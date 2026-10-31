@@ -6503,6 +6503,7 @@ public sealed class RemoteScriptContractTests
             string.Join("\n", new[] { "c849_manifest_write", "c849_manifest_validate", "c849_manifest_compare", "c849_compare_import", "c849_contract_receipt" }.Select(name => Block(remote, name))) + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
             Block(remote, "c1008_rollout_lock") + "\n" +
+            RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
@@ -6537,8 +6538,9 @@ public sealed class RemoteScriptContractTests
                 fi
                 case "$1:$2" in
                     image:inspect) printf 'sha256:%064d\n' 0; return 0 ;;
+                    volume:ls) return 0 ;;
                     volume:inspect)
-                        case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                        case "${@: -1}" in *antiphon-runner-temp_*) printf 'no such volume\n' >&2; return 1 ;; esac
                         echo "$root/state"; return 0 ;;
                     ps:*) return 0 ;;
                     run:*)
@@ -6826,6 +6828,7 @@ public sealed class RemoteScriptContractTests
         compose.ShouldBeGreaterThan(guard, "absence before compose_temp up");
 
         var output = LinuxShell(Block(remote, "c849_no_temp_containers") + "\n" +
+            RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
@@ -6837,8 +6840,9 @@ public sealed class RemoteScriptContractTests
             ensure_checkout() { printf 'reached=ensure_checkout\n' >> "$root/trace"; write_result true GuardPassed 0; }
             compose_temp() { printf 'reached=compose_temp\n' >> "$root/trace"; write_result true ComposeReached 0; }
             docker() {
+                if [ "$1" = volume ] && [ "$2" = ls ]; then return 0; fi
                 if [ "$1" = volume ] && [ "$2" = inspect ]; then
-                    case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                    case "${@: -1}" in *antiphon-runner-temp_*) printf 'no such volume\n' >&2; return 1 ;; esac
                     printf 'unexpected-docker\n' >> "$root/trace"; return 1
                 fi
                 [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
@@ -6863,7 +6867,7 @@ public sealed class RemoteScriptContractTests
                 printf 'ROW mode=%s exit=%s checkout=%s compose=%s unexpected=%s verdict=%s\n' \
                     "$MODE" "$code" "$checkout" "$compose" "$unexpected" "$verdict"
             done
-            """);
+            """, "repo");
         RequireExactRows(output,
             "ROW mode=absent exit=0 checkout=1 compose=0 unexpected=0 verdict=accepted=true diagnosis=GuardPassed",
             "ROW mode=present exit=2 checkout=0 compose=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists",
@@ -7061,7 +7065,8 @@ public sealed class RemoteScriptContractTests
     {
         var remote = Remote();
         var output = LinuxShell(Block(remote, "c849_require_ready") + "\n" +
-            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            Block(remote, "c1008_rollout_lock") + "\n" + RetirementPrelude(remote) +
+            Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
@@ -7072,8 +7077,9 @@ public sealed class RemoteScriptContractTests
             c849_no_temp_containers() { :; }; build_server2_images() { :; }; c849_prepare() { :; }
             write_result() { printf 'deploy=%s\n' "$2"; exit "$3"; }
             docker() {
+                if [ "$1" = volume ] && [ "$2" = ls ]; then return 0; fi
                 if [ "$1" = volume ] && [ "$2" = inspect ]; then
-                    case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                    case "${@: -1}" in *antiphon-runner-temp_*) printf 'no such volume\n' >&2; return 1 ;; esac
                     echo "$root/state"; return 0
                 fi
                 return 1
@@ -7086,7 +7092,7 @@ public sealed class RemoteScriptContractTests
             }
             ( case_deploy_temp_runner ) > "$root/out" 2>&1
             printf 'exit=%s verdict=%s\n' "$?" "$(cat "$root/out")"
-            """);
+            """, "repo");
         output.ShouldContain("exit=2 verdict=deploy=CacheSeedRequired:");
         output.ShouldContain("scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar");
     }
@@ -7158,7 +7164,8 @@ public sealed class RemoteScriptContractTests
             }
         }
         var deployments = LinuxShell(Block(remote, "case_deploy_parent") + "\n" +
-            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            Block(remote, "c1008_rollout_lock") + "\n" + RetirementPrelude(remote) +
+            Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
@@ -7185,8 +7192,9 @@ public sealed class RemoteScriptContractTests
             compose_host() { echo unsafe-compose >> "$root/trace"; }
             compose_temp() { echo unsafe-compose >> "$root/trace"; }
             docker() {
+                if [ "$1" = volume ] && [ "$2" = ls ]; then return 0; fi
                 if [ "$1" = volume ] && [ "$2" = inspect ]; then
-                    case "${@: -1}" in *antiphon-runner-temp_*) return 1 ;; esac
+                    case "${@: -1}" in *antiphon-runner-temp_*) printf 'no such volume\n' >&2; return 1 ;; esac
                     echo "$root/state"; return 0
                 fi
                 echo unsafe-docker >> "$root/trace"; return 1
@@ -7212,7 +7220,7 @@ public sealed class RemoteScriptContractTests
                     if grep -q '^unsafe-' "$root/trace"; then echo unsafe-deploy; fi
                 done
             done
-            """);
+            """, "repo");
         foreach (var target in new[] { "parent", "temp" })
         {
             deployments.ShouldContain("prepare " + target + " verdict=deploy-result=false:CacheRootNotWritable");
@@ -7262,6 +7270,7 @@ public sealed class RemoteScriptContractTests
                 printf '%s %s\n' "$1" "${*: -1}" >> "$root/elevated"
                 if [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\ndocker 30000000 1 29999999 1%% /docker\n'; return 0; fi
                 if [ "$1" = stat ]; then echo 1654:1654:700; return 0; fi
+                if [ "$1" = install ]; then mkdir -p -- "${@: -1}"; return 0; fi
                 PRIVILEGED=1 "$@"
             }
             """ + "\n" + ControlledCacheDf("docker_root", "25000000") + "\n" + """
@@ -7270,9 +7279,10 @@ public sealed class RemoteScriptContractTests
                 case "$1:$2" in
                     # observe assigns local docker_root from this output; reading that name is unset under set -u.
                     info:*) printf '%s\n' "$root/docker" ;;
+                    volume:ls) return 0 ;;
                     volume:inspect)
                         if [ "${3:-}" = -f ]; then format="$4"; fi
-                        case "$name" in *antiphon-runner-temp_*) return 1 ;; esac
+                        case "$name" in *antiphon-runner-temp_*) printf 'no such volume\n' >&2; return 1 ;; esac
                         if [ "$name" = antiphon-runner_runner-state ]; then
                             printf '%s\n' "$root/state"; return 0
                         fi
@@ -7297,6 +7307,7 @@ public sealed class RemoteScriptContractTests
             ensure_build_slots_broker() { echo DEPLOY_REACHED_BROKER; exit 0; }
             """ + "\n" + Block(remote, "c849_observe_volume") + "\n" +
             Block(remote, "c849_budget_gate") + "\n" + Block(remote, "c849_prune_validate_tree") + "\n" +
+            Block(remote, "c1008_rollout_lock") + "\n" + RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             ( c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 ) > "$root/observe" 2>&1
@@ -7315,7 +7326,7 @@ public sealed class RemoteScriptContractTests
             printf 'C997_DF_LOG<<\n'
             cat "$c997_df_log"
             printf '\n>>\n'
-            """);
+            """, "repo");
         output.Contains("OBSERVE_EXIT=0", StringComparison.Ordinal)
             .ShouldBeTrue("CacheTargetInvalid: observe must traverse the Docker volume through sudo");
         output.Contains("PRUNE_EXIT=0", StringComparison.Ordinal)
@@ -9181,6 +9192,14 @@ public sealed class RemoteScriptContractTests
             .ToList();
 
     private static string EnsureDirsBody(string text) => Block(text, "ensure_dirs");
+
+    // Production copies c1008-retirement.sh beside the remote script. Extracted
+    // harnesses must source that same file; clearable refuses until the loader
+    // and c1008_volume are present.
+    private static string RetirementPrelude(string remote) =>
+        "export C1609_RETIREMENT_FILE=\"$repo/scripts/c1008-retirement.sh\"\n" +
+        Block(remote, "c1609_load_retirement") + "\n" +
+        Block(remote, "c1008_volume") + "\n";
 
     private static string Block(string text, string function)
     {
