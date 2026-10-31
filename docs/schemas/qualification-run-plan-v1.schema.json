@@ -259,6 +259,7 @@
       "required": [
         "id",
         "kind",
+        "platformOfRecord",
         "coverageRole",
         "laneId",
         "project",
