@@ -19,9 +19,16 @@ function New-NightlyDispatchSchedule {
             $dispatchRows.Add([pscustomobject]@{suite=[string]$dispatchSuite.id;chunk=[string]$dispatchChunk.id;canonicalOrdinal=$dispatchRows.Count;dispatchOrdinal=$dispatchRows.Count;priorFailure=$dispatchPriority;SuiteState=$dispatchSuite;ChunkRef=$dispatchChunk})
         }
     }
-    # Baseline seam: retain the current suite-major dispatch before the RED witness.
-    $dispatchOrdered = @($dispatchRows.ToArray())
-    $dispatchBytes = [Text.Encoding]::UTF8.GetBytes(($dispatchCanonical.ToArray() | ConvertTo-Json -Depth 30 -Compress))
+    # Stable partition of references. Do not repack, copy or renumber a chunk.
+    $dispatchOrdered = @($dispatchRows.ToArray() | Where-Object priorFailure) + @($dispatchRows.ToArray() | Where-Object { -not $_.priorFailure })
+    $dispatchSeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    for ($dispatchOrdinal = 0; $dispatchOrdinal -lt $dispatchOrdered.Count; $dispatchOrdinal++) {
+        $dispatchRow = $dispatchOrdered[$dispatchOrdinal]
+        $dispatchRow.dispatchOrdinal = $dispatchOrdinal
+        if (-not $dispatchSeen.Add($dispatchRow.suite + [char]0 + $dispatchRow.chunk)) { throw 'dispatch-not-permutation' }
+    }
+    if ($dispatchOrdered.Count -ne $dispatchRows.Count -or -not $dispatchSeen.SetEquals($dispatchKeys)) { throw 'dispatch-not-permutation' }
+    $dispatchBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $dispatchCanonical.ToArray() -Depth 30 -Compress))
     $dispatchHash = [Security.Cryptography.SHA256]::Create()
     try { $dispatchDigest = [BitConverter]::ToString($dispatchHash.ComputeHash($dispatchBytes)).Replace('-','').ToLowerInvariant() }
     finally { $dispatchHash.Dispose() }
@@ -79,12 +86,22 @@ function Invoke-NightlyDispatchCoordinator {
     if ($dispatchBarrier) {
         $dispatchSchedule = New-NightlyDispatchSchedule -PreparedSuites $dispatchPrepared.ToArray() -PriorityMembers $DispatchPriorityMembers -Unresolved $DispatchUnresolved -HistoryDigest $DispatchHistoryDigest -RunId $invocationId -Attempt ([string]$Attempt)
         Write-NightlyDispatchSchedule $dispatchSchedule $LogRoot
-        $dispatchRemaining = @{}
-        foreach ($dispatchState in $dispatchPrepared) { $dispatchRemaining[[string]$dispatchState.id] = @($dispatchState.chunks).Count }
-        foreach ($dispatchEntry in $dispatchSchedule.entries) {
-            . Invoke-NightlyScheduledChunk -ExecutionSuiteState $dispatchEntry.SuiteState -ExecutionChunk $dispatchEntry.ChunkRef
-            $dispatchRemaining[$dispatchEntry.suite]--
-            if ($dispatchRemaining[$dispatchEntry.suite] -eq 0) { . Complete-NightlySuiteExecution -CompletionSuiteState $dispatchEntry.SuiteState }
-        }
+        . Invoke-NightlyPreparedSchedule -PreparedSchedule $dispatchSchedule
+    }
+}
+
+# Shared scheduled execution boundary; callers retain the run verdict and custody.
+function Invoke-NightlyPreparedSchedule {
+    param($PreparedSchedule)
+    if (-not $PreparedSchedule.preparationComplete) { throw 'dispatch-preparation-incomplete' }
+    $dispatchRemaining = @{}
+    foreach ($dispatchEntry in $PreparedSchedule.entries) {
+        if (-not $dispatchRemaining.ContainsKey($dispatchEntry.suite)) { $dispatchRemaining[$dispatchEntry.suite] = 0 }
+        $dispatchRemaining[$dispatchEntry.suite]++
+    }
+    foreach ($dispatchEntry in $PreparedSchedule.entries) {
+        . Invoke-NightlyScheduledChunk -ExecutionSuiteState $dispatchEntry.SuiteState -ExecutionChunk $dispatchEntry.ChunkRef
+        $dispatchRemaining[$dispatchEntry.suite]--
+        if ($dispatchRemaining[$dispatchEntry.suite] -eq 0) { . Complete-NightlySuiteExecution -CompletionSuiteState $dispatchEntry.SuiteState }
     }
 }

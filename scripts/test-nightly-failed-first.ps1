@@ -430,7 +430,317 @@ function Test-GlobalReplayPriority {
     Assert-FF (Test-FFRefusal {New-NightlyDispatchSchedule -PreparedSuites @($fx.suites[0],$fx.suites[0])} 'duplicate-canonical-chunk') 'duplicate'
 }
 
+function Get-FFArgument([object[]]$Arguments, [string]$Name) {
+    $i = [array]::IndexOf($Arguments, $Name)
+    if ($i -ge 0 -and $i+1 -lt $Arguments.Count) { return [string]$Arguments[$i+1] }
+    return ''
+}
+function Write-FFDiagnostic([string]$Directory, [object[]]$Nodes, [string]$State = 'Passed') {
+    [void][IO.Directory]::CreateDirectory($Directory)
+    $text = [Text.StringBuilder]::new()
+    [void]$text.Append("Version: '1.44.0.0'`nVersion: 2.2.2`n")
+    foreach ($n in $Nodes) {
+        $outcome = $State
+        if ($n.PSObject.Properties.Name -contains 'Outcome') { $outcome = [string]$n.Outcome }
+        [void]$text.Append(('TestNodeUpdateMessage {{ TestNode = TestNode {{ Uid = TestNodeUid {{ Value = {0} }}, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty {{ AssemblyFullName = Fixture, Namespace = {1}, TypeName = {2}, MethodName = {3}, MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }}, {4}TestNodeStateProperty {{ Explanation =  }} ] }} }}' -f $n.Uid,$n.Namespace,$n.Type,$n.Method,$outcome))
+        [void]$text.Append("`n")
+    }
+    [IO.File]::WriteAllText((Join-Path $Directory 'fixture.diag'), $text.ToString())
+}
+function Invoke-FFPreparedArm {
+    param($Fixture, [string]$Name, [object[]]$Members = @(), [string]$Variant = 'pass')
+    $RepoRoot = $repo
+    $LogRoot = Join-Path $root $Name
+    [void][IO.Directory]::CreateDirectory($LogRoot)
+    $TimingRoot = Join-Path $LogRoot 'timing'
+    $script:QualificationTimingRoot = $TimingRoot
+    $invocationId = 'conservation-run'; $Attempt = 1; $Sha = 'a'*40; $GitRef = 'origin/master'
+    $Profile = 'rc'; $profileAware = $true
+    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo; $policyHash = $policy.Hash
+    $startedAt = [datetime]::UtcNow.AddSeconds(-1)
+    $qualificationBuildSeconds = 1.25
+    $coverageComplete = $true; $testsPassed = $true; $overallFailed = $false
+    $suiteResults = @(); $reasons = @(); $activeNative = 0; $nativeActiveMax = 0
+    function Set-NightlyOutcome([string]$Class) { }
+    $script:FFLaunches = [Collections.Generic.List[object]]::new()
+    $script:FFArmChunks = @{}
+    $script:FFVariant = $Variant
+    $script:FFFailureKey = 'antiphon/'+[string]$Fixture.suites[0].chunks[-1].id
+    $script:NightlySeams = @{
+        StartProcess = {
+            param($FilePath,$ArgumentList,$WorkingDirectory,$TimeoutMilliseconds,$Environment)
+            $suiteKey = [string]$Environment['ANTIPHON_TEST_PHASE_SUITE']
+            $chunkKey = [string]$Environment['ANTIPHON_TEST_PHASE_GROUP_ID']
+            $key = $suiteKey+'/'+$chunkKey
+            $original = $script:FFArmChunks[$key]
+            if ($null -eq $original) { throw ('unkeyed-launch:'+ $key) }
+            $script:FFLaunches.Add([pscustomobject]@{suite=$suiteKey;chunk=$chunkKey;key=$key;filter=(Get-FFArgument $ArgumentList '--treenode-filter');watchdog=$TimeoutMilliseconds;host=$FilePath})
+            $nodes = @($original.nodes)
+            $rows = @()
+            $terminals = @()
+            $exitCode = 0; $timedOut = $false
+            $special = ($key -ceq $script:FFFailureKey)
+            foreach ($n in $nodes) {
+                $state = 'Passed'
+                if ($special -and $script:FFVariant -ceq 'failure') { $state='Failed'; $exitCode=2 }
+                if ($special -and $script:FFVariant -ceq 'skip') { $state='Skipped' }
+                $rows += [pscustomobject]@{Id=$n.Uid;ClassName=$n.ClassName;MethodName=$n.Method;Outcome=$state}
+                $tn = Copy-FFObject $n
+                $tn | Add-Member -NotePropertyName Outcome -NotePropertyValue $state -Force
+                $terminals += $tn
+            }
+            if ($special -and $script:FFVariant -ceq 'unknown') { $terminals += [pscustomobject]@{Uid='foreign';Namespace='Foreign';Type='Unknown';Method='Run';Outcome='Passed'} }
+            $trx = Join-Path (Get-FFArgument $ArgumentList '--results-directory') (Get-FFArgument $ArgumentList '--report-trx-filename')
+            if (-not ($special -and $script:FFVariant -ceq 'missing')) { Write-C487Trx -Path $trx -Rows $rows }
+            Write-FFDiagnostic (Get-FFArgument $ArgumentList '--diagnostic-output-directory') $terminals
+            if ($special -and $script:FFVariant -ceq 'timeout') { $timedOut=$true; $exitCode=1 }
+            if ($special -and $script:FFVariant -ceq 'publication') { $script:TestPhaseCommitFault=[pscustomobject]@{Stage='Rename';Remaining=2} }
+            $children = -not ($special -and $script:FFVariant -ceq 'teardown')
+            return [pscustomobject]@{ExitCode=$exitCode;TimedOut=$timedOut;ChildrenExited=$children;CleanupComplete=$children;Pid=1;LogText='';JobEmptyObserved=$children}
+        }
+    }
+    $states = @()
+    $plannedBytes = @{}
+    foreach ($s in $Fixture.suites) {
+        $discPath = Join-Path $LogRoot ($s.id+'-profile.discovery.json')
+        $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $s.nodes -AssemblyHash 'fixture'
+        Write-NightlyDiscoveryDocument -Path $discPath -Document $doc
+        $index = New-NightlyDiscoveryIndex
+        $entry = Get-NightlyDiscoveryIndexEntry -Index $index -Path $discPath
+        $census = (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $s.exclusions -ProfileAware).Census
+        $variables = @{
+            suiteId=$s.id;suite=[pscustomobject]@{assembly=$s.id};label=$s.id;mode='unattended';isNative=$true;chunks=$s.chunks
+            profileExclusions=$s.exclusions;suiteHost=[pscustomobject]@{FilePath=('fixture-'+$s.id);Prefix=@();AssemblyPath='fixture'}
+            suiteDiscoveryNodes=$s.nodes;profileDiscovery=$doc;profileDiscoveryPath=$discPath;suiteDiscoveryIndex=$index;suiteCensus=$census
+            suiteDiscoverySeconds=0.25;suiteTerminalNodes=@();chunkIndex=0;phaseAssembly=$s.id;phaseAssemblyDigest='fixture';phaseCostDigest='fixture'
+        }
+        $states += [pscustomobject]@{id=$s.id;nodes=$s.nodes;chunks=$s.chunks;exclusions=$s.exclusions;Variables=$variables;Completed=$false}
+        foreach ($c in $s.chunks) { $script:FFArmChunks[$s.id+'/'+$c.id]=$c }
+        [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt '1' -Suite $s.id -SourceDigest $Sha -AssemblyDigest 'fixture' -PolicyDigest $policyHash -CostFileDigest 'fixture' -AssemblyId $s.id -Groups $s.chunks -DiscoveryNodes $s.nodes -ProfileExclusions $s.exclusions)
+        $plannedBytes[$s.id] = [IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json')))
+    }
+    $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt '1' -Suite '' -Source $Sha -InvocationId $invocationId
+    if ($publicationContext.Refused) { throw ('context-refused:'+ $publicationContext.Reason) }
+    $script:TestPhaseExecutedContext = $publicationContext
+    $schedule = New-NightlyDispatchSchedule -PreparedSuites $states -PriorityMembers $Members -HistoryDigest ('d'*64) -RunId $invocationId -Attempt '1'
+    Write-NightlyDispatchSchedule $schedule $LogRoot
+    $errorText = ''
+    try { $null = . Invoke-NightlyPreparedSchedule -PreparedSchedule $schedule }
+    catch { $errorText=$_.Exception.Message; $coverageComplete=$false; $overallFailed=$true; $reasons += $errorText }
+    finally {
+        $terminal='success'; if ($overallFailed -or -not $testsPassed) { $terminal='failed-run' }
+        Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal $terminal | Out-Null
+        Close-TestPhaseExecutedContext -Context $publicationContext
+        $script:TestPhaseCommitFault=$null
+    }
+    Invoke-TestPhaseRunSummary -RunDirectory $LogRoot
+    $timing = Get-QualificationTimingReport -LogRoot $LogRoot -TimingRoot $TimingRoot
+    $projection = [IO.File]::ReadAllText((Join-Path $TimingRoot 'groups-executed.json')) | ConvertFrom-Json
+    $plansStable = $true
+    foreach ($s in $Fixture.suites) { if ([IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json'))) -cne $plannedBytes[$s.id]) { $plansStable=$false } }
+    $output = [pscustomobject]@{Root=$LogRoot;TimingRoot=$TimingRoot;Schedule=$schedule;Launches=$script:FFLaunches.ToArray();Plans=$plannedBytes;PlansStable=$plansStable;Projection=$projection;Rows=$suiteResults;Reasons=$reasons;Coverage=$coverageComplete;Passed=$testsPassed;Error=$errorText;States=$states;Timing=$timing;Context=$publicationContext;NativeMax=$nativeActiveMax}
+    Write-FFJson (Join-Path $LogRoot 'arm-result.json') ([ordered]@{launches=$output.Launches;rows=$suiteResults;reasons=$reasons;coverage=$coverageComplete;passed=$testsPassed;error=$errorText;nativeMax=$nativeActiveMax})
+    return $output
+}
+function New-FFSmallFixture {
+    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $suites = @()
+    foreach ($sid in @('antiphon','session-runner')) {
+        $nodes = @((New-FFNode ('Fixture.'+$sid.Replace('-','')+'.Ordinary')),(New-FFNode ('Fixture.'+$sid.Replace('-','')+'.Priority')))
+        $chunks=@()
+        foreach($n in $nodes){$c=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes @($n) -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $sid -PolicyObject $policy.Object)[0];$c.id=$n.Type;$chunks += $c}
+        $suites += [pscustomobject]@{id=$sid;nodes=$nodes;chunks=$chunks;exclusions=@()}
+    }
+    return [pscustomobject]@{suites=$suites;resolved=[pscustomobject]@{members=@([pscustomobject]@{suite='antiphon';chunks=@('Priority')},[pscustomobject]@{suite='session-runner';chunks=@('Priority')})}}
+}
+function Test-FullBytesAndCoverageConserved {
+    $fx = New-FFGlobalFixture
+    $before = ConvertTo-Json -InputObject @($fx.suites.chunks) -Depth 30 -Compress
+    $a = Invoke-FFPreparedArm $fx 'canonical'
+    $b = Invoke-FFPreparedArm $fx 'priority' $fx.resolved.members
+    $canonical = @($a.Launches.key)
+    $actual = @($b.Launches.key)
+    $prefix = @($b.Schedule.entries | Where-Object priorFailure)
+    # This must precede all conservation comparisons and uses actual launches.
+    Assert-FF (($actual -join ',') -cne ($canonical -join ',') -and $actual.Count -eq $canonical.Count -and @($actual|Select-Object -Unique).Count -eq $canonical.Count -and -not @(Compare-Object $actual $canonical -CaseSensitive).Count -and $b.Launches[4].suite -cne 'antiphon') 'observedPermutation'
+    $anchorKeys=@($fx.anchors|ForEach-Object {'antiphon/'+$_.chunk})
+    $observedAnchors=@($actual|Where-Object {$anchorKeys -ccontains $_})
+    Assert-FF (($observedAnchors -join ',') -ceq ($anchorKeys -join ',') -and @($prefix|Where-Object {$anchorKeys -ccontains ($_.suite+'/'+$_.chunk)}).Count -eq 4) 'anchors'
+    $samePlans=$true
+    foreach($s in $fx.suites){if($a.Plans[$s.id] -cne $b.Plans[$s.id]){$samePlans=$false}}
+    Assert-FF ($samePlans -and $a.PlansStable -and $b.PlansStable -and $before -ceq (ConvertTo-Json -InputObject @($fx.suites.chunks) -Depth 30 -Compress) -and $a.Schedule.canonicalPlanDigest -ceq $b.Schedule.canonicalPlanDigest) 'canonicalBytes'
+    Assert-FF ($a.Coverage -and $a.Passed -and $b.Coverage -and $b.Passed -and $a.NativeMax -eq 1 -and $b.NativeMax -eq 1 -and @($a.States|Where-Object {-not $_.Completed}).Count -eq 0 -and @($b.States|Where-Object {-not $_.Completed}).Count -eq 0) 'coverage'
+    $keyed=$true
+    foreach($r in $a.Projection.chunks){$other=@($b.Projection.chunks|Where-Object {$_.suite -ceq $r.suite -and $_.chunk -ceq $r.chunk})[0];foreach($f in @('exitCode','trxMissing','passedCount','outcomes','trxDigest','manufacturedPassed')){if((ConvertTo-Json -InputObject $r.$f -Depth 10 -Compress) -cne (ConvertTo-Json -InputObject $other.$f -Depth 10 -Compress)){$keyed=$false}}}
+    Assert-FF ($keyed -and -not $a.Projection.manufacturedPassed -and -not $b.Projection.manufacturedPassed) 'keyedObservations'
+    $small=New-FFSmallFixture
+    $matrix=@()
+    foreach($variant in @('failure','missing','skip','unknown','timeout','publication','teardown')){
+        $left=Invoke-FFPreparedArm $small ($variant+'-canonical') @() $variant
+        $right=Invoke-FFPreparedArm $small ($variant+'-priority') $small.resolved.members $variant
+        $same=($left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and ($left.Reasons|Sort-Object) -join ',' -ceq (($right.Reasons|Sort-Object) -join ','))
+        # Teardown aborts the run at its keyed chunk; no subsequent required work is credited.
+        if($variant -ceq 'teardown'){$same=(-not $left.Coverage -and -not $right.Coverage -and $left.Error -like '*owned-child*' -and $right.Error -like '*owned-child*')}
+        $matrix += [pscustomobject]@{variant=$variant;left=$left;right=$right;same=$same}
+    }
+    Assert-FF (@($matrix|Where-Object {-not $_.same}).Count -eq 0) 'terminalMatrix' (($matrix|Where-Object {-not $_.same}).variant -join ',')
+    $failed=@($matrix|Where-Object {$_.variant -ceq 'failure'})[0]
+    $prefixOk=$true
+    foreach($arm in @($failed.left,$failed.right)){
+        $passed=$true;$coverage=$true
+        foreach($r in $arm.Projection.chunks){if($r.testsPassed -ne $passed -or $r.coverageComplete -ne $coverage){$prefixOk=$false};if($r.exitCode -ne 0){$passed=$false}}
+    }
+    Assert-FF $prefixOk 'prefixState'
+    $companion=@($small.resolved.members|Where-Object {$_.suite -ceq 'session-runner'})
+    $header=Invoke-FFPreparedArm $small 'companion-first' $companion
+    Assert-FF ($a.Projection.suite -ceq $a.Launches[0].suite -and $b.Projection.suite -ceq $b.Launches[0].suite -and $header.Projection.suite -ceq 'session-runner' -and $header.Projection.runId -ceq 'conservation-run' -and $header.Projection.attempt -ceq '1') 'stickyHeader'
+    Assert-FF ((@($a.Rows|ForEach-Object {$_.id+'/'+$_.chunk}) -join ',') -ceq ($canonical -join ',') -and (@($b.Rows|ForEach-Object {$_.id+'/'+$_.chunk}) -join ',') -ceq ($actual -join ',')) 'settlementOrder'
+    Assert-FF (($failed.left.Reasons -join ',') -ceq ($failed.right.Reasons -join ',') -and -not $failed.left.Passed -and -not $failed.right.Passed) 'reasonSequence'
+    $journalOk=$true
+    foreach($arm in @($a,$b,$header)){
+        $current=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-executed.journal/current.json'))|ConvertFrom-Json
+        $generation=Join-Path (Join-Path $arm.TimingRoot 'groups-executed.journal') $current.generation
+        $seal=[IO.File]::ReadAllText((Join-Path $generation 'seal.json'))|ConvertFrom-Json
+        if($seal.projectionDigest -cne (Get-NightlyHistoryDigest (Join-Path $arm.TimingRoot 'groups-executed.json')) -or $seal.sequence -ne $arm.Launches.Count -or -not $arm.Context.Closed){$journalOk=$false}
+        $records=@(Get-ChildItem -LiteralPath $generation -File|Where-Object {$_.Name -match '^\d{8}\.json$'}|Sort-Object Name)
+        for($i=0;$i -lt $records.Count;$i++){$record=[IO.File]::ReadAllText($records[$i].FullName)|ConvertFrom-Json;if($record.sequence -ne $i+1 -or $record.freshSuiteKey -cne $arm.Launches[$i].suite -or $record.freshChunkKey -cne $arm.Launches[$i].chunk){$journalOk=$false}}
+    }
+    Assert-FF $journalOk 'journalBindings'
+    $timelinesOk=$true
+    foreach($arm in @($a,$b)){
+        foreach($timeline in $arm.Timing.Timeline){$chunks=@($arm.Timing.Chunks|Where-Object {$_.suite -ceq $timeline.suite});if($chunks.Count -eq 0 -or $timeline.startedAt -cne @($chunks.startedAt|Sort-Object)[0] -or $timeline.completedAt -cne @($chunks.completedAt|Sort-Object)[-1]){$timelinesOk=$false}}
+        foreach($t in $arm.Timing.Chunks){if($t.buildSlot -cne 'not-used' -or $null -ne $t.buildSlotWaitSeconds -or $null -ne $t.distillationSeconds){$timelinesOk=$false}}
+    }
+    Assert-FF $timelinesOk 'timelines'
+    $summaries=$true
+    foreach($arm in @($a,$b)){
+        foreach($file in @('summary.json','tests.csv','summary.md')){if(-not [IO.File]::Exists((Join-Path $arm.TimingRoot $file))){$summaries=$false}}
+        if([IO.File]::Exists((Join-Path $arm.TimingRoot 'summary.json'))){$summary=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'summary.json'))|ConvertFrom-Json;if($summary.version -ne 1){$summaries=$false}}
+        $singleton=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-planned.json'))|ConvertFrom-Json
+        $index=[IO.File]::ReadAllText((Join-Path $arm.TimingRoot 'groups-planned-index.json'))|ConvertFrom-Json
+        if($singleton.suite -cne $fx.suites[-1].id -or $index.suites.Count -ne $fx.suites.Count){$summaries=$false}
+    }
+    Assert-FF $summaries 'phaseSummariesAndIndex'
+    Assert-FF ($a.Schedule.preparationComplete -and $b.Schedule.preparationComplete -and $b.Schedule.historyDigest -ceq ('d'*64) -and $b.Schedule.unresolved.Count -eq 0) 'schedulePolicy'
+    Test-FFPreparationSequencing
+    Test-FFAuthorityConservation
+}
+function Invoke-FFPreparationArm {
+    param([string]$Name, [string]$HistoryKind, [string]$Failure = 'discovery', [switch]$WriteFault)
+    $RepoRoot=$repo; $LogRoot=Join-Path $root $Name; [void][IO.Directory]::CreateDirectory($LogRoot)
+    $TimingRoot=Join-Path $LogRoot 'timing'; $script:QualificationTimingRoot=$TimingRoot
+    $policy=Read-NightlyExecutionPolicy -RepoRoot $repo
+    $Profile='rc';$profileAware=$true;$platform='windows';$policyHash=$policy.Hash
+    $suiteMap=Get-NightlySuiteMap -PolicyObject $policy.Object
+    $ids=@('antiphon','session-runner','agents-pty')
+    if($Failure -ceq 'e2e'){$ids=@('antiphon','e2e','agents-pty')}
+    foreach($id in $ids){$policy.Object.profiles.rc.exclusions += [pscustomobject]@{suite=$id;class='Fixture.Never';reason='fixture';owner='CARD-1514'}}
+    $requiredSuites=$ids;$chunksBySuite=@{};$qualificationBuildSeconds=1.25
+    $invocationId='preparation-run';$Attempt=1;$Sha='a'*40;$GitRef='origin/master'
+    $startedAt=[datetime]::UtcNow.AddSeconds(-1)
+    $coverageComplete=$true;$testsPassed=$true;$overallFailed=$false;$preflight=[ordered]@{}
+    $suiteResults=@();$reasons=@();$activeNative=0;$nativeActiveMax=0
+    $npmOk=$true;$lintBlocksPipeline=$false;$dotnetOk=$true
+    function Set-NightlyOutcome([string]$Class) { }
+    $script:FFPrep=[pscustomobject]@{Trace=[Collections.Generic.List[string]]::new();Log=$LogRoot;Nodes=@{};Failure=$Failure;Second=$ids[1];SeenSettlement=$false}
+    foreach($id in $ids){$script:FFPrep.Nodes[$id]=@(New-FFNode ('Fixture.'+$id.Replace('-','')+'.Only'))}
+    $script:NightlySeams=@{
+        StartProcess={
+            param($FilePath,$ArgumentList,$WorkingDirectory,$TimeoutMilliseconds,$Environment)
+            $diag=Get-FFArgument $ArgumentList '--diagnostic-output-directory'
+            if($ArgumentList -contains '--list-tests'){
+                $sid=(Split-Path -Leaf $diag) -replace '-profile-discovery$',''
+                if($sid -ceq $script:FFPrep.Second){
+                    $journal=Join-Path $script:QualificationTimingRoot 'groups-executed.journal'
+                    $published=@(Get-ChildItem -LiteralPath $journal -Filter '00000001.json' -Recurse -File -ErrorAction SilentlyContinue)
+                    if($published.Count -gt 0){$script:FFPrep.SeenSettlement=$true;$script:FFPrep.Trace.Add('settle-antiphon')}
+                }
+                $script:FFPrep.Trace.Add('prepare-'+$sid)
+                if($sid -ceq $script:FFPrep.Second -and $script:FFPrep.Failure -cne 'e2e'){
+                    $script:FFPrep.Trace.Add('fail-'+$sid)
+                    return [pscustomobject]@{ExitCode=1;TimedOut=($script:FFPrep.Failure -ceq 'timeout');ChildrenExited=$true;CleanupComplete=$true;LogText=''}
+                }
+                Write-FFDiagnostic $diag $script:FFPrep.Nodes[$sid] 'Discovered'
+            }else{
+                $sid=[string]$Environment['ANTIPHON_TEST_PHASE_SUITE'];$script:FFPrep.Trace.Add('launch-'+$sid)
+                $n=$script:FFPrep.Nodes[$sid][0]
+                $trx=Join-Path (Get-FFArgument $ArgumentList '--results-directory') (Get-FFArgument $ArgumentList '--report-trx-filename')
+                Write-C487Trx $trx @([pscustomobject]@{Id=$n.Uid;ClassName=$n.ClassName;MethodName=$n.Method;Outcome='Passed'})
+                Write-FFDiagnostic $diag @($n)
+            }
+            return [pscustomobject]@{ExitCode=0;TimedOut=$false;ChildrenExited=$true;CleanupComplete=$true;LogText=''}
+        }
+        E2EPrerequisites={
+            $script:FFPrep.Trace.Add('prepare-e2e');$script:FFPrep.Trace.Add('fail-e2e')
+            return [pscustomobject]@{Ok=$false;Rows=@([pscustomobject]@{name='fixture-browser';exitCode=1;detail='fixture'})}
+        }
+    }
+    if($WriteFault){[void][IO.Directory]::CreateDirectory((Join-Path $LogRoot 'dispatch-schedule.json'));[void][IO.Directory]::CreateDirectory((Join-Path $LogRoot 'dispatch-schedule-write-failed'))}
+    $publicationContext=Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt '1' -Suite '' -Source $Sha
+    $script:TestPhaseExecutedContext=$publicationContext
+    $args=@{DispatchSuites=$ids}
+    if($HistoryKind -ceq 'nonempty'){$args.DispatchPriorityMembers=@([pscustomobject]@{suite='antiphon';chunks=@('all-group-1')});$args.DispatchHistoryDigest='d'*64}
+    if($HistoryKind -ceq 'empty'){$args.DispatchPriorityMembers=@();$args.DispatchUnresolved=@()}
+    $errorText=''
+    try{$null = . Invoke-NightlyDispatchCoordinator @args}catch{$errorText=$_.Exception.Message;$coverageComplete=$false}
+    finally{Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal 'failed-run'|Out-Null;Close-TestPhaseExecutedContext -Context $publicationContext}
+    $schedule=$null;$path=Join-Path $LogRoot 'dispatch-schedule.json'
+    if([IO.File]::Exists($path)){$schedule=[IO.File]::ReadAllText($path)|ConvertFrom-Json}
+    $answer=[pscustomobject]@{trace=$script:FFPrep.Trace.ToArray();settled=$script:FFPrep.SeenSettlement;coverage=$coverageComplete;rows=$suiteResults;error=$errorText;schedule=$schedule}
+    Write-FFJson (Join-Path $LogRoot 'preparation-result.json') $answer
+    return $answer
+}
+function Test-FFPreparationSequencing {
+    $lazy=$true;$barrier=$true;$e2e=$true;$io=$true
+    foreach($failure in @('discovery','timeout','e2e')){
+        $absent=Invoke-FFPreparationArm ('lazy-'+$failure) 'absent' $failure
+        $empty=Invoke-FFPreparationArm ('empty-'+$failure) 'empty' $failure
+        $priority=Invoke-FFPreparationArm ('barrier-'+$failure) 'nonempty' $failure
+        if(($absent.trace -join ',') -cne ($empty.trace -join ',') -or $absent.coverage -or $empty.coverage){$lazy=$false}
+        if($failure -cne 'e2e' -and ($absent.trace -join ',') -cne 'prepare-antiphon,launch-antiphon,settle-antiphon,prepare-session-runner,fail-session-runner'){$lazy=$false}
+        if(@($priority.trace|Where-Object {$_ -like 'launch-*'}).Count -ne 0 -or $priority.coverage -or $null -eq $priority.schedule -or $priority.schedule.preparationComplete){$barrier=$false}
+        if($failure -ceq 'e2e' -and (@($absent.rows|Where-Object {$_.id -ceq 'e2e' -and $_.detail -ceq 'e2e-prerequisite-failed'}).Count -ne 1 -or $absent.trace -cnotcontains 'launch-agents-pty' -or @($priority.rows|Where-Object {$_.id -ceq 'e2e'}).Count -ne 1)){$e2e=$false}
+        $fault=Invoke-FFPreparationArm ('write-fault-'+$failure) 'absent' $failure -WriteFault
+        if(($fault.trace -join ',') -cne ($absent.trace -join ',') -or $fault.coverage -ne $absent.coverage -or $fault.error -cne $absent.error){$io=$false}
+    }
+    Assert-FF $lazy 'lazyPreparation'
+    Assert-FF $barrier 'preparationBarrier'
+    Assert-FF $e2e 'e2ePreparation'
+    Assert-FF $io 'diagnosticWriteFailure'
+}
+function Test-FFAuthorityConservation {
+    # Reuse the repository's real pinned-authority fixture, with its owned local
+    # Git checkout and loopback card recipient. Import definitions, never its runner.
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'test-release-gate.ps1'),[ref]$tokens,[ref]$errors)
+    foreach($definition in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)){
+        Set-Item -Path ('function:script:'+ $definition.Name) -Value $definition.Body.GetScriptBlock()
+    }
+    . (Join-Path $PSScriptRoot 'lib/release-gate.ps1')
+    . (Join-Path $PSScriptRoot 'lib/release-authority.ps1')
+    $here=$PSScriptRoot;$repoRoot=$repo;$ResultsDirectory=Join-Path $root 'authority-fixture';[void][IO.Directory]::CreateDirectory($ResultsDirectory)
+    $script:CandidateId='rc-20260923T083000Z';$script:CandidateRef='release/rc-20260923T083000Z'
+    $script:C599RepoPolicyPath=Join-Path $repo 'tests/test-execution-policy.json';$script:C599IntentId='intent-20260923T083000Z';$script:C599RunId='rc-run-1'
+    $script:C599NativeSuites=@('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability')
+    $script:C599Rosters=@{client=@('lint','build','vitest');scripts=@('test-release-gate.ps1','test-nightly.ps1')}
+    $script:C599ABasePolicy=$null;$script:C599PolicyClones=[Collections.Generic.List[string]]::new();$script:C599ReleaseCardId='5b0e6c1e-8f1c-4c3e-9a55-0c5990c5990a'
+    $script:C599Now=[datetime]'2026-09-23T10:00:00Z';$script:C599CardStub=$null
+    $oldMode=$env:ANTIPHON_RELEASE_GATE_TEST_MODE;$env:ANTIPHON_RELEASE_GATE_TEST_MODE='1'
+    try{
+        $auth=New-C599PublishFx
+        $dir=Get-C599AuthorityDir $auth
+        $before=@{};foreach($file in @(Get-ChildItem -LiteralPath $dir -File)){$before[$file.Name]=Get-NightlyHistoryDigest $file.FullName}
+        $gate=Get-C599AGate $auth
+        $after=Get-C599AGate $auth
+        $unchanged=$true;foreach($file in @(Get-ChildItem -LiteralPath $dir -File)){if($before[$file.Name] -cne (Get-NightlyHistoryDigest $file.FullName)){$unchanged=$false}}
+        Assert-FF ($gate.Ok -and $after.Ok -and $unchanged -and (Test-C599NoRemoteWrite $auth)) 'authorityBytes' (@($gate.Reasons)-join ',')
+        $ledger=[IO.File]::ReadAllText((Join-Path $dir 'ledger.json'))|ConvertFrom-Json
+        Assert-FF ($ledger.prepublicationReceipt.kind -ceq 'prepublication' -and $before.ContainsKey('execution-plan.json') -and $before.ContainsKey('discovery.json') -and $before.ContainsKey('authority.json') -and $before.ContainsKey('ledger.json')) 'authorityBinding'
+    }finally{Stop-C599CardStub;Clear-C599FixtureReadOnly;$env:ANTIPHON_RELEASE_GATE_TEST_MODE=$oldMode}
+}
+
 switch -Exact ($Case) {
+    'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=20 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
