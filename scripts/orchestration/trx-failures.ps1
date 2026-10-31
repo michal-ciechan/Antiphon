@@ -19,7 +19,8 @@ foreach ($file in $Path) {
         $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
         $ns.AddNamespace('t', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
         if ($xml.DocumentElement.LocalName -ne 'TestRun' -or $xml.DocumentElement.NamespaceURI -ne $ns.LookupNamespace('t')) { throw 'Not a supported TRX TestRun.' }
-        foreach ($result in $xml.SelectNodes('//t:UnitTestResult[@outcome="Failed"]', $ns)) {
+        # Same failure set as TrxReport and run-checkpoint.ps1.
+        foreach ($result in $xml.SelectNodes('//t:UnitTestResult[@outcome="Failed" or @outcome="Error" or @outcome="Timeout" or @outcome="Aborted"]', $ns)) {
             $count++
             $message = $result.SelectSingleNode('t:Output/t:ErrorInfo/t:Message', $ns)
             $stack = $result.SelectSingleNode('t:Output/t:ErrorInfo/t:StackTrace', $ns)
