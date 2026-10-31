@@ -185,9 +185,12 @@ bf6064a78c2994b17b10eaa0a19e69cfc9958048 fix: retain numeric coordinator failure
 
 The final evidence-only commit follows these code commits. All checkpoint executors and direct probes were awaited to terminal. Generated JSON/TRX/logs remain ignored; essential unchanged CHECKPOINT lines are retained here. Cleanup removes only the eleven literal alternate build output paths recorded in .antiphon/c1609-11-cleanup.txt after the last run; no checkpoint evidence, fixture volume or state directory is deleted.
 
+
+Final static/cleanup: module load, diff whitespace and OS witness inventory passed at final code56340382cf49e573328fb5b4b9d045cfc3c9f26e. All eleven literal alternate outputs above were removed after every owned run joined. Checkpoint evidence and retained fixture state were preserved.
+
+Final report-tip guard at5efa228750d1dce068aa8ab3dc7caf7948c42464 passed:15 commits,10 entries,0 evidence violations; working tree clean. Final report-tip merge-tree passed, tree2aa51f5b11197bc1dbed584f06cb752fcdb70557. The following commit only moves these final notes above the handoff block.
+
 --- next stage ---
 next: code
 handoff: rerun repaired acceptance with fresh source/build provenance; then full CP-15 and whole closed Linux roster; preserve all S5/Windows/production owed work above
 artifact: .antiphon/task-e9fd8902.md
-
-Final static/cleanup: module load, diff whitespace and OS witness inventory passed at final code56340382cf49e573328fb5b4b9d045cfc3c9f26e. All eleven literal alternate outputs above were removed after every owned run joined. Checkpoint evidence and retained fixture state were preserved.
