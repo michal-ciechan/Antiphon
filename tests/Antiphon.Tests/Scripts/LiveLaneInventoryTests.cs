@@ -22,6 +22,13 @@ public sealed class LiveLaneInventoryTests
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
+    [Test]
+    public async Task EveryLiveGateHasDisposition()
+    {
+        var result = await LiveLaneProcess.RunAsync("EveryLiveGateHasDisposition", "Antiphon.Tests").ConfigureAwait(false);
+        result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
+    }
+
     internal static class LiveLaneProcess
     {
         public static async Task<LiveLaneScriptResult> RunAsync(string caseName, string project)
