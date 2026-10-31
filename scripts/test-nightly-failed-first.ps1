@@ -489,7 +489,7 @@ function Invoke-FFPreparedArm {
                 $tn = [pscustomobject]@{Uid=$n.Uid;Namespace=$n.Namespace;Type=$n.Type;Method=$n.Method;Outcome=$state}
                 $terminals += $tn
             }
-            if ($special -and $script:FFVariant -ceq 'unknown') { $terminals += [pscustomobject]@{Uid='foreign';Namespace='Foreign';Type='Unknown';Method='Run';Outcome='Passed'} }
+            if ($special -and $script:FFVariant -ceq 'unknown') { $terminals += [pscustomobject]@{Uid='foreign';Namespace=$nodes[0].Namespace;Type=$nodes[0].Type;Method=$nodes[0].Method;Outcome='Passed'} }
             if ($script:FFVariant -cin @('phase','phase-stale')) {
                 Write-FFPhaseFixture -Directory ([string]$Environment['ANTIPHON_TEST_PHASE_ROOT']) -Suite $suiteKey -Chunk $chunkKey -Nodes $nodes -Stale:($special -and $script:FFVariant -ceq 'phase-stale')
             }
@@ -617,9 +617,13 @@ function Test-FullBytesAndCoverageConserved {
         $right=Invoke-FFPreparedArm $small ($variant+'-priority') $small.resolved.members $variant
         $same=($left.Outcome -ceq $right.Outcome -and $left.OverallFailed -eq $right.OverallFailed -and $left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and (($left.Reasons|Sort-Object) -join ',') -ceq (($right.Reasons|Sort-Object) -join ','))
         $expectedOutcome = 'TESTS'
-        if ($variant -ceq 'timeout') { $expectedOutcome='TIMEOUT' }
+        # The unchanged reducer lowers TIMEOUT to TESTS when a later passing
+        # chunk observes the sticky failed/coverage flags. Preserve that behavior.
         if ($variant -cin @('publication','teardown')) { $expectedOutcome='green' }
         if ($left.Outcome -cne $expectedOutcome -or $right.Outcome -cne $expectedOutcome) { $same=$false }
+        if ($variant -cin @('missing','skip','unknown','timeout') -and ($left.Coverage -or $right.Coverage -or -not $left.OverallFailed -or -not $right.OverallFailed)) { $same=$false }
+        if ($variant -ceq 'failure' -and ($left.Passed -or $right.Passed -or -not $left.Coverage -or -not $right.Coverage)) { $same=$false }
+        if ($variant -ceq 'publication' -and (-not $left.Passed -or -not $right.Passed -or -not $left.Coverage -or -not $right.Coverage)) { $same=$false }
         # Teardown aborts the run at its keyed chunk; no subsequent required work is credited.
         if($variant -ceq 'teardown'){$same=(-not $left.Coverage -and -not $right.Coverage -and $left.Error -like '*owned-child*' -and $right.Error -like '*owned-child*' -and $left.OverallFailed -and $right.OverallFailed -and $left.Outcome -ceq 'green' -and $right.Outcome -ceq 'green')}
         $matrix += [pscustomobject]@{variant=$variant;left=$left;right=$right;same=$same}
