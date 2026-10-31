@@ -34,6 +34,8 @@ const root=process.env.C1609_MANUAL_FIXTURE;
 const args=process.argv.slice(2);let cmd=args.at(-1);
 if(args.includes('-s'))cmd=fs.readFileSync(0,'utf8');
 const map=s=>s.replaceAll('/home/mc/antiphon-server2',root+'/server').replaceAll('/home/mc/antiphon-c590',root+'/control');
+cmd=cmd.replace(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| bash/g,(_,encoded)=>
+ "printf '%s' '"+Buffer.from(map(Buffer.from(encoded,'base64').toString('utf8'))).toString('base64')+"' | base64 -d | bash");
 cmd=map(cmd);
 const m=cmd.match(/bash '([^']+\/c590-remote.sh)'/);
 if(m){
