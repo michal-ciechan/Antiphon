@@ -277,9 +277,9 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
     internal static bool IsVanishedProc(Exception exception)
     {
         if (exception is FileNotFoundException or DirectoryNotFoundException) return true;
-        return exception is IOException io && (
-            io.Message.Contains("No such process", StringComparison.Ordinal) ||
-            io.Message.Contains("No such file", StringComparison.Ordinal));
+        // A vanished /proc entry is IOException 0x80070003 (Win32 path-not-found, low word 3)
+        // on this runtime. Match that code, not the locale-specific message.
+        return exception is IOException io && (io.HResult & 0xFFFF) is 2 or 3;
     }
 
     internal static bool TryReadProcIdentity(int pid, Func<int, LinuxIdentity> read, out LinuxIdentity identity)

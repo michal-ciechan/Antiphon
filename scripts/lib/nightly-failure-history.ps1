@@ -78,6 +78,47 @@ namespace Antiphon.NightlyHistory {
             return -1;
         }
     }
+    public sealed class WindowsFileId {
+        public ulong Volume;
+        public ulong Index;
+        public int Error;
+        const uint ReadAttributes = 0x80;
+        const uint ShareAll = 7;
+        const uint OpenExisting = 3;
+        const uint BackupSemantics = 0x02000000;
+        const uint OpenReparse = 0x00200000;
+        [StructLayout(LayoutKind.Sequential)]
+        struct ByHandleInfo {
+            public uint FileAttributes;
+            public long CreationTime;
+            public long LastAccessTime;
+            public long LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+        [DllImport("kernel32.dll", EntryPoint="CreateFileW", SetLastError=true, CharSet=CharSet.Unicode)]
+        static extern IntPtr CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern bool GetFileInformationByHandle(IntPtr handle, out ByHandleInfo info);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern bool CloseHandle(IntPtr handle);
+        public static WindowsFileId Read(string path) {
+            var result = new WindowsFileId();
+            IntPtr handle = CreateFile(path, ReadAttributes, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics | OpenReparse, IntPtr.Zero);
+            if (handle == new IntPtr(-1)) { result.Error = Marshal.GetLastWin32Error(); return result; }
+            try {
+                ByHandleInfo info;
+                if (!GetFileInformationByHandle(handle, out info)) { result.Error = Marshal.GetLastWin32Error(); return result; }
+                result.Volume = info.VolumeSerialNumber;
+                result.Index = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow;
+                return result;
+            } finally { CloseHandle(handle); }
+        }
+    }
 }
 '@
 }
@@ -90,11 +131,29 @@ function ConvertTo-NightlyHistoryFull {
     return $full
 }
 
+function Get-NightlyHistoryHostDevIno {
+    param([string]$Path)
+    $stat = New-Object Antiphon.NightlyHistory.LinuxStat
+    $code = [Antiphon.NightlyHistory.NodeIdentity]::LStat($Path, [ref]$stat)
+    if ($code -ne 0) { return $null }
+    $kind = ([uint32]$stat.Mode) -band 61440
+    return [pscustomobject]@{
+        Linked = ($kind -eq 40960)
+        Directory = ($kind -eq 16384)
+        Dev = [uint64]$stat.Dev
+        Ino = [uint64]$stat.Ino
+        Nlink = [uint64]$stat.Nlink
+    }
+}
+
 function Get-NightlyHistoryNodeIdentity {
     param([string]$Path)
     Initialize-NightlyHistoryIdentity
     $missing = [pscustomobject]@{ Missing = $true; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $false }
-    $windows = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
+    # Windows has no st_ino. The volume serial plus file index is the identity.
+    # Forcing the Windows branch on a non-Windows host still fills Dev/Ino from
+    # that host, so a replaced ancestor changes the cached id. kernel32 is absent there.
+    $windows = ($script:NightlyHistoryForceWindowsIdentity -eq $true) -or ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
     if ($windows) {
         try { $attrs = [IO.File]::GetAttributes($Path) }
         catch [IO.FileNotFoundException] { return $missing }
@@ -106,9 +165,26 @@ function Get-NightlyHistoryNodeIdentity {
             $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
             if ($null -ne $item -and $item.LinkType) { $linked = $true }
         }
+        $dev = [uint64]0
         $ino = [uint64]0
-        if ($linked) { $ino = [uint64]1 }
-        return [pscustomobject]@{ Missing = $false; Linked = $linked; Directory = $dir; Dev = [uint64]0; Ino = $ino; Unreadable = $false }
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $fileId = [Antiphon.NightlyHistory.WindowsFileId]::Read($Path)
+            if ($fileId.Error -ne 0) {
+                if ($fileId.Error -eq 2 -or $fileId.Error -eq 3) { return $missing }
+                return [pscustomobject]@{ Missing = $false; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $true }
+            }
+            $dev = [uint64]$fileId.Volume
+            $ino = [uint64]$fileId.Index
+        } else {
+            $hostId = Get-NightlyHistoryHostDevIno $Path
+            if ($null -eq $hostId) { return [pscustomobject]@{ Missing = $false; Linked = $false; Directory = $false; Dev = [uint64]0; Ino = [uint64]0; Unreadable = $true } }
+            if ($hostId.Linked) { $linked = $true }
+            if ($hostId.Directory) { $dir = $true }
+            if (-not $linked -and -not $dir -and $hostId.Nlink -gt 1) { $linked = $true }
+            $dev = $hostId.Dev
+            $ino = $hostId.Ino
+        }
+        return [pscustomobject]@{ Missing = $false; Linked = $linked; Directory = $dir; Dev = $dev; Ino = $ino; Unreadable = $false }
     }
     $stat = New-Object Antiphon.NightlyHistory.LinuxStat
     $code = [Antiphon.NightlyHistory.NodeIdentity]::LStat($Path, [ref]$stat)
