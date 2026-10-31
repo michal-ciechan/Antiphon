@@ -4740,7 +4740,7 @@ public sealed class AgentTaskService
         return ToSummary(task, AgentTaskCostWalk.Rollup(family), labels, RecordedEffectiveModel(task, models));
     }
 
-    private static AgentTaskSummaryDto ToSummary(
+    internal static AgentTaskSummaryDto ToSummary(
         AgentTask task,
         IReadOnlyDictionary<Guid, AgentTaskSubtreeFigures> rollup,
         AgentTaskScopeLabels labels,
