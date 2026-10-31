@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.Globalization;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -6,6 +9,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>Pure planner and injected executor for the owned git tree kill.</summary>
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class OwnedProcessTreeTests
 {
     private static readonly CapturedProcessIdentity Root = new(10, 1_000);
@@ -225,6 +229,187 @@ public sealed class OwnedProcessTreeTests
             _ => { });
         killed.ShouldBe(new[] { 10, 20, 30 });
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C448_StartAfterTheSnapshotClockIsNotKilled()
+    {
+        var killed = new List<int>();
+        var snapshot = new DateTime(3_000, DateTimeKind.Utc);
+        OwnedProcessTree.Execute(
+            () => Table(Row(10, 1, 1_000), Row(20, 10, 3_000), Row(30, 10, 3_001), Row(40, 30, 3_002)),
+            pid => pid switch
+            {
+                10 => 1_000L,
+                20 => 3_000L,
+                30 => 3_001L,
+                40 => 3_002L,
+                _ => null,
+            },
+            killed.Add,
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            _ => { },
+            () => snapshot);
+        killed.ShouldBe(new[] { 10, 20 });
+        killed.ShouldNotContain(30);
+        killed.ShouldNotContain(40);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C448_TruncatedTreeIsLogged()
+    {
+        var rows = new List<ProcessTableRow> { Row(10, 1, 1_000) };
+        for (var depth = 1; depth <= OwnedProcessTree.MaxDescendants + 8; depth++)
+            rows.Add(Row(10 + depth, 9 + depth, 1_000 + depth));
+        var log = new List<string>();
+        OwnedProcessTree.Execute(
+            () => new ProcessSnapshot(rows, null),
+            pid => rows.Last(row => row.Pid == pid).StartTicks,
+            _ => { },
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            log.Add);
+        log.ShouldContain(line => line.Contains("truncated=true count=63", StringComparison.Ordinal));
+
+        log.Clear();
+        OwnedProcessTree.Execute(
+            () => Table(Row(10, 1, 1_000), Row(20, 10, 1_100)),
+            pid => pid == 10 ? 1_000L : 1_100L,
+            _ => { },
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            log.Add);
+        log.ShouldNotContain(line => line.Contains("truncated=", StringComparison.Ordinal));
+        await Task.CompletedTask;
+    }
+
+    /// <summary>The production fallback must signal only the owned child.
+    /// <c>Kill(entireProcessTree: true)</c> also kills the grandchild.</summary>
+    [Test]
+    [Timeout(30_000)]
+    public async Task C448_SnapshotFailureKillsTheChildAndLeavesTheGrandchild(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Live Linux grandchild. Native rows remain C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.");
+            return;
+        }
+
+        var start = new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("sleep 120 >/dev/null 2>&1 & echo $!; wait");
+        using var child = Process.Start(start);
+        child.ShouldNotBeNull();
+        var grandPid = 0;
+        var grandTicks = 0L;
+        try
+        {
+            var read = child.StandardOutput.ReadLineAsync(ct).AsTask();
+            var finished = await Task.WhenAny(read, Task.Delay(5_000, ct));
+            (finished == read).ShouldBeTrue("the grandchild pid was not printed");
+            grandPid = int.Parse((await read)!.Trim(), CultureInfo.InvariantCulture);
+            grandPid.ShouldBeGreaterThan(1);
+            using (var grand = Process.GetProcessById(grandPid))
+                RepositoryChildJournal.TryStartTicks(grand, out grandTicks).ShouldBeTrue();
+
+            OwnedProcessTree.Kill(child, () => ProcessSnapshot.Failure("injected"));
+            child.WaitForExit(2_000).ShouldBeTrue();
+
+            using var still = Process.GetProcessById(grandPid);
+            still.HasExited.ShouldBeFalse();
+            RepositoryChildJournal.TryStartTicks(still, out var live).ShouldBeTrue();
+            live.ShouldBe(grandTicks);
+        }
+        finally
+        {
+            try
+            {
+                if (child is { HasExited: false })
+                    child.Kill(entireProcessTree: false);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+            }
+            KillExactPid(grandPid, grandTicks);
+        }
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task C448_ProductionKillPassesTheServerPid(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("The production server-pid arguments are witnessed by a live Linux kill.");
+            return;
+        }
+
+        var start = new ProcessStartInfo
+        {
+            FileName = "/bin/sleep",
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("30");
+        using var sleep = Process.Start(start);
+        sleep.ShouldNotBeNull();
+        (int Server, int Owner)? seen = null;
+        try
+        {
+            OwnedProcessTree.Kill(sleep, observeWiredPids: (server, owner) => seen = (server, owner));
+            sleep.WaitForExit(2_000).ShouldBeTrue();
+            seen.ShouldNotBeNull();
+            seen.Value.Server.ShouldBe(Environment.ProcessId);
+            seen.Value.Owner.ShouldBe(Environment.ProcessId);
+        }
+        finally
+        {
+            try
+            {
+                if (sleep is { HasExited: false })
+                    sleep.Kill(entireProcessTree: false);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+            }
+        }
+        await Task.CompletedTask;
+    }
+
+    private static void KillExactPid(int pid, long startTicks)
+    {
+        if (pid <= 1) return;
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (startTicks != 0)
+            {
+                if (!RepositoryChildJournal.TryStartTicks(process, out var live) || live != startTicks)
+                    return;
+            }
+            process.Kill(entireProcessTree: false);
+            process.WaitForExit(2_000);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+        }
     }
 
     private static ProcessTableRow Row(int pid, int parent, long ticks) => new(pid, parent, ticks);
