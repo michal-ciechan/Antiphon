@@ -1,11 +1,11 @@
 {
-  "baseSha": "a3365ac69a6212ad133b26359f35274dc8d0fce2",
+  "baseSha": "96715b56623d57a16c6788838bd18281a40e768d",
   "files": {
     "scripts/lib/release-gate.ps1": "353ffc3efe2bc326b91961137af3ea695582826740601f11c15a1833efb6f1d1",
     "scripts/lib/release-authority.ps1": "d4a56ad19a2494f5c8c5d6439e7cde903725dfd174f3c32c8fbc37f9c595db21",
     "scripts/lib/release-selection.ps1": "c436f4c9f69431428f7385eaeffaf6f95441a57291b52a99c1cda0fed8596f08",
     "scripts/lib/nightly-run-impl.ps1": "a390dd566386144e5d07023e298d652aeb90e6f575955e6ac1457aac6ef6d21d",
-    "scripts/lib/nightly-tests-impl.ps1": "45895b47b338761a93bf30530a2ed54ad5888a111e52a7cd5d1be3f936e08e31",
+    "scripts/lib/nightly-tests-impl.ps1": "c786a0e394d3c43f56edbe2bdc72aad820f0d19844fd3244f7d68780d3eb86d1",
     "scripts/lib/nightly-failure-history.ps1": "8243fbcd27419f064855f5f1640fffef347edcfd844be9c6b4976a76de61a3ed",
     "scripts/nightly-run.ps1": "cffd621709dd6d99427acf78ef3b4826db7f12f3c3d4c06650c8f43532dae227",
     "scripts/nightly-tests.ps1": "144b7078a0ffed09c59e7bfb3787f58464231c140d4e401739f5b7b78c01d68b",
@@ -14,7 +14,7 @@
   },
   "policy": {
     "schemaVersion": 4,
-    "policyHash": "7de962a40547f495be039cdde12a71e62d7ae4e21e0ada18b76982f87dae6387",
+    "policyHash": "1f68aa2002aee99fe38115ff620bdaa2830497009ed6b15b4a3c2b353dbdbee6",
     "defaultSuites": [
       "antiphon",
       "session-runner",
@@ -859,27 +859,6 @@
             "platform": "windows",
             "reason": "Linux-only by construction: Linux custody namespace shell executes on Linux only. The case remains required on Linux.",
             "owner": "CARD-1614"
-          },
-          {
-            "suite": "antiphon",
-            "class": "Card1619ExitConsumerTests",
-            "platform": "windows",
-            "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive the server consumers. The case remains required on Linux.",
-            "owner": "CARD-1619"
-          },
-          {
-            "suite": "antiphon",
-            "class": "Card1619ExitPersistenceTests",
-            "platform": "windows",
-            "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive committed server storage. The case remains required on Linux.",
-            "owner": "CARD-1619"
-          },
-          {
-            "suite": "antiphon",
-            "class": "Card1619StopAttributionTests",
-            "platform": "windows",
-            "reason": "Linux-only by construction: stop attribution requires actual Linux PTY signals and child identity. The case remains required on Linux.",
-            "owner": "CARD-1619"
           },
           {
             "suite": "antiphon",
