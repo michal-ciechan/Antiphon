@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
@@ -19,7 +20,8 @@ public class ClaudeSubmitContractLiveTests
     [Arguments("claude")]
     public async Task Submitting_via_two_writes_completes_a_turn(string backend)
     {
-        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend);
+        var executable = ClSession.RequireCore(LiveClaudeCore.Submit);
+        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable);
 
         await runner.SendLineAsync(ClaudeSubmitContractHarness.PromptFor(backend));
 

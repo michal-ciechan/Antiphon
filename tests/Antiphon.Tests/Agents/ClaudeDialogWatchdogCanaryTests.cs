@@ -24,19 +24,33 @@ public class ClaudeDialogWatchdogCanaryTests
         => LiveClaudeExecutable.Resolve(LiveClaudeCore.C680, request, context,
             legacy ?? (() => Resolve(OperatingSystem.IsWindows() ? "claude.exe" : "claude")));
 
+    private static LiveClaudeExecutable RequireExecutable()
+    {
+        try { return PrepareExecutable(); }
+        catch (LiveClaudeRefusal e) { throw new SkipTestException(e.Message); }
+    }
+
+    internal static ProcessStartInfo CreateVersionProbe(LiveClaudeExecutable executable)
+        => new(executable.RequirePath(), "--version")
+        { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+
+    internal static AgentLaunchSpec CreateLaunchSpec(LiveClaudeExecutable executable, string[] args,
+        Dictionary<string, string> env, string cwd, Guid sessionId, DateTime generation)
+        => new("c680-native", AgentKind.ClaudeCode, executable.RequirePath(), args, env, cwd, 120, 40,
+            SessionId: sessionId, AcceptedStartedAt: generation);
+
     [Test]
     public async Task C680_LiveNudgeRefusesPermissionAndQuestionDialogs()
     {
+        var executable = RequireExecutable();
         if (Environment.GetEnvironmentVariable("ANTIPHON_HEADED_TESTS") != "1")
             throw new SkipTestException("Native watchdog qualification is explicitly opt-in.");
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
             throw new SkipTestException("Only modern ConPTY and UnixPty are qualified by this method.");
-        var exe = Resolve(OperatingSystem.IsWindows() ? "claude.exe" : "claude");
         Resolve(OperatingSystem.IsWindows() ? "node.exe" : "node");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(6));
         var ct = deadline.Token;
-        using var versionProcess = Process.Start(new ProcessStartInfo(exe, "--version")
-        { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+        using var versionProcess = Process.Start(CreateVersionProbe(executable))!;
         var versionText = await versionProcess.StandardOutput.ReadToEndAsync(ct);
         await versionProcess.WaitForExitAsync(ct);
         var version = Regex.Match(versionText, @"\d+\.\d+\.\d+").Value;
@@ -81,10 +95,10 @@ public class ClaudeDialogWatchdogCanaryTests
                     ["ANTIPHON_TASK_TOKEN"] = "", ["ANTIPHON_TASK_ID"] = "",
                     ["ANTIPHON_API"] = "", ["ANTIPHON_ORCHESTRATOR_INSTRUCTIONS"] = ""
                 };
-                await runner.StartAsync(f.SessionId, new AgentLaunchSpec("c680-native", AgentKind.ClaudeCode,
-                    exe, ["--session-id", f.SessionId.ToString("D"), "--model", model, "--permission-mode", "default",
+                await runner.StartAsync(f.SessionId, CreateLaunchSpec(executable, ["--session-id", f.SessionId.ToString("D"), "--model", model, "--permission-mode", "default",
                         "--setting-sources", "", "--settings", settings, "--strict-mcp-config", "--tools", "Bash,AskUserQuestion"],
-                    env, cwd, 120, 40, SessionId: f.SessionId, AcceptedStartedAt: generation), ct);
+                    env, cwd, f.SessionId, generation), ct);
+                executable.RequireNativeObservation();
                 runner.ActualBackend.ShouldBe(OperatingSystem.IsWindows() ? PtyBackend.ModernConPty : PtyBackend.UnixPty);
                 string? previous = null;
                 await WaitAsync(async () =>

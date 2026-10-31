@@ -11,13 +11,24 @@ internal static class ClSession
         LiveClaudeLaunchContext? context = null, Func<string>? legacy = null)
         => LiveClaudeExecutable.Resolve(uid, request, context, legacy ?? ResolveOrThrow);
 
+    // No native context issuer/observer is commissioned by this diagnostic slice.
+    // Missing context remains a required Full skip at the existing native test boundary.
+    public static LiveClaudeExecutable RequireCore(string uid)
+    {
+        try { return PrepareCore(uid); }
+        catch (LiveClaudeRefusal e) { throw new SkipTestException(e.Message); }
+    }
+
+    public static (string app, string[] args) BuildCoreLaunch(LiveClaudeExecutable executable, params string[] args)
+        => (executable.RequirePath(), args);
+
     public const string EnvFlag = "ANTIPHON_HEADED_TESTS";
 
-    public static void SkipIfNotEligible()
+    public static void SkipIfNotEligible(LiveClaudeExecutable? executable = null)
     {
         if (!(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))) throw new SkipTestException("Headed tests require Windows ConPTY");
         if (Environment.GetEnvironmentVariable(EnvFlag) != "1") throw new SkipTestException($"Set {EnvFlag}=1 to opt in to headed-claude tests");
-        if (ResolveCl() is null && ResolveClaude() is null) throw new SkipTestException("Neither cl.bat/cl.ps1 nor claude found on PATH; cannot run headed tests");
+        if (executable is null && ResolveCl() is null && ResolveClaude() is null) throw new SkipTestException("Neither cl.bat/cl.ps1 nor claude found on PATH; cannot run headed tests");
     }
 
     /// <summary>
@@ -27,9 +38,9 @@ internal static class ClSession
         => ResolveCl() ?? ResolveClaude()
            ?? throw new InvalidOperationException("Neither cl nor claude found on PATH");
 
-    public static string? ResolveCl()
+    public static string? ResolveCl(string? path = null)
     {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var pathEnv = path ?? Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in pathEnv.Split(Path.PathSeparator))
         {
             if (string.IsNullOrWhiteSpace(dir)) continue;
@@ -42,9 +53,9 @@ internal static class ClSession
         return null;
     }
 
-    public static string? ResolveClaude()
+    public static string? ResolveClaude(string? path = null)
     {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var pathEnv = path ?? Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in pathEnv.Split(Path.PathSeparator))
         {
             if (string.IsNullOrWhiteSpace(dir)) continue;

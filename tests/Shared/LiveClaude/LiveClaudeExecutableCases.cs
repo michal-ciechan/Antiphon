@@ -41,16 +41,20 @@ internal sealed class LiveClaudeExecutableCases : IDisposable
         if (!condition) throw new InvalidOperationException($"C1545 {v}/{variant} {predicate}");
     }
 
-    public void Selection(string v)
+    public void Selection(string v, bool legacy = true)
     {
         var executable = Select(Request, Context);
+        Check(executable.Path == Context.Image.Path, v, "owned", "selected image == attested image");
         var receipt = Start(executable);
         executable.Complete(receipt, _ => observation);
         Check(captured.Count == 2 && captured.All(p => p == Context.Image.Path), v, "owned", "probe/start image == attested image");
         Check(receipt.ExecutedImage == observation, v, "owned", "receipt records actual observation");
         // Explicit non-core regression uses the real ClSession seam in CP-17.
-        var legacy = prepare("non-core-manual", null, null, () => decoy);
-        Check(legacy.Path == decoy, v, "legacy", "non-core resolution preserved");
+        if (legacy)
+        {
+            var manual = prepare("non-core-manual", null, null, () => decoy);
+            Check(manual.Path == decoy, v, "legacy", "non-core resolution preserved");
+        }
     }
 
     public void Admission(string v)
@@ -81,8 +85,10 @@ internal sealed class LiveClaudeExecutableCases : IDisposable
     {
         probes = starts = 0;
         LiveClaudeRefusal? refusal = null;
-        try { Start(Select(request, context)); } catch (LiveClaudeRefusal e) { refusal = e; }
-        Check(refusal is { ExitCode: 20, Credit: false } && probes == 0 && starts == 0,
+        var admitted = false;
+        try { var executable = Select(request, context); admitted = true; Start(executable); }
+        catch (LiveClaudeRefusal e) { refusal = e; }
+        Check(!admitted && refusal is { ExitCode: 20, Credit: false } && probes == 0 && starts == 0,
             v, name, "typed refusal before probe/spawn");
     }
 

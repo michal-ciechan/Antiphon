@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Shouldly;
@@ -42,11 +43,12 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     [Test]
     public async Task Control_auto_connects_a_bridge_session_before_the_first_user()
     {
-        ClSession.SkipIfNotEligible();
+        var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+        ClSession.SkipIfNotEligible(executable);
         using var sandbox = CanarySandbox.Create(writeOffSettings: false);
 
         await using var runner = new PtyAgentRunner("modern");
-        await LaunchUntilReadyAsync(runner, sandbox, extraArgs: []);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, extraArgs: []);
         try
         {
             var evidence = await WaitForBridgeAsync(runner, sandbox, BridgeAppear);
@@ -85,12 +87,13 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     [Test]
     public async Task Settings_file_prevents_auto_connect_and_keeps_startup_records()
     {
-        ClSession.SkipIfNotEligible();
+        var executable = ClSession.RequireCore(LiveClaudeCore.Off);
+        ClSession.SkipIfNotEligible(executable);
         using var sandbox = CanarySandbox.Create(writeOffSettings: true);
 
         await using var runner = new PtyAgentRunner("modern");
         var extra = new[] { "--settings", sandbox.SettingsPath! };
-        await LaunchUntilReadyAsync(runner, sandbox, extra);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, extra);
         try
         {
             var evidence = await ObserveAsync(runner, sandbox, OverlayObserve);
@@ -137,12 +140,13 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     [Test]
     public async Task Remote_control_slash_command_still_arms_after_settings_off()
     {
-        ClSession.SkipIfNotEligible();
+        var executable = ClSession.RequireCore(LiveClaudeCore.Slash);
+        ClSession.SkipIfNotEligible(executable);
         using var sandbox = CanarySandbox.Create(writeOffSettings: true);
 
         await using var runner = new PtyAgentRunner("modern");
         var extra = new[] { "--settings", sandbox.SettingsPath! };
-        await LaunchUntilReadyAsync(runner, sandbox, extra);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, extra);
         try
         {
             var before = await ObserveAsync(runner, sandbox, OverlayObserve);
@@ -176,15 +180,17 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     }
 
     private static async Task LaunchUntilReadyAsync(
+        LiveClaudeExecutable executable,
         PtyAgentRunner runner,
         CanarySandbox sandbox,
         string[] extraArgs)
     {
         var args = new List<string> { "--dangerously-skip-permissions", "--session-id", sandbox.SessionId };
         args.AddRange(extraArgs);
-        var (app, launchArgs) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(), args.ToArray());
+        var (app, launchArgs) = ClSession.BuildCoreLaunch(executable, args.ToArray());
         await runner.StartAsync(
             app, launchArgs, cwd: sandbox.Dir, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        executable.RequireNativeObservation();
 
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready)

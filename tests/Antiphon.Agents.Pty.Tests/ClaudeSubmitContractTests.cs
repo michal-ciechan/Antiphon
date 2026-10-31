@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
@@ -78,7 +79,7 @@ internal static class ClaudeSubmitContractHarness
     public static TimeSpan NoSubmitWindowFor(string backend) =>
         backend == "claude" ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(3);
 
-    public static async Task<PtyAgentRunner> LaunchReadyAsync(string backend)
+    public static async Task<PtyAgentRunner> LaunchReadyAsync(string backend, LiveClaudeExecutable? coreExecutable = null)
     {
         var runner = new PtyAgentRunner("inbox");
         if (backend == "fakeclaude")
@@ -93,9 +94,11 @@ internal static class ClaudeSubmitContractHarness
         }
         else
         {
-            ClSession.SkipIfNotEligible();
-            var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(), "--dangerously-skip-permissions");
+            var executable = coreExecutable ?? ClSession.RequireCore(LiveClaudeCore.Submit);
+            ClSession.SkipIfNotEligible(executable);
+            var (app, args) = ClSession.BuildCoreLaunch(executable, "--dangerously-skip-permissions");
             await runner.StartAsync(app, args, cols: 200, rows: 60);
+            executable.RequireNativeObservation();
             var ready = await new ClaudeReadyDetector().WaitAsync(runner);
             if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
         }

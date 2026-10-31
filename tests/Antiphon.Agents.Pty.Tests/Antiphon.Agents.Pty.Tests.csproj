@@ -15,6 +15,7 @@
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="TUnit" Version="1.44.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.5.0" />
   </ItemGroup>

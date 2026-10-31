@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
@@ -86,12 +87,14 @@ public class ClaudeRemoteControlMenuCanaryTests
     [Test]
     public async Task C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt()
     {
-        ClSession.SkipIfNotEligible();
+        var executable = ClSession.RequireCore(LiveClaudeCore.Menu);
+        ClSession.SkipIfNotEligible(executable);
         var sessionId = Guid.NewGuid().ToString("D");
         await using var runner = new PtyAgentRunner("modern");
-        var (app, args) = ClSession.BuildLaunch(
-            ClSession.ResolveOrThrow(), "--dangerously-skip-permissions", "--session-id", sessionId);
+        var (app, args) = ClSession.BuildCoreLaunch(
+            executable, "--dangerously-skip-permissions", "--session-id", sessionId);
         await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        executable.RequireNativeObservation();
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready)
             throw new SkipTestException("pending native acceptance: real Claude TUI did not reach ready");
