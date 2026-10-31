@@ -21,7 +21,8 @@ public class ClaudeSubmitContractLiveTests
     public async Task Submitting_via_two_writes_completes_a_turn(string backend)
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Submit);
-        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable);
+        using var profile = ClSession.RequireProfile(executable);
+        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable, profile);
 
         await runner.SendLineAsync(ClaudeSubmitContractHarness.PromptFor(backend));
 

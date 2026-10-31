@@ -39,10 +39,33 @@ public class ClaudeDialogWatchdogCanaryTests
         => new("c680-native", AgentKind.ClaudeCode, executable.RequirePath(), args, env, cwd, 120, 40,
             SessionId: sessionId, AcceptedStartedAt: generation);
 
+    internal static LiveClaudeProfileSpec BuildProfileLaunch(LiveClaudeProfile profile, string role,
+        string session, string? overlay = null)
+    {
+        var spec = profile.Build(role, session, overlay);
+        return spec;
+    }
+    internal static LiveClaudeSettingsProjection ProjectProfile(LiveClaudeProfile profile, string[] args)
+        => profile.Project(args);
+
+    internal static AgentLaunchSpec CreateProfileLaunch(LiveClaudeExecutable executable, LiveClaudeProfile profile,
+        string settings, Guid sessionId, DateTime generation)
+    {
+        var launch = BuildProfileLaunch(profile, "control", sessionId.ToString("D"));
+        var args = launch.Args.Where(a => a != "--dangerously-skip-permissions").Concat(new[] {
+            "--permission-mode", "default", "--settings", settings, "--strict-mcp-config", "--tools", "Bash,AskUserQuestion" }).ToArray();
+        // Deliberate C680 tool restrictions are recorded separately from startup argv parity.
+        profile.Capture(args);
+        foreach (var name in new[] { "CLAUDECODE", "ANTIPHON_TASK_TOKEN", "ANTIPHON_TASK_ID", "ANTIPHON_API", "ANTIPHON_ORCHESTRATOR_INSTRUCTIONS" })
+            launch.Env[name] = "";
+        return CreateLaunchSpec(executable, args, launch.Env, launch.Cwd, sessionId, generation);
+    }
+
     [Test]
     public async Task C680_LiveNudgeRefusesPermissionAndQuestionDialogs()
     {
         var executable = RequireExecutable();
+        var profileContext = executable.RequireProfileContext();
         if (Environment.GetEnvironmentVariable("ANTIPHON_HEADED_TESTS") != "1")
             throw new SkipTestException("Native watchdog qualification is explicitly opt-in.");
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
@@ -56,17 +79,14 @@ public class ClaudeDialogWatchdogCanaryTests
         var version = Regex.Match(versionText, @"\d+\.\d+\.\d+").Value;
         version.ShouldNotBeEmpty();
         var debugRoot = Environment.GetEnvironmentVariable("ANTIPHON_C680_DEBUG_ROOT");
-        var model = string.IsNullOrWhiteSpace(debugRoot) ? "haiku"
-            : Environment.GetEnvironmentVariable("ANTIPHON_C680_DEBUG_MODEL") ?? "haiku";
-        if (model is not ("haiku" or "sonnet" or "opus"))
-            throw new InvalidOperationException("C680 diagnostic model must be haiku, sonnet or opus.");
+        var model = profileContext.RequestedModel ?? profileContext.EffectiveModel
+            ?? throw new LiveClaudeRefusal("missing-model");
 
         foreach (var question in new[] { false, true })
         {
-            var root = Directory.CreateTempSubdirectory("antiphon-c680-native-").FullName;
+            var root = Directory.CreateDirectory(Path.Combine(profileContext.OwnedRoot, "c680-probe-" + Guid.NewGuid().ToString("N"))).FullName;
             var cwd = Directory.CreateDirectory(Path.Combine(root, "workspace")).FullName;
             var marker = Path.Combine(cwd, "permission-executed.txt");
-            var seeded = false;
             try
             {
                 await File.WriteAllTextAsync(Path.Combine(cwd, "permission-probe.cjs"),
@@ -77,9 +97,7 @@ public class ClaudeDialogWatchdogCanaryTests
                     remoteControlAtStartup = false, disableAllHooks = true,
                     permissions = new { ask = new[] { "Bash(node permission-probe.cjs)" } }
                 }), ct);
-                var trust = ClaudeProjectTrust.Seed(cwd);
-                seeded = trust.Outcome == ClaudeProjectTrustOutcome.Seeded;
-                (trust.Outcome is ClaudeProjectTrustOutcome.Seeded or ClaudeProjectTrustOutcome.AlreadyTrusted).ShouldBeTrue();
+                using var profile = new LiveClaudeProfile(profileContext with { Cwd = cwd });
                 await using var runner = new DirectSessionRunnerClient(Path.Combine(root, "sessions"),
                     ptyBackend: "modern", claudeTranscript: true);
                 await using var f = await ExpectationDeliveryFixture.CreateAsync(observable: false, runner: runner);
@@ -88,16 +106,7 @@ public class ClaudeDialogWatchdogCanaryTests
                 var generation = await f.GenerationAsync();
                 var debug = new ClaudeDialogCanaryDiagnostics(debugRoot, root, cwd, f.SessionId,
                     version, model, question ? "AskUserQuestion" : "Bash");
-                var env = new Dictionary<string, string>
-                {
-                    ["CLAUDE_CODE_CHILD_SESSION"] = "", ["CLAUDE_CODE_SESSION_ID"] = "",
-                    ["CLAUDE_CODE_BRIDGE_SESSION_ID"] = "", ["CLAUDECODE"] = "",
-                    ["ANTIPHON_TASK_TOKEN"] = "", ["ANTIPHON_TASK_ID"] = "",
-                    ["ANTIPHON_API"] = "", ["ANTIPHON_ORCHESTRATOR_INSTRUCTIONS"] = ""
-                };
-                await runner.StartAsync(f.SessionId, CreateLaunchSpec(executable, ["--session-id", f.SessionId.ToString("D"), "--model", model, "--permission-mode", "default",
-                        "--setting-sources", "", "--settings", settings, "--strict-mcp-config", "--tools", "Bash,AskUserQuestion"],
-                    env, cwd, f.SessionId, generation), ct);
+                await runner.StartAsync(f.SessionId, CreateProfileLaunch(executable, profile, settings, f.SessionId, generation), ct);
                 executable.RequireNativeObservation();
                 runner.ActualBackend.ShouldBe(OperatingSystem.IsWindows() ? PtyBackend.ModernConPty : PtyBackend.UnixPty);
                 string? previous = null;
@@ -152,7 +161,6 @@ public class ClaudeDialogWatchdogCanaryTests
             }
             finally
             {
-                if (seeded) ClaudeProjectTrust.Remove(cwd);
                 // DirectSessionRunnerClient joins only its recorded owned children before this scope exits.
                 if (Directory.Exists(root)) Directory.Delete(root, true);
             }

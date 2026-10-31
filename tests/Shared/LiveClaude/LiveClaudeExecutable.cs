@@ -99,6 +99,11 @@ internal sealed class LiveClaudeExecutable
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     public string RequirePath() { Recheck(); return Path; }
+    public LiveClaudeProfileContext RequireProfileContext()
+    {
+        Recheck();
+        return context?.Profile ?? throw new LiveClaudeRefusal("missing-profile");
+    }
 
     // Native image/session observation is deliberately uncommissioned. Never credit a launch
     // from a version string or an inferred PID. A future native adapter must supply real facts.

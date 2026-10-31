@@ -88,12 +88,13 @@ public class ClaudeRemoteControlMenuCanaryTests
     public async Task C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Menu);
+        using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
         var sessionId = Guid.NewGuid().ToString("D");
         await using var runner = new PtyAgentRunner("modern");
-        var (app, args) = ClSession.BuildCoreLaunch(
-            executable, "--dangerously-skip-permissions", "--session-id", sessionId);
-        await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        var launch = ClSession.BuildProfileLaunch(profile, "menu", sessionId);
+        var (app, args) = ClSession.BuildCoreLaunch(executable, launch.Args);
+        await runner.StartAsync(app, args, cwd: launch.Cwd, cols: 120, rows: 30, env: launch.Env);
         executable.RequireNativeObservation();
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready)

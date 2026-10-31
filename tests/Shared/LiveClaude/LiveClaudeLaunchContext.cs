@@ -5,7 +5,13 @@ internal sealed record LiveClaudeBinding(string Uid, string Run, int Attempt, st
 internal sealed record LiveClaudeImage(string Path, string Sha256);
 internal sealed record LiveClaudeLock(bool Held, string Owner);
 internal sealed record LiveClaudeLaunchContext(LiveClaudeBinding Binding, LiveClaudeImage Image,
-    string LockOwner, Func<LiveClaudeLock> ReadLock, IReadOnlyList<LiveClaudeImage> Chain);
+    string LockOwner, Func<LiveClaudeLock> ReadLock, IReadOnlyList<LiveClaudeImage> Chain,
+    LiveClaudeProfileContext? Profile = null);
+internal sealed record LiveClaudeProfileContext(string OwnedRoot, string CandidateRoot, string? ConfigDir,
+    string Cwd, string ManagedPolicyPath, bool ManagedLocationProven,
+    string? ModelMode, string? RequestedModel, string? EffectiveModel,
+    IReadOnlyDictionary<string, string> DeclaredFiles, bool SourcesComplete = false,
+    IReadOnlyDictionary<string, string>? Environment = null);
 internal sealed record LiveClaudeLaunchRequest(LiveClaudeBinding Binding, string? Executable)
 {
     public const string ExecutableVariable = "ANTIPHON_LIVE_CLAUDE_EXE";

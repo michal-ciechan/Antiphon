@@ -39,11 +39,15 @@ public static class ClaudeProjectTrust
     {
         var dir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         if (!string.IsNullOrWhiteSpace(dir))
-            return Path.Combine(dir, ".claude.json");
+            return DefaultConfigPath(dir);
         return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".claude.json");
     }
+
+    /// <summary>Explicit config-directory counterpart; does not consult process environment.</summary>
+    public static string DefaultConfigPath(string configDirectory)
+        => Path.Combine(configDirectory, ".claude.json");
 
     /// <summary>
     /// <see cref="Path.GetFullPath(string)"/>, trailing separators trimmed, <c>\</c> → <c>/</c>,

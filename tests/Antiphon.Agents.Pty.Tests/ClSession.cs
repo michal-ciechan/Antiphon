@@ -7,6 +7,14 @@ namespace Antiphon.Agents.Pty.Tests;
 
 internal static class ClSession
 {
+    public static LiveClaudeProfile RequireProfile(LiveClaudeExecutable executable)
+        => new(executable.RequireProfileContext());
+
+    public static LiveClaudeProfileSpec BuildProfileLaunch(LiveClaudeProfile profile, string role,
+        string session, string? overlay = null) => profile.Build(role, session, overlay);
+    public static LiveClaudeSettingsProjection ProjectProfile(LiveClaudeProfile profile, string[] args)
+        => profile.Project(args);
+
     public static LiveClaudeExecutable PrepareCore(string uid, LiveClaudeLaunchRequest? request = null,
         LiveClaudeLaunchContext? context = null, Func<string>? legacy = null)
         => LiveClaudeExecutable.Resolve(uid, request, context, legacy ?? ResolveOrThrow);

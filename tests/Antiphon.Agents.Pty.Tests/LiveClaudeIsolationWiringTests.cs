@@ -6,18 +6,23 @@ namespace Antiphon.Agents.Pty.Tests;
 [Category("Unit"), Timeout(30_000)]
 public class LiveClaudeIsolationWiringTests
 {
+    private static LiveClaudeProfileSpec Build(LiveClaudeProfile profile,string role,string session,string? overlay)
+        => role is "control" or "off" or "slash"
+            ? ClaudeRemoteControlAtStartupCanaryTests.BuildProfileLaunch(profile,role,session,overlay)
+            : ClSession.BuildProfileLaunch(profile,role,session,overlay);
     private static void Run(string v)
     {
-        var type = typeof(LiveClaudeLaunchContext).Assembly.GetType("Antiphon.TestSupport.LiveClaude.LiveClaudeProfileCases");
-        if (type is null)
+        LiveClaudeProfileCases.Run(v,Build,ClaudeRemoteControlAtStartupCanaryTests.FindSessionJsonl,
+            ClaudeRemoteControlAtStartupCanaryTests.ReadSessionFile,ClSession.ProjectProfile);
+        if(v=="V-7")
         {
-            var startup = LiveClaudeExecutableAudit.Read("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs");
-            if (!startup.Contains("SpecialFolder.UserProfile") || !startup.Contains("var extra = new[] { \"--settings\""))
-                throw new InvalidOperationException("C1545 baseline changed unexpectedly");
-            throw new InvalidOperationException($"C1545 {v}/baseline legacy UserProfile/inline overlay, omitted cwd/model and no measured source projection; required profile entry missing");
+            using var fixture=new LiveClaudeProfileFixture();
+            using var profile=new LiveClaudeProfile(fixture.Context);
+            using var sandbox=ClaudeRemoteControlAtStartupCanaryTests.CanarySandbox.Create(profile,"control");
+            LiveClaudeProfileCases.Assert(sandbox.Dir==profile.Paths.Cwd,v,"sandbox","actual startup sandbox owns dedicated cwd/trust");
         }
-        try { type.GetMethod("Run")!.Invoke(null, [v, false]); }
-        catch (System.Reflection.TargetInvocationException e) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException!).Throw(); }
+        LiveClaudeProfileAudit.PtyCallers();
+        LiveClaudeProfileMutants.Run(v);
     }
     [Test] public void DedicatedConfigOwnsTrustAndEvidence() => Run("V-7");
     [Test] public void CwdInstructionsCannotLeak() => Run("V-8");

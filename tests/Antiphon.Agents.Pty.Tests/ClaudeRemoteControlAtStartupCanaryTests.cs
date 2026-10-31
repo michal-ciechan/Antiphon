@@ -44,11 +44,13 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     public async Task Control_auto_connects_a_bridge_session_before_the_first_user()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+        using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        using var sandbox = CanarySandbox.Create(writeOffSettings: false);
+        using var sandbox = CanarySandbox.Create(profile, "control");
 
         await using var runner = new PtyAgentRunner("modern");
-        await LaunchUntilReadyAsync(executable, runner, sandbox, extraArgs: []);
+        var launch = BuildProfileLaunch(profile, "control", sandbox.SessionId, sandbox.SettingsPath);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
             var evidence = await WaitForBridgeAsync(runner, sandbox, BridgeAppear);
@@ -88,12 +90,13 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     public async Task Settings_file_prevents_auto_connect_and_keeps_startup_records()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Off);
+        using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        using var sandbox = CanarySandbox.Create(writeOffSettings: true);
+        using var sandbox = CanarySandbox.Create(profile, "off");
 
         await using var runner = new PtyAgentRunner("modern");
-        var extra = new[] { "--settings", sandbox.SettingsPath! };
-        await LaunchUntilReadyAsync(executable, runner, sandbox, extra);
+        var launch = BuildProfileLaunch(profile, "off", sandbox.SessionId, sandbox.SettingsPath);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
             var evidence = await ObserveAsync(runner, sandbox, OverlayObserve);
@@ -141,12 +144,13 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     public async Task Remote_control_slash_command_still_arms_after_settings_off()
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Slash);
+        using var profile = ClSession.RequireProfile(executable);
         ClSession.SkipIfNotEligible(executable);
-        using var sandbox = CanarySandbox.Create(writeOffSettings: true);
+        using var sandbox = CanarySandbox.Create(profile, "slash");
 
         await using var runner = new PtyAgentRunner("modern");
-        var extra = new[] { "--settings", sandbox.SettingsPath! };
-        await LaunchUntilReadyAsync(executable, runner, sandbox, extra);
+        var launch = BuildProfileLaunch(profile, "slash", sandbox.SessionId, sandbox.SettingsPath);
+        await LaunchUntilReadyAsync(executable, runner, sandbox, launch);
         try
         {
             var before = await ObserveAsync(runner, sandbox, OverlayObserve);
@@ -183,13 +187,11 @@ public class ClaudeRemoteControlAtStartupCanaryTests
         LiveClaudeExecutable executable,
         PtyAgentRunner runner,
         CanarySandbox sandbox,
-        string[] extraArgs)
+        LiveClaudeProfileSpec launch)
     {
-        var args = new List<string> { "--dangerously-skip-permissions", "--session-id", sandbox.SessionId };
-        args.AddRange(extraArgs);
-        var (app, launchArgs) = ClSession.BuildCoreLaunch(executable, args.ToArray());
+        var (app, launchArgs) = ClSession.BuildCoreLaunch(executable, launch.Args);
         await runner.StartAsync(
-            app, launchArgs, cwd: sandbox.Dir, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+            app, launchArgs, cwd: launch.Cwd, cols: 120, rows: 30, env: launch.Env);
         executable.RequireNativeObservation();
 
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
@@ -332,8 +334,8 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     {
         var screen = runner.SnapshotScreen();
         var badge = RcBadgePresent(screen);
-        var session = ReadSessionFile(sandbox.SessionId, sandbox.Dir);
-        var jsonl = FindSessionJsonl(sandbox.SessionId);
+        var session = ReadSessionFile(sandbox.Profile.Paths, sandbox.SessionId, sandbox.Dir);
+        var jsonl = FindSessionJsonl(sandbox.Profile.Paths, sandbox.SessionId);
         BridgeHit? jsonlBridge = jsonl is null ? null : FindBridge(jsonl);
         var bridgeId = session.BridgeId ?? jsonlBridge?.Id;
         var armed = badge
@@ -365,56 +367,14 @@ public class ClaudeRemoteControlAtStartupCanaryTests
         + $"sessionBridge={e.SessionFileBridgeId ?? "<none>"} jsonl={e.JsonlPath ?? "<none>"} "
         + $"jsonlBridge={e.JsonlBridgeId ?? "<none>"}";
 
-    private static string? FindSessionJsonl(string sessionId)
-    {
-        var projects = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects");
-        if (!Directory.Exists(projects))
-            return null;
-        return Directory
-            .EnumerateFiles(projects, $"{sessionId}.jsonl", SearchOption.AllDirectories)
-            .FirstOrDefault();
-    }
+    internal static LiveClaudeProfileSpec BuildProfileLaunch(LiveClaudeProfile profile, string role, string session, string? overlay = null)
+        => ClSession.BuildProfileLaunch(profile, role, session, overlay);
 
-    private static (bool Found, string? BridgeId) ReadSessionFile(string sessionId, string cwd)
-    {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "sessions");
-        if (!Directory.Exists(dir))
-            return (false, null);
+    internal static string? FindSessionJsonl(LiveClaudeProfilePaths paths, string sessionId)
+        => paths.FindSessionJsonl(sessionId);
 
-        foreach (var path in Directory.EnumerateFiles(dir, "*.json"))
-        {
-            JsonDocument doc;
-            try { doc = JsonDocument.Parse(File.ReadAllText(path)); }
-            catch (IOException) { continue; }
-            catch (JsonException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
-            using (doc)
-            {
-                var root = doc.RootElement;
-                var fileSession = root.TryGetProperty("sessionId", out var sid) ? sid.GetString() : null;
-                var fileCwd = root.TryGetProperty("cwd", out var c) ? c.GetString() : null;
-                var match = string.Equals(fileSession, sessionId, StringComparison.OrdinalIgnoreCase)
-                    || (fileCwd is not null
-                        && string.Equals(
-                            Path.GetFullPath(fileCwd).TrimEnd('\\'),
-                            Path.GetFullPath(cwd).TrimEnd('\\'),
-                            StringComparison.OrdinalIgnoreCase));
-                if (!match)
-                    continue;
-
-                var id = root.TryGetProperty("bridgeSessionId", out var bridge)
-                    && bridge.ValueKind == JsonValueKind.String
-                    ? bridge.GetString()
-                    : null;
-                return (true, string.IsNullOrWhiteSpace(id) ? null : id);
-            }
-        }
-
-        return (false, null);
-    }
-
+    internal static (bool Found, string? BridgeId) ReadSessionFile(LiveClaudeProfilePaths paths, string sessionId, string cwd)
+        => paths.ReadSessionFile(sessionId, cwd);
     private static List<string> ReadTypes(string jsonlPath)
     {
         var types = new List<string>();
@@ -510,88 +470,30 @@ public class ClaudeRemoteControlAtStartupCanaryTests
     /// <c>~/.claude.json</c> (not <c>~/.claude/settings.json</c>) so the trust dialog does not
     /// confound the auto-connect measurement. Disposed by deleting the directory.
     /// </summary>
-    private sealed class CanarySandbox : IDisposable
+    internal sealed class CanarySandbox : IDisposable
     {
-        public string Dir { get; }
-        public string SessionId { get; }
+        public LiveClaudeProfile Profile { get; }
+        public string Role { get; }
+        public string Dir => Profile.Paths.Cwd;
+        public string SessionId { get; } = Guid.NewGuid().ToString("D");
         public string? SettingsPath { get; }
-
-        private CanarySandbox(string dir, string sessionId, string? settingsPath)
+        private CanarySandbox(LiveClaudeProfile profile, string role)
         {
-            Dir = dir;
-            SessionId = sessionId;
-            SettingsPath = settingsPath;
+            Profile = profile;
+            Role = role;
+            if (role is "off" or "slash")
+            {
+                SettingsPath = Path.Combine(profile.Context.OwnedRoot, "remote-control-off.json");
+                File.WriteAllText(SettingsPath, OffSettingsJson);
+            }
+            Trust(profile);
         }
-
-        public static CanarySandbox Create(bool writeOffSettings)
+        public static CanarySandbox Create(LiveClaudeProfile profile, string role) => new(profile, role);
+        private static void Trust(LiveClaudeProfile profile)
         {
-            var dir = Directory.CreateTempSubdirectory("antiphon-rc-off-canary-").FullName;
-            File.WriteAllText(
-                Path.Combine(dir, "CLAUDE.md"),
-                "Throwaway CARD-0306 canary working directory. Do not enable remote control.\n");
-            var sessionId = Guid.NewGuid().ToString("D");
-            string? settingsPath = null;
-            if (writeOffSettings)
-            {
-                settingsPath = Path.Combine(dir, "remote-control-off.json");
-                File.WriteAllText(settingsPath, OffSettingsJson);
-            }
-
-            Trust(dir);
-            return new CanarySandbox(dir, sessionId, settingsPath);
+            if (!ClaudeProjectTrust.IsTrusted(profile.Paths.Cwd, profile.Paths.GlobalState))
+                throw new LiveClaudeRefusal("trust-unavailable");
         }
-
-        /// <summary>
-        /// Same both-spellings write as <c>ClaudeTrustPromptCanaryTests.UntrustedDirectory.Trust</c>.
-        /// </summary>
-        private static void Trust(string cwd)
-        {
-            var configPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude.json");
-            if (!File.Exists(configPath))
-                return;
-
-            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(configPath))?.AsObject();
-            if (node is null)
-                return;
-
-            if (node["projects"] is not System.Text.Json.Nodes.JsonObject projects)
-            {
-                projects = new System.Text.Json.Nodes.JsonObject();
-                node["projects"] = projects;
-            }
-
-            foreach (var key in new[] { cwd, cwd.Replace('\\', '/') })
-            {
-                if (projects[key] is not System.Text.Json.Nodes.JsonObject project)
-                {
-                    project = new System.Text.Json.Nodes.JsonObject();
-                    projects[key] = project;
-                }
-
-                project["hasTrustDialogAccepted"] = true;
-                project["hasCompletedProjectOnboarding"] = true;
-                project["projectOnboardingSeenCount"] = 1;
-            }
-
-            File.WriteAllText(configPath, node.ToJsonString(
-                new JsonSerializerOptions { WriteIndented = true }));
-        }
-
-        public void Dispose()
-        {
-            try
-            {
-                foreach (var path in Directory.EnumerateFileSystemEntries(Dir, "*", SearchOption.AllDirectories))
-                {
-                    try { File.SetAttributes(path, FileAttributes.Normal); }
-                    catch { /* dir or gone */ }
-                }
-
-                Directory.Delete(Dir, recursive: true);
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
+        public void Dispose() => Profile.Complete();
     }
 }

@@ -72,7 +72,7 @@ internal static class LiveClaudeExecutableAudit
         var launches = body!.DescendantNodes().OfType<InvocationExpressionSyntax>()
             .Where(c => c.Expression.ToString() == "runner.StartAsync").ToArray();
         if (launches.Length != 1 || launches[0].ArgumentList.Arguments.ElementAtOrDefault(1)?.Expression
-                is not InvocationExpressionSyntax build || build.Expression.ToString() != "CreateLaunchSpec"
+                is not InvocationExpressionSyntax build || build.Expression.ToString() is not ("CreateLaunchSpec" or "CreateProfileLaunch")
             || build.ArgumentList.Arguments.FirstOrDefault()?.Expression.ToString() != "executable")
             Fail("C680", "launch must consume admitted spec");
         // Observation refusal must be an unconditional statement immediately after the actual start.

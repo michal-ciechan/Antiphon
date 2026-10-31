@@ -79,7 +79,8 @@ internal static class ClaudeSubmitContractHarness
     public static TimeSpan NoSubmitWindowFor(string backend) =>
         backend == "claude" ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(3);
 
-    public static async Task<PtyAgentRunner> LaunchReadyAsync(string backend, LiveClaudeExecutable? coreExecutable = null)
+    public static async Task<PtyAgentRunner> LaunchReadyAsync(string backend, LiveClaudeExecutable? coreExecutable = null,
+        LiveClaudeProfile? coreProfile = null)
     {
         var runner = new PtyAgentRunner("inbox");
         if (backend == "fakeclaude")
@@ -95,9 +96,11 @@ internal static class ClaudeSubmitContractHarness
         else
         {
             var executable = coreExecutable ?? ClSession.RequireCore(LiveClaudeCore.Submit);
+            var profile = coreProfile ?? throw new LiveClaudeRefusal("missing-profile");
             ClSession.SkipIfNotEligible(executable);
-            var (app, args) = ClSession.BuildCoreLaunch(executable, "--dangerously-skip-permissions");
-            await runner.StartAsync(app, args, cols: 200, rows: 60);
+            var launch = ClSession.BuildProfileLaunch(profile, "submit", Guid.NewGuid().ToString("D"));
+            var (app, args) = ClSession.BuildCoreLaunch(executable, launch.Args);
+            await runner.StartAsync(app, args, cwd: launch.Cwd, cols: 200, rows: 60, env: launch.Env);
             executable.RequireNativeObservation();
             var ready = await new ClaudeReadyDetector().WaitAsync(runner);
             if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
