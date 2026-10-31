@@ -5,6 +5,7 @@
 if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
+. (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
@@ -837,6 +838,471 @@ function Get-NightlyNpmLaunch {
 
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
 
+# Dot-source these helpers: keyed suite state survives interleaving; run verdicts,
+# reasons and the publication context remain in the caller's execution scope.
+function Prepare-NightlySuiteExecution {
+    param([string]$ExecutionSuiteId)
+    $suiteId = $ExecutionSuiteId
+    $suite = $suiteMap[$suiteId]
+    $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId $suiteId -Platform $platform)
+    $label = [string]$suite.name
+    if ([string]::IsNullOrWhiteSpace($label)) { $label = $suiteId }
+    $isNative = Test-NightlySuiteIsNative -Suite $suite -SuiteId $suiteId
+    $mode = [string]$suite.mode
+    # D-6: 'manual' keeps a suite out of the nightly default lane. A suite the
+    # selected profile explicitly requires runs; it is never skipped as manual.
+    if ($mode -eq 'manual' -and ($requiredSuites -notcontains $suiteId)) {
+        $suiteResults += [ordered]@{
+            id = $suiteId; name = $label; skipped = $true; result = 'manual'; exitCode = 0
+            coverageComplete = $false; detail = 'manual exclusion'
+        }
+        return $null
+    }
+
+    $chunks = @()
+    if ($chunksBySuite.ContainsKey($suiteId) -and @($chunksBySuite[$suiteId]).Count -gt 0) {
+        $chunks = @($chunksBySuite[$suiteId])
+        $eligible = @()
+        if ($suite.eligibleClasses) { $eligible = @($suite.eligibleClasses) }
+        elseif ($chunks.Count -gt 0) {
+            foreach ($ch in $chunks) { foreach ($c in @($ch.classes)) { $eligible += [string]$c } }
+        }
+        $member = Test-NightlyChunkMembership -EligibleClasses $eligible -Chunks $chunks
+        if (-not $member.Ok) {
+            if ($member.Duplicates.Count -gt 0) {
+                throw ('duplicate-class {0}' -f ($member.Duplicates -join ','))
+            }
+            throw ('missing-class {0}' -f ($member.Missing -join ','))
+        }
+    } else {
+        $chunks = @([pscustomobject]@{ id = 'all'; classes = @() })
+    }
+
+    # The pinned filter parser requires prefix forms for combined operands.
+    # Separate exact class chunks so no suffix class can ever be launched.
+    $exactChunks = @()
+    foreach ($chunk in $chunks) {
+        if (@($chunk.classes).Count -gt 1) {
+            $classIndex = 0
+            foreach ($class in $chunk.classes) {
+                $exactChunks += [pscustomobject]@{ id = ('{0}-class-{1}' -f $chunk.id, (++$classIndex)); classes = @($class) }
+            }
+        } else { $exactChunks += $chunk }
+    }
+    $chunks = $exactChunks
+    $suiteDiscoverySeconds = 0.0
+    $suiteHost = $null
+    if ($isNative) {
+        $assemblyName = [string]$suite.assembly
+        if ([string]::IsNullOrWhiteSpace($assemblyName)) { $assemblyName = $label }
+        $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $assemblyName
+    }
+
+    if ($suiteId -eq 'e2e') {
+        $bundle = Join-Path $RepoRoot (Join-Path 'client' (Join-Path 'dist' 'index.html'))
+        $prereqEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+        Remove-TestPhaseVariables -Environment $prereqEnv
+        $prereq = Test-NightlyE2EPrerequisites -RepoRoot $RepoRoot -LogRoot $LogRoot -Environment $prereqEnv -BundlePath $bundle
+        $preflight.e2e = @($prereq.Rows)
+        if (-not $prereq.Ok) {
+            # D-6: a missing browser or stale bundle is red/incomplete, not a skip.
+            $coverageComplete = $false
+            $testsPassed = $false
+            $overallFailed = $true
+            Set-NightlyOutcome PREFLIGHT
+            $reasons += 'e2e-prerequisite-failed'
+            $suiteResults += [ordered]@{
+                id = $suiteId; name = $label; skipped = $false; result = 'FAIL'; exitCode = 1
+                coverageComplete = $false; detail = 'e2e-prerequisite-failed'
+            }
+            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk 'prereq' -LastPhase 'preflight' -Why 'e2e-prerequisite-failed' -BuildSeconds $qualificationBuildSeconds -StartedAt (Get-NightlyUtcNow).ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
+            return $null
+        }
+    }
+
+    $suiteDiscoveryNodes = @()
+    $profileDiscovery = $null
+    $suiteCensus = $null
+    # CARD-1419: one discovery parse and census per suite, shared by every launch verdict.
+    $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
+    if ($isNative -and $profileAware -and $profileExclusions.Count -gt 0) {
+        $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
+        $profileEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+        Remove-TestPhaseVariables -Environment $profileEnv
+        $profileDiscStarted = Get-NightlyUtcNow
+        $profileDiscWatch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $profileDiscovery = Invoke-NightlyProduceDiscovery -ExePath $suiteHost.FilePath -ArgumentPrefix @($suiteHost.Prefix) -AssemblyPath $suiteHost.AssemblyPath -OutputPath $profileDiscoveryPath `
+                -DiagnosticDirectory (Join-Path $LogRoot ($suiteId + '-profile-discovery')) `
+                -LogPath (Join-Path $LogRoot ($suiteId + '-profile-discovery.log')) -WorkingDirectory $RepoRoot `
+                -Environment $profileEnv
+            $profileDiscWatch.Stop()
+            $suiteDiscoverySeconds = [math]::Round($profileDiscWatch.Elapsed.TotalSeconds, 3)
+            $planningName = 'planning'
+            if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
+            Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
+            $suiteDiscoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
+            $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
+            $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
+            if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
+            $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
+            if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
+        } catch {
+            if ($profileDiscWatch.IsRunning) { $profileDiscWatch.Stop() }
+            $suiteDiscoverySeconds = [math]::Round($profileDiscWatch.Elapsed.TotalSeconds, 3)
+            $planningName = 'planning'
+            if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
+            Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
+            $discWhy = 'discovery-failed'
+            if ([string]$_.Exception.Message -match 'timed out') { $discWhy = 'discovery-timeout' }
+            $discTargets = @($chunks)
+            if ($discTargets.Count -lt 1) {
+                $discTargets = @([pscustomobject]@{ id = 'discovery' })
+            }
+            foreach ($discChunk in $discTargets) {
+                Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$discChunk.id) -LastPhase 'discovery' -Why $discWhy -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $suiteDiscoverySeconds -StartedAt (Get-NightlyUtcNow).ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
+            }
+            throw
+        }
+    }
+    if ($isNative) {
+        try {
+            $phaseNodes = @()
+            if ($suiteDiscoveryNodes) { $phaseNodes = @($suiteDiscoveryNodes) }
+            $phaseAssembly = [string]$suite.assembly
+            $phaseAssemblyDigest = ''
+            $phaseDll = [IO.Path]::Combine($RepoRoot, 'tests', $phaseAssembly, 'bin', 'Debug', 'net9.0', ($phaseAssembly + '.dll'))
+            if (-not [string]::IsNullOrWhiteSpace($phaseAssembly) -and (Test-Path -LiteralPath $phaseDll)) {
+                $phaseAssemblyDigest = Get-NightlyFileSha256 -Path $phaseDll
+            }
+            $phaseCostDigest = ''
+            if (-not [string]::IsNullOrWhiteSpace([string]$script:NightlyClassCostPath) -and (Test-Path -LiteralPath $script:NightlyClassCostPath)) {
+                $phaseCostDigest = Get-NightlyFileSha256 -Path $script:NightlyClassCostPath
+            }
+            [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite $suiteId -SourceDigest ([string]$Sha) -AssemblyDigest $phaseAssemblyDigest -PolicyDigest ([string]$policyHash) -CostFileDigest $phaseCostDigest -AssemblyId $phaseAssembly -Groups $chunks -DiscoveryNodes $phaseNodes -ProfileExclusions $profileExclusions)
+        } catch {
+            Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+        }
+    }
+    $chunkIndex = 0
+    $suiteTerminalNodes = @()
+    $executionVariables = @{}
+    foreach ($executionName in @('suiteId','suite','label','mode','isNative','chunks','profileExclusions','suiteHost','suiteDiscoveryNodes','profileDiscovery','profileDiscoveryPath','suiteDiscoveryIndex','suiteCensus','suiteDiscoverySeconds','suiteTerminalNodes','chunkIndex','phaseAssembly','phaseAssemblyDigest','phaseCostDigest')) {
+        $executionVariables[$executionName] = Get-Variable -Name $executionName -ValueOnly -ErrorAction SilentlyContinue
+    }
+    return [pscustomobject]@{ id=$suiteId; chunks=@($chunks); nodes=@($suiteDiscoveryNodes); exclusions=@($profileExclusions); Variables=$executionVariables; Completed=$false }
+}
+
+function Invoke-NightlyScheduledChunk {
+    param($ExecutionSuiteState, $ExecutionChunk)
+    foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
+        Set-Variable -Name $executionName -Value $ExecutionSuiteState.Variables[$executionName]
+    }
+    $chunk = $ExecutionChunk
+    try {
+    $chunkIndex++
+    $chunkStartedAt = (Get-NightlyUtcNow).ToString('o')
+    $queueWatch = [Diagnostics.Stopwatch]::StartNew()
+    $logPath = Join-Path $LogRoot ('{0}-{1}-tests.log' -f $suiteId, $chunk.id)
+    $trxPath = Join-Path $LogRoot ('{0}-{1}.trx' -f $suiteId, $chunk.id)
+    $jsonPath = Join-Path $LogRoot ('{0}-{1}.json' -f $suiteId, $chunk.id)
+    $envMap = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+    Remove-TestPhaseVariables -Environment $envMap
+    $envMap['C487_INVOCATION'] = $invocationId
+    $envMap['C487_RUN_DIR'] = $LogRoot
+
+    if ($isNative) {
+        if ($activeNative -gt 0) {
+            throw 'native overlap'
+        }
+        $activeNative++
+        $cur = Get-NightlyNativeActiveCount
+        if ($cur -gt $nativeActiveMax) { $nativeActiveMax = $cur }
+        if ($activeNative -gt $nativeActiveMax) { $nativeActiveMax = $activeNative }
+    }
+
+    $run = $null
+    $execDiagDir = ''
+    $queueWatch.Stop()
+    $queueWaitSeconds = [math]::Round($queueWatch.Elapsed.TotalSeconds, 3)
+    $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $null
+    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
+    $heartbeatTrx = ''
+    if ($isNative) { $heartbeatTrx = $trxPath }
+    Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'run' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+    $runWatch = [Diagnostics.Stopwatch]::StartNew()
+    if ($suiteId -eq 'client') {
+        $wrapper = Join-Path $RepoRoot (Join-Path 'scripts' 'test-client.ps1')
+        $args = @('-NoProfile', '-NoLogo', '-File', $wrapper, '-JsonResultPath', $jsonPath)
+        try {
+            $run = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $args -WorkingDirectory $RepoRoot `
+                -TimeoutMilliseconds 1200000 -Environment $envMap -LogPath $logPath
+        } catch {
+            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+            throw
+        }
+    } elseif ($suiteId -eq 'scripts') {
+        $census = @(Get-NightlyScriptCensus -PolicyObject $policy.Object)
+        $scriptFail = $false
+        foreach ($row in $census) {
+            $disp = [string]$row.disposition
+            if ($disp -ne 'unattended') { continue }
+            if ([bool]$row.wildcard) { throw 'wildcard script execution refused' }
+            $scriptPath = Join-Path $RepoRoot (([string]$row.path) -replace '/', '\')
+            $sargs = @('-NoProfile', '-NonInteractive', '-File', $scriptPath)
+            if ($row.arguments) { foreach ($a in @($row.arguments)) { $sargs += [string]$a } }
+            try {
+                $sr = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $sargs -WorkingDirectory $RepoRoot `
+                    -TimeoutMilliseconds 600000 -Environment $envMap -LogPath (Join-Path $LogRoot ('script-{0}.log' -f $row.id))
+            } catch {
+                Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+                throw
+            }
+            if ($sr.ExitCode -ne 0) { $scriptFail = $true }
+        }
+        $run = [pscustomobject]@{ ExitCode = $(if ($scriptFail) { 1 } else { 0 }); TimedOut = $false; ChildrenExited = $true }
+    } else {
+        if ($null -eq $suiteHost) {
+            $exeName = [string]$suite.assembly
+            if ([string]::IsNullOrWhiteSpace($exeName)) { $exeName = $label }
+            $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $exeName
+        }
+        $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
+        New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
+        $chunkClasses = @()
+        if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
+        $groupFilter = ''
+        if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $groupFilter = [string]$chunk.groupFilter }
+        $methodFilter = ''
+        if ($chunk.PSObject.Properties.Name -contains 'methodFilter') { $methodFilter = [string]$chunk.methodFilter }
+        $nativeArgs = @()
+        if ($suiteHost.Prefix) {
+            foreach ($prefixArg in @($suiteHost.Prefix)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$prefixArg)) { $nativeArgs += [string]$prefixArg }
+            }
+        }
+        $nativeArgs += @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $groupFilter -MethodFilter $methodFilter)
+        $phaseEnv = @{}
+        foreach ($phaseKey in @($envMap.Keys)) { $phaseEnv[[string]$phaseKey] = [string]$envMap[$phaseKey] }
+        Enable-TestPhaseExecutionEnvironment -Environment $phaseEnv -LogRoot $LogRoot -RunId $invocationId -GroupId ([string]$chunk.id) -Attempt ([string]$Attempt) -Suite $suiteId -Profile $Profile -TimingRoot $TimingRoot
+        $plannedSeconds = $null
+        if ($null -ne $chunk.PSObject.Properties['seconds'] -and $null -ne $chunk.seconds) {
+            $plannedSeconds = $chunk.seconds
+        }
+        $costBasis = 'default'
+        if ($null -ne $chunk.PSObject.Properties['costBasis'] -and -not [string]::IsNullOrWhiteSpace([string]$chunk.costBasis)) {
+            $costBasis = [string]$chunk.costBasis
+        }
+        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteId -PlannedSeconds $plannedSeconds -Basis $costBasis -PolicyObject $policy.Object
+        if (-not $admission.Admitted) {
+            throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
+        }
+        $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
+                -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
+                -Environment $phaseEnv -LogPath $logPath
+        } catch {
+            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+            throw
+        }
+        $phaseWatch.Stop()
+        try {
+            [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
+        } catch {
+            Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+        }
+    }
+    $runWatch.Stop()
+    $runWallSeconds = [math]::Round($runWatch.Elapsed.TotalSeconds, 3)
+
+    $cleaned = Wait-NightlyOwnedCleanup -RunResult $run
+    if ($isNative) {
+        $activeNative--
+        if (-not $cleaned) { throw 'owned-child still running' }
+    }
+
+    if (Test-Path -LiteralPath $logPath) {
+        $stamp = 'C487_INVOCATION=' + $invocationId
+        $rawLog = [System.IO.File]::ReadAllText($logPath)
+        if ($rawLog -notmatch [regex]::Escape($invocationId)) {
+            [System.IO.File]::WriteAllText($logPath, ($stamp + [Environment]::NewLine + $rawLog))
+        }
+    } else {
+        Set-Content -LiteralPath $logPath -Value ('C487_INVOCATION=' + $invocationId) -Encoding UTF8
+    }
+    $fresh = Test-NightlyFreshEvidence -Path $logPath -RunDirectory $LogRoot -NotBeforeUtc $startedAt -InvocationId $invocationId
+    $row = [ordered]@{
+        id = $suiteId
+        chunk = [string]$chunk.id
+        name = $label
+        log = $logPath
+        exitCode = $run.ExitCode
+        timedOut = [bool]$run.TimedOut
+        skipped = $false
+        result = $(if ($run.TimedOut) { 'TIMEOUT' } elseif ($run.ExitCode -ne 0) { 'FAIL' } else { 'pass' })
+    }
+    if (-not $fresh.Ok) {
+        $coverageComplete = $false
+        $testsPassed = $false
+        $overallFailed = $true
+        $row.detail = $fresh.Reason
+        $reasons += $fresh.Reason
+    }
+    if ($isNative) {
+        $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
+        if ($profileDiscovery) {
+            $discPath = $profileDiscoveryPath
+            if ($chunk.exactFilter -or (($chunk.PSObject.Properties.Name -contains 'methodFilter') -and $chunk.methodFilter)) {
+                # The full discovery remains the suite union authority;
+                # the leaf verdict checks just this chunk's method expansions.
+                $discPath = Join-Path $LogRoot ('{0}-{1}-selection.discovery.json' -f $suiteId, $chunk.id)
+                $leaf = ConvertTo-NightlyDiscoveryDocument -Nodes $chunk.nodes -AssemblyHash $profileDiscovery.assemblyHash
+                Write-NightlyDiscoveryDocument -Path $discPath -Document $leaf
+            }
+        }
+        if ((Test-Path -LiteralPath $trxPath) -and -not (Test-Path -LiteralPath $discPath)) {
+            try {
+                $diagDir = Join-Path $LogRoot ('{0}-{1}-discovery' -f $suiteId, $chunk.id)
+                $discLog = Join-Path $LogRoot ('{0}-{1}-discovery.log' -f $suiteId, $chunk.id)
+                $chunkDiscWatch = [Diagnostics.Stopwatch]::StartNew()
+                [void](Invoke-NightlyProduceDiscovery -ExePath $suiteHost.FilePath -ArgumentPrefix @($suiteHost.Prefix) -AssemblyPath $suiteHost.AssemblyPath -OutputPath $discPath `
+                    -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
+                    -Environment $envMap)
+                $chunkDiscWatch.Stop()
+                $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
+                $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
+            } catch {
+                $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
+            }
+        }
+        $required = @()
+        if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
+        $execDiagPath = Get-NightlyLatestDiagnosticLog -Directory $execDiagDir
+        $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `
+            -ExecutionDiagnosticPath $execDiagPath `
+            -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
+            -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
+            -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required `
+            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware -DiscoveryIndex $suiteDiscoveryIndex
+        if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
+            $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
+        }
+        if ($nativeVerdict.terminalNodes) {
+            foreach ($tn in @($nativeVerdict.terminalNodes)) { $suiteTerminalNodes += $tn }
+        }
+        $row.trx = $trxPath
+        $row.evidenceReasons = @($nativeVerdict.reasons)
+        $census = if ($suiteCensus) { $suiteCensus } else { $nativeVerdict.census }
+        if ($census) {
+            # D-5: expanded-UID accounting is manifest evidence; record both
+            # counts and the digest, plus every exclusion with its reason.
+            $row.requiredUidCount = [int]$census.RequiredCount
+            $row.excludedUidCount = [int]$census.ExcludedCount
+            $row.censusDigest = [string]$census.Digest
+            $row.exclusions = @($census.Excluded)
+        }
+        if (-not [bool]$nativeVerdict.coverageComplete) {
+            $coverageComplete = $false
+            $row.coverageComplete = $false
+            foreach ($ev in @($nativeVerdict.reasons)) { $reasons += $ev }
+        }
+        if (-not [bool]$nativeVerdict.testsPassed) {
+            $testsPassed = $false
+            $overallFailed = $true
+            $row.result = 'FAIL'
+        }
+    }
+    if ($suiteId -eq 'client') {
+        if (-not (Test-Path -LiteralPath $jsonPath)) {
+            $coverageComplete = $false
+            $testsPassed = $false
+            $overallFailed = $true
+            $reasons += 'missing-client-json'
+            $row.coverageComplete = $false
+        }
+    }
+    if ($run.TimedOut) {
+        $overallFailed = $true
+        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false
+        $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
+        $testsPassed = [bool]$timeoutDisposition.TestsPassed
+        Set-NightlyOutcome TIMEOUT
+        $reasons += ('timeout {0}' -f $suiteId)
+    } elseif ($run.ExitCode -ne 0) {
+        $overallFailed = $true
+        $testsPassed = $false
+        Set-NightlyOutcome TESTS
+    } elseif (-not $testsPassed -or -not $coverageComplete) {
+        $overallFailed = $true
+        Set-NightlyOutcome TESTS
+    }
+    $timingPhase = 'complete'
+    $timingWhy = ''
+    $timingTrx = ''
+    if ($isNative) { $timingTrx = $trxPath }
+    if ($run.TimedOut) {
+        $timingPhase = 'timeout'
+        $timingWhy = 'timeout'
+    } elseif ($isNative -and -not (Test-Path -LiteralPath $trxPath)) {
+        $timingWhy = 'missing-trx'
+    } elseif ($suiteId -eq 'client' -and -not (Test-Path -LiteralPath $jsonPath)) {
+        $timingWhy = 'missing-client-json'
+    } elseif ($suiteId -eq 'client') {
+        $timingWhy = 'no-trx:client'
+    } elseif ($suiteId -eq 'scripts' -and [int]$run.ExitCode -ne 0) {
+        $timingWhy = 'script-failed'
+    } elseif ($suiteId -eq 'scripts') {
+        $timingWhy = 'no-trx:scripts'
+    }
+    $timingUpdate = @{
+        LogRoot = $LogRoot
+        TimingRoot = $TimingRoot
+        Suite = $suiteId
+        Chunk = [string]$chunk.id
+        LastPhase = $timingPhase
+        Why = $timingWhy
+        RunWallSeconds = $runWallSeconds
+        DiscoverySeconds = $chunkDiscoverySeconds
+        BuildSeconds = $qualificationBuildSeconds
+        QueueWaitSeconds = $queueWaitSeconds
+        TrxPath = $timingTrx
+        RunId = $invocationId
+        Attempt = [string]$Attempt
+        Terminal = $true
+    }
+    if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
+    Update-QualificationChunkTiming @timingUpdate
+    $suiteResults += $row
+    } finally {
+        foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
+            $ExecutionSuiteState.Variables[$executionName] = Get-Variable -Name $executionName -ValueOnly -ErrorAction SilentlyContinue
+        }
+        $ExecutionSuiteState.nodes = @($suiteDiscoveryNodes)
+    }
+}
+
+function Complete-NightlySuiteExecution {
+    param($CompletionSuiteState)
+    foreach ($completionName in @($CompletionSuiteState.Variables.Keys)) {
+        Set-Variable -Name $completionName -Value $CompletionSuiteState.Variables[$completionName]
+    }
+    if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
+        $unionNodes = @()
+        foreach ($dn in @($suiteDiscoveryNodes)) {
+            if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }
+            $unionNodes += $dn
+        }
+        $union = Test-NightlySuiteUidUnion -DiscoveryNodes $unionNodes -ChunkTerminalNodes $suiteTerminalNodes
+        if (-not $union.Ok) {
+            $coverageComplete = $false
+            $overallFailed = $true
+            $reasons += ('missing-expanded-row union {0}' -f ($union.Missing -join ','))
+        }
+    }
+    $CompletionSuiteState.Completed = $true
+}
+
 function Invoke-AntiphonNightlyTests {
     param(
         [string]$RepoRoot = '',
@@ -1180,441 +1646,8 @@ function Invoke-AntiphonNightlyTests {
             Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
-            foreach ($suiteId in $selectedSuites) {
-                if (-not $npmOk -or $lintBlocksPipeline -or -not $dotnetOk) { break }
-                $suite = $suiteMap[$suiteId]
-                $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId $suiteId -Platform $platform)
-                $label = [string]$suite.name
-                if ([string]::IsNullOrWhiteSpace($label)) { $label = $suiteId }
-                $isNative = Test-NightlySuiteIsNative -Suite $suite -SuiteId $suiteId
-                $mode = [string]$suite.mode
-                # D-6: 'manual' keeps a suite out of the nightly default lane. A suite the
-                # selected profile explicitly requires runs; it is never skipped as manual.
-                if ($mode -eq 'manual' -and ($requiredSuites -notcontains $suiteId)) {
-                    $suiteResults += [ordered]@{
-                        id = $suiteId; name = $label; skipped = $true; result = 'manual'; exitCode = 0
-                        coverageComplete = $false; detail = 'manual exclusion'
-                    }
-                    continue
-                }
+            . Invoke-NightlyDispatchCoordinator -DispatchSuites $selectedSuites
 
-                $chunks = @()
-                if ($chunksBySuite.ContainsKey($suiteId) -and @($chunksBySuite[$suiteId]).Count -gt 0) {
-                    $chunks = @($chunksBySuite[$suiteId])
-                    $eligible = @()
-                    if ($suite.eligibleClasses) { $eligible = @($suite.eligibleClasses) }
-                    elseif ($chunks.Count -gt 0) {
-                        foreach ($ch in $chunks) { foreach ($c in @($ch.classes)) { $eligible += [string]$c } }
-                    }
-                    $member = Test-NightlyChunkMembership -EligibleClasses $eligible -Chunks $chunks
-                    if (-not $member.Ok) {
-                        if ($member.Duplicates.Count -gt 0) {
-                            throw ('duplicate-class {0}' -f ($member.Duplicates -join ','))
-                        }
-                        throw ('missing-class {0}' -f ($member.Missing -join ','))
-                    }
-                } else {
-                    $chunks = @([pscustomobject]@{ id = 'all'; classes = @() })
-                }
-
-                # The pinned filter parser requires prefix forms for combined operands.
-                # Separate exact class chunks so no suffix class can ever be launched.
-                $exactChunks = @()
-                foreach ($chunk in $chunks) {
-                    if (@($chunk.classes).Count -gt 1) {
-                        $classIndex = 0
-                        foreach ($class in $chunk.classes) {
-                            $exactChunks += [pscustomobject]@{ id = ('{0}-class-{1}' -f $chunk.id, (++$classIndex)); classes = @($class) }
-                        }
-                    } else { $exactChunks += $chunk }
-                }
-                $chunks = $exactChunks
-                $suiteDiscoverySeconds = 0.0
-                $suiteHost = $null
-                if ($isNative) {
-                    $assemblyName = [string]$suite.assembly
-                    if ([string]::IsNullOrWhiteSpace($assemblyName)) { $assemblyName = $label }
-                    $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $assemblyName
-                }
-
-                if ($suiteId -eq 'e2e') {
-                    $bundle = Join-Path $RepoRoot (Join-Path 'client' (Join-Path 'dist' 'index.html'))
-                    $prereqEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
-                    Remove-TestPhaseVariables -Environment $prereqEnv
-                    $prereq = Test-NightlyE2EPrerequisites -RepoRoot $RepoRoot -LogRoot $LogRoot -Environment $prereqEnv -BundlePath $bundle
-                    $preflight.e2e = @($prereq.Rows)
-                    if (-not $prereq.Ok) {
-                        # D-6: a missing browser or stale bundle is red/incomplete, not a skip.
-                        $coverageComplete = $false
-                        $testsPassed = $false
-                        $overallFailed = $true
-                        Set-NightlyOutcome PREFLIGHT
-                        $reasons += 'e2e-prerequisite-failed'
-                        $suiteResults += [ordered]@{
-                            id = $suiteId; name = $label; skipped = $false; result = 'FAIL'; exitCode = 1
-                            coverageComplete = $false; detail = 'e2e-prerequisite-failed'
-                        }
-                        Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk 'prereq' -LastPhase 'preflight' -Why 'e2e-prerequisite-failed' -BuildSeconds $qualificationBuildSeconds -StartedAt (Get-NightlyUtcNow).ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
-                        continue
-                    }
-                }
-
-                $suiteDiscoveryNodes = @()
-                $profileDiscovery = $null
-                $suiteCensus = $null
-                # CARD-1419: one discovery parse and census per suite, shared by every launch verdict.
-                $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
-                if ($isNative -and $profileAware -and $profileExclusions.Count -gt 0) {
-                    $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
-                    $profileEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
-                    Remove-TestPhaseVariables -Environment $profileEnv
-                    $profileDiscStarted = Get-NightlyUtcNow
-                    $profileDiscWatch = [Diagnostics.Stopwatch]::StartNew()
-                    try {
-                        $profileDiscovery = Invoke-NightlyProduceDiscovery -ExePath $suiteHost.FilePath -ArgumentPrefix @($suiteHost.Prefix) -AssemblyPath $suiteHost.AssemblyPath -OutputPath $profileDiscoveryPath `
-                            -DiagnosticDirectory (Join-Path $LogRoot ($suiteId + '-profile-discovery')) `
-                            -LogPath (Join-Path $LogRoot ($suiteId + '-profile-discovery.log')) -WorkingDirectory $RepoRoot `
-                            -Environment $profileEnv
-                        $profileDiscWatch.Stop()
-                        $suiteDiscoverySeconds = [math]::Round($profileDiscWatch.Elapsed.TotalSeconds, 3)
-                        $planningName = 'planning'
-                        if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
-                        Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
-                        $suiteDiscoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
-                        $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
-                        $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
-                        if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
-                        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
-                        if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
-                    } catch {
-                        if ($profileDiscWatch.IsRunning) { $profileDiscWatch.Stop() }
-                        $suiteDiscoverySeconds = [math]::Round($profileDiscWatch.Elapsed.TotalSeconds, 3)
-                        $planningName = 'planning'
-                        if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
-                        Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
-                        $discWhy = 'discovery-failed'
-                        if ([string]$_.Exception.Message -match 'timed out') { $discWhy = 'discovery-timeout' }
-                        $discTargets = @($chunks)
-                        if ($discTargets.Count -lt 1) {
-                            $discTargets = @([pscustomobject]@{ id = 'discovery' })
-                        }
-                        foreach ($discChunk in $discTargets) {
-                            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$discChunk.id) -LastPhase 'discovery' -Why $discWhy -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $suiteDiscoverySeconds -StartedAt (Get-NightlyUtcNow).ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
-                        }
-                        throw
-                    }
-                }
-                if ($isNative) {
-                    try {
-                        $phaseNodes = @()
-                        if ($suiteDiscoveryNodes) { $phaseNodes = @($suiteDiscoveryNodes) }
-                        $phaseAssembly = [string]$suite.assembly
-                        $phaseAssemblyDigest = ''
-                        $phaseDll = [IO.Path]::Combine($RepoRoot, 'tests', $phaseAssembly, 'bin', 'Debug', 'net9.0', ($phaseAssembly + '.dll'))
-                        if (-not [string]::IsNullOrWhiteSpace($phaseAssembly) -and (Test-Path -LiteralPath $phaseDll)) {
-                            $phaseAssemblyDigest = Get-NightlyFileSha256 -Path $phaseDll
-                        }
-                        $phaseCostDigest = ''
-                        if (-not [string]::IsNullOrWhiteSpace([string]$script:NightlyClassCostPath) -and (Test-Path -LiteralPath $script:NightlyClassCostPath)) {
-                            $phaseCostDigest = Get-NightlyFileSha256 -Path $script:NightlyClassCostPath
-                        }
-                        [void](Write-TestPhasePlannedManifest -LogRoot $LogRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite $suiteId -SourceDigest ([string]$Sha) -AssemblyDigest $phaseAssemblyDigest -PolicyDigest ([string]$policyHash) -CostFileDigest $phaseCostDigest -AssemblyId $phaseAssembly -Groups $chunks -DiscoveryNodes $phaseNodes -ProfileExclusions $profileExclusions)
-                    } catch {
-                        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
-                    }
-                }
-                $chunkIndex = 0
-                $suiteTerminalNodes = @()
-                foreach ($chunk in $chunks) {
-                    $chunkIndex++
-                    $chunkStartedAt = (Get-NightlyUtcNow).ToString('o')
-                    $queueWatch = [Diagnostics.Stopwatch]::StartNew()
-                    $logPath = Join-Path $LogRoot ('{0}-{1}-tests.log' -f $suiteId, $chunk.id)
-                    $trxPath = Join-Path $LogRoot ('{0}-{1}.trx' -f $suiteId, $chunk.id)
-                    $jsonPath = Join-Path $LogRoot ('{0}-{1}.json' -f $suiteId, $chunk.id)
-                    $envMap = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
-                    Remove-TestPhaseVariables -Environment $envMap
-                    $envMap['C487_INVOCATION'] = $invocationId
-                    $envMap['C487_RUN_DIR'] = $LogRoot
-
-                    if ($isNative) {
-                        if ($activeNative -gt 0) {
-                            throw 'native overlap'
-                        }
-                        $activeNative++
-                        $cur = Get-NightlyNativeActiveCount
-                        if ($cur -gt $nativeActiveMax) { $nativeActiveMax = $cur }
-                        if ($activeNative -gt $nativeActiveMax) { $nativeActiveMax = $activeNative }
-                    }
-
-                    $run = $null
-                    $execDiagDir = ''
-                    $queueWatch.Stop()
-                    $queueWaitSeconds = [math]::Round($queueWatch.Elapsed.TotalSeconds, 3)
-                    $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $null
-                    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
-                    $heartbeatTrx = ''
-                    if ($isNative) { $heartbeatTrx = $trxPath }
-                    Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'run' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
-                    $runWatch = [Diagnostics.Stopwatch]::StartNew()
-                    if ($suiteId -eq 'client') {
-                        $wrapper = Join-Path $RepoRoot (Join-Path 'scripts' 'test-client.ps1')
-                        $args = @('-NoProfile', '-NoLogo', '-File', $wrapper, '-JsonResultPath', $jsonPath)
-                        try {
-                            $run = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $args -WorkingDirectory $RepoRoot `
-                                -TimeoutMilliseconds 1200000 -Environment $envMap -LogPath $logPath
-                        } catch {
-                            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
-                            throw
-                        }
-                    } elseif ($suiteId -eq 'scripts') {
-                        $census = @(Get-NightlyScriptCensus -PolicyObject $policy.Object)
-                        $scriptFail = $false
-                        foreach ($row in $census) {
-                            $disp = [string]$row.disposition
-                            if ($disp -ne 'unattended') { continue }
-                            if ([bool]$row.wildcard) { throw 'wildcard script execution refused' }
-                            $scriptPath = Join-Path $RepoRoot (([string]$row.path) -replace '/', '\')
-                            $sargs = @('-NoProfile', '-NonInteractive', '-File', $scriptPath)
-                            if ($row.arguments) { foreach ($a in @($row.arguments)) { $sargs += [string]$a } }
-                            try {
-                                $sr = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $sargs -WorkingDirectory $RepoRoot `
-                                    -TimeoutMilliseconds 600000 -Environment $envMap -LogPath (Join-Path $LogRoot ('script-{0}.log' -f $row.id))
-                            } catch {
-                                Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
-                                throw
-                            }
-                            if ($sr.ExitCode -ne 0) { $scriptFail = $true }
-                        }
-                        $run = [pscustomobject]@{ ExitCode = $(if ($scriptFail) { 1 } else { 0 }); TimedOut = $false; ChildrenExited = $true }
-                    } else {
-                        if ($null -eq $suiteHost) {
-                            $exeName = [string]$suite.assembly
-                            if ([string]::IsNullOrWhiteSpace($exeName)) { $exeName = $label }
-                            $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $exeName
-                        }
-                        $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
-                        New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
-                        $chunkClasses = @()
-                        if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
-                        $groupFilter = ''
-                        if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $groupFilter = [string]$chunk.groupFilter }
-                        $methodFilter = ''
-                        if ($chunk.PSObject.Properties.Name -contains 'methodFilter') { $methodFilter = [string]$chunk.methodFilter }
-                        $nativeArgs = @()
-                        if ($suiteHost.Prefix) {
-                            foreach ($prefixArg in @($suiteHost.Prefix)) {
-                                if (-not [string]::IsNullOrWhiteSpace([string]$prefixArg)) { $nativeArgs += [string]$prefixArg }
-                            }
-                        }
-                        $nativeArgs += @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $groupFilter -MethodFilter $methodFilter)
-                        $phaseEnv = @{}
-                        foreach ($phaseKey in @($envMap.Keys)) { $phaseEnv[[string]$phaseKey] = [string]$envMap[$phaseKey] }
-                        Enable-TestPhaseExecutionEnvironment -Environment $phaseEnv -LogRoot $LogRoot -RunId $invocationId -GroupId ([string]$chunk.id) -Attempt ([string]$Attempt) -Suite $suiteId -Profile $Profile -TimingRoot $TimingRoot
-                        $plannedSeconds = $null
-                        if ($null -ne $chunk.PSObject.Properties['seconds'] -and $null -ne $chunk.seconds) {
-                            $plannedSeconds = $chunk.seconds
-                        }
-                        $costBasis = 'default'
-                        if ($null -ne $chunk.PSObject.Properties['costBasis'] -and -not [string]::IsNullOrWhiteSpace([string]$chunk.costBasis)) {
-                            $costBasis = [string]$chunk.costBasis
-                        }
-                        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteId -PlannedSeconds $plannedSeconds -Basis $costBasis -PolicyObject $policy.Object
-                        if (-not $admission.Admitted) {
-                            throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
-                        }
-                        $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
-                        try {
-                            $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
-                                -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
-                                -Environment $phaseEnv -LogPath $logPath
-                        } catch {
-                            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
-                            throw
-                        }
-                        $phaseWatch.Stop()
-                        try {
-                            [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
-                        } catch {
-                            Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
-                        }
-                    }
-                    $runWatch.Stop()
-                    $runWallSeconds = [math]::Round($runWatch.Elapsed.TotalSeconds, 3)
-
-                    $cleaned = Wait-NightlyOwnedCleanup -RunResult $run
-                    if ($isNative) {
-                        $activeNative--
-                        if (-not $cleaned) { throw 'owned-child still running' }
-                    }
-
-                    if (Test-Path -LiteralPath $logPath) {
-                        $stamp = 'C487_INVOCATION=' + $invocationId
-                        $rawLog = [System.IO.File]::ReadAllText($logPath)
-                        if ($rawLog -notmatch [regex]::Escape($invocationId)) {
-                            [System.IO.File]::WriteAllText($logPath, ($stamp + [Environment]::NewLine + $rawLog))
-                        }
-                    } else {
-                        Set-Content -LiteralPath $logPath -Value ('C487_INVOCATION=' + $invocationId) -Encoding UTF8
-                    }
-                    $fresh = Test-NightlyFreshEvidence -Path $logPath -RunDirectory $LogRoot -NotBeforeUtc $startedAt -InvocationId $invocationId
-                    $row = [ordered]@{
-                        id = $suiteId
-                        chunk = [string]$chunk.id
-                        name = $label
-                        log = $logPath
-                        exitCode = $run.ExitCode
-                        timedOut = [bool]$run.TimedOut
-                        skipped = $false
-                        result = $(if ($run.TimedOut) { 'TIMEOUT' } elseif ($run.ExitCode -ne 0) { 'FAIL' } else { 'pass' })
-                    }
-                    if (-not $fresh.Ok) {
-                        $coverageComplete = $false
-                        $testsPassed = $false
-                        $overallFailed = $true
-                        $row.detail = $fresh.Reason
-                        $reasons += $fresh.Reason
-                    }
-                    if ($isNative) {
-                        $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
-                        if ($profileDiscovery) {
-                            $discPath = $profileDiscoveryPath
-                            if ($chunk.exactFilter -or (($chunk.PSObject.Properties.Name -contains 'methodFilter') -and $chunk.methodFilter)) {
-                                # The full discovery remains the suite union authority;
-                                # the leaf verdict checks just this chunk's method expansions.
-                                $discPath = Join-Path $LogRoot ('{0}-{1}-selection.discovery.json' -f $suiteId, $chunk.id)
-                                $leaf = ConvertTo-NightlyDiscoveryDocument -Nodes $chunk.nodes -AssemblyHash $profileDiscovery.assemblyHash
-                                Write-NightlyDiscoveryDocument -Path $discPath -Document $leaf
-                            }
-                        }
-                        if ((Test-Path -LiteralPath $trxPath) -and -not (Test-Path -LiteralPath $discPath)) {
-                            try {
-                                $diagDir = Join-Path $LogRoot ('{0}-{1}-discovery' -f $suiteId, $chunk.id)
-                                $discLog = Join-Path $LogRoot ('{0}-{1}-discovery.log' -f $suiteId, $chunk.id)
-                                $chunkDiscWatch = [Diagnostics.Stopwatch]::StartNew()
-                                [void](Invoke-NightlyProduceDiscovery -ExePath $suiteHost.FilePath -ArgumentPrefix @($suiteHost.Prefix) -AssemblyPath $suiteHost.AssemblyPath -OutputPath $discPath `
-                                    -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
-                                    -Environment $envMap)
-                                $chunkDiscWatch.Stop()
-                                $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
-                                $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
-                            } catch {
-                                $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
-                            }
-                        }
-                        $required = @()
-                        if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
-                        $execDiagPath = Get-NightlyLatestDiagnosticLog -Directory $execDiagDir
-                        $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `
-                            -ExecutionDiagnosticPath $execDiagPath `
-                            -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
-                            -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
-                            -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required `
-                            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware -DiscoveryIndex $suiteDiscoveryIndex
-                        if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
-                            $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
-                        }
-                        if ($nativeVerdict.terminalNodes) {
-                            foreach ($tn in @($nativeVerdict.terminalNodes)) { $suiteTerminalNodes += $tn }
-                        }
-                        $row.trx = $trxPath
-                        $row.evidenceReasons = @($nativeVerdict.reasons)
-                        $census = if ($suiteCensus) { $suiteCensus } else { $nativeVerdict.census }
-                        if ($census) {
-                            # D-5: expanded-UID accounting is manifest evidence; record both
-                            # counts and the digest, plus every exclusion with its reason.
-                            $row.requiredUidCount = [int]$census.RequiredCount
-                            $row.excludedUidCount = [int]$census.ExcludedCount
-                            $row.censusDigest = [string]$census.Digest
-                            $row.exclusions = @($census.Excluded)
-                        }
-                        if (-not [bool]$nativeVerdict.coverageComplete) {
-                            $coverageComplete = $false
-                            $row.coverageComplete = $false
-                            foreach ($ev in @($nativeVerdict.reasons)) { $reasons += $ev }
-                        }
-                        if (-not [bool]$nativeVerdict.testsPassed) {
-                            $testsPassed = $false
-                            $overallFailed = $true
-                            $row.result = 'FAIL'
-                        }
-                    }
-                    if ($suiteId -eq 'client') {
-                        if (-not (Test-Path -LiteralPath $jsonPath)) {
-                            $coverageComplete = $false
-                            $testsPassed = $false
-                            $overallFailed = $true
-                            $reasons += 'missing-client-json'
-                            $row.coverageComplete = $false
-                        }
-                    }
-                    if ($run.TimedOut) {
-                        $overallFailed = $true
-                        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false
-                        $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
-                        $testsPassed = [bool]$timeoutDisposition.TestsPassed
-                        Set-NightlyOutcome TIMEOUT
-                        $reasons += ('timeout {0}' -f $suiteId)
-                    } elseif ($run.ExitCode -ne 0) {
-                        $overallFailed = $true
-                        $testsPassed = $false
-                        Set-NightlyOutcome TESTS
-                    } elseif (-not $testsPassed -or -not $coverageComplete) {
-                        $overallFailed = $true
-                        Set-NightlyOutcome TESTS
-                    }
-                    $timingPhase = 'complete'
-                    $timingWhy = ''
-                    $timingTrx = ''
-                    if ($isNative) { $timingTrx = $trxPath }
-                    if ($run.TimedOut) {
-                        $timingPhase = 'timeout'
-                        $timingWhy = 'timeout'
-                    } elseif ($isNative -and -not (Test-Path -LiteralPath $trxPath)) {
-                        $timingWhy = 'missing-trx'
-                    } elseif ($suiteId -eq 'client' -and -not (Test-Path -LiteralPath $jsonPath)) {
-                        $timingWhy = 'missing-client-json'
-                    } elseif ($suiteId -eq 'client') {
-                        $timingWhy = 'no-trx:client'
-                    } elseif ($suiteId -eq 'scripts' -and [int]$run.ExitCode -ne 0) {
-                        $timingWhy = 'script-failed'
-                    } elseif ($suiteId -eq 'scripts') {
-                        $timingWhy = 'no-trx:scripts'
-                    }
-                    $timingUpdate = @{
-                        LogRoot = $LogRoot
-                        TimingRoot = $TimingRoot
-                        Suite = $suiteId
-                        Chunk = [string]$chunk.id
-                        LastPhase = $timingPhase
-                        Why = $timingWhy
-                        RunWallSeconds = $runWallSeconds
-                        DiscoverySeconds = $chunkDiscoverySeconds
-                        BuildSeconds = $qualificationBuildSeconds
-                        QueueWaitSeconds = $queueWaitSeconds
-                        TrxPath = $timingTrx
-                        RunId = $invocationId
-                        Attempt = [string]$Attempt
-                        Terminal = $true
-                    }
-                    if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
-                    Update-QualificationChunkTiming @timingUpdate
-                    $suiteResults += $row
-                }
-                if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
-                    $unionNodes = @()
-                    foreach ($dn in @($suiteDiscoveryNodes)) {
-                        if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }
-                        $unionNodes += $dn
-                    }
-                    $union = Test-NightlySuiteUidUnion -DiscoveryNodes $unionNodes -ChunkTerminalNodes $suiteTerminalNodes
-                    if (-not $union.Ok) {
-                        $coverageComplete = $false
-                        $overallFailed = $true
-                        $reasons += ('missing-expanded-row union {0}' -f ($union.Missing -join ','))
-                    }
-                }
-            }
         } else {
             $coverageComplete = $false
             $testsPassed = $false
