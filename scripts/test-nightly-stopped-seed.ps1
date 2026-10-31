@@ -17,7 +17,8 @@ foreach($file in @(Get-ChildItem -LiteralPath $run -Filter '*.json')){
     [IO.File]::WriteAllText($file.FullName,$text)
 }
 function Snapshot {
-    @((Get-Item -LiteralPath $run),(Get-ChildItem -LiteralPath $run -Recurse -Force)) | ForEach-Object {
+    $items=@(Get-Item -LiteralPath $run)+@(Get-ChildItem -LiteralPath $run -Recurse -Force)
+    $items | ForEach-Object {
         $hash='directory';if(-not $_.PSIsContainer){$hash=(Get-FileHash -LiteralPath $_.FullName).Hash}
         $_.FullName+'|'+$_.LastWriteTimeUtc.Ticks+'|'+$hash
     } | Sort-Object
