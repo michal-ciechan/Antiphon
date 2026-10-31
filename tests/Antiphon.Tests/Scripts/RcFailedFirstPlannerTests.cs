@@ -17,7 +17,8 @@ public sealed class RcFailedFirstPlannerTests
              "FF GlobalReplayPriority.allSplits", "FF GlobalReplayPriority.canonicalDigest",
              "FF GlobalReplayPriority.unresolved", "FF GlobalReplayPriority.duplicate"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
-    [Test, Timeout(180_000)]
+    // CARD-1404/1514: full 312-launch conservation replay; see measured plan amendment.
+    [Test, Timeout(1_140_000)]
     public Task FullBytesAndCoverageConserved(CancellationToken cancellationToken) =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(FullBytesAndCoverageConserved), 22,
             ["FF FullBytesAndCoverageConserved.observedPermutation", "FF FullBytesAndCoverageConserved.anchors",
@@ -30,5 +31,5 @@ public sealed class RcFailedFirstPlannerTests
              "FF FullBytesAndCoverageConserved.lazyPreparation", "FF FullBytesAndCoverageConserved.preparationBarrier",
              "FF FullBytesAndCoverageConserved.e2ePreparation", "FF FullBytesAndCoverageConserved.diagnosticWriteFailure",
              "FF FullBytesAndCoverageConserved.authorityBytes", "FF FullBytesAndCoverageConserved.authorityBinding", "FF FullBytesAndCoverageConserved.originalManifestBytes", "FF FullBytesAndCoverageConserved.artifactSchemas"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(1080), TimeSpan.FromSeconds(10)), cancellationToken);
 }
