@@ -1094,6 +1094,21 @@ function Test-FFHeartbeatBindings {
         if($null -ne $mutantCost){$bad=$false}
         [IO.File]::WriteAllText($planPath,$planText);[IO.File]::WriteAllText($indexPath,$indexText);[IO.File]::WriteAllText($activePath,$activeText)
     }
+    foreach($variant in @('index-version','plan-version','chunk-path','header-type')){
+        $mutantPlan=$planText|ConvertFrom-Json;$mutantIndex=$indexText|ConvertFrom-Json;$mutantActive=$activeText|ConvertFrom-Json;$lookupChunk='all-group-3'
+        switch($variant){
+            'index-version'{$mutantIndex.version=2}
+            'plan-version'{$mutantPlan.version=2}
+            'chunk-path'{$lookupChunk='../all-group-3';$mutantActive.chunk=$lookupChunk;$mutantPlan.groups[0].chunk=$lookupChunk}
+            'header-type'{$mutantActive.attempt=2;$mutantIndex.attempt=2;$mutantPlan.attempt=2;@($mutantIndex.suites|Where-Object {$_.suite -ceq 'antiphon'})[0].attempt=2}
+        }
+        Write-FFJson $planPath $mutantPlan;Write-FFJson $indexPath $mutantIndex
+        $mutantActive.planDigest=Get-NightlyHistoryDigest $planPath;Write-FFJson $activePath $mutantActive
+        $mutantCost=Get-QualificationGroupPlannedSeconds $path $lookupChunk
+        $script:FFOperations.Add([ordered]@{kind='heartbeat-schema';field=$variant;plannedSeconds=$mutantCost;expected='unknown'})
+        if($null -ne $mutantCost){$bad=$false}
+        [IO.File]::WriteAllText($planPath,$planText);[IO.File]::WriteAllText($indexPath,$indexText);[IO.File]::WriteAllText($activePath,$activeText)
+    }
     Assert-FF $bad 'heartbeatRefusals'
 }
 
