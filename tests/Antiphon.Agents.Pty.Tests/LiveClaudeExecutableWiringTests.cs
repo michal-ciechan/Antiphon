@@ -134,6 +134,48 @@ public class LiveClaudeExecutableWiringTests
                 }
             }
             """);
+        // Delegation count is one and the helper still consumes the attested argument.
+        // Only the bare string launch inside the lambda makes this refuse.
+        ExpectAuditRefusal(Control, """
+            class Synthetic {
+                void Control_auto_connects_a_bridge_session_before_the_first_user() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+                    startup.ControlAsync(experiment, () => {
+                        runner.StartAsync("claude", launchArgs);
+                        return RunStartupControlAsync(executable, profile, experiment);
+                    });
+                }
+                void RunStartupControlAsync() {
+                    LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+                }
+            }
+            """);
+        // The lambda names a helper but does not pass the attested argument.
+        ExpectAuditRefusal(Control, """
+            class Synthetic {
+                void Control_auto_connects_a_bridge_session_before_the_first_user() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+                    startup.ControlAsync(experiment, () => RunStartupControlAsync("claude"));
+                }
+                void RunStartupControlAsync() {
+                    LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+                }
+            }
+            """);
+        // PATH claude is a variable, so a string-literal scan cannot see it.
+        ExpectAuditRefusal(Control, """
+            class Synthetic {
+                void Control_auto_connects_a_bridge_session_before_the_first_user() {
+                    var executable = ClSession.RequireCore(LiveClaudeCore.Control);
+                    startup.ControlAsync(experiment, () => RunStartupControlAsync(executable, profile, experiment));
+                }
+                void RunStartupControlAsync() {
+                    var exe = "claude";
+                    await runner.StartAsync(exe, launch.Args);
+                    LaunchUntilReadyAsync(executable, runner, sandbox, launch);
+                }
+            }
+            """);
     }
 
     private static void ExpectAuditRefusal(Action<string> audit, string source)
