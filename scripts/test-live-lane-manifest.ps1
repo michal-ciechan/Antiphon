@@ -233,6 +233,15 @@ switch ($Case) {
         $env:MSBUILDDISABLENODEREUSE = '1'
         $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = '1'
         $results = Join-Path $RepoRoot ('.antiphon/live-lane-runs/' + [guid]::NewGuid().ToString('N'))
+        # A command row is ready before its builds. One --after run picks CP-30 first and
+        # the census then refuses with producer-incomplete. Run the roster rows, then the census.
+        if ($Group -eq 'S1a') {
+            foreach ($row in @('CP-25', 'CP-1', 'CP-30')) {
+                & dotnet exec $ToolDll run $manifestPath --rows $row --expected-source-sha $expected --serial --total-timeout 26m --results-root $results
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            exit 0
+        }
         & dotnet exec $ToolDll run $manifestPath --after $Group --expected-source-sha $expected --serial --total-timeout 26m --hard-wall-timeout 29m --results-root $results
         exit $LASTEXITCODE
     }
