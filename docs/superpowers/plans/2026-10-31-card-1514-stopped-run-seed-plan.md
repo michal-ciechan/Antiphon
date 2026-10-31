@@ -17,10 +17,10 @@ unresolved old class. Unknown timestamps retain canonical order; known timestamp
 
 ## Verification design
 
-Six guard mutants are separately run and restored against the exact named portable case:
+Seven guard mutants are separately run and restored against the exact named portable case:
 failed partition -> FailedFirstMapping; acknowledgement -> AcknowledgementRequired;
 hash -> HashMustVerify; source write -> BuilderReadOnly; chunk drop -> ScheduleConservesAllChunks;
-Timeout as pass -> TimeoutIsFailure. These diagnostics are not post-land Mutation credit.
+Timeout as pass -> TimeoutIsFailure; coordinator PreviousRun forwarding -> ScheduleConservesAllChunks. These diagnostics are not post-land Mutation credit.
 Additional fallback case binds age and no-map behavior. Permutation trials use 64 fixed random
 seeds; the actual prepared-schedule boundary launches every chunk and observes new red work.
 
@@ -35,7 +35,6 @@ seeds; the actual prepared-schedule boundary launches every chunk and observes n
 | CP-5 | S2 | `CP-1` | seed-timeout | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/TimeoutIsFailure` | four failure outcomes | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-6 | S2 | `CP-1` | seed-permutation | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/ScheduleConservesAllChunks` | permutation and execution | exact method | 1 | 1 | true | TEMP=/tmp |
 | CP-7 | S2 | `CP-1` | seed-fallback | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/InvalidSeedFallsBack` | stale/unmapped original order | exact method | 1 | 1 | true | TEMP=/tmp |
-
 | CP-8 | S2 | `CP-1` | seed-hops | `/*/Antiphon.Tests.Scripts/RcStoppedRunSeedTests/PublicHopsForwardAcknowledgement` | public wrappers, sync and executor hop | exact method | 1 | 1 | true | TEMP=/tmp |
 
 ## Performance budget
