@@ -4,6 +4,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-failure-history.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-dispatch.ps1')
+. (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
 $root=New-C487Root $ResultsDirectory
 $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -60,7 +61,12 @@ try {
             $unmapped=$inputRecord.History.PSObject.Copy()
             $unmapped.members+=@([pscustomobject]@{suite='antiphon';className='Synthetic.Removed.Red';observations=@();reasons=@('failed')})
             $resolved=Resolve-NightlyPriorFailures $unmapped $suites Full
-            Check (($ids[0..4] -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red' -and ($ids[20..24] -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed' -and ($ids[5..7] -join ',') -ceq 'new-Never,new-Torn,new-New' -and @($resolved.members).Count -eq 5 -and @($resolved.unresolved).Count -eq 1) ($ids -join ',')
+            # The pure order must actually use known ages, independently of canonical position.
+            $hours=@{'antiphon'=1;'session-runner'=5;'pty-host'=2;'agents-pty'=4;'e2e'=3}
+            foreach($row in $inputRecord.History.chunks){if($row.chunk -match '(group|split)-2$'){$row.lastRunAtUtc=$now.AddHours(-$hours[$row.suite]).ToString('o')}}
+            $aged=Schedule $inputRecord
+            $oldest=(@($aged.entries[0..4].suite) -join ',')
+            Check ($oldest -ceq 'session-runner,agents-pty,e2e,pty-host,antiphon' -and ($ids[0..4] -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red' -and ($ids[20..24] -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed' -and ($ids[5..8] -join ',') -ceq 'new-Never,new-New,new-Never,new-New' -and @($resolved.members).Count -eq 5 -and @($resolved.unresolved).Count -eq 1) ($ids -join ',')
         }
         'AcknowledgementRequired' {
             $missing=Ingress;$wrong=Ingress -Accept -Source 'rc-wrong';$accepted=Ingress -Accept
@@ -79,8 +85,9 @@ try {
             Check (@($seed.failedTests).Count -eq 5 -and @($seed.failedTests|Where-Object {$_.outcome -eq 'Timeout' -and $_.className -eq 'Synthetic.pty_host.Red' -and $_.method -eq 'Run' -and $_.chunk -eq 'all-group-2'}).Count -eq 1 -and @($seed.failedTests|Where-Object outcome -eq 'Aborted').Count -eq 1) 'Failed/Error/Timeout/Aborted must retain class, method, suite and old chunk'
         }
         'ScheduleConservesAllChunks' {
-            $inputRecord=Ingress -Accept;$random=[Random]::new(1514);$ok=$true
+            $inputRecord=Ingress -Accept;$ok=$true
             for($trial=0;$trial -lt 64;$trial++){
+                $random=[Random]::new(1514+$trial)
                 foreach($s in $suites){$s.chunks=@($s.chunks|Sort-Object {$random.Next()})}
                 $schedule=Schedule $inputRecord
                 $expected=@(foreach($s in $suites){foreach($c in $s.chunks){$s.id+'/'+$c.id}})|Sort-Object
@@ -88,21 +95,59 @@ try {
                 $ok=$ok -and ($expected -join ',') -ceq ($actual -join ',') -and $actual.Count -eq 25
             }
             # Execute the same canonical objects through the production serial boundary.
-            $script:trace=@();$script:reds=0
-            function Invoke-NightlyScheduledChunk($ExecutionSuiteState,$ExecutionChunk){$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++}}
+            $script:trace=@();$script:reds=0;$script:NightlyTestsOutcome='green'
+            function Invoke-NightlyScheduledChunk($ExecutionSuiteState,$ExecutionChunk){$script:trace+=($ExecutionSuiteState.id+'/'+$ExecutionChunk.id);if($ExecutionChunk.id -eq 'new-New'){$script:reds++;Set-NightlyOutcome 'TESTS'}}
             function Complete-NightlySuiteExecution($CompletionSuiteState){}
             . Invoke-NightlyPreparedSchedule $schedule
-            Check ($ok -and $script:trace.Count -eq 25 -and $script:reds -eq 5) '64 random permutations and fresh red on previously unseen work; no inherited green/skip credit'
+            Check ($ok -and $script:trace.Count -eq 25 -and $script:reds -eq 5 -and $script:NightlyTestsOutcome -eq 'TESTS') '64 random permutations and fresh red on previously unseen work; no inherited green/skip credit'
         }
         'InvalidSeedFallsBack' {
             $old=[IO.File]::ReadAllText($seedPath)|ConvertFrom-Json
             $old.createdAtUtc=$now.AddDays(-15).ToString('o');$old.contentHash=Get-NightlyStoppedSeedHash $old
             $stale=Join-Path $root 'stale.json';Write-Seed $old $stale
             $received=Ingress -Path $stale -Accept
+            $ancient=[IO.File]::ReadAllText($seedPath)|ConvertFrom-Json
+            $body=$ancient.payload|ConvertFrom-Json;$body.sourceObservedAtUtc=$now.AddDays(-15).ToString('o')
+            $ancient.payload=$body|ConvertTo-Json -Depth 35 -Compress;$ancient.contentHash=Get-NightlyStoppedSeedHash $ancient
+            $ancientPath=Join-Path $root 'ancient.json';Write-Seed $ancient $ancientPath
+            $oldSource=Ingress -Path $ancientPath -Accept
+            $malformed=Join-Path $root 'malformed.json';[IO.File]::WriteAllText($malformed,'{')
+            $bad=Ingress -Path $malformed -Accept
             $good=Ingress -Accept
             foreach($s in $suites){foreach($c in $s.chunks){$c.classes=@('Synthetic.Gone.Class')}}
             $unmapped=Schedule $good
-            Check ($received.FallbackReason -eq 'seed-stale' -and $null -eq $received.History -and $unmapped.orderingReason -eq 'seed-plan-unmapped' -and $unmapped.entries[0].chunk -eq 'new-Passed' -and $unmapped.entries.Count -eq 25) 'stale or wholly unmappable seed restores complete original plan'
+            Check ($oldSource.FallbackReason -eq 'seed-stale' -and $null -eq $bad.History -and (Schedule $bad).entries.Count -eq 25 -and $received.FallbackReason -eq 'seed-stale' -and $null -eq $received.History -and $unmapped.orderingReason -eq 'seed-plan-unmapped' -and $unmapped.entries[0].chunk -eq 'new-Passed' -and $unmapped.entries.Count -eq 25) 'stale or wholly unmappable seed restores complete original plan'
+        }
+        'PublicHopsForwardAcknowledgement' {
+            . (Join-Path $PSScriptRoot 'lib/nightly-run-impl.ps1')
+            $fxRoot=Join-Path $root 'hops';[void][IO.Directory]::CreateDirectory($fxRoot)
+            $clone=New-C487OwnedClone $fxRoot
+            $state=Join-Path $fxRoot 'state';$trace=Join-Path $fxRoot 'trace.log';$seams=Join-Path $fxRoot 'seams.ps1'
+            Write-C487Seams -Path $seams -TracePath $trace -GitOutput ('b'*40)
+            $runArgs=@{CheckoutRoot=$clone;StateRoot=$state;LogRoot=(Join-Path $fxRoot 'logs');SeamsPath=$seams;NoReport=$true;Trigger='manual';Ref='master';CoordinationRoot=(Join-Path $fxRoot 'coord');PassThru=$true;PriorFailuresPath=$seedPath;AcceptCrossCandidateSeed=$true;SeedSourceCandidateId='rc-synthetic-old'}
+            $hop=Invoke-AntiphonNightlyRun @runArgs
+            $text=[IO.File]::ReadAllText($trace)
+            $selfHop=$text -match 'EXEC.*nightly-run.ps1.*-AcceptCrossCandidateSeed.*-SeedSourceCandidateId rc-synthetic-old'
+            $runArgs.NoSync=$true;$runArgs.RunId='synthetic-new-nosync'
+            $direct=Invoke-AntiphonNightlyRun @runArgs
+            $text=[IO.File]::ReadAllText($trace)
+            $executorHop=$text -match 'EXEC.*nightly-tests.ps1.*-AcceptCrossCandidateSeed.*-SeedSourceCandidateId rc-synthetic-old'
+            # Exercise both real wrapper parameter blocks and splats, replacing only
+            # their final implementation function in a private copied fixture.
+            $wrappers=$true
+            foreach($kind in @('run','tests')){
+                $wrapperRoot=Join-Path $fxRoot ('wrapper-'+$kind);$lib=Join-Path $wrapperRoot 'lib';[void][IO.Directory]::CreateDirectory($lib)
+                Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('nightly-'+$kind+'.ps1')) -Destination $wrapperRoot
+                foreach($name in @('nightly-common','nightly-policy','nightly-coverage','release-gate','release-selection')){[IO.File]::WriteAllText((Join-Path $lib ($name+'.ps1')),'')}
+                $function='Invoke-AntiphonNightly'+$(if($kind -eq 'run'){'Run'}else{'Tests'})
+                $command=Get-Command $function
+                $body=$command.ScriptBlock.Ast.ParamBlock.Extent.Text
+                $fake='function '+$function+' { '+$body+'; return [pscustomobject]@{Accepted=[bool]$AcceptCrossCandidateSeed;Source=$SeedSourceCandidateId;Path=$PriorFailuresPath;ExitCode=0} }'
+                [IO.File]::WriteAllText((Join-Path $lib ('nightly-'+$kind+'-impl.ps1')),$fake)
+                $received=& (Join-Path $wrapperRoot ('nightly-'+$kind+'.ps1')) -PriorFailuresPath $seedPath -AcceptCrossCandidateSeed -SeedSourceCandidateId rc-synthetic-old -PassThru
+                $wrappers=$wrappers -and $received.Accepted -and $received.Source -ceq 'rc-synthetic-old' -and $received.Path -ceq $seedPath
+            }
+            Check ($selfHop -and $executorHop -and $wrappers -and [IO.Directory]::Exists((Join-Path $state 'history'))) ('sync='+$selfHop+' nosync='+$executorHop+' wrappers='+$wrappers)
         }
         default {throw 'unknown case'}
     }

@@ -179,20 +179,24 @@ function Resolve-NightlyStoppedSeedOrder {
         $mapped=0;$ranked=[Collections.Generic.List[object]]::new()
         foreach($entry in $Entries){
             $classes=@($entry.ChunkRef.classes)
-            if($classes.Count -eq 0){$classes=@(Get-NightlyHistoryOrdinalStrings @($entry.ChunkRef.nodes|ForEach-Object {Get-NightlyBareClassIdentity $_.ClassName}))}
+            if($classes.Count -eq 0){
+                $nodes=@($entry.ChunkRef.nodes)
+                if($nodes.Count -eq 0){$nodes=@($entry.SuiteState.nodes)}
+                $classes=@(Get-NightlyHistoryOrdinalStrings @($nodes|ForEach-Object {Get-NightlyBareClassIdentity $_.ClassName}))
+            }
             $passed=($classes.Count -gt 0);$last=$null
             foreach($class in $classes){
                 $history=@($Seed.chunks|Where-Object {$_.suite -ceq $entry.suite -and @($_.classes) -ccontains $class})
                 if($history.Count -gt 0){$mapped++}else{$passed=$false}
                 foreach($old in $history){
-                    if(-not $old.completed){$passed=$false}
+                    if(-not $old.completed -or @($Seed.failedTests|Where-Object {$_.suite -ceq $old.suite -and $_.chunk -ceq $old.chunk -and $_.className -ceq $class}).Count -gt 0){$passed=$false}
                     $time=ConvertTo-NightlySeedUtc $old.lastRunAtUtc
                     if($time -and ($null -eq $last -or $time -gt $last)){$last=$time}
                 }
             }
             $priority=1
             if($entry.priorFailure){$priority=0}elseif($passed){$priority=2}
-            $ticks=[long]::MinValue;if($last){$ticks=$last.UtcTicks}
+            $ticks=[long]::MinValue;if($last){$ticks=$last.UtcDateTime.Ticks}
             $ranked.Add([pscustomobject]@{entry=$entry;priority=$priority;ticks=$ticks;ordinal=$entry.canonicalOrdinal})
         }
         if($mapped -eq 0){throw 'seed-plan-unmapped'}
