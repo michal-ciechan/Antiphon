@@ -47,6 +47,21 @@ public sealed class VolumeRetirementWrapperTests
         deniedCalls.Length.ShouldBe(1, "W1 a refused Preview cannot enter Apply");
         deniedCalls[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue();
 
+        using var prior = new C1008WrapperFixture();
+        var wrapperSource = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
+        // At the old entry use its existing normal action: the intended red is
+        // regenerating Preview instead of consuming the explicitly named proof.
+        var priorArgs = wrapperSource.Contains("[string]$RetirementProof", StringComparison.Ordinal)
+            ? new[] { "-RetirementProof", Operation } : Array.Empty<string>();
+        var consumed = await prior.Run("retire-temp", priorArgs);
+        consumed.Exit.ShouldBe(0, consumed.Output);
+        var priorCalls = consumed.Trace.Where(row => row["kind"]?.GetValue<string>() == "case" &&
+            row["name"]?.GetValue<string>() == "retire-temp-runner").ToArray();
+        priorCalls.Length.ShouldBe(1, "W1 an explicit prior Ready proof cannot be silently replaced by a new Preview");
+        priorCalls[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse();
+        priorCalls[0]["recycle"]!["operationId"]!.GetValue<string>().ShouldBe(Operation);
+        priorCalls[0]["recycle"]!["expectedProofDigest"]!.GetValue<string>().ShouldBe(new string('a',64));
+
         using var deploy = new C1008WrapperFixture();
         deploy.State["allowClear"] = true;
         var recreated = await deploy.Run("deploy-temp");

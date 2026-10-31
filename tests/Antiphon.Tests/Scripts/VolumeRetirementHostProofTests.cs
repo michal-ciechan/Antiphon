@@ -153,6 +153,24 @@ public sealed class VolumeRetirementHostProofTests
             Directory.GetFiles(proof).ShouldBeEmpty();
         }
         finally { Directory.Delete(proof, recursive: true); }
+
+        var bound = Directory.CreateTempSubdirectory("c1609-h4-v2-").FullName;
+        try
+        {
+            var written = await VersionedProof(bound);
+            written.Exit.ShouldBe(0, written.Output);
+            var files = Directory.GetFiles(Path.Combine(bound, "proof"));
+            var body = await File.ReadAllTextAsync(files.Single(p => !p.EndsWith(".bundle", StringComparison.Ordinal)));
+            body.ShouldStartWith("c1008-host-proof 2\n", "H4 current publication transport requires a typed v2 proof");
+            body.ShouldContain("nonce " + new string('b',32));
+            body.ShouldContain("inventory " + new string('c',64));
+            var bundle = files.Single(p => p.EndsWith(".bundle", StringComparison.Ordinal));
+            body.ShouldContain("bundle " + Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(bundle))).ToLowerInvariant());
+            body.ShouldContain("count 3\n", "head plus original annotated tag and peeled object");
+            body.ShouldNotContain("fixture.invalid");
+            body.ShouldNotContain(bound);
+        }
+        finally { Directory.Delete(bound, recursive: true); }
     }
 
     [Test]
@@ -169,6 +187,16 @@ public sealed class VolumeRetirementHostProofTests
         run.Output.ShouldContain("user=https://example.com/repo.git");
         run.Output.ShouldContain("token=null");
         run.Output.ShouldNotContain("pass@");
+
+        var denied = Directory.CreateTempSubdirectory("c1609-h5-v2-").FullName;
+        try
+        {
+            var local = await VersionedProof(denied, unsafeOrigin: true);
+            local.Exit.ShouldNotBe(0, "H5 an allowlist entry cannot authorize a local/file transport: " + local.Output);
+            local.Output.ShouldContain("RecycleGitAuditUnknown");
+            Directory.GetFiles(Path.Combine(denied, "proof")).ShouldBeEmpty();
+        }
+        finally { Directory.Delete(denied, recursive: true); }
     }
 
     [Test]
@@ -204,6 +232,31 @@ public sealed class VolumeRetirementHostProofTests
             Directory.GetFiles(proof).ShouldBeEmpty();
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static async Task<(int Exit, string Output)> VersionedProof(string root, bool unsafeOrigin = false)
+    {
+        var origin = Path.Combine(root,"origin.git"); var work = Path.Combine(root,"work");
+        (await Git(root,"init","-q","--bare",origin)).Exit.ShouldBe(0);
+        (await Git(root,"init","-q","-b","main",work)).Exit.ShouldBe(0);
+        await File.WriteAllTextAsync(Path.Combine(work,"published"),"published\n");
+        (await Git(work,"add","published")).Exit.ShouldBe(0);
+        (await Git(work,"commit","-qm","published")).Exit.ShouldBe(0);
+        (await Git(work,"tag","-a","v1","-m","published")).Exit.ShouldBe(0);
+        (await Git(work,"push","-q",origin,"main","--tags")).Exit.ShouldBe(0);
+        var proof = Path.Combine(root,"proof"); Directory.CreateDirectory(proof);
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot,"scripts/c1008-host-proof.ps1");
+        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; $extra=@{}; $url=$env:C1609_BARE; " +
+            "if((Get-Command Write-C1008HostOriginProof).Parameters.ContainsKey('ProofVersion')) { " +
+            "$url=if($env:C1609_UNSAFE -eq '1'){$env:C1609_BARE}else{'https://fixture.invalid/proof.git'}; " +
+            "$extra=@{ProofVersion=2;PhaseNonce=('b'*32);InventoryDigest=('c'*64);ApprovedOrigins=@($url)}; " +
+            "$original=${function:Invoke-C1609HostGit}; " +
+            "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='') " +
+            "$mapped=@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
+            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory } }; " +
+            "Write-C1008HostOriginProof -OriginUrl $url -RepoRelative '" + Repo + "' -OperationId '" + Operation +
+            "' -ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @extra";
+        return await Pwsh(command,new[]{("C1609_BARE",origin),("C1609_PROOF",proof),("C1609_LOG",Path.Combine(root,"proof.log")),("C1609_UNSAFE",unsafeOrigin?"1":"0")});
     }
 
     private static async Task<(int Exit, string Output)> Proof(string origin, string proof, string log,
