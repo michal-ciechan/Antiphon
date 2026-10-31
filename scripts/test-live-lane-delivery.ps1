@@ -16,7 +16,7 @@ $manifest = [IO.File]::ReadAllText($manifestPath).Replace('properties: {}', "pro
 $manifest = $manifest.Replace('bin-live-delivery',"bin-$runKey").Replace('timeoutMinutes: 18','timeoutMinutes: 2')
 $rows = @('CP-19')
 if ($Controls) {
-    foreach ($entry in @(@(18,'ExplicitBridgeSetup'),@(19,'ControlRequiredForSettingsOff'),@(20,'ControlWindowBoundsOffObservation'),@(21,'StartupMethodsUseControlOracle'),@(22,'LoadedSettingsSurviveOffOverlay'))) {
+    foreach ($entry in @(@(23,'PromptReceiptPrecedesVerdict'),@(24,'LostEnterCannotPass'),@(25,'DroppedBridgeCannotPass'),@(26,'LiveMethodsUseTranscriptVerdicts'))) {
         $v = $entry[0]; $method = $entry[1]
         $manifest += @"
 

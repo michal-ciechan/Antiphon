@@ -22,14 +22,11 @@ public class ClaudeSubmitContractLiveTests
     {
         var executable = ClSession.RequireCore(LiveClaudeCore.Submit);
         using var profile = ClSession.RequireProfile(executable);
-        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable, profile);
-
-        await runner.SendLineAsync(ClaudeSubmitContractHarness.PromptFor(backend));
-
-        var done = await runner.WaitForOutputAsync(
-            text => ClaudeSubmitContractHarness.DonePattern.IsMatch(text),
-            ClaudeSubmitContractHarness.DoneWaitFor(backend));
-        done.ShouldBeTrue($"[{backend}] a properly-submitted turn must complete (\" for Ns\" must appear)");
+        var sessionId = Guid.NewGuid().ToString("D");
+        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable, profile, sessionId);
+        var body = ClaudeSubmitContractHarness.PromptFor(backend);
+        var (request, rows) = await ClaudeSubmitContractHarness.SubmitClaudeAsync(runner, profile, sessionId, body);
+        LiveClaudeDeliveryEvidence.RequireSubmit(request, rows);
 
         await ClaudeSubmitContractHarness.CleanupAsync(runner, backend);
     }

@@ -101,26 +101,24 @@ public class ClaudeRemoteControlMenuCanaryTests
             throw new SkipTestException("pending native acceptance: real Claude TUI did not reach ready");
 
         await ClaudeRemoteControlAtStartupCanaryTests.EnsureMenuBridgeAsync(runner, profile, sessionId);
+        var delivery = new LiveClaudeDeliverySession(runner, profile, sessionId);
+        var bridge = delivery.Bridge() ?? throw new LiveClaudeRefusal("bridge-unestablished");
         await EchoGatedSubmit.SendAsync(runner, "/remote-control");
         var appeared = await runner.WaitForScreenAsync(MenuPresent, TimeSpan.FromSeconds(12));
-        if (!appeared)
-            throw new SkipTestException(
-                "pending native acceptance: no management menu (bridge not pre-established). Screen:\n"
-                + runner.SnapshotScreen());
-
+        if (!appeared) throw new LiveClaudeRefusal("menu-unobserved");
+        var beforeEsc = delivery.Bridge();
         await runner.WriteAsync(DismissKey);
         await Task.Delay(SettleMs);
         var firstClear = !MenuPresent(runner.SnapshotScreen());
         await Task.Delay(SettleMs);
         var secondClear = !MenuPresent(runner.SnapshotScreen());
-        firstClear.ShouldBeTrue();
-        secondClear.ShouldBeTrue();
-
-        var token = "C514-OK-" + Guid.NewGuid().ToString("N")[..8];
-        await EchoGatedSubmit.SendAsync(runner, token);
-        (await runner.WaitForScreenAsync(
-            s => ComposerDeliveryEvidence.FragmentIsVisible(s, token) || s.Contains(token, StringComparison.Ordinal),
-            TimeSpan.FromSeconds(12)))
-            .ShouldBeTrue("unique prompt must convert after idle Esc. Screen:\n" + runner.SnapshotScreen());
+        if (!firstClear || !secondClear) throw new LiveClaudeRefusal("menu-not-dismissed");
+        var afterEsc = delivery.Bridge();
+        var body = ClaudeSubmitContractHarness.PromptFor("claude");
+        var request = delivery.Capture(body);
+        var rows = await LiveClaudeDeliveryEvidence.SubmitOnceAsync(request, () => delivery.SendAsync(body),
+            () => delivery.ObserveAsync(request, completion: false), completion: false);
+        var afterSubmit = delivery.Bridge();
+        LiveClaudeDeliveryEvidence.RequireMenu(request, rows, bridge, beforeEsc, afterEsc, afterSubmit);
     }
 }
