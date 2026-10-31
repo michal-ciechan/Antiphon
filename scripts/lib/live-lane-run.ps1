@@ -69,10 +69,14 @@ function Invoke-LiveLaneRun {
     $result = [pscustomobject]@{
         ExitCode = 20; Reason = 'admission-incomplete'; DiagnosticOnly = $true; GateCredit = $false
         TerminalComplete = $false; RawChildExit = $null; CheckpointRunId = $null
+        Classification = 'INCONCLUSIVE'; Rows = @(); RawChildOutcome = $null
+        ChildExits = [Collections.Generic.List[int]]::new(); Probes = @()
     }
     # This slice has no production native executor. Fake opt-in alone is insufficient:
     # only this inert roster/opaque executable/profile and explicit I/O adapters exist.
     if ($Request.Mode -cne 'Fixture') { $result.Reason = 'native-unqualified'; return $result }
+    if ([string]::IsNullOrWhiteSpace($Request.Executable)) { $result.Reason = 'executable-missing'; return $result }
+    if ([string]::IsNullOrWhiteSpace($Request.Profile)) { $result.Reason = 'profile-required'; return $result }
     if ($Request.Lane -cne 'fixture-live' -or $Request.Executable -cne 'owned-fixture-executable' -or
         $Request.Profile -cne 'owned-fixture-profile' -or @($Request.Uids).Count -eq 0 -or
         @($Request.Uids | Where-Object { $_ -cnotin @('fixture.A.0','fixture.B.0') }).Count -gt 0) {
@@ -137,6 +141,16 @@ function Invoke-LiveLaneRun {
             $result.ExitCode = 2; $result.Reason = 'context-stale'; return $result
         }
         if ([double](& $Boundary.Clock) -ge $deadline) { $result.Reason = 'deadline'; return $result }
+        if ($Boundary.Probe -is [scriptblock]) {
+            $preflight = Invoke-LiveLanePreflight $Boundary $Request $deadline
+            $result.Probes = @($preflight.Probes | ForEach-Object {
+                @{ Phase = $_.Phase; Started = $_.Started; Finished = $_.Finished; Bounded = $_.Bounded }
+            })
+            if ($preflight.Verdict.ExitCode -ne 0) {
+                $result.ExitCode = $preflight.Verdict.ExitCode; $result.Reason = $preflight.Verdict.Reason
+                return $result
+            }
+        }
         $child = & $Boundary.Start $context $startInfo $manifest
         if ([string]::IsNullOrWhiteSpace($child.RunId) -or @($child.Children).Count -eq 0) { throw 'invalid owned adapter handle' }
         $result.CheckpointRunId = $child.RunId
@@ -144,27 +158,48 @@ function Invoke-LiveLaneRun {
             if ([double](& $Boundary.Clock) -ge $deadline) { $result.Reason = 'deadline'; break }
             $code = [int](& $Boundary.Wait $child.RunId)
             $result.RawChildExit = $code
+            $result.ChildExits.Add($code)
             if ($code -eq 75) { continue }
             $terminal = $true
             $evidence = & $Boundary.ReadTerminal $child.RunId
-            if ($evidence.RunId -cne $child.RunId -or $evidence.Complete -ne $true) { throw 'incomplete terminal evidence' }
-            $result.Reason = 'outcomes-unqualified'
+            $postProbe = $null
+            # One bounded zero-prompt probe for classification only. Never restart
+            # the checkpoint or submit a model turn after any UserPrompt receipt.
+            if ($Boundary.Probe -is [scriptblock] -and $evidence -is [Collections.IDictionary]) {
+                $failed = @($evidence.Rows | Where-Object { $_.State -ceq 'Failed' -and -not (Test-LiveLaneTranscriptOutage $_) })
+                if ($failed.Count -gt 0) {
+                    $probeDeadline = [Math]::Min($deadline, [double](& $Boundary.Clock) + 15)
+                    $postProbe = Invoke-LiveLaneProbe $Boundary 'PostFailure' $failed[0] $probeDeadline
+                    $result.Probes += @{ Phase = $postProbe.Phase; Started = $postProbe.Started; Finished = $postProbe.Finished; Bounded = $postProbe.Bounded }
+                }
+            }
+            $outcome = Get-LiveLaneOutcome $Request $evidence $child.RunId $code $postProbe
+            $result.ExitCode = $outcome.ExitCode; $result.Reason = $outcome.Reason
+            $result.Rows = $outcome.Rows; $result.RawChildOutcome = $outcome.RawChildOutcome
             break
         }
         # Stop every still-running owned child before joining any. No foreign PID
         # is ever inferred from a lock file or ambient process listing.
         $cleanupAttempted = $true
         $joined = Join-LiveLaneChildren $child $Boundary (-not $terminal)
-        if (-not $joined) { $result.Reason = 'cleanup-incomplete'; return $result }
+        if (-not $joined) {
+            if ($result.ExitCode -notin @(1,2)) { $result.ExitCode = 20; $result.Reason = 'cleanup-incomplete' }
+            return $result
+        }
         $result.TerminalComplete = $terminal
+        $result.Classification = Get-LiveLaneClassification $result.ExitCode
         & $Boundary.WriteReceipt (Join-Path $Request.ResultsRoot 'diagnostic.json') $result
     } catch {
         # Never serialize arbitrary exceptions from a provider, path or environment.
-        $result.ExitCode = 20; $result.Reason = 'handoff-incomplete'; $result.TerminalComplete = $false
+        if ($result.ExitCode -notin @(1,2)) { $result.ExitCode = 20; $result.Reason = 'handoff-incomplete' }
+        $result.TerminalComplete = $false
     } finally {
         if ($null -ne $child -and -not $cleanupAttempted) {
             $joined = Join-LiveLaneChildren $child $Boundary $true
-            if (-not $joined) { $result.ExitCode = 20; $result.Reason = 'cleanup-incomplete'; $result.TerminalComplete = $false }
+            if (-not $joined) {
+                if ($result.ExitCode -notin @(1,2)) { $result.ExitCode = 20; $result.Reason = 'cleanup-incomplete' }
+                $result.TerminalComplete = $false
+            }
         }
         if ($owned -and ($null -eq $child -or $joined)) {
             if ($Boundary.BeforeRelease) { & $Boundary.BeforeRelease $Request }
@@ -175,6 +210,7 @@ function Invoke-LiveLaneRun {
                 if ($Boundary.Trace) { & $Boundary.Trace 'release' }
             }
         }
+        $result.Classification = Get-LiveLaneClassification $result.ExitCode
     }
     return $result
 }

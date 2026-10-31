@@ -83,7 +83,12 @@ function New-Fixture {
         ReadTerminal = { param($id)
             $F.Trace.Add('terminal:' + $id)
             if ($F.Fault -eq 'terminal-read') { throw 'injected' }
-            return @{ RunId = $id; ChildExit = 0; Complete = $true }
+            return @{
+                SchemaVersion=1; RunId=$id; ChildExit=0; Complete=$true; Evidence='Complete'
+                Lane='fixture-live'; Attempt=1; Source=('a'*40); Build='Succeeded'; Platform='Fixture'; Authority='diagnostic'
+                InputBefore='input-A'; InputAfter='input-A'; ExecutableBefore='exe-A'; ExecutableAfter='exe-A'; Outcome='Passed'
+                Rows=@(@{ Uid='fixture.A.0'; State='Passed'; Setup='Ready' })
+            }
         }
         Stop = { param($child) $F.Trace.Add('stop:' + $child) }
         Join = { param($child, $seconds) $F.Trace.Add('join:' + $child); return $F.JoinOk }
@@ -149,7 +154,9 @@ function Test-ProtectedInputs([string]$Overlay = '') {
     # All pre-existing executable/config inputs, including definitions and old tests,
     # are protected. New executable paths are enumerated individually.
     $allowed = @('scripts/run-live-lane.ps1','scripts/lib/live-lane-run.ps1','scripts/test-live-lane-run.ps1',
-        'tests/live-lane-checkpoints/live-claude-core-windows.yaml','tests/Antiphon.Tests/Scripts/LiveLaneRunnerTests.cs')
+        'tests/live-lane-checkpoints/live-claude-core-windows.yaml','tests/Antiphon.Tests/Scripts/LiveLaneRunnerTests.cs',
+        'scripts/lib/live-lane-outcome.ps1','scripts/test-live-lane-outcome.ps1',
+        'tests/Antiphon.Tests/Scripts/LiveLaneOutcomeTests.cs')
     $existing = @(& git -C $repo ls-tree -r --name-only $base)
     if ($LASTEXITCODE -ne 0 -or $existing.Count -lt 100) { throw 'base tree unavailable' }
     $changed = @(& git -C $repo diff --name-only $base --)
