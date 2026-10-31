@@ -72,14 +72,7 @@ function Get-QualificationGroupPlannedSeconds {
         # A failed Idle write cannot make a previous settled chunk look live.
         $sidecar=Join-Path $dir ($active.suite+'-'+$active.chunk+'.timing.json')
         if(Test-Path -LiteralPath $sidecar){$timing=Read-QualificationPlanJson $sidecar;if($timing.lastPhase -cin @('complete','timeout','cancelled','teardown') -or $timing.completedAt){throw 'chunk-settled'}}
-        $pointerPath=Join-Path (Join-Path $dir 'groups-executed.journal') 'current.json'
-        if(Test-Path -LiteralPath $pointerPath){
-            $pointer=Read-QualificationPlanJson $pointerPath
-            if([string]$pointer.generation -cnotmatch '^[a-f0-9]{32}$'){throw 'journal-pointer'}
-            $prefix=Read-TestPhaseGenerationPrefix -GenerationDir (Join-Path (Split-Path -Parent $pointerPath) $pointer.generation)
-            if($prefix.Corrupt){throw 'journal-unavailable'}
-            foreach($record in $prefix.Records){if($record.HeaderRun -cne $active.runId -or $record.HeaderAttempt -cne $active.attempt){throw 'journal-identity'};if($record.FreshSuite -ceq $active.suite -and $record.FreshChunk -ceq $active.chunk){throw 'chunk-settled'}}
-        }
+        Assert-QualificationJournalUnsettled -Directory $dir -Active $active
         if($script:QualificationIdentityReadObserver){$null=$script:QualificationIdentityReadObserver.Invoke($activePath)}
         if((Get-NightlyFileSha256 $activePath) -cne $active.identityDigest){throw 'active-changed'}
         $seconds=[double]$groups[0].plannedSeconds
@@ -89,6 +82,49 @@ function Get-QualificationGroupPlannedSeconds {
         Write-Verbose ('planned-cost-unresolved:'+$_.Exception.Message)
         return $null
     }
+}
+
+function Assert-QualificationJournalUnsettled {
+    param([string]$Directory, $Active)
+    $journal=Join-Path $Directory 'groups-executed.journal'
+    # Older isolated plan producers have no journal. Once a journal is present,
+    # an absent generation or prefix is uncertainty, never proof of no settlement.
+    if(-not (Test-Path -LiteralPath $journal)){return}
+    $pointerPath=Join-Path $journal 'current.json'
+    $pointerDigest=Get-NightlyFileSha256 $pointerPath
+    $pointer=Read-QualificationPlanJson $pointerPath
+    if(($pointer.version -isnot [int] -and $pointer.version -isnot [long]) -or $pointer.version -ne 1 -or $pointer.generation -isnot [string] -or $pointer.generation -cnotmatch '^[a-f0-9]{32}$' -or $pointer.metadataDigest -isnot [string] -or $pointer.metadataDigest -cnotmatch '^[a-f0-9]{64}$' -or $pointer.timingRoot -cne $Directory){throw 'journal-pointer'}
+    $generation=Join-Path $journal $pointer.generation
+    foreach($path in @($journal,$generation)){
+        if(-not [IO.Directory]::Exists($path) -or ([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'journal-generation-unavailable'}
+    }
+    $metaPath=Join-Path $generation 'metadata.json'
+    $meta=Read-QualificationPlanJson $metaPath
+    if((Get-NightlyFileSha256 $metaPath) -cne $pointer.metadataDigest){throw 'journal-metadata-digest'}
+    if(($meta.version -isnot [int] -and $meta.version -isnot [long]) -or $meta.version -ne 1 -or $meta.generation -cne $pointer.generation -or $meta.runId -cne $Active.runId -or $meta.attempt -cne $Active.attempt -or $meta.source -cne $Active.sourceDigest){throw 'journal-metadata-identity'}
+    # Recovered seed rows are not in the numbered prefix. Until their complete
+    # custody can be established this lookup must retain the unknown-cost budget.
+    if($meta.unresolved -ne $false -or $meta.corruptionReason -or $meta.seedDigest -or $meta.parentGeneration){throw 'journal-liveness-unknown'}
+    if(Test-Path -LiteralPath (Join-Path $generation 'seal.json')){throw 'journal-terminal'}
+    $files=@([IO.Directory]::GetFiles($generation)|Where-Object {[IO.Path]::GetFileName($_) -cmatch '^[0-9]{8}\.json$'}|Sort-Object)
+    for($i=0;$i -lt $files.Count;$i++){
+        if([IO.Path]::GetFileName($files[$i]) -cne (($i+1).ToString('00000000')+'.json') -or (Get-TestPhasePathIdentity $files[$i]).Kind -cne 'regular'){throw 'journal-gap'}
+        $envelope=Read-QualificationPlanJson $files[$i]
+        if($envelope.version -ne 1 -or $envelope.root -cne $Directory){throw 'journal-record-binding'}
+    }
+    $prefix=Read-TestPhaseGenerationPrefix -GenerationDir $generation
+    if($prefix.Corrupt -or $prefix.LastSequence -ne $files.Count){throw 'journal-unavailable'}
+    foreach($record in $prefix.Records){
+        if($record.Kind -cne 'chunk' -or $record.HeaderRun -cne $Active.runId -or $record.HeaderAttempt -cne $Active.attempt){throw 'journal-identity'}
+        if(($record.FreshSuite -ceq $Active.suite -and $record.FreshChunk -ceq $Active.chunk) -or ($record.SettledSuite -ceq $Active.suite -and $record.SettledChunk -ceq $Active.chunk)){throw 'chunk-settled'}
+    }
+    $statePath=Join-Path $Directory 'groups-executed.state.json'
+    if(Test-Path -LiteralPath $statePath){
+        $state=Read-QualificationPlanJson $statePath
+        if($state.version -ne 1 -or $state.generation -cne $pointer.generation -or $state.root -cne $Directory -or $state.sequence -ne $prefix.LastSequence -or $state.publicationComplete -ne $true -or $state.unresolved -ne $false -or @($state.quality).Count -ne 0){throw 'journal-state-unavailable'}
+    }
+    $after=@([IO.Directory]::GetFiles($generation)|Where-Object {[IO.Path]::GetFileName($_) -cmatch '^[0-9]{8}\.json$'}|Sort-Object)
+    if(($files -join [char]0) -cne ($after -join [char]0) -or (Get-NightlyFileSha256 $pointerPath) -cne $pointerDigest -or (Get-NightlyFileSha256 $metaPath) -cne $pointer.metadataDigest -or (Test-Path -LiteralPath (Join-Path $generation 'seal.json'))){throw 'journal-changed'}
 }
 
 function Read-QualificationPlanJson {
