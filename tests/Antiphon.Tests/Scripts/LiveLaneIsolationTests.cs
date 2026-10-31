@@ -1,6 +1,9 @@
+using System.Reflection;
 using System.Text.Json;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport.LiveClaude;
+using Microsoft.Extensions.Logging.Abstractions;
 using Antiphon.Tests.Agents;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -39,8 +42,55 @@ public class LiveLaneIsolationTests
         LiveClaudeProfileCases.Assert(root == profile.Paths.Projects, "V-13", "projects-root", "reader uses the profile config directory");
         var ambient = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects");
         LiveClaudeProfileCases.Assert(!string.Equals(root, ambient, StringComparison.Ordinal), "V-13", "projects-root", "reader stays off the operator profile");
-        var runtime = LiveClaudeExecutableAudit.Read("src/Antiphon.SessionRunner/SessionRunnerRuntime.cs");
-        LiveClaudeProfileCases.Assert(runtime.Contains("TranscriptTailer.ResolveProjectsRoot(request.Env)", StringComparison.Ordinal), "V-13", "projects-root", "launch passes the child environment");
+        LaunchEnvironmentBindsItsOwnTranscript();
+    }
+
+    private static void LaunchEnvironmentBindsItsOwnTranscript()
+    {
+        var root = Directory.CreateTempSubdirectory("c1545-tailer-").FullName;
+        var launchConfig = Path.Combine(root, "launch");
+        var decoyConfig = Path.Combine(root, "decoy");
+        var sessionId = Guid.NewGuid();
+        var fileName = sessionId.ToString("D") + ".jsonl";
+        var launchFile = Path.Combine(launchConfig, "projects", "launch-cwd", fileName);
+        var decoyFile = Path.Combine(decoyConfig, "projects", "decoy-cwd", fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(launchFile)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(decoyFile)!);
+        Directory.CreateDirectory(Path.Combine(root, "logs"));
+        Directory.CreateDirectory(Path.Combine(root, "cwd"));
+        File.WriteAllText(launchFile, "{\"type\":\"user\",\"uuid\":\"launch-only\"}\n");
+        File.WriteAllText(decoyFile, "{\"type\":\"user\",\"uuid\":\"decoy-only\"}\n");
+        const string key = "CLAUDE_CONFIG_DIR";
+        var previous = Environment.GetEnvironmentVariable(key);
+        Environment.SetEnvironmentVariable(key, decoyConfig);
+        var session = new RunnerSession(sessionId, new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = Path.Combine(root, "logs") },
+            new SessionRunnerEventHub(), NullLogger.Instance);
+        try
+        {
+            var request = new RunnerLaunchRequest(sessionId, "claude", Array.Empty<string>(),
+                new Dictionary<string, string> { [key] = launchConfig }, Path.Combine(root, "cwd"), 80, 24, TranscriptEnabled: true);
+            var start = typeof(RunnerSession).GetMethod("StartTailerFor", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("C1545 V-13/projects-root StartTailerFor missing");
+            start.Invoke(session, new object[] { request, DateTime.UtcNow });
+            var deadline = Environment.TickCount64 + 2_000;
+            string? bound = null;
+            while (Environment.TickCount64 < deadline)
+            {
+                bound = session.Tailer?.BoundTranscriptPath;
+                if (bound is not null) break;
+                Thread.Sleep(25);
+            }
+            var actual = bound is null ? null : Path.GetFullPath(bound);
+            LiveClaudeProfileCases.Assert(string.Equals(actual, Path.GetFullPath(launchFile), StringComparison.Ordinal)
+                && !string.Equals(actual, Path.GetFullPath(decoyFile), StringComparison.Ordinal),
+                "V-13", "projects-root", "tailer bound " + (actual ?? "<none>"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(key, previous);
+            session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Directory.Delete(root, true);
+        }
     }
     [Test] public void CwdInstructionsCannotLeak() => Run("V-14");
     [Test] public void SettingsProjectionDetectsDrift() => Run("V-15");
