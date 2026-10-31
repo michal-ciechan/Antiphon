@@ -622,8 +622,9 @@ function Test-FullBytesAndCoverageConserved {
         $right=Invoke-FFPreparedArm $small ($variant+'-priority') $small.resolved.members $variant
         $same=($left.Outcome -ceq $right.Outcome -and $left.OverallFailed -eq $right.OverallFailed -and $left.Coverage -eq $right.Coverage -and $left.Passed -eq $right.Passed -and $left.Error -ceq $right.Error -and (($left.Reasons|Sort-Object) -join ',') -ceq (($right.Reasons|Sort-Object) -join ','))
         $expectedOutcome = 'TESTS'
-        # The unchanged reducer lowers TIMEOUT to TESTS when a later passing
-        # chunk observes the sticky failed/coverage flags. Preserve that behavior.
+        # S3 reduces each chunk's own verdict, so a later pass cannot invent a
+        # TESTS event from the earlier timeout's sticky run flags.
+        if ($variant -ceq 'timeout') { $expectedOutcome='TIMEOUT' }
         if ($variant -cin @('publication','teardown')) { $expectedOutcome='green' }
         if ($left.Outcome -cne $expectedOutcome -or $right.Outcome -cne $expectedOutcome) { $same=$false }
         if ($variant -cin @('missing','skip','unknown','timeout') -and ($left.Coverage -or $right.Coverage -or -not $left.OverallFailed -or -not $right.OverallFailed)) { $same=$false }
@@ -945,7 +946,9 @@ function Invoke-FFActualLoop {
     }
     $p.Object.policyHash=Get-NightlyPolicyHash $p.Object
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
-    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
+    $bySuite=@{}
+    foreach($s in $Fixture.suites){$index=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal);foreach($n in $s.nodes){$index.Add([string]$n.Uid,$n)};$bySuite[$s.id]=$index}
+    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
     $seams=Join-Path $dir 'seams.ps1'
     [IO.File]::WriteAllText($seams, @'
 $NightlySeams=@{
@@ -968,7 +971,7 @@ $NightlySeams=@{
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
             $plan=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json
             $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
-            $nodes=@($s.nodes|Where-Object {@($group.plannedTestIds) -ccontains $_.Uid})
+            $nodes=@(foreach($uid in $group.plannedTestIds){$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid]})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
             $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter')})
             $special=($sid -ceq 'antiphon' -and @($group.classes|Where-Object {$_ -clike '*Priority*'}).Count -gt 0)
@@ -993,6 +996,7 @@ $NightlySeams=@{
     $summary=[IO.File]::ReadAllText((Join-Path $dir 'summary.json'))|ConvertFrom-Json
     $schedule=[IO.File]::ReadAllText((Join-Path $dir 'dispatch-schedule.json'))|ConvertFrom-Json
     $projection=[IO.File]::ReadAllText((Join-Path $dir 'timing/groups-executed.json'))|ConvertFrom-Json
+    Write-FFJson (Join-Path $dir 'actual-loop-observer.json') ([ordered]@{launches=$global:FFLoopBoundaryState.Launches.ToArray();discovery=$global:FFLoopBoundaryState.Discovery.ToArray();builds=$global:FFLoopBoundaryState.Builds})
     $prepared=@(foreach($s in $Fixture.suites){$plan=[IO.File]::ReadAllText((Join-Path $dir ('timing/groups-planned-'+$s.id+'.json')))|ConvertFrom-Json;[pscustomobject]@{id=$s.id;nodes=$s.nodes;exclusions=@();chunks=@(foreach($g in $plan.groups){[pscustomobject]@{id=$g.chunk;classes=$g.classes}})}})
     return [pscustomobject]@{Result=$result;Summary=$summary;Schedule=$schedule;Projection=$projection;Trace=$global:FFLoopBoundaryState;Prepared=$prepared;Root=$dir}
 }

@@ -3094,7 +3094,10 @@ function Write-TestPhaseSummaryFiles {
         tests = @($orderedTests)
         sharedFixtures = @($Report.Shared)
     }
-    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text (ConvertTo-TestPhaseJsonText -Value $summary)
+    # Diagnostic summary only: avoid hundreds of thousands of PowerShell
+    # recursive serializer calls for a complete native roster. Authority writers
+    # retain their original canonical serializer and exact bytes.
+    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text (ConvertTo-Json -InputObject $summary -Depth 50 -Compress)
 
     $headers = @('testId','duration','groupId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
     $lines = New-Object System.Collections.Generic.List[string]
