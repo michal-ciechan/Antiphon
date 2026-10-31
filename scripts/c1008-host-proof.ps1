@@ -5,7 +5,7 @@
 . (Join-Path $PSScriptRoot 'c1609-host-proof.ps1')
 
 function Get-C1008Sha256 {
-    param([Parameter(Mandatory = $true)][string]$Text)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
         $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))
@@ -187,10 +187,11 @@ function Write-C1008HostOriginProof {
         [Parameter(Mandatory = $true)][string]$LogPath,
         [ValidateSet(1,2)][int]$ProofVersion = 1,
         [string]$PhaseNonce = '', [string]$InventoryDigest = '', [string[]]$ApprovedOrigins = @(),
-        [int]$NetworkBudgetMs = 600000
+        [int]$NetworkBudgetMs = 600000,
+        [object[]]$RequiredObjects = @(), [string]$PreviousProofFile = ''
     )
     if ($ProofVersion -eq 2) {
-        Write-C1609HostOriginProof -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $NetworkBudgetMs
+        Write-C1609HostOriginProof -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $NetworkBudgetMs -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile
         return
     }
     if ($OperationId -cnotmatch '^c1008[0-9a-f]{32}$' -or $CreatedUnix -lt 0) {

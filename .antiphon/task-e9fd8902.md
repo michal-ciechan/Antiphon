@@ -71,3 +71,11 @@ CHECKPOINT OBJECTS-RED commit=0c22785c48aeb37a5b84e2cd80d4026296fcd466 build=ok 
 ```
 
 Terminal exit1, clean source/build verified. Method3.623s,row8.884s,build388.114s,total456.702s charged/456.703s wall; no slot wait or fired deadline. H1 retains its original v1 assertions. All required-object cases share one tiny origin/work seed; individual fresh proof scratch/output isolates the producer subject.
+
+## Coordinated renewal candidate
+
+The candidate moves private-origin inventory into the same FD8-owning host process as Preview/Apply. The credential-capable client answers nonce/phase/digest-bound proof requests over that process's stdin/stdout, fetches only approved origins in origin-only scratch, and proves every audited object by exact type and the preserved commit/tag/tree/blob rules. Complete per-repo required-object coverage is checked. Objects travel by protected files and stdin, never giant argv. Unchanged advertisements reuse only that phase's origin-only bundle; changed advertisements fetch a new graph and reprove the same objects. Network/graph work shares600s per phase; each confirmation is bounded10s. Unknown/EOF/malformed responses refuse. Live guards are read after network work, and controller confirmation precedes Ready and each exact target intent. No credential or ambient host Git config enters a helper.
+
+Initial inventory, immutable object-roster copies and exchange/control/admission records live under the protected host operation and phase nonce. Host graph files are hash-compared on both sides and flushed before authority advances. Preview manual authority is admitted before the long phase and rechecked byte-for-byte against the same fingerprints at completion; wall/monotonic disagreement still refuses. Fresh invocations and Resume receive no cached authority. Main v1 and all existing exact-name/refusal/delete/partial-resume gates remain. The file-backed SSH adapter now forwards the same interactive protocol without a nested lock. No production rollout or tool activation is performed.
+
+Bash, Node and PowerShell parsing, ASCII transport checks and git diff --check passed before this candidate commit. New code is not yet qualified; intended reds above are preserved. Definition files are unchanged; -Update has not run.

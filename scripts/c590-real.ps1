@@ -350,24 +350,139 @@ function Assert-C1008BridgeContext {
 
 # CARD-1607. Inventory is a separate remote case. Its private-origin list comes
 # back as a file. The desktop ls-remote runs here, and only ref lines cross back.
+function Get-C1609ProofSetDigest([string]$Directory) {
+    $lines=[Collections.Generic.List[string]]::new()
+    foreach($file in [IO.Directory]::EnumerateFileSystemEntries($Directory)){
+        $name=[IO.Path]::GetFileName($file)
+        if($name -ceq 'host-proof.log'){continue}
+        if($name -cnotmatch '^[0-9a-f]{64}(\.bundle)?$' -or
+            ([IO.FileInfo]::new($file).Attributes -band ([IO.FileAttributes]::ReparsePoint -bor [IO.FileAttributes]::Directory))){throw 'proof-custody'}
+        $lines.Add($name+' '+(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())
+    }
+    if(-not $lines.Count){throw 'proof-empty'}
+    $array=$lines.ToArray();[Array]::Sort($array,[StringComparer]::Ordinal)
+    return Get-C1008Sha256 (($array -join [char]10)+[char]10)
+}
+
+function Invoke-C1609RetirementCoordinator {
+    param([string]$Remote,[string]$EvidenceRoot,[string]$Run,[string]$Operation,[string]$ProjectId,[string]$ReceiptPath)
+    $psi=[Diagnostics.ProcessStartInfo]::new('ssh');$psi.UseShellExecute=$false
+    $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+    foreach($arg in @('-o','BatchMode=yes','-o','ConnectTimeout=30','-o','ServerAliveInterval=30','-o','ServerAliveCountMax=240','mc@server2',$Remote)){[void]$psi.ArgumentList.Add($arg)}
+    $proc=[Diagnostics.Process]::new();$proc.StartInfo=$psi;$started=$false;$code=2
+    $watch=[Diagnostics.Stopwatch]::StartNew();$networkMs=0L;$previousDirectory='';$previousDigest='none'
+    $objectDigest=Get-C1008Sha256 ''; $nonces=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $lineBuffer='';$exitedAt=$null;$phaseBinding=''
+    try {
+        [void]$proc.Start();$started=$true;$proc.StandardInput.NewLine="`n"
+        $streams=@(@{reader=$proc.StandardOutput;buffer=[char[]]::new(4096);task=$null;done=$false;count=0;protocol=$true},
+            @{reader=$proc.StandardError;buffer=[char[]]::new(4096);task=$null;done=$false;count=0;protocol=$false})
+        foreach($stream in $streams){$stream.task=$stream.reader.ReadAsync($stream.buffer,0,$stream.buffer.Length)}
+        while(@($streams|Where-Object{-not $_.done}).Count){
+            # Content has its own 10800s cap, network work shares 600s, and each
+            # confirmation is bounded. This outer cap cannot shorten a valid scan.
+            if($watch.Elapsed.TotalSeconds -gt 26000){throw 'deadline'}
+            if($proc.HasExited){if($null -eq $exitedAt){$exitedAt=$watch.ElapsedMilliseconds};if($watch.ElapsedMilliseconds-$exitedAt -gt 2000){throw 'drain'}}
+            foreach($stream in $streams){
+                if($stream.done -or -not $stream.task.IsCompleted){continue}
+                $n=$stream.task.GetAwaiter().GetResult();if($n -eq 0){$stream.done=$true;continue}
+                $stream.count+=$n;if($stream.count -gt 16777216){throw 'output-bound'}
+                if($stream.protocol){
+                    $lineBuffer += [string]::new($stream.buffer,0,$n)
+                    while(($newline=$lineBuffer.IndexOf([char]10)) -ge 0){
+                        $line=$lineBuffer.Substring(0,$newline);$lineBuffer=$lineBuffer.Substring($newline+1)
+                        if($line.Length -gt 8192){throw 'line-bound'}
+                        $response=''
+                        if($line -cmatch '^C1609_PROOF_REQUEST ([0-9a-f]{32}) ([0-9a-f]{32}) (initial|renew) (none|[0-9a-f]{64}) ([0-9a-f]{64})$'){
+                            $exchange=$Matches[1];$phase=$Matches[2];$kind=$Matches[3];$prior=$Matches[4];$requiredDigest=$Matches[5]
+                            if(-not $phaseBinding){$phaseBinding=$phase};if($phaseBinding -cne $phase){throw 'phase-binding'}
+                            if(-not $nonces.Add($exchange) -or $prior -cne $previousDigest -or
+                                ($kind -ceq 'initial' -and $previousDirectory) -or ($kind -ceq 'renew' -and -not $previousDirectory)){throw 'exchange-binding'}
+                            $remaining=600000-[int]$networkMs;if($remaining -le 0){throw 'network-deadline'}
+                            $destination=Join-Path $EvidenceRoot ('exchange-'+$exchange);[void][IO.Directory]::CreateDirectory($destination)
+                            $network=[Diagnostics.Stopwatch]::StartNew()
+                            $exports=@(Get-C1008RetireProofExports -EvidenceRoot $destination -Run $Run -RecycleOperation $Operation `
+                                -InventoryRemote 'true' -ProjectId $ProjectId -Coordinated -NetworkBudgetMs $remaining `
+                                -PreviousProofDirectory $previousDirectory -RequiredObjectDigest $requiredDigest -RequireObjectCoverage:($kind -ceq 'renew') -InventoryPhaseNonce $phase
+                            $networkMs += $network.ElapsedMilliseconds;if($networkMs -gt 600000 -or $exports.Count -ne 4){throw 'network-deadline'}
+                            $values=@{}
+                            foreach($export in $exports){if($export -cnotmatch "^export (C1008_HOST_PROOF|C1008_OPERATION_STARTED|C1609_PROOF_NONCE|C1609_PROOF_INVENTORY)='([A-Za-z0-9._/-]+)'$"){throw 'proof-response'};$values[$Matches[1]]=$Matches[2]}
+                            if($values.Count -ne 4){throw 'proof-response'}
+                            $name=[IO.Path]::GetFileName($values.C1008_HOST_PROOF)
+                            $previousDirectory=Join-Path $destination $name
+                            $previousDigest=Get-C1609ProofSetDigest $previousDirectory;$objectDigest=$requiredDigest
+                            $response='C1609_PROOF_RESPONSE '+$exchange+' '+$name+' '+$values.C1008_OPERATION_STARTED+' '+$values.C1609_PROOF_NONCE+' '+$values.C1609_PROOF_INVENTORY+' '+$previousDigest+' '+$prior+' '+$requiredDigest
+                            [IO.File]::AppendAllText((Join-Path $EvidenceRoot 'coordinator-exchanges.jsonl'),
+                                ((@{nonce=$exchange;kind=$kind;objectsDigest=$objectDigest;proofDigest=$previousDigest;networkMs=$network.ElapsedMilliseconds}|ConvertTo-Json -Compress)+"`n"))
+                        } elseif($line -cmatch '^C1609_CONTROL_REQUEST ([0-9a-f]{32}) (ready|apply|audit|antiphon-runner-temp_(runner-state|dind-data|runner-tmp|work)) (none|[0-9a-f]{64}) ([0-9a-f]{64})$'){
+                            $exchange=$Matches[1];$purpose=$Matches[2];$proof=$Matches[4];$objects=$Matches[5]
+                            if(-not $nonces.Add($exchange) -or $proof -cne $previousDigest -or $objects -cne $objectDigest){throw 'control-binding'}
+                            $response='C1609_CONTROL_RESPONSE '+$exchange+' '+$purpose+' '+$proof+' '+$objects
+                        } elseif($line.StartsWith('C1609_PROOF_REQUEST') -or $line.StartsWith('C1609_CONTROL_REQUEST')){throw 'protocol'}
+                        if($response){
+                            if($proc.HasExited){throw 'controller-eof'}
+                            $write=$proc.StandardInput.WriteLineAsync($response);if(-not $write.Wait(10000)){throw 'response-deadline'};$write.GetAwaiter().GetResult();$proc.StandardInput.Flush()
+                        }
+                    }
+                    if($lineBuffer.Length -gt 8192){throw 'line-bound'}
+                }
+                $stream.task=$stream.reader.ReadAsync($stream.buffer,0,$stream.buffer.Length)
+            }
+            [Threading.Thread]::Sleep(10)
+        }
+        if(-not $proc.WaitForExit(2000)){throw 'exit'};$code=$proc.ExitCode
+    } catch { $code=2 }
+    finally {
+        if($started){try{$proc.StandardInput.Close()}catch{};if(-not $proc.HasExited){$proc.Kill($true);[void]$proc.WaitForExit(2000)}}
+        $proc.Dispose()
+        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"))
+    }
+    return $code
+}
+
 function Get-C1008RetireProofExports {
     param(
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Parameter(Mandatory = $true)][string]$Run,
         [Parameter(Mandatory = $true)][string]$RecycleOperation,
         [Parameter(Mandatory = $true)][string]$InventoryRemote,
-        [string]$ProjectId = ''
+        [string]$ProjectId = '', [switch]$Coordinated, [int]$NetworkBudgetMs = 600000,
+        [string]$PreviousProofDirectory = '', [string]$RequiredObjectDigest = '', [switch]$RequireObjectCoverage,
+        [string]$InventoryPhaseNonce = ''
     )
+    $networkWatch=[Diagnostics.Stopwatch]::StartNew()
+    function Invoke-C1609ProofSsh([string]$Command,[string]$Receipt='') {
+        if(-not $Coordinated){return Invoke-C590Ssh $Command -ReceiptPath $Receipt}
+        try {
+            $remaining=[Math]::Min(30000,$NetworkBudgetMs-[int]$networkWatch.ElapsedMilliseconds)
+            $r=Invoke-C1609BoundedProcess -FileName ssh -Arguments @('-o','BatchMode=yes','-o','ConnectTimeout=15','mc@server2',$Command) -TimeoutMs $remaining
+            return $r.ExitCode
+        } catch {return 2}
+    }
+    function Invoke-C1609ProofScp([string[]]$Arguments) {
+        if(-not $Coordinated){& scp @Arguments;return $LASTEXITCODE}
+        try {
+            $remaining=[Math]::Min(300000,$NetworkBudgetMs-[int]$networkWatch.ElapsedMilliseconds)
+            $r=Invoke-C1609BoundedProcess -FileName scp -Arguments $Arguments -TimeoutMs $remaining
+            return $r.ExitCode
+        } catch {return 2}
+    }
     if ($Run -cnotmatch '^[a-z0-9]+$' -or $RecycleOperation -cnotmatch '^c1008[0-9a-f]{32}$') {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
-    $code = Invoke-C590Ssh $InventoryRemote -ReceiptPath (Join-Path $EvidenceRoot 'inventory-remote-output.txt')
+    $code = Invoke-C1609ProofSsh $InventoryRemote (Join-Path $EvidenceRoot 'inventory-remote-output.txt')
     $inventoryParent = $EvidenceRoot
-    & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $Run + "/retire-temp-inventory") $inventoryParent
-    if ($LASTEXITCODE -ne 0) {
+    $inventoryName='retire-temp-inventory';$inventorySource="mc@server2:/work/test-evidence/$Run/retire-temp-inventory"
+    if($Coordinated){
+        if($InventoryPhaseNonce -cnotmatch '^[0-9a-f]{32}$'){throw 'phase-binding'}
+        $inventoryName='inventory-'+$InventoryPhaseNonce
+        $inventorySource="mc@server2:/home/mc/antiphon-server2/retirement/$RecycleOperation/$inventoryName"
+    }
+    $copyCode=Invoke-C1609ProofScp @('-o','BatchMode=yes','-r',$inventorySource,$inventoryParent)
+    if ($copyCode -ne 0) {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
     }
-    $inventoryDir = Join-Path $EvidenceRoot 'retire-temp-inventory'
+    $inventoryDir = Join-Path $EvidenceRoot $inventoryName
     $resultPath = Join-Path $inventoryDir 'c590-result.json'
     if (-not (Test-Path -LiteralPath $resultPath)) {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
@@ -389,6 +504,7 @@ function Get-C1008RetireProofExports {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
     if ($rows.Count -eq 0) { return @() }
+    $requiredByOrigin=@{}
     try {
         $allowPath = Join-Path $inventoryDir 'trusted-origins.json'
         $allowText = [IO.File]::ReadAllText($allowPath)
@@ -399,6 +515,24 @@ function Get-C1008RetireProofExports {
         $requestLines = [string[]]@($rows | ForEach-Object { 'C1008_PRIVATE_ORIGIN repo='+$_.Repo+' origin='+$_.Origin+' originHash='+$_.OriginHash+' proofName='+$_.ProofName })
         [Array]::Sort($requestLines,[StringComparer]::Ordinal)
         $requestDigest = Get-C1008Sha256 (($requestLines -join [char]10)+[char]10)
+        foreach($row in $rows){if(-not $requiredByOrigin.ContainsKey($row.OriginHash)){$requiredByOrigin[$row.OriginHash]=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)}}
+        if($Coordinated){
+            $requiredFile=Join-Path $inventoryDir 'published-objects.txt'
+            if(([IO.FileInfo]::new($requiredFile)).Length -gt 16777216){throw 'required-size'}
+            $requiredText=[IO.File]::ReadAllText($requiredFile)
+            if((Get-C1008Sha256 $requiredText) -cne $RequiredObjectDigest){throw 'required-digest'}
+            $repos=@{};foreach($row in $rows){$repos[$row.Repo]=$row.OriginHash}
+            $covered=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach($line in $requiredText.Split([char]10)){
+                if($line -ceq ''){continue}
+                if($line -cnotmatch '^C1609_PROVED_OBJECT repo=([A-Za-z0-9._/-]+) object=([0-9a-f]{40}) type=(commit|tag|tree|blob)$'){throw 'required-shape'}
+                $repo=$Matches[1];$oid=$Matches[2];$type=$Matches[3]
+                if(-not $repos.ContainsKey($repo) -or -not $seen.Add($repo+':'+$oid)){throw 'required-coverage'}
+                [void]$covered.Add($repo);$group=$requiredByOrigin[$repos[$repo]]
+                if($group.ContainsKey($oid) -and $group[$oid] -cne $type){throw 'required-type'};$group[$oid]=$type
+            }
+            if($RequireObjectCoverage -and $covered.Count -ne $rows.Count){throw 'required-coverage'}
+        }
     } catch { Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2 }
     $phaseNonce = [guid]::NewGuid().ToString('N')
     $started = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -414,7 +548,7 @@ function Get-C1008RetireProofExports {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
     [void](New-Item -ItemType Directory -Path $localDir)
-    $mkdirCode = Invoke-C590Ssh ('mkdir ' + $remoteDir + ' && chmod 755 ' + $remoteDir)
+    $mkdirCode = Invoke-C1609ProofSsh ('mkdir ' + $remoteDir + ' && chmod 755 ' + $remoteDir)
     if ($mkdirCode -ne 0) {
         Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
     }
@@ -426,8 +560,11 @@ function Get-C1008RetireProofExports {
             if ($graphs.ContainsKey($row.OriginHash)) {
                 Copy-C1609HostOriginProof -Directory $localDir -SourceName $graphs[$row.OriginHash] -Repo $row.Repo -Origin $row.Origin
             } else {
-                $remaining = 600000 - [int]$phaseWatch.ElapsedMilliseconds
-                Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath -ProofVersion 2 -PhaseNonce $phaseNonce -InventoryDigest $requestDigest -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining
+                $remaining = $NetworkBudgetMs - [int]$phaseWatch.ElapsedMilliseconds
+                if($Coordinated){$remaining=[Math]::Min($remaining,$NetworkBudgetMs-[int]$networkWatch.ElapsedMilliseconds)}
+                $required=@(foreach($pair in $requiredByOrigin[$row.OriginHash].GetEnumerator()){[pscustomobject]@{objectId=$pair.Key;type=$pair.Value}})
+                $previousFile=if($PreviousProofDirectory){Join-Path $PreviousProofDirectory $row.ProofName}else{''}
+                Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath -ProofVersion 2 -PhaseNonce $phaseNonce -InventoryDigest $requestDigest -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining -RequiredObjects $required -PreviousProofFile $previousFile
                 $graphs[$row.OriginHash] = $row.ProofName
             }
         }
@@ -445,22 +582,22 @@ function Get-C1008RetireProofExports {
         if (-not (Test-Path -LiteralPath $proofFile)) {
             Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
         }
-        & scp -o BatchMode=yes $proofFile ('mc@server2:' + $remoteDir + '/' + $row.ProofName)
-        if ($LASTEXITCODE -ne 0) {
+        $copyCode=Invoke-C1609ProofScp @('-o','BatchMode=yes',$proofFile,('mc@server2:' + $remoteDir + '/' + $row.ProofName))
+        if ($copyCode -ne 0) {
             Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
         }
         $bundleFile = Join-Path $localDir ([string]$row.ProofName + '.bundle')
         if (Test-Path -LiteralPath $bundleFile) {
-            & scp -o BatchMode=yes $bundleFile ('mc@server2:' + $remoteDir + '/' + $row.ProofName + '.bundle')
-            if ($LASTEXITCODE -ne 0) {
+            $copyCode=Invoke-C1609ProofScp @('-o','BatchMode=yes',$bundleFile,('mc@server2:' + $remoteDir + '/' + $row.ProofName + '.bundle'))
+            if ($copyCode -ne 0) {
                 Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
             }
-            $bundleMode = Invoke-C590Ssh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName + '.bundle')
+            $bundleMode = Invoke-C1609ProofSsh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName + '.bundle')
             if ($bundleMode -ne 0) {
                 Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
             }
         }
-        $chmodCode = Invoke-C590Ssh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName)
+        $chmodCode = Invoke-C1609ProofSsh ('chmod 644 ' + $remoteDir + '/' + $row.ProofName)
         if ($chmodCode -ne 0) {
             Write-C590Result -EvidenceRoot $EvidenceRoot -Accepted $false -Diagnosis 'RecycleGitAuditUnknown' -ExitCode 2
         }
@@ -715,20 +852,13 @@ mkdir -- '{0}'
             "export C1008_RESUME='$recycleResume'"
             "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
         ) + $auditTimeoutExport
-        $retireProofExports = @()
         if ($Case -ceq 'retire-temp-runner' -and $recycleContext -ceq 'default') {
-            $inventoryExports = @(foreach ($export in $bridgeExports) {
-                if ($export -ceq "export C590_CASE='$Case'") { "export C590_CASE='retire-temp-inventory'" }
-                elseif ($export -ceq "export C1008_DRY_RUN='$recycleDryRun'") { "export C1008_DRY_RUN='0'" }
-                elseif ($export -ceq "export C1008_RESUME='$recycleResume'") { "export C1008_RESUME='0'" }
-                else { $export }
-            })
-            if ($recycleDryRun -ceq '1') { $inventoryExports += "export C1008_INVENTORY_ALLOW_PREVIEW='1'" }
-            $inventoryRemote = ($inventoryExports + @($remoteEntry)) -join '; '
-            $retireProofExports = @(Get-C1008RetireProofExports -EvidenceRoot $root -Run $run -RecycleOperation $recycleOperation -InventoryRemote $inventoryRemote -ProjectId $recycleProjectId)
+            $remote = ($bridgeExports + @("export C1609_EXCHANGE='1'","export C1609_EXCHANGE_PROOF_ROOT='/home/mc/antiphon-c590'",$remoteEntry)) -join '; '
+            $code = Invoke-C1609RetirementCoordinator -Remote $remote -EvidenceRoot $root -Run $run -Operation $recycleOperation -ProjectId $recycleProjectId -ReceiptPath (Join-Path $root 'remote-output.txt')
+        } else {
+            $remote = ($bridgeExports + @($remoteEntry)) -join '; '
+            $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
         }
-        $remote = ($bridgeExports + $retireProofExports + @($remoteEntry)) -join '; '
-        $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null
         if ($LASTEXITCODE -ne 0 -and ($recycleContext -or $null -ne $cleanup)) {

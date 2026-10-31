@@ -38,6 +38,16 @@ if(m){
 }
 fs.appendFileSync(root+'/manual-ssh-trace',JSON.stringify({packet:args.includes('-s'),hostCase:!!m,caseName:cmd.match(/export C590_CASE='([a-z-]+)'/)?.[1]||null})+'\n');
 fs.writeFileSync(root+'/manual-command-'+process.pid+'.sh',cmd,{mode:0o600});
-const r=cp.spawnSync('bash',['-c',cmd],{env:process.env,encoding:'utf8',timeout:45000,maxBuffer:4*1024*1024});
-fs.writeFileSync(root+'/manual-command-'+process.pid+'.log',(r.stdout||'')+(r.stderr||''),{mode:0o600});
-process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
+if(cmd.includes("export C1609_EXCHANGE='1'")){
+ const child=cp.spawn('bash',['-c',cmd],{env:process.env,stdio:['pipe','pipe','pipe']});
+ const log=fs.createWriteStream(root+'/manual-command-'+process.pid+'.log',{mode:0o600});
+ process.stdin.pipe(child.stdin);child.stdin.on('error',()=>{});
+ child.stdout.on('data',chunk=>{log.write(chunk);process.stdout.write(chunk);});
+ child.stderr.on('data',chunk=>{log.write(chunk);process.stderr.write(chunk);});
+ child.once('error',()=>{log.end();process.exitCode=2;});
+ child.once('close',code=>{process.stdin.unpipe(child.stdin);process.stdin.pause();log.end(()=>process.exit(code??2));});
+}else{
+ const r=cp.spawnSync('bash',['-c',cmd],{env:process.env,encoding:'utf8',timeout:45000,maxBuffer:4*1024*1024});
+ fs.writeFileSync(root+'/manual-command-'+process.pid+'.log',(r.stdout||'')+(r.stderr||''),{mode:0o600});
+ process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
+}

@@ -8167,6 +8167,11 @@ consider_common() {
     while IFS= read -r tip; do
         printf 'tip=%s common=%s\n' "$tip" "$hash"
     done < "$scratch/unique"
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        while IFS=' ' read -r oid type; do
+            printf 'C1609_PROVED_OBJECT repo=%s object=%s type=%s\n' "$(rel_repo "$rep")" "$oid" "$type"
+        done < "$scratch/types"
+    fi
 }
 cleanup() {
     local pids
@@ -9152,6 +9157,8 @@ c1008_recycle() {
     C1609_CENSUS_V2=0; C1609_APPLY_ACTIVE=0; C1609_RESUME_VALIDATED=0
     unset C1609_APPLY_INVENTORY_FILE
     unset C1609_ADMITTED_PID C1609_ADMITTED_DIGEST C1609_ADMITTED_AT C1609_ADMITTED_MONOTONIC C1609_ADMITTED_MANUAL
+    unset C1609_PREVIEW_ADMITTED_PID C1609_PREVIEW_ADMITTED_AT C1609_PREVIEW_ADMITTED_MONOTONIC C1609_PREVIEW_ADMITTED_MANUAL
+    unset C1609_BOUND_PROOF_DIGEST C1609_BOUND_OBJECT_DIGEST C1609_EXCHANGE_DIRECTORY C1609_REQUEST_DIGEST
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
     # Inventory is a docker --env only. A shell export must not reach the helper.
     if [ -n "${C1008_AUDIT_MODE:-}" ]; then write_result false RecycleContextInvalid 2; fi
@@ -9215,6 +9222,10 @@ c1008_recycle() {
         C1609_APPLY_ACTIVE=1
     fi
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            c1609_admit_manual_preview || c1008_refuse RecycleReceiptUnavailable
+            c1609_prepare_exchange || c1008_refuse RecycleGitAuditUnknown
+        fi
         if [ -n "${C994_IMAGE:-}" ]; then
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleGitAuditUnknown
             code=0
@@ -9254,7 +9265,8 @@ c1008_recycle() {
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
         if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
-            c1609_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+            c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
+            c1609_publication_gate ready || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
             printf 'C1609_RETIREMENT state=Ready\n'
             if [ -n "${C1008_HOST_PROOF:-}" ]; then
@@ -9350,6 +9362,7 @@ c1008_recycle() {
         [ -f "$(c1609_retirement_root)/receipt.json" ] || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         c1609_require_ready_preview admit || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
     fi
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then c1609_prepare_exchange || c1008_refuse RecycleGitAuditUnknown; fi
     c1008_audit_checked; audit="$C1008_AUDIT"
     if [ "${C1008_RESUME:-0}" = 1 ]; then
         if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
@@ -9402,6 +9415,7 @@ c1008_recycle() {
     # removed, the first full audit is already this phase's content observation.
     # Main and temp container effects retain the post-removal audit/comparison.
     if [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || [ "$(printf '%s' "$owned" | jq length)" != 0 ]; then
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then c1609_publication_gate audit || c1008_refuse RecycleGitAuditUnknown; fi
         c1008_audit_checked; after="$C1008_AUDIT"
         [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
     fi
@@ -9416,7 +9430,7 @@ c1008_recycle() {
         if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
         if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
         # Resume continues a journal that already passed this gate. A fresh apply does not.
-        c1609_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+        c1609_publication_gate apply || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
         if [ "${C1008_RESUME:-0}" != 1 ]; then
             c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         fi
@@ -9429,7 +9443,7 @@ c1008_recycle() {
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" '.volumes[$name].original')" ] \
                 || c1008_refuse RecycleResumeMismatch
             if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
-                c1609_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+                c1609_publication_gate "$name" || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
                 c1609_recheck_target "$name" || c1008_refuse RecycleResumeMismatch
                 c1609_target_intent "$name" || c1008_refuse RecycleReceiptUnavailable
             fi

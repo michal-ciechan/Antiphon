@@ -231,8 +231,8 @@ c1609_export_trusted_origins() {
         c1609_persist "$destination"
 }
 
-# A long audit or census wait may age the host observation. Until a renewed
-# exchange is available, stop before Ready/intent rather than reuse old proof.
+# The coordinator renews an aged observation through the bound host exchange.
+# Direct callers still refuse before Ready/intent when no renewal is available.
 c1609_publication_fresh() {
     local proof="${C1008_HOST_PROOF:-}" file name completed now count=0
     [ -n "$proof" ] || return 0
@@ -300,7 +300,7 @@ c1609_manual_attestation() {
       (if $phase=="Preview" then .previewDigest==null
        else .previewDigest==$digest and ($digest|test("^[0-9a-f]{64}$")) end)
       ' "$file" >/dev/null || return 1
-    # An Apply admitted by this owning shell validates these exact bytes at its
+    # A phase admitted by this owning shell validates these exact bytes at its
     # admission instant. A fresh invocation always validates against current UTC.
     now="${4:-}"
     if [ -z "$now" ]; then now="$(date -u +%s)" || return 1; fi
@@ -312,6 +312,137 @@ c1609_manual_attestation() {
       [ "$((now - stamp))" -ge -60 ] && [ "$((now - stamp))" -le 900 ] || return 1
     jq -cnS --slurpfile attestation "$file" --slurpfile grant "$grant" \
       '{attestation:$attestation[0],authority:$grant[0]}'
+}
+
+c1609_admit_manual_preview() {
+    [ "${C1008_MODE:-scripted}" = manual ] || return 0
+    local snapshot manual now monotonic root
+    now="$(date -u +%s)"; monotonic="$(c1609_monotonic_ms)" || return 1
+    snapshot="$(c1609_target_snapshot)" || return 1
+    manual="$(c1609_manual_attestation Preview "$snapshot" '')" || return 1
+    root="$(c1609_retirement_root)"
+    jq -cnS --arg op "$C1008_OPERATION" --arg nonce "$C1609_PHASE_NONCE" --argjson now "$now" --argjson monotonic "$monotonic" \
+      --arg digest "$(printf '%s\n' "$manual" | sha256sum | cut -d' ' -f1)" \
+      '{schema:1,phase:"Preview",operationId:$op,phaseNonce:$nonce,admittedUnix:$now,admittedMonotonicMs:$monotonic,authorityDigest:$digest}' |
+        c1609_persist "$root/manual-preview-admission-$C1609_PHASE_NONCE.json" || return 1
+    C1609_PREVIEW_ADMITTED_PID="$BASHPID"; C1609_PREVIEW_ADMITTED_AT="$now"
+    C1609_PREVIEW_ADMITTED_MONOTONIC="$monotonic"; C1609_PREVIEW_ADMITTED_MANUAL="$manual"
+}
+
+# Complete proof artifacts have a deterministic digest on both sides of the
+# private control stream. Nothing under an audited volume supplies this path.
+c1609_proof_set_digest() {
+    local directory="${C1008_HOST_PROOF:-}" file name
+    [ -n "$directory" ] || { printf 'none\n'; return 0; }
+    c1609_custody "$directory" dir || return 1
+    for file in "$directory"/*; do
+        name="${file##*/}"; [[ "$name" =~ ^[0-9a-f]{64}(\.bundle)?$ ]] || return 1
+        c1609_custody "$file" file || return 1
+    done
+    (
+        for file in "$directory"/*; do
+            printf '%s %s\n' "${file##*/}" "$(sha256sum -- "$file" | cut -d' ' -f1)" || exit 1
+        done
+    ) | LC_ALL=C sort | sha256sum | cut -d' ' -f1
+}
+
+c1609_request_host_proof() {
+    local kind="$1" objects="$2" previous reply nonce marker name started proof_nonce inventory produced returned_previous returned_objects extra directory file digest root
+    previous="$(c1609_proof_set_digest)" || return 1
+    [ "$previous" = "${C1609_BOUND_PROOF_DIGEST:-none}" ] || return 1
+    nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    printf 'C1609_PROOF_REQUEST %s %s %s %s %s\n' "$nonce" "$C1609_PHASE_NONCE" "$kind" "$previous" "$objects"
+    IFS=' ' read -r -t 600 marker reply name started proof_nonce inventory produced returned_previous returned_objects extra || return 1
+    [ "$marker" = C1609_PROOF_RESPONSE ] && [ "$reply" = "$nonce" ] && [ -z "$extra" ] &&
+      [ "$returned_previous" = "$previous" ] && [ "$returned_objects" = "$objects" ] &&
+      [[ "$started" =~ ^[0-9]{1,12}$ && "$proof_nonce" =~ ^[0-9a-f]{32}$ && "$inventory" =~ ^[0-9a-f]{64}$ && "$produced" =~ ^[0-9a-f]{64}$ ]] &&
+      [ "$name" = "c1008-proof-$C1008_OPERATION-$started-$proof_nonce" ] &&
+      [ "$inventory" = "$C1609_REQUEST_DIGEST" ] || return 1
+    directory="${C1609_EXCHANGE_PROOF_ROOT:?}/$name"
+    C1008_HOST_PROOF="$directory"; C1008_OPERATION_STARTED="$started"
+    C1609_PROOF_NONCE="$proof_nonce"; C1609_PROOF_INVENTORY="$inventory"
+    c1609_publication_fresh || return 1
+    digest="$(c1609_proof_set_digest)" || return 1
+    [ "$digest" = "$produced" ] || return 1
+    # Retain graph bytes as well as the intent/response before Ready or effects.
+    for file in "$directory"/*; do sync -- "$file" || return 1; done
+    sync -- "$directory" || return 1
+    root="$(c1609_retirement_root)"
+    jq -cnS --arg phase "$C1609_PHASE_NONCE" --arg nonce "$nonce" --arg kind "$kind" --arg previous "$previous" \
+      --arg proof "$digest" --arg objects "$objects" --arg inventory "$inventory" \
+      '{schema:1,phaseNonce:$phase,exchangeNonce:$nonce,kind:$kind,previousDigest:$previous,proofDigest:$proof,objectsDigest:$objects,inventoryDigest:$inventory}' |
+      c1609_persist "$root/exchange-$nonce.json" || return 1
+    C1609_BOUND_PROOF_DIGEST="$digest"; C1609_BOUND_OBJECT_DIGEST="$objects"
+}
+
+c1609_prepare_exchange() {
+    [ "${C1609_EXCHANGE:-0}" = 1 ] || return 0
+    local root destination out code=0 line empty
+    [ -z "${C1008_HOST_PROOF:-}" ] || return 1
+    root="$(c1609_retirement_root)"; destination="$root/inventory-$C1609_PHASE_NONCE"
+    [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
+    (umask 077; mkdir -- "$destination") || return 1
+    out="$root/inventory-$C1609_PHASE_NONCE.out"
+    [ ! -e "$out" ] && [ ! -L "$out" ] || return 1
+    c1008_audit_readonly inventory > "$out" || code=$?
+    sync -- "$out" || return 1
+    if [ "$code" != 0 ]; then
+        case "$code" in 3) c1008_refuse RecycleUnpublishedWork ;; 4) c1008_refuse RecycleWorktreeDirty ;; *) c1008_refuse RecycleGitAuditUnknown ;; esac
+    fi
+    LC_ALL=C awk '/^C1008_PRIVATE_ORIGIN / {print}' "$out" | LC_ALL=C sort > "$destination/private-origins.txt" || return 1
+    c1609_export_trusted_origins "$destination/private-origins.txt" "$destination/trusted-origins.json" || return 1
+    : > "$destination/published-objects.txt"
+    jq -cnS '{accepted:true,diagnosis:"",exit:0}' | c1609_persist "$destination/c590-result.json" || return 1
+    for line in private-origins.txt published-objects.txt; do sync -- "$destination/$line" || return 1; done
+    sync -- "$destination" || return 1
+    C1609_EXCHANGE_DIRECTORY="$destination"
+    C1609_REQUEST_DIGEST="$(sha256sum "$destination/private-origins.txt" | cut -d' ' -f1)" || return 1
+    empty="$(sha256sum "$destination/published-objects.txt" | cut -d' ' -f1)" || return 1
+    C1609_BOUND_PROOF_DIGEST=none; C1609_BOUND_OBJECT_DIGEST="$empty"
+    if [ -s "$destination/private-origins.txt" ]; then c1609_request_host_proof initial "$empty" || return 1; fi
+}
+
+c1609_publication_gate() {
+    local purpose="${1:-apply}" source directory objects before nonce marker reply returned_proof returned_objects returned_purpose extra attempt
+    if [ "${C1609_EXCHANGE:-0}" != 1 ]; then c1609_publication_fresh; return; fi
+    directory="${C1609_EXCHANGE_DIRECTORY:?}"
+    source="$CASE_DIR/apply-audit.out"
+    [ "${C1008_DRY_RUN:-0}" != 1 ] || source="$CASE_DIR/preview-audit.out"
+    c1609_custody "$source" file || return 1
+    [ ! -e "$directory/published-objects.next" ] && [ ! -L "$directory/published-objects.next" ] || return 1
+    c1609_custody "$directory/published-objects.txt" file || return 1
+    LC_ALL=C awk '/^C1609_PROVED_OBJECT / {print}' "$source" | LC_ALL=C sort -u > "$directory/published-objects.next" || return 1
+    while IFS= read -r objects; do
+        [[ "$objects" =~ ^C1609_PROVED_OBJECT\ repo=[A-Za-z0-9._/-]+\ object=[0-9a-f]{40}\ type=(commit|tag|tree|blob)$ ]] || return 1
+    done < "$directory/published-objects.next"
+    sync -- "$directory/published-objects.next" && mv -T -- "$directory/published-objects.next" "$directory/published-objects.txt" && sync -- "$directory" || return 1
+    objects="$(sha256sum "$directory/published-objects.txt" | cut -d' ' -f1)" || return 1
+    if [ -e "$directory/objects-$objects.txt" ] || [ -L "$directory/objects-$objects.txt" ]; then
+        c1609_custody "$directory/objects-$objects.txt" file && cmp -s "$directory/published-objects.txt" "$directory/objects-$objects.txt" || return 1
+    else
+        cp -- "$directory/published-objects.txt" "$directory/objects-$objects.txt" && sync -- "$directory/objects-$objects.txt" && sync -- "$directory" || return 1
+    fi
+    before="$(c1609_proof_set_digest)" || return 1
+    [ "$before" = "$C1609_BOUND_PROOF_DIGEST" ] || return 1
+    for attempt in 1 2; do
+        if [ -n "${C1008_HOST_PROOF:-}" ] && { [ "$objects" != "$C1609_BOUND_OBJECT_DIGEST" ] || ! c1609_publication_fresh; }; then
+            c1609_request_host_proof renew "$objects" || return 1
+        fi
+        # A network proof may take minutes. Refresh all live facts after that
+        # work, then check whether the bounded census itself aged publication.
+        c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
+        if c1609_publication_fresh; then break; fi
+        [ "$attempt" != 2 ] || return 1
+    done
+    nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    printf 'C1609_CONTROL_REQUEST %s %s %s %s\n' "$nonce" "$purpose" "$C1609_BOUND_PROOF_DIGEST" "$objects"
+    IFS=' ' read -r -t 10 marker reply returned_purpose returned_proof returned_objects extra || return 1
+    [ "$marker" = C1609_CONTROL_RESPONSE ] && [ "$reply" = "$nonce" ] && [ "$returned_purpose" = "$purpose" ] &&
+      [ "$returned_proof" = "$C1609_BOUND_PROOF_DIGEST" ] && [ "$returned_objects" = "$objects" ] && [ -z "$extra" ] || return 1
+    jq -cnS --arg phase "$C1609_PHASE_NONCE" --arg nonce "$nonce" --arg purpose "$purpose" --arg proof "$returned_proof" --arg objects "$objects" \
+      '{schema:1,phaseNonce:$phase,exchangeNonce:$nonce,purpose:$purpose,proofDigest:$proof,objectsDigest:$objects}' |
+      c1609_persist "$(c1609_retirement_root)/control-$nonce.json" || return 1
+    c1609_publication_fresh
 }
 
 c1609_recheck_target() {
@@ -326,7 +457,7 @@ c1609_recheck_target() {
 }
 
 c1609_write_ready_receipt() {
-    local root targets digest now daemon nonce snapshot manual
+    local root targets digest now daemon nonce snapshot manual admission_time='' monotonic elapsed
     root="$(c1609_retirement_root)"
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
       [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
@@ -337,7 +468,15 @@ c1609_write_ready_receipt() {
     c1609_custody "$CASE_DIR/preview-audit.out" file || return 1
     targets="$(printf '%s\n' "${C1008_TARGETS[@]}" | jq -R . | jq -sc .)" || return 1
     snapshot="$(c1609_target_snapshot)" || return 1
-    manual="$(c1609_manual_attestation Preview "$snapshot" '')" || return 1
+    if [ "${C1609_PREVIEW_ADMITTED_PID:-}" = "$BASHPID" ]; then
+        now="$(date -u +%s)"; monotonic="$(c1609_monotonic_ms)" || return 1
+        elapsed=$((monotonic - C1609_PREVIEW_ADMITTED_MONOTONIC))
+        [ "$elapsed" -ge 0 ] && [ "$(((now-C1609_PREVIEW_ADMITTED_AT)*1000-elapsed))" -ge -60000 ] &&
+          [ "$(((now-C1609_PREVIEW_ADMITTED_AT)*1000-elapsed))" -le 60000 ] || return 1
+        admission_time="$C1609_PREVIEW_ADMITTED_AT"
+    fi
+    manual="$(c1609_manual_attestation Preview "$snapshot" '' "$admission_time")" || return 1
+    [ -z "$admission_time" ] || [ "$manual" = "$C1609_PREVIEW_ADMITTED_MANUAL" ] || return 1
     daemon="$(docker info --format '{{.ID}}')" || return 1
     [ -n "$daemon" ] && [[ "$daemon" != *[$'\n\r\t']* ]] || return 1
     digest="$(c1609_inventory_digest "$CASE_DIR/preview-audit.out")" || return 1
