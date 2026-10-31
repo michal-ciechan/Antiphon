@@ -1,0 +1,6 @@
+# Wrapper input only. Deliberately incompatible with generic checkpoint schema 1.
+# No executable command, build or paid row is present before S1c qualification.
+schemaVersion: -1545
+format: antiphon-live-lane-spec-v1
+lane: live-claude-core-windows
+nativeQualified: false
