@@ -3,12 +3,18 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Dtos;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.E2E.Fixtures;
 
 public sealed partial class LandDeliveryFixture
 {
+    internal Task<AttentionItemDto> PollingAttentionAsync(AttentionDto attention, Guid requestId,
+        Func<CancellationToken, Task<string>>? producerState = null)
+        => Task.FromResult(attention.Items.Single(i => i.TaskId == TaskId
+            && i.Kind == AttentionKind.LandOutcomeUnconfirmed && i.Headline.Contains("Outcome")));
+
     // Diagnostic collection cannot extend the receipt deadline or replace its failure.
     internal async Task<TimeoutException> ReceiptTimeoutAsync(TimeoutException original, LandNotificationKind kind,
         Guid? requestId, Guid? notificationId, Func<CancellationToken, Task<string>>? producerState = null)
