@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 foreach ($name in 'nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','nightly-failure-history','c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
+. (Join-Path $PSScriptRoot 'lib/qualification-supervisor-heartbeat.ps1')
 $repo = Split-Path -Parent $PSScriptRoot
 $root = New-C487Root $ResultsDirectory
 $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -1022,6 +1023,36 @@ function Test-ActualLoopFollowsSchedule {
     $previous=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@([pscustomobject]@{id='A';chunk='1';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='2';result='FAIL';exitCode=1})}
     $order=Resolve-NightlyPreviousRunOrder $entries $previous ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
     Assert-FF ((@($order.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -ceq 'B2,A4,A5,A2,B1,B3,B4,B5,A1,A3' -and $order.reason -ceq 'previous-run-order') 'progressOrder'
+    Test-FFHeartbeatBindings
+}
+
+function Test-FFHeartbeatBindings {
+    $dir=Join-Path $root 'heartbeat';[void][IO.Directory]::CreateDirectory($dir)
+    foreach($sid in @('antiphon','session-runner')){
+        $seconds=1800;if($sid -ceq 'session-runner'){$seconds=60}
+        $groups=@([pscustomobject]@{id='all-group-3';classes=@('Fixture.Cost');seconds=$seconds},[pscustomobject]@{id='all-group-4';classes=@('Fixture.Short');seconds=120})
+        [void](Write-TestPhasePlannedManifest -LogRoot $dir -RunId 'heartbeat-run' -Attempt '2' -Suite $sid -SourceDigest ('a'*40) -AssemblyDigest ('d'*64) -PolicyDigest ('b'*64) -CostFileDigest ('c'*64) -AssemblyId $sid -Groups $groups -DiscoveryNodes @())
+    }
+    $timing=Join-Path $dir 'timing';$path=Join-Path $timing 'groups-planned.json'
+    $collision=$true
+    foreach($sid in @('antiphon','session-runner','antiphon')){
+        [void](Write-QualificationActiveChunkIdentity $timing $sid 'all-group-3' 'heartbeat-run' '2')
+        $expected=1800;if($sid -ceq 'session-runner'){$expected=60}
+        $legacy=Get-QualificationGroupPlannedSeconds $path 'all-group-3'
+        $qualified=Get-QualificationGroupPlannedSeconds $path 'all-group-3' $sid 'heartbeat-run' '2'
+        if($legacy -ne $expected -or $qualified -ne $expected -or (Get-QualificationHeartbeatIdleBudget $legacy).minutes -ne [math]::Max(10,($expected/60))){$collision=$false}
+    }
+    Assert-FF $collision 'heartbeatCollision'
+    $legacyOk=$true
+    foreach($pair in @(@('all-group-3',1800),@('all-group-4',120))){
+        [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' $pair[0] 'heartbeat-run' '2')
+        if((Get-QualificationGroupPlannedSeconds $path $pair[0]) -ne $pair[1]){$legacyOk=$false}
+    }
+    Assert-FF $legacyOk 'heartbeatLegacy'
+    [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' 'all-group-3' 'heartbeat-run' '2')
+    $bad=( $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3' 'session-runner' 'heartbeat-run' '2')) -and ($null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3' 'antiphon' 'wrong-run' '2')) -and ($null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3' 'antiphon' 'heartbeat-run' '9')) -and ($null -eq (Get-QualificationGroupPlannedSeconds $path 'All-group-3'))
+    [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' 'all-group-3' 'heartbeat-run' '2' Idle)
+    Assert-FF ($bad -and $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3')) 'heartbeatRefusals'
 }
 
 function Test-JournalCustodySurvivesInterleaving {
@@ -1050,7 +1081,8 @@ function Test-JournalCustodySurvivesInterleaving {
 }
 
 switch -Exact ($Case) {
-    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=8 }
+    'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=3 }
+    'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=11 }
     'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=8 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }

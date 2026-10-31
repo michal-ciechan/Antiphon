@@ -10,11 +10,13 @@ public sealed class RcFailedFirstExecutionTests
     // Provisional full replay bound uses S2's measured 156-launch cost (CARD-1514).
     [Test, Timeout(1_140_000)]
     public Task ActualLoopFollowsSchedule(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ActualLoopFollowsSchedule), 8,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ActualLoopFollowsSchedule), 11,
             ["FF ActualLoopFollowsSchedule.actualTrace", "FF ActualLoopFollowsSchedule.permutation",
              "FF ActualLoopFollowsSchedule.oneBuildDiscovery", "FF ActualLoopFollowsSchedule.historyBinding",
              "FF ActualLoopFollowsSchedule.allChunksVerdict", "FF ActualLoopFollowsSchedule.finalProjection",
-             "FF ActualLoopFollowsSchedule.fallback", "FF ActualLoopFollowsSchedule.progressOrder"],
+             "FF ActualLoopFollowsSchedule.fallback", "FF ActualLoopFollowsSchedule.progressOrder",
+             "FF ActualLoopFollowsSchedule.heartbeatCollision", "FF ActualLoopFollowsSchedule.heartbeatLegacy",
+             "FF ActualLoopFollowsSchedule.heartbeatRefusals"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(1080), TimeSpan.FromSeconds(10)), cancellationToken);
 
     [Test, Timeout(180_000)]
