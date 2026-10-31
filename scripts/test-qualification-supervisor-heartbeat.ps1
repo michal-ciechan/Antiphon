@@ -191,8 +191,13 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ('qhb-' + [guid]::NewGuid().ToStrin
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
     $plannedPath = Join-Path $temp 'groups-planned.json'
-    $plannedJson = '{"version":1,"groups":[{"chunk":"all-group-105","plannedSeconds":600},{"chunk":"other","plannedSeconds":1800}]}'
+    $plan=[ordered]@{version=1;suite='antiphon';runId='standalone-heartbeat';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);costFileDigest=('c'*64);assemblyDigest=('d'*64);groups=@([ordered]@{chunk='all-group-105';plannedSeconds=600},[ordered]@{chunk='other';plannedSeconds=1800})}
+    $plannedJson=ConvertTo-Json -InputObject $plan -Depth 8 -Compress
     [IO.File]::WriteAllText($plannedPath, $plannedJson)
+    [IO.File]::WriteAllText((Join-Path $temp 'groups-planned-antiphon.json'),$plannedJson)
+    $index=[ordered]@{version=1;runId=$plan.runId;attempt='1';suites=@([ordered]@{suite='antiphon';file='groups-planned-antiphon.json';runId=$plan.runId;attempt='1';sourceDigest=$plan.sourceDigest;policyDigest=$plan.policyDigest;costFileDigest=$plan.costFileDigest;assemblyDigest=$plan.assemblyDigest})}
+    [IO.File]::WriteAllText((Join-Path $temp 'groups-planned-index.json'),(ConvertTo-Json -InputObject $index -Depth 8 -Compress))
+    [void](Write-QualificationActiveChunkIdentity $temp 'antiphon' 'all-group-105' $plan.runId '1')
     $found = Get-QualificationGroupPlannedSeconds -Path $plannedPath -ChunkId 'all-group-105'
     $missingChunk = Get-QualificationGroupPlannedSeconds -Path $plannedPath -ChunkId 'missing-group'
     $wrongCase = Get-QualificationGroupPlannedSeconds -Path $plannedPath -ChunkId 'All-Group-105'
