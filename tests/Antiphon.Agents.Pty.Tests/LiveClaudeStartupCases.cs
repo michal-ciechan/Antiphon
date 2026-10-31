@@ -130,7 +130,13 @@ internal static class LiveClaudeStartupCases
             var elapsed=TimeSpan.Zero;
             var observation=await LiveClaudeStartupEvidence.ObserveOffAsync(Owner,Control,()=>elapsed,
                 ()=>Task.FromResult(elapsed>=TimeSpan.FromSeconds(arrival)?new StartupBridge(Owner,"late-bridge"):null),
-                step=>{elapsed+=step;return Task.CompletedTask;},()=>Settings(Owner.Session));
+                step=>
+                {
+                    var next=elapsed+step;
+                    var eventTime=TimeSpan.FromSeconds(arrival);
+                    elapsed=elapsed<eventTime && next>eventTime ? eventTime : next;
+                    return Task.CompletedTask;
+                },()=>Settings(Owner.Session));
             Assert(LiveClaudeStartupEvidence.OwnedBridge(Owner,observation.Bridge),v,arrival==15?"deadline-bridge":"late-bridge");
             Fails(()=>LiveClaudeStartupEvidence.RequireOff(Experiment,Control,observation),"C1545 startup/off",v,arrival==15?"deadline-bridge":"late-bridge");
         }
