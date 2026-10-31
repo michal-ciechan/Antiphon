@@ -1,6 +1,6 @@
-#requires -Version 5.1
+#requires -Version 7.4
 # S1 is an inert parser/identity library. No admission, execution or release credit.
-# Syntax parses in Windows PowerShell 5.1; execution needs PowerShell 7/Test-Json.
+# Run with pwsh 7.4+; System.Text.Json and draft 2020-12 Test-Json are required.
 if (-not ('QualificationGraphJson' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -79,13 +79,13 @@ public static class QualificationGraphJson
         }
         return null;
     }
-    public static string Canonical(JsonElement value)
+    public static string Canonical(JsonElement value, string key = "")
     {
         using (var stream = new MemoryStream())
         {
             using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions {
                 Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
-            { Write(writer, value, ""); }
+            { Write(writer, value, key); }
             return Encoding.UTF8.GetString(stream.ToArray());
         }
     }
@@ -211,11 +211,39 @@ function New-QualificationRefusal {
     return [pscustomobject]@{ Accepted = $false; Category = $Category; Path = $Path; Reason = $Reason }
 }
 
+
+function Test-QualificationCatalogSchema {
+    param([string]$Json, [string]$SchemaPath)
+    # Reuse the graph schema's exact object definitions, with a closed catalog root.
+    # A catalog cannot carry graph-only fields (phase, runId, edges, history, ...).
+    $source = [IO.File]::ReadAllText($SchemaPath) | ConvertFrom-Json -AsHashtable
+    $fields = @('profile', 'policyDigest', 'rosterDigest', 'candidate', 'targets', 'nodes', 'uids')
+    $properties = [ordered]@{}
+    foreach ($field in $fields) {
+        if ($field -ceq 'uids') {
+            $properties[$field] = @{ type = 'object'; additionalProperties = @{
+                type = 'array'; uniqueItems = $true; items = @{ type = 'string'; minLength = 1 }
+            } }
+        } else { $properties[$field] = $source.properties[$field] }
+    }
+    $catalogSchema = [ordered]@{
+        '$schema' = $source.'$schema'; type = 'object'; additionalProperties = $false
+        required = $fields; properties = $properties; '$defs' = $source.'$defs'
+    } | ConvertTo-Json -Depth 64 -Compress
+    return Test-Json -Json $Json -Schema $catalogSchema -ErrorAction SilentlyContinue
+}
+
+function Get-QualificationFieldIdentity {
+    param([System.Text.Json.JsonElement]$Object, [string]$Field)
+    return [QualificationGraphJson]::Canonical($Object.GetProperty($Field), $Field)
+}
+
 function Read-QualificationGraph {
     param(
         [string]$Json,
         [string]$CatalogJson,
-        [string]$SchemaPath = (Join-Path $PSScriptRoot '../../docs/schemas/qualification-run-plan-v1.schema.json')
+        [string]$SchemaPath = (Join-Path $PSScriptRoot '../../docs/schemas/qualification-run-plan-v1.schema.json'),
+        [string]$ExpectedCatalogHash
     )
     try { $decoded = [QualificationGraphJson]::Decode($Json) }
     catch {
@@ -235,52 +263,70 @@ function Read-QualificationGraph {
         return New-QualificationRefusal 'identity' '/catalog' 'catalog-required'
     }
     try {
-        [void][QualificationGraphJson]::Decode($CatalogJson)
-        $catalog = $CatalogJson | ConvertFrom-Json
+        $catalog = [QualificationGraphJson]::Decode($CatalogJson)
+        if (-not (Test-QualificationCatalogSchema $CatalogJson $SchemaPath)) { throw 'catalog-shape' }
     } catch { return New-QualificationRefusal 'identity' '/catalog' 'catalog-invalid' }
+    if ($ExpectedCatalogHash -cnotmatch '^[a-f0-9]{64}$') {
+        return New-QualificationRefusal 'identity' '/catalog' 'catalog-pin-required'
+    }
+    if ((Get-QualificationSha256 $CatalogJson) -cne $ExpectedCatalogHash) {
+        return New-QualificationRefusal 'identity' '/catalog' 'catalog-pin-mismatch'
+    }
     $graph = $Json | ConvertFrom-Json
     foreach ($field in @('profile', 'policyDigest', 'rosterDigest', 'candidate')) {
-        $actual = ConvertTo-QualificationCanonicalJson (ConvertTo-Json -InputObject $graph.$field -Depth 64 -Compress)
-        $expected = ConvertTo-QualificationCanonicalJson (ConvertTo-Json -InputObject $catalog.$field -Depth 64 -Compress)
-        if ($actual -cne $expected) { return New-QualificationRefusal 'identity' ('/' + $field) 'catalog-mismatch' }
+        if ((Get-QualificationFieldIdentity $decoded $field) -cne (Get-QualificationFieldIdentity $catalog $field)) {
+            return New-QualificationRefusal 'identity' ('/' + $field) 'catalog-mismatch'
+        }
     }
     $targetIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    for ($i = 0; $i -lt $graph.targets.Count; $i++) {
-        $target = $graph.targets[$i]
-        if (-not $targetIds.Add($target.id)) { return New-QualificationRefusal 'identity' "/targets/$i/id" 'duplicate-target' }
-        $known = @($catalog.targets | Where-Object { $_.id -ceq $target.id })
+    $targets = @($decoded.GetProperty('targets').EnumerateArray())
+    $catalogTargets = @($catalog.GetProperty('targets').EnumerateArray())
+    for ($i = 0; $i -lt $targets.Count; $i++) {
+        $target = $targets[$i]
+        $id = $target.GetProperty('id').GetString()
+        if (-not $targetIds.Add($id)) { return New-QualificationRefusal 'identity' "/targets/$i/id" 'duplicate-target' }
+        $known = @($catalogTargets | Where-Object { $_.GetProperty('id').GetString() -ceq $id })
         if ($known.Count -ne 1) { return New-QualificationRefusal 'identity' "/targets/$i/id" 'target-unregistered' }
         foreach ($field in @('bindingDigest', 'capability', 'parallelism', 'resourceKeys', 'quota')) {
-            $actual = ConvertTo-QualificationCanonicalJson (ConvertTo-Json -InputObject @{ $field = $target.$field } -Depth 64 -Compress)
-            $expected = ConvertTo-QualificationCanonicalJson (ConvertTo-Json -InputObject @{ $field = $known[0].$field } -Depth 64 -Compress)
-            if ($actual -cne $expected) { return New-QualificationRefusal 'identity' "/targets/$i/$field" 'catalog-mismatch' }
+            if ((Get-QualificationFieldIdentity $target $field) -cne (Get-QualificationFieldIdentity $known[0] $field)) {
+                return New-QualificationRefusal 'identity' "/targets/$i/$field" 'catalog-mismatch'
+            }
         }
     }
     $nodeIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    for ($i = 0; $i -lt $graph.nodes.Count; $i++) {
-        $node = $graph.nodes[$i]
-        if (-not $nodeIds.Add($node.id)) { return New-QualificationRefusal 'identity' "/nodes/$i/id" 'duplicate-node' }
-        $known = @($catalog.nodes | Where-Object { $_.id -ceq $node.id })
+    $nodes = @($decoded.GetProperty('nodes').EnumerateArray())
+    $catalogNodes = @($catalog.GetProperty('nodes').EnumerateArray())
+    for ($i = 0; $i -lt $nodes.Count; $i++) {
+        $node = $nodes[$i]
+        $id = $node.GetProperty('id').GetString()
+        if (-not $nodeIds.Add($id)) { return New-QualificationRefusal 'identity' "/nodes/$i/id" 'duplicate-node' }
+        $known = @($catalogNodes | Where-Object { $_.GetProperty('id').GetString() -ceq $id })
         if ($known.Count -ne 1) { return New-QualificationRefusal 'identity' "/nodes/$i/id" 'node-unregistered' }
-        # Target/binding and ordering annotations are deliberately outside node identity.
+        # Compare decoded subtrees directly; never round-trip identity through PowerShell numbers.
         foreach ($field in @('kind', 'platformOfRecord', 'coverageRole', 'laneId', 'project', 'suite', 'chunk', 'canonicalOrdinal', 'action', 'requires', 'disposition', 'inputFingerprint', 'skipReceipt')) {
-            $actual = ConvertTo-QualificationCanonicalJson (ConvertTo-Json -InputObject $node.$field -Depth 64 -Compress)
-            $expected = ConvertTo-QualificationCanonicalJson (ConvertTo-Json -InputObject $known[0].$field -Depth 64 -Compress)
-            if ($actual -cne $expected) { return New-QualificationRefusal 'identity' "/nodes/$i/$field" 'catalog-mismatch' }
+            if ((Get-QualificationFieldIdentity $node $field) -cne (Get-QualificationFieldIdentity $known[0] $field)) {
+                return New-QualificationRefusal 'identity' "/nodes/$i/$field" 'catalog-mismatch'
+            }
         }
+        $selection = $node.GetProperty('selection')
+        $knownSelection = $known[0].GetProperty('selection')
         foreach ($field in @('filter', 'uidSetDigest', 'expectedCount')) {
-            if ($node.selection.$field -cne $known[0].selection.$field) {
+            if ((Get-QualificationFieldIdentity $selection $field) -cne (Get-QualificationFieldIdentity $knownSelection $field)) {
                 return New-QualificationRefusal 'identity' "/nodes/$i/selection/$field" 'catalog-mismatch'
             }
         }
-        if (-not $targetIds.Contains($node.targetId)) {
+        if (-not $targetIds.Contains($node.GetProperty('targetId').GetString())) {
             return New-QualificationRefusal 'identity' "/nodes/$i/targetId" 'target-unregistered'
         }
-        if ($null -ne $node.selection.uidSetDigest) {
-            $uidProperty = @($catalog.uids.PSObject.Properties | Where-Object { $_.Name -ceq $node.id })
-            if ($uidProperty.Count -ne 1 -or
-                (Get-QualificationUidSetDigest $uidProperty[0].Value) -cne $node.selection.uidSetDigest -or
-                @($uidProperty[0].Value).Count -ne $node.selection.expectedCount) {
+        if ($selection.GetProperty('uidSetDigest').ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+            $uids = [System.Text.Json.JsonElement]::new()
+            if (-not $catalog.GetProperty('uids').TryGetProperty($id, [ref]$uids)) {
+                return New-QualificationRefusal 'identity' "/nodes/$i/selection" 'catalog-uid-mismatch'
+            }
+            $members = @($uids.EnumerateArray() | ForEach-Object { $_.GetString() })
+            if ((Get-QualificationUidSetDigest $members) -cne $selection.GetProperty('uidSetDigest').GetString() -or
+                [QualificationGraphJson]::Canonical([QualificationGraphJson]::Decode([string]$members.Count)) -cne
+                    (Get-QualificationFieldIdentity $selection 'expectedCount')) {
                 return New-QualificationRefusal 'identity' "/nodes/$i/selection" 'catalog-uid-mismatch'
             }
         }

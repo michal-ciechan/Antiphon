@@ -1,4 +1,4 @@
-#requires -Version 5.1
+#requires -Version 7.4
 param([ValidateSet('SchemaAndIdentity')][string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
 $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -52,7 +52,12 @@ function Invoke-RestMethod { throw 'unexpected-runner' }
 function Write-NightlyAtomicJson { throw 'unexpected-receipt' }
 . "$PSScriptRoot/lib/qualification-graph.ps1"
 $setupSeconds = $clock.Elapsed.TotalSeconds
-Check ([bool](Get-Command Read-QualificationGraph -ErrorAction SilentlyContinue)) 'production-surface'
+Check ([bool](Get-Command Read-PinnedGraph -ErrorAction SilentlyContinue)) 'production-surface'
+function Read-PinnedGraph {
+    param([string]$Json, [string]$CatalogJson, [string]$SchemaPath)
+    # The test supplies the independent fixture/variant pin, as a controller must.
+    return Read-QualificationGraph $Json $CatalogJson $SchemaPath -ExpectedCatalogHash (Independent-Hash $CatalogJson)
+}
 $catalogJson = Load 'catalog.json'
 $pins = (Load 'identity.expected.json' | ConvertFrom-Json).catalogPins
 $pinsOk = (Independent-Hash $catalogJson) -ceq (Load 'catalog.sha256').Trim()
@@ -60,13 +65,13 @@ foreach ($pin in $pins.PSObject.Properties) { $pinsOk = $pinsOk -and (Independen
 Check $pinsOk 'catalog-pin'
 $graphJson = Load 'execute.valid.json'
 $base = $graphJson | ConvertFrom-Json
-$healthy = Read-QualificationGraph $graphJson $catalogJson $schema
+$healthy = Read-PinnedGraph $graphJson $catalogJson $schema
 foreach ($entry in @(
     @('valid-prepare', 'prepare.valid.json'),
     @('valid-execute', 'execute.valid.json'),
     @('valid-sentinel', 'execute-preparation-failed.valid.json'))) {
     $text = Load $entry[1]
-    $result = Read-QualificationGraph $text $catalogJson $schema
+    $result = Read-PinnedGraph $text $catalogJson $schema
     $original = $text | ConvertFrom-Json
     Check ($result.Accepted -and (Json $result.Graph) -ceq (Json $original)) $entry[0] $result.Reason
 }
@@ -74,7 +79,7 @@ foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
     $edited = Edit-Graph (Copy-Graph $base) $recipe
     $text = Json $edited
     $direct = Test-QualificationGraphSchema $text $schema
-    $result = Read-QualificationGraph $text $catalogJson $schema
+    $result = Read-PinnedGraph $text $catalogJson $schema
     $boundary = ($direct -eq ($recipe.boundary -ceq 'identity'))
     $path = $result.SchemaPaths -ccontains $recipe.path
     if ($recipe.boundary -ceq 'identity') { $path = $result.Path -ceq $recipe.path }
@@ -82,7 +87,7 @@ foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
         $result.Category -ceq $recipe.category -and $path) $recipe.id ("path=" + $recipe.path + " result=" + $result.Category + ':' + $result.Path)
     if ((Inventory $fixtures) -cne $beforeInputs) { throw 'fixture-bytes-changed' }
 }
-$missing = Read-QualificationGraph $graphJson '' $schema
+$missing = Read-PinnedGraph $graphJson '' $schema
 Check ($healthy.Accepted -and -not $missing.Accepted -and $missing.Reason -ceq 'catalog-required' -and $missing.Path -ceq '/catalog') 'catalog-missing'
 
 # Catalog membership must independently prove the graph's declared selection.
@@ -96,26 +101,43 @@ foreach ($fault in @('wrong-uid', 'missing-uid', 'extra-uid', 'wrong-count', 'wr
         'wrong-count' { $cat.nodes[3].selection.expectedCount = 3; $g.nodes[3].selection.expectedCount = 3 }
         'wrong-digest' { $cat.nodes[3].selection.uidSetDigest = 'f' * 64; $g.nodes[3].selection.uidSetDigest = 'f' * 64 }
     }
-    $r = Read-QualificationGraph (Json $g) (Json $cat) $schema
+    $r = Read-PinnedGraph (Json $g) (Json $cat) $schema
     Check ($healthy.Accepted -and -not $r.Accepted -and $r.Category -ceq 'identity' -and
         $r.Path -ceq '/nodes/3/selection' -and $r.Reason -ceq 'catalog-uid-mismatch') ('catalog-uid-mismatch/' + $fault) ($r.Reason + ':' + $r.Path)
 }
 foreach ($phase in @('prepare', 'execute')) {
     $text = Load ($phase + '.valid.json')
-    $r = Read-QualificationGraph $text $text $schema
+    $r = Read-PinnedGraph $text $text $schema
     Check ($healthy.Accepted -and -not $r.Accepted -and $r.Category -ceq 'identity' -and
         $r.Path -ceq '/catalog' -and $r.Reason -ceq 'catalog-invalid') ('catalog-is-graph/' + $phase) ($r.Reason + ':' + $r.Path)
 }
 $preciseGraph = $graphJson.Replace('"canonicalOrdinal": 0', '"canonicalOrdinal": 1.0000000000000000000001e22')
 $preciseCatalog = $catalogJson.Replace('"canonicalOrdinal": 0', '"canonicalOrdinal": 1e22')
-$r = Read-QualificationGraph $preciseGraph $preciseCatalog $schema
+$r = Read-PinnedGraph $preciseGraph $preciseCatalog $schema
 Check ($healthy.Accepted -and (Test-QualificationGraphSchema $preciseGraph $schema) -and
     -not $r.Accepted -and $r.Category -ceq 'identity' -and $r.Path -ceq '/nodes/0/canonicalOrdinal' -and
     $r.Reason -ceq 'catalog-mismatch') 'catalog-number-exact' ($r.Reason + ':' + $r.Path)
 
+
+$r = Read-QualificationGraph $graphJson $catalogJson $schema
+Check (-not $r.Accepted -and $r.Reason -ceq 'catalog-pin-required') 'catalog-pin-missing'
+$r = Read-QualificationGraph $graphJson $catalogJson $schema -ExpectedCatalogHash ('0' * 64)
+Check (-not $r.Accepted -and $r.Reason -ceq 'catalog-pin-mismatch') 'catalog-pin-wrong'
+foreach ($fault in @('missing-uids', 'unknown-field', 'wrong-node-shape', 'wrong-uid-type')) {
+    $cat = $catalogJson | ConvertFrom-Json
+    switch ($fault) {
+        'missing-uids' { $cat.PSObject.Properties.Remove('uids') }
+        'unknown-field' { $cat | Add-Member -NotePropertyName phase -NotePropertyValue 'prepare' }
+        'wrong-node-shape' { $cat.nodes[0].PSObject.Properties.Remove('platformOfRecord') }
+        'wrong-uid-type' { $cat.uids.'fixture-selection' = @(42) }
+    }
+    $r = Read-PinnedGraph $graphJson (Json $cat) $schema
+    Check (-not $r.Accepted -and $r.Path -ceq '/catalog' -and $r.Reason -ceq 'catalog-invalid') ('catalog-shape/' + $fault)
+}
+
 $duplicate = Copy-Graph $base
 $duplicate.nodes = @($duplicate.nodes) + @($duplicate.nodes[0])
-$r = Read-QualificationGraph (Json $duplicate) $catalogJson $schema
+$r = Read-PinnedGraph (Json $duplicate) $catalogJson $schema
 Check ($healthy.Accepted -and -not $r.Accepted -and $r.Reason -ceq 'duplicate-node' -and $r.Path -ceq '/nodes/5/id') 'duplicate-node'
 $rawCases = @(
     @('duplicate-key/root', (Load 'duplicate-key.raw.json'), '/schemaVersion', 'duplicate-key'),
@@ -124,12 +146,12 @@ $rawCases = @(
     @('nonfinite/Infinity', $graphJson.Replace('"seconds": 1.25', '"seconds": Infinity'), '', 'invalid-json'),
     @('nonfinite/overflow', $graphJson.Replace('"seconds": 1.25', '"seconds": 1e9999'), '/nodes/0/estimate/seconds', 'nonfinite'))
 foreach ($entry in $rawCases) {
-    $r = Read-QualificationGraph $entry[1] $catalogJson $schema
+    $r = Read-PinnedGraph $entry[1] $catalogJson $schema
     Check ($healthy.Accepted -and -not $r.Accepted -and $r.Category -ceq 'raw' -and $r.Path -ceq $entry[2] -and $r.Reason -ceq $entry[3]) $entry[0] $r.Reason
 }
 $extra = Copy-Graph $base
 $extra | Add-Member -NotePropertyName fixtureUnexpected -NotePropertyValue $true
-$r = Read-QualificationGraph (Json $extra) $catalogJson $schema
+$r = Read-PinnedGraph (Json $extra) $catalogJson $schema
 Check ($healthy.Accepted -and -not $r.Accepted -and $r.Category -ceq 'schema') 'schema-wired'
 $golden = Load 'execute.canonical.json'
 $expected = Load 'identity.expected.json' | ConvertFrom-Json
@@ -137,7 +159,7 @@ $keys = @($base.PSObject.Properties.Name)
 [Array]::Reverse($keys)
 $reordered = [ordered]@{}
 foreach ($key in $keys) { $reordered[$key] = $base.$key }
-$r = Read-QualificationGraph (Json $reordered) $catalogJson $schema
+$r = Read-PinnedGraph (Json $reordered) $catalogJson $schema
 $oldCulture = [Threading.Thread]::CurrentThread.CurrentCulture
 try {
     [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('tr-TR')
@@ -150,7 +172,7 @@ $sets = Copy-Graph $base
 [Array]::Reverse($sets.edges)
 [Array]::Reverse($sets.targets)
 [Array]::Reverse($sets.targets[0].resourceKeys)
-$r = Read-QualificationGraph (Json $sets) $catalogJson $schema
+$r = Read-PinnedGraph (Json $sets) $catalogJson $schema
 Check ($healthy.Accepted -and $healthy.CanonicalJson -ceq $golden -and
     $r.Accepted -and $r.CanonicalJson -ceq $golden) 'canonical-sets' $r.Reason
 $nullJson = ConvertTo-QualificationCanonicalJson 'null'
@@ -172,7 +194,7 @@ foreach ($binding in @('binding', 'target')) {
         foreach ($n in $g.nodes) { $n.targetId = 'windows-B' }
     }
     $cat = Load ('catalog-' + $binding + '-B.json')
-    $r = Read-QualificationGraph (Json $g) $cat $schema
+    $r = Read-PinnedGraph (Json $g) $cat $schema
     $gold = Load ('execute-' + $binding + '-B.canonical.json')
     Check ($r.Accepted -and (Json $r.NodeIds) -ceq (Json $expected.nodeIds)) ($binding + '-node-stable')
     Check ($r.Accepted -and $r.CanonicalJson -ceq $gold -and $r.GraphDigest -ceq (Independent-Hash $gold) -and
@@ -186,7 +208,7 @@ $cat = $catalogJson | ConvertFrom-Json
 $cat.uids.'fixture-selection' = $changedUids
 $cat.nodes[3].selection.uidSetDigest = $changedDigest
 $g.nodes[3].selection.uidSetDigest = $changedDigest
-$r = Read-QualificationGraph (Json $g) (Json $cat) $schema
+$r = Read-PinnedGraph (Json $g) (Json $cat) $schema
 Check ($r.Accepted -and (Get-QualificationUidSetDigest $changedUids) -ceq $changedDigest -and $changedDigest -cne $expected.uidSetDigest -and
     (Get-QualificationUidSetDigest @('a', 'A')) -ceq (Independent-Hash '["A","a"]')) 'uid-members-changed'
 . "$PSScriptRoot/lib/nightly-common.ps1"
