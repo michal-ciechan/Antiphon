@@ -6,6 +6,7 @@ if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
+. (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
@@ -935,7 +936,7 @@ function Prepare-NightlySuiteExecution {
     $suiteCensus = $null
     # CARD-1419: one discovery parse and census per suite, shared by every launch verdict.
     $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
-    if ($isNative -and $profileAware -and $profileExclusions.Count -gt 0) {
+    if ($isNative -and (($profileAware -and $profileExclusions.Count -gt 0) -or $dispatchNeedsDiscovery)) {
         $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
         $profileEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
         Remove-TestPhaseVariables -Environment $profileEnv
@@ -1009,6 +1010,8 @@ function Invoke-NightlyScheduledChunk {
         Set-Variable -Name $executionName -Value $ExecutionSuiteState.Variables[$executionName]
     }
     $chunk = $ExecutionChunk
+    $chunkTestsPassed=$true
+    $chunkCoverageComplete=$true
     try {
     $chunkIndex++
     $chunkStartedAt = (Get-NightlyUtcNow).ToString('o')
@@ -1153,6 +1156,8 @@ function Invoke-NightlyScheduledChunk {
         result = $(if ($run.TimedOut) { 'TIMEOUT' } elseif ($run.ExitCode -ne 0) { 'FAIL' } else { 'pass' })
     }
     if (-not $fresh.Ok) {
+        $chunkTestsPassed=$false
+        $chunkCoverageComplete=$false
         $coverageComplete = $false
         $testsPassed = $false
         $overallFailed = $true
@@ -1213,11 +1218,13 @@ function Invoke-NightlyScheduledChunk {
             $row.exclusions = @($census.Excluded)
         }
         if (-not [bool]$nativeVerdict.coverageComplete) {
+            $chunkCoverageComplete=$false
             $coverageComplete = $false
             $row.coverageComplete = $false
             foreach ($ev in @($nativeVerdict.reasons)) { $reasons += $ev }
         }
         if (-not [bool]$nativeVerdict.testsPassed) {
+            $chunkTestsPassed=$false
             $testsPassed = $false
             $overallFailed = $true
             $row.result = 'FAIL'
@@ -1225,6 +1232,8 @@ function Invoke-NightlyScheduledChunk {
     }
     if ($suiteId -eq 'client') {
         if (-not (Test-Path -LiteralPath $jsonPath)) {
+            $chunkTestsPassed=$false
+            $chunkCoverageComplete=$false
             $coverageComplete = $false
             $testsPassed = $false
             $overallFailed = $true
@@ -1243,7 +1252,7 @@ function Invoke-NightlyScheduledChunk {
         $overallFailed = $true
         $testsPassed = $false
         Set-NightlyOutcome TESTS
-    } elseif (-not $testsPassed -or -not $coverageComplete) {
+    } elseif (-not $chunkTestsPassed -or -not $chunkCoverageComplete) {
         $overallFailed = $true
         Set-NightlyOutcome TESTS
     }
@@ -1395,6 +1404,7 @@ function Invoke-AntiphonNightlyTests {
     $preflight = [ordered]@{}
     $reasons = @()
     $nativeActiveMax = 0
+    $dispatchSchedule = $null
 
     if (Test-NightlySharedTree -Path $RepoRoot) {
         if (-not $AllowSharedTree) {
@@ -1493,6 +1503,7 @@ function Invoke-AntiphonNightlyTests {
     }
     $LogRoot = ConvertTo-NightlyCanonicalPath -Path $LogRoot
     New-Item -ItemType Directory -Path $LogRoot -Force | Out-Null
+    $dispatchInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -OwnedDirectory $LogRoot -CandidateSha $Sha
     $summaryPath = Join-Path $LogRoot 'summary.json'
     $invocationId = $RunId
     $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot $TimingRoot -LogRoot $LogRoot -RunId $RunId)
@@ -1659,7 +1670,7 @@ function Invoke-AntiphonNightlyTests {
             Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
-            . Invoke-NightlyDispatchCoordinator -DispatchSuites $selectedSuites
+            . Invoke-NightlyDispatchCoordinator -DispatchSuites $selectedSuites -DispatchHistory $dispatchInput.History -DispatchHistoryDigest $dispatchInput.Digest -DispatchPreviousRun $dispatchInput.PreviousRun -DispatchFallbackReason $dispatchInput.FallbackReason
 
         } else {
             $coverageComplete = $false
@@ -1765,6 +1776,11 @@ function Invoke-AntiphonNightlyTests {
         builds = $buildResults
         suites = $suiteResults
         invocationId = $invocationId
+    }
+    # Bound by the exported summary digest. This diagnostic snapshot can order a
+    # later complete attempt; it never supplies pass credit or skips a launch.
+    if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
+        $summary.dispatchProgress=[ordered]@{sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suites=@($suiteResults|Where-Object {$_.chunk})}
     }
     try {
         $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
