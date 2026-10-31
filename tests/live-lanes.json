@@ -7,19 +7,27 @@
       "class": "ClaudeDialogWatchdogCanaryTests",
       "method": "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
       "arguments": [],
-      "uid": "",
-      "categories": [],
-      "bound": false
+      "uid": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.1.1.C680_LiveNudgeRefusesPermissionAndQuestionDialogs.1.1.0",
+      "categories": [
+        "Integration"
+      ],
+      "bound": true
     },
     {
       "project": "Antiphon.Agents.Pty.Tests",
       "namespace": "Antiphon.Agents.Pty.Tests",
       "class": "ClaudeSubmitContractLiveTests",
       "method": "Submitting_via_two_writes_completes_a_turn",
-      "arguments": ["claude"],
-      "uid": "",
-      "categories": [],
-      "bound": false
+      "arguments": [
+        "claude"
+      ],
+      "uid": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests.1.1.Submitting_via_two_writes_completes_a_turn(System.String).1.1.0",
+      "categories": [
+        "OptIn",
+        "Headed",
+        "Pty"
+      ],
+      "bound": true
     },
     {
       "project": "Antiphon.Agents.Pty.Tests",
@@ -27,9 +35,13 @@
       "class": "ClaudeRemoteControlAtStartupCanaryTests",
       "method": "Control_auto_connects_a_bridge_session_before_the_first_user",
       "arguments": [],
-      "uid": "",
-      "categories": [],
-      "bound": false
+      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Control_auto_connects_a_bridge_session_before_the_first_user.1.1.0",
+      "categories": [
+        "HeadedCanary",
+        "OptIn",
+        "Headed"
+      ],
+      "bound": true
     },
     {
       "project": "Antiphon.Agents.Pty.Tests",
@@ -37,9 +49,13 @@
       "class": "ClaudeRemoteControlAtStartupCanaryTests",
       "method": "Settings_file_prevents_auto_connect_and_keeps_startup_records",
       "arguments": [],
-      "uid": "",
-      "categories": [],
-      "bound": false
+      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Settings_file_prevents_auto_connect_and_keeps_startup_records.1.1.0",
+      "categories": [
+        "HeadedCanary",
+        "OptIn",
+        "Headed"
+      ],
+      "bound": true
     },
     {
       "project": "Antiphon.Agents.Pty.Tests",
@@ -47,9 +63,13 @@
       "class": "ClaudeRemoteControlAtStartupCanaryTests",
       "method": "Remote_control_slash_command_still_arms_after_settings_off",
       "arguments": [],
-      "uid": "",
-      "categories": [],
-      "bound": false
+      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Remote_control_slash_command_still_arms_after_settings_off.1.1.0",
+      "categories": [
+        "HeadedCanary",
+        "OptIn",
+        "Headed"
+      ],
+      "bound": true
     },
     {
       "project": "Antiphon.Agents.Pty.Tests",
@@ -57,9 +77,13 @@
       "class": "ClaudeRemoteControlMenuCanaryTests",
       "method": "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt",
       "arguments": [],
-      "uid": "",
-      "categories": [],
-      "bound": false
+      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests.1.1.C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt.1.1.0",
+      "categories": [
+        "HeadedCanary",
+        "OptIn",
+        "Headed"
+      ],
+      "bound": true
     }
   ],
   "gates": [],
