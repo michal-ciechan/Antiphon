@@ -20,8 +20,16 @@ C1022 backend-launch teardown retains native handles for the test-owned host, ch
 OpenConsole before requesting stop. It joins those handles even after an assertion or stop
 failure; deletion requires confirmed exit and successful ownership cleanup. Unresolved cleanup
 retains the directory and reports PID, process name and elapsed wait, preserving the original
-failure. `Cleanup_joins_owned_child_even_when_body_or_stop_fails` provides portable held-child
-witnesses for all three launch cases. These witnesses do not replace the Windows ConPTY run.
+failure. After that join, a Windows-shaped access denial on the staged host directory is retried
+for 75 seconds (native rerun e960ffeb saw the staged Antiphon.Agents.Pty.dll released about one
+minute after the denied delete, with no process whose image was under that directory). Backoff
+is 250ms doubling through 32s. Each denial names the holder: a Linux /proc fd or map, or on
+Windows the Restart Manager owner plus a loaded module of the test process. A hold that outlasts
+the budget fails with that holder and keeps the original body or stop exception as the first
+aggregate inner. `Cleanup_joins_owned_child_even_when_body_or_stop_fails` covers owned-exit joins.
+`Cleanup_retries_staged_hold_for_five_seconds_then_deletes` and
+`Cleanup_names_holder_and_preserves_original_when_staged_file_stays_open` cover the five-second
+and permanent holds. These witnesses do not replace the Windows ConPTY run.
 
 CARD-1049: `AmServiceDeployReadinessTests` uses native loopback and real curl on
 Windows. The held, non-listening fixture admits raw curl 7/28 on Windows (7 on
