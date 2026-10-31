@@ -210,12 +210,19 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         Guid? requestId = null, Guid? notificationId = null, int seconds = 60)
     {
         AgentTaskLandNotification? result = null;
+        try
+        {
         await UntilProtocolAsync(async () => {
             await using var db = CreateContext();
             result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId)
                 && (notificationId == null || n.Id == notificationId));
             return result is not null;
         }, "complete native Land receipt", seconds);
+        }
+        catch (TimeoutException ex)
+        {
+            throw await ReceiptTimeoutAsync(ex, kind, requestId, notificationId);
+        }
         await using var observer = CreateContext();
         var row = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == result!.QueueMessageId);
         var prompt = await observer.TranscriptEntries.SingleAsync(p => p.AgentSessionId == CallerId && p.Sequence == result!.ConfirmingPromptSequence);
