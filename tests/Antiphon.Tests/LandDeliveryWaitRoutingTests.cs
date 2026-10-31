@@ -86,8 +86,9 @@ public sealed class LandDeliveryWaitRoutingTests
 
     /// <summary>
     /// CARD-1412 M5: the renewing helpers are renewing because of what they forward to the shared wait.
-    /// <c>UntilProtocolAsync</c> forwards the protocol-git probe itself; <c>UntilDispatchAsync</c> forwards
-    /// the protocol-git count plus the dispatch total its predicate wrapper refreshes on every poll.
+    /// <c>UntilProtocolAsync</c> forwards the protocol-git probe itself, then the optional clock;
+    /// <c>UntilDispatchAsync</c> forwards the protocol-git count plus the dispatch total its predicate
+    /// wrapper refreshes on every poll.
     /// </summary>
     [Test]
     public void Renewing_helpers_forward_the_protocol_probe_to_the_shared_wait()
@@ -96,8 +97,9 @@ public sealed class LandDeliveryWaitRoutingTests
         var fixture = StripComments(File.ReadAllText(Path.Combine(root, Fixture)));
         var dispatchFixture = StripComments(File.ReadAllText(Path.Combine(root, DispatchFixture)));
         var protocol = InnerWait(fixture, "public async Task UntilProtocolAsync(");
-        protocol.Arguments.Count.ShouldBe(4, "UntilProtocolAsync forwards predicate, evidence, quietSeconds and the probe");
+        protocol.Arguments.Count.ShouldBe(5, "UntilProtocolAsync forwards predicate, evidence, quietSeconds, the probe and the clock");
         protocol.Arguments[3].ShouldBe("ProtocolProgress");
+        protocol.Arguments[4].ShouldBe("clock: clock");
         var dispatch = InnerWait(dispatchFixture, "public async Task UntilDispatchAsync(");
         dispatch.Arguments.Count.ShouldBe(4, "UntilDispatchAsync forwards its predicate wrapper, evidence, quietSeconds and the probe");
         dispatch.Arguments[3].ShouldBe("() => ProtocolProgress() + dispatch");
