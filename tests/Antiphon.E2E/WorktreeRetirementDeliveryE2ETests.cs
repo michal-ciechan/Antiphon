@@ -49,11 +49,7 @@ public sealed class WorktreeRetirementDeliveryE2ETests
         await f.ReleaseExecutionAsync();
         if (producer == "busy-then-released")
         {
-            await LandDeliveryFixture.UntilAsync(async () =>
-            {
-                await using var db = f.CreateContext();
-                return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null);
-            }, "busy caller has queued outcome");
+            await f.WaitForBusyCallerQueuedOutcomeAsync();
             await f.ReleaseBusyAsync();
         }
 

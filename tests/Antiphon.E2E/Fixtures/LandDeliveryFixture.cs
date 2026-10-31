@@ -366,10 +366,29 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         }
     }
     public static Task UntilAsync(Func<Task<bool>> predicate, string evidence, int seconds = 60,
-        Func<long>? progress = null, int capSeconds = 600)
-        => ProgressAwareWait.UntilAsync(predicate, evidence, seconds, progress, capSeconds);
+        Func<long>? progress = null, int capSeconds = 600, TimeProvider? clock = null)
+        => ProgressAwareWait.UntilAsync(predicate, evidence, seconds, progress, capSeconds, clock);
 
     public long ProtocolProgress() => Directory.GetFiles(Root, "protocol-git-*.json").LongLength;
+
+    /// <summary>
+    /// Historical C459 busy-caller gate: a plain 60 s deadline, no protocol-git heartbeat.
+    /// The witness owns the proof that a still-moving land dies here.
+    /// </summary>
+    public async Task WaitForBusyCallerQueuedOutcomeAsync(Func<Task<bool>>? queued = null, int quietSeconds = 60,
+        TimeProvider? clock = null, Func<CancellationToken, Task<string>>? producerState = null)
+    {
+        _ = producerState;
+        queued ??= QueuedOutcomeAsync;
+        await UntilAsync(queued, "busy caller has queued outcome", quietSeconds, progress: null, clock: clock);
+    }
+
+    private async Task<bool> QueuedOutcomeAsync()
+    {
+        await using var db = CreateContext();
+        return await db.AgentTaskLandNotifications.AnyAsync(n =>
+            n.TaskId == TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null);
+    }
 
     public async Task UntilProtocolAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60)
     {
