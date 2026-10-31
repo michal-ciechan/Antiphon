@@ -949,7 +949,7 @@ function Invoke-FFActualLoop {
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
     $bySuite=@{}
     foreach($s in $Fixture.suites){$index=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal);foreach($n in $s.nodes){$index.Add([string]$n.Uid,$n)};$bySuite[$s.id]=$index}
-    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
+    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Identities=[Collections.Generic.List[object]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
     $seams=Join-Path $dir 'seams.ps1'
     [IO.File]::WriteAllText($seams, @'
 $NightlySeams=@{
@@ -967,6 +967,8 @@ $NightlySeams=@{
             $global:FFLoopBoundaryState.Discovery.Add($sid)
             Write-FFDiagnostic $diag @($s.nodes) 'Discovered'
         } elseif($sid) {
+            $active=Read-QualificationActiveChunkIdentity $script:QualificationTimingRoot
+            $global:FFLoopBoundaryState.Identities.Add($active)
             $global:FFLoopBoundaryState.Active++;$global:FFLoopBoundaryState.Max=[math]::Max($global:FFLoopBoundaryState.Max,$global:FFLoopBoundaryState.Active)
             $s=@($global:FFLoopBoundaryState.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
@@ -1022,7 +1024,14 @@ function Test-ActualLoopFollowsSchedule {
     $entries=@(foreach($sid in @('A','B')){foreach($id in 1..5){[pscustomobject]@{suite=$sid;chunk=[string]$id}}})
     $previous=[pscustomobject]@{sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@([pscustomobject]@{id='A';chunk='1';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='2';result='FAIL';exitCode=1})}
     $order=Resolve-NightlyPreviousRunOrder $entries $previous ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
-    Assert-FF ((@($order.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -ceq 'B2,A4,A5,A2,B1,B3,B4,B5,A1,A3' -and $order.reason -ceq 'previous-run-order') 'progressOrder'
+    $progressOk=(@($order.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -ceq 'B2,A4,A5,A2,B1,B3,B4,B5,A1,A3' -and $order.reason -ceq 'previous-run-order'
+    foreach($variant in @('missing','stale','candidate','malformed')){
+        $record=Copy-FFObject $previous
+        switch($variant){'missing'{$record=$null};'stale'{$record.completedAt='2026-09-01T00:00:00Z'};'candidate'{$record.sha='b'*40};'malformed'{$record.suites='wrong'}}
+        $fallbackOrder=Resolve-NightlyPreviousRunOrder $entries $record ('a'*40) ([datetime]'2026-10-31T06:00:00Z')
+        if((@($fallbackOrder.entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -cne (@($entries|ForEach-Object {$_.suite+$_.chunk})-join ',') -or -not $fallbackOrder.reason -or $fallbackOrder.reason -ceq 'previous-run-order'){$progressOk=$false}
+    }
+    Assert-FF $progressOk 'progressOrder'
     Test-FFHeartbeatBindings
 }
 
@@ -1052,7 +1061,14 @@ function Test-FFHeartbeatBindings {
     [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' 'all-group-3' 'heartbeat-run' '2')
     $bad=( $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3' 'session-runner' 'heartbeat-run' '2')) -and ($null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3' 'antiphon' 'wrong-run' '2')) -and ($null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3' 'antiphon' 'heartbeat-run' '9')) -and ($null -eq (Get-QualificationGroupPlannedSeconds $path 'All-group-3'))
     [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' 'all-group-3' 'heartbeat-run' '2' Idle)
-    Assert-FF ($bad -and $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3')) 'heartbeatRefusals'
+    $bad=$bad -and $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3')
+    [void](Write-QualificationActiveChunkIdentity $timing 'antiphon' 'all-group-3' 'heartbeat-run' '2')
+    Write-FFJson (Join-Path $timing 'antiphon-all-group-3.timing.json') ([ordered]@{lastPhase='complete'})
+    $bad=$bad -and $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3')
+    Write-FFJson (Join-Path $timing 'antiphon-all-group-3.timing.json') ([ordered]@{lastPhase='run'})
+    $script:QualificationIdentityReadObserver={param($activePath);[void](Write-QualificationActiveChunkIdentity (Split-Path -Parent $activePath) 'antiphon' 'all-group-3' 'heartbeat-run' '2' Idle)}
+    try{$bad=$bad -and $null -eq (Get-QualificationGroupPlannedSeconds $path 'all-group-3')}finally{$script:QualificationIdentityReadObserver=$null}
+    Assert-FF $bad 'heartbeatRefusals'
 }
 
 function Test-JournalCustodySurvivesInterleaving {
@@ -1078,12 +1094,16 @@ function Test-JournalCustodySurvivesInterleaving {
     Assert-FF ($read.Refused -or $read.Unresolved -or -not $read.PublicationComplete) 'custody'
     [IO.File]::WriteAllText($first,$bytes)
     Assert-FF ($a.Projection.suite -ceq $a.Trace.Launches[0].suite -and (@($a.Summary.suites|ForEach-Object {$_.id+'/'+$_.chunk})-join ',') -ceq ($keys-join ',') -and $a.Summary.suiteTimeline.Count -eq 2 -and [IO.File]::Exists((Join-Path $a.Root 'timing/summary.json'))) 'fieldPolicies'
+    $identitiesOk=$a.Trace.Identities.Count -eq $a.Trace.Launches.Count
+    for($i=0;$i -lt $a.Trace.Launches.Count;$i++){$identity=$a.Trace.Identities[$i];$launch=$a.Trace.Launches[$i];if($null -eq $identity -or $identity.suite -cne $launch.suite -or $identity.chunk -cne $launch.chunk -or $identity.runId -cne 'actual-run' -or $identity.attempt -cne '1' -or $identity.state -cne 'Active'){$identitiesOk=$false}}
+    $idle=Read-QualificationActiveChunkIdentity (Join-Path $a.Root 'timing')
+    Assert-FF ($identitiesOk -and $idle.state -ceq 'Idle') 'activeIdentity'
 }
 
 switch -Exact ($Case) {
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=3 }
     'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=11 }
-    'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=8 }
+    'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=9 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
