@@ -122,7 +122,8 @@ $sets = Copy-Graph $base
 [Array]::Reverse($sets.targets)
 [Array]::Reverse($sets.targets[0].resourceKeys)
 $r = Read-QualificationGraph (Json $sets) $catalogJson $schema
-Check ($r.Accepted -and $r.CanonicalJson -ceq $golden) 'canonical-sets' $r.Reason
+Check ($healthy.Accepted -and $healthy.CanonicalJson -ceq $golden -and
+    $r.Accepted -and $r.CanonicalJson -ceq $golden) 'canonical-sets' $r.Reason
 $nullJson = ConvertTo-QualificationCanonicalJson 'null'
 $empty = ConvertTo-QualificationCanonicalJson '""'
 Check ($nullJson -ceq 'null' -and $empty -ceq '""' -and (Get-QualificationSha256 $nullJson) -cne (Get-QualificationSha256 $empty)) 'typed-null'
