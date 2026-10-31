@@ -15,7 +15,7 @@ Refs measured:
 
 ## Verdict
 
-**The rc port is cheap and mechanical. Taking the commits in order, it costs one hand-resolved hunk and one hand-fixed file.**
+**The rc port is cheap and mechanical at the git level: taken in order, it costs one hand-resolved hunk and one hand-fixed file. It compiles on rc, but two policy/roster tests go red because of CARD-1609 itself (they would on master too), so it needs one small Code fix-up (§4).**
 
 - Neither the review's 213 conflicting files nor its 50 measured here come from CARD-1609. They come from the 933 master commits between the rc/master fork point `a97194ee7` and the CARD-1609 base `98fc3ceb6`, which a whole-branch merge drags in.
 - A 3-way merge of only the CARD-1609 delta onto rc is **clean**: `git merge-tree --write-tree --merge-base=98fc3ceb6 origin/rc/2026-10-27 origin/feat/card-task-1fa8a516` exits 0 with tree `2f9296cc0d7d7c570b67e550f461c50d543236df`.
@@ -162,7 +162,7 @@ Steps for a Merge task (Grok High is adequate):
    - At #2 `678655489`, resolve `c1008-fake-docker.sh` as above: chroot form with `(offline || helperAuth)`.
    - At #20 `685f41559`, take `git merge-file -p <rc copy> <98fc3ceb6 copy> <685f41559 copy>`.
    - Expect no other conflict. Round-14 commits are unmeasured.
-4. One fix-up commit on the port branch: delete the two resurrected CARD-1603 rows (and their blank separator) from `tests/Antiphon.Tests/slow-tests-allowlist.txt`.
+4. One fix-up commit on the port branch: delete the two resurrected CARD-1603 rows (and their blank separator) from `tests/Antiphon.Tests/slow-tests-allowlist.txt`. Then a Code slice (preferably landed on master first and picked): drop the two deleted `RetiredTempContainerHostTests` methods from `tests/Shared/NativeLinuxWindowsBaseline.json`, and raise the C1210 frozen TRX totals in `WindowsUnitPlatformAdmissionTests.ValidDocument` by the 28 new Native results.
 5. Verify the port's tree equals the squash tree, apart from the step-4 allowlist edit: `git diff <squash tree> HEAD` must show only the allowlist.
 6. One narrow green series on Linux (server2), through the checkpoint tool or build-slot:
    - build `tests/Antiphon.Tests` once;
@@ -175,7 +175,24 @@ Steps for a Merge task (Grok High is adequate):
 7. Land graph: no definition file changes (no csproj, props or targets in the delta). `scripts/audit-land-verification-graph.ps1 -Check` on the port should stay at rc's `69 definitions, digest E7C6EDAF…`. The CARD-1609 round-13 runs recorded `66 / 20DE49F6…` because they ran on the master base. Run `-Check` once, never `-Update`.
 8. `git merge-tree --write-tree origin/rc/2026-10-27 HEAD` must be clean. Land onto rc.
 
-**Rc compile risk, unmeasured.** The new tests were written against base `98fc3ceb6`, which has no `NativeLinuxOnly` attribute policy (`bd59c1b6c`). They carry roster rows but no `[NativeLinuxOnly]`. Master has the same policy, so the master land faces the same check. CP-6's `NativeLinuxPolicyWitnessTests` row decides it. If it is red, the fix pattern is the master one (`bd59c1b6c` style attributes), applied identically to master and rc.
+**Measured on the port tree (server2, build-slot).** Two runs, one per tree:
+
+- **Port tree.** I built `tests/Antiphon.Tests` at the dry-run head (tree `2f9296cc0`, without the allowlist fix): exit 0, 0 errors, 5m04s. **The ported tree compiles on rc.** Then I ran `/*/*/(NativeLinuxPolicyWitnessTests*)|(WindowsUnitPlatformAdmissionTests*)/*` from the built dll. Two failed and one was skipped (`C1210_Windows_linux_only_outcomes_are_exact`, Windows-only). The run then hit my 580 s wall timeout, so the remaining counts were not captured and the long-running case was not identified. No process was left behind.
+- **rc base.** I rebuilt the same scratch worktree at rc `e0d49d221` (incremental) and ran the same two failing methods exactly: **2/2 passed, 11.9 s.** Both reds are therefore caused by the port.
+
+The two reds:
+
+1. `NativeLinuxPolicyWitnessTests.Policy_rows_require_pinned_attribute` fails with `baseline-unresolved suite=antiphon row=RetiredTempContainerHostTests` for `C994_Audit_image_is_pinned_and_required()` and `C994_Image_receipt_lookup_is_bound()`.
+   - CARD-1609 #54 `de1a52dd7` deletes those two methods.
+   - `tests/Shared/NativeLinuxWindowsBaseline.json` on rc lists each of them 4 times, and master's copy has the same rows.
+   - **The master land has the same semantic red.** It is hidden on master only if the separately known master-inherited red of this test masks it.
+   - Repair: remove the rows from the baseline. If the policy file changes, its `policyHash` must be resealed; the baseline itself is pinned as an embedded resource.
+2. `WindowsUnitPlatformAdmissionTests.C1210_Audit_rejects_empty_or_incomplete_outcomes` fails on counter `total`, expected `"104"` but was `"76"`.
+   - `ValidDocument` hard-codes the frozen TRX totals `76`/`109`/`72`/`74` from the 72-result Native roster (`WindowsUnitPlatformAdmissionTests.cs` around line 331).
+   - CARD-1609 raised Native to 89 identities and 100 results (#2 and the later roster commits) but did not move those constants.
+   - This holds by construction at the CARD-1609 tip on master as well, so it is not rc-specific.
+
+So the port needs **one Code fix-up slice** (baseline rows, and C1210 frozen totals +28), done identically on master. It is not a merge-only task. This is a fix idea only; it is not designed here.
 
 Size estimate:
 
@@ -207,12 +224,13 @@ These are the default-behaviour changes in CARD-1609 at round 13, read from the 
 6. **New dot-sourced dependency:** `deploy-server2.ps1` now dot-sources `scripts/c1609-read-packet.ps1`. A partial port that omits that file breaks every phase at startup.
 7. **The c590-real bridge** forwards `ANTIPHON_VOLUME_RETIREMENT_APPLY` to the host only when it matches `^enabled-c1008[0-9a-f]{32}$` (`509f20891`). It travels on the ssh command line (review: advisory).
 
-Recommendation: do not land on rc before round 14 is reviewed clean for D-1 and D-2. Run the first ported rollout's gate 9 as `-DryRun` only, as the runbook already says. Before deploy-temp, read the server2 temp volume census with the read-only `-Phase check-census`, or by an operator.
+Recommendation: do not land on rc before round 14 is reviewed clean for D-1 and D-2. Run the first ported rollout's gate 9 as `-DryRun` only, as the runbook already says. Before the first deploy-temp, an operator should read whether any `antiphon-runner-temp_*` volume exists on server2.
 
 ## Remaining uncertainties
 
 - Round 14 is not yet pushed, so its commits, conflicts and any new default changes are unmeasured.
-- Compile and test of the ported tree on rc was not run, so there are no build or test counts here. A build-slot build of `tests/Antiphon.Tests` at the port tree was queued, as described under the status line below.
+- Only the two policy/roster classes were run on the port. The volume-retirement rows (step 6) were not run on rc, and the first probe's long-running case is unidentified (580 s wall timeout).
+- Whether server2 currently holds retained `antiphon-runner-temp_*` volumes (risk 3) needs an operator read on the host.
 - The review's 213 count was not reproduced. It is moot for the plan.
 
 ## Not done, noted
