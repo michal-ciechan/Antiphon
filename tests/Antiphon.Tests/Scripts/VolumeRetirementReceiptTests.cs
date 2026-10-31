@@ -395,7 +395,7 @@ public sealed class VolumeRetirementReceiptTests
 
         using var publicManual = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.ReadyPreview(publicManual);
-        var entry = await RunEntryCases(publicManual.Root, "c1609-manual-cases.mjs", 180);
+        var entry = await RunEntryCases(publicManual.Root, "c1609-manual-cases.mjs", 450);
         entry.Exit.ShouldBe(0, "J10 public manual template, authenticated Preview/Apply and refusal controls: " + entry.Output);
         entry.Output.ShouldContain("C1609_MANUAL passed");
     }

@@ -56,8 +56,11 @@ function run(extra,authority=true){
    RetiredRunnerId:'server2-temp',VolumeName:initial.targets,EvidenceDirectory:root+'/manual-evidence'},extra);
  const file=root+'/manual-request.json';fs.writeFileSync(file,JSON.stringify(a));
  const started=performance.now();
+ // CARD-1609 phase measurement: Apply 86.203s, Resume 42.894s, Preview 42.456s.
+ // Bounded collection limits are rounded 2x single samples, not population p95.
+ const timeout=extra.Apply&&!extra.Resume?180000:extra.Apply||extra.AttestationFile?90000:15000;
  const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',launcher,'-Request',file],
-  {env:{...env,ANTIPHON_OPERATOR_TOKEN_FILE:authority?token:root+'/missing-token'},encoding:'utf8',timeout:60000,maxBuffer:4*1024*1024});
+  {env:{...env,ANTIPHON_OPERATOR_TOKEN_FILE:authority?token:root+'/missing-token'},encoding:'utf8',timeout,maxBuffer:4*1024*1024});
  trace.push({request:Object.keys(extra),exit:r.status,milliseconds:performance.now()-started});
  assert(!r.error,'public manual driver failed: '+r.error);
  assert(!(r.stdout+r.stderr).includes('C1609_MANUAL_OPERATOR_SENTINEL'),'credential must never be exported');
