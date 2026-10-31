@@ -945,7 +945,7 @@ function Invoke-FFActualLoop {
     }
     $p.Object.policyHash=Get-NightlyPolicyHash $p.Object
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
-    $script:FFLoop=[pscustomobject]@{Fixture=$Fixture;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
+    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
     $seams=Join-Path $dir 'seams.ps1'
     [IO.File]::WriteAllText($seams, @'
 $NightlySeams=@{
@@ -958,31 +958,31 @@ $NightlySeams=@{
         $diag=Get-FFArgument $ArgumentList '--diagnostic-output-directory'
         if($ArgumentList -contains '--list-tests') {
             $sid=(Split-Path -Leaf $diag) -replace '-profile-discovery$','' -replace '-.*-discovery$',''
-            foreach($s in $script:FFLoop.Fixture.suites){if((Split-Path -Leaf $diag).StartsWith($s.id+'-')){$sid=$s.id;break}}
-            $s=@($script:FFLoop.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
-            $script:FFLoop.Discovery.Add($sid)
+            foreach($s in $global:FFLoopBoundaryState.Fixture.suites){if((Split-Path -Leaf $diag).StartsWith($s.id+'-')){$sid=$s.id;break}}
+            $s=@($global:FFLoopBoundaryState.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
+            $global:FFLoopBoundaryState.Discovery.Add($sid)
             Write-FFDiagnostic $diag @($s.nodes) 'Discovered'
         } elseif($sid) {
-            $script:FFLoop.Active++;$script:FFLoop.Max=[math]::Max($script:FFLoop.Max,$script:FFLoop.Active)
-            $s=@($script:FFLoop.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
+            $global:FFLoopBoundaryState.Active++;$global:FFLoopBoundaryState.Max=[math]::Max($global:FFLoopBoundaryState.Max,$global:FFLoopBoundaryState.Active)
+            $s=@($global:FFLoopBoundaryState.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
             $plan=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json
             $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
             $nodes=@($s.nodes|Where-Object {@($group.plannedTestIds) -ccontains $_.Uid})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
-            $script:FFLoop.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter')})
+            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter')})
             $special=($sid -ceq 'antiphon' -and @($group.classes|Where-Object {$_ -clike '*Priority*'}).Count -gt 0)
             $state='Passed';$code=0;$timeout=$false
-            if($special -and $script:FFLoop.Variant -ceq 'failure'){$state='Failed';$code=2}
-            if($special -and $script:FFLoop.Variant -ceq 'timeout'){$timeout=$true;$code=1}
+            if($special -and $global:FFLoopBoundaryState.Variant -ceq 'failure'){$state='Failed';$code=2}
+            if($special -and $global:FFLoopBoundaryState.Variant -ceq 'timeout'){$timeout=$true;$code=1}
             $rows=@(foreach($n in $nodes){[pscustomobject]@{Id=$n.Uid;ClassName=$n.ClassName;MethodName=$n.Method;Outcome=$state}})
             $trx=Join-Path (Get-FFArgument $ArgumentList '--results-directory') (Get-FFArgument $ArgumentList '--report-trx-filename')
             Write-C487Trx $trx $rows;Write-FFDiagnostic $diag $nodes $state
             $existing=Join-Path $script:QualificationTimingRoot 'groups-executed.json'
-            if([IO.File]::Exists($existing)){$script:FFLoop.SettledBeforeReturn=$true}
-            $script:FFLoop.Active--
+            if([IO.File]::Exists($existing)){$global:FFLoopBoundaryState.SettledBeforeReturn=$true}
+            $global:FFLoopBoundaryState.Active--
             return [pscustomobject]@{ExitCode=$code;TimedOut=$timeout;ChildrenExited=$true;CleanupComplete=$true;JobEmptyObserved=$true;LogText=''}
-        } elseif($ArgumentList -contains 'Antiphon.sln') {$script:FFLoop.Builds++}
+        } elseif($ArgumentList -contains 'Antiphon.sln') {$global:FFLoopBoundaryState.Builds++}
         return [pscustomobject]@{ExitCode=0;TimedOut=$false;ChildrenExited=$true;CleanupComplete=$true;JobEmptyObserved=$true;LogText=''}
     }
 }
@@ -994,7 +994,7 @@ $NightlySeams=@{
     $schedule=[IO.File]::ReadAllText((Join-Path $dir 'dispatch-schedule.json'))|ConvertFrom-Json
     $projection=[IO.File]::ReadAllText((Join-Path $dir 'timing/groups-executed.json'))|ConvertFrom-Json
     $prepared=@(foreach($s in $Fixture.suites){$plan=[IO.File]::ReadAllText((Join-Path $dir ('timing/groups-planned-'+$s.id+'.json')))|ConvertFrom-Json;[pscustomobject]@{id=$s.id;nodes=$s.nodes;exclusions=@();chunks=@(foreach($g in $plan.groups){[pscustomobject]@{id=$g.chunk;classes=$g.classes}})}})
-    return [pscustomobject]@{Result=$result;Summary=$summary;Schedule=$schedule;Projection=$projection;Trace=$script:FFLoop;Prepared=$prepared;Root=$dir}
+    return [pscustomobject]@{Result=$result;Summary=$summary;Schedule=$schedule;Projection=$projection;Trace=$global:FFLoopBoundaryState;Prepared=$prepared;Root=$dir}
 }
 
 function Test-ActualLoopFollowsSchedule {
