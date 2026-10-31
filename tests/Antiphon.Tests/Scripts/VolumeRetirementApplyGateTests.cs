@@ -226,6 +226,46 @@ public sealed class VolumeRetirementApplyGateTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Valid_token_refuses_protected_names_and_keeps_host_state()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using (var host = new C1008HostFixture())
+        {
+            var applied = await host.Run("deploy-parent", EnabledToken);
+            applied.Exit.ShouldBe(0, "apply-gate: a valid token removes the host recycle volumes; " + applied.Output);
+            host.Removed.ShouldBe(new[]
+            {
+                "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data"
+            }, "apply-gate: a valid token removes only the three host recycle volumes, in target order");
+            host.ReloadDocker();
+            (host.Docker["volumes"]?["antiphon-runner_runner-state"] is not null).ShouldBeTrue(
+                "apply-gate: host runner-state is not a removal target");
+        }
+
+        using var refused = new C1008HostFixture();
+        var blocked = await refused.Run("deploy-parent", EnabledToken, sourceTransform: AppendProtectedTargets);
+        blocked.Exit.ShouldBe(2, "apply-gate: a valid token still refuses a protected name; " + blocked.Output);
+        blocked.Output.ShouldContain("DIAGNOSIS=RecycleProtectedVolume", Case.Sensitive);
+        blocked.Output.ShouldNotContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+        AssertNoVolumeRemoval(refused, "protected names with a valid token");
+        AssertNoContainerStop(refused, "protected names with a valid token");
+        File.Exists(Journal(refused)).ShouldBeFalse("apply-gate: a protected-name refusal writes no journal");
+    }
+
+    private static string AppendProtectedTargets(string source)
+    {
+        const string call = "\n    c1609_refuse_protected_targets\n";
+        const string appended =
+            "\n    C1008_TARGETS+=(\"${HOST_PROJECT}_runner-state\" antiphon_pgdata)\n    c1609_refuse_protected_targets\n";
+        var at = source.IndexOf(call, StringComparison.Ordinal);
+        at.ShouldBeGreaterThanOrEqualTo(0, "apply-gate: protected-target refusal is present");
+        source.IndexOf(call, at + call.Length, StringComparison.Ordinal).ShouldBe(-1,
+            "apply-gate: protected-target refusal is one call");
+        return source.Replace(call, appended, StringComparison.Ordinal);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Recheck_target_refuses_a_changed_fingerprint()
     {
         C1008HostFixture.RequireNativeLinux();

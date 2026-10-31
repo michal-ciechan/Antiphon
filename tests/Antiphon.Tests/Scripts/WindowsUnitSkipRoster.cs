@@ -95,6 +95,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Changed_content_and_remote_proof_refuse", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Every_delete_rechecks_full_live_guards", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Receipt_shape_custody_and_digest_are_strict", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Proof_directory_custody_matches_the_applying_account", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Volume_incarnation_and_operation_are_bound", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Freshness_and_policy_version_are_rechecked", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Legacy_receipts_are_history_only", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
@@ -235,6 +236,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Manual_apply_refuses_until_the_operation_token_matches", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Refused_apply_keeps_the_ready_preview", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "State_volume_named_in_the_plan_is_refused_before_delete", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Valid_token_refuses_protected_names_and_keeps_host_state", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "VolumeRetirementApplyGateTests", "Recheck_target_refuses_a_changed_fingerprint", 1, ExistingReason),
     ];
 

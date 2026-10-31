@@ -69,6 +69,104 @@ public sealed class VolumeRetirementReceiptTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Proof_directory_custody_matches_the_applying_account()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = "/tmp/c1609-custody-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            var run = await VolumeRetirementFixture.Bash(CustodyScript(root));
+            run.Exit.ShouldBe(0, "proof custody; " + run.Output);
+            run.Output.ShouldContain("C1609_CUSTODY passed", Case.Sensitive);
+        }
+        finally
+        {
+            DeleteCustodyTree(root);
+        }
+    }
+
+    private static string CustodyScript(string root)
+    {
+        var retirement = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh");
+        return """
+            set -euo pipefail
+            root='__ROOT__'
+            retirement='__RETIREMENT__'
+            mkdir -p "$root"
+            server="$root/server"
+            proof="$server/retirement/op"
+            mkdir -p "$proof"
+            chmod 0700 "$root" "$server" "$server/retirement" "$proof"
+            printf 'owned\n' > "$proof/note"
+            chmod 0600 "$proof/note"
+            ln -s "$proof" "$root/proof-link"
+            ln -s "$proof/note" "$proof/note-link"
+            export SERVER2_ROOT="$server"
+            run_case() {
+              local name="$1" want="$2" target="$3" kind="$4" mock="${5:-}"
+              set +e
+              C1609_TARGET="$target" C1609_KIND="$kind" C1609_MOCK="$mock" bash -c '
+                set -euo pipefail
+                source "$1"
+                if [ -n "${C1609_MOCK:-}" ]; then
+                  stat() {
+                    if [ "$1" = -c ] && [ "$3" = -- ] && [ "$4" = "$C1609_TARGET" ]; then
+                      uid="${C1609_MOCK%%:*}"
+                      mode="${C1609_MOCK#*:}"
+                      case "$2" in
+                        "%u %a %h") printf "%s %s 1\n" "$uid" "$mode"; return 0 ;;
+                        "%u %a") printf "%s %s\n" "$uid" "$mode"; return 0 ;;
+                      esac
+                    fi
+                    command stat "$@"
+                  }
+                fi
+                c1609_custody "$C1609_TARGET" "$C1609_KIND"
+              ' bash "$retirement"
+              local code=$?
+              set -e
+              if [ "$want" = pass ] && [ "$code" != 0 ]; then printf 'FAIL %s exit=%s\n' "$name" "$code"; exit 1; fi
+              if [ "$want" = fail ] && [ "$code" = 0 ]; then printf 'FAIL %s accepted\n' "$name"; exit 1; fi
+              printf 'PASS %s\n' "$name"
+            }
+            euid="$(id -u)"
+            run_case app-dir pass "$proof" dir
+            run_case app-file pass "$proof/note" file
+            run_case root-dir pass "$proof" dir '0:700'
+            run_case stranger-dir fail "$proof" dir '99999:700'
+            run_case root-file fail "$proof/note" file '0:600'
+            chmod 0777 "$proof"; run_case world-dir fail "$proof" dir
+            chmod 0770 "$proof"; run_case group-dir fail "$proof" dir
+            chmod 0702 "$proof"; run_case other-write-dir fail "$proof" dir
+            chmod 0700 "$proof"
+            chmod 0666 "$proof/note"; run_case world-file fail "$proof/note" file
+            chmod 0600 "$proof/note"
+            run_case symlink-dir fail "$root/proof-link" dir
+            run_case symlink-file fail "$proof/note-link" file
+            run_case symlink-dir-safe-stat fail "$root/proof-link" dir "${euid}:700"
+            printf 'C1609_CUSTODY passed\n'
+            """.Replace("__ROOT__", root, StringComparison.Ordinal)
+            .Replace("__RETIREMENT__", retirement, StringComparison.Ordinal);
+    }
+
+    private static void DeleteCustodyTree(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        foreach (var link in new[]
+        {
+            Path.Combine(root, "proof-link"),
+            Path.Combine(root, "server", "retirement", "op", "note-link")
+        })
+        {
+            try { File.Delete(link); }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
+        }
+        Directory.Delete(root, true);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Volume_incarnation_and_operation_are_bound()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
