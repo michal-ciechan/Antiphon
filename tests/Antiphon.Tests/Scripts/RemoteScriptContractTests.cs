@@ -5145,12 +5145,26 @@ public sealed class RemoteScriptContractTests
     public void Custody_residue_counts_subdirectories_only()
     {
         var block = Block(Remote(), "case_custody_containment");
+        block.ShouldContain("source /usr/local/lib/antiphon-custody-common.sh || exit 1");
+        block.ShouldContain("ns=\"$(custody_read_namespace)\" || exit 1");
         foreach (var controller in new[] { "pids", "freezer" })
         {
             var root = "/sys/fs/cgroup/" + controller + "/antiphon-custody";
-            block.ShouldContain("find " + root + " -mindepth 1 -maxdepth 1 -type d");
+            block.ShouldContain("custody_count_execution_trees " + root + " \"$ns\" || exit 1");
             block.ShouldNotContain("ls -1 " + root);
         }
+
+        // CARD-1614 counts execution directories inside namespace directories.
+        var common = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
+            "docker", "session-runner-grok", "antiphon-custody-common.sh"));
+        var counter = Block(common, "custody_count_execution_trees");
+        counter.ShouldContain("[ -L \"$ns_path\" ] || [ ! -d \"$ns_path\" ]");
+        counter.ShouldContain("[ -L \"$exec_path\" ] || [ ! -d \"$exec_path\" ]");
+        counter.ShouldContain("procs=\"$exec_path/tree/cgroup.procs\"");
+        block.ShouldContain("|| write_result false CustodyResidue 2");
+        block.ShouldContain("if ! grep -q '^status=ok$' \"$CASE_DIR/custody-residue.txt\"; then");
+        block.ShouldContain("if ! grep -q '^current=0$' \"$CASE_DIR/custody-residue.txt\"; then");
+        block.ShouldContain("if grep -qE '^(current|foreign|legacy)=[1-9]' \"$CASE_DIR/custody-residue.txt\"; then");
     }
 
     // CP-15 dispatches `verify-docker-stack.ps1 -Case custody-containment`, which reaches the
