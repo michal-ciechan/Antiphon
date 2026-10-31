@@ -169,8 +169,14 @@ function Invoke-LiveLaneRun {
                 $failed = @($evidence.Rows | Where-Object { $_.State -ceq 'Failed' -and -not (Test-LiveLaneTranscriptOutage $_) })
                 if ($failed.Count -gt 0) {
                     $probeDeadline = [Math]::Min($deadline, [double](& $Boundary.Clock) + 15)
-                    $postProbe = Invoke-LiveLaneProbe $Boundary 'PostFailure' $failed[0] $probeDeadline
-                    $result.Probes += @{ Phase = $postProbe.Phase; Started = $postProbe.Started; Finished = $postProbe.Finished; Bounded = $postProbe.Bounded }
+                    try {
+                        $postProbe = Invoke-LiveLaneProbe $Boundary 'PostFailure' $failed[0] $probeDeadline
+                        $result.Probes += @{ Phase = $postProbe.Phase; Started = $postProbe.Started; Finished = $postProbe.Finished; Bounded = $postProbe.Bounded }
+                    } catch {
+                        # Transport failure is no outage proof. Keep the original
+                        # assertion and all terminal facts for the classifier.
+                        $postProbe = $null
+                    }
                 }
             }
             $outcome = Get-LiveLaneOutcome $Request $evidence $child.RunId $code $postProbe
