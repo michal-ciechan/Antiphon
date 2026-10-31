@@ -89,3 +89,13 @@ CHECKPOINT RENEW-GREEN commit=7650549b0162404a71ddc8ffece57d9d78c7f2b7 build=ok 
 ```
 
 Build326.386s,row791.522s,tests781.582s,total1177.061s; build/row slot wait0. No deadline fired. Only the affected W1/J10 methods are rerun after this fix; the three passing methods retain this precise source provenance. The complete acceptance selection is not green from this mixed run.
+
+## Coordinator transport failure remains red
+
+RENEW-FIX20261031-073058-fa78 at902a4446569992a4e31e9141aa6694753779863a is terminal RED1,2/0/2/0, clean source/build verified. W1 reached a valid initial proof exchange under FD8 and then transport refused before Ready/effects (103.012s method). J10 passed its long manual phase and existing direct matrices but public authenticated DryRun also refused RemoteTransportFailed (about180s method). This is an introduced coordinator regression, not inherited red. No fixture assertion or deadline was relaxed. The following diagnostic adds only a numeric source line to transport metadata; no child stderr, paths or secrets are retained.
+
+```text
+CHECKPOINT RENEW-FIX commit=902a4446569992a4e31e9141aa6694753779863a build=ok filter=/*/Antiphon.Tests.Scripts/(VolumeRetirementReceiptTests*)|(VolumeRetirementWrapperTests*)/(Manual_attestation_is_exact_and_cannot_waive_findings*)|(Retire_temp_uses_current_proof_protocol*) executed=2 passed=0 failed=2 skipped=0 trx=/work/worktrees/task-e9fd8902/.antiphon/checkpoints/20261031-073058-fa78/rows/RENEW-FIX/run.trx slot=granted waited=0s dirty=0 source=902a4446569992a4e31e9141aa6694753779863a sourceState=clean buildSource=verified
+```
+
+Build624.365s,compiler494.39s,row295.673s,tests283.747s,total1023.852s. No slot wait or deadline fired. Host compiler contention was observed; p95 remains unknown. Full CP-15/roster are still unrun, ordered behind acceptance.

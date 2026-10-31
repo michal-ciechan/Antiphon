@@ -372,7 +372,7 @@ function Invoke-C1609RetirementCoordinator {
     $proc=[Diagnostics.Process]::new();$proc.StartInfo=$psi;$started=$false;$code=2
     $watch=[Diagnostics.Stopwatch]::StartNew();$networkMs=0L;$previousDirectory='';$previousDigest='none'
     $objectDigest=Get-C1008Sha256 ''; $nonces=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $lineBuffer='';$exitedAt=$null;$phaseBinding=''
+    $lineBuffer='';$exitedAt=$null;$phaseBinding='';$failureLine=0
     try {
         [void]$proc.Start();$started=$true;$proc.StandardInput.NewLine="`n"
         $streams=@(@{reader=$proc.StandardOutput;buffer=[char[]]::new(4096);task=$null;done=$false;count=0;protocol=$true},
@@ -431,11 +431,11 @@ function Invoke-C1609RetirementCoordinator {
             [Threading.Thread]::Sleep(10)
         }
         if(-not $proc.WaitForExit(2000)){throw 'exit'};$code=$proc.ExitCode
-    } catch { $code=2 }
+    } catch { $code=2;$failureLine=[int]$_.InvocationInfo.ScriptLineNumber }
     finally {
         if($started){try{$proc.StandardInput.Close()}catch{};if(-not $proc.HasExited){$proc.Kill($true);[void]$proc.WaitForExit(2000)}}
         $proc.Dispose()
-        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"))
+        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"+'failure-line='+$failureLine+"`n"))
     }
     return $code
 }
