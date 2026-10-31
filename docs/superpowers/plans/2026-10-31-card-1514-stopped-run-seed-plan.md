@@ -35,6 +35,14 @@ at da15833114c7dfdb31c89f6d826485cb5b95bf6f passed 8/8 in 7m25s (one build), clo
 the wrapper-witness repair. That historical cost is retained. The final group uses a
 third fresh output, bin-f6-seed-green3/, one build shared by all eight exact rows.
 
+Whole-suite refinement: a legitimate plan row can have classes=[]; retain observed
+class membership from its TRX. BuilderReadOnly was committed RED at 753e048d0 and
+reproduced seed-trx-class-unplanned before the one-line production fallback. The
+missing-plan-row RED group was 0/3; its repaired probe was 4/4. Final expanded
+fixture probe was 8/8 in a 97s lease before this final isolated checkpoint build.
+The two historical checkpoint groups remain 9m22s and 7m25s; final ordinary
+estimate remains 15m excluding admission. No required timeout was widened.
+
 ## Verification design
 
 Seven guard mutants are separately run and restored against the exact named portable case:
