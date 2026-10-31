@@ -65,8 +65,10 @@ public class LiveLaneExecutableTests
         {
             return "20 " + setup;
         }
-
-        return null;
+        catch (LiveClaudeRefusal)
+        {
+            return null;
+        }
     }
 
     private static Dictionary<string, object?> EmittedSkip(string reason, string setup)
