@@ -48,7 +48,8 @@ public sealed class RetiredTempContainerScriptTests
         foreach(var present in new[]{false,true})foreach(var zero in new[]{false,true}){
             using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;f.State["tempExited"]=true;if(zero)f.State["statuses"]!["server2-temp"]!["runnerSessions"]=0;
             var run=await f.Run("retire-temp");run.Exit.ShouldBe(0,"c994-retire-order: "+run.Output);
-            Cases(run.Trace).Select(x=>x["name"]!.GetValue<string>()).ShouldBe(new[]{"retire-temp-containers","retire-temp-runner"},"c994-retire-order");
+            Cases(run.Trace).Select(x=>x["name"]!.GetValue<string>()).ShouldBe(new[]{"retire-temp-containers","retire-temp-runner","retire-temp-runner"},"c994-retire-order");
+            Cases(run.Trace).Skip(1).Select(x=>x["recycle"]!["dryRun"]!.GetValue<bool>()).ShouldBe(new[]{true,false},"c994-full-preview-before-apply");
             Cases(run.Trace).Last()["recycle"]!["cleanupOperationId"]!.GetValue<string>().ShouldBe(Cases(run.Trace).First()["cleanup"]!["operationId"]!.GetValue<string>());
         }
         using var live=new C1008WrapperFixture();live.State["tempContainer"]=true;
@@ -165,6 +166,7 @@ public sealed class RetiredTempContainerScriptTests
         foreach(var present in new[]{false,true})foreach(var zero in new[]{false,true}){using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;f.State["tempExited"]=true;if(zero)f.State["statuses"]!["server2-temp"]!["runnerSessions"]=0;
             var run=await f.Run("retire-temp","-DryRun");run.Exit.ShouldBe(0,"c994-preview-pending: "+run.Output);
             if(present){NoRecycle(run.Trace,"c994-preview-pending");run.Output.ShouldContain("volumeProof=pending-confirmed-absence auditPending=true");}
+            else { var content=Cases(run.Trace).Where(x=>x["name"]?.GetValue<string>()=="retire-temp-runner").Single();content["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue("c994-full-content-preview"); }
             JsonNode.Parse(File.ReadAllText(f.StatePath))!["tempContainer"]!.GetValue<bool>().ShouldBe(present);run.Trace.Any(x=>x["method"]?.GetValue<string>()=="POST").ShouldBeFalse();}
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]

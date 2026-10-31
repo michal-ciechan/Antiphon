@@ -1442,7 +1442,14 @@ function Invoke-Phase {
             $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
             $context = [pscustomobject]@{ version=1; project='antiphon-runner-temp'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
             if ($null -ne $cleanup) { $context | Add-Member -NotePropertyName cleanupOperationId -NotePropertyValue $cleanup.operationId }
-            # Preview stops here. retire-temp-runner is the volume-delete case.
+            # The host's dryRun mode performs the complete read-only content
+            # Preview. Normal retirement consumes that same operation's Ready
+            # record; Resume keeps its existing intent-reconciliation path.
+            if (-not $ResumeRecycle) {
+                $previewContext = $context.PSObject.Copy()
+                $previewContext.dryRun = $true
+                Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $previewContext
+            }
             if ($DryRun) { return }
             Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $context
         }
