@@ -239,6 +239,9 @@ public class HostCustodyTests
                 ptyBackend: "modern", custodyStoreRoot: custodyRoot,
                 custodyBackend: VerificationCustodyBackends.WindowsJob);
             host = Process.GetProcessById(hostPid);
+            // Retain the native handle before an early launch rejection exits the process, so
+            // EOF diagnostics can still read its exit code after Windows removes its PID.
+            _ = host.Handle;
             await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(15),
                 () => PipeTestClient.DescribeHost(host, Path.Combine(root, "host.log")));
             await client.SendAsync(new HelloMessage(PtyHostProtocol.Version));
