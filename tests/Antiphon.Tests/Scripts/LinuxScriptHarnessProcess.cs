@@ -274,8 +274,13 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
         return exitCode;
     }
 
-    internal static bool IsVanishedProc(Exception exception) =>
-        exception is FileNotFoundException or DirectoryNotFoundException;
+    internal static bool IsVanishedProc(Exception exception)
+    {
+        if (exception is FileNotFoundException or DirectoryNotFoundException) return true;
+        return exception is IOException io && (
+            io.Message.Contains("No such process", StringComparison.Ordinal) ||
+            io.Message.Contains("No such file", StringComparison.Ordinal));
+    }
 
     internal static bool TryReadProcIdentity(int pid, Func<int, LinuxIdentity> read, out LinuxIdentity identity)
     {
