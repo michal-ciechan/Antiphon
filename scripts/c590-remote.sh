@@ -4602,6 +4602,9 @@ c849_fixture_on_signal() {
     local sig="${1:-TERM}"
     trap '' INT TERM
     c849_fixture_release_live_probes || true
+    # EXIT cannot run again if this signal interrupted its active finalizer.
+    # Finalization is idempotent for the ordinary signal -> EXIT path too.
+    c849_fixture_finalize || true
     case "$sig" in
         INT) exit 130 ;;
         *) exit 143 ;;
