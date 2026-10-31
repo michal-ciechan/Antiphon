@@ -88,8 +88,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// CARD-0168 B-tier: opt in to the production Claude JSONL tailer. Same safety argument as
     /// <paramref name="codexTranscript"/> — the caller MUST give the session a unique temp cwd
     /// (C2) so discovery cannot bind a stranger's conversation under <c>~/.claude/projects</c>.
-    /// Isolated <c>CLAUDE_CONFIG_DIR</c> is the preferred pairing (ForClaude) and must also be
-    /// set on THIS process so the in-proc tailer looks at the same root the child writes to.
+    /// Isolated <c>CLAUDE_CONFIG_DIR</c> is the preferred pairing (ForClaude). The in-proc tailer
+    /// reads that directory from the child launch environment, so this process does not also set it.
     /// </param>
     /// <param name="herdrClient">
     /// CARD-0168 S5: when non-null, herdr-backend launches on this in-proc runtime talk to this

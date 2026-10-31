@@ -1,3 +1,4 @@
+using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
@@ -86,36 +87,43 @@ public class ClaudeRemoteControlMenuCanaryTests
     [Test]
     public async Task C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt()
     {
-        ClSession.SkipIfNotEligible();
+        var executable = ClSession.RequireCore(LiveClaudeCore.Menu);
+        using var profile = ClSession.RequireProfile(executable);
+        ClSession.SkipIfNotEligible(executable);
         var sessionId = Guid.NewGuid().ToString("D");
         await using var runner = new PtyAgentRunner("modern");
-        var (app, args) = ClSession.BuildLaunch(
-            ClSession.ResolveOrThrow(), "--dangerously-skip-permissions", "--session-id", sessionId);
-        await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        var launch = ClSession.BuildProfileLaunch(profile, "menu", sessionId);
+        var (app, args) = ClSession.BuildCoreLaunch(executable, launch.Args);
+        await runner.StartAsync(app, args, cwd: launch.Cwd, cols: launch.Cols, rows: launch.Rows, env: launch.Env);
+        executable.RequireNativeObservation();
+        try
+        {
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready)
             throw new SkipTestException("pending native acceptance: real Claude TUI did not reach ready");
 
-        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        await ClaudeRemoteControlAtStartupCanaryTests.EnsureMenuBridgeAsync(runner, profile, sessionId);
+        var delivery = new LiveClaudeDeliverySession(runner, profile, sessionId);
+        var bridge = delivery.Bridge() ?? throw new LiveClaudeRefusal("bridge-unestablished");
+        await delivery.SendAsync("/remote-control");
         var appeared = await runner.WaitForScreenAsync(MenuPresent, TimeSpan.FromSeconds(12));
-        if (!appeared)
-            throw new SkipTestException(
-                "pending native acceptance: no management menu (bridge not pre-established). Screen:\n"
-                + runner.SnapshotScreen());
-
+        if (!appeared) throw new LiveClaudeRefusal("menu-unobserved");
+        var beforeEsc = delivery.Bridge();
         await runner.WriteAsync(DismissKey);
         await Task.Delay(SettleMs);
         var firstClear = !MenuPresent(runner.SnapshotScreen());
         await Task.Delay(SettleMs);
         var secondClear = !MenuPresent(runner.SnapshotScreen());
-        firstClear.ShouldBeTrue();
-        secondClear.ShouldBeTrue();
-
-        var token = "C514-OK-" + Guid.NewGuid().ToString("N")[..8];
-        await EchoGatedSubmit.SendAsync(runner, token);
-        (await runner.WaitForScreenAsync(
-            s => ComposerDeliveryEvidence.FragmentIsVisible(s, token) || s.Contains(token, StringComparison.Ordinal),
-            TimeSpan.FromSeconds(12)))
-            .ShouldBeTrue("unique prompt must convert after idle Esc. Screen:\n" + runner.SnapshotScreen());
+        if (!firstClear || !secondClear) throw new LiveClaudeRefusal("menu-not-dismissed");
+        var afterEsc = delivery.Bridge();
+        var body = ClaudeSubmitContractHarness.PromptFor("claude");
+        var request = delivery.Capture(body);
+        var rows = await LiveClaudeDeliveryEvidence.SubmitOnceAsync(request, () => delivery.SendAsync(body),
+            () => delivery.ObserveAsync(request, completion: false), completion: false);
+        var afterSubmit = delivery.Bridge();
+        LiveClaudeDeliveryEvidence.RequireMenu(request, rows, bridge, beforeEsc, afterEsc, afterSubmit);
+        }
+        catch (LiveClaudeRefusal e) when (LiveClaudeOutcome.SetupStatus(e.Reason) is string setup)
+        { throw new SkipTestException("20 " + setup); }
     }
 }

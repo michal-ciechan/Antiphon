@@ -3274,7 +3274,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     resumeLaunch: resumeLaunch,
                     onBound: RecordTranscriptBinding,
                     onUnbound: RecordTranscriptUnbinding,
-                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
+                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath),
+                    projectsRoot: TranscriptTailer.ResolveProjectsRoot(request.Env));
                 _tailer.Start();
             }
         }
