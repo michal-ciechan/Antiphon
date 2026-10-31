@@ -169,9 +169,13 @@ try {
             $malformed=Join-Path $root 'malformed.json';[IO.File]::WriteAllText($malformed,'{')
             $bad=Ingress -Path $malformed -Accept
             $good=Ingress -Accept
+            $rankedBefore=Resolve-NightlyPriorFailures $good.History $suites Full
+            $wanted=@(foreach($s in $suites){foreach($c in @($s.chunks)){$s.id+'/'+$c.id}})
             foreach($s in $suites){foreach($c in $s.chunks){$c.classes=@('Synthetic.Gone.Class')}}
-            $unmapped=Schedule $good
-            Check ($oldSource.FallbackReason -eq 'seed-stale' -and $null -eq $bad.History -and (Schedule $bad).entries.Count -eq 25 -and $received.FallbackReason -eq 'seed-stale' -and $null -eq $received.History -and $unmapped.orderingReason -eq 'seed-plan-unmapped' -and $unmapped.entries[0].chunk -eq 'new-Passed' -and $unmapped.entries.Count -eq 25) 'stale or wholly unmappable seed restores complete original plan'
+            $unmapped=New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers @($rankedBefore.members) -Unresolved @($rankedBefore.unresolved) -PreviousRun $good.PreviousRun -CandidateSha ('b'*40) -NowUtc $now
+            $unmappedOrder=@($unmapped.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
+            $unmappedOriginal=((($unmappedOrder -join ',') -ceq ($wanted -join ',')) -and @($unmapped.entries|Where-Object priorFailure).Count -gt 0)
+            Check ($oldSource.FallbackReason -eq 'seed-stale' -and $null -eq $bad.History -and (Schedule $bad).entries.Count -eq 25 -and $received.FallbackReason -eq 'seed-stale' -and $null -eq $received.History -and $unmapped.orderingReason -eq 'seed-plan-unmapped' -and $unmappedOriginal -and $unmapped.entries.Count -eq 25) 'stale or wholly unmappable seed restores complete original plan'
         }
         'PublicHopsForwardAcknowledgement' {
             . (Join-Path $PSScriptRoot 'lib/nightly-run-impl.ps1')
@@ -390,36 +394,171 @@ try {
             $kept=Schedule $inputRecord
             $cross=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $seed -CandidateSha ('c'*40) -NowUtc $now
             $bare=$seed.PSObject.Copy();$bare.PSObject.Properties.Remove('seedKind')
-            $missingMarker=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $bare -CandidateSha ('b'*40) -NowUtc $now
+            $ranked=Resolve-NightlyPriorFailures $seed $suites Full
+            $members=@($ranked.members)
+            $canonicalOrder=@(foreach($s in $suites){foreach($c in @($s.chunks)){$s.id+'/'+$c.id}})
+            function Test-Original($Schedule){
+                $actual=@($Schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
+                return (@($Schedule.entries|Where-Object priorFailure).Count -gt 0 -and ($actual -join ',') -ceq ($canonicalOrder -join ','))
+            }
+            $missingMarker=New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers $members -PreviousRun $bare -CandidateSha ('b'*40) -NowUtc $now
             $foreign=$seed.PSObject.Copy();$foreign.seedKind='operator-seed-forged'
-            $foreignSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $foreign -CandidateSha ('b'*40) -NowUtc $now
+            $foreignSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers $members -PreviousRun $foreign -CandidateSha ('b'*40) -NowUtc $now
             $tiny=@([pscustomobject]@{id='antiphon';chunks=@([pscustomobject]@{id='Ordinary';classes=@('C.B');nodes=@()},[pscustomobject]@{id='Priority';classes=@('C.A');nodes=@()});nodes=@();exclusions=@()})
             $plain=New-NightlyDispatchSchedule -PreparedSuites $tiny -NowUtc $now
-            $normal=[pscustomobject]@{schemaVersion=1;liveness='closed';sha=('b'*40);completedAt=$now.AddHours(-1).ToString('o');canonicalPlanDigest=$plain.canonicalPlanDigest;seedKind='operator-seed-from-stopped-run';suites=@([pscustomobject]@{id='antiphon';chunk='Priority';result='FAIL';exitCode=1},[pscustomobject]@{id='antiphon';chunk='Ordinary';result='pass';exitCode=0})}
+            $forgedChunks=[object[]]@(
+                [pscustomobject]@{suite='antiphon';chunk='seed-ordinary';classes=[object[]]@('C.B');completed=$true;started=$true;lastRunAtUtc=$now.AddHours(-2).ToString('o')},
+                [pscustomobject]@{suite='antiphon';chunk='seed-priority';classes=[object[]]@('C.A');completed=$true;started=$true;lastRunAtUtc=$now.AddHours(-3).ToString('o')}
+            )
+            $forgedFailed=[object[]]@(
+                [pscustomobject]@{suite='antiphon';chunk='seed-ordinary';className='C.B';method='Run';outcome='Failed'},
+                [pscustomobject]@{suite='antiphon';chunk='seed-ordinary';className='C.B';method='RunAgain';outcome='Failed'}
+            )
+            $normal=[pscustomobject]@{
+                schemaVersion=1;liveness='closed';sha=('b'*40);completedAt=$now.AddHours(-1).ToString('o');canonicalPlanDigest=$plain.canonicalPlanDigest
+                seedKind='operator-seed-from-stopped-run';sourceSha=('b'*40);sourceRunId='synthetic-forged';sourceObservedAtUtc=$now.AddHours(-2).ToString('o')
+                suites=@([pscustomobject]@{id='antiphon';chunk='Priority';result='FAIL';exitCode=1},[pscustomobject]@{id='antiphon';chunk='Ordinary';result='pass';exitCode=0})
+                chunks=$forgedChunks;failedTests=$forgedFailed
+            }
+            if($normal.chunks -isnot [array] -or $normal.failedTests -isnot [array] -or $normal.chunks.Count -lt 2){ throw 'forged normal record lost its arrays' }
             $forged=New-NightlyDispatchSchedule -PreparedSuites $tiny -PreviousRun $normal -CandidateSha ('b'*40) -NowUtc $now
             $stripped=$normal.PSObject.Copy();$stripped.PSObject.Properties.Remove('canonicalPlanDigest')
             $forgedMissing=New-NightlyDispatchSchedule -PreparedSuites $tiny -PreviousRun $stripped -CandidateSha ('b'*40) -NowUtc $now
             $noSha=$seed.PSObject.Copy();$noSha.PSObject.Properties.Remove('sourceSha')
-            $shaSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $noSha -CandidateSha ('b'*40) -NowUtc $now
+            $shaSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers $members -PreviousRun $noSha -CandidateSha ('b'*40) -NowUtc $now
             $noRun=$seed.PSObject.Copy();$noRun.PSObject.Properties.Remove('sourceRunId')
-            $runSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $noRun -CandidateSha ('b'*40) -NowUtc $now
+            $runSchedule=New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers $members -PreviousRun $noRun -CandidateSha ('b'*40) -NowUtc $now
             $hit=@($seed.chunks|Where-Object { @($_.classes).Count -gt 0 })[0]
-            $regrouped=@([pscustomobject]@{id=$hit.suite;chunks=@([pscustomobject]@{id=$hit.chunk;classes=@('Synthetic.Regrouped.Other');nodes=@()},[pscustomobject]@{id='extra-chunk';classes=@('Synthetic.Regrouped.Extra');nodes=@()});nodes=@();exclusions=@()})
-            $regroup=New-NightlyDispatchSchedule -PreparedSuites $regrouped -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
+            $regrouped=@([pscustomobject]@{
+                id='antiphon'
+                chunks=@(
+                    [pscustomobject]@{id='all-group-1';classes=@('Synthetic.antiphon.Passed','Synthetic.antiphon.Never');nodes=@()},
+                    [pscustomobject]@{id='held-red';classes=@('Synthetic.antiphon.Red');nodes=@()}
+                )
+                nodes=@(
+                    [pscustomobject]@{Uid='Synthetic.antiphon.Passed';ClassName='Synthetic.antiphon.Passed';Method='Run';Type='Passed';Categories=@()},
+                    [pscustomobject]@{Uid='Synthetic.antiphon.Never';ClassName='Synthetic.antiphon.Never';Method='Run';Type='Never';Categories=@()},
+                    [pscustomobject]@{Uid='Synthetic.antiphon.Red';ClassName='Synthetic.antiphon.Red';Method='Run';Type='Red';Categories=@()}
+                )
+                exclusions=@()
+            })
+            $regroupMembers=@((Resolve-NightlyPriorFailures $seed $regrouped Full).members)
+            $regroup=New-NightlyDispatchSchedule -PreparedSuites $regrouped -PriorityMembers $regroupMembers -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
             $same=@([pscustomobject]@{id=$hit.suite;chunks=@([pscustomobject]@{id=$hit.chunk;classes=@($hit.classes);nodes=@()});nodes=@();exclusions=@()})
             $sameSchedule=New-NightlyDispatchSchedule -PreparedSuites $same -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
-            $canonical=@($suites[0].chunks[0].id)
             $ok=$kept.orderingReason -like 'operator-seed-order*' -and @($kept.entries[0..4].chunk)[0] -ceq 'new-Red' -and (Test-Permutation $kept $suites)
             $ok=$ok -and $cross.orderingReason -like 'operator-seed-order*' -and (Test-Permutation $cross $suites)
-            $ok=$ok -and $missingMarker.orderingReason -ceq 'previous-run-plan-digest-missing' -and $missingMarker.entries[0].chunk -ceq $canonical -and (Test-Permutation $missingMarker $suites)
-            $ok=$ok -and $foreignSchedule.orderingReason -ceq 'operator-seed-kind-foreign' -and $foreignSchedule.entries[0].chunk -ceq $canonical -and (Test-Permutation $foreignSchedule $suites)
+            $ok=$ok -and $missingMarker.orderingReason -ceq 'previous-run-plan-digest-missing' -and (Test-Original $missingMarker)
+            $ok=$ok -and $foreignSchedule.orderingReason -ceq 'operator-seed-kind-foreign' -and (Test-Original $foreignSchedule)
             $ok=$ok -and $forged.orderingReason -ceq 'previous-run-order' -and $forged.entries[0].chunk -ceq 'Priority' -and (Test-Permutation $forged $tiny)
             $ok=$ok -and $forgedMissing.orderingReason -ceq 'previous-run-plan-digest-missing' -and $forgedMissing.entries[0].chunk -ceq 'Ordinary' -and (Test-Permutation $forgedMissing $tiny)
-            $ok=$ok -and $shaSchedule.orderingReason -ceq 'seed-candidate-missing' -and $shaSchedule.entries[0].chunk -ceq $canonical -and (Test-Permutation $shaSchedule $suites)
-            $ok=$ok -and $runSchedule.orderingReason -ceq 'seed-run-missing' -and (Test-Permutation $runSchedule $suites)
-            $ok=$ok -and $regroup.orderingReason -ceq 'seed-plan-regrouped' -and $regroup.entries[0].chunk -ceq $hit.chunk -and (Test-Permutation $regroup $regrouped)
+            $ok=$ok -and $shaSchedule.orderingReason -ceq 'seed-candidate-missing' -and (Test-Original $shaSchedule)
+            $ok=$ok -and $runSchedule.orderingReason -ceq 'seed-run-missing' -and (Test-Original $runSchedule)
+            $ok=$ok -and $regroup.orderingReason -like 'operator-seed-order*' -and $regroup.entries[0].chunk -ceq 'held-red' -and $regroup.entries[0].priorFailure -and $regroup.entries.Count -eq 2 -and (Test-Permutation $regroup $regrouped)
             $ok=$ok -and $sameSchedule.orderingReason -like 'operator-seed-order*' -and (Test-Permutation $sameSchedule $same)
-            Check $ok ('kept='+$kept.orderingReason+'; missing='+$missingMarker.orderingReason+'; foreign='+$foreignSchedule.orderingReason+'; forged='+$forged.orderingReason+'/'+$forged.entries[0].chunk+'; forgedMissing='+$forgedMissing.orderingReason+'/'+$forgedMissing.entries[0].chunk+'; sha='+$shaSchedule.orderingReason+'; run='+$runSchedule.orderingReason+'; regroup='+$regroup.orderingReason+'; same='+$sameSchedule.orderingReason)
+            Check $ok ('kept='+$kept.orderingReason+'; missing='+$missingMarker.orderingReason+'; foreign='+$foreignSchedule.orderingReason+'; forged='+$forged.orderingReason+'/'+$forged.entries[0].chunk+'; forgedMissing='+$forgedMissing.orderingReason+'/'+$forgedMissing.entries[0].chunk+'; sha='+$shaSchedule.orderingReason+'; run='+$runSchedule.orderingReason+'; regroup='+$regroup.orderingReason+'/'+$regroup.entries[0].chunk+'; same='+$sameSchedule.orderingReason)
+        }
+        'RealPackerRegroupKeepsFailedFirst' {
+            $alpha='Antiphon.Tests.PackWitness.Alpha'
+            $beta='Antiphon.Tests.PackWitness.Beta'
+            $gamma='Antiphon.Tests.PackWitness.Gamma'
+            $never='Antiphon.Tests.PackWitness.NeverSeen'
+            $delta='Antiphon.Tests.PackWitness.Delta'
+            $zeta='Antiphon.Tests.PackWitness.Zeta'
+            $stamp=$now.AddHours(-2).ToString('o')
+            $script:packSeedN=0
+            function Convert-Counts($Counts){
+                $nodes=New-Object System.Collections.Generic.List[object]
+                $leaves=New-Object System.Collections.Generic.List[object]
+                $i=0
+                foreach($name in @($Counts.Keys|Sort-Object)){
+                    $i++
+                    $type=([string]$name).Split('.')[-1]
+                    for($n=1;$n -le [int]$Counts[$name];$n++){
+                        [void]$nodes.Add([pscustomobject]@{ClassName=[string]$name;Method=('M'+$n);Type=$type;Categories=@();Uid=([string]$name+'/'+$n)})
+                    }
+                    [void]$leaves.Add([pscustomobject]@{id=('all-profile-'+$i);classes=@([string]$name);exactFilter='';nodes=@()})
+                }
+                return @(ConvertTo-NightlyProfileLaunchGroups -Leaves @($leaves.ToArray()) -DiscoveryNodes @($nodes.ToArray()))
+            }
+            function Write-PackSeed($Rows,$Failed){
+                $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
+                $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-packer';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
+                $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+                $script:packSeedN++
+                $path=Join-Path $root ('pack-seed-'+$script:packSeedN+'.json')
+                [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
+                return Read-NightlyStoppedRunSeed $path
+            }
+            function New-Suite($Groups){
+                $chunks=@(foreach($g in @($Groups)){[pscustomobject]@{id=[string]$g.id;classes=@($g.classes);nodes=@()}})
+                $nodes=@(foreach($g in @($Groups)){foreach($c in @($g.classes)){[pscustomobject]@{Uid=[string]$c;ClassName=[string]$c;Method='Run';Type=([string]$c).Split('.')[-1];Categories=@()}}})
+                return @([pscustomobject]@{id='antiphon';chunks=$chunks;nodes=$nodes;exclusions=@()})
+            }
+            function Order-Plan($Doc,$Groups){
+                $prepared=New-Suite $Groups
+                $resolved=Resolve-NightlyPriorFailures $Doc $prepared Full
+                return New-NightlyDispatchSchedule -PreparedSuites $prepared -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $now
+            }
+            $oldCounts=@{$alpha=1700;$beta=100;$gamma=100}
+            $newCounts=@{$alpha=1851;$beta=100;$gamma=100}
+            $old=@(Convert-Counts $oldCounts)
+            $packed=@(Convert-Counts $newCounts)
+            $oldMethods=0;foreach($v in $oldCounts.Values){$oldMethods+=[int]$v}
+            $newMethods=0;foreach($v in $newCounts.Values){$newMethods+=[int]$v}
+            $moved=$false
+            foreach($group in @($old)){
+                $other=@($packed|Where-Object { $_.id -ceq $group.id })
+                $left=((@($group.classes)|ForEach-Object {[string]$_}|Sort-Object) -join ',')
+                $right=$(if($other.Count -eq 1){((@($other[0].classes)|ForEach-Object {[string]$_}|Sort-Object) -join ',')}else{''})
+                if($left -cne $right){$moved=$true}
+            }
+            $betaOld=[string]@($old|Where-Object { @($_.classes) -ccontains $beta })[0].id
+            $rows=New-Object System.Collections.Generic.List[object]
+            foreach($group in @($old)){[void]$rows.Add([ordered]@{suite='antiphon';chunk=[string]$group.id;classes=@($group.classes);completed=$true;started=$true;lastRunAtUtc=$stamp})}
+            [void]$rows.Add([ordered]@{suite='antiphon';chunk='seed-only';classes=@($zeta);completed=$true;started=$true;lastRunAtUtc=$stamp})
+            $failed=@(
+                [ordered]@{suite='antiphon';chunk=$betaOld;className=$beta;method='M1';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk=$betaOld;className=$beta;method='M2';outcome='Failed'}
+            )
+            $doc=Write-PackSeed $rows.ToArray() $failed
+            $planned=@($packed)+@([pscustomobject]@{id='never-added';classes=@($never)})
+            $betaNew=[string]@($planned|Where-Object { @($_.classes) -ccontains $beta })[0].id
+            $schedule=Order-Plan $doc $planned
+            $again=Order-Plan $doc $planned
+            $ids=@($schedule.entries.chunk)
+            $againIds=@($again.entries.chunk)
+            $expected=@($planned|ForEach-Object {'antiphon/'+$_.id})|Sort-Object
+            $actual=@($schedule.entries|ForEach-Object {$_.suite+'/'+$_.chunk})|Sort-Object
+            $packOk=($moved -and ($newMethods-$oldMethods) -eq 151 -and $schedule.orderingReason -like 'operator-seed-order*' -and $ids[0] -ceq $betaNew -and $schedule.entries[0].priorFailure -and $ids -cnotcontains 'seed-only' -and $ids -ccontains 'never-added' -and ($ids -join ',') -ceq ($againIds -join ',') -and ($expected -join ',') -ceq ($actual -join ','))
+            $splitGroups=@(
+                [pscustomobject]@{id='passed-only';classes=@($alpha)},
+                [pscustomobject]@{id='mixed';classes=@($beta,$gamma)},
+                [pscustomobject]@{id='split-a';classes=@($beta)},
+                [pscustomobject]@{id='split-b';classes=@($beta)},
+                [pscustomobject]@{id='unfinished';classes=@($delta)},
+                [pscustomobject]@{id='never';classes=@($never)}
+            )
+            $splitRows=@(
+                [ordered]@{suite='antiphon';chunk='old-alpha';classes=@($alpha);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='old-beta';classes=@($beta);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='old-gamma';classes=@($gamma);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='old-delta';classes=@($delta);completed=$false;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='old-zeta';classes=@($zeta);completed=$true;started=$true;lastRunAtUtc=$stamp}
+            )
+            $splitFailed=@(
+                [ordered]@{suite='antiphon';chunk='old-beta';className=$beta;method='M1';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk='old-beta';className=$beta;method='M2';outcome='Failed'}
+            )
+            $splitDoc=Write-PackSeed $splitRows $splitFailed
+            $split=Order-Plan $splitDoc $splitGroups
+            $splitIds=@($split.entries.chunk) -join ','
+            $byId=@{}
+            foreach($entry in @($split.entries)){$byId[$entry.chunk]=$entry}
+            # Code rule: any chunk a failed class maps onto is priority 0, including a mixed passed+failed chunk and every chunk of a split class.
+            # Unfinished with no failure stays priority 1. A class the seed never saw stays priority 1 with no timestamp, so it sorts before a timestamped unfinished chunk.
+            $ruleOk=($split.orderingReason -like 'operator-seed-order*' -and $splitIds -ceq 'mixed,split-a,split-b,never,unfinished,passed-only' -and $byId['mixed'].priorFailure -and $byId['split-a'].priorFailure -and $byId['split-b'].priorFailure -and -not $byId['unfinished'].priorFailure -and -not $byId['never'].priorFailure -and -not $byId['passed-only'].priorFailure -and @($split.entries|ForEach-Object {$_.chunk}) -cnotcontains 'old-zeta')
+            Check ($packOk -and $ruleOk) ('pack='+$schedule.orderingReason+'/'+($ids -join ',')+'; moved='+$moved+'; delta='+($newMethods-$oldMethods)+'; beta='+$betaOld+'->'+$betaNew+'; split='+$split.orderingReason+'/'+$splitIds)
         }
         'SummaryPrefixTamper' {
             $runId='d47848cce896471db1cc8ca346707cad'

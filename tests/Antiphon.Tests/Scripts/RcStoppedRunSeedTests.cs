@@ -26,6 +26,7 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(180_000)] public Task ChunkUnfinishedTolerance(CancellationToken token) => Run(nameof(ChunkUnfinishedTolerance), token);
     [Test, Timeout(180_000)] public Task LinkCacheRefusesReplacement(CancellationToken token) => Run(nameof(LinkCacheRefusesReplacement), token);
     [Test, Timeout(120_000)] public Task DigestGuardLeavesSeedOrder(CancellationToken token) => Run(nameof(DigestGuardLeavesSeedOrder), token);
+    [Test, Timeout(120_000)] public Task RealPackerRegroupKeepsFailedFirst(CancellationToken token) => Run(nameof(RealPackerRegroupKeepsFailedFirst), token);
     [Test, Timeout(180_000)] public Task SummaryPrefixTamper(CancellationToken token) => Run(nameof(SummaryPrefixTamper), token);
     [Test, Timeout(120_000)] public Task WindowsAncestorSwapRefused(CancellationToken token) => Run(nameof(WindowsAncestorSwapRefused), token);
 
