@@ -24,7 +24,7 @@ internal static class LiveClaudeStartupMutants
         new("PC-95","V-18","control.ModelPrompts != 0", "false", "zero-prompts"),
         new("PC-96","V-20","var window = OffWindow(control);", "var window = TimeSpan.FromSeconds(8);", "late-bridge"),
         new("PC-97","V-20","control.Latency > TimeSpan.FromSeconds(15) ? control.Latency : TimeSpan.FromSeconds(15)", "TimeSpan.FromSeconds(15)", "latency-bound"),
-        new("PC-98","V-20","var bridge = await read();", "if (elapsed() >= window) return new(owner, null, elapsed(), settings()); var bridge = await read();", "deadline-bridge"),
+        new("PC-98","V-20","while (true)\n        {\n            var bridge = await read();", "while (true)\n        {\n            if (elapsed() >= window) return new(owner, null, elapsed(), settings()); var bridge = await read();", "deadline-bridge"),
         new("PC-102","V-22","new[] { \"user\", \"project\", \"local\" }", "new[] { \"project\", \"local\" }", "marker-user"),
         new("PC-103","V-22","new[] { \"user\", \"project\", \"local\" }", "new[] { \"user\", \"local\" }", "marker-project"),
         new("PC-104","V-22","new[] { \"user\", \"project\", \"local\" }", "new[] { \"user\", \"project\" }", "marker-local"),
@@ -50,7 +50,7 @@ internal static class LiveClaudeStartupMutants
             {
                 var body=LiveClaudeStartupAudit.Method(source,method).ToFullString();
                 foreach(var to in new[]{";","if (false) { "+oracle+" }","try { "+oracle+" } catch { }"})
-                    LiveClaudeStartupAudit.Reject(s=>LiveClaudeStartupAudit.Caller(s,method,role),body,oracle,to,pc);
+                    LiveClaudeStartupAudit.Reject(s=>LiveClaudeStartupAudit.Caller("class Subject { "+s+" }",method,role),body,oracle,to,pc);
             }
         }
         if(!Mutations.Any(m=>m.V==v)) return;
