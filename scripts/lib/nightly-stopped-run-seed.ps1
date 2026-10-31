@@ -76,6 +76,7 @@ function Export-NightlyStoppedRunSeed {
     if([IO.File]::Exists($output)){throw 'seed-output-exists'}
     $inputs=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     function Read-SeedFile([string]$Path){
+        if(-not (Test-NightlyHistoryUnderRoot ([IO.Path]::GetFullPath($Path)) $root)){throw 'seed-input-outside-source'}
         Assert-NightlyHistoryNoLink $Path
         $digest=Get-NightlyHistoryDigest $Path
         $text=[IO.File]::ReadAllText($Path)
@@ -108,14 +109,39 @@ function Export-NightlyStoppedRunSeed {
     $chunks=[Collections.Generic.List[object]]::new();$failed=[Collections.Generic.List[object]]::new()
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $failedKeys=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $documents=[Collections.Generic.List[object]]::new()
+    $plannedKeys=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($file in $plans){
-        $plan=(Read-SeedFile $file.FullName)|ConvertFrom-Json
+        $document=(Read-SeedFile $file.FullName)|ConvertFrom-Json
+        $documents.Add($document)
+        foreach($group in @($document.groups)){[void]$plannedKeys.Add([string]$document.suite+'/'+[string]$group.chunk)}
+    }
+    if(-not $SourceRunId){$SourceRunId=[string]$documents[0].runId}
+    if(-not $SourceSha){$SourceSha=[string]$documents[0].sourceDigest}
+    # A stopped run can retain a TRX whose historical group row is missing. Keep
+    # its identities independently of plan lookup; missing membership elsewhere
+    # must never erase a resolvable failure. Only supervisor per-chunk names at
+    # the supplied root are admitted, never nested discovery/diagnostic TRX files.
+    foreach($trxFile in @($files|Where-Object {$_.DirectoryName -eq $root -and $_.Extension -ceq '.trx'}|Sort-Object Name)){
+        if($trxFile.Name -cnotmatch '^(antiphon|session-runner|pty-host|agents-pty|messaging|e2e|markdown-pdf|observability)-([A-Za-z0-9_-]+)\.trx$'){continue}
+        $orphanSuite=$Matches[1];$orphanChunk=$Matches[2]
+        if($plannedKeys.Contains($orphanSuite+'/'+$orphanChunk)){continue}
+        $orphanRows=@()
+        try{
+            [void](Read-SeedFile $trxFile.FullName)
+            $orphanRows=@(Read-NightlyTrxIdentities $trxFile.FullName)
+        }catch{if($_.Exception.Message -clike 'seed-*'){throw}}
+        $orphanClasses=@(Get-NightlyHistoryOrdinalStrings @($orphanRows|ForEach-Object {Get-NightlyBareClassIdentity $_.ClassName}))
+        $documents.Add([pscustomobject]@{version=1;runId=$SourceRunId;sourceDigest=$SourceSha;suite=$orphanSuite;groups=@([pscustomobject]@{chunk=$orphanChunk;classes=$orphanClasses;plannedTestIds=@();fromTrxOnly=$true})})
+    }
+    foreach($plan in $documents){
         if($plan.version -ne 1 -or -not $plan.suite -or $plan.groups -isnot [array]){throw 'seed-plan-schema'}
         if($SourceRunId -and $plan.runId -cne $SourceRunId){throw 'seed-plan-run-mismatch'}
         if($SourceSha -and $plan.sourceDigest -cne $SourceSha){throw 'seed-plan-source-mismatch'}
         $SourceRunId=[string]$plan.runId;$SourceSha=[string]$plan.sourceDigest
         foreach($group in $plan.groups){
             $suite=[string]$plan.suite;$chunk=[string]$group.chunk;$key=$suite+'/'+$chunk
+            if($suite -cnotmatch '^[a-z][a-z0-9-]*$' -or $chunk -cnotmatch '^[A-Za-z0-9_-]+$'){throw 'seed-plan-identity'}
             if(-not $seen.Add($key)){throw 'seed-plan-duplicate'}
             $classes=@(Get-NightlyHistoryOrdinalStrings @($group.classes|ForEach-Object {Get-NightlyBareClassIdentity $_}))
             $stem=$suite+'-'+$chunk;$timing=$null;$last=$null;$completed=$false;$started=$false
@@ -158,7 +184,7 @@ function Export-NightlyStoppedRunSeed {
                     $completed=$false
                 }
             }
-            $chunks.Add([ordered]@{suite=$suite;chunk=$chunk;classes=$classes;completed=[bool]$completed;started=[bool]$started;lastRunAtUtc=$(if($last){$last.ToString('o')}else{$null})})
+            $chunks.Add([ordered]@{suite=$suite;chunk=$chunk;classes=$classes;membershipSource=$(if($group.fromTrxOnly){'trx-without-plan-row'}else{'plan'});completed=[bool]$completed;started=[bool]$started;lastRunAtUtc=$(if($last){$last.ToString('o')}else{$null})})
         }
     }
     if(-not $SourceRunId -or -not $SourceCandidateId -or $SourceSha -cnotmatch '^[a-f0-9]{40}$' -or $observed -eq [datetimeoffset]::MinValue){throw 'seed-source-identity-or-time-missing: supply source candidate/run/sha where owner metadata is absent'}
