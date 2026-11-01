@@ -9,8 +9,7 @@
       "arguments": [],
       "uid": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.1.1.C680_LiveNudgeRefusesPermissionAndQuestionDialogs.1.1.0",
       "categories": [
-        "Integration",
-        "LiveClaude"
+        "Integration"
       ],
       "bound": true
     },
@@ -26,8 +25,7 @@
       "categories": [
         "OptIn",
         "Headed",
-        "Pty",
-        "LiveClaude"
+        "Pty"
       ],
       "bound": true
     },
@@ -41,8 +39,7 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed",
-        "LiveClaude"
+        "Headed"
       ],
       "bound": true
     },
@@ -56,8 +53,7 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed",
-        "LiveClaude"
+        "Headed"
       ],
       "bound": true
     },
@@ -71,8 +67,7 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed",
-        "LiveClaude"
+        "Headed"
       ],
       "bound": true
     },
@@ -86,8 +81,7 @@
       "categories": [
         "HeadedCanary",
         "OptIn",
-        "Headed",
-        "LiveClaude"
+        "Headed"
       ],
       "bound": true
     }
