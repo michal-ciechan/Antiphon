@@ -14,6 +14,13 @@ namespace Antiphon.Tests.TestHelpers;
 /// <summary>A fresh owned real Linux PTY lifetime, using the production detached host resolver.</summary>
 internal sealed class Card1619NativeExitFixture : IAsyncDisposable
 {
+    /// <summary>
+    /// Outer bound for one real host launch, connect, and exit envelope. A start that is
+    /// still inside the product launch and connect ceilings must not be cancelled: that
+    /// cancellation is reported at the next await, AttachAsync (CARD-1632).
+    /// </summary>
+    public static readonly TimeSpan CaptureBudget = TimeSpan.FromSeconds(10);
+
     public Guid Id { get; } = Guid.NewGuid();
     public DateTime Generation { get; } = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-1));
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "card1619-s3a-" + Guid.NewGuid().ToString("N"));
@@ -32,7 +39,7 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
 
     private async Task<string> RunAsync(int signal, int code, bool requested, bool planted)
     {
-        using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var ct = new CancellationTokenSource(CaptureBudget);
         var clock = Stopwatch.StartNew();
         void Mark(string phase) =>
             Console.WriteLine($"card1619-phase signal={signal} code={code} {phase} ms={clock.ElapsedMilliseconds}");
