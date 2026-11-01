@@ -818,8 +818,8 @@ public sealed class RollingVolumeRecycleScriptTests
     // image: both volumes read-only, the same network as apply, every capability
     // dropped, no-new-privileges, --init, --rm, and a hard timeout. The helper name
     // and label belong to this preview run. That helper is the only container a
-    // preview may start. The host does not invoke Git. An unbound scan still starts
-    // no container. Apply still requires a dryRun false receipt.
+    // preview may start. The host does not invoke Git. CARD-1609: the cleanup
+    // receipt never authorizes apply; the operation token and the Ready preview do.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -859,23 +859,27 @@ public sealed class RollingVolumeRecycleScriptTests
             CleanupReceipt(clean, PreviewCleanupOperation)["image"]!.GetValue<string>().ShouldBe(image,
                 "recycle-preview-receipt: recycle does not rewrite the producer image");
 
+            // CARD-1609: the bound dry-run cleanup receipt is not apply authority. The
+            // operation token and this operation's Ready preview are. Without the token
+            // apply stops before any create, stop, journal, remove, or preview consume.
+            ResetPreviewTrace(clean);
+            var blocked = await clean.Run("retire-temp-runner", bound + "\nC1609_FIXTURE_APPLY_GATE=off");
+            blocked.Exit.ShouldBe(2, "recycle-preview-receipt: a dry-run receipt does not open the apply gate; " + blocked.Output);
+            blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+            blocked.Output.ShouldNotContain("C1008_PREVIEW");
+            blocked.Output.ShouldNotContain("C1008_RECYCLE");
+            clean.Trace.Any(a => a.Length > 0 && a[0] is "create" or "stop").ShouldBeFalse(
+                "recycle-preview-receipt: a refused apply starts and stops nothing");
+            clean.Removed.ShouldBeEmpty("recycle-preview-receipt: a dry-run receipt removes nothing");
+            File.Exists(Path.Combine(clean.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
+                .ShouldBeFalse("recycle-preview-receipt: a refused apply writes no journal");
+
             ResetPreviewTrace(clean);
             var apply = await clean.Run("retire-temp-runner", bound);
-            apply.Exit.ShouldBe(2, "recycle-preview-receipt: apply refuses a dry-run receipt; " + apply.Output);
-            apply.Output.ShouldContain("RecycleGitAuditUnknown");
+            apply.Exit.ShouldBe(0, "recycle-preview-receipt: the token and the Ready preview authorize apply; " + apply.Output);
+            apply.Output.ShouldContain("C1609_TOOLING protocol=2 policy=1 image=" + C1008HostFixture.SessionImage);
+            apply.Output.ShouldContain("outcome=completed");
             apply.Output.ShouldNotContain("C1008_PREVIEW");
-            apply.Output.ShouldNotContain("RecycleWorktreeDirty");
-            clean.Trace.Any(a => a.Length > 0 && a[0] == "create").ShouldBeFalse(
-                "recycle-preview-receipt: apply does not audit a preview receipt");
-            clean.Removed.ShouldBeEmpty("recycle-preview-receipt: a dry-run receipt removes nothing");
-
-            File.Delete(CleanupReceiptPath(clean, AppliedCleanupOperation));
-            ResetPreviewTrace(clean);
-            var unbound = await clean.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            unbound.Exit.ShouldBe(0, "recycle-preview-receipt: unbound preview is not authority; " + unbound.Output);
-            unbound.Output.ShouldContain("auditPending=true");
-            unbound.Output.ShouldNotContain("auditPending=false");
-            AssertReadonlyPreview(clean, image, audited: true);
         }
         finally
         {
@@ -973,9 +977,11 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
-    // A temp retired at SHA A keeps its completed cleanup image. Preview and apply at
-    // SHA B must audit with that image. A different retirement, a missing image, and
-    // no record do not.
+    // CARD-1609. A temp retired at SHA A once audited inside its completed cleanup
+    // image. Retirement now audits inside the protected current tooling at every
+    // SHA. A bound, cross-SHA, empty, foreign, or missing historical image never
+    // chooses the helper image and never opens apply. Dirty and unpublished work
+    // still refuse, and missing current tooling still refuses apply.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -995,22 +1001,24 @@ public sealed class RollingVolumeRecycleScriptTests
             ShareVolumeWithApply(clean);
             ResetPreviewTrace(clean);
             var run = await clean.Run("retire-temp-runner", boundEmpty + "\n" + PreviewWitnessProbe, dryRun: true);
-            run.Exit.ShouldBe(0, "c1594-cross-sha: preview audits with the retired image; " + run.Output);
+            run.Exit.ShouldBe(0, "c1594-cross-sha: preview audits with the current tooling; " + run.Output);
             run.Output.ShouldContain("auditPending=false");
-            run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
-            AssertReadonlyPreview(clean, CrossShaImage, audited: true);
+            AssertCurrentTooling(clean, run, CrossShaImage);
+            AssertReadonlyPreview(clean, C1008HostFixture.SessionImage, audited: true);
+
+            ResetPreviewTrace(clean);
+            var blocked = await clean.Run("retire-temp-runner", boundEmpty + "\nC1609_FIXTURE_APPLY_GATE=off");
+            blocked.Exit.ShouldBe(2, "c1594-cross-sha: a cross-SHA receipt does not open the apply gate; " + blocked.Output);
+            blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+            clean.Trace.Any(args => args.Length > 0 && args[0] is "create" or "run" or "stop").ShouldBeFalse(
+                "c1594-cross-sha: a refused apply starts and stops nothing");
+            clean.Removed.ShouldBeEmpty("c1594-cross-sha: a refused apply removes nothing");
 
             ResetPreviewTrace(clean);
             var applied = await clean.Run("retire-temp-runner", boundEmpty);
-            applied.Exit.ShouldBe(0, "c1594-cross-sha: apply audits with the retired image; " + applied.Output);
-            var created = clean.Trace.Where(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint")).ToArray();
-            created.Length.ShouldBe(2, "c1594-cross-sha: apply audits before and after removal");
-            foreach (var args in created)
-            {
-                args.ShouldContain(CrossShaImage);
-                args.ShouldContain("--user");
-                args.ShouldContain("1654:1654");
-            }
+            applied.Exit.ShouldBe(0, "c1594-cross-sha: the token apply audits with the current tooling; " + applied.Output);
+            applied.Output.ShouldContain("outcome=completed");
+            AssertCurrentTooling(clean, applied, CrossShaImage);
         }
 
         using (var dirty = new C1008HostFixture(main: false))
@@ -1028,7 +1036,8 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Output.ShouldContain("RecycleWorktreeDirty");
             run.Output.ShouldNotContain("auditPending=true");
             run.Output.ShouldNotContain("C1008_PREVIEW");
-            AssertReadonlyPreview(dirty, CrossShaImage, audited: true);
+            AssertCurrentTooling(dirty, run, CrossShaImage);
+            AssertReadonlyPreview(dirty, C1008HostFixture.SessionImage, audited: true);
             dirty.Removed.ShouldBeEmpty();
         }
 
@@ -1056,7 +1065,8 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Output.ShouldContain("RecycleUnpublishedWork");
             run.Output.ShouldNotContain("auditPending=true");
             run.Output.ShouldNotContain("C1008_PREVIEW");
-            AssertReadonlyPreview(unpublished, CrossShaImage, audited: true);
+            AssertCurrentTooling(unpublished, run, CrossShaImage);
+            AssertReadonlyPreview(unpublished, C1008HostFixture.SessionImage, audited: true);
             unpublished.Removed.ShouldBeEmpty();
         }
         finally
@@ -1064,6 +1074,7 @@ public sealed class RollingVolumeRecycleScriptTests
             if (Directory.Exists(unpublishedRoot)) Directory.Delete(unpublishedRoot, recursive: true);
         }
 
+        // A foreign receipt is history, not a refusal and not an image choice.
         foreach (var (field, value) in new (string, string)[]
         {
             ("retiredAt", "2026-10-04T09:30:00.000000000Z"),
@@ -1071,71 +1082,52 @@ public sealed class RollingVolumeRecycleScriptTests
             ("project", "antiphon-runner")
         })
         {
-            using var refused = new C1008HostFixture(main: false);
-            var seed = await CaptureCleanupSeed(refused);
+            using var foreignFixture = new C1008HostFixture(main: false);
+            var seed = await CaptureCleanupSeed(foreignFixture);
             var foreign = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
             foreign[field] = value;
-            ReplaceReceipts(refused, foreign);
-            ResetPreviewTrace(refused);
-            var run = await refused.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + CrossShaOperation, dryRun: true);
-            run.Exit.ShouldBe(2, "c1594-cross-sha: " + field + " is not this retirement; " + run.Output);
-            run.Output.ShouldContain("RecycleGitAuditUnknown");
-            run.Output.ShouldNotContain("auditPending=true");
-            run.Output.ShouldNotContain("C1008_PREVIEW");
-            refused.Trace.Any(args => args.Length > 0 && args[0] == "run").ShouldBeFalse("c1594-cross-sha: " + field);
-            refused.Removed.ShouldBeEmpty();
+            ReplaceReceipts(foreignFixture, foreign);
+            ResetPreviewTrace(foreignFixture);
+            var run = await foreignFixture.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + CrossShaOperation, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-cross-sha: " + field + " is not this retirement; " + run.Output);
+            AssertCurrentTooling(foreignFixture, run, CrossShaImage);
+            foreignFixture.Removed.ShouldBeEmpty();
         }
 
         using (var missing = new C1008HostFixture(main: false))
         {
             var seed = await CaptureCleanupSeed(missing);
-            ReplaceReceipts(missing, CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha,
-                image: "sha256:" + new string('b', 64)));
+            var gone = "sha256:" + new string('b', 64);
+            ReplaceReceipts(missing, CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: gone));
             ResetPreviewTrace(missing);
             missing.Docker["fault"] = "original-image-missing";
             var run = await missing.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + CrossShaOperation, dryRun: true);
-            run.Exit.ShouldBe(2, "c1594-cross-sha: a missing pinned image refuses; " + run.Output);
-            run.Output.ShouldContain("RecycleGitAuditUnknown");
-            run.Output.ShouldNotContain("auditPending=true");
-            run.Output.ShouldNotContain("C1008_PREVIEW");
-            missing.Trace.Any(args => args.Length > 0 && args[0] == "run").ShouldBeFalse("c1594-cross-sha: missing image starts no helper");
+            run.Exit.ShouldBe(0, "c1594-cross-sha: a missing historical image is not needed; " + run.Output);
+            AssertCurrentTooling(missing, run, gone);
             missing.Removed.ShouldBeEmpty();
         }
 
         using (var unpinned = new C1008HostFixture(main: false))
         {
             var preview = await unpinned.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            preview.Exit.ShouldBe(0, "c1594-cross-sha: no record stays an unpinned preview; " + preview.Output);
-            preview.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
-            preview.Output.ShouldContain("auditPending=true");
-            preview.Output.ShouldNotContain("auditPending=false");
+            preview.Exit.ShouldBe(0, "c1594-cross-sha: no record previews with the current tooling; " + preview.Output);
+            preview.Output.ShouldContain("auditPending=false");
+            preview.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
             AssertReadonlyPreview(unpinned, C1008HostFixture.SessionImage, audited: true);
             ResetPreviewTrace(unpinned);
             unpinned.Docker["fault"] = "image-inspect-error";
             var apply = await unpinned.Run("retire-temp-runner");
-            apply.Exit.ShouldBe(2, "c1594-cross-sha: unpinned apply refuses when the current image is absent; " + apply.Output);
-            apply.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
-            apply.Output.ShouldContain("RecycleGitAuditUnknown");
+            apply.Exit.ShouldBe(2, "c1594-cross-sha: apply refuses when the current tooling is absent; " + apply.Output);
+            apply.Output.ShouldContain("RecycleGitAuditUnknown reason=current-tooling-unavailable");
+            apply.Output.ShouldNotContain("C1609_TOOLING");
             unpinned.Removed.ShouldBeEmpty();
-        }
-
-        using (var preferred = new C1008HostFixture(main: false))
-        {
-            var seed = await CaptureCleanupSeed(preferred);
-            var current = CloneReceipt(seed, AppliedCleanupOperation, image: C1008HostFixture.SessionImage);
-            var newer = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
-            ReplaceReceipts(preferred, current, newer);
-            TouchNewer(preferred, CrossShaOperation);
-            ResetPreviewTrace(preferred);
-            var run = await preferred.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            run.Exit.ShouldBe(0, "c1594-cross-sha: the current SHA image still wins; " + run.Output);
-            run.Output.ShouldContain("auditPending=false");
-            AssertReadonlyPreview(preferred, C1008HostFixture.SessionImage, audited: true);
         }
     }
 
-    // A receipt from another retirement is history. The same retirement's completed
-    // cross-SHA image still binds. Partial and dry-run cross-SHA receipts do not.
+    // CARD-1609. No historical cleanup receipt binds the audit image: not an older
+    // retirement, not this retirement's completed cross-SHA receipt, not a partial
+    // or dry-run one. Each previews inside the current tooling, and none of them
+    // lets an apply without the operation token through the gate.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -1145,71 +1137,61 @@ public sealed class RollingVolumeRecycleScriptTests
         const string olderOperation = "c99400000000000000000000000000000019";
         const string partialOperation = "c9940000000000000000000000000000001a";
         const string dryOperation = "c9940000000000000000000000000000001b";
+        var olderImage = "sha256:" + new string('d', 64);
 
-        using (var older = new C1008HostFixture(main: false))
+        foreach (var shape in new[] { "older", "bound", "partial", "dry" })
         {
-            var seed = await CaptureCleanupSeed(older);
-            var foreign = CloneReceipt(seed, olderOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
-            foreign["retiredAt"] = "2026-10-02T09:30:00.000000000Z";
-            ReplaceReceipts(older, foreign);
-            ResetPreviewTrace(older);
-            var run = await older.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            run.Exit.ShouldBe(0, "c1594-older-retirement: a different retirement warns; " + run.Output);
-            run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
-            run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            run.Output.ShouldContain("auditPending=true");
-            AssertReadonlyPreview(older, C1008HostFixture.SessionImage, audited: true);
-        }
-
-        using (var bound = new C1008HostFixture(main: false))
-        {
-            var seed = await CaptureCleanupSeed(bound);
-            var foreign = CloneReceipt(seed, olderOperation, sourceSha: CrossSourceSha, image: "sha256:" + new string('d', 64));
-            foreign["retiredAt"] = "2026-10-02T09:30:00.000000000Z";
-            var cross = CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
-            ReplaceReceipts(bound, foreign, cross);
-            await PublishRepo(bound);
-            ShareVolumeWithApply(bound);
-            ResetPreviewTrace(bound);
-            var run = await bound.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            run.Exit.ShouldBe(0, "c1594-older-retirement: the same retirement still binds; " + run.Output);
-            run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+            using var fixture = new C1008HostFixture(main: false);
+            var seed = await CaptureCleanupSeed(fixture);
+            var records = new List<JsonObject>();
+            switch (shape)
+            {
+                case "older":
+                case "bound":
+                    var foreign = CloneReceipt(seed, olderOperation, sourceSha: CrossSourceSha,
+                        image: shape == "older" ? CrossShaImage : olderImage);
+                    foreign["retiredAt"] = "2026-10-02T09:30:00.000000000Z";
+                    records.Add(foreign);
+                    if (shape == "bound")
+                        records.Add(CloneReceipt(seed, CrossShaOperation, sourceSha: CrossSourceSha, image: CrossShaImage));
+                    break;
+                case "partial":
+                    var partial = CloneReceipt(seed, partialOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+                    partial["outcome"] = "partial";
+                    records.Add(partial);
+                    break;
+                default:
+                    var dry = CloneReceipt(seed, dryOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
+                    dry["dryRun"] = true;
+                    dry["outcome"] = "preview";
+                    records.Add(dry);
+                    break;
+            }
+            ReplaceReceipts(fixture, records.ToArray());
+            await PublishRepo(fixture);
+            ShareVolumeWithApply(fixture);
+            ResetPreviewTrace(fixture);
+            var run = await fixture.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
+            run.Exit.ShouldBe(0, "c1594-older-retirement: " + shape + " previews with the current tooling; " + run.Output);
             run.Output.ShouldContain("auditPending=false");
-            AssertReadonlyPreview(bound, CrossShaImage, audited: true);
-        }
-
-        using (var partial = new C1008HostFixture(main: false))
-        {
-            var seed = await CaptureCleanupSeed(partial);
-            var record = CloneReceipt(seed, partialOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
-            record["outcome"] = "partial";
-            ReplaceReceipts(partial, record);
-            ResetPreviewTrace(partial);
-            var run = await partial.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            run.Exit.ShouldBe(0, "c1594-older-retirement: a partial cross-SHA receipt does not count; " + run.Output);
-            run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
+            run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertReadonlyPreview(partial, C1008HostFixture.SessionImage, audited: true);
-        }
+            AssertCurrentTooling(fixture, run, CrossShaImage, olderImage);
+            AssertReadonlyPreview(fixture, C1008HostFixture.SessionImage, audited: true);
 
-        using (var dry = new C1008HostFixture(main: false))
-        {
-            var seed = await CaptureCleanupSeed(dry);
-            var record = CloneReceipt(seed, dryOperation, sourceSha: CrossSourceSha, image: CrossShaImage);
-            record["dryRun"] = true;
-            record["outcome"] = "preview";
-            ReplaceReceipts(dry, record);
-            ResetPreviewTrace(dry);
-            var run = await dry.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-            run.Exit.ShouldBe(0, "c1594-older-retirement: a dry-run cross-SHA receipt does not count; " + run.Output);
-            run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
-            run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertReadonlyPreview(dry, C1008HostFixture.SessionImage, audited: true);
+            ResetPreviewTrace(fixture);
+            var blocked = await fixture.Run("retire-temp-runner", "C1609_FIXTURE_APPLY_GATE=off");
+            blocked.Exit.ShouldBe(2, "c1594-older-retirement: " + shape + " does not open the apply gate; " + blocked.Output);
+            blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+            fixture.Trace.Any(args => args.Length > 0 && args[0] is "create" or "run" or "stop").ShouldBeFalse(
+                "c1594-older-retirement: " + shape + " refused apply starts and stops nothing");
+            fixture.Removed.ShouldBeEmpty("c1594-older-retirement: " + shape + " removes nothing");
         }
     }
 
-    // Two completed receipts from other SHAs for this retirement must agree.
-    // The newest image is not a tie-break when they differ.
+    // Two completed receipts from other SHAs that disagree are history too. Neither
+    // image is used, the preview is Ready from content, and the disagreement does
+    // not authorize an apply without the operation token.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -1227,13 +1209,33 @@ public sealed class RollingVolumeRecycleScriptTests
         TouchNewer(fixture, otherOperation);
         ResetPreviewTrace(fixture);
         var run = await fixture.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-        run.Exit.ShouldBe(0, "c1594-cross-sha: different images from other SHAs warn; content is the gate; " + run.Output);
-        run.Output.ShouldContain("RecycleGitAuditUnknown");
+        run.Exit.ShouldBe(0, "c1594-cross-sha: different images from other SHAs are history; content is the gate; " + run.Output);
         run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
-        run.Output.ShouldNotContain(newerImage);
+        AssertCurrentTooling(fixture, run, CrossShaImage, newerImage);
         fixture.Trace.Any(args => args.Length > 0 && args[0] == "create").ShouldBeFalse(
             "c1594-cross-sha: a disagreement does not authorize a delete");
         fixture.Removed.ShouldBeEmpty();
+
+        ResetPreviewTrace(fixture);
+        var blocked = await fixture.Run("retire-temp-runner", "C1609_FIXTURE_APPLY_GATE=off");
+        blocked.Exit.ShouldBe(2, "c1594-cross-sha: a disagreement does not open the apply gate; " + blocked.Output);
+        blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+        fixture.Trace.Any(args => args.Length > 0 && args[0] is "create" or "run" or "stop").ShouldBeFalse(
+            "c1594-cross-sha: a refused apply starts and stops nothing");
+        fixture.Removed.ShouldBeEmpty("c1594-cross-sha: a refused apply removes nothing");
+    }
+
+    // The helper image is the protected current tooling. No historical image is
+    // printed, pinned, or handed to Docker.
+    private static void AssertCurrentTooling(C1008HostFixture fixture, (int Exit, string Output) run, params string[] historical)
+    {
+        run.Output.ShouldContain("C1609_TOOLING protocol=2 policy=1 image=" + C1008HostFixture.SessionImage);
+        run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        foreach (var image in historical)
+        {
+            run.Output.ShouldNotContain(image, "historical image is not tooling");
+            fixture.Trace.Any(args => args.Contains(image)).ShouldBeFalse("historical image reached docker: " + image);
+        }
     }
 
     // CARD-1594. antiphon-evidence/ and review-evidence/ under the common git
