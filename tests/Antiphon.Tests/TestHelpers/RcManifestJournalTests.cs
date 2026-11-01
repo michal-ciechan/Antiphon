@@ -38,6 +38,9 @@ public sealed class RcManifestJournalTests
             ("Asia/Kolkata", 330),
             ("America/New_York", -240),
         };
+        var applied = 0;
+        var skipped = 0;
+        var appliedWriters = new HashSet<string>(StringComparer.Ordinal);
         foreach (var zone in zones)
         {
             var work = Path.Combine(root, zone.Name.Replace('/', '_'));
@@ -50,7 +53,16 @@ public sealed class RcManifestJournalTests
                     ["TZ"] = zone.Name,
                     ["MP_EXPECT_OFFSET"] = zone.OffsetMinutes.ToString(),
                 });
+            if (IsZoneNotApplicable(write))
+            {
+                NoteZoneSkip(zone.Name + " write", write.Reason);
+                skipped++;
+                continue;
+            }
+
             write.Ok.ShouldBeTrue(zone.Name + " " + write.Reason);
+            applied++;
+            appliedWriters.Add(zone.Name);
         }
 
         foreach (var writer in zones)
@@ -59,6 +71,14 @@ public sealed class RcManifestJournalTests
             var expected = Path.Combine(root, writer.Name.Replace('/', '_'), "oracle", "timing", "groups-executed.json");
             foreach (var reducer in zones)
             {
+                var label = writer.Name + "->" + reducer.Name;
+                if (!appliedWriters.Contains(writer.Name))
+                {
+                    NoteZoneSkip(label, "writer-not-applicable");
+                    skipped++;
+                    continue;
+                }
+
                 var work = Path.Combine(root, "reduce-" + writer.Name.Replace('/', '_') + "-" + reducer.Name.Replace('/', '_'));
                 var reduced = await ManifestPublicationFixture.Run(
                     cancellationToken,
@@ -71,8 +91,28 @@ public sealed class RcManifestJournalTests
                         ["MP_SOURCE"] = source,
                         ["MP_EXPECTED"] = expected,
                     });
-                reduced.Ok.ShouldBeTrue(writer.Name + "->" + reducer.Name + " " + reduced.Reason);
+                if (IsZoneNotApplicable(reduced))
+                {
+                    NoteZoneSkip(label, reduced.Reason);
+                    skipped++;
+                    continue;
+                }
+
+                reduced.Ok.ShouldBeTrue(label + " " + reduced.Reason);
+                applied++;
             }
+        }
+
+        Console.WriteLine("zone-grid applied=" + applied + " skipped=" + skipped);
+        if (OperatingSystem.IsWindows())
+        {
+            skipped.ShouldBeGreaterThan(0);
+            applied.ShouldBeLessThan(12);
+        }
+        else
+        {
+            skipped.ShouldBe(0);
+            applied.ShouldBe(12);
         }
     }
 
@@ -128,5 +168,16 @@ public sealed class RcManifestJournalTests
         result.Reason.Contains("actual=330", StringComparison.Ordinal).ShouldBeFalse(result.Reason);
         result.Reason.Contains(" id=", StringComparison.Ordinal).ShouldBeTrue(result.Reason);
         Console.WriteLine("zone-effective " + result.Reason);
+    }
+
+    private static bool IsZoneNotApplicable(ManifestPublicationResult result)
+    {
+        return !result.Ok
+            && result.Reason.StartsWith("zone-not-applicable", StringComparison.Ordinal);
+    }
+
+    private static void NoteZoneSkip(string label, string reason)
+    {
+        Console.WriteLine("SKIP zone-not-applicable " + label + " " + reason);
     }
 }

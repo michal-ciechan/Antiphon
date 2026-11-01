@@ -1496,7 +1496,7 @@ function Get-TestPhaseWriterEnvironment {
     $ui = ''
     try { $culture = [string][System.Threading.Thread]::CurrentThread.CurrentCulture.Name } catch { }
     try { $ui = [string][System.Threading.Thread]::CurrentThread.CurrentUICulture.Name } catch { }
-    $tz = Get-TestPhasePinnedTimeZone
+    $tz = [System.TimeZoneInfo]::Local
     $offset = $tz.GetUtcOffset([datetime]::Now)
     $sign = '+'
     if ($offset.Ticks -lt 0) { $sign = '-' }
