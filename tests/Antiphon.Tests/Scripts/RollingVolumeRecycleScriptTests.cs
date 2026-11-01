@@ -1233,7 +1233,7 @@ public sealed class RollingVolumeRecycleScriptTests
         run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
         foreach (var image in historical)
         {
-            run.Output.ShouldNotContain(image, "historical image is not tooling");
+            run.Output.ShouldNotContain(image);
             fixture.Trace.Any(args => args.Contains(image)).ShouldBeFalse("historical image reached docker: " + image);
         }
     }
