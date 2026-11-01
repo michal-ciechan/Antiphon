@@ -317,12 +317,35 @@ function Assert-NightlyHistoryClass {
     if ($ClassName -cnotmatch '^[A-Za-z_][A-Za-z0-9_+`]*(\.[A-Za-z_][A-Za-z0-9_+`]*)+$') { throw 'history-class-identity' }
 }
 
+function Read-NightlyHistoryText {
+    param([string]$Path)
+    $text=[IO.File]::ReadAllText($Path)
+    if ($text.Length -gt 0 -and [int][char]$text[0] -eq 0xFEFF) { return $text.Substring(1) }
+    return $text
+}
+
+function Read-NightlyHistoryJson {
+    param([string]$Path)
+    return (Read-NightlyHistoryText $Path) | ConvertFrom-Json
+}
+
+function ConvertTo-NightlyHistoryTerminalInstant {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetimeoffset]) { return $Value }
+    if ($Value -is [datetime]) { return [datetimeoffset]$Value }
+    if ([string]::IsNullOrWhiteSpace([string]$Value)) { return $null }
+    $parsed=[datetimeoffset]::MinValue
+    $styles=[Globalization.DateTimeStyles]::RoundtripKind
+    if ([datetimeoffset]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) { return $parsed }
+    return $null
+}
+
 function Assert-NightlyHistorySchema {
     param($History)
     Assert-NightlyHistoryFields $History @('format','sourceRunId','sourceAttempt','sourceSha','profile','platform','policyHash','createdAtUtc','complete','evidence','members','fallbackChunks','membershipComplete','unresolved')
     if ($History.format -cne 'antiphon-nightly-prior-failures-v1' -or $History.complete -isnot [bool] -or -not $History.complete -or $History.membershipComplete -isnot [bool] -or [string]$History.sourceSha -cnotmatch '^[a-f0-9]{40}$' -or [string]$History.policyHash -cnotmatch '^[a-f0-9]{64}$' -or [string]::IsNullOrWhiteSpace([string]$History.sourceRunId) -or [string]::IsNullOrWhiteSpace([string]$History.sourceAttempt) -or $History.profile -cnotin @('rc','nightly') -or $History.platform -cnotin @('windows','linux')) { throw 'history-schema' }
-    $date=[datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse([string]$History.createdAtUtc,[ref]$date)) { throw 'history-schema: createdAtUtc' }
+    if ($null -eq (ConvertTo-NightlyHistoryTerminalInstant $History.createdAtUtc)) { throw 'history-schema: createdAtUtc' }
     foreach ($name in 'evidence','members','fallbackChunks','unresolved') {
         if ($null -eq $History.$name -or $History.$name -isnot [array]) { throw ('history-schema: array '+$name) }
     }
@@ -356,7 +379,7 @@ function Assert-NightlyHistorySchema {
 
 function Get-NightlyHistoryFailureNodes {
     param([string]$Path, $Discovery = $null, [switch]$IncludeCompleteness)
-    $text=[IO.File]::ReadAllText($Path)
+    $text=Read-NightlyHistoryText $Path
     $byUid=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $discoveryByUid=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     if ($null -ne $Discovery) { foreach ($n in @($Discovery.Nodes)) { $discoveryByUid.Add([string]$n.Uid,$n) } }
@@ -440,12 +463,12 @@ function Export-NightlyPriorFailures {
     }
     $summaryArtifact=Read-HistoryInput 'summary.json' 'summary'
     if ($null -eq $summaryArtifact) { throw 'run-not-closed: summary missing' }
-    try { $summary=[IO.File]::ReadAllText($summaryArtifact.FullPath) | ConvertFrom-Json } catch { throw 'history-schema: summary' }
+    try { $summary=Read-NightlyHistoryJson $summaryArtifact.FullPath } catch { throw 'history-schema: summary' }
     if (-not $summary.runId -and $summary.invocationId) { $summary | Add-Member -NotePropertyName runId -NotePropertyValue ([string]$summary.invocationId) -Force }
     if ($summary.invocationId -and $summary.runId -cne $summary.invocationId) { throw 'history-provenance: run identity' }
     Assert-NightlyHistoryFields $summary @('runId','sha','profile','platform','policyHash','suites','completedAt')
-    $date=[datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$date) -or $summary.outcome -cin @('Working','Running') -or [string]::IsNullOrWhiteSpace([string]$summary.runId)) { throw 'run-not-closed' }
+    $date=ConvertTo-NightlyHistoryTerminalInstant $summary.completedAt
+    if ($null -eq $date -or $summary.outcome -cin @('Working','Running') -or [string]::IsNullOrWhiteSpace([string]$summary.runId)) { throw 'run-not-closed' }
     $attempt='unknown'
     if ($summary.attempt) { $attempt=[string]$summary.attempt }
     elseif ($summary.selection -and $summary.selection.attempt) { $attempt=[string]$summary.selection.attempt }
@@ -477,7 +500,7 @@ function Export-NightlyPriorFailures {
             $parsed=$null
             if ($null -ne $disc) {
                 try {
-                    $doc=[IO.File]::ReadAllText($disc.FullPath) | ConvertFrom-Json
+                    $doc=Read-NightlyHistoryJson $disc.FullPath
                     Assert-NightlyHistoryFields $doc @('format','tunitVersion','mtpVersion','assemblyHash','nodes')
                     if ($doc.format -cne 'antiphon-tunit-discovery-v1' -or $doc.tunitVersion -cne '1.44.0' -or $doc.mtpVersion -cne '2.2.2') { throw 'discovery-version' }
                     foreach ($n in @($doc.nodes)) { Assert-NightlyHistoryFields $n @('uid','namespace','type','method') }
@@ -571,7 +594,7 @@ function Export-NightlyPriorFailures {
             $perSuite=($null -ne $planArtifact)
             if (-not $perSuite) { $planArtifact=Read-HistoryInput ($timingArtifact.RelativePath+'/groups-planned.json') 'planned' $summary }
             if ($null -ne $planArtifact) {
-                try { $candidate=[IO.File]::ReadAllText($planArtifact.FullPath) | ConvertFrom-Json } catch { $candidate=$null }
+                try { $candidate=Read-NightlyHistoryJson $planArtifact.FullPath } catch { $candidate=$null }
                 if ($null -ne $candidate -and $candidate.suite -ceq $suite) {
                     if ($candidate.version -ne 1) { throw 'history-schema: planned version' }
                     if ($null -ne $discovery -and $candidate.assemblyDigest -and $candidate.assemblyDigest -cne $discovery.AssemblyHash) { throw 'history-provenance: planned assembly' }
@@ -581,7 +604,7 @@ function Export-NightlyPriorFailures {
             }
             $indexArtifact=Read-HistoryInput ($timingArtifact.RelativePath+'/groups-planned-index.json') 'planned-index' $summary
             if ($null -ne $indexArtifact) {
-                $index=[IO.File]::ReadAllText($indexArtifact.FullPath) | ConvertFrom-Json
+                $index=Read-NightlyHistoryJson $indexArtifact.FullPath
                 if ($index.version -ne 1) { throw 'history-schema: planned index version' }
                 if ($index.runId -cne $summary.runId -or ($attempt -cne 'unknown' -and $index.attempt -cne $attempt)) { throw 'history-provenance: planned index' }
                 $rows=@($index.suites | Where-Object { $_.suite -ceq $suite })
@@ -599,7 +622,7 @@ function Export-NightlyPriorFailures {
             $chunkDiscovery=Read-HistoryInput $discName 'discovery' $summary
             if ($null -eq $chunkDiscovery) { continue }
             try {
-                $doc=[IO.File]::ReadAllText($chunkDiscovery.FullPath) | ConvertFrom-Json
+                $doc=Read-NightlyHistoryJson $chunkDiscovery.FullPath
                 $parsed=ConvertFrom-NightlyDiscoveryDocument $doc 'antiphon-tunit-discovery-v1'
                 $plannedCount=[Math]::Max($plannedCount,@($parsed.Nodes).Count)
             } catch { throw 'history-identity-conflict: chunk discovery' }
@@ -680,7 +703,7 @@ function Read-NightlyPriorFailures {
     if ($PSBoundParameters.ContainsKey('ExpectedDigest') -and ([string]::IsNullOrWhiteSpace($ExpectedDigest) -or $ExpectedDigest -cnotmatch '^[a-f0-9]{64}$')) { throw 'history-digest-mismatch' }
     $digest=Get-NightlyHistoryDigest $Path
     if ($ExpectedDigest -and $digest -cne $ExpectedDigest) { throw 'history-digest-mismatch' }
-    try { $history=[IO.File]::ReadAllText($Path) | ConvertFrom-Json } catch { throw 'history-schema: JSON' }
+    try { $history=Read-NightlyHistoryJson $Path } catch { throw 'history-schema: JSON' }
     Assert-NightlyHistorySchema $history
     if (-not $RunDirectory) { $RunDirectory=[string]$history.sourceRoot }
     if (-not $RunDirectory) { throw 'history-provenance: source root required' }
@@ -691,7 +714,7 @@ function Read-NightlyPriorFailures {
         if (-not $artifact.Exists -or (Get-NightlyHistoryDigest $artifact.FullPath) -cne $e.sha256) { throw 'evidence-digest-mismatch' }
     }
     if (@($history.evidence | Where-Object { $_.relativePath -ceq 'summary.json' -and $_.kind -ceq 'summary' }).Count -ne 1) { throw 'history-provenance: summary missing' }
-    $summary=[IO.File]::ReadAllText((Join-Path $root 'summary.json')) | ConvertFrom-Json
+    $summary=Read-NightlyHistoryJson (Join-Path $root 'summary.json')
     if (-not $summary.runId -and $summary.invocationId) { $summary | Add-Member -NotePropertyName runId -NotePropertyValue ([string]$summary.invocationId) -Force }
     $attempt='unknown'
     if ($summary.attempt) { $attempt=[string]$summary.attempt }
@@ -709,7 +732,7 @@ function Initialize-NightlyDispatchHistory {
         $fallback='history-unavailable'
         $read=@{Path=$Path};if($ExpectedDigest){$read.ExpectedDigest=$ExpectedDigest}
         Assert-NightlyHistoryNoLink $Path
-        $probe=[IO.File]::ReadAllText($Path)|ConvertFrom-Json
+        $probe=Read-NightlyHistoryJson $Path
         $isSeed=($probe.PSObject.Properties.Name -ccontains 'seedKind')
         if($isSeed){
             if(-not $AcceptCrossCandidateSeed){throw 'seed-acknowledgement-required'}
@@ -723,13 +746,12 @@ function Initialize-NightlyDispatchHistory {
             $previous=$history
         }else{
         $history=Read-NightlyPriorFailures @read
-        $summary=[IO.File]::ReadAllText((Join-Path $history.sourceRoot 'summary.json'))|ConvertFrom-Json
+        $summary=Read-NightlyHistoryJson (Join-Path $history.sourceRoot 'summary.json')
         if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
         if($summary.dispatchProgress -and $summary.dispatchProgress.PSObject.Properties.Name -ccontains 'liveness' -and $summary.dispatchProgress.liveness -cne 'closed'){throw 'history-liveness-unknown'}
         if($CandidateSha -and $history.sourceSha -cne $CandidateSha){throw 'history-candidate-mismatch'}
-        $completed=[datetimeoffset]::MinValue
-        if($summary.completedAt -is [datetime]){$completed=[datetimeoffset]$summary.completedAt}
-        elseif(-not [datetimeoffset]::TryParse([string]$summary.completedAt,[ref]$completed)){throw 'history-terminal-time-invalid'}
+        $completed=ConvertTo-NightlyHistoryTerminalInstant $summary.completedAt
+        if($null -eq $completed){throw 'history-terminal-time-invalid'}
         $now=Get-NightlyUtcNow
         if($completed.UtcDateTime -lt $now.AddDays(-7) -or $completed.UtcDateTime -gt $now.AddMinutes(5)){throw 'history-stale'}
         $previous=$null

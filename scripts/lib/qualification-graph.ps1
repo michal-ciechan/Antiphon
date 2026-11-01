@@ -174,21 +174,86 @@ function Get-QualificationUidSetDigest {
     return Get-QualificationSha256 (ConvertTo-QualificationCanonicalJson $json)
 }
 
+function ConvertTo-QualificationJsonPointer {
+    param([string]$Location)
+    $text = ([string]$Location).Trim().Replace('\', '/')
+    if ($text.StartsWith('#/')) { $text = $text.Substring(1) }
+    elseif ($text -eq '#' -or $text -eq '$' -or $text -eq '') { return '' }
+    if ($text.StartsWith('/')) { return $text }
+    if ($text.StartsWith('$.')) { $text = $text.Substring(2) }
+    elseif ($text.StartsWith('$')) { $text = $text.Substring(1).TrimStart('.') }
+    elseif ($text.StartsWith('.')) { $text = $text.Substring(1) }
+    if ([string]::IsNullOrEmpty($text)) { return '' }
+    $pointer = ''
+    $index = 0
+    while ($index -lt $text.Length) {
+        $ch = $text[$index]
+        if ($ch -eq '.' -or $ch -eq '/') { $index++; continue }
+        $token = ''
+        if ($ch -eq '[') {
+            $index++
+            if ($index -lt $text.Length -and ($text[$index] -eq "'" -or $text[$index] -eq '"')) {
+                $quote = $text[$index]
+                $index++
+                $start = $index
+                while ($index -lt $text.Length -and $text[$index] -ne $quote) { $index++ }
+                $token = $text.Substring($start, $index - $start)
+                if ($index -lt $text.Length) { $index++ }
+                if ($index -lt $text.Length -and $text[$index] -eq ']') { $index++ }
+            } else {
+                $start = $index
+                while ($index -lt $text.Length -and $text[$index] -ne ']') { $index++ }
+                $token = $text.Substring($start, $index - $start)
+                if ($index -lt $text.Length) { $index++ }
+            }
+        } else {
+            $start = $index
+            while ($index -lt $text.Length -and $text[$index] -ne '.' -and $text[$index] -ne '[' -and $text[$index] -ne '/') { $index++ }
+            $token = $text.Substring($start, $index - $start)
+        }
+        if ($token.Length -gt 0) { $pointer += '/' + $token.Replace('~', '~0').Replace('/', '~1') }
+    }
+    return $pointer
+}
+
 function Get-QualificationSchemaPointersFromMessage {
     param([string]$Message)
-    # Current extractor. Windows-shaped messages (JSONPath, backslash pointers,
-    # a trailing CR) do not yield canonical JSON pointers yet.
-    $paths = @()
-    if ($Message -match " at '([^']*)'$") {
-        $parent = $Matches[1]
-        $paths += $parent
-        if ($Message -match 'Required properties (\[.*\]) are not present') {
-            foreach ($property in ($Matches[1] | ConvertFrom-Json)) {
-                $paths += $parent + '/' + $property
-            }
+    # Canonical JSON pointers. Location text may be a pointer, a #/ pointer,
+    # a backslash pointer, or a JSONPath, and the message may end in CR.
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ([string]::IsNullOrEmpty($Message)) { return @() }
+    $text = $Message.TrimStart([char]0xFEFF).Trim()
+    $found = $false
+    $location = ''
+    if ($text -match "Path '([^']*)'") { $found = $true; $location = $Matches[1] }
+    elseif ($text -match 'Path "([^"]*)"') { $found = $true; $location = $Matches[1] }
+    elseif ($text -match " at '([^']*)'") { $found = $true; $location = $Matches[1] }
+    elseif ($text -match ' at "([^"]*)"') { $found = $true; $location = $Matches[1] }
+    if (-not $found) { return @() }
+    $parent = ConvertTo-QualificationJsonPointer $location
+    [void]$paths.Add($parent)
+    $fields = [Collections.Generic.List[string]]::new()
+    if ($text -match 'Required properties (\[.*\]) are not present') {
+        $encoded = $Matches[1]
+        foreach ($property in @($encoded | ConvertFrom-Json)) {
+            if (-not [string]::IsNullOrEmpty([string]$property)) { $fields.Add([string]$property) }
         }
     }
-    return @($paths | Select-Object -Unique)
+    if ($text -match 'Required properties are missing from object: ([^.]+)\.') {
+        $listed = $Matches[1]
+        foreach ($property in ($listed -split ',')) {
+            $name = $property.Trim()
+            if ($name) { $fields.Add($name) }
+        }
+    }
+    if ($text -match "Property '([^']+)' has not been defined") { $fields.Add($Matches[1]) }
+    elseif ($text -match 'Property "([^"]+)" has not been defined') { $fields.Add($Matches[1]) }
+    foreach ($field in $fields) {
+        $token = $field.Replace('~', '~0').Replace('/', '~1')
+        if ([string]::IsNullOrEmpty($parent)) { [void]$paths.Add('/' + $token) }
+        else { [void]$paths.Add($parent + '/' + $token) }
+    }
+    return @($paths)
 }
 
 function Get-QualificationGraphSchemaResult {
@@ -197,25 +262,18 @@ function Get-QualificationGraphSchemaResult {
     # engines treating JSON Schema format as annotation.
     $schemaErrors = @()
     $valid = Test-Json -Json $Json -SchemaFile $SchemaPath -ErrorAction SilentlyContinue -ErrorVariable schemaErrors
-    $paths = @()
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if (-not $valid) {
         foreach ($errorRecord in $schemaErrors) {
-            $message = $errorRecord.Exception.Message
-            if ($message -match " at '([^']*)'$") {
-                $parent = $Matches[1]
-                $paths += $parent
-                if ($message -match 'Required properties (\[.*\]) are not present') {
-                    foreach ($property in ($Matches[1] | ConvertFrom-Json)) {
-                        $paths += $parent + '/' + $property
-                    }
-                }
+            foreach ($pointer in @(Get-QualificationSchemaPointersFromMessage $errorRecord.Exception.Message)) {
+                [void]$paths.Add($pointer)
             }
         }
     } else {
         $datePath = [QualificationGraphJson]::InvalidDate([QualificationGraphJson]::Decode($Json))
-        if (-not [string]::IsNullOrEmpty($datePath)) { $valid = $false; $paths += $datePath }
+        if (-not [string]::IsNullOrEmpty($datePath)) { $valid = $false; [void]$paths.Add($datePath) }
     }
-    return [pscustomobject]@{ Accepted = [bool]$valid; Paths = @($paths | Select-Object -Unique) }
+    return [pscustomobject]@{ Accepted = [bool]$valid; Paths = @($paths) }
 }
 
 function Test-QualificationGraphSchema {
