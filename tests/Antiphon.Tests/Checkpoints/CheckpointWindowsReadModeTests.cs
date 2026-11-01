@@ -86,7 +86,7 @@ public sealed class CheckpointWindowsReadModeTests
             }
         }
 
-        f.Io.Count("inspect", path).ShouldBe(1);
+        f.Io.Count("inspect", path).ShouldBe(2);
         f.Io.Count("close-read", path).ShouldBe(opens);
     }
 

@@ -18,7 +18,7 @@ public sealed class HostCleanupCheckpointReceiptTests
         var control = new HostCleanupReceiptFixture();
         ReceiptFile.ReadText(control.Context, control.StatePath).ShouldContain("verified-run", Case.Sensitive, label + "wrapper-route:bytes");
         control.Io.Count("open-read", control.StatePath).ShouldBe(1, label + "wrapper-route:verified-open");
-        control.Io.Count("inspect", control.StatePath).ShouldBe(1, label + "wrapper-route:verified-handle");
+        control.Io.Count("inspect", control.StatePath).ShouldBe(2, label + "wrapper-route:verified-handle");
         control.Io.Opens.ShouldBeEmpty(label + "wrapper-route:no-raw-open");
         foreach (var kind in new[] { "fifo", "directory", "symlink", "device" })
         {
@@ -56,10 +56,14 @@ public sealed class HostCleanupCheckpointReceiptTests
             f.Io.InspectFails = variant == "inspect-error";
             if (variant == "truncated") f.Io.StreamFactory = () => new MemoryStream(Encoding.UTF8.GetBytes("{"));
             if (variant == "truncated")
-                Should.Throw<JsonException>(() => ReceiptJson.Read<RunState>(f.Context, f.StatePath, RunStateStore.Json));
+            {
+                var refused = Should.Throw<IOException>(() => ReceiptJson.Read<RunState>(f.Context, f.StatePath, RunStateStore.Json));
+                refused.Message.ShouldContain("read-truncated: 1 of ", Case.Sensitive, label + variant);
+                refused.Message.ShouldContain("retained size ", Case.Sensitive, label + variant);
+            }
             else
                 Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, f.StatePath));
-            f.Io.Count("inspect", f.StatePath).ShouldBe(1, label + variant + ":held-inspected");
+            f.Io.Count("inspect", f.StatePath).ShouldBe(variant == "truncated" ? 2 : 1, label + variant + ":held-inspected");
             f.Io.Count("stream").ShouldBe(variant == "truncated" ? 1 : 0, label + variant + ":stream-entry");
             NoMutation(f, label + variant);
         }
@@ -80,7 +84,7 @@ public sealed class HostCleanupCheckpointReceiptTests
             .ShouldBe("verified-run", label);
         f.Io.Text(f.StatePath).ShouldContain("replacement-run", Case.Sensitive, label + ":swap-reached");
         f.Io.Count("open-read", f.StatePath).ShouldBe(1, label + ":one-handle");
-        f.Io.Count("inspect", f.StatePath).ShouldBe(1, label + ":verified");
+        f.Io.Count("inspect", f.StatePath).ShouldBe(2, label + ":verified");
         f.Io.Opens.ShouldBeEmpty(label + ":no-raw-path-open");
         NoMutation(f, label);
     }
@@ -99,7 +103,7 @@ public sealed class HostCleanupCheckpointReceiptTests
             else
                 Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, f.StatePath)).Message
                     .ShouldContain("exceeds size limit", Case.Sensitive, label + "receipt-cap:over");
-            f.Io.Count("inspect", f.StatePath).ShouldBe(1, label + "receipt-cap:entry");
+            f.Io.Count("inspect", f.StatePath).ShouldBe(size == limit ? 2 : 1, label + "receipt-cap:entry");
             f.Io.Count("stream").ShouldBe(size == limit ? 1 : 0, label + "receipt-cap:stream-entry");
         }
         foreach (var cancel in new[] { false, true })
