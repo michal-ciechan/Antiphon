@@ -223,11 +223,11 @@ function Save-ScratchCommit([string]$Root, [string]$Message) {
     & git -C $Root -c user.name=c1545 -c user.email=c1545@invalid -c commit.gpgsign=false -c core.autocrlf=false commit -q -m $Message
     if ($LASTEXITCODE -ne 0) { throw 'scratch commit failed' }
 }
-function Add-PolicyExclusion([string]$Root) {
+function Add-PolicyExclusion([string]$Root, [string]$Class = 'Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests') {
     # Real candidate policy edit, with correctly recomputed policy hash.
     $policyPath = Join-Path $Root 'tests/test-execution-policy.json'
     $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json -AsHashtable
-    $policy.profiles.rc.exclusions += @{ suite='antiphon'; class='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; reason='fixture'; owner='CARD-1545' }
+    $policy.profiles.rc.exclusions += @{ suite='antiphon'; class=$Class; reason='fixture'; owner='CARD-1545' }
     $policy.policyHash = Get-NightlyPolicyHash $policy
     [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50) + "`n")
 }
@@ -274,7 +274,7 @@ function Test-WrapperOnlyPaidManifest {
     $q = New-Fixture; $q.Request.Mode = 'Native'; $r = Run-Fixture $q
     Check 'native-disabled' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'native-unqualified' -and (No-Starts))
     $digest = Get-ProtectedInputDigest $repo
-    Assert-C487 (Test-FullInputs $repo) "C1545 $method/full-inputs" ("census inputs digest $digest, pinned $($script:PinnedInputDigest)" +
+    Assert-C487 (Test-FullInputs $repo) "C1545 $method/full-inputs" ("census inputs digest $digest (its CRLF copy must match), pinned $($script:PinnedInputDigest), C680/ordinary sentinels Required and live sentinel Excluded" +
         '; if this census/policy input change is deliberate and reviewed, set $script:PinnedInputDigest in scripts/test-live-lane-run.ps1' +
         ' to the value printed by: pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest')
     $beforeRoot = Join-Path $ResultsDirectory 'pinned'
@@ -289,10 +289,14 @@ function Test-WrapperOnlyPaidManifest {
     [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryDisposition { param(`$Node, `$ProfileExclusions, [switch]`$ProfileAware) return @{ Disposition = 'excluded'; Reason = 'fixture'; Owner = 'CARD-1545' } }`n")
     Check 'reader-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     # The same policy edit committed, as a clean CI/nightly/rc checkout sees it.
+    # A second commit excludes an unrelated class: no sentinel moves, so only the pin catches it.
     $committed = Join-Path $ResultsDirectory 'committed'
     New-CommittedInputRepo $committed
     Add-PolicyExclusion $committed; Save-ScratchCommit $committed 'exclude C680'
-    Check 'committed-edit' (-not (Test-FullInputs $committed))
+    $neutral = Join-Path $ResultsDirectory 'committed-neutral'
+    New-CommittedInputRepo $neutral
+    Add-PolicyExclusion $neutral 'Antiphon.Tests.Fixture.UnrelatedTests'; Save-ScratchCommit $neutral 'exclude unrelated'
+    Check 'committed-edit' (-not (Test-FullInputs $committed) -and -not (Test-FullInputs $neutral))
     # A CRLF checkout of the unchanged inputs keeps the verdict.
     $crlfRoot = Join-Path $ResultsDirectory 'crlf-checkout'
     Copy-ProtectedInputs $repo $crlfRoot "`r`n"
