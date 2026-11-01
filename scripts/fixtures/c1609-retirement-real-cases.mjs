@@ -10,11 +10,14 @@ import {boundedChild, ownedDaemon} from './c994-real-custody.mjs';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const cli = '/usr/local/bin/docker';
 const label = 'io.antiphon.c1609-real';
-// Production apply is ssh user mc, the same account that writes the proof.
-// The helper nsenter is root; drop to this process, which owns the proof, and keep its groups.
-const applyUid = process.getuid();
-const applyGid = process.getgid();
-const applyGroups = process.getgroups().join(',');
+// Production apply is ssh user mc. mc writes the proof and is not uid 1654,
+// and the Docker data root is 0710 root:root. The applier is a distinct
+// non-root uid in the docker socket group so the fixture sudo shim can
+// nsenter, and it does not own the volume data.
+const volumeOwnerUid = 1654;
+const applyUid = 1916;
+const applyGid = 1916;
+const applyGroups = '1656';
 const q = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const argv = process.argv.slice(2);
@@ -146,7 +149,9 @@ function writeDockerShim() {
 async function prepare() {
   ownedDaemon(d('info','--format','{{.Name}}'), os.hostname(), fs.existsSync('/.dockerenv'));
   const root = fs.mkdtempSync('/tmp/c1609-real-');
-  fs.chmodSync(root,0o700);
+  // The applier is not this process. It must traverse the fixture root to read
+  // the generated script and the docker shim. The proof itself stays 0700.
+  fs.chmodSync(root,0o755);
   const prefix = 'c1609rd' + crypto.randomBytes(8).toString('hex');
   scope = {schema:1,root,prefix,source:call('git',['rev-parse','HEAD']).stdout.trim(),
     daemon:d('info','--format','{{.ID}}'),hostRoot:'/tmp/'+prefix+'-host',image:prefix+':audit',volumes:[],phase:'prepare'};
@@ -158,17 +163,14 @@ async function prepare() {
   scope.helper=d('run','-d','--privileged','--pid','host','--network','none','--name',prefix+'-metadata',
     '--label',label+'='+prefix,scope.image,'sleep','infinity');
   save();
-  rootRun('umask 077; mkdir ' + q(scope.hostRoot) + '; chmod 0700 ' + q(scope.hostRoot));
+  rootRun('umask 077; mkdir ' + q(scope.hostRoot) + '; chmod 0755 ' + q(scope.hostRoot));
   rootRun('chown ' + applyUid + ':' + applyGid + ' ' + q(scope.hostRoot));
-  // Volume _data is mode 0777 and owned by the applying uid. The data root is
-  // mode 710, so bash access() cannot traverse it. Other-execute is enough;
-  // cleanup restores the recorded mode.
-  scope.dockerRootMode=rootRun('stat -c %a /var/lib/docker').stdout.trim();
-  assert.match(scope.dockerRootMode, /^[0-7]{3,4}$/);
-  rootRun('chmod o+x /var/lib/docker');
+  // Leave /var/lib/docker at its production mode. The shared runner data root
+  // is 0710 root:root; widening it hides the mountpoint scan this fixture
+  // exists to witness. The applier reaches it only through the sudo shim.
   save();
-  fs.mkdirSync(root+'/bin'); fs.mkdirSync(root+'/inspects');
-  fs.writeFileSync(root+'/docker-calls.jsonl','');
+  fs.mkdirSync(root+'/bin'); fs.mkdirSync(root+'/inspects', {mode:0o777});
+  fs.writeFileSync(root+'/docker-calls.jsonl','', {mode:0o666});
   writeDockerShim();
   const origin=root+'/origin.git', seed=root+'/seed';
   call('git',['init','-q','--bare',origin]); call('git',['-C',origin,'symbolic-ref','HEAD','refs/heads/main']);
@@ -202,8 +204,9 @@ function fixture(id) {
     '--mount','type=bind,source='+scope.root+'/seed,target=/seed,readonly',
     ...f.names.flatMap((n,i)=>['--mount','type=volume,source='+n+',target=/v'+i+',volume-nocopy']),
     scope.image,'bash','-ceu',
-    f.names.map((n,i)=>'chmod 0777 /v'+i+'; chown 1654:1654 /v'+i+(i===2?'':'; printf '+q(n)+' > /v'+i+'/sentinel')).join('; ') +
-    '; mkdir -p /v3/repos; cp -a /seed /v3/repos/outer; chown -R 1654:1654 /v3/repos');
+    f.names.map((n,i)=>'chmod 0777 /v'+i+'; chown '+volumeOwnerUid+':'+volumeOwnerUid+' /v'+i+(i===2?'':'; printf '+q(n)+' > /v'+i+'/sentinel')).join('; ') +
+    '; mkdir -m 0700 /v0/private; chown '+volumeOwnerUid+':'+volumeOwnerUid+' /v0/private' +
+    '; mkdir -p /v3/repos; cp -a /seed /v3/repos/outer; chown -R '+volumeOwnerUid+':'+volumeOwnerUid+' /v3/repos');
   rootRun('umask 077; mkdir -p '+q(f.host+'/server/retirement')+' '+q(f.host+'/evidence')+'; chmod 0700 '+q(f.host+'/server'));
   rootRun('chown -R '+applyUid+':'+applyGid+' '+q(f.host));
   f.before=Object.fromEntries(f.kept.map(n=>[n,ownedVolume(n)]));
@@ -211,7 +214,11 @@ function fixture(id) {
 }
 const originURL='https://fixture.invalid/card-1609/native.git';
 function proof(f) {
-  const dir=scope.root+'/'+f.stem+'-proof'; fs.mkdirSync(dir);
+  // Custody requires the applying uid to own the proof and every ancestor
+  // that is not root. Stage the files as this process, then hand them over.
+  const dir=f.host+'/'+f.stem+'-proof';
+  rootRun('mkdir -p '+q(dir)+' && chmod 0777 '+q(f.host)+' '+q(dir));
+  fs.mkdirSync(dir, {recursive:true});
   const bin=dir+'/bin';fs.mkdirSync(bin);
   fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/local/bin/git -c protocol.file.allow=always "$'+'{args[@]}"\n',{mode:0o755});
   f.proof=dir+'/proof';fs.mkdirSync(f.proof);
@@ -224,10 +231,11 @@ function proof(f) {
     '; Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+
     ' -ProofVersion 2 -PhaseNonce '+q(f.nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(f.proof)+' -CreatedUnix '+Math.floor(Date.now()/1000)+' -LogPath '+q(dir+'/proof.log')]);
   assert.equal(psi.code,0);
+  rootRun('chown -R '+applyUid+':'+applyGid+' '+q(dir)+' && chmod 0700 '+q(f.host)+' && chmod -R u=rwX,go= '+q(dir));
   f.started=Math.floor(Date.now()/1000)-5;
 }
 function shell(f, body, suffix='run') {
-  fs.writeFileSync(scope.root+'/current-operation.json',JSON.stringify({op:f.op,receipt:f.host+'/server/retirement/'+f.op+'/receipt.json'}));
+  fs.writeFileSync(scope.root+'/current-operation.json',JSON.stringify({op:f.op,receipt:f.host+'/server/retirement/'+f.op+'/receipt.json'}), {mode:0o644});
   let retirement=repo+'/scripts/c1008-retirement.sh';
   if(process.env.C1609_NATIVE_PC==='N2-name-only' && suffix==='replacement'){
     const original=fs.readFileSync(retirement,'utf8');
@@ -235,7 +243,7 @@ function shell(f, body, suffix='run') {
     assert.equal(original.split(guard).length,2,'method-scoped incarnation PC');
     retirement=scope.root+'/'+f.stem+'-pc-retirement.sh';
     const mutated=original.replace(guard,'    : # N2 PC deliberately ignores the incarnation tuple');
-    fs.writeFileSync(retirement,mutated,{mode:0o600});
+    fs.writeFileSync(retirement,mutated,{mode:0o644});
     fs.writeFileSync(retirement+'.provenance.json',JSON.stringify({source:scope.source,original:hash(original),mutated:hash(mutated),method:'Replacement_and_concurrent_reference_block_delete'}));
   }
   let src=fs.readFileSync(repo+'/scripts/c590-remote.sh','utf8');
@@ -262,13 +270,16 @@ function shell(f, body, suffix='run') {
   ].join('\n');
   src=src.replace(marker,()=>'\n'+lines+'\n'+marker);
   const filename=scope.root+'/'+f.stem+'-'+suffix+'.sh';
-  fs.writeFileSync(filename,'export C590_CASE=retire-temp-runner C590_SHA='+q(scope.source)+' C590_RUN=native C590_REEXEC=1\n'+src,{mode:0o600});
+  fs.writeFileSync(filename,'export C590_CASE=retire-temp-runner C590_SHA='+q(scope.source)+' C590_RUN=native C590_REEXEC=1\n'+src,{mode:0o644});
+  fs.chmodSync(scope.root+'/inspects', 0o777);
+  fs.chmodSync(scope.root+'/docker-calls.jsonl', 0o666);
+  if (fs.existsSync(scope.root+'/fault.json')) fs.chmodSync(scope.root+'/fault.json', 0o644);
   // The helper image's HOME is /root. After the uid drop, docker warns on
   // stdout-merged inspect and jq rejects the warning. Production's home is
   // the applying account's own directory.
   return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--',
     'setpriv','--reuid='+applyUid,'--regid='+applyGid,'--groups',applyGroups,'--inh-caps=-all','--',
-    'env','HOME='+scope.root,'bash',filename],{},180000);
+    'env','HOME='+f.host,'bash',filename],{},180000);
 }
 function receipt(f) {return JSON.parse(rootRead(f.host+'/server/retirement/'+f.op+'/receipt.json'));}
 const auditReady=[
