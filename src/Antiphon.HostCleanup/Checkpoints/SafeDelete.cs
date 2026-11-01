@@ -407,8 +407,9 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
     // A missing executable is git-unavailable. ETXTBSY, EAGAIN, and a settle race are retried
     // a few times inside that deadline when the executable is present, then still reported as
     // git-unavailable. Any other Win32 start failure names the native code, the OS message,
-    // and argumentCharacters. A child that was created and then does not finish is git-timeout,
-    // including a custody failure after that start.
+    // and argumentCharacters. A child that was created and then does not finish is git-timeout.
+    // A live child that cannot be assigned to a job is git-custody, not a timeout. An
+    // already-exited child keeps its result.
     private GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
     {
         if (timeoutMs < 1)
@@ -432,6 +433,10 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                     return new GitRun(-1, "", "", "git-unavailable");
                 context.Delay(TimeSpan.FromMilliseconds(Math.Min(25 << (attempt - 1), Math.Max(0, timeoutMs - context.Time.GetElapsedTime(started).TotalMilliseconds))));
                 continue;
+            }
+            catch (InvalidOperationException ex) when (ex.Message.StartsWith("process custody", StringComparison.Ordinal))
+            {
+                return new GitRun(-1, "", "", "git-custody: " + ex.Message);
             }
             catch (InvalidOperationException)
             {

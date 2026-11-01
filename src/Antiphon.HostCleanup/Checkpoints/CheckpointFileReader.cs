@@ -10,8 +10,12 @@ public static class CheckpointFileReader
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
     public const long ContentLimit = 1L << 30; // Content stamps stream; receipt reads keep their 64 MiB bound.
-    // A three-second silence window covers open/inspection and each read. Dedicated I/O and
-    // monitor waits remove the pool-starvation reason for CARD-1599's six-second stopgap.
+    // A three-second silence window measures a read that delivered nothing. Bytes that arrive
+    // after the wait are progress and re-arm the window; the window is not widened. A zero-byte
+    // stall is retried once inside the overall budget. The terminal stall names a holder when
+    // one is known. Dedicated I/O and monitor waits remove the pool-starvation reason for
+    // CARD-1599's six-second stopgap. Windows overlapped reads wait on their own event on this
+    // thread, so completion does not depend on a pool worker.
     // The overall budget assumes at least 1 MiB/s after a 30s allowance: tiny receipts get
     // 31s, and an inclusive 1 GiB stamp gets 1054s. Short reads cannot restart that budget.
     public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
@@ -103,35 +107,63 @@ public static class CheckpointFileReader
         using var stream = handle.OpenStream();
         long total = 0;
         var buffer = new byte[ReadChunk];
+        var zeroStallRetried = false;
+        budget.BindHolder(() => context.Io is ICheckpointReadHolders holders ? holders.Holder(path) : null);
         try
         {
             // One byte past the limit is requested so a file that grows during the read is still refused.
             while (true)
             {
                 budget.Check();
-                var count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), budget.Token)
-                    .AsTask().WaitAsync(budget.Token).GetAwaiter().GetResult();
-                budget.Check();
-                if (count == 0) break;
-                if (total + count > limit) throw new InvalidDataException("selected file exceeds size limit");
-                sink(buffer.AsSpan(0, count));
-                total += count;
-                budget.Progress(count);
+                int count;
+                try
+                {
+                    count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), budget.Token)
+                        .AsTask().WaitAsync(budget.Token).GetAwaiter().GetResult();
+                }
+                catch (Exception ex) when (RetryableStall(ex, budget, cancellationToken) && total == 0 && !zeroStallRetried)
+                {
+                    zeroStallRetried = true;
+                    budget.RearmStall();
+                    continue;
+                }
+                // A wait that returns bytes is progress, even when the wait crossed the silence window.
+                if (count > 0)
+                {
+                    if (total + count > limit) throw new InvalidDataException("selected file exceeds size limit");
+                    sink(buffer.AsSpan(0, count));
+                    total += count;
+                    budget.Progress(count);
+                    continue;
+                }
+                try { budget.Check(); }
+                catch (Exception ex) when (RetryableStall(ex, budget, cancellationToken) && total == 0 && !zeroStallRetried)
+                {
+                    zeroStallRetried = true;
+                    budget.RearmStall();
+                    continue;
+                }
+                break;
             }
         }
         catch (Exception ex) when (ex is ReadStalledException ||
             (ex is OperationCanceledException && budget.Stalled && !cancellationToken.IsCancellationRequested))
         {
             // A stall at the old EOF is complete only if the retained handle still has the inspected size.
+            // A zero-byte stall was already retried once above; an EOF stall is not retried.
             budget.CheckOverall();
             if (total == (long)metadata.Size && handle.Inspect().Size == metadata.Size)
             {
                 budget.CheckOverall();
                 return;
             }
-            throw new IOException($"read-stalled: {total} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
+            throw new IOException(budget.StallText());
         }
     }
+
+    private static bool RetryableStall(Exception ex, ReadBudget budget, CancellationToken cancellationToken) =>
+        ex is ReadStalledException ||
+        (ex is OperationCanceledException && budget.Stalled && !cancellationToken.IsCancellationRequested);
     // One dedicated I/O thread owns the handle, buffers and sink through disposal. The caller
     // waits on a monitor, not a pool timer. If a syscall cannot be cancelled, that thread keeps
     // ownership until it returns; it cannot publish bytes or touch a disposed caller-owned sink.
@@ -140,7 +172,7 @@ public static class CheckpointFileReader
         private readonly object _gate = new();
         private readonly TimeProvider _time;
         private readonly CancellationToken _caller;
-        private readonly CancellationTokenSource _stop;
+        private CancellationTokenSource _stop;
         private readonly long _started;
         private long _progress;
         private long _total;
@@ -148,6 +180,9 @@ public static class CheckpointFileReader
         private TimeSpan _overall;
         private Exception? _refusal;
         private bool _completed;
+        private Func<string?>? _holder;
+        private bool _holderResolved;
+        private string? _holderText;
 
         private ReadBudget(TimeProvider time, long limit, CancellationToken caller)
         {
@@ -200,8 +235,10 @@ public static class CheckpointFileReader
                         if (left < handoff) handoff = left;
                         if (!budget._completed && handoff > TimeSpan.Zero)
                             Monitor.Wait(budget._gate, handoff);
-                        if (!budget._completed) throw refusal is ReadStalledException ? new IOException(refusal.Message) : refusal;
-                        break;
+                        if (budget._completed) break;
+                        // A delivered chunk, or the one zero-byte retry, cleared this stall during the handoff.
+                        if (refusal is ReadStalledException && budget._refusal is null) continue;
+                        throw refusal is ReadStalledException ? new IOException(refusal.Message) : refusal;
                     }
                     // Polling also observes manual TimeProviders and caller cancellation without
                     // installing any timer or queueing any thread-pool work.
@@ -226,13 +263,42 @@ public static class CheckpointFileReader
             Check();
         }
 
+        public void BindHolder(Func<string?> holder) => _holder = holder;
+
         public void Progress(int count)
         {
             lock (_gate)
             {
                 _total += count;
                 _progress = _time.GetTimestamp();
+                if (_refusal is ReadStalledException) _refusal = null;
+                ReplaceCancelledStop();
+                Monitor.PulseAll(_gate);
             }
+        }
+
+        // The one zero-byte retry keeps the original overall start and opens a fresh silence window.
+        public void RearmStall()
+        {
+            lock (_gate)
+            {
+                if (_refusal is ReadStalledException) _refusal = null;
+                _progress = _time.GetTimestamp();
+                ReplaceCancelledStop();
+                Monitor.PulseAll(_gate);
+            }
+        }
+
+        public string StallText()
+        {
+            lock (_gate) return FormatStall();
+        }
+
+        private void ReplaceCancelledStop()
+        {
+            if (!_stop.IsCancellationRequested || _caller.IsCancellationRequested) return;
+            _stop.Dispose();
+            _stop = CancellationTokenSource.CreateLinkedTokenSource(_caller);
         }
 
         public void Check()
@@ -267,8 +333,33 @@ public static class CheckpointFileReader
             if (_caller.IsCancellationRequested) return new OperationCanceledException(_caller);
             if (_time.GetElapsedTime(_started) >= _overall) return OverallRefusal();
             if (_time.GetElapsedTime(_progress) >= StallDeadline)
-                return new ReadStalledException($"read-stalled: {_total} of {_size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
+                return new ReadStalledException(FormatStall());
             return null;
+        }
+
+        private string FormatStall()
+        {
+            var text = $"read-stalled: {_total} of {_size} bytes; no progress within {StallDeadline.TotalSeconds:0}s";
+            if (!_holderResolved)
+            {
+                _holderResolved = true;
+                _holderText = SanitizeHolder(_holder?.Invoke());
+            }
+            return _holderText is null ? text : text + "; holder=" + _holderText;
+        }
+
+        private static string? SanitizeHolder(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var chars = new char[Math.Min(value.Length, 80)];
+            var count = 0;
+            foreach (var ch in value)
+            {
+                if (count == chars.Length) break;
+                if (ch is >= (char)32 and < (char)127 && ch != ';') chars[count++] = ch;
+            }
+            var text = new string(chars, 0, count).Trim();
+            return text.Length == 0 ? null : text;
         }
 
         private IOException OverallRefusal() => new($"read-deadline-exceeded: {_total} of {_size} bytes; overall limit {_overall.TotalSeconds:0}s");

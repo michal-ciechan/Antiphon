@@ -86,10 +86,16 @@ public sealed class CheckpointReadStallWitnessTests
 
     private sealed class DelayedDelivery(byte[] bytes, ControlledTimeProvider clock, Action count) : MemoryStream(bytes, writable: false)
     {
+        private int _calls;
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            count();
-            clock.Advance(TimeSpan.FromSeconds(4));
+            // The delivering read is the one that waited. The following EOF probe is immediate.
+            if (++_calls == 1)
+            {
+                count();
+                clock.Advance(TimeSpan.FromSeconds(4));
+            }
             return base.ReadAsync(buffer, cancellationToken);
         }
     }
@@ -99,12 +105,13 @@ public sealed class CheckpointReadStallWitnessTests
         private int _reads;
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            count();
             if (++_reads == 1)
             {
+                count();
                 clock.Advance(TimeSpan.FromSeconds(4));
                 return ValueTask.FromResult(0);
             }
+            if (_reads == 2) count();
             return base.ReadAsync(buffer, cancellationToken);
         }
     }
