@@ -155,7 +155,11 @@ public class Card1619LinuxStopIntentTests
     {
         await using var world = await RunnerCustodyReleaseTests.ReleaseWorld.Open(adopt: false);
         var binding = world.Binding;
-        using var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"));
+        // The 100 ms product budget stays on the store clock. A frozen clock keeps a slow
+        // fsync inside that budget, so publication order is not a wall-clock race.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 30, 0, 0, 0, TimeSpan.Zero));
+        var started = clock.GetTimestamp();
+        using var store = new ProcessStopIntentStore(Path.Combine(world.Root, "intent"), clock: clock);
         world.Runtime.CustodyForTests.StopIntents = store;
         world.Recovery.BeforeKill = () => store.Snapshot(binding.Generation.SessionId, binding.Generation.AcceptedStartedAt)!
             .Outcome.ShouldBe(ProcessStopOutcome.Requested);
@@ -168,6 +172,7 @@ public class Card1619LinuxStopIntentTests
         intent.Outcome.ShouldBe(ProcessStopOutcome.Issued);
         intent.CustodyContainer.ShouldBe(world.ContainerId.ToString("D"));
         (await store.LastRecord).ShouldBeTrue();
+        clock.GetElapsedTime(started).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
     }
 
     [Test]
@@ -232,12 +237,17 @@ public class Card1619LinuxStopIntentTests
         f.Runtime.StopIntents = new(Path.Combine(f.Root, "blocked"), (_, _) => { entered.TrySetResult(); return pending.Task; }, clock);
         try
         {
-            var timer = Stopwatch.StartNew();
-            f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation, ProcessStopTarget.Child,
-                LinuxProcessIdentity.TryRead(f.Child.Id));
-            timer.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(250));
+            var started = clock.GetTimestamp();
+            var stop = Task.Run(() => f.Runtime.StopOwnedProcess(f.Child.Id, f.Child.StartTime.ToUniversalTime(), f.Id, f.Generation,
+                ProcessStopTarget.Child, LinuxProcessIdentity.TryRead(f.Child.Id)));
+            // The signal returns while the writer is still blocked. The 100 ms bound is the
+            // store clock; wall time under load is not that bound.
+            (await Task.WhenAny(stop, Task.Delay(TimeSpan.FromSeconds(5)))).ShouldBe(stop);
+            await stop;
+            clock.GetElapsedTime(started).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
             await f.Child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            pending.Task.IsCompleted.ShouldBeFalse();
             clock.Advance(TimeSpan.FromMilliseconds(100));
             (await f.Runtime.StopIntents.LastRecord.WaitAsync(TimeSpan.FromSeconds(1))).ShouldBeFalse();
             pending.Task.IsCompleted.ShouldBeFalse();
