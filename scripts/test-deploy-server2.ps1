@@ -111,6 +111,79 @@ function Run-C727 {
 function Cases { param($Run) return @($Run.Trace | Where-Object kind -eq 'case') }
 function Posts { param($Run) return @($Run.Trace | Where-Object { $_.kind -eq 'http' -and $_.method -eq 'POST' }) }
 function Has-Case { param($Run, [string]$Name) return @((Cases $Run) | Where-Object name -eq $Name).Count -gt 0 }
+# CARD-1609 normal retire-temp visits the host twice: preview, then apply.
+# CR/LF, slash direction and a drive prefix are the same target. Order is not.
+$script:c849HappyHostOrder = 'runner-cache-seed:,deploy-temp-runner:,verify-runner-caches:server2-temp,deploy-parent:,verify-runner-caches:server2,retire-temp-containers:,retire-temp-containers:,retire-temp-runner::preview,retire-temp-runner::apply'
+function ConvertTo-C849HostTarget {
+    param($Case)
+    $name = (([string]$Case.name) -replace '[\r\n]', '').Trim()
+    $target = (([string]$Case.runnerId) -replace '[\r\n]', '').Trim().Replace('\', '/')
+    if ($target -match '^([A-Za-z]):/(.*)$') {
+        $target = '/' + $Matches[1].ToLowerInvariant() + '/' + $Matches[2]
+    }
+    $step = ''
+    if ($name -eq 'retire-temp-runner') {
+        $dry = $null
+        if ($null -ne $Case.PSObject.Properties['dryRun']) { $dry = $Case.dryRun }
+        elseif ($null -ne $Case.PSObject.Properties['recycle'] -and $null -ne $Case.recycle -and
+            $null -ne $Case.recycle.PSObject.Properties['dryRun']) { $dry = $Case.recycle.dryRun }
+        if ($dry -is [string]) {
+            $text = ($dry -replace '[\r\n]', '').Trim()
+            if ($text -ceq 'true') { $dry = $true }
+            elseif ($text -ceq 'false') { $dry = $false }
+            else { $dry = $null }
+        }
+        if ($dry -eq $true) { $step = 'preview' }
+        elseif ($dry -eq $false) { $step = 'apply' }
+    }
+    if ($step) { return ($name + ':' + $target + ':' + $step) }
+    return ($name + ':' + $target)
+}
+function Get-C849HostOrder {
+    param($Cases)
+    return (@($Cases | ForEach-Object { ConvertTo-C849HostTarget $_ }) -join ',')
+}
+function Assert-C849HostOrderWitness {
+    # Same ordered visits as T-1. A Windows-shaped copy and two order mutants
+    # stay on this function, so the live comparison cannot ignore them.
+    $logical = @(
+        [pscustomobject]@{ name = 'runner-cache-seed'; runnerId = '' },
+        [pscustomobject]@{ name = 'deploy-temp-runner'; runnerId = '' },
+        [pscustomobject]@{ name = 'verify-runner-caches'; runnerId = 'server2-temp' },
+        [pscustomobject]@{ name = 'deploy-parent'; runnerId = '' },
+        [pscustomobject]@{ name = 'verify-runner-caches'; runnerId = 'server2' },
+        [pscustomobject]@{ name = 'retire-temp-containers'; runnerId = '' },
+        [pscustomobject]@{ name = 'retire-temp-containers'; runnerId = '' },
+        [pscustomobject]@{ name = 'retire-temp-runner'; runnerId = ''; dryRun = $true },
+        [pscustomobject]@{ name = 'retire-temp-runner'; runnerId = ''; dryRun = $false }
+    )
+    if ((Get-C849HostOrder $logical) -ne $script:c849HappyHostOrder) { throw 'FAIL C849_ORACLE logical list' }
+    $shaped = @(foreach ($item in $logical) {
+        $runner = [string]$item.runnerId
+        if ($runner) { $runner = $runner.Replace('/', '\') }
+        [pscustomobject]@{ name = ([string]$item.name + "`r"); runnerId = ($runner + "`r"); dryRun = $item.dryRun }
+    })
+    if ((Get-C849HostOrder $shaped) -ne $script:c849HappyHostOrder) { throw 'FAIL C849_ORACLE newline or separator' }
+    $windowsPath = [pscustomobject]@{ name = "verify-runner-caches`r"; runnerId = "C:\runner\server2`r" }
+    $linuxPath = [pscustomobject]@{ name = 'verify-runner-caches'; runnerId = '/c/runner/server2' }
+    $normalPath = ConvertTo-C849HostTarget $linuxPath
+    if ((ConvertTo-C849HostTarget $windowsPath) -ne $normalPath -or $normalPath -ne 'verify-runner-caches:/c/runner/server2') {
+        throw 'FAIL C849_ORACLE path form'
+    }
+    $swapped = @($logical)
+    $held = $swapped[0]
+    $swapped[0] = $swapped[1]
+    $swapped[1] = $held
+    if ((Get-C849HostOrder $swapped) -eq $script:c849HappyHostOrder) { throw 'FAIL C849_ORACLE swapped hosts stayed green' }
+    $dropped = @($logical | Select-Object -SkipLast 1)
+    if ((Get-C849HostOrder $dropped) -eq $script:c849HappyHostOrder) { throw 'FAIL C849_ORACLE dropped target stayed green' }
+    $reordered = @($logical[0], $logical[1], $logical[3], $logical[2]) + @($logical[4..($logical.Count - 1)])
+    if ((Get-C849HostOrder $reordered) -eq $script:c849HappyHostOrder) { throw 'FAIL C849_ORACLE reorder stayed green' }
+    $previewSwap = @($logical[0..($logical.Count - 3)])
+    $previewSwap += [pscustomobject]@{ name = 'retire-temp-runner'; runnerId = ''; dryRun = $false }
+    $previewSwap += [pscustomobject]@{ name = 'retire-temp-runner'; runnerId = ''; dryRun = $true }
+    if ((Get-C849HostOrder $previewSwap) -eq $script:c849HappyHostOrder) { throw 'FAIL C849_ORACLE preview/apply swap stayed green' }
+}
 function Final-TempStatus {
     param($Run)
     $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
@@ -183,7 +256,13 @@ function Assert-HostRace {
     $t = Run-C727 -Scenario hold-post-fails -Phase deploy-temp -Set $retired
     Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('RunnerApiFailed')) 'T-21 fallible hold refuses'
     Assert-C727 (-not $t.State.tempContainer -and (Cases $t).Count -eq 0) 'T-21 clear gap no container to register'
-    Assert-C727 (@($t.Trace | Where-Object kind -eq 'census').Count -eq 1) 'T-21 absence checked before clear'
+    $census = @($t.Trace | Where-Object kind -eq 'census')
+    $clear = @($t.Trace | Where-Object { $_.kind -eq 'http' -and $_.method -eq 'POST' -and $_.suffix -eq '/drain/clear' })
+    Assert-C727 ($census.Count -eq 3 -and $clear.Count -eq 1 -and
+        $census[0].name -eq 'temp-project-absent' -and
+        @($census | Where-Object name -eq 'temp-retirement-clearable').Count -eq 2 -and
+        [array]::IndexOf($t.Trace, $census[0]) -lt [array]::IndexOf($t.Trace, $clear[0]) -and
+        [array]::IndexOf($t.Trace, $census[2]) -lt [array]::IndexOf($t.Trace, $clear[0])) 'T-21 absence checked before clear'
     Complete-Group 21 'retirement race and clear gap'
 }
 function Assert-HostAbsence {
@@ -242,10 +321,13 @@ try {
     } else {
         Write-Output 'C973_SKIPPED jq-missing: T-20 marker-reader groups need jq (CARD-0927)'
     }
+    Assert-C849HostOrderWitness
     $t1 = Run-C727 -Scenario happy
     $c = Cases $t1; $p = Posts $t1
     Assert-C727 ($t1.Exit -eq 0) 'T-1 exit'
-    Assert-C727 ((@($c | ForEach-Object { "$($_.name):$($_.runnerId)" }) -join ',') -eq 'runner-cache-seed:,deploy-temp-runner:,verify-runner-caches:server2-temp,deploy-parent:,verify-runner-caches:server2,retire-temp-containers:,retire-temp-containers:,retire-temp-runner:') 'T-1 host order/targets'
+    $actualOrder = Get-C849HostOrder $c
+    $script:assertions++
+    if ($actualOrder -ne $script:c849HappyHostOrder) { throw "FAIL T-1 host order/targets actual=$actualOrder" }
     Assert-C727 ($p.Count -eq 5) 'T-1 post count'
     Assert-C727 ($p[0].runnerId -eq 'server2-temp' -and $p[0].suffix -eq '/drain' -and $p[0].body.redirectTo -eq 'server2' -and $p[0].body.retireWhenIdle -eq $false -and [array]::IndexOf($t1.Trace, $p[0]) -lt [array]::IndexOf($t1.Trace, $c[0])) 'T-1 hold before seed'
     Assert-C727 ($p[1].runnerId -eq 'server2-temp' -and $p[1].suffix -eq '/drain/clear' -and [array]::IndexOf($t1.Trace, $p[1]) -gt [array]::IndexOf($t1.Trace, $c[2])) 'T-1 temp verify before clear'
