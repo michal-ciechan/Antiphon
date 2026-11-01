@@ -59,13 +59,17 @@ public sealed class PtyHostClient : IAsyncDisposable
 
                 await PtyHostFraming.WriteAsync(pipe, new HelloMessage(PtyHostProtocol.Version), ct);
                 var reply = await PtyHostFraming.ReadAsync(pipe, ct);
+                // Only a missing reply is the relisten race. A frame that arrived and is not
+                // helloAck is a protocol fault and must fail this attempt (CARD-1634).
+                if (reply is null)
+                    throw new HelloEofException("Expected helloAck, got EOF.");
                 if (reply is not HelloAckMessage hello)
-                    throw new InvalidOperationException($"Expected helloAck, got {reply?.GetType().Name ?? "EOF"}.");
+                    throw new InvalidOperationException($"Expected helloAck, got {reply.GetType().Name}.");
 
                 return new PtyHostClient(pipe, hello);
             }
             catch (Exception ex) when (
-                ex is IOException or TimeoutException or InvalidOperationException or EndOfStreamException
+                ex is IOException or TimeoutException or HelloEofException
                 || (ex is OperationCanceledException && !ct.IsCancellationRequested))
             {
                 // A detached host closes the current pipe and listens again. The reconnect can be
@@ -262,5 +266,15 @@ public sealed class PtyHostClient : IAsyncDisposable
         _lifetime.Dispose();
         _writeGate.Dispose();
         _requestGate.Dispose();
+    }
+
+    /// <summary>
+    /// Clean EOF where helloAck should have been. Retried inside the connect budget.
+    /// Stays an <see cref="InvalidOperationException"/> so a timed-out connect still
+    /// reports that EOF as its inner failure.
+    /// </summary>
+    private sealed class HelloEofException : InvalidOperationException
+    {
+        public HelloEofException(string message) : base(message) { }
     }
 }
