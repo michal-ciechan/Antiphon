@@ -145,8 +145,10 @@ disagreeing historical cleanup images are not the retirement gate". Master's
 ## 6. Recording merge
 
 The commit was prepared, not pushed to master or rc. It was built with
-`git commit-tree 85283b399 -p origin/master -p origin/rc/2026-10-27`; see the task report for
-the tip SHA and checks. It changes no tree bytes: its tree is master's tree. Cost:
+`git commit-tree 85283b399 -p origin/master -p origin/rc/2026-10-27`; it was pushed only to
+`feat/card-task-3fdf288c-recorded` at `697b8873c12f44b69106bbf464660bc8a736a17e`. Checks:
+`HEAD^{tree}` = `85283b399…` (master), `merge-base --is-ancestor` holds for both rc and master
+(fast-forward of master), and `git cherry 697b8873c origin/rc/2026-10-27` is empty. It changes no tree bytes: its tree is master's tree. Cost:
 `git rev-list --count origin/master..<tip>` = 1202, which is 1201 old-rc commits plus the merge,
 almost all of them cherry-pick duplicates of master commits. That history joins master's log,
 `git log`, `git bisect` and `git blame` walks. Benefit: `git cherry origin/master
