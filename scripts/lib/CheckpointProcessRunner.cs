@@ -29,7 +29,8 @@ namespace Antiphon.Checkpoints
 
         // An already-exited child lost the job-assignment race and still has a result.
         // A live child that cannot be assigned is process custody, not a timeout.
-        public static string? CustodyRefusal(bool assigned, bool exited) =>
+        // string, not string?: this file is also Add-Type'd without a nullable context.
+        public static string CustodyRefusal(bool assigned, bool exited) =>
             assigned || exited ? null : "process custody unavailable";
 
         public static Result Run(ProcessStartInfo start, int timeoutMs, bool git, CancellationToken cancellationToken = default)
