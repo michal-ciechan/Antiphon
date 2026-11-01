@@ -12,7 +12,9 @@ public static class CheckpointFileReader
     public const long ContentLimit = 1L << 30; // Content stamps stream; receipt reads keep their 64 MiB bound.
     // A three-second silence window measures the read. Bytes that return after it has elapsed
     // are not progress, and the window is not widened. A zero-byte stall before any byte is
-    // retried once inside the overall budget. The terminal stall names a holder when one is
+    // retried once inside the overall budget. A clean end of file is accepted only when the
+    // bytes read equal the inspected size and the retained handle still has that size.
+    // The terminal stall names a holder when one is
     // known. Dedicated I/O and monitor waits remove the pool-starvation reason for CARD-1599's
     // six-second stopgap. Windows overlapped reads wait on their own event on this thread, so
     // completion does not depend on a pool worker.
@@ -92,8 +94,8 @@ public static class CheckpointFileReader
         {
             if ((context.Io.Attributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
                 throw new InvalidDataException("selected file is not regular");
-            // FileStream infers async mode from the retained handle. A synchronous Windows
-            // handle makes ReadAsync queue blocking I/O behind the callers waiting for it.
+            // The handle is opened overlapped. WindowsReadStream issues ReadFile with its own
+            // OVERLAPPED and must not bind that handle to the thread-pool completion port.
             request = new(0, 0x00200000 | 0x08000000 | 0x40000000); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
         }
         else throw new InvalidDataException("opened-handle verification unsupported on this platform");
@@ -135,7 +137,9 @@ public static class CheckpointFileReader
                     budget.Progress(count);
                     continue;
                 }
-                break;
+                var observed = handle.Inspect().Size;
+                if (total == (long)metadata.Size && observed == metadata.Size) break;
+                throw new InvalidDataException($"read-truncated: {total} of {metadata.Size} bytes; retained size {observed}");
             }
         }
         catch (Exception ex) when (ex is ReadStalledException ||

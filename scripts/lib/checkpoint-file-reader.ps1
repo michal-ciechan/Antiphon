@@ -23,7 +23,9 @@ public static class ConfinedFileReader
     public const long ContentLimit = 1L << 30;
     // A three-second silence window measures the read. Bytes that return after it has elapsed
     // are not progress, and the window is not widened. A zero-byte stall before any byte is
-    // retried once inside the overall budget. Dedicated I/O and monitor waits remove the
+    // retried once inside the overall budget. A clean end of file is accepted only when the
+    // bytes read equal the inspected size and the retained handle still has that size.
+    // Dedicated I/O and monitor waits remove the
     // pool-starvation reason for CARD-1599's six-second stopgap. Windows overlapped reads
     // wait on their own event on this thread, so completion does not depend on a pool worker.
     // The overall budget assumes at least 1 MiB/s after a 30s allowance: tiny receipts get
@@ -132,7 +134,9 @@ public static class ConfinedFileReader
                     budget.Progress(count);
                     continue;
                 }
-                break;
+                var observed = (OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle)).Size;
+                if (total == (long)metadata.Size && observed == metadata.Size) break;
+                throw new InvalidDataException($"read-truncated: {total} of {metadata.Size} bytes; retained size {observed}");
             }
         }
         catch (Exception ex) when (ex is ReadStalledException ||
@@ -331,49 +335,71 @@ public static class ConfinedFileReader
         }
     }
 
-    // Wait on the overlapped event on this thread. Overlapped I/O does not advance the file pointer.
-    private sealed class WindowsReadStream : FileStream
+    // A stack OVERLAPPED must not be posted to the thread-pool completion port. This type
+    // derives from Stream: the FileStream constructor would bind the handle.
+    // The caller owns the SafeFileHandle and closes it after the size re-check.
+    // CancelIoEx only requests cancellation. GetOverlappedResult(wait: true) returns after the
+    // kernel has finished with this stack OVERLAPPED and the pinned buffer. Close and unpin run
+    // in the finally, so they cannot precede that return. A read that never completes keeps both
+    // on this thread; the caller's 100 ms handoff does not free them.
+    private sealed class WindowsReadStream : Stream
     {
         private readonly SafeFileHandle _handle;
         private long _offset;
 
-        public WindowsReadStream(SafeFileHandle handle) : base(handle, FileAccess.Read) => _handle = handle;
+        public WindowsReadStream(SafeFileHandle handle) => _handle = handle;
 
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
 
         public override int Read(Span<byte> buffer)
         {
             var rented = ArrayPool<byte>.Shared.Rent(buffer.Length);
-            var pin = GCHandle.Alloc(rented, GCHandleType.Pinned);
             try
             {
                 var read = ReadPinned(rented, buffer.Length, CancellationToken.None);
                 if (read > 0) rented.AsSpan(0, read).CopyTo(buffer);
                 return read;
             }
-            finally { pin.Free(); ArrayPool<byte>.Shared.Return(rented); }
+            finally { ArrayPool<byte>.Shared.Return(rented); }
         }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var rented = ArrayPool<byte>.Shared.Rent(buffer.Length);
-            var pin = GCHandle.Alloc(rented, GCHandleType.Pinned);
             try
             {
                 var read = ReadPinned(rented, buffer.Length, cancellationToken);
                 if (read > 0) rented.AsSpan(0, read).CopyTo(buffer.Span);
                 return ValueTask.FromResult(read);
             }
-            finally { pin.Free(); ArrayPool<byte>.Shared.Return(rented); }
+            finally { ArrayPool<byte>.Shared.Return(rented); }
         }
+
+        protected override void Dispose(bool disposing) { }
 
         private int ReadPinned(byte[] buffer, int count, CancellationToken cancellationToken)
         {
-            var ev = CreateEvent(IntPtr.Zero, true, false, null);
-            if (ev == IntPtr.Zero) throw new IOException("read event unavailable: win32=" + Marshal.GetLastWin32Error());
+            var pin = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            var ev = IntPtr.Zero;
             try
             {
+                ev = CreateEvent(IntPtr.Zero, true, false, null);
+                if (ev == IntPtr.Zero) throw new IOException("read event unavailable: win32=" + Marshal.GetLastWin32Error());
                 var overlapped = new NativeOverlapped
                 {
                     OffsetLow = unchecked((int)_offset),
@@ -383,30 +409,41 @@ public static class ConfinedFileReader
                 if (!ReadFile(_handle, buffer, count, out var read, ref overlapped))
                 {
                     var error = Marshal.GetLastWin32Error();
-                    if (error == 38) return 0;
-                    if (error != 997) throw new IOException("read failed: win32=" + error);
+                    if (error == 38) return 0; // ERROR_HANDLE_EOF, not pending
+                    if (error != 997) throw new IOException("read failed: win32=" + error); // ERROR_IO_PENDING
                     while (true)
                     {
                         var wait = WaitForSingleObject(ev, 50);
                         if (wait == 0) break;
                         if (wait == 258 && !cancellationToken.IsCancellationRequested) continue;
                         CancelIoEx(_handle, ref overlapped);
-                        WaitForSingleObject(ev, 100);
-                        if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
-                        throw new IOException("read wait failed: win32=" + wait);
+                        if (!GetOverlappedResult(_handle, ref overlapped, out _, true))
+                        {
+                            var pending = Marshal.GetLastWin32Error();
+                            if (pending != 38 && pending != 995 && !cancellationToken.IsCancellationRequested)
+                                throw new IOException("read failed: win32=" + pending);
+                        }
+                        if (cancellationToken.IsCancellationRequested)
+                            throw new OperationCanceledException(cancellationToken);
+                        throw new IOException("read wait failed: win32=" + (wait == 0xFFFFFFFFu ? Marshal.GetLastWin32Error() : wait));
                     }
                     if (!GetOverlappedResult(_handle, ref overlapped, out read, false))
                     {
                         var pending = Marshal.GetLastWin32Error();
                         if (pending == 38) return 0;
-                        if (pending == 995 || cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
+                        if (pending == 995 || cancellationToken.IsCancellationRequested)
+                            throw new OperationCanceledException(cancellationToken);
                         throw new IOException("read failed: win32=" + pending);
                     }
                 }
                 if (read > 0) _offset += read;
                 return read;
             }
-            finally { CloseHandle(ev); }
+            finally
+            {
+                if (ev != IntPtr.Zero) CloseHandle(ev);
+                pin.Free();
+            }
         }
     }
 
@@ -435,8 +472,8 @@ public static class ConfinedFileReader
     {
         if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
             throw new InvalidDataException("selected file is not regular");
-        // FileStream infers async mode from the retained handle; do not queue synchronous
-        // Windows I/O behind the callers blocking on ReadAsync's three-second deadline.
+        // The handle is opened overlapped. WindowsReadStream issues ReadFile with its own
+        // OVERLAPPED and must not bind that handle to the thread-pool completion port.
         var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, 0x00200000 | 0x08000000 | 0x40000000, IntPtr.Zero); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN | OVERLAPPED
         if (handle.IsInvalid) { handle.Dispose(); throw NativeFailure(); }
         return handle;
