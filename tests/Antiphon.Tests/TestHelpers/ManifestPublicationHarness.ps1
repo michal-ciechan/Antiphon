@@ -34,11 +34,15 @@ function Assert-MpOffset {
     $raw = [Environment]::GetEnvironmentVariable('MP_EXPECT_OFFSET')
     if ([string]::IsNullOrWhiteSpace($raw)) { return }
     $expect = [int]$raw
+    # Dates in the projection follow the process zone. A TZ id that resolved
+    # but did not move Local is not the zone under test.
     $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
-    $tz = Get-TestPhasePinnedTimeZone
+    $tz = [System.TimeZoneInfo]::Local
     $got = [int]$tz.GetUtcOffset($moment).TotalMinutes
     if ($got -ne $expect) {
-        Fail-Mp ("timezone-offset expected=" + $expect + " actual=" + $got + " id=" + [string]$tz.Id)
+        $requested = ''
+        try { $requested = [string][Environment]::GetEnvironmentVariable('TZ') } catch { $requested = '' }
+        Fail-Mp ("zone-not-applicable requested=" + $requested + " expected=" + $expect + " actual=" + $got + " id=" + [string]$tz.Id)
     }
 }
 
