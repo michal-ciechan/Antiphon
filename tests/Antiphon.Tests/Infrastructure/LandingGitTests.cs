@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
@@ -1117,6 +1118,81 @@ public sealed class LandingGitTests
         }
     }
 
+    /// <summary>The sleeper is absent from the sealed snapshot and appears, still parented to the
+    /// killed root, on the read taken after the reap. Linux reparents on SIGKILL, so the follow
+    /// row rewrites that parent. The journal is removed once that holder exits.</summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task C448_LateInTreeHolderIsKilledAndTheJournalIsRemoved(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("Linux stand-in that injects the Windows parent pid. Native rows remain C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c448-late");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var pidFile = Path.Combine(repo.Path, "holder.pid");
+        var script = Path.Combine(repo.Path, "late.sh");
+        await File.WriteAllTextAsync(script, LateHolderGit.Script(pidFile), ct);
+        File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var git = new LateHolderGit(script, pidFile);
+        using var cancel = new CancellationTokenSource();
+        var call = git.RunAsync(repo.Path, ["commit", "--allow-empty", "-m", "owned"], cancel.Token);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var ready = false;
+            while (watch.Elapsed < TimeSpan.FromSeconds(8))
+            {
+                if (File.Exists(pidFile)) { ready = true; break; }
+                if (call.IsCompleted) break;
+                await Task.Delay(50, ct);
+            }
+
+            ready.ShouldBeTrue("the late holder is alive before cancellation");
+            var holder = int.Parse((await File.ReadAllTextAsync(pidFile, ct)).Trim(), CultureInfo.InvariantCulture);
+            cancel.Cancel();
+            var thrown = await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            watch.Stop();
+            Console.WriteLine($"C448_LATE elapsed={watch.Elapsed} error={thrown.GetType().Name}");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15),
+                "cancellation returns inside the kill grace, not the holder's sleep");
+            var died = Stopwatch.StartNew();
+            while (HolderAlive(holder) && died.Elapsed < TimeSpan.FromSeconds(4))
+                await Task.Delay(50, ct);
+            HolderAlive(holder).ShouldBeFalse("the follow pass signals the late holder");
+            var common = await git.CommonDirectoryAsync(repo.Path, ct);
+            var children = Path.Combine(common, "antiphon", "children");
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0 && cleared.Elapsed < TimeSpan.FromSeconds(4))
+                await Task.Delay(50, ct);
+            JournalFiles(children).ShouldBeEmpty("the late holder was in the killed set, so the journal is removed");
+            git.Lines.ShouldContain(line => line.Contains("repository_child_journal_release", StringComparison.Ordinal)
+                && line.Contains("reason=removed", StringComparison.Ordinal));
+            git.Lines.ShouldNotContain(line => line.Contains("repository_child_journal_handoff", StringComparison.Ordinal));
+            git.Lines.ShouldContain(line => line.StartsWith("repository_child_tree_kill root=", StringComparison.Ordinal)
+                && !ListsPid(line, holder));
+            git.Lines.ShouldContain(line => line.StartsWith("repository_child_tree_kill_follow ", StringComparison.Ordinal)
+                && ListsPid(line, holder));
+        }
+        finally
+        {
+            watch.Stop();
+            cancel.Cancel();
+            KillHolder(pidFile);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+        }
+    }
+
+    private static bool ListsPid(string line, int pid)
+    {
+        var text = pid.ToString(CultureInfo.InvariantCulture);
+        return line.Contains($"killed={text}", StringComparison.Ordinal)
+            || line.Contains($",{text}", StringComparison.Ordinal);
+    }
+
     private static async Task<string> InstallExecutableHookAsync(string repository, string name, string body, CancellationToken ct)
     {
         var hooks = Path.Combine(repository, ".git", "hooks");
@@ -1127,6 +1203,82 @@ public sealed class LandingGitTests
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
                 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         return hook;
+    }
+
+    /// <summary>A commit stand-in whose sleeper is hidden from the sealed snapshot and injected,
+    /// parented to the killed root, on the read after the reap.</summary>
+    private sealed class LateHolderGit(string scriptPath, string pidFile) : LandingGit
+    {
+        private readonly List<string> _lines = [];
+        private int _rootPid;
+        private int _holderPid;
+        private long _holderTicks;
+        private bool _revealed;
+
+        public IReadOnlyList<string> Lines => _lines;
+
+        public static string Script(string holderPidFile)
+        {
+            var quoted = holderPidFile.Replace("\\", "/").Replace("'", "");
+            return "#!/bin/sh\n" +
+                "sh -c 'trap \"\" HUP; echo $$ > \"" + quoted + "\"; exec sleep 30' &\n" +
+                "sleep 30\n";
+        }
+
+        protected override void WriteChildLog(string line) => _lines.Add(line);
+
+        internal override OwnedProcessTree.TreeKillReport KillOwnedTree(Process process)
+        {
+            _rootPid = process.Id;
+            CaptureHolder();
+            return OwnedProcessTree.Kill(process, ReadTable, waitForExit: Wait, log: WriteChildLog);
+        }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "commit")
+                return base.StartProcess(start);
+            return DetachedPipeHolderGit.StartHolder(start, scriptPath);
+        }
+
+        private void CaptureHolder()
+        {
+            if (!int.TryParse(File.ReadAllText(pidFile).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var pid) || pid <= 1)
+                throw new InvalidOperationException("late_holder_pid_missing");
+            using var holder = Process.GetProcessById(pid);
+            if (!RepositoryChildJournal.TryStartTicks(holder, out _holderTicks))
+                throw new InvalidOperationException("late_holder_ticks_missing");
+            _holderPid = pid;
+        }
+
+        private ProcessSnapshot ReadTable()
+        {
+            if (_revealed)
+            {
+                return new ProcessSnapshot([new ProcessTableRow(_holderPid, _rootPid, _holderTicks)], null);
+            }
+
+            var snapshot = OwnedProcessTree.CaptureSnapshot(_rootPid);
+            if (snapshot.FailureReason is not null || _holderPid <= 1) return snapshot;
+            var rows = new List<ProcessTableRow>(snapshot.Rows.Count);
+            foreach (var row in snapshot.Rows)
+                if (row.Pid != _holderPid) rows.Add(row);
+            return new ProcessSnapshot(rows, null);
+        }
+
+        private bool Wait(int pid)
+        {
+            _revealed = true;
+            try
+            {
+                using var watched = Process.GetProcessById(pid);
+                return watched.WaitForExit(OwnedProcessTree.ReapBoundMilliseconds);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                return true;
+            }
+        }
     }
 
     /// <summary>A commit stand-in that closes both pipes and stays alive. The tree kill is suppressed
@@ -1142,7 +1294,8 @@ public sealed class LandingGitTests
                 "sleep 30\n";
         }
 
-        protected override void KillOwnedTree(Process process) { }
+        internal override OwnedProcessTree.TreeKillReport KillOwnedTree(Process process) =>
+            OwnedProcessTree.TreeKillReport.None;
 
         protected override void KillOwnedRoot(Process process) { }
 

@@ -99,6 +99,7 @@ public sealed class OwnedProcessTreeTests
         var rows = new List<ProcessTableRow> { Row(10, 1, 1_000), Row(20, 10, 1_100) };
         var reads = 0;
         var killed = new List<int>();
+        var log = new List<string>();
         OwnedProcessTree.Execute(
             () =>
             {
@@ -119,10 +120,15 @@ public sealed class OwnedProcessTreeTests
             serverPid: 7,
             ownerPid: 8,
             rootAlreadyExited: false,
-            _ => { });
+            log.Add);
         reads.ShouldBeGreaterThan(1);
-        killed.ShouldBe(new[] { 10, 20, 30 });
-        killed.ShouldNotContain(99);
+        // The sealed wave is logged before the follow read, so 99 is absent from it.
+        log.ShouldContain(line => line.StartsWith("repository_child_tree_kill ", StringComparison.Ordinal)
+            && line.Contains("killed=10,20,30", StringComparison.Ordinal)
+            && !line.Contains("99", StringComparison.Ordinal));
+        log.ShouldContain(line => line.StartsWith("repository_child_tree_kill_follow ", StringComparison.Ordinal)
+            && line.Contains("killed=99", StringComparison.Ordinal));
+        killed.ShouldBe(new[] { 10, 20, 30, 99 });
         await Task.CompletedTask;
     }
 
@@ -259,6 +265,77 @@ public sealed class OwnedProcessTreeTests
             && line.Contains("killed=10,20", StringComparison.Ordinal)
             && !line.Contains("killed=10,20,30", StringComparison.Ordinal));
         killed.ShouldContain(30);
+        await Task.CompletedTask;
+    }
+
+    /// <summary>The late child is invisible until the reap runs. A follow read taken before that
+    /// wait, or a kill that skips the wait, leaves it out of the signalled set.</summary>
+    [Test]
+    public async Task C448_ChildThatAppearsOnlyAfterTheReapIsKilled()
+    {
+        var visible = false;
+        var waits = 0;
+        var killed = new List<int>();
+        var log = new List<string>();
+        OwnedProcessTree.Execute(
+            () => visible
+                ? Table(Row(10, 1, 1_000), Row(20, 10, 1_100), Row(30, 20, 1_200))
+                : Table(Row(10, 1, 1_000), Row(20, 10, 1_100)),
+            pid => pid switch { 10 => 1_000L, 20 => 1_100L, 30 => 1_200L, _ => null },
+            killed.Add,
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            log.Add,
+            waitForExit: _ =>
+            {
+                waits++;
+                visible = true;
+                return true;
+            });
+        waits.ShouldBeGreaterThan(0);
+        log.ShouldContain(line => line.StartsWith("repository_child_tree_kill ", StringComparison.Ordinal)
+            && line.Contains("killed=10,20", StringComparison.Ordinal)
+            && !line.Contains("30", StringComparison.Ordinal));
+        log.ShouldContain(line => line.StartsWith("repository_child_tree_kill_follow ", StringComparison.Ordinal)
+            && line.Contains("killed=30", StringComparison.Ordinal));
+        killed.ShouldContain(30);
+        await Task.CompletedTask;
+    }
+
+    /// <summary>A process reparented outside the signalled set, and a child whose start is older
+    /// than its parent, stay out of the follow kill.</summary>
+    [Test]
+    public async Task C448_FollowPassKillsOnlyChildrenOfTheSignalledSet()
+    {
+        var rows = new List<ProcessTableRow> { Row(10, 1, 1_000), Row(20, 10, 1_100) };
+        var killed = new List<int>();
+        OwnedProcessTree.Execute(
+            () => new ProcessSnapshot(rows.ToArray(), null),
+            pid => rows.Last(row => row.Pid == pid).StartTicks,
+            pid =>
+            {
+                killed.Add(pid);
+                if (pid == 10)
+                {
+                    rows.Add(Row(30, 20, 1_200));
+                    rows.Add(Row(40, 1, 1_200));
+                    rows.Add(Row(41, 20, 900));
+                }
+            },
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            _ => { });
+        killed.ShouldContain(10);
+        killed.ShouldContain(20);
+        killed.ShouldContain(30);
+        killed.ShouldNotContain(40);
+        killed.ShouldNotContain(41);
         await Task.CompletedTask;
     }
 
