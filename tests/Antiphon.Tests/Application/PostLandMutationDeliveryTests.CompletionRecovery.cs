@@ -195,7 +195,11 @@ public sealed partial class PostLandMutationDeliveryTests
             queries.Count(s => s.Contains("UPDATE \"AgentTasks\"", StringComparison.Ordinal)).ShouldBe(0);
             queries.Count(s => s.Contains("FROM \"AgentTaskLandNotifications\"", StringComparison.Ordinal)).ShouldBe(0,
                 "a stamped historical task must never reach per-task receipt lookups");
-            var candidates = queries.Where(s => s.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal)).ToArray();
+            var reads = queries.Where(s => s.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal)).ToArray();
+            reads.ShouldAllBe(s => s.Contains("LIMIT"), "every recovery read of AgentTasks must stay page-bounded");
+            // CARD-1610's failure-notice backfill shares this pass. It reads failed tasks still owed
+            // a supervision notice, never completion-note history, so it is not a candidate scan.
+            var candidates = reads.Where(s => !s.Contains("FROM \"TaskSupervisionNotices\"", StringComparison.Ordinal)).ToArray();
             candidates.Length.ShouldBe(1, string.Join("\n---\n", candidates));
             candidates[0].ShouldContain("\"CompletionNoteQueuedAt\" IS NULL");
             candidates[0].ShouldContain("LIMIT");
