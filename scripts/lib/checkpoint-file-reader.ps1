@@ -339,9 +339,12 @@ public static class ConfinedFileReader
     }
 
     // Wait on the overlapped event on this thread. Overlapped I/O does not advance the file pointer.
-    private sealed class WindowsReadStream(SafeFileHandle handle) : FileStream(handle, FileAccess.Read)
+    private sealed class WindowsReadStream : FileStream
     {
+        private readonly SafeFileHandle _handle;
         private long _offset;
+
+        public WindowsReadStream(SafeFileHandle handle) : base(handle, FileAccess.Read) => _handle = handle;
 
         public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
 
@@ -384,7 +387,7 @@ public static class ConfinedFileReader
                     OffsetHigh = unchecked((int)(_offset >> 32)),
                     EventHandle = ev
                 };
-                if (!ReadFile(handle, buffer, count, out var read, ref overlapped))
+                if (!ReadFile(_handle, buffer, count, out var read, ref overlapped))
                 {
                     var error = Marshal.GetLastWin32Error();
                     if (error == 38) return 0;
@@ -394,12 +397,12 @@ public static class ConfinedFileReader
                         var wait = WaitForSingleObject(ev, 50);
                         if (wait == 0) break;
                         if (wait == 258 && !cancellationToken.IsCancellationRequested) continue;
-                        CancelIoEx(handle, ref overlapped);
+                        CancelIoEx(_handle, ref overlapped);
                         WaitForSingleObject(ev, 100);
                         if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
                         throw new IOException("read wait failed: win32=" + wait);
                     }
-                    if (!GetOverlappedResult(handle, ref overlapped, out read, false))
+                    if (!GetOverlappedResult(_handle, ref overlapped, out read, false))
                     {
                         var pending = Marshal.GetLastWin32Error();
                         if (pending == 38) return 0;
