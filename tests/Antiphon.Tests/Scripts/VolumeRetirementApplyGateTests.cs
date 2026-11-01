@@ -93,6 +93,24 @@ public sealed class VolumeRetirementApplyGateTests
     }
 
     [Test]
+    public void Apply_gate_crlf_copy_of_the_expected_block_matches_the_lf_script()
+    {
+        var remote = Read("scripts/c590-remote.sh");
+        var recycle = Function(remote, "c1008_recycle");
+        const string expected = """
+            if [ "${C1008_DRY_RUN:-0}" != 1 ]; then
+                c1609_apply_gate
+            fi
+        """;
+        // A Windows checkout of this file embeds CR in the raw literal. Those
+        // bytes are the needle the assertion above uses against the LF script.
+        var crlf = expected.Replace("\n", "\r\n", StringComparison.Ordinal);
+        crlf.Contains('\r').ShouldBeTrue("the Windows checkout embeds CR in this raw literal");
+        recycle.ShouldContain(crlf, Case.Sensitive,
+            "apply-gate: a CRLF copy of the expected block matches the LF script");
+    }
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Scripted_apply_refuses_until_the_operation_token_matches()
     {
