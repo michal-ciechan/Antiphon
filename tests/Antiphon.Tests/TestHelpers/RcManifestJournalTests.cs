@@ -102,4 +102,31 @@ public sealed class RcManifestJournalTests
         var result = await ManifestPublicationFixture.Run(cancellationToken, "successor-drain", root);
         result.Ok.ShouldBeTrue(result.Reason);
     }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task EffectiveZoneCheckRefusesPinnedWindowsId(CancellationToken cancellationToken)
+    {
+        var root = C1514Support.FreshRoot();
+        var result = await ManifestPublicationFixture.Run(
+            cancellationToken,
+            "zone-effective",
+            root,
+            new Dictionary<string, string>
+            {
+                ["TZ"] = "India Standard Time",
+            });
+        if (result.Reason.StartsWith("zone-effective-not-applicable", StringComparison.Ordinal))
+        {
+            Console.WriteLine("SKIP zone-effective-not-applicable " + result.Reason);
+            return;
+        }
+
+        result.Ok.ShouldBeFalse(result.Reason);
+        result.Reason.StartsWith("zone-not-applicable", StringComparison.Ordinal).ShouldBeTrue(result.Reason);
+        result.Reason.Contains("expected=330", StringComparison.Ordinal).ShouldBeTrue(result.Reason);
+        result.Reason.Contains("actual=330", StringComparison.Ordinal).ShouldBeFalse(result.Reason);
+        result.Reason.Contains(" id=", StringComparison.Ordinal).ShouldBeTrue(result.Reason);
+        Console.WriteLine("zone-effective " + result.Reason);
+    }
 }

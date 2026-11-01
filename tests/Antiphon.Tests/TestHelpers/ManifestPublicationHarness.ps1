@@ -690,6 +690,30 @@ function Invoke-V4 {
     Write-MpResult -Ok $true -Reason 'v4'
 }
 
+function Invoke-ZoneEffective {
+    $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
+    $local = [System.TimeZoneInfo]::Local
+    $localOff = [int]$local.GetUtcOffset($moment).TotalMinutes
+    $pinned = Get-TestPhasePinnedTimeZone
+    $pinnedOff = [int]$pinned.GetUtcOffset($moment).TotalMinutes
+    if ($pinnedOff -eq $localOff -and [string]$pinned.Id -eq [string]$local.Id) {
+        Fail-Mp ('zone-effective-not-applicable local=' + [string]$local.Id + ' offset=' + $localOff)
+    }
+    $writer = Get-TestPhaseWriterEnvironment
+    $nowOff = $local.GetUtcOffset([datetime]::Now)
+    $sign = '+'
+    if ($nowOff.Ticks -lt 0) { $sign = '-' }
+    $off = $sign + ([math]::Abs($nowOff.Hours)).ToString('00') + ':' + ([math]::Abs($nowOff.Minutes)).ToString('00')
+    $suffix = '|' + [string]$local.Id + '|' + $off
+    if (-not $writer.EndsWith($suffix, [System.StringComparison]::Ordinal)) {
+        Fail-Mp ('zone-effective-writer=' + $writer + ' expected-suffix=' + $suffix)
+    }
+    # Same check v3-write uses. A pinned Windows id must not count as in effect.
+    [Environment]::SetEnvironmentVariable('MP_EXPECT_OFFSET', [string]$pinnedOff)
+    Assert-MpOffset
+    Fail-Mp ('zone-effective-pinned-accepted pinned=' + [string]$pinned.Id + ' offset=' + $pinnedOff + ' local=' + [string]$local.Id + ' offset=' + $localOff)
+}
+
 function Invoke-ZoneMap {
     $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
     $script:TestPhaseTimeZoneFinder = {
@@ -1866,6 +1890,7 @@ try {
         'v3-reduce' { Invoke-V3Reduce }
         'v4' { Invoke-V4 }
         'v4-successor' { Invoke-V4Successor }
+        'zone-effective' { Invoke-ZoneEffective }
         'zone-map' { Invoke-ZoneMap }
         'successor-drain' { Invoke-SuccessorDrain }
         'successor-drain-child' { Invoke-SuccessorDrainChild }
