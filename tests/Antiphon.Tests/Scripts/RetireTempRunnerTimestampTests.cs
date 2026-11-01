@@ -52,10 +52,18 @@ public sealed class RetireTempRunnerTimestampTests
             tempRetiredAt = timestamp,
         }));
         var probePath = Path.Combine(root, "probe.ps1");
+        // CARD-1609 copies the retirement scripts with native scp and treats
+        // $LASTEXITCODE -ne 0 as RecycleReceiptUnavailable. A function stub
+        // leaves that automatic variable null, and $null -ne 0 is true, so the
+        // bridge stops before the fake remote. Record a successful exit.
         await File.WriteAllTextAsync(probePath, """
             $ErrorActionPreference = 'Stop'
-            function ssh { Add-Content -LiteralPath $env:C780_TRACE -Value ('ssh ' + ($args -join ' ')) }
+            function ssh {
+                $global:LASTEXITCODE = 0
+                Add-Content -LiteralPath $env:C780_TRACE -Value ('ssh ' + ($args -join ' '))
+            }
             function scp {
+                $global:LASTEXITCODE = 0
                 Add-Content -LiteralPath $env:C780_TRACE -Value ('scp ' + ($args -join ' '))
                 if ($args -contains '-r') {
                     $dest = [string]$args[-1]
