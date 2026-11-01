@@ -26,7 +26,8 @@ public sealed class LiveLaneRunnerTests
         await Run("WrapperOnlyPaidManifest", "valid-context", "context-missing", "context-lane", "context-uid",
             "context-source", "context-executable", "context-profile", "context-owner", "context-forged",
             "context-tuple-pid", "context-tuple-runId", "context-tuple-lane", "context-tuple-start",
-            "native-disabled", "full-inputs", "policy-edit", "reader-edit", "legacy-state");
+            "native-disabled", "full-inputs", "policy-edit", "reader-edit", "committed-edit", "crlf-inputs", "sentinel-moved",
+            "legacy-state");
     }
 
     [Test]
