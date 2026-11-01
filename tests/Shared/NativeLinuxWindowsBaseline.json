@@ -474,24 +474,6 @@
       "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
       "Declaring": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Signature": "C994_Image_receipt_lookup_is_bound()",
-      "RowClass": "RetiredTempContainerHostTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|C994_Image_receipt_lookup_is_bound()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Declaring": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Signature": "C994_Audit_image_is_pinned_and_required()",
-      "RowClass": "RetiredTempContainerHostTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|C994_Audit_image_is_pinned_and_required()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Declaring": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
       "Signature": "C994_Cleanup_receipts_redact_unapproved_fields()",
       "RowClass": "RetiredTempContainerHostTests",
       "RowMethods": [],
@@ -4935,30 +4917,6 @@
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "C994_Exited_owned_containers_are_removed_without_volumes \u003E C1008HostFixture.RequireNativeLinux \u003E NativeLinuxGate.Require",
       "Identity": "antiphon|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|C994_Host_preview_never_mutates()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Declaring": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Signature": "C994_Image_receipt_lookup_is_bound()",
-      "Reason": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.",
-      "ReasonSha256": "9497d88b8efd4ad7229fd778107f3d18ceacf9e4728720aa4cc6330518e3ca1f",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
-      "Via": "C994_Exited_owned_containers_are_removed_without_volumes \u003E C1008HostFixture.RequireNativeLinux \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|C994_Image_receipt_lookup_is_bound()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Declaring": "Antiphon.Tests.Scripts.RetiredTempContainerHostTests",
-      "Signature": "C994_Audit_image_is_pinned_and_required()",
-      "Reason": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.",
-      "ReasonSha256": "9497d88b8efd4ad7229fd778107f3d18ceacf9e4728720aa4cc6330518e3ca1f",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
-      "Via": "C994_Exited_owned_containers_are_removed_without_volumes \u003E C1008HostFixture.RequireNativeLinux \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|Antiphon.Tests.Scripts.RetiredTempContainerHostTests|C994_Audit_image_is_pinned_and_required()"
     },
     {
       "Suite": "antiphon",
