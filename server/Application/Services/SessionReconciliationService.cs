@@ -217,8 +217,14 @@ public sealed class SessionReconciliationService
         }
         if (liveSessions.Count == 0)
         {
-            await _db.SaveChangesAsync(ct);
-            if (transaction is not null) await transaction.CommitAsync(ct);
+            // A no-op save still runs SavingChanges and SavedChanges. That stole the
+            // one-shot failure the re-adoption commit is supposed to absorb.
+            if (_db.ChangeTracker.HasChanges())
+            {
+                await _db.SaveChangesAsync(ct);
+                if (transaction is not null) await transaction.CommitAsync(ct);
+            }
+
             return 0;
         }
 
