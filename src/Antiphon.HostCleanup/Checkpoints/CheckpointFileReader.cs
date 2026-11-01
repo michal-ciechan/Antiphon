@@ -10,12 +10,12 @@ public static class CheckpointFileReader
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
     public const long ContentLimit = 1L << 30; // Content stamps stream; receipt reads keep their 64 MiB bound.
-    // A three-second silence window measures a read that delivered nothing. Bytes that arrive
-    // after the wait are progress and re-arm the window; the window is not widened. A zero-byte
-    // stall is retried once inside the overall budget. The terminal stall names a holder when
-    // one is known. Dedicated I/O and monitor waits remove the pool-starvation reason for
-    // CARD-1599's six-second stopgap. Windows overlapped reads wait on their own event on this
-    // thread, so completion does not depend on a pool worker.
+    // A three-second silence window measures the read. Bytes that return after it has elapsed
+    // are not progress, and the window is not widened. A zero-byte stall before any byte is
+    // retried once inside the overall budget. The terminal stall names a holder when one is
+    // known. Dedicated I/O and monitor waits remove the pool-starvation reason for CARD-1599's
+    // six-second stopgap. Windows overlapped reads wait on their own event on this thread, so
+    // completion does not depend on a pool worker.
     // The overall budget assumes at least 1 MiB/s after a 30s allowance: tiny receipts get
     // 31s, and an inclusive 1 GiB stamp gets 1054s. Short reads cannot restart that budget.
     public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
@@ -115,32 +115,24 @@ public static class CheckpointFileReader
             while (true)
             {
                 budget.Check();
-                int count;
-                try
-                {
-                    count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), budget.Token)
-                        .AsTask().WaitAsync(budget.Token).GetAwaiter().GetResult();
-                }
-                catch (Exception ex) when (RetryableStall(ex, budget, cancellationToken) && total == 0 && !zeroStallRetried)
+                // A cancelled in-flight read stays a stall. Only a completed zero-byte read is retried.
+                var count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), budget.Token)
+                    .AsTask().WaitAsync(budget.Token).GetAwaiter().GetResult();
+                // The silence window is the read. Bytes that return after it has elapsed are not progress.
+                // Only a zero-byte stall before any byte is retried, once, inside the overall budget.
+                try { budget.Check(); }
+                catch (Exception ex) when (RetryableStall(ex, budget, cancellationToken) && count == 0 && total == 0 && !zeroStallRetried)
                 {
                     zeroStallRetried = true;
                     budget.RearmStall();
                     continue;
                 }
-                // A wait that returns bytes is progress, even when the wait crossed the silence window.
                 if (count > 0)
                 {
                     if (total + count > limit) throw new InvalidDataException("selected file exceeds size limit");
                     sink(buffer.AsSpan(0, count));
                     total += count;
                     budget.Progress(count);
-                    continue;
-                }
-                try { budget.Check(); }
-                catch (Exception ex) when (RetryableStall(ex, budget, cancellationToken) && total == 0 && !zeroStallRetried)
-                {
-                    zeroStallRetried = true;
-                    budget.RearmStall();
                     continue;
                 }
                 break;

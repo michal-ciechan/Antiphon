@@ -7,14 +7,14 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// The silence window measures a read that delivered nothing. A wait that then returns bytes is
-// progress. A zero-byte stall is retried once inside the overall budget. A file that stays held
-// is refused with the holder name. A custody failure is not a git timeout.
+// The silence window measures the read and stays three seconds. Bytes that return after it
+// elapsed are still a stall. A zero-byte stall is retried once inside the overall budget. A
+// file that stays held is refused with the holder name. A custody failure is not a git timeout.
 [Category("Unit")]
 public sealed class CheckpointReadStallWitnessTests
 {
     [Test]
-    public void delivered_read_is_progress_when_the_wait_exceeds_three_seconds()
+    public void delivered_read_past_the_silence_window_is_still_refused()
     {
         var f = new HostCleanupCheckpointFixture();
         var payload = Bytes(32);
@@ -22,9 +22,10 @@ public sealed class CheckpointReadStallWitnessTests
         var reads = 0;
         f.Io.StreamFactory = () => new DelayedDelivery(payload, f.Clock, () => reads++);
 
-        var read = ReceiptFile.ReadBytes(f.Context, f.Payload);
+        var refused = Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, f.Payload));
 
-        read.ShouldBe(payload);
+        refused.Message.ShouldContain("receipt-read-refused", Case.Sensitive);
+        refused.Message.ShouldContain("read-stalled: 0 of 32 bytes; no progress within 3s", Case.Sensitive);
         reads.ShouldBe(1);
     }
 
