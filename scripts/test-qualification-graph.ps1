@@ -303,6 +303,20 @@ foreach ($path in @("$PSScriptRoot/lib/qualification-graph.ps1", $PSCommandPath)
     $ascii = $ascii -and $errors.Count -eq 0
 }
 Check $ascii 'ascii'
+$shapesOk = $true
+$shapeDetail = ''
+$shapes = @(
+    @{ message = 'Required properties are missing from object: platformOfRecord. Path ''nodes[0]'', line 1, position 4.'; path = '/nodes/0/platformOfRecord' },
+    @{ message = 'The JSON is not valid with the schema: Required properties ["coverageRole"] are not present at ''\nodes\0'''; path = '/nodes/0/coverageRole' },
+    @{ message = 'Property ''fixtureUnexpected'' has not been defined and the schema does not allow additional properties. Path ''candidate'', line 1, position 8.'; path = '/candidate/fixtureUnexpected' },
+    @{ message = 'The JSON is not valid with the schema: Required properties ["id"] are not present at ''#/targets/0'''; path = '/targets/0/id' },
+    @{ message = ('The JSON is not valid with the schema: Value is "integer" but should be "object" at ''\targets\0''' + "`r"); path = '/targets/0' }
+)
+foreach ($shape in $shapes) {
+    $got = @(Get-QualificationSchemaPointersFromMessage $shape.message)
+    if ($got -cnotcontains $shape.path) { $shapesOk = $false; $shapeDetail = $shape.path + ' got=' + ($got -join '|') }
+}
+Check $shapesOk 'windows-shaped-paths' $shapeDetail
 Check ((Inventory $fixtures) -ceq $beforeInputs -and (Inventory $ResultsDirectory) -ceq $beforeScratch) 'no-side-effects'
 Write-Host ("QGRAPH TIMING setup={0:F3}s body={1:F3}s services=not-used externalCalls=fixture-io; child=owned-by-ScriptHarness" -f $setupSeconds, ($clock.Elapsed.TotalSeconds - $setupSeconds))
 Write-Host "C487: $script:C487Passed passed, $script:C487Failed failed, $script:C487Rows rows"

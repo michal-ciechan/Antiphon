@@ -10,7 +10,7 @@ public sealed class QualificationGraphContractTests
     [Test]
     [Timeout(210_000)]
     public Task SchemaAndIdentity() => ScriptHarness.RunHarnessCaseAsync(
-        "test-qualification-graph.ps1", "QGRAPH", "SchemaAndIdentity", 112,
+        "test-qualification-graph.ps1", "QGRAPH", "SchemaAndIdentity", 113,
         [
             "QGRAPH SchemaAndIdentity/production-surface",
             "QGRAPH SchemaAndIdentity/catalog-pin",
@@ -123,6 +123,7 @@ public sealed class QualificationGraphContractTests
             "QGRAPH SchemaAndIdentity/uid-members-changed",
             "QGRAPH SchemaAndIdentity/script-census",
             "QGRAPH SchemaAndIdentity/ascii",
+            "QGRAPH SchemaAndIdentity/windows-shaped-paths",
             "QGRAPH SchemaAndIdentity/no-side-effects"
         ],
         ScriptHarnessOptions.Default with

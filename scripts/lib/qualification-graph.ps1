@@ -174,6 +174,23 @@ function Get-QualificationUidSetDigest {
     return Get-QualificationSha256 (ConvertTo-QualificationCanonicalJson $json)
 }
 
+function Get-QualificationSchemaPointersFromMessage {
+    param([string]$Message)
+    # Current extractor. Windows-shaped messages (JSONPath, backslash pointers,
+    # a trailing CR) do not yield canonical JSON pointers yet.
+    $paths = @()
+    if ($Message -match " at '([^']*)'$") {
+        $parent = $Matches[1]
+        $paths += $parent
+        if ($Message -match 'Required properties (\[.*\]) are not present') {
+            foreach ($property in ($Matches[1] | ConvertFrom-Json)) {
+                $paths += $parent + '/' + $property
+            }
+        }
+    }
+    return @($paths | Select-Object -Unique)
+}
+
 function Get-QualificationGraphSchemaResult {
     param([string]$Json, [string]$SchemaPath)
     # The actual checked-in schema is the authority. Explicit dates supplement
