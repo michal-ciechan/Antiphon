@@ -28,6 +28,15 @@ namespace Antiphon.Tests.Application;
 public class Card1619ExitPersistenceTests
 {
     [Test]
+    public void Capture_budget_covers_host_launch_and_connect()
+    {
+        var settings = new Antiphon.SessionRunner.SessionRunnerSettings();
+        Card1619NativeExitFixture.CaptureBudget.ShouldBeGreaterThanOrEqualTo(
+            TimeSpan.FromSeconds(settings.PtyHostLaunchTimeoutSec + settings.PtyHostConnectTimeoutSec),
+            "a start still inside the product launch and connect ceilings must not be cancelled at AttachAsync");
+    }
+
+    [Test]
     [Arguments(9, 0)]
     [Arguments(15, 0)]
     [Arguments(0, 0)]
