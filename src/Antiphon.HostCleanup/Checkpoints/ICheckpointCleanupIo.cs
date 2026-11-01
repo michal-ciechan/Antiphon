@@ -87,6 +87,12 @@ public interface ICheckpointReadHandle : IDisposable
     Stream OpenStream();
 }
 
+// A stall refusal names a holder only when one is known. Null leaves the stall text unchanged.
+public interface ICheckpointReadHolders
+{
+    string? Holder(string path);
+}
+
 public readonly record struct CheckpointProcessSnapshot(long StartToken, char State, bool HasExited);
 
 public interface ICheckpointCleanupIo
