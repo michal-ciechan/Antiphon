@@ -14,6 +14,22 @@ internal static class LiveClaudeExecutableAudit
         return dir?.FullName ?? throw new InvalidOperationException("C1545 source root missing");
     }
     public static string Read(string relative) => File.ReadAllText(Path.Combine(Root(), relative));
+
+    public static string NormalizeSourceNewlines(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return text ?? "";
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal);
+    }
+
+    public static int CountSourceAnchor(string? source, string? needle)
+    {
+        var normalizedNeedle = NormalizeSourceNewlines(needle);
+        if (normalizedNeedle.Length == 0) return 0;
+        return NormalizeSourceNewlines(source).Split(normalizedNeedle).Length - 1;
+    }
+
+    public static string ReplaceSourceAnchor(string? source, string? from, string? to) =>
+        NormalizeSourceNewlines(source).Replace(NormalizeSourceNewlines(from), NormalizeSourceNewlines(to), StringComparison.Ordinal);
     public static MethodDeclarationSyntax Method(string source, string name)
     {
         var tree = CSharpSyntaxTree.ParseText(source);

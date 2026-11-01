@@ -65,13 +65,23 @@ public class LiveClaudeEvidenceWiringTests
     [Test]
     public void CrlfCheckoutCountsSanitizerAnchorsOnce()
     {
-        var source = ToCrlf(LiveClaudeExecutableAudit.Read("tests/Shared/LiveClaude/LiveClaudeEvidenceSanitizer.cs"));
+        var original = LiveClaudeExecutableAudit.Read("tests/Shared/LiveClaude/LiveClaudeEvidenceSanitizer.cs");
+        var crlf = ToCrlf(original);
         var pc37 = Pc37Anchor();
         var identity = IdentityAnchor();
-        var pc37Count = source.Split(pc37).Length - 1;
-        var identityCount = source.Split(identity).Length - 1;
-        if (pc37Count != 1 || identityCount != 1)
+        var pc37Count = LiveClaudeExecutableAudit.CountSourceAnchor(crlf, pc37);
+        var identityCount = LiveClaudeExecutableAudit.CountSourceAnchor(crlf, identity);
+        if (LiveClaudeExecutableAudit.CountSourceAnchor(original, pc37) != 1
+            || pc37Count != 1
+            || LiveClaudeExecutableAudit.CountSourceAnchor(original, identity) != 1
+            || identityCount != 1)
             throw new InvalidOperationException("C1545 CRLF anchor count pc37=" + pc37Count + " identity=" + identityCount);
+        var removedMarker = crlf.Replace(ToCrlf(pc37), "var marker = \"\";", StringComparison.Ordinal);
+        var removedIdentity = crlf.Replace(ToCrlf(identity), "if (false) { }", StringComparison.Ordinal);
+        if (LiveClaudeExecutableAudit.CountSourceAnchor(removedMarker, pc37) != 0)
+            throw new InvalidOperationException("C1545 CRLF PC-37 removal still matched");
+        if (LiveClaudeExecutableAudit.CountSourceAnchor(removedIdentity, identity) != 0)
+            throw new InvalidOperationException("C1545 CRLF identity removal still matched");
     }
 
     private static string Pc37Anchor() =>
@@ -134,18 +144,18 @@ public class LiveClaudeEvidenceWiringTests
             ("PC-34", ".Append(Classify(capture.Screen))", ".Append(capture.Screen)", "payloadHasScreenSentinel"),
             ("PC-35", ".Append(Classify(capture.Secret))", ".Append(capture.Secret)", "payloadHasCredentialSentinel"),
             ("PC-36", ".Append(Classify(capture.Device))", ".Append(capture.Device)", "payloadHasDeviceSentinel"),
-            ("PC-37", "var marker = \"C1545-EVIDENCE case=\" + capture.CaseId + \" test=\" + capture.TestId\n            + \" kind=\" + capture.Kind + \" run=\" + run;", "var marker = \"\";", "actualSinkHasCaseMarker")
+            ("PC-37", Pc37Anchor(), "var marker = \"\";", "actualSinkHasCaseMarker")
         };
         foreach (var mutant in mutants)
         {
-            var count = source.Split(mutant.From).Length - 1;
+            var count = LiveClaudeExecutableAudit.CountSourceAnchor(source, mutant.From);
             if (count != 1) throw new InvalidOperationException("C1545 " + mutant.Pc + " mutation site ambiguous: " + count);
-            var text = InvokeProject(source.Replace(mutant.From, mutant.To, StringComparison.Ordinal));
+            var text = InvokeProject(LiveClaudeExecutableAudit.ReplaceSourceAnchor(source, mutant.From, mutant.To));
             var leaked = LiveClaudeEvidenceSanitizer.ContainsSentinel(text) || text.Contains("https://claude.ai", StringComparison.Ordinal);
             var marked = text.Contains("C1545-EVIDENCE case=control-success", StringComparison.Ordinal);
             var red = mutant.Pc == "PC-37" ? !marked : leaked;
             if (!red) throw new InvalidOperationException("C1545 " + mutant.Pc + " did not reach expected assertion");
-            var restored = InvokeProject(source);
+            var restored = InvokeProject(LiveClaudeExecutableAudit.NormalizeSourceNewlines(source));
             if (LiveClaudeEvidenceSanitizer.ContainsSentinel(restored) || !restored.Contains("C1545-EVIDENCE case=control-success", StringComparison.Ordinal))
                 throw new InvalidOperationException("C1545 " + mutant.Pc + " restore failed");
             Console.WriteLine("C1545 " + mutant.Pc + " assertion-red; restored-green " + mutant.Assertion);
@@ -210,7 +220,7 @@ public class LiveClaudeEvidenceWiringTests
         ProveOneCheck(source, "SM-S4", fieldsFrom, fieldsTo,
             leaked: text => text.Contains(jwt, StringComparison.Ordinal),
             invoke: mutated => InvokeProject(mutated, fields: new Dictionary<string, string> { ["cli"] = jwt }));
-        var identityFrom = "if (!IsToken(capture.CaseId) || !IsToken(capture.TestId) || !IsToken(capture.Kind))\n            throw new InvalidOperationException(\"C1545 evidence/identity\");";
+        var identityFrom = IdentityAnchor();
         ProveOneCheck(source, "SM-S5", identityFrom, "if (false)\n            throw new InvalidOperationException(\"C1545 evidence/identity\");",
             leaked: text => text.Contains("ghp_", StringComparison.Ordinal),
             invoke: mutated => InvokeProject(mutated, caseId: "ghp_" + new string('a', 36)));
@@ -224,10 +234,10 @@ public class LiveClaudeEvidenceWiringTests
 
     private static void ProveOneCheck(string source, string pc, string from, string to, Func<string, bool> leaked, Func<string, string> invoke)
     {
-        if (source.Split(from).Length != 2) throw new InvalidOperationException("C1545 " + pc + " mutation site ambiguous");
-        var opened = invoke(source.Replace(from, to, StringComparison.Ordinal));
+        if (LiveClaudeExecutableAudit.CountSourceAnchor(source, from) != 1) throw new InvalidOperationException("C1545 " + pc + " mutation site ambiguous");
+        var opened = invoke(LiveClaudeExecutableAudit.ReplaceSourceAnchor(source, from, to));
         if (!leaked(opened)) throw new InvalidOperationException("C1545 " + pc + " did not reach expected assertion");
-        var restored = invoke(source);
+        var restored = invoke(LiveClaudeExecutableAudit.NormalizeSourceNewlines(source));
         if (leaked(restored)) throw new InvalidOperationException("C1545 " + pc + " restore failed");
         Console.WriteLine("C1545 " + pc + " assertion-red; restored-green");
     }

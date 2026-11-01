@@ -261,7 +261,7 @@ function Get-LiveLaneDisplayMap {
     param([string]$DiagPath)
     $map = @{}
     if (-not (Test-Path -LiteralPath $DiagPath)) { return $map }
-    $raw = [System.IO.File]::ReadAllText($DiagPath)
+    $raw = [System.IO.File]::ReadAllText($DiagPath).Replace("`r", '')
     $rx = [regex]'TestNodeUid \{ Value = (?<uid>[^}]+?) \}, DisplayName = (?<display>.*?), Properties = \['
     foreach ($m in $rx.Matches($raw)) {
         $uid = $m.Groups['uid'].Value.Trim()
@@ -297,7 +297,7 @@ function Get-LiveLaneParsedArguments {
     }
     $tail = $current.ToString().Trim()
     if (-not [string]::IsNullOrWhiteSpace($tail) -or $parts.Count -gt 0) { $parts += $tail }
-    return @($parts | ForEach-Object { $_.Trim().Trim('"').Trim("'") } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    return @($parts | ForEach-Object { $_.Trim().Trim('"').Trim("'").Replace("`r", '') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
 function Add-LiveLaneDiscoveryOverlay {
@@ -552,18 +552,35 @@ function Get-LiveLaneLocalCoreCount {
 }
 
 function Test-LiveLaneSubmitExtraExpansion {
-    param([string]$Project, [object[]]$Nodes, $Entries)
+    param([string]$Project, [object[]]$Nodes, $Entries, [string[]]$CloneArguments)
+    $extraArguments = [System.Collections.Generic.List[string]]::new()
+    [void]$extraArguments.Add('other')
+    if ($PSBoundParameters.ContainsKey('CloneArguments')) {
+        $extraArguments.Clear()
+        foreach ($item in @($PSBoundParameters['CloneArguments'])) {
+            if ($null -ne $item) { [void]$extraArguments.Add([string]$item) }
+        }
+        if ($extraArguments.Count -eq 0) { [void]$extraArguments.Add('other') }
+    }
     $extraNodes = @(ConvertTo-LiveLaneList $Nodes)
-    $submitNode = @($extraNodes | Where-Object { [string](Get-LiveLaneProp $_ 'method') -eq 'Submitting_via_two_writes_completes_a_turn' } | Select-Object -First 1)
+    $wanted = @(Get-LiveLaneContract | Where-Object {
+        [string]$_.project -eq $Project -and [string]$_.method -eq 'Submitting_via_two_writes_completes_a_turn'
+    })
+    $submitNode = @()
+    if ($wanted.Count -eq 1) {
+        $hit = @(Get-LiveLaneMatchingNodes -Nodes $extraNodes -Identity $wanted[0])
+        if ($hit.Count -eq 1) { $submitNode = @($hit) }
+    }
     if ($submitNode.Count -eq 1) {
+        $shown = ($extraArguments.ToArray() -join ',')
         $clone = [pscustomobject]@{
             project = $Project
             uid = ([string](Get-LiveLaneProp $submitNode[0] 'uid') + '-extra')
             namespace = [string](Get-LiveLaneProp $submitNode[0] 'namespace')
             type = [string](Get-LiveLaneProp $submitNode[0] 'type')
             method = [string](Get-LiveLaneProp $submitNode[0] 'method')
-            displayName = 'Submitting_via_two_writes_completes_a_turn(other)'
-            arguments = @('other')
+            displayName = ('Submitting_via_two_writes_completes_a_turn(' + $shown + ')')
+            arguments = $extraArguments.ToArray()
             signature = [string](Get-LiveLaneProp $submitNode[0] 'signature')
             categories = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $submitNode[0] 'categories'))
         }

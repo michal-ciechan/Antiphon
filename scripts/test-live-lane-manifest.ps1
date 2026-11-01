@@ -312,6 +312,36 @@ function Invoke-LiveLaneScratchWitness {
     return @($problems)
 }
 
+function Test-LiveLaneCrlfDisplayArguments {
+    $problems = @()
+    $lfPath = '/tmp/c1545-f0ad975a-lf.diag'
+    $crlfPath = '/tmp/c1545-f0ad975a-crlf.diag'
+    $line = 'TestNodeUid { Value = uid-submit }, DisplayName = Submitting_via_two_writes_completes_a_turn(claude), Properties = [ ParameterTypeFullNames = [System.String] ]'
+    try {
+        [System.IO.File]::WriteAllText($lfPath, $line + "`n")
+        [System.IO.File]::WriteAllText($crlfPath, ($line + "`n").Replace("`n", "`r`n"))
+        $lfMap = Get-LiveLaneDisplayMap -DiagPath $lfPath
+        $crlfMap = Get-LiveLaneDisplayMap -DiagPath $crlfPath
+        $lfArgs = @()
+        $crlfArgs = @()
+        if ($lfMap.ContainsKey('uid-submit')) { $lfArgs = @(Get-LiveLaneParsedArguments -Method 'Submitting_via_two_writes_completes_a_turn' -Display ([string]$lfMap['uid-submit'].Display)) }
+        if ($crlfMap.ContainsKey('uid-submit')) { $crlfArgs = @(Get-LiveLaneParsedArguments -Method 'Submitting_via_two_writes_completes_a_turn' -Display ([string]$crlfMap['uid-submit'].Display)) }
+        if (($lfArgs -join '|') -ne 'claude' -or ($crlfArgs -join '|') -ne 'claude') {
+            $problems += ('C1545 V-2/display lf=' + ($lfArgs -join '|') + ' crlf=' + ($crlfArgs -join '|'))
+        }
+        $bare = $line.Replace('(claude)', '()')
+        [System.IO.File]::WriteAllText($crlfPath, ($bare + "`n").Replace("`n", "`r`n"))
+        $bareMap = Get-LiveLaneDisplayMap -DiagPath $crlfPath
+        $bareArgs = @()
+        if ($bareMap.ContainsKey('uid-submit')) { $bareArgs = @(Get-LiveLaneParsedArguments -Method 'Submitting_via_two_writes_completes_a_turn' -Display ([string]$bareMap['uid-submit'].Display)) }
+        if (@($bareArgs).Count -ne 0) { $problems += 'C1545 V-2/display removed argument still parsed' }
+    } finally {
+        Remove-Item -LiteralPath '/tmp/c1545-f0ad975a-lf.diag' -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath '/tmp/c1545-f0ad975a-crlf.diag' -ErrorAction SilentlyContinue
+    }
+    return @($problems)
+}
+
 function New-LiveLaneDecoyFirstSubmitNodes {
     $decoy = [pscustomobject]@{
         project = 'Antiphon.Agents.Pty.Tests'
@@ -347,8 +377,13 @@ switch ($Case) {
         $entries = @(Copy-LiveLaneEntries (Get-LiveLaneProp $manifestObject 'core') | Where-Object { $_.project -eq $projectName })
         $nodes = @(New-LiveLaneDecoyFirstSubmitNodes)
         $expanded = Test-LiveLaneSubmitExtraExpansion -Project $projectName -Nodes $nodes -Entries $entries
+        $sameArgument = Test-LiveLaneSubmitExtraExpansion -Project $projectName -Nodes $nodes -Entries $entries -CloneArguments @('claude')
         $decoyFailures = @()
         if (-not $expanded) { $decoyFailures += 'C1545 V-2/extra-argument expandedUidSet has no extra argument' }
+        if ($sameArgument) { $decoyFailures += 'C1545 V-2/extra-argument same argument still expanded' }
+        foreach ($item in @(Test-LiveLaneCrlfDisplayArguments)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$item)) { $decoyFailures += [string]$item }
+        }
         Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $decoyFailures -LaunchCount 0
         if ($decoyFailures.Count -ne 0) { exit 1 }
         exit 0
