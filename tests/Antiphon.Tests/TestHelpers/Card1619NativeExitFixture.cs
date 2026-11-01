@@ -15,11 +15,13 @@ namespace Antiphon.Tests.TestHelpers;
 internal sealed class Card1619NativeExitFixture : IAsyncDisposable
 {
     /// <summary>
-    /// Outer bound for one real host launch, connect, and exit envelope. A start that is
-    /// still inside the product launch and connect ceilings must not be cancelled: that
-    /// cancellation is reported at the next await, AttachAsync (CARD-1632).
+    /// Outer bound for one real host launch, connect, and exit envelope. Launch and connect
+    /// ceilings are 30s and 15s; five more seconds cover the exit envelope after a start
+    /// that used both. A 10s token cancelled a still-legal start and the next await reported
+    /// that as TaskCanceledException in AttachAsync (CARD-1632). Unloaded and CPU-pinned
+    /// starts finish near 1s; this bound is the product ceiling, not 2x that p95.
     /// </summary>
-    public static readonly TimeSpan CaptureBudget = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan CaptureBudget = TimeSpan.FromSeconds(50);
 
     public Guid Id { get; } = Guid.NewGuid();
     public DateTime Generation { get; } = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-1));
