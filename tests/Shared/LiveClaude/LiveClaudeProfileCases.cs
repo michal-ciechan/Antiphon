@@ -15,7 +15,7 @@ internal sealed class LiveClaudeProfileFixture : IDisposable
     public LiveClaudeProfileFixture(string? root = null, string mode = "named-A")
     {
         keep = root is not null;
-        Root = root is null ? Directory.CreateTempSubdirectory("c1545-profile-").FullName : Directory.CreateDirectory(root).FullName;
+        Root = root is null ? CleanTempSubdirectory("c1545-profile-") : Directory.CreateDirectory(root).FullName;
         Ambient = Directory.CreateDirectory(Path.Combine(Root, "ambient")).FullName;
         var config = Directory.CreateDirectory(Path.Combine(Root, "profile")).FullName;
         var cwd = Directory.CreateDirectory(Path.Combine(Root, "workspace")).FullName;
@@ -29,6 +29,41 @@ internal sealed class LiveClaudeProfileFixture : IDisposable
         Context = new(Root, LiveClaudeExecutableAudit.Root(), config, cwd, Path.Combine(Root, "managed-settings.json"), true,
             mode == "production-default" ? mode : "named", mode == "production-default" ? null : mode,
             mode == "production-default" ? "observed-default" : mode, Declared, true);
+    }
+    // The profile refuses any Claude instruction input above its owned root. Windows TEMP sits
+    // under the user profile, whose .claude Claude may load, so a fixture takes the first base
+    // with no such input on or above it rather than weakening that refusal.
+    private static readonly Lazy<string> cleanBase = new(() => CleanBase(DefaultBases()));
+    public static string CleanTempSubdirectory(string prefix)
+        => Directory.CreateDirectory(Path.Combine(cleanBase.Value, prefix + Guid.NewGuid().ToString("N")[..12])).FullName;
+    internal static IEnumerable<string> DefaultBases()
+    {
+        yield return Path.GetTempPath();
+        if (!OperatingSystem.IsWindows()) yield break;
+        yield return Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData), "antiphon-c1545");
+        yield return Path.Combine(Path.GetPathRoot(Path.GetTempPath())!, "antiphon-c1545");
+    }
+    internal static string CleanBase(IEnumerable<string> candidates)
+    {
+        var refused = new List<string>();
+        foreach (var candidate in candidates)
+        {
+            var hit = InstructionInputAt(candidate);
+            if (hit is not null) { refused.Add(hit); continue; }
+            try { return Directory.CreateDirectory(candidate).FullName; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { refused.Add(candidate + ": " + e.Message); }
+        }
+        throw new InvalidOperationException("C1545 fixture has no base without Claude instruction inputs above it: " + string.Join("; ", refused));
+    }
+    internal static string? InstructionInputAt(string candidate)
+    {
+        for (var p = Path.GetFullPath(candidate); !string.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))
+            foreach (var name in LiveClaudeProfile.AncestorInstructionNames)
+            {
+                var entry = Path.Combine(p, name);
+                if (File.Exists(entry) || Directory.Exists(entry)) return entry;
+            }
+        return null;
     }
     public void Write(string path, string text, bool declare = true)
     {

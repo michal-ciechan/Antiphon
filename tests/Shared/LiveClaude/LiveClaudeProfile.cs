@@ -88,12 +88,19 @@ internal sealed class LiveClaudeProfile : IDisposable
     {
         var observed = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
-        // A host .claude above the fixture (Windows TEMP lives under the user profile) is outside
-        // the owned root. Stop there; do not treat it as an owned instruction input.
-        for (var dir = new DirectoryInfo(Paths.Cwd); dir is not null && LiveClaudeProfilePaths.Within(dir.FullName, Context.OwnedRoot); dir = dir.Parent)
+        // Claude loads project memory from every ancestor of its cwd, and CLAUDE_CONFIG_DIR redirects
+        // only the user-level directory. Walk to the filesystem root: an instruction input above the
+        // owned root, including a host profile's .claude, is unowned and refuses.
+        for (var dir = new DirectoryInfo(Paths.Cwd); dir is not null; dir = dir.Parent)
         {
-            foreach (var name in new[] { "CLAUDE.md", "AGENTS.md", ".mcp.json" })
-            { var file = Path.Combine(dir.FullName, name); if (File.Exists(file)) queue.Enqueue(file); }
+            var owned = LiveClaudeProfilePaths.Within(dir.FullName, Context.OwnedRoot);
+            foreach (var name in AncestorInstructionNames)
+            {
+                var entry = Path.Combine(dir.FullName, name);
+                if (!File.Exists(entry) && !Directory.Exists(entry)) continue;
+                if (!owned) throw new LiveClaudeRefusal("unowned-instructions");
+                if (File.Exists(entry)) queue.Enqueue(entry);
+            }
             var dot = Path.Combine(dir.FullName, ".claude");
             if (!Directory.Exists(dot)) continue;
             LiveClaudeProfilePaths.Owned(dot, Context.OwnedRoot);
@@ -156,6 +163,9 @@ internal sealed class LiveClaudeProfile : IDisposable
             }
         }
     }
+    // The per-directory names Claude's ancestor walk can load. A fixture root needs none above it.
+    internal static readonly string[] AncestorInstructionNames = ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json", ".claude"];
+
     public static string[] HookTokens(string command) => System.Text.RegularExpressions.Regex.Matches(command, "\"[^\"]*\"|[^\\s\"]+")
         .Select(m => m.Value.Trim('"')).ToArray();
 

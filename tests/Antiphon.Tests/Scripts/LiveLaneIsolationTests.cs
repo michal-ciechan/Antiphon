@@ -206,21 +206,35 @@ public class LiveLaneIsolationTests
     [Test]
     public void HostAncestorClaudeDirectoryStaysOutsideTheOwnedClosure()
     {
-        var parent = Directory.CreateTempSubdirectory("c1545-host-").FullName;
+        // Windows TEMP sits under the user profile, whose .claude Claude may load from the ancestor
+        // walk. A lane rooted there refuses; the fixture moves to a base with nothing above it.
+        var scratch = LiveClaudeProfileFixture.CleanTempSubdirectory("c1545-host-");
         try
         {
-            Directory.CreateDirectory(Path.Combine(parent, ".claude"));
-            File.WriteAllText(Path.Combine(parent, ".claude", "settings.json"), "{\"model\":\"host\"}");
-            using var fixture = new LiveClaudeProfileFixture(Path.Combine(parent, "profile"));
+            var home = Path.Combine(scratch, "home");
+            Directory.CreateDirectory(Path.Combine(home, ".claude"));
+            File.WriteAllText(Path.Combine(home, ".claude", "CLAUDE.md"), "operator instructions");
+            File.WriteAllText(Path.Combine(home, ".claude", "settings.json"), "{\"model\":\"host\"}");
+            var hostTemp = Directory.CreateDirectory(Path.Combine(home, "AppData", "Local", "Temp")).FullName;
+            var outside = Path.Combine(scratch, "outside");
+            using (var underHost = new LiveClaudeProfileFixture(Path.Combine(hostTemp, "profile")))
+                LiveClaudeProfileCases.Refuses(() => { using var p = new LiveClaudeProfile(underHost.Context); },
+                    "unowned-instructions", "V-14", "host-ancestor-refuses");
+            var chosen = LiveClaudeProfileFixture.CleanBase([hostTemp, outside]);
+            LiveClaudeProfileCases.Assert(chosen == Path.GetFullPath(outside), "V-14", "host-ancestor",
+                "the fixture skips a base under a host .claude");
+            using var fixture = new LiveClaudeProfileFixture(Path.Combine(chosen, "profile"));
             using var profile = new LiveClaudeProfile(fixture.Context);
-            LiveClaudeProfileCases.Assert(LiveClaudeProfilePaths.Within(profile.Paths.Cwd, fixture.Context.OwnedRoot),
-                "V-14", "host-ancestor", "owned cwd stays inside the fixture root");
-            LiveClaudeProfileCases.Assert(!LiveClaudeProfilePaths.Within(Path.Combine(parent, ".claude"), fixture.Context.OwnedRoot),
-                "V-14", "host-ancestor", "a host .claude above the fixture is outside the owned root");
+            LiveClaudeProfileCases.Assert(LiveClaudeProfileFixture.InstructionInputAt(scratch) is null,
+                "V-14", "host-ancestor", "the default fixture base has no instruction input above it");
+            var only = false;
+            try { LiveClaudeProfileFixture.CleanBase([hostTemp]); }
+            catch (InvalidOperationException e) when (e.Message.StartsWith("C1545 fixture has no base", StringComparison.Ordinal)) { only = true; }
+            LiveClaudeProfileCases.Assert(only, "V-14", "host-ancestor", "a host with Claude inputs above every base fails the fixture");
         }
         finally
         {
-            Directory.Delete(parent, true);
+            Directory.Delete(scratch, true);
         }
     }
 
@@ -231,7 +245,7 @@ public class LiveLaneIsolationTests
         // only the user-level directory. A file strictly above the owned root must still refuse.
         foreach (var name in new[] { "CLAUDE.md", "AGENTS.md", ".mcp.json", ".claude/CLAUDE.md" })
         {
-            var parent = Directory.CreateTempSubdirectory("c1545-above-").FullName;
+            var parent = LiveClaudeProfileFixture.CleanTempSubdirectory("c1545-above-");
             try
             {
                 using var fixture = new LiveClaudeProfileFixture(Path.Combine(parent, "profile"));
