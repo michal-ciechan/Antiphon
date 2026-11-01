@@ -83,6 +83,163 @@ public class Card1619RunnerExitTests
         try { await server; } catch (OperationCanceledException) { }
     }
 
+    /// <summary>
+    /// A host that accepts hello and closes every time must still end at the connect budget.
+    /// One accept would be the old fail-fast EOF; a retry that ignores or resets the deadline
+    /// never returns (CARD-1634).
+    /// </summary>
+    [Test]
+    public async Task Eof_every_hello_times_out_inside_the_connect_budget()
+    {
+        var pipeName = PtyHostProtocol.PipeNameFor(Guid.NewGuid());
+        using var stop = new CancellationTokenSource();
+        var listening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var accepts = 0;
+        var server = ServeHellosAsync(pipeName, stop.Token, listening,
+            () => Interlocked.Increment(ref accepts), (_, _) => Task.CompletedTask);
+        Task<PtyHostClient>? connect = null;
+        try
+        {
+            await listening.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var elapsed = Stopwatch.StartNew();
+            connect = PtyHostClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(2), stop.Token);
+            var winner = await Task.WhenAny(connect, Task.Delay(TimeSpan.FromSeconds(8)));
+            winner.ShouldBe(connect, "EOF retries have to stay inside the connect budget");
+            elapsed.Stop();
+            var ex = await Should.ThrowAsync<System.TimeoutException>(() => connect);
+            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(4), "budget was 2s; slack is 2s");
+            accepts.ShouldBeGreaterThan(1, "the retry has to be observed, not a single failed hello");
+            ex.InnerException.ShouldBeAssignableTo<InvalidOperationException>();
+            ex.InnerException!.Message.ShouldContain("EOF");
+        }
+        finally
+        {
+            stop.Cancel();
+            if (connect is not null) try { await connect; } catch { }
+            try { await server; } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A corrupt length is not the relisten race. Retrying it would spend the whole budget
+    /// (CARD-1634). 0xFFFFFFFF is a negative length, which framing rejects before the payload.
+    /// </summary>
+    [Test]
+    public async Task Corrupt_hello_frame_fails_fast()
+    {
+        var pipeName = PtyHostProtocol.PipeNameFor(Guid.NewGuid());
+        using var stop = new CancellationTokenSource();
+        var listening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = ServeHellosAsync(pipeName, stop.Token, listening, static () => { }, async (pipe, token) =>
+        {
+            await pipe.WriteAsync(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }, token);
+            await pipe.FlushAsync(token);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        });
+        Task<PtyHostClient>? connect = null;
+        try
+        {
+            await listening.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var elapsed = Stopwatch.StartNew();
+            connect = PtyHostClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(5), stop.Token);
+            var winner = await Task.WhenAny(connect, Task.Delay(TimeSpan.FromSeconds(4)));
+            winner.ShouldBe(connect, "a corrupt frame must not be retried for the 5s budget");
+            elapsed.Stop();
+            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+            await Should.ThrowAsync<InvalidDataException>(() => connect);
+        }
+        finally
+        {
+            stop.Cancel();
+            if (connect is not null) try { await connect; } catch { }
+            try { await server; } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A frame that is not helloAck is a protocol fault. Retrying it used to burn the connect
+    /// budget the same way a corrupt frame would (CARD-1634 A-1).
+    /// </summary>
+    [Test]
+    public async Task Non_ack_hello_reply_fails_without_retry()
+    {
+        var pipeName = PtyHostProtocol.PipeNameFor(Guid.NewGuid());
+        using var stop = new CancellationTokenSource();
+        var listening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var accepts = 0;
+        var server = ServeHellosAsync(pipeName, stop.Token, listening,
+            () => Interlocked.Increment(ref accepts), async (pipe, token) =>
+            {
+                await PtyHostFraming.WriteAsync(pipe, new ErrorMessage("protocol", "not-hello"), token);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        Task<PtyHostClient>? connect = null;
+        try
+        {
+            await listening.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var elapsed = Stopwatch.StartNew();
+            connect = PtyHostClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(5), stop.Token);
+            var winner = await Task.WhenAny(connect, Task.Delay(TimeSpan.FromSeconds(4)));
+            winner.ShouldBe(connect, "a non-ack hello must fail this attempt, not retry until the budget");
+            elapsed.Stop();
+            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+            accepts.ShouldBe(1);
+            var ex = await Should.ThrowAsync<InvalidOperationException>(() => connect);
+            ex.Message.ShouldContain("ErrorMessage");
+        }
+        finally
+        {
+            stop.Cancel();
+            if (connect is not null) try { await connect; } catch { }
+            try { await server; } catch { }
+        }
+    }
+
+    private static async Task ServeHellosAsync(
+        string pipeName,
+        CancellationToken stop,
+        TaskCompletionSource firstListening,
+        Action onAccept,
+        Func<NamedPipeServerStream, CancellationToken, Task> respond)
+    {
+        while (!stop.IsCancellationRequested)
+        {
+            NamedPipeServerStream pipe;
+            try
+            {
+                pipe = OpenPipe(pipeName, stop);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (IOException) when (!stop.IsCancellationRequested)
+            {
+                continue;
+            }
+
+            try
+            {
+                firstListening.TrySetResult();
+                await pipe.WaitForConnectionAsync(stop);
+                onAccept();
+                var hello = await PtyHostFraming.ReadAsync(pipe, stop);
+                if (hello is null)
+                    continue;
+                hello.ShouldBeOfType<HelloMessage>();
+                await respond(pipe, stop);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            finally
+            {
+                await pipe.DisposeAsync();
+            }
+        }
+    }
+
     private static NamedPipeServerStream OpenPipe(string pipeName, CancellationToken ct)
     {
         Exception? last = null;
