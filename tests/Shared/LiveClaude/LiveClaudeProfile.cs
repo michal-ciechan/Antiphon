@@ -88,7 +88,9 @@ internal sealed class LiveClaudeProfile : IDisposable
     {
         var observed = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
-        for (var dir = new DirectoryInfo(Paths.Cwd); dir is not null; dir = dir.Parent)
+        // A host .claude above the fixture (Windows TEMP lives under the user profile) is outside
+        // the owned root. Stop there; do not treat it as an owned instruction input.
+        for (var dir = new DirectoryInfo(Paths.Cwd); dir is not null && LiveClaudeProfilePaths.Within(dir.FullName, Context.OwnedRoot); dir = dir.Parent)
         {
             foreach (var name in new[] { "CLAUDE.md", "AGENTS.md", ".mcp.json" })
             { var file = Path.Combine(dir.FullName, name); if (File.Exists(file)) queue.Enqueue(file); }

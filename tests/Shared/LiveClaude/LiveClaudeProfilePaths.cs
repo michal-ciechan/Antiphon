@@ -19,19 +19,39 @@ internal sealed class LiveClaudeProfilePaths
         if (Within(Cwd, context.CandidateRoot) || Within(ConfigDir, context.CandidateRoot))
             throw new LiveClaudeRefusal("candidate-cwd");
     }
-    public static bool Within(string path, string root)
-        => Path.GetFullPath(path).Equals(Path.GetFullPath(root), StringComparison.Ordinal)
-           || Path.GetFullPath(path).StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal);
-    public static string Owned(string path, string root)
+    public static bool Within(string path, string root) => Within(path, root, LiveClaudeOwnershipRules.Platform);
+    internal static bool Within(string path, string root, LiveClaudeOwnershipRules rules)
     {
-        if (!Path.IsPathFullyQualified(path) || !Path.IsPathFullyQualified(root) || !Within(path, root))
+        var canonicalPath = TrimEnding(rules.Canonicalize(path));
+        var canonicalRoot = TrimEnding(rules.Canonicalize(root));
+        if (canonicalPath.Equals(canonicalRoot, rules.Comparison)) return true;
+        var separator = canonicalRoot.Contains('\\') ? '\\' : '/';
+        var prefix = canonicalRoot.EndsWith(separator) ? canonicalRoot : canonicalRoot + separator;
+        return canonicalPath.StartsWith(prefix, rules.Comparison);
+    }
+    public static string Owned(string path, string root) => Owned(path, root, LiveClaudeOwnershipRules.Platform);
+    internal static string Owned(string path, string root, LiveClaudeOwnershipRules rules)
+    {
+        if (!rules.IsFullyQualified(path) || !rules.IsFullyQualified(root) || !Within(path, root, rules))
             throw new LiveClaudeRefusal("unowned-path");
-        for (var p = Path.GetFullPath(path); !string.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))
+        var canonical = rules.Canonicalize(path);
+        if (rules.CheckReparse)
         {
-            if ((File.Exists(p) || Directory.Exists(p)) && (File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0)
-                throw new LiveClaudeRefusal("linked-path");
+            for (var p = canonical; !string.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))
+            {
+                if ((File.Exists(p) || Directory.Exists(p)) && (File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0)
+                    throw new LiveClaudeRefusal("linked-path");
+            }
         }
-        return Path.GetFullPath(path);
+        return canonical;
+    }
+    private static string TrimEnding(string path)
+    {
+        if (path.Length <= 1) return path;
+        var trimmed = path.TrimEnd('\\', '/');
+        if (trimmed.Length == 0) return path[0] == '/' ? "/" : path;
+        if (trimmed.Length == 2 && trimmed[1] == ':') return trimmed + "\\";
+        return trimmed;
     }
     public string? FindSessionJsonl(string sessionId)
     {
@@ -60,6 +80,39 @@ internal sealed class LiveClaudeProfilePaths
             return (true, r.TryGetProperty("bridgeSessionId", out var id) ? id.GetString() : null);
         }
         return (false, null);
+    }
+}
+
+// Both sides are canonicalised the same way. Windows compares case-insensitively; a separator
+// boundary keeps a sibling such as C:\root2 outside C:\root. Callers inject a Windows-shaped
+// canonicaliser where the host cannot expand 8.3 names or backslashes.
+internal sealed class LiveClaudeOwnershipRules
+{
+    internal static readonly LiveClaudeOwnershipRules Platform = new(
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal,
+        static path => Path.GetFullPath(path),
+        static path => Path.IsPathFullyQualified(path),
+        checkReparse: true);
+    internal LiveClaudeOwnershipRules(StringComparison comparison, Func<string, string> canonicalize,
+        Func<string, bool> isFullyQualified, bool checkReparse)
+    {
+        Comparison = comparison;
+        Canonicalize = canonicalize;
+        IsFullyQualified = isFullyQualified;
+        CheckReparse = checkReparse;
+    }
+    internal StringComparison Comparison { get; }
+    internal Func<string, string> Canonicalize { get; }
+    internal Func<string, bool> IsFullyQualified { get; }
+    internal bool CheckReparse { get; }
+    internal static LiveClaudeOwnershipRules WindowsShape(Func<string, string> canonicalize) =>
+        new(StringComparison.OrdinalIgnoreCase, canonicalize, WindowsQualified, checkReparse: false);
+    internal static bool WindowsQualified(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        if (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
+            return true;
+        return path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal);
     }
 }
 

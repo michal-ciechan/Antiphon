@@ -101,6 +101,109 @@ public class LiveLaneIsolationTests
     [Test] public void UnknownConfigDisablesReuse() => Run("V-16");
 
     [Test]
+    public void WindowsShapedOwnershipAcceptsAliasesAndRefusesEscapes()
+    {
+        var shortNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["LNDCO~1"] = "lndco" };
+        var junctions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"C:\Users\lndco\AppData\Local\Temp\profile\link"] = @"D:\outside\escaped"
+        };
+        var rules = LiveClaudeOwnershipRules.WindowsShape(path => CanonicalWindows(path, shortNames, junctions));
+        var root = @"C:\Users\LNDCO~1\AppData\Local\Temp\profile\";
+        var child = @"c:/users/lndco/appdata/local/temp/profile/workspace/.claude";
+        LiveClaudeProfileCases.Assert(LiveClaudeProfilePaths.Within(child, root, rules),
+            "V-14", "windows-alias", "mixed-case, slash and 8.3 forms of an in-root path are owned");
+        var owned = LiveClaudeProfilePaths.Owned(child, root, rules);
+        LiveClaudeProfileCases.Assert(owned.EndsWith(@"\workspace\.claude", StringComparison.OrdinalIgnoreCase),
+            "V-14", "windows-alias", "the owned result is the canonical child");
+        LiveClaudeProfileCases.Assert(LiveClaudeProfilePaths.Within(@"C:\Users\lndco\AppData\Local\Temp\profile\workspace\..\workspace\.claude", root, rules),
+            "V-14", "windows-alias", "dot segments that stay inside the root remain owned");
+        LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(@"C:\Users\lndco\AppData\Local\Temp\profile2\workspace", root, rules),
+            "unowned-path", "V-14", "sibling-prefix");
+        LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(@"C:\ROOT2\child", @"C:\root", rules),
+            "unowned-path", "V-14", "sibling-case");
+        LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(@"C:\Users\lndco\AppData\Local\Temp\profile\workspace\..\..\..\Windows", root, rules),
+            "unowned-path", "V-14", "dotdot-escape");
+        LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(@"C:\Users\lndco\AppData\Local\Temp\profile\link\CLAUDE.md", root, rules),
+            "unowned-path", "V-14", "junction-escape");
+        LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(@"relative\workspace", root, rules),
+            "unowned-path", "V-14", "relative");
+    }
+
+    [Test]
+    public void SymlinkInsideTheRootThatPointsOutsideIsRefused()
+    {
+        var root = Directory.CreateTempSubdirectory("c1545-link-root-").FullName;
+        var outside = Directory.CreateTempSubdirectory("c1545-link-out-").FullName;
+        var link = Path.Combine(root, "escape");
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside);
+            LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(link, root), "linked-path", "V-14", "linked-escape");
+            LiveClaudeProfileCases.Refuses(() => LiveClaudeProfilePaths.Owned(Path.Combine(outside, "nope"), root), "unowned-path", "V-14", "outside-root");
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link, false);
+            Directory.Delete(root, true);
+            Directory.Delete(outside, true);
+        }
+    }
+
+    private static string CanonicalWindows(string path, IReadOnlyDictionary<string, string> shortNames, IReadOnlyDictionary<string, string> junctions, int depth = 0)
+    {
+        if (depth > 8) throw new InvalidOperationException("C1545 windows canonicaliser exceeded junction depth");
+        var normalized = path.Replace('/', '\\');
+        var unc = normalized.StartsWith(@"\\", StringComparison.Ordinal);
+        var parts = normalized.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        var drive = "";
+        var start = 0;
+        if (!unc && parts.Length > 0 && parts[0].Length == 2 && parts[0][1] == ':')
+        {
+            drive = char.ToUpperInvariant(parts[0][0]) + ":";
+            start = 1;
+        }
+        else if (unc) drive = @"\\";
+        var stack = new List<string>();
+        for (var i = start; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (part == ".") continue;
+            if (part == "..")
+            {
+                if (stack.Count > 0) stack.RemoveAt(stack.Count - 1);
+                continue;
+            }
+            foreach (var pair in shortNames)
+            {
+                if (!part.Equals(pair.Key, StringComparison.OrdinalIgnoreCase)) continue;
+                part = pair.Value;
+                break;
+            }
+            stack.Add(part);
+            if (drive.Length == 0) continue;
+            var soFar = JoinWindows(drive, stack);
+            foreach (var pair in junctions)
+            {
+                var link = pair.Key.Replace('/', '\\').TrimEnd('\\');
+                if (!soFar.Equals(link, StringComparison.OrdinalIgnoreCase)) continue;
+                var rest = i + 1 < parts.Length ? "\\" + string.Join("\\", parts.Skip(i + 1)) : "";
+                return CanonicalWindows(linkTarget(pair.Value) + rest, shortNames, junctions, depth + 1);
+            }
+        }
+        return JoinWindows(drive, stack);
+        static string linkTarget(string target) => target.Replace('/', '\\').TrimEnd('\\');
+    }
+
+    private static string JoinWindows(string drive, List<string> stack)
+    {
+        var body = string.Join("\\", stack);
+        if (drive == @"\\") return body.Length == 0 ? @"\\" : @"\\" + body;
+        if (drive.Length == 0) return body;
+        return body.Length == 0 ? drive + "\\" : drive + "\\" + body;
+    }
+
+    [Test]
     public void HostAncestorClaudeDirectoryStaysOutsideTheOwnedClosure()
     {
         var parent = Directory.CreateTempSubdirectory("c1545-host-").FullName;
