@@ -147,7 +147,7 @@ function Invoke-CaptureShellWitness {
             if ($values.ContainsKey('QTIMING_KEEP')) { $keepValue = [string]$values['QTIMING_KEEP'] }
             $kept = (-not [string]::IsNullOrWhiteSpace($pathValue)) -and ($keepValue -eq 'kept-value') -and ($phaseHits.Count -eq 0)
             if (-not $kept) {
-                Write-Host ('DIAG capture-seam-off count=' + $names.Count + ' path=' + $(if ([string]::IsNullOrWhiteSpace($pathValue)) { '0' } else { '1' }) + ' keep=' + $(if ($keepValue -eq 'kept-value') { '1' } else { '0' }) + ' phase=' + $phaseHits.Count + ' names=' + ($names -join ','))
+                Write-Host ('DIAG capture-seam-off count=' + $names.Count + ' path=' + $(if ([string]::IsNullOrWhiteSpace($pathValue)) { '0' } else { '1' }) + ' keep=' + $(if ($keepValue -eq 'kept-value') { '1' } else { '0' }) + ' phase=' + $phaseHits.Count)
             }
             Assert-Check $kept 'capture-seam-off-keeps-non-phase'
         } finally {
@@ -297,13 +297,13 @@ $NightlySeams = @{
         if ($Environment) {
             foreach ($key in @($Environment.Keys)) {
                 $name = [string]$key
-                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_")) { continue }
+                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_", [StringComparison]::Ordinal)) { continue }
                 $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
             }
         }
         if ($env:QTIMING_FORWARD -ne "1") {
             foreach ($name in @($psi.EnvironmentVariables.Keys)) {
-                if ([string]$name.StartsWith("ANTIPHON_TEST_PHASE_")) {
+                if (([string]$name).StartsWith("ANTIPHON_TEST_PHASE_", [StringComparison]::Ordinal)) {
                     [void]$psi.EnvironmentVariables.Remove([string]$name)
                 }
             }
