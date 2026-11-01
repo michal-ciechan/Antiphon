@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "9cd8d7281b04ee66287f1c2bf5104d1e385937cd4e34881032f9fbca3d438eea",
+  "policyHash": "4cff198961861361802bac1416af4f129167c2d7cd7ff466712e9b56f32e8755",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -908,6 +908,27 @@
           "platform": "windows",
           "reason": "Linux-only by construction: real Linux stop boundaries require /bin/sh, libc signals and /proc storage refusal. The case remains required on Linux.",
           "owner": "CARD-1619"
+        },
+        {
+          "suite": "antiphon",
+          "class": "VolumeRetirementContentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts). The case remains required on Linux.",
+          "owner": "CARD-1609"
+        },
+        {
+          "suite": "antiphon",
+          "class": "VolumeRetirementReceiptTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts). The case remains required on Linux.",
+          "owner": "CARD-1609"
+        },
+        {
+          "suite": "antiphon",
+          "class": "VolumeRetirementDockerTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Docker retirement witnesses require Linux inside the owned daemon. The case remains required on Linux.",
+          "owner": "CARD-1609"
         },
         {
           "suite": "antiphon",

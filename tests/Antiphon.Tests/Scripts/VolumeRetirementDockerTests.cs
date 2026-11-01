@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Antiphon.TestSupport;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -10,6 +11,7 @@ namespace Antiphon.Tests.Scripts;
 // First method includes the once-per-session image preparation (120s provisional).
 // N3's first complete owned-daemon run measured 181s including its driver; use
 // a provisional 360s body budget until normal phase samples establish p95.
+[NativeLinuxOnly(NativeLinuxReason)]
 [Timeout(480_000)]
 [Category("Integration")]
 [Category("Slow")]
