@@ -81,6 +81,68 @@ function cleanupObjects(names, ids) {
   for (const name of names) if (present.has(name)) { ownedVolume(name); d('volume','rm','--',name); }
   for (const name of names) assert(!new Set(d('volume','ls','-q').split('\n')).has(name), 'FixtureVolumeResidue');
 }
+// The 1s cancel witness times the docker client. A node shim on that path
+// canceled container create before the helper existed (run 20261031-224720-95fc,
+// preview-75a3fe88: context canceled at 1.000s). Exec the real client. Volume
+// rm stays in node so the intent and fault cut are unchanged.
+function writeDockerShim() {
+  const mark = label + '=' + scope.prefix;
+  const lines = [
+    '#!/bin/bash',
+    'set -u',
+    'ROOT=' + q(scope.root),
+    'MJS=' + q(fileURLToPath(import.meta.url)),
+    'PREFIX=' + q(scope.prefix),
+    'MARK=' + q(mark),
+    'REAL=/usr/local/bin/docker',
+    'JQ=/usr/local/bin/jq',
+    'if [ "${1:-}" = volume ] && [ "${2:-}" = rm ]; then',
+    '  exec /usr/local/bin/node "$MJS" --docker-shim --root "$ROOT" -- "$@"',
+    'fi',
+    'args=("$@")',
+    'if [ "${args[0]:-}" = kill ] || [ "${args[0]:-}" = rm ]; then',
+    '  "$JQ" -nc \'{args:$ARGS.positional}\' --args "$@" >> "$ROOT/docker-calls.jsonl" || exit 2',
+    'fi',
+    'if [ "${args[0]:-}" = ps ]; then args+=(--filter "label=$MARK"); fi',
+    'if [ "${args[0]:-}" = run ]; then args=(run --label "$MARK" "${args[@]:1}"); fi',
+    'if [ "${args[0]:-}" = run ] && [ "${C1609_NATIVE_HIDE_CID:-}" = 1 ]; then',
+    '  found=0',
+    '  for i in "${!args[@]}"; do',
+    '    if [ "${args[$i]}" = --cidfile ]; then args[$((i+1))]="${args[$((i+1))]}.native-withheld"; found=1; break; fi',
+    '  done',
+    '  [ "$found" = 1 ] || exit 2',
+    '  args=(run --sig-proxy=false "${args[@]:1}")',
+    '  "$JQ" -nc \'{args:["native-cid-cut"],withheldCid:true}\' >> "$ROOT/docker-calls.jsonl" || exit 2',
+    'fi',
+    'cid=""',
+    'if [ "${args[0]:-}" = run ]; then',
+    '  for i in "${!args[@]}"; do',
+    '    if [ "${args[$i]}" = --cidfile ]; then cid="${args[$((i+1))]}"; break; fi',
+    '  done',
+    'fi',
+    'if [ -n "$cid" ]; then',
+    '  (',
+    '    for _n in $(seq 1 200); do',
+    '      if [ -f "$cid" ]; then',
+    '        id="$(tr -d \'[:space:]\' < "$cid" 2>/dev/null || true)"',
+    '        if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then',
+    '          if "$REAL" inspect "$id" | "$JQ" -e --arg p "$PREFIX" \'.[0].Config.Labels["io.antiphon.c1609-real"]==$p\' >/dev/null 2>&1; then',
+    '            tmp="$ROOT/inspects/$id.json.tmp"',
+    '            "$REAL" inspect "$id" | "$JQ" \'.[0]\' > "$tmp" && mv -f "$tmp" "$ROOT/inspects/$id.json"',
+    '            "$REAL" exec --user 1654:1654 "$id" touch /audit-scratch/n1-release >/dev/null 2>&1 || true',
+    '            exit 0',
+    '          fi',
+    '        fi',
+    '      fi',
+    '      sleep 0.02',
+    '    done',
+    '  ) >/dev/null 2>&1 &',
+    'fi',
+    'exec "$REAL" "${args[@]}"',
+    ''
+  ];
+  fs.writeFileSync(scope.root + '/bin/docker', lines.join('\n'), {mode:0o755});
+}
 async function prepare() {
   ownedDaemon(d('info','--format','{{.Name}}'), os.hostname(), fs.existsSync('/.dockerenv'));
   const root = fs.mkdtempSync('/tmp/c1609-real-');
@@ -107,7 +169,7 @@ async function prepare() {
   save();
   fs.mkdirSync(root+'/bin'); fs.mkdirSync(root+'/inspects');
   fs.writeFileSync(root+'/docker-calls.jsonl','');
-  fs.writeFileSync(root+'/bin/docker','#!/bin/sh\nexec /usr/local/bin/node '+q(fileURLToPath(import.meta.url))+' --docker-shim --root '+q(root)+' -- "$@"\n',{mode:0o755});
+  writeDockerShim();
   const origin=root+'/origin.git', seed=root+'/seed';
   call('git',['init','-q','--bare',origin]); call('git',['-C',origin,'symbolic-ref','HEAD','refs/heads/main']);
   call('git',['init','-q','-b','main',seed]);
