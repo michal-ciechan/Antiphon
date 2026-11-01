@@ -237,7 +237,40 @@ function Test-OrdinaryFailedChunk {
         Assert-FF $accepted ('ordinary-'+$variant+'-partial') $detail
     }
 }
+function Test-WindowsShapedHistory {
+    $previous = [Threading.Thread]::CurrentThread.CurrentCulture
+    $previousUi = [Threading.Thread]::CurrentThread.CurrentUICulture
+    $detail = ''
+    $ok = $false
+    try {
+        $culture = [Globalization.CultureInfo]::GetCultureInfo('en-GB')
+        [Threading.Thread]::CurrentThread.CurrentCulture = $culture
+        [Threading.Thread]::CurrentThread.CurrentUICulture = $culture
+        $run = Join-Path $root ('shaped-' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $run 'timing'))
+        $nodes = @((New-FFNode 'Antiphon.Tests.Accounting.ShapedTests' 'Run' 'shaped'))
+        $row = [ordered]@{ id='antiphon'; chunk='all'; exitCode=1; result='FAIL'; timedOut=$false; trx='C:\retired\logs\retained-run\antiphon-all.trx' }
+        $summary = [ordered]@{ runId='retained-run'; attempt='1'; invocationId='retained-run'; completedAt='2026-10-29T00:00:00Z'; sha=('a'*40); profile='rc'; platform='windows'; policyHash=('b'*64); suites=@($row); timingRoot='timing'; logDir='C:\retired\logs\retained-run' }
+        $json = (($summary | ConvertTo-Json -Depth 20).Replace("`r`n","`n").Replace("`n","`r`n"))
+        [IO.File]::WriteAllText((Join-Path $run 'summary.json'), $json, (New-Object System.Text.UTF8Encoding $true))
+        $raw = [IO.File]::ReadAllBytes((Join-Path $run 'summary.json'))
+        if ($raw.Length -lt 4 -or $raw[0] -ne 0xEF -or $raw[1] -ne 0xBB -or $raw[2] -ne 0xBF -or -not ($raw -contains 13)) { throw 'witness-bytes' }
+        $body = '<TestRun><TestDefinitions><UnitTest id="shaped"><TestMethod className="Antiphon.Tests.Accounting.ShapedTests" name="Run" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="shaped" outcome="Failed" /></Results></TestRun>'
+        [IO.File]::WriteAllText((Join-Path $run 'antiphon-all.trx'), $body)
+        Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
+        $exp = Export-NightlyPriorFailures -RunDirectory $run -OutputPath (Join-Path $root 'shaped-history.json') -PassThru
+        $ok = ($exp.History.sourceRunId -ceq 'retained-run' -and @($exp.History.members | Where-Object { $_.className -ceq 'Antiphon.Tests.Accounting.ShapedTests' }).Count -eq 1)
+    } catch {
+        $detail = $_.Exception.Message
+        $ok = $false
+    } finally {
+        [Threading.Thread]::CurrentThread.CurrentCulture = $previous
+        [Threading.Thread]::CurrentThread.CurrentUICulture = $previousUi
+    }
+    Assert-FF $ok 'windows-shaped' $detail
+}
 function Test-RefusesIncompleteEvidence {
+    Test-WindowsShapedHistory
     Test-OrdinaryFailedChunk
     $replay=New-FFReplay
     $fx=New-FFHistoricalFixture
@@ -1343,7 +1376,8 @@ switch -Exact ($Case) {
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
     'EvidenceUnion' { Test-EvidenceUnion; $expected=10 }
-    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=47 }
+    'WindowsShapedHistory' { Test-WindowsShapedHistory; $expected=1 }
+    'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=48 }
     'OrdinaryFailedChunk' { Test-OrdinaryFailedChunk; $expected=4 }
     default { throw ('unknown case: '+$Case) }
 }

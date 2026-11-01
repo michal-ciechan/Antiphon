@@ -18,7 +18,7 @@ public sealed class RcFailureHistoryTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
     [Test, Timeout(180_000)]
     public Task RefusesIncompleteEvidence(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 47,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 48,
             ["FF RefusesIncompleteEvidence.ordinary-bound-full", "FF RefusesIncompleteEvidence.ordinary-bound-partial",
              "FF RefusesIncompleteEvidence.ordinary-unbound-full", "FF RefusesIncompleteEvidence.ordinary-unbound-partial",
              "FF RefusesIncompleteEvidence.validControl", "FF RefusesIncompleteEvidence.chunk-exit",
@@ -43,6 +43,7 @@ public sealed class RcFailureHistoryTests
              "FF RefusesIncompleteEvidence.invalidMapping", "FF RefusesIncompleteEvidence.ambiguous",
              "FF RefusesIncompleteEvidence.malformedFallback", "FF RefusesIncompleteEvidence.boundPlan",
              "FF RefusesIncompleteEvidence.caseSensitive", "FF RefusesIncompleteEvidence.invalidSelector",
-             "FF RefusesIncompleteEvidence.executionJson", "FF RefusesIncompleteEvidence.relocation"],
+             "FF RefusesIncompleteEvidence.executionJson", "FF RefusesIncompleteEvidence.relocation",
+             "FF RefusesIncompleteEvidence.windows-shaped"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
 }
