@@ -312,9 +312,47 @@ function Invoke-LiveLaneScratchWitness {
     return @($problems)
 }
 
+function New-LiveLaneDecoyFirstSubmitNodes {
+    $decoy = [pscustomobject]@{
+        project = 'Antiphon.Agents.Pty.Tests'
+        uid = 'decoy-submit'
+        namespace = 'Antiphon.Agents.Pty.Tests'
+        type = 'ClaudeSubmitContractTests'
+        method = 'Submitting_via_two_writes_completes_a_turn'
+        displayName = 'Submitting_via_two_writes_completes_a_turn(fakeclaude)'
+        arguments = @('fakeclaude')
+        signature = ''
+        categories = @('Pty')
+    }
+    $live = [pscustomobject]@{
+        project = 'Antiphon.Agents.Pty.Tests'
+        uid = 'live-submit'
+        namespace = 'Antiphon.Agents.Pty.Tests'
+        type = 'ClaudeSubmitContractLiveTests'
+        method = 'Submitting_via_two_writes_completes_a_turn'
+        displayName = 'Submitting_via_two_writes_completes_a_turn(claude)'
+        arguments = @('claude')
+        signature = ''
+        categories = @('Pty')
+    }
+    return @($decoy, $live)
+}
+
 switch ($Case) {
     'ExactCoreRoster' { Invoke-LiveLaneRosterCase -ProjectName 'Antiphon.Tests' }
     'ExactPtyCoreRoster' { Invoke-LiveLaneRosterCase -ProjectName 'Antiphon.Agents.Pty.Tests' }
+    'ExtraArgumentDecoyFirst' {
+        $projectName = 'Antiphon.Agents.Pty.Tests'
+        $manifestObject = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
+        $entries = @(Copy-LiveLaneEntries (Get-LiveLaneProp $manifestObject 'core') | Where-Object { $_.project -eq $projectName })
+        $nodes = @(New-LiveLaneDecoyFirstSubmitNodes)
+        $expanded = Test-LiveLaneSubmitExtraExpansion -Project $projectName -Nodes $nodes -Entries $entries
+        $decoyFailures = @()
+        if (-not $expanded) { $decoyFailures += 'C1545 V-2/extra-argument expandedUidSet has no extra argument' }
+        Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $decoyFailures -LaunchCount 0
+        if ($decoyFailures.Count -ne 0) { exit 1 }
+        exit 0
+    }
     'EveryLiveGateHasDisposition' {
         $manifest = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
         $failures = @(Invoke-LiveLaneGateMatrix -RepoRoot $RepoRoot -Manifest $manifest)

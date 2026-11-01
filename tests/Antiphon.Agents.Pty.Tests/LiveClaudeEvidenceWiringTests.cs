@@ -63,6 +63,30 @@ public class LiveClaudeEvidenceWiringTests
     }
 
     [Test]
+    public void CrlfCheckoutCountsSanitizerAnchorsOnce()
+    {
+        var source = ToCrlf(LiveClaudeExecutableAudit.Read("tests/Shared/LiveClaude/LiveClaudeEvidenceSanitizer.cs"));
+        var pc37 = Pc37Anchor();
+        var identity = IdentityAnchor();
+        var pc37Count = source.Split(pc37).Length - 1;
+        var identityCount = source.Split(identity).Length - 1;
+        if (pc37Count != 1 || identityCount != 1)
+            throw new InvalidOperationException("C1545 CRLF anchor count pc37=" + pc37Count + " identity=" + identityCount);
+    }
+
+    private static string Pc37Anchor() =>
+        "var marker = \"C1545-EVIDENCE case=\" + capture.CaseId + \" test=\" + capture.TestId\n            + \" kind=\" + capture.Kind + \" run=\" + run;";
+
+    private static string IdentityAnchor() =>
+        "if (!IsToken(capture.CaseId) || !IsToken(capture.TestId) || !IsToken(capture.Kind))\n            throw new InvalidOperationException(\"C1545 evidence/identity\");";
+
+    private static string ToCrlf(string text)
+    {
+        var lf = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal);
+        return lf.Replace("\n", "\r\n", StringComparison.Ordinal);
+    }
+
+    [Test]
     public void CanarySinksCannotBypassSanitizer()
     {
         var counts = Count(Callers.Select(caller =>
