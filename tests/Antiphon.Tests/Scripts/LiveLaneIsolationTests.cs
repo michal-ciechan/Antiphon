@@ -100,6 +100,27 @@ public class LiveLaneIsolationTests
     [Test] public void SettingsProjectionDetectsDrift() => Run("V-15");
     [Test] public void UnknownConfigDisablesReuse() => Run("V-16");
 
+    [Test]
+    public void HostAncestorClaudeDirectoryStaysOutsideTheOwnedClosure()
+    {
+        var parent = Directory.CreateTempSubdirectory("c1545-host-").FullName;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(parent, ".claude"));
+            File.WriteAllText(Path.Combine(parent, ".claude", "settings.json"), "{\"model\":\"host\"}");
+            using var fixture = new LiveClaudeProfileFixture(Path.Combine(parent, "profile"));
+            using var profile = new LiveClaudeProfile(fixture.Context);
+            LiveClaudeProfileCases.Assert(LiveClaudeProfilePaths.Within(profile.Paths.Cwd, fixture.Context.OwnedRoot),
+                "V-14", "host-ancestor", "owned cwd stays inside the fixture root");
+            LiveClaudeProfileCases.Assert(!LiveClaudeProfilePaths.Within(Path.Combine(parent, ".claude"), fixture.Context.OwnedRoot),
+                "V-14", "host-ancestor", "a host .claude above the fixture is outside the owned root");
+        }
+        finally
+        {
+            Directory.Delete(parent, true);
+        }
+    }
+
     [Test, Explicit]
     public void StartupArgvMatchesProductionApplyOff()
     {
