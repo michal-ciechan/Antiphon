@@ -121,6 +121,30 @@ public sealed class VolumeRetirementContentTests
             "state credentials must refuse with zero removes; the work-only audit permitted removal. " +
             "exit=" + run.Exit + " removed=[" + string.Join(",", fixture.Removed) + "] out=" +
             VolumeRetirementFixture.Truncate(run.Output));
+
+        using var unreadable = new C1008HostFixture(main: false);
+        var mount = VolumeRetirementFixture.StateMount(unreadable);
+        var previous = File.GetUnixFileMode(mount);
+        try
+        {
+            File.SetUnixFileMode(mount, UnixFileMode.None);
+            var blocked = await unreadable.Run("retire-temp-runner");
+            blocked.Exit.ShouldBe(2, "an unreadable state mount refuses; " + VolumeRetirementFixture.Truncate(blocked.Output));
+            blocked.Output.ShouldContain("reason=state-unreadable");
+            blocked.Output.ShouldNotContain("reason=state-credential");
+            unreadable.Removed.ShouldBeEmpty();
+        }
+        finally
+        {
+            File.SetUnixFileMode(mount, previous);
+        }
+
+        using var elevation = new C1008HostFixture(main: false);
+        var denied = await elevation.Run("retire-temp-runner", "sudo() { return 1; }");
+        denied.Exit.ShouldBe(2, "a sudo refusal is fail-closed; " + VolumeRetirementFixture.Truncate(denied.Output));
+        denied.Output.ShouldContain("reason=state-elevation-unavailable");
+        denied.Output.ShouldNotContain("reason=state-credential");
+        elevation.Removed.ShouldBeEmpty();
     }
 
     [Test]

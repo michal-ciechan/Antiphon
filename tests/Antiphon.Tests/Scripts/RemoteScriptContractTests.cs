@@ -7498,10 +7498,19 @@ public sealed class RemoteScriptContractTests
     public void C849_Docker_volume_paths_have_no_bare_host_reads()
     {
         var remote = Remote();
-        BareDockerRootReads(remote).ShouldBeEmpty();
-        var scratch = remote.Replace("c849_observe_volume() {", "c849_observe_volume() {\n    realpath -e -- \"$mountpoint\"", StringComparison.Ordinal);
+        var metadata = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c1008-volume-metadata.sh"));
+        var pinned = remote + "\n" + metadata;
+        BareDockerRootReads(pinned).ShouldBeEmpty();
+        var scratch = pinned.Replace("c849_observe_volume() {", "c849_observe_volume() {\n    realpath -e -- \"$mountpoint\"", StringComparison.Ordinal);
         BareDockerRootReads(scratch).ShouldContain("c849_observe_volume: realpath -e -- \"$mountpoint\"");
+        // Names live here, not only in the scanner. Dropping one from the roster leaves the injected find invisible.
+        foreach (var name in new[] { "c1609_volume_mount", "c1609_scan_state", "c1609_scan_dind", "c1609_state_credential_scan" })
+        {
+            var injected = pinned.Replace(name + "() {", name + "() {\n    find -P \"$mountpoint\"", StringComparison.Ordinal);
+            BareDockerRootReads(injected).ShouldContain(name + ": find -P \"$mountpoint\"");
+        }
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh")).ShouldBe(remote);
+        File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c1008-volume-metadata.sh")).ShouldBe(metadata);
     }
 
     private static List<string> BareDockerRootReads(string source)
@@ -7509,12 +7518,13 @@ public sealed class RemoteScriptContractTests
         var violations = new List<string>();
         foreach (var name in new[] { "c849_observe_volume", "c849_cold_volume_facts", "c849_cold_proof",
                      "c849_cold_probe", "c849_prune_validate_tree", "c849_preview", "c849_budget_gate",
-                     "c1609_temp_retirement_clearable", "case_deploy_temp_runner" })
+                     "c1609_temp_retirement_clearable", "case_deploy_temp_runner",
+                     "c1609_volume_mount", "c1609_scan_state", "c1609_scan_dind", "c1609_state_credential_scan" })
         {
             foreach (var line in Block(source, name).Split('\n').Select(x => x.Trim()))
             {
                 if (!Regex.IsMatch(line, @"\$(mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)(\b|[}""/])")) continue;
-                if (Regex.IsMatch(line, @"(?<!sudo -n )\b(realpath|stat|readlink|ls|test)\b[^;&|]*\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b")
+                if (Regex.IsMatch(line, @"(?<!sudo -n )\b(realpath|stat|readlink|ls|test|find)\b[^;&|]*\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b")
                     || Regex.IsMatch(line, @"\[\s*!?\s*-[Lde]\s+""?\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b"))
                     violations.Add(name + ": " + line);
             }

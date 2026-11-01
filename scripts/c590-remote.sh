@@ -6061,21 +6061,21 @@ c1008_volume() {
 }
 
 # Temp runner-state only. A credential-shaped name refuses before any volume delete.
-# Return 1 for a hit, 2 when the mount cannot be read, 0 when clean or absent.
+# Return 1 for a hit, 2 when the mount cannot be read or sudo is unavailable, 0 when clean or absent.
+# The mount walk lives in c1609_scan_state and uses sudo -n. A missing loader refuses closed.
 c1609_state_credential_scan() {
-    local facts mount hit
+    local status=0
+    c1609_scan_reason=''
     [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] || return 0
-    facts="$(c1008_volume "${TEMP_PROJECT}_runner-state")" || return 2
-    [ "$facts" = null ] && return 0
-    mount="$(printf '%s' "$facts" | jq -r .Mountpoint)"
-    [ -n "$mount" ] && [ -d "$mount" ] && [ ! -L "$mount" ] && [ -r "$mount" ] && [ -x "$mount" ] || return 2
-    hit="$(find -P "$mount" -xdev \( \
-        -name auth.json -o -name .credentials.json -o -name credentials.json \
-        -o -name id_rsa -o -name id_ed25519 -o -name id_ecdsa \
-        -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \
-        \) -print -quit 2>/dev/null)" || return 2
-    [ -z "$hit" ] || return 1
-    return 0
+    c1609_load_volume_metadata
+    if ! declare -F c1609_scan_state >/dev/null 2>&1; then
+        return 2
+    fi
+    c1609_scan_state >/dev/null || status=$?
+    if [ "$status" = 0 ]; then return 0; fi
+    if [ "$status" = 1 ]; then return 1; fi
+    c1609_scan_reason="${c1609_meta_reason:-}"
+    return 2
 }
 
 # CARD-1105 D-3: every bind target this script has shipped. A removed mount keeps its row.
@@ -9401,7 +9401,10 @@ c1008_recycle() {
         c1609_scan=0
         c1609_state_credential_scan || c1609_scan=$?
         if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
-        if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
+        if [ "$c1609_scan" != 0 ]; then
+            if [ -n "${c1609_scan_reason:-}" ]; then c1008_refuse "RecycleGitAuditUnknown reason=${c1609_scan_reason}"; fi
+            c1008_refuse RecycleGitAuditUnknown
+        fi
         [ -f "$(c1609_retirement_root)/receipt.json" ] || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
         c1609_require_ready_preview admit || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
     fi
@@ -9471,7 +9474,10 @@ c1008_recycle() {
         c1609_scan=0
         c1609_state_credential_scan || c1609_scan=$?
         if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
-        if [ "$c1609_scan" != 0 ]; then c1008_refuse RecycleGitAuditUnknown; fi
+        if [ "$c1609_scan" != 0 ]; then
+            if [ -n "${c1609_scan_reason:-}" ]; then c1008_refuse "RecycleGitAuditUnknown reason=${c1609_scan_reason}"; fi
+            c1008_refuse RecycleGitAuditUnknown
+        fi
         # Resume continues a journal that already passed this gate. A fresh apply does not.
         c1609_publication_gate apply || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
         if [ "${C1008_RESUME:-0}" != 1 ]; then
