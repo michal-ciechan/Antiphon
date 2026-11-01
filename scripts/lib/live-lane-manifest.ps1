@@ -5,8 +5,9 @@
 if ($script:AntiphonLiveLaneManifestLoaded) { return }
 $script:AntiphonLiveLaneManifestLoaded = $true
 
-$script:LiveLanePreS1BaseSha = '2e5b78808e2a027bc3bddc00c43d0d9951f781d3'
+$script:LiveLanePreS1BaseSha = 'bf0b874e695a642118e2dd55913228e2f635d009'
 $script:LiveLaneFixtureRel = 'tests/fixtures/live-lanes/full-discovery-before.json'
+$script:LiveLanePreS1PinRel = 'tests/fixtures/live-lanes/pre-s1-base.sha'
 $script:LiveLaneAllowedSeedPaths = @(
     'tests/live-lanes.json',
     'scripts/lib/live-lane-manifest.ps1',
@@ -14,6 +15,11 @@ $script:LiveLaneAllowedSeedPaths = @(
     'tests/Antiphon.Tests/Scripts/LiveLaneInventoryTests.cs',
     'tests/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests.cs',
     'tests/fixtures/live-lanes/full-discovery-before.json'
+)
+# The pin is outside the seed allow-list. A seed commit that touches it is seed-engine
+# even if a later edit adds the path to the allow-list above.
+$script:LiveLaneImmutableSeedPaths = @(
+    'tests/fixtures/live-lanes/pre-s1-base.sha'
 )
 $script:LiveLaneProtectedPaths = @(
     'tests/test-execution-policy.json',
@@ -52,6 +58,55 @@ function Get-LiveLaneProp {
         if ([string]::Equals([string]$p.Name, $Name, [StringComparison]::OrdinalIgnoreCase)) { return $p.Value }
     }
     return $null
+}
+
+function Get-LiveLanePinnedPreS1 {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot $script:LiveLanePreS1PinRel
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    $text = ([System.IO.File]::ReadAllText($path)).Trim().ToLowerInvariant()
+    if ($text -notmatch '^[0-9a-f]{40}$') { return '' }
+    return $text
+}
+
+function Get-LiveLaneDeclaredPreS1 {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $match = [regex]::Match($Text, "LiveLanePreS1BaseSha\s*=\s*'([0-9a-fA-F]{40})'")
+    if (-not $match.Success) { return '' }
+    return $match.Groups[1].Value.ToLowerInvariant()
+}
+
+function Test-LiveLaneSeedDeclaresBase {
+    param([string]$RepoRoot, [string]$Pre, [string]$Seed, [string]$Head)
+    $key = $Pre + '|' + $Seed + '|' + $Head + '|' + $script:LiveLanePreS1BaseSha
+    if ($null -eq $script:LiveLaneSeedDeclareCache) { $script:LiveLaneSeedDeclareCache = @{} }
+    if ($script:LiveLaneSeedDeclareCache.ContainsKey($key)) { return @($script:LiveLaneSeedDeclareCache[$key]) }
+    $found = New-Object System.Collections.Generic.List[string]
+    $listed = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-list', ($Pre + '..' + $Seed))
+    if ($listed.Exit -eq 0) {
+        foreach ($commit in @(($listed.Text -split "`n"))) {
+            $commit = $commit.Trim().ToLowerInvariant()
+            if ($commit -notmatch '^[0-9a-f]{40}$') { continue }
+            $names = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('diff-tree', '--no-commit-id', '--name-only', '-r', $commit)
+            foreach ($name in @(($names.Text -split "`n"))) {
+                if ($script:LiveLaneImmutableSeedPaths -contains $name.Trim()) { $found.Add('seed-engine') }
+            }
+            $shown = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('show', ($commit + ':scripts/lib/live-lane-manifest.ps1'))
+            $bound = ''
+            if ($shown.Exit -eq 0) { $bound = Get-LiveLaneDeclaredPreS1 $shown.Text }
+            $engineTouched = $false
+            foreach ($name in @(($names.Text -split "`n"))) {
+                $trimmed = $name.Trim()
+                if ($trimmed -eq 'scripts/lib/live-lane-manifest.ps1' -or $trimmed -eq 'scripts/test-live-lane-manifest.ps1') { $engineTouched = $true }
+            }
+            if ($engineTouched -and -not [string]::IsNullOrWhiteSpace($bound) -and $bound -ne $script:LiveLanePreS1BaseSha) { $found.Add('seed-engine') }
+            if ($bound -eq $commit -or $bound -eq $Seed -or $bound -eq $Head) { $found.Add('self-seed') }
+        }
+    }
+    $unique = @($found | Select-Object -Unique)
+    $script:LiveLaneSeedDeclareCache[$key] = $unique
+    return $unique
 }
 
 function Get-LiveLaneRepoRoot {
@@ -1983,12 +2038,26 @@ public static class LiveLaneCensusEngine
             grown[copy.Length] = n;
             return grown;
         }
+        if (patch == "drop-live")
+        {
+            for (int i = 0; i < copy.Length; i++)
+            {
+                if (!IsContract(copy[i], contract)) continue;
+                if (!HasCat(copy[i].Cats, "LiveClaude")) continue;
+                var n = Clone(copy[i]);
+                n.Cats = WithoutCat(n.Cats, "LiveClaude");
+                copy[i] = n;
+                break;
+            }
+            return copy;
+        }
         return copy;
     }
 
     static List<string> Run(Node[] before, Node[] after, ExRow[] beforeEx, ExRow[] afterEx, Id[] additive, Id[] contract)
     {
         var diag = new List<string>();
+        int liveAdds = 0;
         var beforeMap = new Dictionary<string, Node>(StringComparer.OrdinalIgnoreCase);
         foreach (var n in before) beforeMap[n.Uid ?? ""] = n;
         var afterMap = new Dictionary<string, Node>(StringComparer.OrdinalIgnoreCase);
@@ -2005,6 +2074,7 @@ public static class LiveLaneCensusEngine
             bool addedOther;
             bool addedLive;
             CategoryDelta(pair.Value.Cats, other.Cats, out removed, out addedOther, out addedLive);
+            if (addedLive && !removed && !addedOther) liveAdds++;
             if (removed || addedOther) Add(diag, "category-delta");
             else if (addedLive && !IsContract(pair.Value, contract)) Add(diag, "category-delta");
             if (!string.Equals(StableArg(pair.Value.ArgKey), StableArg(other.ArgKey), StringComparison.OrdinalIgnoreCase)) Add(diag, "extra-expansion");
@@ -2063,6 +2133,7 @@ public static class LiveLaneCensusEngine
             }
             if (c680.Length > 0 && beforeRc.Required.Contains(c680) && afterRc.Excluded.Contains(c680)) Add(diag, "C680-required-to-excluded");
         }
+        if (liveAdds != 6) Add(diag, "liveclaude-count");
         return diag;
     }
 
@@ -2381,10 +2452,21 @@ function Invoke-LiveLaneCensus {
     if ($Mutant -and $Mutant.ContainsKey('seed')) { $seed = [string]$Mutant.seed }
     if ([string]::IsNullOrWhiteSpace($seed)) { $diagnostics.Add('seed-object-missing') ; return @{ Accepted = $false; Diagnostics = @($diagnostics) } }
     $head = (Get-LiveLaneGit -RepoRoot $repo -GitArgs @('rev-parse', 'HEAD')).Text
+    if ($seed -eq $head) { $diagnostics.Add('self-seed') }
     $ancestor = Get-LiveLaneGit -RepoRoot $repo -GitArgs @('merge-base', '--is-ancestor', $seed, $head)
     if ($ancestor.Exit -ne 0) { $diagnostics.Add('seed-not-ancestor') }
     $pre = [string](Get-LiveLaneProp $Context 'preS1BaseSha')
-    if ($pre -ne $script:LiveLanePreS1BaseSha) { $diagnostics.Add('baseline-drift') }
+    $pin = Get-LiveLanePinnedPreS1 -RepoRoot $repo
+    if ([string]::IsNullOrWhiteSpace($pin) -or $pin -ne $script:LiveLanePreS1BaseSha) { $diagnostics.Add('baseline-drift') }
+    if ($pre -ne $script:LiveLanePreS1BaseSha -or $pre -ne $pin) { $diagnostics.Add('baseline-drift') }
+    if ($pre -eq $seed -or $pre -eq $head) { $diagnostics.Add('self-seed') }
+    $preAncestor = Get-LiveLaneGit -RepoRoot $repo -GitArgs @('merge-base', '--is-ancestor', $pre, $seed)
+    if ($preAncestor.Exit -ne 0) { $diagnostics.Add('baseline-drift') }
+    if ($Mutant -and $Mutant.ContainsKey('boundSha')) {
+        $boundMutant = ([string]$Mutant.boundSha).ToLowerInvariant()
+        if ($boundMutant -ne $script:LiveLanePreS1BaseSha) { $diagnostics.Add('seed-engine') }
+        if ($boundMutant -eq $seed -or $boundMutant -eq $head) { $diagnostics.Add('self-seed') }
+    }
     $fixtureRel = [string](Get-LiveLaneProp $Context 'fixturePath')
     if ([string]::IsNullOrWhiteSpace($fixtureRel)) { $fixtureRel = $script:LiveLaneFixtureRel }
     $required = @($script:LiveLaneProtectedPaths) + @($fixtureRel)
@@ -2410,6 +2492,7 @@ function Invoke-LiveLaneCensus {
     $parent = (Get-LiveLaneGit -RepoRoot $repo -GitArgs @('rev-parse', ($seed + '^'))).Text
     $recorded = $material.Recorded
     if ($recorded -ne $parent -or $recorded -eq $seed) { $diagnostics.Add('producer-provenance') }
+    if ($recorded -eq $head -or $recorded -eq $seed) { $diagnostics.Add('self-seed') }
     $provenance = Get-LiveLaneProp $Context 'producerProvenance'
     if ($Mutant -and $Mutant.ContainsKey('provenance')) { $provenance = $Mutant.provenance }
     foreach ($project in @(ConvertTo-LiveLaneList (Get-LiveLaneProp (Get-LiveLaneProp $fixture 'producing') 'projects'))) {
@@ -2425,7 +2508,11 @@ function Invoke-LiveLaneCensus {
     $touched = @($names | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     if ($Mutant -and $Mutant.ContainsKey('extraPath')) { $touched += [string]$Mutant.extraPath }
     foreach ($name in $touched) {
+        if ($script:LiveLaneImmutableSeedPaths -contains $name) { $diagnostics.Add('seed-engine') }
         if ($script:LiveLaneAllowedSeedPaths -notcontains $name) { $diagnostics.Add('seed-range') }
+    }
+    foreach ($item in @(Test-LiveLaneSeedDeclaresBase -RepoRoot $repo -Pre $pre -Seed $seed -Head $head)) {
+        $diagnostics.Add([string]$item)
     }
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
         $drift = $false
@@ -2767,7 +2854,20 @@ function Invoke-LiveLaneFullCensusBody {
     if (-not (Test-LiveLaneCensusHas $catCase @('category-delta'))) { $missing.Add('remove-Integration') }
 
     $tagCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'tag-seventh'; fastHash = $true }
-    if (-not (Test-LiveLaneCensusHas $tagCase @('category-delta'))) { $missing.Add('tag-seventh') }
+    if (-not (Test-LiveLaneCensusHas $tagCase @('category-delta', 'liveclaude-count'))) { $missing.Add('tag-seventh') }
+
+    $dropLive = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'drop-live'; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $dropLive @('liveclaude-count'))) { $missing.Add('drop-liveclaude') }
+
+    $headNow = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', 'HEAD')).Text.Trim()
+    $selfCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ seed = $headNow; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $selfCase @('self-seed'))) { $missing.Add('self-seed') }
+
+    $engineCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ extraPath = 'tests/fixtures/live-lanes/pre-s1-base.sha'; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $engineCase @('seed-engine'))) { $missing.Add('seed-engine') }
+
+    $boundCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ boundSha = $headNow; fastHash = $true }
+    if (-not (Test-LiveLaneCensusHas $boundCase @('seed-engine', 'self-seed'))) { $missing.Add('seed-declares-base') }
 
     $extraCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ patch = 'extra-expansion'; fastHash = $true }
     if (-not (Test-LiveLaneCensusHas $extraCase @('extra-expansion'))) { $missing.Add('extra-expansion') }
