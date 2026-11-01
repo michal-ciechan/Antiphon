@@ -178,84 +178,133 @@ public class LandingGit : ILandingGit
     /// <paramref name="process"/> or <paramref name="keepUntilClosed"/>. After both streams close, the
     /// continuation runs <paramref name="onStreamsClosed"/> and only then disposes the handle. The
     /// journal deleter does not touch the Process. Disposing earlier closes the read ends and looks
-    /// like EOF while a grandchild still holds the pipes. A crash before the streams close leaves the file.</summary>
+    /// like EOF while a grandchild still holds the pipes. A crash before the streams close leaves the file.
+    /// When the killed set has exited and the pipe is still open, the drain is tried once more for
+    /// <see cref="KillDrainGrace"/>. A holder that was not a child of that set keeps the record.</summary>
     private async Task<bool> ReleaseChildAsync(Process process, Action? onStreamsClosed, IDisposable? keepUntilClosed, params Task[] streams)
     {
-        TryKill(process, entireProcessTree: true);
-        using var grace = new CancellationTokenSource(KillDrainGrace);
-        try
+        var report = TryKillTree(process);
+        var drained = false;
+        using (var grace = new CancellationTokenSource(KillDrainGrace))
         {
-            if (!process.HasExited)
-                await process.WaitForExitAsync(grace.Token);
-            if (streams.Length > 0)
-                await Task.WhenAll(streams).WaitAsync(grace.Token);
-            return false;
-        }
-        catch (OperationCanceledException)
-        {
-            // The tree walk can miss the root when an intermediate job already reaped it.
-            TryKill(process, entireProcessTree: false);
             try
             {
                 if (!process.HasExited)
-                {
-                    using var root = new CancellationTokenSource(KillDrainGrace);
-                    await process.WaitForExitAsync(root.Token);
-                }
+                    await process.WaitForExitAsync(grace.Token);
+                if (streams.Length > 0)
+                    await Task.WhenAll(streams).WaitAsync(grace.Token);
+                drained = true;
             }
-            catch (OperationCanceledException) { }
-
-            // The exit is read when the streams actually close, not at this grace snapshot.
-            // A root that is still dying here used to leave delete unset, and the continuation
-            // then disposed the handle without removing the journal. The recorded root can exit
-            // a moment later while a pipe holder is still alive; the fence drops only once both
-            // are true. Waiting here would stretch the caller out to that holder's lifetime.
-            Console.Error.WriteLine(
-                $"repository_child_journal_handoff root={SafePid(process)} exited={RootExited(process)}");
-            var closeJournal = onStreamsClosed;
-            var retained = keepUntilClosed;
-            ObserveAbandoned(streams, () =>
+            catch (OperationCanceledException)
             {
-                var waitForRoot = false;
+                // The tree walk can miss the root when an intermediate job already reaped it.
+                TryKillRoot(process);
                 try
                 {
-                    if (closeJournal is null) return;
-                    if (RootExited(process))
+                    if (!process.HasExited)
                     {
-                        closeJournal();
-                        return;
+                        using var root = new CancellationTokenSource(KillDrainGrace);
+                        await process.WaitForExitAsync(root.Token);
                     }
-                    waitForRoot = true;
-                    var pid = SafePid(process);
-                    Console.Error.WriteLine($"repository_child_journal_waiting_for_root pid={pid}");
-                    _ = Task.Run(() =>
+                }
+                catch (OperationCanceledException) { }
+
+                if (RootExited(process) && HoldersGone(report))
+                {
+                    if (streams.Length == 0 || StreamsCompleted(streams))
+                        drained = true;
+                    else
                     {
+                        // The sealed set and its late children have exited. One more grace lets
+                        // the pipe reach EOF. A holder outside that set is still running, so this
+                        // wait stays inside the grace instead of that holder's lifetime.
                         try
                         {
-                            try { process.WaitForExit(AbandonedRootExitBound); }
-                            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-                            { }
-                            if (RootExited(process)) closeJournal();
-                            else Console.Error.WriteLine($"repository_child_journal_retained_running_root pid={pid} reason=exit_wait_bound");
+                            using var again = new CancellationTokenSource(KillDrainGrace);
+                            await Task.WhenAll(streams).WaitAsync(again.Token);
+                            drained = true;
                         }
-                        catch (IOException)
-                        {
-                            Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
-                        }
-                        finally { DisposeAbandoned(process, retained); }
-                    });
+                        catch (OperationCanceledException) { }
+                    }
                 }
-                catch (IOException)
-                {
-                    Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
-                }
-                finally
-                {
-                    if (!waitForRoot) DisposeAbandoned(process, retained);
-                }
-            });
-            return true;
+            }
         }
+
+        var pipeDrained = streams.Length == 0 || StreamsCompleted(streams);
+        if (drained && RootExited(process))
+        {
+            WriteChildLog(DecisionLine("repository_child_journal_release", process, report, pipeDrained, "removed"));
+            return false;
+        }
+
+        // The exit is read when the streams actually close, not at this grace snapshot.
+        // A root that is still dying here used to leave delete unset, and the continuation
+        // then disposed the handle without removing the journal. The recorded root can exit
+        // a moment later while a pipe holder is still alive; the fence drops only once both
+        // are true. Waiting here would stretch the caller out to that holder's lifetime.
+        var reason = !RootExited(process) ? "root_alive" : !HoldersGone(report) ? "live_holder" : "pipe_open";
+        WriteChildLog(DecisionLine("repository_child_journal_handoff", process, report, pipeDrained, reason));
+        var closeJournal = onStreamsClosed;
+        var retained = keepUntilClosed;
+        ObserveAbandoned(streams, () =>
+        {
+            var waitForRoot = false;
+            try
+            {
+                if (closeJournal is null) return;
+                if (RootExited(process))
+                {
+                    closeJournal();
+                    return;
+                }
+                waitForRoot = true;
+                var pid = SafePid(process);
+                Console.Error.WriteLine($"repository_child_journal_waiting_for_root pid={pid}");
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        try { process.WaitForExit(AbandonedRootExitBound); }
+                        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                        { }
+                        if (RootExited(process)) closeJournal();
+                        else Console.Error.WriteLine($"repository_child_journal_retained_running_root pid={pid} reason=exit_wait_bound");
+                    }
+                    catch (IOException)
+                    {
+                        Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
+                    }
+                    finally { DisposeAbandoned(process, retained); }
+                });
+            }
+            catch (IOException)
+            {
+                Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
+            }
+            finally
+            {
+                if (!waitForRoot) DisposeAbandoned(process, retained);
+            }
+        });
+        return true;
+    }
+
+    private static bool HoldersGone(OwnedProcessTree.TreeKillReport report) =>
+        report.ReapWaited && report.StillAlive == 0 && report.FollowStillAlive == 0;
+
+    private static bool StreamsCompleted(Task[] streams)
+    {
+        foreach (var stream in streams)
+            if (!stream.IsCompleted) return false;
+        return true;
+    }
+
+    private static string DecisionLine(string kind, Process process, OwnedProcessTree.TreeKillReport report, bool pipeDrained, string reason)
+    {
+        var killedAlive = report.ReapWaited ? report.StillAlive : 0;
+        var killedDead = report.ReapWaited ? Math.Max(0, report.Signalled - report.StillAlive) : 0;
+        var reap = report.ReapWaited ? "waited" : "skipped";
+        return $"{kind} root={SafePid(process)} exited={RootExited(process)} killed_alive={killedAlive} killed_dead={killedDead} follow_alive={report.FollowStillAlive} follow_killed={report.FollowKilled} wait_ms={report.WaitMilliseconds} pipe_drained={pipeDrained} reap={reap} reason={reason}";
     }
 
     private static void DisposeAbandoned(Process process, IDisposable? keepUntilClosed)
@@ -285,8 +334,10 @@ public class LandingGit : ILandingGit
         { }
     }
 
-    /// <summary>Test seam. Production kills through <see cref="OwnedProcessTree"/>.</summary>
-    protected virtual void KillOwnedTree(Process process) => OwnedProcessTree.Kill(process);
+    /// <summary>Test seam. Production kills through <see cref="OwnedProcessTree"/>.
+    /// Internal so the report type stays internal; friend assemblies can still override it.</summary>
+    internal virtual OwnedProcessTree.TreeKillReport KillOwnedTree(Process process) =>
+        OwnedProcessTree.Kill(process, log: WriteChildLog);
 
     /// <summary>Test seam. Production signals the owned root handle and does not walk a pid.</summary>
     protected virtual void KillOwnedRoot(Process process)
@@ -295,19 +346,27 @@ public class LandingGit : ILandingGit
             process.Kill(entireProcessTree: false);
     }
 
-    private void TryKill(Process process, bool entireProcessTree)
+    /// <summary>Stderr line for one owned-child kill or journal decision. Tests collect it.</summary>
+    protected virtual void WriteChildLog(string line) => Console.Error.WriteLine(line);
+
+    private OwnedProcessTree.TreeKillReport TryKillTree(Process process)
     {
         try
         {
-            if (entireProcessTree)
-            {
-                // A dead Windows root can still have children (parent ids are not rewritten).
-                // Linux skips that walk once the owned root has exited, inside OwnedProcessTree.
-                KillOwnedTree(process);
-                return;
-            }
-            KillOwnedRoot(process);
+            // A dead Windows root can still have children (parent ids are not rewritten).
+            // Linux skips that walk once the owned root has exited, inside OwnedProcessTree.
+            return KillOwnedTree(process);
         }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or AggregateException)
+        {
+            Console.Error.WriteLine(OwnedProcessTree.KillFailed(SafePid(process), ex.GetType().Name));
+            return OwnedProcessTree.TreeKillReport.None;
+        }
+    }
+
+    private void TryKillRoot(Process process)
+    {
+        try { KillOwnedRoot(process); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or AggregateException)
         {
             Console.Error.WriteLine(OwnedProcessTree.KillFailed(SafePid(process), ex.GetType().Name));

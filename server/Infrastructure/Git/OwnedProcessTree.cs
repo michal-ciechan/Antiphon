@@ -41,11 +41,33 @@ internal sealed record KillPlan(IReadOnlyList<PlannedKill> Kills, string? BlockR
 /// (<c>fallback=owned_root_only</c>), never an unguarded pid walk.
 /// The clock is sampled before each snapshot. A row whose start is later
 /// than that sample is unreadable and is not walked.
+/// The sealed list is signalled first. After those processes are reaped, one
+/// later read accepts a process that was not in that seal, whose parent was
+/// signalled, and whose start is at or after that parent's. A process
+/// reparented outside the signalled set is left alone.
 /// </summary>
 internal static class OwnedProcessTree
 {
     /// <summary>Kill list length, including the root. A larger closure is not signalled.</summary>
     internal const int MaxDescendants = 64;
+
+    /// <summary>One budget for a signalled wave to exit. TerminateProcess does not reap
+    /// before it returns, so a later snapshot must wait before it decides who is gone.</summary>
+    internal const int ReapBoundMilliseconds = 2000;
+
+    /// <summary>What the kill did, for the journal release line.</summary>
+    internal readonly record struct TreeKillReport(
+        int SealedDescendants,
+        int Signalled,
+        int StillAlive,
+        bool ReapWaited,
+        int Followers,
+        int FollowKilled,
+        int FollowStillAlive,
+        long WaitMilliseconds)
+    {
+        public static TreeKillReport None { get; } = new(0, 0, 0, false, 0, 0, 0, 0);
+    }
 
     /// <summary>Table reads before the first signal. A later pass picks up a child that
     /// appeared while the table was being read. The list is then sealed.</summary>
@@ -119,12 +141,16 @@ internal static class OwnedProcessTree
     }
 
     /// <summary>Read the table until it stops growing, then signal that sealed list.
-    /// <paramref name="readStartTicks"/> and <paramref name="kill"/> are the executor's
-    /// injected seams. Production opens one process per pid and kills that same object.
-    /// <paramref name="clock"/> is sampled before each snapshot (UTC). A later start is
-    /// unreadable. <paramref name="observeWiredPids"/> sees the server and owner pids
-    /// the caller passed in.</summary>
-    internal static void Execute(
+    /// After those processes are reaped, one later read accepts a process that was
+    /// not in the seal, whose parent was signalled, and whose start is at or after
+    /// that parent's. <paramref name="readStartTicks"/> and <paramref name="kill"/> are
+    /// the executor's injected seams. Production opens one process per pid and kills
+    /// that same object. <paramref name="clock"/> is sampled before each snapshot (UTC).
+    /// A later start is unreadable. <paramref name="observeWiredPids"/> sees the server
+    /// and owner pids the caller passed in. <paramref name="waitForExit"/> returns true
+    /// when that pid has exited; null skips the reap. <paramref name="beginReap"/> starts
+    /// a fresh wait budget for one wave.</summary>
+    internal static TreeKillReport Execute(
         Func<ProcessSnapshot> readTable,
         Func<int, long?> readStartTicks,
         Action<int> kill,
@@ -135,18 +161,21 @@ internal static class OwnedProcessTree
         bool rootAlreadyExited,
         Action<string> log,
         Func<DateTime>? clock = null,
-        Action<int, int>? observeWiredPids = null)
+        Action<int, int>? observeWiredPids = null,
+        Func<int, bool>? waitForExit = null,
+        Action? beginReap = null)
     {
         observeWiredPids?.Invoke(serverPid, ownerPid);
         clock ??= static () => DateTime.UtcNow;
         if (rootAlreadyExited)
         {
             log(KillFailed(root.Pid, "root_gone"));
-            return;
+            return TreeKillReport.None;
         }
 
         var accepted = new List<PlannedKill>();
         var seen = new HashSet<int>();
+        var snapshotted = new HashSet<int>();
         var truncated = false;
         for (var pass = 0; pass < MaxSnapshotPasses; pass++)
         {
@@ -158,15 +187,18 @@ internal static class OwnedProcessTree
             {
                 log(SnapshotFailed(root.Pid, snapshot.FailureReason));
                 killOwnedRoot();
-                return;
+                return TreeKillReport.None;
             }
+
+            foreach (var row in snapshot.Rows)
+                if (row.Pid > 1) snapshotted.Add(row.Pid);
 
             var plan = Plan(MaskRowsStartedAfter(snapshot.Rows, snapshotTicks), root, serverPid, ownerPid);
             if (plan.BlockReason is not null)
             {
                 log(KillFailed(root.Pid, plan.BlockReason));
                 if (plan.BlockReason is "root_identity_mismatch") killOwnedRoot();
-                return;
+                return TreeKillReport.None;
             }
 
             if (plan.Truncated) truncated = true;
@@ -185,33 +217,10 @@ internal static class OwnedProcessTree
             if (added == 0) break;
         }
 
-        var signalled = new List<int>();
         foreach (var entry in accepted)
-        {
-            long? live;
-            try { live = readStartTicks(entry.Pid); }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-                log(KillFailed(entry.Pid, ex.GetType().Name));
-                continue;
-            }
-            if (live != entry.StartTicks)
-            {
-                log(KillFailed(entry.Pid, live is null ? "unreadable" : "reused"));
-                continue;
-            }
-            try
-            {
-                kill(entry.Pid);
-                signalled.Add(entry.Pid);
-            }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-                var reason = ex.Message is "reused" or "unreadable" or "identity_not_held" ? ex.Message : ex.GetType().Name;
-                log(KillFailed(entry.Pid, reason));
-            }
-        }
+            snapshotted.Add(entry.Pid);
 
+        var signalled = Signal(accepted, readStartTicks, kill, log);
         var descendants = 0;
         foreach (var entry in accepted)
             if (entry.Pid != root.Pid) descendants++;
@@ -219,18 +228,81 @@ internal static class OwnedProcessTree
         if (truncated)
             outcome += $" truncated=true count={descendants}";
         log(outcome);
+
+        var parentTicks = new Dictionary<int, long>();
+        var signalledSet = new HashSet<int>(signalled);
+        foreach (var entry in accepted)
+            if (signalledSet.Contains(entry.Pid)) parentTicks[entry.Pid] = entry.StartTicks;
+
+        List<int> stillAlive;
+        long waited;
+        if (waitForExit is null)
+        {
+            stillAlive = [];
+            waited = 0;
+            log(ReapLine(root.Pid, 0, stillAlive, false));
+        }
+        else
+        {
+            (stillAlive, waited) = Reap(signalled, waitForExit, beginReap, log);
+            log(ReapLine(root.Pid, waited, stillAlive, true));
+        }
+
+        var followTicks = UtcTicks(clock());
+        var followSnapshot = readTable();
+        string? followFailure = null;
+        List<PlannedKill> followers;
+        if (followSnapshot.FailureReason is not null)
+        {
+            followers = [];
+            followFailure = followSnapshot.FailureReason;
+        }
+        else
+        {
+            followers = PlanLateChildren(
+                MaskRowsStartedAfter(followSnapshot.Rows, followTicks),
+                parentTicks,
+                snapshotted,
+                serverPid,
+                ownerPid,
+                accepted.Count);
+        }
+
+        var followSignalled = followers.Count == 0
+            ? []
+            : Signal(followers, readStartTicks, kill, log);
+        List<int> followAlive = [];
+        long followWaited = 0;
+        if (waitForExit is not null && followSignalled.Count > 0)
+            (followAlive, followWaited) = Reap(followSignalled, waitForExit, beginReap, log);
+        log(FollowLine(root.Pid, followers.Count, followSignalled, followAlive, followFailure));
+        return new TreeKillReport(
+            descendants,
+            signalled.Count,
+            stillAlive.Count,
+            waitForExit is not null,
+            followers.Count,
+            followSignalled.Count,
+            followAlive.Count,
+            waited + followWaited);
     }
 
-    internal static void Kill(Process root, Func<ProcessSnapshot>? readTable = null, Action<int, int>? observeWiredPids = null)
+    internal static TreeKillReport Kill(
+        Process root,
+        Func<ProcessSnapshot>? readTable = null,
+        Action<int, int>? observeWiredPids = null,
+        Func<int, bool>? waitForExit = null,
+        Action<string>? log = null)
     {
         int rootId;
         try { rootId = root.Id; }
-        catch (InvalidOperationException) { return; }
+        catch (InvalidOperationException) { return TreeKillReport.None; }
 
+        Action<string> write = log ?? (static line => Console.Error.WriteLine(line));
         if (!RepositoryChildJournal.TryStartTicks(root, out var rootTicks))
         {
-            Console.Error.WriteLine(KillFailed(rootId, "root_identity_unreadable"));
-            return;
+            write(KillFailed(rootId, "root_identity_unreadable"));
+            return TreeKillReport.None;
         }
 
         var rootExited = false;
@@ -239,18 +311,20 @@ internal static class OwnedProcessTree
             try { rootExited = root.HasExited; }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                Console.Error.WriteLine(KillFailed(rootId, ex.GetType().Name));
-                return;
+                write(KillFailed(rootId, ex.GetType().Name));
+                return TreeKillReport.None;
             }
         }
 
         Process? held = null;
         var heldPid = 0;
         var disposeHeld = false;
+        var retained = new List<RetainedProcess>();
+        var reapClock = new Stopwatch();
         try
         {
-            Execute(
-                readTable ?? (() => ReadSnapshot(rootId)),
+            return Execute(
+                readTable ?? (() => CaptureSnapshot(rootId)),
                 ReadHeldTicks,
                 KillHeld,
                 () => KillOwnedHandle(root, rootId, rootTicks),
@@ -258,10 +332,17 @@ internal static class OwnedProcessTree
                 Environment.ProcessId,
                 Environment.ProcessId,
                 rootExited,
-                static line => Console.Error.WriteLine(line),
-                observeWiredPids: observeWiredPids);
+                write,
+                observeWiredPids: observeWiredPids,
+                waitForExit: waitForExit ?? WaitRetained,
+                beginReap: waitForExit is null ? BeginReap : null);
         }
-        finally { ReleaseHeld(); }
+        finally
+        {
+            ReleaseHeld();
+            foreach (var item in retained)
+                if (item.Dispose) item.Process.Dispose();
+        }
 
         long? ReadHeldTicks(int pid)
         {
@@ -296,10 +377,22 @@ internal static class OwnedProcessTree
         void KillHeld(int pid)
         {
             if (held is null || heldPid != pid) throw new InvalidOperationException("identity_not_held");
-            if (held.HasExited) return;
-            // StartTime is cached on this Process. A second read compares that cache
-            // with itself. The live check is ReadHeldTicks, which opened this object.
-            held.Kill(entireProcessTree: false);
+            var process = held;
+            var dispose = disposeHeld;
+            held = null;
+            disposeHeld = false;
+            try
+            {
+                // StartTime is cached on this Process. A second read compares that cache
+                // with itself. The live check is ReadHeldTicks, which opened this object.
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: false);
+            }
+            finally
+            {
+                // Keep the handle until the follow snapshot. Disposing it lets Windows reuse the pid.
+                retained.Add(new RetainedProcess(process, dispose, pid));
+            }
         }
 
         void ReleaseHeld()
@@ -308,6 +401,149 @@ internal static class OwnedProcessTree
             held = null;
             disposeHeld = false;
         }
+
+        bool WaitRetained(int pid)
+        {
+            for (var i = retained.Count - 1; i >= 0; i--)
+            {
+                if (retained[i].Pid != pid) continue;
+                var remaining = ReapBoundMilliseconds - (int)reapClock.ElapsedMilliseconds;
+                if (remaining < 0) remaining = 0;
+                return retained[i].Process.WaitForExit(remaining);
+            }
+            // No handle: the pid was already gone when the tick check ran.
+            return true;
+        }
+
+        void BeginReap() => reapClock.Restart();
+    }
+
+    /// <summary>The same walk production uses. A test supplies this as <see cref="Kill"/>'s table.</summary>
+    internal static ProcessSnapshot CaptureSnapshot(int rootPid) => ReadSnapshot(rootPid);
+
+    private readonly record struct RetainedProcess(Process Process, bool Dispose, int Pid);
+
+    private static List<int> Signal(
+        IReadOnlyList<PlannedKill> entries,
+        Func<int, long?> readStartTicks,
+        Action<int> kill,
+        Action<string> log)
+    {
+        var signalled = new List<int>();
+        foreach (var entry in entries)
+        {
+            long? live;
+            try { live = readStartTicks(entry.Pid); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                log(KillFailed(entry.Pid, ex.GetType().Name));
+                continue;
+            }
+            if (live != entry.StartTicks)
+            {
+                log(KillFailed(entry.Pid, live is null ? "unreadable" : "reused"));
+                continue;
+            }
+            try
+            {
+                kill(entry.Pid);
+                signalled.Add(entry.Pid);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                var reason = ex.Message is "reused" or "unreadable" or "identity_not_held" ? ex.Message : ex.GetType().Name;
+                log(KillFailed(entry.Pid, reason));
+            }
+        }
+        return signalled;
+    }
+
+    /// <summary>Wait out one signalled wave. An empty wave does not start the budget.
+    /// A refused wait counts as still alive.</summary>
+    private static (List<int> Alive, long Waited) Reap(
+        IReadOnlyList<int> signalled,
+        Func<int, bool> waitForExit,
+        Action? beginReap,
+        Action<string> log)
+    {
+        if (signalled.Count == 0) return ([], 0);
+        beginReap?.Invoke();
+        var clock = Stopwatch.StartNew();
+        var alive = new List<int>();
+        foreach (var pid in signalled)
+        {
+            try
+            {
+                if (!waitForExit(pid)) alive.Add(pid);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                alive.Add(pid);
+                log(KillFailed(pid, ex.GetType().Name));
+            }
+        }
+        return (alive, clock.ElapsedMilliseconds);
+    }
+
+    /// <summary>One pass over processes that were not in the sealed snapshots.
+    /// The parent must be a pid this wave signalled, and the start must be at or after that parent's.</summary>
+    private static List<PlannedKill> PlanLateChildren(
+        IReadOnlyList<ProcessTableRow> table,
+        IReadOnlyDictionary<int, long> signalledTicks,
+        HashSet<int> snapshotted,
+        int serverPid,
+        int ownerPid,
+        int alreadyAccepted)
+    {
+        var kills = new List<PlannedKill>();
+        if (signalledTicks.Count == 0 || alreadyAccepted >= MaxDescendants) return kills;
+
+        var children = new Dictionary<int, List<ProcessTableRow>>();
+        foreach (var row in table)
+        {
+            if (row.Pid <= 1 || row.Pid == row.ParentPid) continue;
+            if (!children.TryGetValue(row.ParentPid, out var list))
+                children[row.ParentPid] = list = new List<ProcessTableRow>();
+            list.Add(row);
+        }
+        foreach (var list in children.Values)
+            list.Sort(static (left, right) => left.Pid.CompareTo(right.Pid));
+
+        var parents = new List<int>(signalledTicks.Count);
+        foreach (var pid in signalledTicks.Keys) parents.Add(pid);
+        parents.Sort();
+
+        var accepted = new HashSet<int>();
+        foreach (var parentPid in parents)
+        {
+            if (!children.TryGetValue(parentPid, out var list)) continue;
+            var parentTicks = signalledTicks[parentPid];
+            foreach (var child in list)
+            {
+                if (child.Pid == serverPid || child.Pid == ownerPid) continue;
+                if (snapshotted.Contains(child.Pid) || accepted.Contains(child.Pid)) continue;
+                if (child.StartTicks is not long childTicks) continue;
+                // Started before its parent: the recorded parent pid is stale.
+                if (childTicks < parentTicks) continue;
+                if (alreadyAccepted + kills.Count >= MaxDescendants) return kills;
+                accepted.Add(child.Pid);
+                kills.Add(new PlannedKill(child.Pid, childTicks, "follower"));
+            }
+        }
+        return kills;
+    }
+
+    private static string FormatIds(IReadOnlyList<int> pids) =>
+        pids.Count == 0 ? "none" : string.Join(',', pids);
+
+    private static string ReapLine(int rootPid, long waited, IReadOnlyList<int> alive, bool reapWaited) =>
+        $"repository_child_tree_kill_reap root={rootPid} waited_ms={waited} still_alive={FormatIds(alive)} reap={(reapWaited ? "waited" : "skipped")}";
+
+    private static string FollowLine(int rootPid, int followers, IReadOnlyList<int> killed, IReadOnlyList<int> alive, string? reason)
+    {
+        var line = $"repository_child_tree_kill_follow root={rootPid} followers={followers} killed={FormatIds(killed)} still_alive={FormatIds(alive)}";
+        if (reason is not null) line += $" reason={reason}";
+        return line;
     }
 
     private static void KillOwnedHandle(Process root, int rootId, long rootTicks) =>
