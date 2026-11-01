@@ -163,23 +163,68 @@ function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
 }
-function Get-OwnBlobText([string]$Path) {
-    $rev = (& git -C $repo rev-parse HEAD).Trim()
+function Get-OwnBlobText([string]$Root, [string]$Path) {
+    $rev = (& git -C $Root rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $rev.Length -ne 40) { throw 'own blob unavailable' }
-    $text = (& git -C $repo show "${rev}:${Path}") -join "`n"
+    $text = (& git -C $Root show "${rev}:${Path}") -join "`n"
     if ($LASTEXITCODE -ne 0) { throw 'own blob unavailable' }
     return (ConvertTo-LfText ($text + "`n"))
 }
-function Test-ProtectedInputs([string]$Overlay = '') {
+function Test-ProtectedInputs([string]$Overlay = '', [string]$Owner = $repo) {
     # Protected inputs match this commit's own blobs after newline normalisation.
-    $root = if ([string]::IsNullOrWhiteSpace($Overlay)) { $repo } else { $Overlay }
+    $root = if ([string]::IsNullOrWhiteSpace($Overlay)) { $Owner } else { $Overlay }
     foreach ($path in $script:ProtectedInputs) {
         $actualPath = Join-Path $root $path
         if (-not (Test-Path -LiteralPath $actualPath)) { return $false }
         $actual = ConvertTo-LfText ([IO.File]::ReadAllText($actualPath))
-        if ($actual -cne (Get-OwnBlobText $path)) { return $false }
+        if ($actual -cne (Get-OwnBlobText $Owner $path)) { return $false }
     }
     return $true
+}
+function Copy-ProtectedInputs([string]$From, [string]$To, [string]$NewLine = "`n") {
+    foreach ($path in $script:ProtectedInputs) {
+        $text = Get-OwnBlobText $From $path
+        $dest = Join-Path $To $path
+        [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
+        [IO.File]::WriteAllText($dest, $text.Replace("`n", $NewLine))
+    }
+}
+function Test-CensusSentinels([string]$Census) {
+    return ($Census.Contains('sentinel-c680') -and $Census.Contains('sentinel-excluded'))
+}
+function Test-FullInputs([string]$Root) {
+    $id = [guid]::NewGuid().ToString('N')
+    $pinned = Join-Path $ResultsDirectory "pinned-$id"; $crlf = Join-Path $ResultsDirectory "crlf-$id"
+    Copy-ProtectedInputs $Root $pinned; Copy-ProtectedInputs $Root $crlf "`r`n"
+    if (-not ((Test-ProtectedInputs '' $Root) -and (Test-ProtectedInputs $crlf $Root))) { return $false }
+    $before = Read-Census $pinned; $after = Read-Census $Root
+    return ($before -ceq $after -and (Read-Census $crlf) -ceq $after -and (Test-CensusSentinels $before))
+}
+function New-CommittedInputRepo([string]$Root) {
+    # A scratch repository whose HEAD commits the protected inputs, like a clean
+    # CI/nightly checkout of a candidate that edited them.
+    [void][IO.Directory]::CreateDirectory($Root)
+    & git -C $Root init -q
+    if ($LASTEXITCODE -ne 0) { throw 'scratch repo unavailable' }
+    foreach ($path in $script:ProtectedInputs) {
+        $dest = Join-Path $Root $path
+        [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
+        [IO.File]::WriteAllText($dest, (ConvertTo-LfText ([IO.File]::ReadAllText((Join-Path $repo $path)))))
+    }
+    Save-ScratchCommit $Root 'base'
+}
+function Save-ScratchCommit([string]$Root, [string]$Message) {
+    & git -C $Root -c core.autocrlf=false add -A
+    & git -C $Root -c user.name=c1545 -c user.email=c1545@invalid -c commit.gpgsign=false -c core.autocrlf=false commit -q -m $Message
+    if ($LASTEXITCODE -ne 0) { throw 'scratch commit failed' }
+}
+function Add-PolicyExclusion([string]$Root) {
+    # Real candidate policy edit, with correctly recomputed policy hash.
+    $policyPath = Join-Path $Root 'tests/test-execution-policy.json'
+    $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json -AsHashtable
+    $policy.profiles.rc.exclusions += @{ suite='antiphon'; class='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; reason='fixture'; owner='CARD-1545' }
+    $policy.policyHash = Get-NightlyPolicyHash $policy
+    [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50) + "`n")
 }
 function Read-Census($root) {
     # A fresh runspace prevents script-level import guards from making a pinned
@@ -223,34 +268,32 @@ function Test-WrapperOnlyPaidManifest {
     }
     $q = New-Fixture; $q.Request.Mode = 'Native'; $r = Run-Fixture $q
     Check 'native-disabled' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'native-unqualified' -and (No-Starts))
+    Check 'full-inputs' (Test-FullInputs $repo)
     $beforeRoot = Join-Path $ResultsDirectory 'pinned'
-    $crlfRoot = Join-Path $ResultsDirectory 'crlf'
-    foreach ($path in $script:ProtectedInputs) {
-        $lf = Get-OwnBlobText $path
-        $copies = @(
-            [pscustomobject]@{ Root = $beforeRoot; Text = $lf },
-            [pscustomobject]@{ Root = $crlfRoot; Text = $lf.Replace("`n", "`r`n") }
-        )
-        foreach ($copy in $copies) {
-            $dest = Join-Path $copy.Root $path
-            [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
-            [IO.File]::WriteAllText($dest, $copy.Text)
-        }
-    }
-    $before = Read-Census $beforeRoot; $after = Read-Census $repo; $crlf = Read-Census $crlfRoot
-    Check 'full-inputs' ((Test-ProtectedInputs) -and (Test-ProtectedInputs $crlfRoot) -and $before -ceq $after -and $crlf -ceq $after -and $before.Contains('sentinel-c680') -and $before.Contains('sentinel-excluded'))
-    # Real candidate policy edit, with correctly recomputed policy hash.
+    Copy-ProtectedInputs $repo $beforeRoot
+    $after = Read-Census $repo
     $policyPath = Join-Path $beforeRoot 'tests/test-execution-policy.json'
     $original = [IO.File]::ReadAllText($policyPath)
-    $policy = $original | ConvertFrom-Json -AsHashtable
-    $policy.profiles.rc.exclusions += @{ suite='antiphon'; class='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; reason='fixture'; owner='CARD-1545' }
-    $policy.policyHash = Get-NightlyPolicyHash $policy
-    [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50))
+    Add-PolicyExclusion $beforeRoot
     Check 'policy-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     [IO.File]::WriteAllText($policyPath, $original)
     $reader = Join-Path $beforeRoot 'scripts/lib/nightly-coverage.ps1'
     [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryDisposition { param(`$Node, `$ProfileExclusions, [switch]`$ProfileAware) return @{ Disposition = 'excluded'; Reason = 'fixture'; Owner = 'CARD-1545' } }`n")
     Check 'reader-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
+    # The same policy edit committed, as a clean CI/nightly/rc checkout sees it.
+    $committed = Join-Path $ResultsDirectory 'committed'
+    New-CommittedInputRepo $committed
+    Add-PolicyExclusion $committed; Save-ScratchCommit $committed 'exclude C680'
+    Check 'committed-edit' (-not (Test-FullInputs $committed))
+    # A CRLF checkout of the unchanged inputs keeps the verdict.
+    $crlfRoot = Join-Path $ResultsDirectory 'crlf-checkout'
+    Copy-ProtectedInputs $repo $crlfRoot "`r`n"
+    Check 'crlf-inputs' ((Test-ProtectedInputs $crlfRoot) -and (Read-Census $crlfRoot) -ceq $after)
+    # C680 moved from Required to Excluded must not satisfy the sentinels.
+    $moved = $after | ConvertFrom-Json -AsHashtable
+    $moved = [ordered]@{ Hash = $moved.Hash; Required = @($moved.Required | Where-Object { $_ -cne 'sentinel-c680' })
+        Excluded = @(@($moved.Excluded) + 'sentinel-c680' | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
+    Check 'sentinel-moved' ((Test-CensusSentinels $after) -and -not (Test-CensusSentinels $moved))
     $q = New-Fixture; $r = Run-Fixture $q
     Check 'legacy-state' ($F.Starts -eq 1 -and $F.Trace.Contains('receipt'))
 }
