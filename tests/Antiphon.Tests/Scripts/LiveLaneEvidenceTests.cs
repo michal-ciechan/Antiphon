@@ -494,8 +494,13 @@ public class LiveLaneEvidenceTests
             ProveCompileCore(pc, source.Replace("\n", "\r\n", StringComparison.Ordinal), from, to, leaked, marker);
     }
 
+    private static string NormalizeSourceNewlines(string text) =>
+        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal);
+
     private static void ProveCompileCore(string pc, string source, string from, string to, bool leaked, bool marker)
     {
+        source = NormalizeSourceNewlines(source);
+        from = NormalizeSourceNewlines(from);
         if (source.Split(from).Length != 2) throw new InvalidOperationException("C1545 " + pc + " anchor");
         var dir = Path.Combine("/tmp", "c1545-" + pc);
         Directory.CreateDirectory(dir);
