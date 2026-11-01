@@ -224,6 +224,31 @@ public class LiveLaneIsolationTests
         }
     }
 
+    [Test]
+    public void InstructionFilesAboveTheOwnedRootRefuse()
+    {
+        // Claude loads project memory from every ancestor of its cwd; CLAUDE_CONFIG_DIR redirects
+        // only the user-level directory. A file strictly above the owned root must still refuse.
+        foreach (var name in new[] { "CLAUDE.md", "AGENTS.md", ".mcp.json", ".claude/CLAUDE.md" })
+        {
+            var parent = Directory.CreateTempSubdirectory("c1545-above-").FullName;
+            try
+            {
+                using var fixture = new LiveClaudeProfileFixture(Path.Combine(parent, "profile"));
+                using (new LiveClaudeProfile(fixture.Context)) { }
+                var path = Path.Combine(parent, name);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, name.EndsWith(".json") ? "{}" : "host instructions above the owned root");
+                LiveClaudeProfileCases.Refuses(() => { using var p = new LiveClaudeProfile(fixture.Context); },
+                    "unowned-instructions", "V-14", "above-root-" + name);
+            }
+            finally
+            {
+                Directory.Delete(parent, true);
+            }
+        }
+    }
+
     [Test, Explicit]
     public void StartupArgvMatchesProductionApplyOff()
     {
