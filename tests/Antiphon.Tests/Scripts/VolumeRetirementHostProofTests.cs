@@ -286,6 +286,101 @@ public sealed class VolumeRetirementHostProofTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Test]
+    public void Cleanup_clears_read_only_git_objects_before_windows_shaped_delete()
+    {
+        const string prefix = "c1609-ro-";
+        var root = Directory.CreateTempSubdirectory(prefix).FullName;
+        var fanout = Path.Combine(root, "objects", "ab");
+        var loose = Path.Combine(fanout, new string('c', 38));
+        try
+        {
+            Directory.CreateDirectory(fanout);
+            File.WriteAllText(loose, "git-object");
+            File.SetAttributes(loose, File.GetAttributes(loose) | FileAttributes.ReadOnly);
+            File.SetAttributes(fanout, File.GetAttributes(fanout) | FileAttributes.ReadOnly);
+            File.GetAttributes(loose).HasFlag(FileAttributes.ReadOnly).ShouldBeTrue();
+
+            // Linux deletes a read-only file when its directory is writable. The seam
+            // throws UnauthorizedAccessException instead, which is the Windows rule.
+            DeleteOwned(root, prefix, WindowsShapedDelete);
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                ReadOnlyDirectory.ClearReadOnly(root);
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public void Cleanup_failure_stays_secondary_to_the_assertion()
+    {
+        const string prefix = "c1609-mask-";
+        var root = Directory.CreateTempSubdirectory(prefix).FullName;
+        var report = new StringWriter();
+        Exception? observed = null;
+        try
+        {
+            try
+            {
+                throw new InvalidOperationException("assertion-failed");
+            }
+            finally
+            {
+                DeleteOwned(root, prefix, static (_, _) =>
+                    throw new UnauthorizedAccessException("cleanup-denied"), report);
+            }
+        }
+        catch (Exception error)
+        {
+            observed = error;
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+
+        observed.ShouldBeOfType<InvalidOperationException>().Message.ShouldBe("assertion-failed");
+        report.ToString().ShouldContain("cleanup-denied");
+    }
+
+    [Test]
+    public void Cleanup_deletes_only_its_exact_temp_directory()
+    {
+        const string prefix = "c1609-guard-";
+        var root = Directory.CreateTempSubdirectory(prefix).FullName;
+        var nested = Path.Combine(root, "nested");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(nested, "keep"), "keep");
+        File.WriteAllText(Path.Combine(root, "keep"), "keep");
+        var report = new StringWriter();
+        try
+        {
+            DeleteOwned(nested, prefix, report: report);
+            Directory.Exists(nested).ShouldBeTrue();
+            report.ToString().ShouldContain("escaped its owned temp root");
+
+            report.GetStringBuilder().Clear();
+            DeleteOwned(root, "c1609-other-", report: report);
+            Directory.Exists(root).ShouldBeTrue();
+            File.Exists(Path.Combine(root, "keep")).ShouldBeTrue();
+            report.ToString().ShouldContain("escaped its owned temp root");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                ReadOnlyDirectory.ClearReadOnly(root);
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static async Task<(int Exit, string Output)> VersionedProof(string root, bool unsafeOrigin = false)
     {
         var origin = Path.Combine(root,"origin.git"); var work = Path.Combine(root,"work");
@@ -398,4 +493,58 @@ public sealed class VolumeRetirementHostProofTests
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 
     private static string Quote(string path) => "'" + path.Replace("'", "''") + "'";
+
+    // Red witness: this delete does not clear read-only git objects yet.
+    private static void DeleteOwned(
+        string root,
+        string prefix,
+        Action<string, bool>? delete = null,
+        TextWriter? report = null)
+    {
+        report ??= Console.Error;
+        try
+        {
+            var full = OwnedTempRoot(root, prefix);
+            if (!Directory.Exists(full))
+                return;
+            (delete ?? Directory.Delete)(full, true);
+        }
+        catch (Exception error)
+        {
+            report.WriteLine($"Git fixture cleanup failed for {root}: {error}");
+        }
+    }
+
+    private static string OwnedTempRoot(string root, string prefix)
+    {
+        if (prefix.Length == 0)
+            throw new ArgumentException("Host-proof cleanup requires an owned prefix.", nameof(prefix));
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        var full = Path.GetFullPath(root);
+        if (!string.Equals(Path.GetDirectoryName(full), temp, comparison)
+            || !Path.GetFileName(full).StartsWith(prefix, StringComparison.Ordinal))
+            throw new IOException("Host-proof cleanup escaped its owned temp root: " + root);
+        return full;
+    }
+
+    private static void WindowsShapedDelete(string path, bool recursive)
+    {
+        if (recursive)
+            RefuseReadOnly(path);
+        Directory.Delete(path, recursive);
+    }
+
+    private static void RefuseReadOnly(string path)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReadOnly) != 0)
+            throw new UnauthorizedAccessException($"Access to the path '{path}' is denied.");
+        if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
+            return;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+            RefuseReadOnly(entry);
+    }
 }
