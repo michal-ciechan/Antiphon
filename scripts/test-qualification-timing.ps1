@@ -235,6 +235,13 @@ $NightlySeams = @{
                 $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
             }
         }
+        if ($env:QTIMING_FORWARD -ne "1") {
+            foreach ($name in @($psi.EnvironmentVariables.Keys)) {
+                if ([string]$name.StartsWith("ANTIPHON_TEST_PHASE_")) {
+                    [void]$psi.EnvironmentVariables.Remove([string]$name)
+                }
+            }
+        }
         $seenForShell = $seen
         if ($seenForShell -match '^[A-Za-z]:\\') {
             $drive = $seenForShell.Substring(0, 1).ToLowerInvariant()
@@ -1343,6 +1350,9 @@ try {
         $suiteParts = @($on.Suites -split ',')
         $bytesOk = ($outParts.Count -ge 1 -and @($outParts | Where-Object { $_ -ne 'QUAL-OUT' }).Count -eq 0 -and @($errParts | Where-Object { $_ -ne 'QUAL-ERR' }).Count -eq 0 -and @($exitParts | Where-Object { $_ -ne ([string]$childExit) }).Count -eq 0 -and $suiteParts.Count -eq $exitParts.Count)
         $same = ($on.Wrapper -eq $off.Wrapper -and $on.Wrapper -eq 1 -and $on.Suites -eq $off.Suites -and $on.StdOut -eq $off.StdOut -and $on.StdErr -eq $off.StdErr -and $on.Exits -eq $off.Exits -and $on.Payload -eq $off.Payload -and $on.Seen -ge 1 -and $off.Seen -eq 0 -and $bytesOk)
+        if (-not $same) {
+            Write-Host ('DIAG capture-identity-exit-' + $childExit + ' wrapper=' + $on.Wrapper + '/' + $off.Wrapper + ' suites=' + $on.Suites + '|' + $off.Suites + ' stdout=' + $on.StdOut + '|' + $off.StdOut + ' stderr=' + $on.StdErr + '|' + $off.StdErr + ' exits=' + $on.Exits + '|' + $off.Exits + ' seen=' + $on.Seen + '/' + $off.Seen + ' bytesOk=' + $bytesOk + ' payloadEqual=' + ($on.Payload -eq $off.Payload))
+        }
         Assert-Check $same ('capture-identity-exit-' + $childExit)
     }
 } catch {
