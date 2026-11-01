@@ -12,26 +12,31 @@ namespace Antiphon.Server.Application.Exceptions;
 public sealed class RemoteLaunchAlreadyExitedException : Exception
 {
     public RemoteLaunchAlreadyExitedException(
-        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason)
-        : base(Describe(runnerId, sessionId, exitCode, exitReason, runnerExitReason))
+        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason,
+        int? exitSignal = null, Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? exitStopIntent = null)
+        : base(Describe(runnerId, sessionId, exitCode, exitReason, runnerExitReason, exitSignal, exitStopIntent))
     {
         RunnerId = runnerId;
         SessionId = sessionId;
         ExitCode = exitCode;
+        ExitSignal = exitSignal;
+        ExitStopIntent = exitStopIntent;
         ExitReason = exitReason;
     }
 
     public string RunnerId { get; }
     public Guid SessionId { get; }
     public int? ExitCode { get; }
+    public int? ExitSignal { get; }
+    public Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? ExitStopIntent { get; }
     public AgentExitReason ExitReason { get; }
 
     private static string Describe(
-        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason)
+        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason, int? signal, Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? intent)
     {
         var code = exitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown";
         var reason = string.IsNullOrWhiteSpace(runnerExitReason) ? exitReason.ToString() : runnerExitReason;
         return $"Remote launch of session {sessionId} on runner '{runnerId}' already ran and exited before its "
-            + $"acknowledgement arrived (exit code {code}, reason {reason}); the same generation is not started again.";
+            + $"acknowledgement arrived (exit code {code}, reason {reason}; {Antiphon.Server.Application.Services.SessionExitPolicy.Describe(exitCode, signal, intent: intent)}); the same generation is not started again.";
     }
 }

@@ -210,12 +210,19 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         Guid? requestId = null, Guid? notificationId = null, int seconds = 60)
     {
         AgentTaskLandNotification? result = null;
+        try
+        {
         await UntilProtocolAsync(async () => {
             await using var db = CreateContext();
             result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId)
                 && (notificationId == null || n.Id == notificationId));
             return result is not null;
         }, "complete native Land receipt", seconds);
+        }
+        catch (TimeoutException ex)
+        {
+            throw await ReceiptTimeoutAsync(ex, kind, requestId, notificationId);
+        }
         await using var observer = CreateContext();
         var row = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == result!.QueueMessageId);
         var prompt = await observer.TranscriptEntries.SingleAsync(p => p.AgentSessionId == CallerId && p.Sequence == result!.ConfirmingPromptSequence);
@@ -359,17 +366,44 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         }
     }
     public static Task UntilAsync(Func<Task<bool>> predicate, string evidence, int seconds = 60,
-        Func<long>? progress = null, int capSeconds = 600)
-        => ProgressAwareWait.UntilAsync(predicate, evidence, seconds, progress, capSeconds);
+        Func<long>? progress = null, int capSeconds = 600, TimeProvider? clock = null)
+        => ProgressAwareWait.UntilAsync(predicate, evidence, seconds, progress, capSeconds, clock);
 
     public long ProtocolProgress() => Directory.GetFiles(Root, "protocol-git-*.json").LongLength;
 
-    public async Task UntilProtocolAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60)
+    /// <summary>
+    /// C459 busy-caller gate. Completed protocol-git records renew the 60 s quiet window, up to the
+    /// 600 s cap. A land that stops emitting them still fails one quiet window later, and the
+    /// timeout names the recipient hold, the last Git record and a safe log tail.
+    /// </summary>
+    public async Task WaitForBusyCallerQueuedOutcomeAsync(Func<Task<bool>>? queued = null, int quietSeconds = 60,
+        TimeProvider? clock = null, Func<CancellationToken, Task<string>>? producerState = null)
+    {
+        queued ??= QueuedOutcomeAsync;
+        try
+        {
+            await UntilProtocolAsync(queued, "busy caller has queued outcome", quietSeconds, clock);
+        }
+        catch (TimeoutException ex)
+        {
+            throw await ReceiptTimeoutAsync(ex, LandNotificationKind.Outcome, null, null, producerState, "queued-outcome");
+        }
+    }
+
+    private async Task<bool> QueuedOutcomeAsync()
+    {
+        await using var db = CreateContext();
+        return await db.AgentTaskLandNotifications.AnyAsync(n =>
+            n.TaskId == TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null);
+    }
+
+    public async Task UntilProtocolAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60,
+        TimeProvider? clock = null)
     {
         var started = DateTime.UtcNow;
         var before = ProtocolProgress();
         var outcome = "satisfied";
-        try { await UntilAsync(predicate, evidence, quietSeconds, ProtocolProgress); }
+        try { await UntilAsync(predicate, evidence, quietSeconds, ProtocolProgress, clock: clock); }
         catch (TimeoutException) { outcome = "timeout"; throw; }
         finally
         {

@@ -903,12 +903,13 @@ public sealed partial class AttentionService
 
         var sessions = await _db.AgentSessions.AsNoTracking()
             .Where(s => sessionIds.Contains(s.Id))
-            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
+            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal, s.ExitStopIntentJson })
             .ToListAsync(ct);
         var sessionById = sessions.ToDictionary(
             s => s.Id,
             s => new AgentTaskLiveness.SessionSnapshot(
-                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
+                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal,
+                    SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)));
 
         // "Has the session written anything at all" — the FailNeverStartedAsync predicate, asked in
         // one query for the whole candidate set rather than once per task.
@@ -1015,6 +1016,12 @@ public sealed partial class AttentionService
             if (AgentTaskLiveness.IsDeadSession(task.AgentSessionId, session))
             {
                 var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
+                var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session,
+                    task.AgentSessionId is Guid id && withTranscript.Contains(id));
+                // Keep task-level diagnostics, but never let a missing FailureReason hide an
+                // observed normal/signal exit. Use the same evidence as the acting sweep.
+                var detail = session?.FailureReason is null && task.FailureReason is { Length: > 0 } taskReason
+                    ? taskReason + "; " + classified.Reason : classified.Reason;
 
                 items.Add(new AttentionItemDto(
                     AttentionKind.DeadSession,
@@ -1025,7 +1032,7 @@ public sealed partial class AttentionService
                     null,
                     task.Title,
                     $"Still {task.Status} but {what}.",
-                    Evidence(session?.FailureReason ?? task.FailureReason ?? what, digest),
+                    Evidence(detail, digest),
                     session?.EndedAt ?? task.DispatchedAt,
                     cost,
                     [AttentionAction.Retry, AttentionAction.Cancel, AttentionAction.Escalate]));

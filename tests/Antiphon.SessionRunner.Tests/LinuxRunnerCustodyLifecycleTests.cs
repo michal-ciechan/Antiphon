@@ -161,7 +161,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
     }
 
-    private static void RequireNativeLifecycle()
+    internal static void RequireNativeLifecycle()
     {
         RequireHelpers();
         if (!File.Exists("/run/antiphon-custody/namespace"))
@@ -228,7 +228,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
 
     private readonly record struct ShellResult(int ExitCode, string Stdout, string Stderr);
 
-    private sealed class NativeHold : IAsyncDisposable
+    internal sealed class NativeHold : IAsyncDisposable
     {
         public required SessionRunnerRuntime Runtime { get; init; }
         public required VerificationExecutionBinding Binding { get; init; }

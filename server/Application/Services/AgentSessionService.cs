@@ -67,7 +67,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         DateTime Generation,
         DateTime IssuedAt,
         AgentExitReason? ObservedReason,
-        int? ObservedExitCode);
+        int? ObservedExitCode,
+        int? ObservedExitSignal);
 
     public AgentSessionService(
         AppDbContext db,
@@ -443,11 +444,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 session.FailureReason = ColumnText.Clip(ex.Message, 2000);
                 session.EndedAt = UtcNow();
                 session.LastSeenAt = session.EndedAt.Value;
-                // R5 repair: the runner ran this generation and it exited on its own; record that exit
+                // R5 repair: the runner ran this generation and observed its exit; record that evidence
                 // rather than a platform stop.
                 if (ex is RemoteLaunchAlreadyExitedException exited)
                 {
-                    session.ExitCode = exited.ExitCode;
+                    SessionExitEvidence.Apply(session, exited.ExitCode, exited.ExitSignal, exited.ExitStopIntent);
                     SessionTermination.Record(session, SessionTermination.FromExitReason(exited.ExitReason));
                 }
                 else if (boundToThisKill)
@@ -862,6 +863,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         AgentExitReason? observedReason = null;
         int? observedExitCode = null;
+        int? observedExitSignal = null;
         if (generationKill is { } reported)
         {
             killedGeneration = reported.Killed;
@@ -869,13 +871,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             observedReason = reported.Cause;
         }
 
-        if (acceptedGeneration is not null && adapter.Exited.IsCompletedSuccessfully)
-            observedExitCode = adapter.Exited.Result;
+        var completion = adapter.Completion;
+        if (acceptedGeneration is not null && completion.IsCompletedSuccessfully)
+        {
+            observedExitCode = completion.Result.ExitCode;
+            observedExitSignal = completion.Result.ExitSignal;
+        }
 
         await adapter.DisposeAsync();
         return acceptedGeneration is { } killedGenerationId
             ? new LaunchCleanupKill(
-                killedGeneration == true, killedGenerationId, issuedAt, observedReason, observedExitCode)
+                killedGeneration == true, killedGenerationId, issuedAt, observedReason, observedExitCode, observedExitSignal)
             : null;
     }
 
@@ -901,6 +907,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return false;
         if (session.FailureReason?.Contains("ProcessExited", StringComparison.Ordinal) == true)
             return false;
+        // Reject conflicting observations (including normal Unix exit versus a signal).
+        // Matching no-signal Windows kills and legacy unknowns retain the cause/time/code guards.
+        if (session.ExitSignal is int storedSignal && owned.ObservedExitSignal is int observedSignal
+            && storedSignal != observedSignal) return false;
         if (owned.ObservedExitCode is int observedCode)
             return session.ExitCode == observedCode;
         return session.ExitCode is null or 0;
@@ -1889,7 +1899,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return killed;
 
         var runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
-        session.ExitCode = runnerSession.ExitCode;
+        SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent);
         await _runtime.DisposeSessionAsync(sessionId);
         session.Status = killed ? SessionStatus.Stopped : SessionStatus.Failed;
         session.EndedAt = UtcNow();
@@ -2049,7 +2059,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             throw;
         }
 
-        if (runnerSession.Status != "Exited" && runnerSession.ExitCode is null)
+        if (runnerSession.Status != "Exited" && runnerSession.ExitCode is null && runnerSession.ExitSignal is not > 0)
         {
             // A kill response is not an exit. Retain the adapter, attempt and workspace ownership
             // until a later retry or exit observer confirms the process is gone.
@@ -2059,7 +2069,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
 
         var exitReason = runnerSession.ExitReason;
-        session.ExitCode = runnerSession.ExitCode;
+        SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent);
         await _runtime.DisposeSessionAsync(sessionId);
 
         var memoryKilled = exitReason == AgentExitReason.MemoryKilled;
@@ -2086,6 +2096,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 memoryKilled ? RunPhase.Failed : killed ? RunPhase.Canceled : RunPhase.Failed,
                 UtcNow());
             attempt.ExitCode = session.ExitCode;
+            attempt.ExitSignal = session.ExitSignal;
             attempt.ErrorDetails = memoryKilled
                 ? MemoryKilledFailureReason
                 : killed ? "Agent session was killed by request."
@@ -2098,7 +2109,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         await _eventBus.PublishToGroupAsync(
             AgentSessionGroups.Session(sessionId),
             "SessionExited",
-            new { sessionId, status = session.Status.ToString(), session.ExitCode },
+            new { sessionId, status = session.Status.ToString(), session.ExitCode, session.ExitSignal, exitStopIntent = SessionExitEvidence.ReadIntent(session.ExitStopIntentJson) },
             ct);
         // Cardless (interactive) sessions have nothing to notify a board about.
         if (session.CardId is Guid cardId)
@@ -2172,6 +2183,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         session.LastSeenAt = now;
         session.EndedAt = null;
         session.ExitCode = null;
+        session.ExitSignal = null;
+        session.ExitStopIntentJson = null;
         session.FailureReason = null;
         session.Cwd = cwd;
         session.Card.OwnerSessionId = session.Id;
@@ -3789,9 +3802,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         session.LastSeenAt = session.EndedAt.Value;
         session.FailureReason = MemoryKilledFailureReason;
         SessionTermination.Record(session, SessionTermination.FromExitReason(adapter.ExitReason));
-        if (adapter.Exited.IsCompletedSuccessfully)
-            session.ExitCode = adapter.Exited.Result;
+        var completion = adapter.Completion;
+        if (completion.IsCompletedSuccessfully)
+            SessionExitEvidence.Apply(session, completion.Result.ExitCode, completion.Result.ExitSignal,
+                completion.Result.ExitStopIntent);
         attempt.ExitCode = session.ExitCode;
+        attempt.ExitSignal = session.ExitSignal;
         attempt.ErrorDetails = MemoryKilledFailureReason;
         await adapter.DisposeAsync();
         return true;

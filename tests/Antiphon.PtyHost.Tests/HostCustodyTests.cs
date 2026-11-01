@@ -226,22 +226,7 @@ public class HostCustodyTests
         Directory.CreateDirectory(worktree);
         var sessionId = Guid.NewGuid();
         var pipeName = $"antiphon-c1614-linger-{sessionId:N}";
-        var store = new VerificationCustodyStore(custodyRoot);
-        var now = DateTime.UtcNow;
-        var binding = new VerificationExecutionBinding(Guid.NewGuid(),
-            new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
-            new(sessionId, new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
-            new(root, Path.Combine(root, ".git"), worktree,
-                Path.Combine(root, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()),
-            VerificationCustodyBackends.WindowsJob, store.StoreId);
-        store.Reserve(binding);
-        var seen = new HashSet<int>();
-        foreach (var existing in Process.GetProcessesByName("PING"))
-        {
-            seen.Add(existing.Id);
-            existing.Dispose();
-        }
-
+        var (store, binding) = ReserveWindowsLingerExecution(root, sessionId);
         var launcher = new PtyHostLauncher(new ShadowCopyStore(Path.Combine(root, "bin")), AppContext.BaseDirectory);
         var hostPid = 0;
         Process? host = null;
@@ -254,38 +239,50 @@ public class HostCustodyTests
                 ptyBackend: "modern", custodyStoreRoot: custodyRoot,
                 custodyBackend: VerificationCustodyBackends.WindowsJob);
             host = Process.GetProcessById(hostPid);
-            await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(15));
+            // Retain the native handle before an early launch rejection exits the process, so
+            // EOF diagnostics can still read its exit code after Windows removes its PID.
+            _ = host.Handle;
+            await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(15),
+                () => PipeTestClient.DescribeHost(host, Path.Combine(root, "host.log")));
             await client.SendAsync(new HelloMessage(PtyHostProtocol.Version));
             (await client.ExpectAsync<HelloAckMessage>()).Features.ShouldNotBeNull()
                 .ShouldContain("verificationCustodyV1");
-            var batch = Path.Combine(root, "hold.cmd");
-            File.WriteAllText(batch, "@echo off\r\nstart /b ping.exe -n 40 127.0.0.1 > nul\r\nexit /b 0\r\n");
+            var script = Path.Combine(root, "hold.ps1");
+            var childIdentityPath = Path.Combine(root, "child.identity");
+            var releaseRootPath = Path.Combine(root, "release-root");
+            File.WriteAllText(script, """
+                param([string]$IdentityPath, [string]$ReleasePath)
+                $ErrorActionPreference = 'Stop'
+                $child = Start-Process -FilePath "$env:SystemRoot\System32\PING.EXE" -ArgumentList '-n','40','127.0.0.1' -NoNewWindow -PassThru
+                [IO.File]::WriteAllText(($IdentityPath + '.tmp'), ($child.Id.ToString() + '|' + $child.StartTime.ToUniversalTime().Ticks.ToString()))
+                [IO.File]::Move(($IdentityPath + '.tmp'), $IdentityPath)
+                while (-not [IO.File]::Exists($ReleasePath)) { Start-Sleep -Milliseconds 20 }
+                """);
             await client.SendAsync(new LaunchMessage(
-                Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                ["/d", "/q", "/c", batch], new Dictionary<string, string>(), worktree,
+                Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
+                ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
+                    childIdentityPath, releaseRootPath], new Dictionary<string, string>(), worktree,
                 120, 30, 0, false, Path.Combine(root, "session.ansi.log"),
                 VerificationBinding: binding, RunnerStoreId: store.StoreId));
             var launched = await client.ExpectAsync<LaunchedMessage>(TimeSpan.FromSeconds(20));
             launched.ChildPid.ShouldBeGreaterThan(0);
 
             var findBy = DateTime.UtcNow + TimeSpan.FromSeconds(8);
-            while (held is null && DateTime.UtcNow < findBy && host is { HasExited: false })
+            while (!File.Exists(childIdentityPath) && DateTime.UtcNow < findBy && host is { HasExited: false })
+                await Task.Delay(50);
+            File.Exists(childIdentityPath).ShouldBeTrue("the tracked root must identify its own descendant");
+            var identity = File.ReadAllText(childIdentityPath).Split('|');
+            var descendant = Process.GetProcessById(int.Parse(identity[0]));
+            if (descendant.StartTime.ToUniversalTime().Ticks != long.Parse(identity[1]))
             {
-                foreach (var candidate in Process.GetProcessesByName("PING"))
-                {
-                    if (seen.Contains(candidate.Id) || held is not null)
-                    {
-                        candidate.Dispose();
-                        continue;
-                    }
-                    held = candidate;
-                }
-                if (held is null)
-                    await Task.Delay(50);
+                descendant.Dispose();
+                throw new InvalidOperationException("The descendant PID was reused; no kill is authorized.");
             }
-
-            held.ShouldNotBeNull("the tracked job must hold the ping descendant before linger closes the host");
+            held = descendant;
             host.HasExited.ShouldBeFalse("the descendant must still be observed while the host is alive");
+            // Hold the root until the client owns the exact descendant handle, so the two-second
+            // linger measures job release rather than racing process discovery on a loaded host.
+            File.WriteAllText(releaseRootPath, "release");
             var rootGone = false;
             try
             {
@@ -332,6 +329,40 @@ public class HostCustodyTests
             host?.Dispose();
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+
+    [Test]
+    public void C1614_Linger_fixture_is_admitted_before_native_start()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-c1614-admission", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var (store, binding) = ReserveWindowsLingerExecution(root, Guid.NewGuid());
+            var journal = new HostCustodyJournal(store, binding, Guid.NewGuid());
+            journal.Binding.ShouldBe(binding);
+            File.Exists(store.PathFor(binding.ExecutionId, "native-start-intent.json")).ShouldBeFalse();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    private static (VerificationCustodyStore Store, VerificationExecutionBinding Binding)
+        ReserveWindowsLingerExecution(string root, Guid sessionId)
+    {
+        var worktree = Path.Combine(root, "snapshot");
+        var custodyRoot = Path.Combine(root, "custody");
+        Directory.CreateDirectory(worktree);
+        var store = new VerificationCustodyStore(custodyRoot);
+        var now = DateTime.UtcNow;
+        var binding = new VerificationExecutionBinding(Guid.NewGuid(),
+            new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
+            new(sessionId, new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
+            new(root, Path.Combine(root, ".git"), worktree,
+                Path.Combine(root, ".git", "worktrees", "snapshot"), "feat/custody-test", Guid.NewGuid()),
+            VerificationCustodyBackends.WindowsJob, store.StoreId);
+        store.Reserve(binding);
+        // Reserve alone is not launch authority: mirror the runner's durable pre-launch boundary.
+        store.WriteRecord(binding, "runner-start-intent.json", new CustodyStamp(1, DateTime.UtcNow));
+        return (store, binding);
     }
 
     [Test]

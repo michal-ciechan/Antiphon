@@ -38,6 +38,7 @@ public sealed class CheckpointRepeatHostTests : CheckpointTestBase
     {
         var result = await RunHost("2", null, cancellationToken);
         var trx = TrxReport.Parse(result.Trx);
+        trx.Ok.ShouldBeTrue(trx.Error + Environment.NewLine + result.Text);
         trx.Failed.ShouldBe(1, "original-repeat-failure-retained");
         trx.Passed.ShouldBe(14);
         trx.Failures.Single().Message.ShouldContain("deliberate-repeat-failure-ordinal-2");

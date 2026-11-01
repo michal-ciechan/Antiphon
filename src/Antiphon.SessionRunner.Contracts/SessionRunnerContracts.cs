@@ -256,7 +256,9 @@ public sealed record RunnerSessionDto(
     GrokRulesReceipt? GrokRulesReceipt = null,
     VerificationExecutionBinding? VerificationBinding = null,
     DateTime? AcceptedStartedAt = null,
-    HerdrLabelObservation? LabelObservation = null);
+    HerdrLabelObservation? LabelObservation = null,
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -288,7 +290,9 @@ public sealed record RunnerSessionExitedEvent(
     int? ExitCode,
     string ExitReason,
     long LastSequence,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 /// <summary>
 /// A restarted runner re-attached to a still-live pty-host (the session kept running the whole

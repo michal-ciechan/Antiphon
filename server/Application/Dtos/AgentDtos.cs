@@ -281,7 +281,8 @@ public sealed record AgentIncidentDto(
     string Message,
     int? ExitCode,
     string? FailureReason,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    int? ExitSignal = null);
 
 public sealed record AgentQueueCardDto(
     Guid CardId,

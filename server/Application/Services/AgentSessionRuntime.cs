@@ -192,7 +192,7 @@ public sealed partial class AgentSessionRuntime
     public async Task<SessionExitDisposition> ObserveExitAsync(
         SessionRunnerExitedEvent evt, CancellationToken ct)
     {
-        var disposition = await CloseSessionOnExitAsync(evt, ct);
+        var (disposition, observation) = await CloseSessionOnExitAsync(evt, ct);
         if (disposition == SessionExitDisposition.Applied)
         {
             await _eventBus.PublishToGroupAsync(
@@ -202,7 +202,9 @@ public sealed partial class AgentSessionRuntime
                 {
                     sessionId = evt.SessionId,
                     status = "Exited",
-                    exitCode = evt.ExitCode,
+                    exitCode = observation!.ExitCode,
+                    exitSignal = observation!.ExitSignal,
+                    exitStopIntent = observation!.ExitStopIntent,
                     exitReason = evt.ExitReason.ToString(),
                     acceptedStartedAt = evt.AcceptedStartedAt,
                 },
@@ -215,9 +217,9 @@ public sealed partial class AgentSessionRuntime
     // A runner exit must also land in the DATABASE, not just the SignalR group: the session row is
     // what the UI's liveSession/agent-status derive from. Before this, an exit that arrived via the
     // event pump left the session Running and its agent Working forever — a phantom with no process.
-    // Idempotent: sessions already closed by another path (kill, launch-failure, reconciler) are
-    // left untouched. Card-owned agents are skipped; their lifecycle belongs to the orchestrator.
-    private async Task<SessionExitDisposition> CloseSessionOnExitAsync(
+    // Sessions already closed by another path keep their lifecycle and source while missing
+    // actual observation fields can still be enriched. Card-owned agents are skipped; their lifecycle belongs to the orchestrator.
+    private async Task<(SessionExitDisposition Disposition, AgentExitObservation? Observation)> CloseSessionOnExitAsync(
         SessionRunnerExitedEvent evt, CancellationToken ct)
     {
         var sessionId = evt.SessionId;
@@ -231,22 +233,28 @@ public sealed partial class AgentSessionRuntime
             var session = await db.AgentSessions.FromSqlInterpolated(
                 $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").FirstOrDefaultAsync(ct);
             if (session is null)
-                return SessionExitDisposition.Unknown;
+                return (SessionExitDisposition.Unknown, null);
 
             if (evt.AcceptedStartedAt is null)
             {
                 await ReportLegacyExitOnceAsync(sessionId, ct);
-                return SessionExitDisposition.Missing;
+                return (SessionExitDisposition.Missing, null);
             }
 
             var cmp = SessionGeneration.Compare(evt.AcceptedStartedAt.Value, session.StartedAt);
             if (cmp < 0)
-                return SessionExitDisposition.Stale;
+                return (SessionExitDisposition.Stale, null);
             if (cmp > 0)
-                return SessionExitDisposition.Unknown;
+                return (SessionExitDisposition.Unknown, null);
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var changed = false;
+            var previousCode = session.ExitCode;
+            var previousSignal = session.ExitSignal;
+            var previousIntent = session.ExitStopIntentJson;
+            if (!SessionExitEvidence.Apply(session, exitCode, evt.ExitSignal, evt.ExitStopIntent))
+                _logger.LogWarning("Conflicting exit observation for session {SessionId}; retaining first evidence", sessionId);
+            changed |= previousCode != session.ExitCode || previousSignal != session.ExitSignal || previousIntent != session.ExitStopIntentJson;
             var oldHerdrEvidence = session.HerdrSupervisionFailureKind;
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromExitReason(exitReason));
             changed |= oldHerdrEvidence != session.HerdrSupervisionFailureKind;
@@ -256,16 +264,19 @@ public sealed partial class AgentSessionRuntime
             // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open, and
             // CARD-0383 detect-timeout keep-pane, are never a clean stop — Stopped is operator
             // intent and reconciliation's auto-kill key.
-            var cleanStop = exitCode == 0 || exitReason == AgentExitReason.CpuSpinKilled;
+            var cleanStop = SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal, exitReason,
+                session.TerminationSource);
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {
                 session.Status = cleanStop ? SessionStatus.Stopped : SessionStatus.Failed;
-                session.ExitCode = exitCode;
+                // Actual code and optional signal were merged under the generation fence above.
                 if (session.Status == SessionStatus.Failed)
-                    session.FailureReason = $"Process exited ({exitReason}, code {exitCode?.ToString() ?? "unknown"}).";
+                    session.FailureReason = $"Process exited ({exitReason}, code {session.ExitCode?.ToString() ?? "unknown"}). "
+                        + SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal, session.TerminationSource,
+                            SessionExitEvidence.ReadIntent(session.ExitStopIntentJson));
                 // A prior KillAsync may already have persisted OperatorRequest/SystemRequest;
                 // an exit event must not erase it (CARD-0256).
-                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason, session.ExitSignal, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)));
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
                 changed = true;
@@ -275,7 +286,7 @@ public sealed partial class AgentSessionRuntime
             {
                 // Race C.1: a closer wrote the terminal status first and left the column empty.
                 // The exit event is the backfill path; it must not change the already-closed status.
-                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason, session.ExitSignal, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)));
                 session.ExitCode ??= exitCode;
                 changed = true;
             }
@@ -355,12 +366,13 @@ public sealed partial class AgentSessionRuntime
                 await admission.ReleaseSessionConsumersAsync(sessionId, CancellationToken.None);
             if (changedAgentId is Guid agentId)
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
-            return SessionExitDisposition.Applied;
+            return (SessionExitDisposition.Applied, new(session.ExitCode, session.ExitSignal,
+                SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to persist exit of session {SessionId}", sessionId);
-            return SessionExitDisposition.PersistenceFailed;
+            return (SessionExitDisposition.PersistenceFailed, null);
         }
     }
 
@@ -2340,7 +2352,7 @@ public sealed partial class AgentSessionRuntime
             return await adapter.KillAsync(timeout, ct);
 
         var session = await _runnerClient.KillAsync(sessionId, ct);
-        return session.Status == "Exited" || session.ExitCode is not null;
+        return session.Status == "Exited" || session.ExitCode is not null || session.ExitSignal is > 0;
     }
 
     public async Task<bool> KillGenerationAsync(
@@ -2357,22 +2369,23 @@ public sealed partial class AgentSessionRuntime
     {
         if (_testAdapters.TryGetValue(sessionId, out var adapter))
         {
-            int? exitCode = adapter.Exited.IsCompletedSuccessfully
-                ? adapter.Exited.Result
-                : null;
+            var completion = adapter.Completion;
+            var observation = completion.IsCompletedSuccessfully ? completion.Result : null;
+            int? exitCode = observation?.ExitCode;
             _testPending.TryGetValue(sessionId, out var pending);
             return Task.FromResult(new SessionRunnerSessionDto(
                 sessionId,
                 adapter.Pid,
                 UtcNow(),
-                exitCode is null ? "Running" : "Exited",
+                observation is null ? "Running" : "Exited",
                 exitCode,
                 adapter.ExitReason,
                 GetDeltaSequenceOrDefault(sessionId),
                 Pending: pending,
                 AcceptedStartedAt: _testAcceptedStartedAt.TryGetValue(sessionId, out var accepted)
                     ? accepted
-                    : null));
+                    : null,
+                ExitSignal: observation?.ExitSignal, ExitStopIntent: observation?.ExitStopIntent));
         }
 
         return _runnerClient.GetAsync(sessionId, ct);

@@ -206,8 +206,9 @@ public class AgentTaskLandDeliveryE2ETests
     private async Task C467_V29_RealOutcomeProducerMatrix(string outcome)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.ArrangeOutcomeAsync(outcome);
-        await f.RequestAsync(); await f.ReleaseExecutionAsync();
-        var note = await f.ReceiptAsync(outcome == "conflict" ? LandNotificationKind.Conflict : LandNotificationKind.Outcome);
+        var request = await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        var note = await f.ReceiptAsync(outcome == "conflict" ? LandNotificationKind.Conflict : LandNotificationKind.Outcome,
+            requestId: request);
         await using (var db = f.CreateContext())
         {
             var terminal = await db.AgentTaskEvents.SingleAsync(e => e.Id == note.SourceEventId);
@@ -269,7 +270,7 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C467_V32_StatusPollingCannotDischargeUnreceivedOutcome(string state)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(busy: state == "busy", cut: state == "attempt" ? "attempt" : "none");
-        await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        var requestId = await f.RequestAsync(); await f.ReleaseExecutionAsync();
         await f.UntilProtocolAsync(async () => {
             await using var db = f.CreateContext();
             return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null)
@@ -282,15 +283,17 @@ public class AgentTaskLandDeliveryE2ETests
             return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged) == 2;
         }, "outcome warning and error obligations");
         var attention = await f.AttentionAsync();
-        var owed = attention.Items.Single(i => i.TaskId == f.TaskId && i.Kind == AttentionKind.LandOutcomeUnconfirmed && i.Headline.Contains("Outcome"));
+        var owed = await f.PollingAttentionAsync(attention, requestId);
         owed.Severity.ShouldBe(AlertSeverity.Error);
         owed.Headline.ShouldContain(state == "busy" ? "busy" : "attempted");
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
+            note.RequestId.ShouldBe(requestId);
             note.ConfirmedAt.ShouldBeNull();
             var aged = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged).ToListAsync();
             aged.Count.ShouldBe(2);
+            new[] { note.Id }.Concat(aged.Select(n => n.Id)).ShouldContain(owed.LandNotificationId!.Value);
             foreach (var warning in aged)
             {
                 warning.Body.ShouldContain("\npublication=Landed; cleanup=Complete\n");

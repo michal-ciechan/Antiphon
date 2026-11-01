@@ -227,9 +227,11 @@ public sealed class RunnerCustodyReleaseTests
         released.Receipt.ShouldBeNull();
     }
 
-    private sealed class RecordingRecovery : ILinuxCustodyRecovery
+    internal sealed class RecordingRecovery : ILinuxCustodyRecovery
     {
         public List<Guid> Kills { get; } = [];
+        public Action? BeforeKill { get; set; }
+        public PtyTerminationObservation Result { get; set; } = new(true, 0);
         public bool Gone { get; set; } = true;
         public Guid NamespaceId { get; set; }
         public IReadOnlyList<int> Pids { get; set; } = [];
@@ -237,13 +239,14 @@ public sealed class RunnerCustodyReleaseTests
         public Guid ReadNamespace() => NamespaceId;
         public PtyTerminationObservation Kill(Guid containerId)
         {
+            BeforeKill?.Invoke();
             Kills.Add(containerId);
-            return new(true, 0);
+            return Result;
         }
         public IReadOnlyList<int> ReadTreePids(Guid containerId) => Pids;
     }
 
-    private sealed class RecordingLogger : ILogger<SessionRunnerRuntime>
+    internal sealed class RecordingLogger : ILogger<SessionRunnerRuntime>
     {
         public string Text { get; private set; } = "";
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -256,7 +259,7 @@ public sealed class RunnerCustodyReleaseTests
         }
     }
 
-    private sealed class ReleaseWorld : IAsyncDisposable
+    internal sealed class ReleaseWorld : IAsyncDisposable
     {
         public required SessionRunnerRuntime Runtime { get; init; }
 

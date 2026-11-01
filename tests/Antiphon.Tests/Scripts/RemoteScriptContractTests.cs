@@ -1162,6 +1162,7 @@ public sealed class RemoteScriptContractTests
         Fact(output, "signal-INT-group-cid-kills").ShouldBe("1", output);
         Fact(output, "signal-INT-group-bounded").ShouldBe("1", output);
         Fact(output, "signal-INT-group-trap").ShouldBe("1", output);
+        Fact(output, "signal-INT-group-handler-returned").ShouldBe("0", output);
         Fact(output, "driver-exit4").ShouldBe("1", output);
         Fact(output, "driver-ready").ShouldBe("1", output);
         Fact(output, "red-m1").ShouldBe("1", output);
@@ -1175,6 +1176,94 @@ public sealed class RemoteScriptContractTests
         Fact(output, "reap-owned-escalated").ShouldBe("1", output);
         Fact(output, "reap-unowned-escalated").ShouldBe("0", output);
         Fact(output, "reap-unowned-survived").ShouldBe("1", output);
+    }
+
+    // A signal received inside an active EXIT trap cannot invoke EXIT again.
+    // Hold the first finalizer after both proven CIDs publish, then let the
+    // existing sender deliver the signal. Every release assertion stays exact.
+    [Test]
+    [Arguments("TERM")]
+    [Arguments("INT")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Signal_during_exit_finishes_custody_cleanup(string signal)
+    {
+        var group = signal == "INT";
+        var output = C1192Run(group ? "slot-int-group-exit" : "slot-term-exit");
+        var prefix = group ? "signal-INT-group-" : "signal-TERM-";
+        Fact(output, prefix + "exit").ShouldBe(group ? "130" : "143", output);
+        var facts = group
+            ? new[] { "installed", "accepted", "containers", "procs", "lease", "volumes",
+                "foreign", "cid-kills", "bounded", "trap" }
+            : new[] { "installed", "cid-kills", "lease", "volumes" };
+        foreach (var fact in facts)
+            Fact(output, prefix + fact).ShouldBe("1", output);
+        if (group) Fact(output, prefix + "handler-returned").ShouldBe("0", output);
+    }
+
+    // A group INT can interrupt a foreground poll and take the ordinary refusal
+    // cleanup path after a broken handler returns. Complete cleanup and exit 2
+    // must not hide that return; this fixes the schedule independently of load.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Group_signal_contract_requires_the_handler_to_exit(bool handlerReturned)
+    {
+        RequireLinuxPwsh();
+        var output = LinuxShell($$"""
+            source <(awk '/^c1192_out_fact\(\)|^c1192_group_contract\(\)/ { active=1 } active { print } active && /^}/ { active=0 }' "$repo/scripts/fixtures/c1192-workspace-contract.sh")
+            facts=$(cat <<'FACTS'
+            signal-INT-group-installed=1
+            signal-INT-group-exit=2
+            signal-INT-group-accepted=1
+            signal-INT-group-containers=1
+            signal-INT-group-procs=1
+            signal-INT-group-lease=1
+            signal-INT-group-volumes=1
+            signal-INT-group-foreign=1
+            signal-INT-group-cid-kills=1
+            signal-INT-group-bounded=1
+            signal-INT-group-trap=1
+            signal-INT-group-handler-returned={{(handlerReturned ? "1" : "0")}}
+            FACTS
+            )
+            if c1192_group_contract "$facts"; then printf 'contract=accepted\n'; else printf 'contract=rejected\n'; fi
+            """, "repo");
+        Fact(output, "contract").ShouldBe(handlerReturned ? "rejected" : "accepted", output);
+    }
+
+    // The generated driver is a shell contract, including when WSL cannot create
+    // user/mount namespaces. The m7 control must still reach ready after losing
+    // its deadline, so a failed launch cannot masquerade as a detected mutation.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Driver_deadline_witness_does_not_require_mount_namespaces(bool withoutDeadline)
+    {
+        RequireLinuxPwsh();
+        var output = LinuxShell($$"""
+            set -eu
+            tools=$(mktemp -d)
+            trap 'rm -rf -- "$tools"' EXIT
+            export C849_NAMESPACE_CALLS="$tools/calls"
+            for tool in unshare mount pivot_root; do
+                cat > "$tools/$tool" <<'SH'
+            #!/bin/sh
+            printf '%s\n' "$0" >> "$C849_NAMESPACE_CALLS"
+            printf 'namespace operation refused\n' >&2
+            exit 1
+            SH
+                chmod 700 "$tools/$tool"
+            done
+            export PATH="$tools:$PATH"
+            C1192_MUTATION='{{(withoutDeadline ? "m7" : "")}}' bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" slot-driver-deadline "$repo"
+            [ ! -e "$C849_NAMESPACE_CALLS" ] && printf 'namespace-tools-unused=1\n'
+            """, "repo");
+        Fact(output, "driver-exit4").ShouldBe(withoutDeadline ? "0" : "1", output);
+        Fact(output, "driver-ready").ShouldBe("1", output);
+        Fact(output, "namespace-tools-unused").ShouldBe("1", output);
+        output.ShouldNotContain("C1192_FAIL");
     }
 
     // CARD-0849 round 3. A cid that arrives after the sibling probe has already
@@ -5145,12 +5234,26 @@ public sealed class RemoteScriptContractTests
     public void Custody_residue_counts_subdirectories_only()
     {
         var block = Block(Remote(), "case_custody_containment");
+        block.ShouldContain("source /usr/local/lib/antiphon-custody-common.sh || exit 1");
+        block.ShouldContain("ns=\"$(custody_read_namespace)\" || exit 1");
         foreach (var controller in new[] { "pids", "freezer" })
         {
             var root = "/sys/fs/cgroup/" + controller + "/antiphon-custody";
-            block.ShouldContain("find " + root + " -mindepth 1 -maxdepth 1 -type d");
+            block.ShouldContain("custody_count_execution_trees " + root + " \"$ns\" || exit 1");
             block.ShouldNotContain("ls -1 " + root);
         }
+
+        // CARD-1614 counts execution directories inside namespace directories.
+        var common = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
+            "docker", "session-runner-grok", "antiphon-custody-common.sh"));
+        var counter = Block(common, "custody_count_execution_trees");
+        counter.ShouldContain("[ -L \"$ns_path\" ] || [ ! -d \"$ns_path\" ]");
+        counter.ShouldContain("[ -L \"$exec_path\" ] || [ ! -d \"$exec_path\" ]");
+        counter.ShouldContain("procs=\"$exec_path/tree/cgroup.procs\"");
+        block.ShouldContain("|| write_result false CustodyResidue 2");
+        block.ShouldContain("if ! grep -q '^status=ok$' \"$CASE_DIR/custody-residue.txt\"; then");
+        block.ShouldContain("if ! grep -q '^current=0$' \"$CASE_DIR/custody-residue.txt\"; then");
+        block.ShouldContain("if grep -qE '^(current|foreign|legacy)=[1-9]' \"$CASE_DIR/custody-residue.txt\"; then");
     }
 
     // CP-15 dispatches `verify-docker-stack.ps1 -Case custody-containment`, which reaches the

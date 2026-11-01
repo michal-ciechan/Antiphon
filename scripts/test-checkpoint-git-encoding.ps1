@@ -3,7 +3,7 @@
 # a legacy console code page must not hide a non-ASCII content change, and invalid UTF-8
 # from git must be refused. The legacy page is applied on the helper's ProcessStartInfo,
 # which is how Windows decodes a redirected pipe when StandardOutputEncoding is unset.
-param([string]$Root, [string]$Repository, [string]$Mode)
+param([string]$Root, [string]$Repository, [string]$Mode, [string]$GitExecutable)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ([string]::IsNullOrWhiteSpace($Root) -or [string]::IsNullOrWhiteSpace($Repository) -or [string]::IsNullOrWhiteSpace($Mode)) {
@@ -98,45 +98,17 @@ if ($Mode -eq 'tamper') {
     Assert-ContentChangeIsTampered $relative 'tracked-non-ascii'
     Write-Host 'C1608 tamper PASS'
 } elseif ($Mode -eq 'encoding') {
-    [void][IO.Directory]::CreateDirectory($root)
-    $shims = Join-Path $Root 'shims'
-    [void][IO.Directory]::CreateDirectory($shims)
-    # Production starts FileName 'git'. Windows resolves git.cmd; Linux execs a mode-0700 sh script.
-    # File.SetUnixFileMode stays in-process so the witness does not need chmod.
-    if ($IsWindows) {
-        $pwsh = [string](Get-Process -Id $PID).Path
-        $cmd = @"
-@echo off
-setlocal EnableExtensions
-:skipc
-if /I not "%~1"=="-c" goto afterc
-shift
-shift
-goto skipc
-:afterc
-if /I "%~1"=="config" exit /b 0
-"$pwsh" -NoProfile -NonInteractive -Command "[Console]::OpenStandardOutput().WriteByte(255)"
-exit /b %ERRORLEVEL%
-"@
-        $shimPath = Join-Path $shims 'git.cmd'
-        $cmdText = $cmd.Replace("`r`n", "`n").Replace("`r", "`n").Replace("`n", "`r`n")
-        [IO.File]::WriteAllText($shimPath, $cmdText)
-    } else {
-        $shim = @'
-#!/bin/sh
-set -eu
-while [ "$1" = -c ]; do shift 2; done
-if [ "$1" = config ]; then exit 0; fi
-printf '\377'
-'@
-        $shimPath = Join-Path $shims 'git'
-        [IO.File]::WriteAllText($shimPath, $shim.Replace("`r`n", "`n").Replace("`r", "`n"))
-        $mode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
-        [IO.File]::SetUnixFileMode($shimPath, [IO.UnixFileMode]$mode)
-        $set = [IO.File]::GetUnixFileMode($shimPath)
-        if (($set -band [IO.UnixFileMode]::UserExecute) -eq 0) { throw 'git shim is not executable' }
+    # CreateProcess appends .exe to an extensionless name; a PATH git.cmd is not
+    # the program selected by UseShellExecute=false. Bind only the executable in
+    # this imported helper, retaining production hardening, byte capture and decode.
+    if (-not [IO.Path]::IsPathFullyQualified($GitExecutable) -or -not [IO.File]::Exists($GitExecutable)) {
+        throw 'a staged native GitExecutable is required for the encoding witness'
     }
-    $env:PATH = $shims + [IO.Path]::PathSeparator + $env:PATH
+    $definition = (Get-Command Invoke-CheckpointGit).ScriptBlock.Ast.Extent.Text
+    $needle = '$psi.FileName = ''git'''
+    if (([regex]::Matches($definition, [regex]::Escape($needle))).Count -ne 1) { throw 'git executable seam changed' }
+    $literal = "'" + $GitExecutable.Replace("'", "''") + "'"
+    . ([scriptblock]::Create($definition.Replace($needle, '$psi.FileName = ' + $literal)))
     $listed = Invoke-CheckpointGit $root @('status')
     $stdout = [string]$listed.Stdout
     if ($listed.Reason -cne 'git-encoding' -or -not [string]::IsNullOrEmpty($stdout)) {

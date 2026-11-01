@@ -987,7 +987,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                         exited.ExitCode,
                         MapExitReason(exited.ExitReason),
                         exited.LastSequence,
-                        exited.AcceptedStartedAt));
+                        exited.AcceptedStartedAt, exited.ExitSignal, exited.ExitStopIntent));
         }
 
         if (eventName == SessionRunnerEventNames.SessionAdopted)
@@ -1288,7 +1288,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.HerdrOrigin,
             dto.GrokRulesReceipt,
             dto.AcceptedStartedAt,
-            dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null);
+            dto.LabelObservation is { Version: 1, Intent.Version: 1 } observation ? observation : null,
+            ExitSignal: dto.ExitSignal, ExitStopIntent: dto.ExitStopIntent);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

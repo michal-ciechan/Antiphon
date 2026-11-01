@@ -25,7 +25,11 @@ public sealed class HostSession : IAsyncDisposable
     private long _lastSeq;
     private string _status = PtyHostStatus.WaitingForLaunch;
     private int? _exitCode;
+    private int? _exitSignal;
+    private Antiphon.SessionRunner.Contracts.ProcessStopIntentDto? _exitStopIntent = null;
     private string? _exitReason;
+    private DateTime _stopGeneration;
+    private DateTime? _stopChildStart;
     private int _cols;
     private int _rows;
     private string? _ansiLogPath;
@@ -57,10 +61,18 @@ public sealed class HostSession : IAsyncDisposable
         // runtime (a test) can now say which pseudoconsole its sessions get without reaching for
         // the process environment it shares with everything else.
         _runner = new PtyAgentRunner(options.PtyBackend);
+        if (OperatingSystem.IsLinux())
+        {
+            _runner.StopSignal = RecordStop;
+            _runner.StopWasIssued = signal => ReadStopIntent(signal) is { Outcome: ProcessStopOutcome.Issued,
+                Provenance: ProcessStopProvenance.LiveIssuer, Target: ProcessStopTarget.Child or ProcessStopTarget.Custody };
+        }
     }
 
     /// <summary>Completes when the host should exit; the result is the reason (for the log).</summary>
     public Task<string> ExitRequested => _exitRequested.Task;
+
+    public ProcessStopIntentStore? StopIntents { get; set; }
 
     public string Status
     {
@@ -115,6 +127,9 @@ public sealed class HostSession : IAsyncDisposable
         }
 
         _launchTimeoutCts?.Cancel();
+        _stopGeneration = launch.AcceptedStartedAt ?? launch.VerificationBinding?.Generation.AcceptedStartedAt ?? DateTime.MinValue;
+        if (OperatingSystem.IsLinux()) StopIntents ??= new ProcessStopIntentStore(
+            Path.Combine(Path.GetDirectoryName(_options.ManifestDir)!, "stop-intents"), warning: _log.Warn);
         _runner.OnData += OnData;
 
         try
@@ -191,6 +206,7 @@ public sealed class HostSession : IAsyncDisposable
 
         var childPid = _runner.Pid ?? 0;
         var childStart = TryGetProcessStartUtc(childPid) ?? _runner.StartedAt;
+        _stopChildStart = childStart;
 
         lock (_gate)
         {
@@ -253,7 +269,10 @@ public sealed class HostSession : IAsyncDisposable
             _sink = sink;
 
             if (_status == PtyHostStatus.Exited)
-                sink.TryWrite(new ExitedMessage(_exitCode, _exitReason ?? "Unknown", _lastSeq));
+            {
+                _exitStopIntent = ReadStopIntent(_exitSignal);
+                sink.TryWrite(new ExitedMessage(_exitCode, _exitReason ?? "Unknown", _lastSeq, _exitSignal, _exitStopIntent));
+            }
         }
 
         return null;
@@ -288,6 +307,28 @@ public sealed class HostSession : IAsyncDisposable
         }
     }
 
+    private bool? RecordStop(int pid, int signal, string path, Func<bool?> send)
+    {
+        if (StopIntents is null) return send();
+        var target = path == "CustodyRelease" ? ProcessStopTarget.Custody
+            : path == "HelperTimeout" ? ProcessStopTarget.Helper : ProcessStopTarget.Child;
+        bool? result = null;
+        StopIntents.Attempt(new() {
+            RequestId = Guid.NewGuid(), SessionId = _options.SessionId, AcceptedStartedAt = _stopGeneration,
+            HostInstanceId = _hostInstanceId, RequestedAtUtc = DateTime.UtcNow, TargetPid = pid > 0 ? pid : null,
+            TargetStartedAtUtc = target == ProcessStopTarget.Helper ? TryGetProcessStartUtc(pid) : _stopChildStart ?? TryGetProcessStartUtc(pid),
+            Target = target, AttemptedSignal = signal,
+            Path = path switch { "PortaFallback" => ProcessStopPath.PortaFallback, "Disposal" => ProcessStopPath.Disposal,
+                "CustodyRelease" => ProcessStopPath.CustodyRelease, _ => ProcessStopPath.ProcessTree },
+            CustodyNamespace = target == ProcessStopTarget.Custody ? _custody?.LinuxNamespaceId.ToString("D") : null,
+            CustodyContainer = target == ProcessStopTarget.Custody ? _custody?.ContainerId.ToString("D") : null,
+        }, () => result = send());
+        return result;
+    }
+
+    private ProcessStopIntentDto? ReadStopIntent(int? signal) =>
+        StopIntents?.Snapshot(_options.SessionId, _stopGeneration, signal) ?? _exitStopIntent;
+
     public Task<bool> KillAsync(TimeSpan timeout) => _runner.KillAsync(timeout);
 
     public void ClearLiveBuffer() => _runner.ClearLiveBuffer();
@@ -296,6 +337,7 @@ public sealed class HostSession : IAsyncDisposable
     {
         lock (_gate)
         {
+            _exitStopIntent = ReadStopIntent(_exitSignal);
             return new StatusReplyMessage(
                 _status,
                 _runner.Pid,
@@ -304,7 +346,8 @@ public sealed class HostSession : IAsyncDisposable
                 _rows,
                 _lastSeq,
                 _exitCode,
-                _exitReason);
+                _exitReason,
+                _exitSignal, _exitStopIntent);
         }
     }
 
@@ -392,17 +435,21 @@ public sealed class HostSession : IAsyncDisposable
 
     private async Task ObserveExitAsync()
     {
-        int exitCode;
+        int? exitCode;
+        int? exitSignal;
         string exitReason;
         try
         {
-            exitCode = await _runner.Exited;
+            var observation = await _runner.Completion;
+            exitCode = observation.ExitCode;
+            exitSignal = observation.ExitSignal;
             exitReason = _runner.ExitReason.ToString();
         }
         catch (Exception ex)
         {
             _log.Error("exit observer failed", ex);
-            exitCode = -1;
+            exitCode = null;
+            exitSignal = null;
             exitReason = "ObserverFailed";
         }
 
@@ -411,6 +458,8 @@ public sealed class HostSession : IAsyncDisposable
         {
             _status = PtyHostStatus.Exited;
             _exitCode = exitCode;
+            _exitSignal = exitSignal;
+            _exitStopIntent = ReadStopIntent(exitSignal);
             _exitReason = exitReason;
             lastSeq = _lastSeq;
         }
@@ -427,6 +476,8 @@ public sealed class HostSession : IAsyncDisposable
             _manifest = _manifest with
             {
                 ExitCode = exitCode,
+                ExitSignal = exitSignal,
+                ExitStopIntent = _exitStopIntent,
                 ExitReason = exitReason,
                 ExitedAtUtc = DateTime.UtcNow,
             };
@@ -434,10 +485,10 @@ public sealed class HostSession : IAsyncDisposable
             catch (Exception ex) { _log.Error("exit manifest save failed; lingering anyway", ex); }
         }
 
-        _log.Info($"Child exited (code {exitCode}, reason {exitReason}); lingering for runner ack");
+        _log.Info($"Child exited (code {exitCode}, signal {exitSignal?.ToString() ?? "unknown"}, reason {exitReason}); lingering for runner ack");
         lock (_gate)
         {
-            _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq));
+            _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq, exitSignal, _exitStopIntent));
         }
 
     }
@@ -527,6 +578,7 @@ public sealed class HostSession : IAsyncDisposable
             await _exitObserver;
         if (_custodyObserver is not null)
             await _custodyObserver;
+        StopIntents?.Dispose();
         _custodyLifetime.Dispose();
         _admission.Dispose();
     }

@@ -2,6 +2,10 @@
 # Qualification timing retention. ASCII-only.
 # A blank timing root, a nightly chunk, a chunk with no TRX, and a timed-out
 # chunk must all leave a sidecar and a summary table.
+param(
+    [ValidateSet('', 'CaptureShell')]
+    [string]$Case = ''
+)
 $ErrorActionPreference = 'Stop'
 $failed = 0
 
@@ -13,6 +17,256 @@ function Assert-Check {
     }
     Write-Host ('FAIL ' + $Name)
     $script:failed++
+}
+
+function Invoke-CaptureShellWitness {
+    $source = [IO.File]::ReadAllText($PSCommandPath)
+    $hardCodedShell = '$psi.FileName = ' + '"/bin/sh"'
+    $hardCodedHits = ([regex]::Matches($source, [regex]::Escape($hardCodedShell))).Count
+    Assert-Check ($hardCodedHits -eq 1) 'capture-shell-source-uses-resolver'
+    Assert-Check ($source.Contains('SKIP capture-identity shell-absent: no sh.exe on PATH and no Git for Windows sh.exe beside git')) 'capture-shell-absent-reason-present'
+    $missing = $false
+    if (-not (Get-Command Resolve-QualificationCaptureShell -ErrorAction SilentlyContinue)) {
+        Write-Host 'FAIL capture-shell-resolver-missing'
+        $script:failed++
+        $missing = $true
+    }
+    if (-not (Get-Command New-QualificationCaptureSeam -ErrorAction SilentlyContinue)) {
+        Write-Host 'FAIL capture-shell-seam-helper-missing'
+        $script:failed++
+        $missing = $true
+    }
+    if ($missing) { return }
+
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-sh-' + [guid]::NewGuid().ToString('N'))
+    $gitCmd = Join-Path $root 'Program Files/Git/cmd'
+    $gitUsr = Join-Path $root 'Program Files/Git/usr/bin'
+    $direct = Join-Path $root 'direct'
+    $empty = Join-Path $root 'empty'
+    $probeRoot = Join-Path $root 'probe'
+    $probeDir = Join-Path $probeRoot 'cap'
+    New-Item -ItemType Directory -Path $gitCmd, $gitUsr, $direct, $empty, $probeDir -Force | Out-Null
+    $plant = Join-Path $gitUsr 'sh.exe'
+    $plantBody = "#!/bin/sh`nprintf '%s\n' `"`$0`" > `"`$QTIMING_CAPTURE_SHELL_MARKER`"`nexec /bin/sh `"`$@`"`n"
+    [IO.File]::WriteAllText($plant, $plantBody)
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        [IO.File]::SetUnixFileMode($plant, [IO.UnixFileMode]'UserRead,UserWrite,UserExecute,GroupRead,GroupExecute,OtherRead,OtherExecute')
+    }
+    [IO.File]::WriteAllText((Join-Path $gitCmd 'git.exe'), 'git')
+    [IO.File]::WriteAllText((Join-Path $direct 'sh.exe'), 'direct')
+    $marker = Join-Path $root 'marker'
+    try {
+        $beside = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue $gitCmd
+        $besideText = [string]$beside
+        $besideOk = (-not [string]::IsNullOrWhiteSpace($besideText)) -and ($besideText -ne '/bin/sh') -and ($besideText.Replace('\', '/') -eq (([IO.Path]::GetFullPath($plant)).Replace('\', '/')))
+        Assert-Check $besideOk 'capture-shell-resolver-windows-shape'
+        $directShell = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue $direct
+        $directOk = ([string]$directShell).Replace('\', '/') -eq (([IO.Path]::GetFullPath((Join-Path $direct 'sh.exe'))).Replace('\', '/'))
+        Assert-Check $directOk 'capture-shell-resolver-path-sh-exe'
+        $onlyBin = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue '/bin'
+        $binRejected = [string]::IsNullOrWhiteSpace([string]$onlyBin)
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+            $binRejected = $binRejected -and (Test-Path -LiteralPath '/bin/sh' -PathType Leaf)
+        }
+        Assert-Check $binRejected 'capture-shell-resolver-skips-bin-sh'
+        $absent = Resolve-QualificationCaptureShell -Platform 'windows' -PathValue $empty
+        Assert-Check ([string]::IsNullOrWhiteSpace([string]$absent)) 'capture-shell-absent-skips'
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            Write-Host 'SKIP capture-shell-seam-start linux-planted-shell'
+            return
+        }
+        if (-not $besideOk) { return }
+        $seamPath = Join-Path $probeRoot 'seam.ps1'
+        New-QualificationCaptureSeam -Path $seamPath -Shell $besideText
+        $seamText = [IO.File]::ReadAllText($seamPath)
+        $seamOk = $seamText.Contains($besideText) -and (-not $seamText.Contains('$psi.FileName = "/bin/sh"'))
+        Assert-Check $seamOk 'capture-shell-seam-embeds-resolved-shell'
+        $env:QTIMING_CAPTURE_DIR = $probeDir
+        $env:QTIMING_CHILD_EXIT = '0'
+        $env:QTIMING_FORWARD = '1'
+        $env:QTIMING_CAPTURE_SHELL_MARKER = $marker
+        . $seamPath
+        $null = & $NightlySeams.StartProcess 'dotnet' @('--report-trx') $probeRoot 10000 @{
+            ANTIPHON_TEST_PHASE_ROOT = $probeRoot
+            QTIMING_CAPTURE_SHELL_MARKER = $marker
+        }
+        $markerText = ''
+        if (Test-Path -LiteralPath $marker) { $markerText = ([IO.File]::ReadAllText($marker)).Trim() }
+        $stdoutPath = Join-Path $probeDir 'stdout-0'
+        $stderrPath = Join-Path $probeDir 'stderr-0'
+        $exitPath = Join-Path $probeDir 'exit-0'
+        $stdout = ''
+        $stderr = ''
+        $exitText = ''
+        if (Test-Path -LiteralPath $stdoutPath) { $stdout = [IO.File]::ReadAllText($stdoutPath) }
+        if (Test-Path -LiteralPath $stderrPath) { $stderr = [IO.File]::ReadAllText($stderrPath) }
+        if (Test-Path -LiteralPath $exitPath) { $exitText = ([IO.File]::ReadAllText($exitPath)).Trim() }
+        $seen = @(Get-ChildItem -LiteralPath $probeDir -Filter 'seen-*' -File -ErrorAction SilentlyContinue)
+        $started = ($markerText -eq $besideText) -and ($stdout -eq 'QUAL-OUT') -and ($stderr -eq 'QUAL-ERR') -and ($exitText -eq '0') -and (@($seen).Count -ge 1)
+        Assert-Check $started 'capture-shell-seam-starts-resolved-shell'
+    } catch {
+        Write-Host ('FAIL capture-shell-witness ' + $_.Exception.Message)
+        $script:failed++
+    } finally {
+        Remove-Item Env:QTIMING_CAPTURE_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_CHILD_EXIT -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_FORWARD -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_CAPTURE_SHELL_MARKER -ErrorAction SilentlyContinue
+        Remove-Variable -Name NightlySeams -Scope Script -ErrorAction SilentlyContinue
+        Remove-Variable -Name NightlySeams -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Resolve-QualificationCaptureLink {
+    param([string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    try {
+        $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+        if ($item.LinkType -and $item.Target) {
+            $target = [string]@($item.Target)[0]
+            if (-not [IO.Path]::IsPathRooted($target)) {
+                $target = Join-Path (Split-Path -Parent $full) $target
+            }
+            $resolved = [IO.Path]::GetFullPath($target)
+            if (Test-Path -LiteralPath $resolved -PathType Leaf) { return $resolved }
+        }
+    } catch { }
+    return $full
+}
+
+function Resolve-QualificationCaptureShell {
+    param(
+        [string]$Platform = '',
+        [string]$PathValue = ''
+    )
+    if ([string]::IsNullOrWhiteSpace($Platform)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:QTIMING_CAPTURE_SHELL_PLATFORM)) {
+            $Platform = [string]$env:QTIMING_CAPTURE_SHELL_PLATFORM
+        } elseif (($env:OS -eq 'Windows_NT') -or ($IsWindows -eq $true)) {
+            $Platform = 'windows'
+        } else {
+            $Platform = 'linux'
+        }
+    }
+    $Platform = $Platform.ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:QTIMING_CAPTURE_SHELL_PATH)) {
+            $PathValue = [string]$env:QTIMING_CAPTURE_SHELL_PATH
+        } else {
+            $PathValue = [string]$env:PATH
+        }
+    }
+    # Linux keeps the literal /bin/sh. A Windows-shaped witness sets Platform
+    # to windows and must not select that path.
+    if ($Platform -eq 'linux' -and (Test-Path -LiteralPath '/bin/sh' -PathType Leaf)) {
+        return '/bin/sh'
+    }
+    $separator = [string][IO.Path]::PathSeparator
+    $dirs = @($PathValue -split [regex]::Escape($separator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($dir in $dirs) {
+        $candidate = Join-Path $dir 'sh.exe'
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $full = [IO.Path]::GetFullPath($candidate)
+        if ($Platform -eq 'windows' -and $full -eq '/bin/sh') { continue }
+        return $full
+    }
+    foreach ($dir in $dirs) {
+        foreach ($name in @('git.exe', 'git', 'sh.exe', 'sh')) {
+            $candidate = Join-Path $dir $name
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            $full = [IO.Path]::GetFullPath($candidate)
+            if ($Platform -eq 'windows' -and $full -eq '/bin/sh') { continue }
+            $linked = Resolve-QualificationCaptureLink $full
+            $installation = Split-Path -Parent (Split-Path -Parent $linked)
+            if ([string]::IsNullOrWhiteSpace($installation)) { continue }
+            foreach ($relative in @('usr/bin/sh.exe', 'bin/sh.exe')) {
+                $shell = $installation
+                foreach ($part in ($relative -split '/')) { $shell = Join-Path $shell $part }
+                if (-not (Test-Path -LiteralPath $shell -PathType Leaf)) { continue }
+                $shellFull = [IO.Path]::GetFullPath($shell)
+                if ($Platform -eq 'windows' -and $shellFull -eq '/bin/sh') { continue }
+                return $shellFull
+            }
+        }
+    }
+    if ($Platform -ne 'windows') {
+        foreach ($dir in $dirs) {
+            $candidate = Join-Path $dir 'sh'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return [IO.Path]::GetFullPath($candidate)
+            }
+        }
+    }
+    return $null
+}
+
+function New-QualificationCaptureSeam {
+    param([string]$Path, [string]$Shell)
+    $literal = ([string]$Shell).Replace('"', '`"')
+    $body = @'
+$NightlySeams = @{
+    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $argsText = @($ArgumentList) -join " "
+        if ($argsText -notmatch "--report-trx" -or $argsText -match "--list-tests") {
+            return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
+        }
+        $dir = [string]$env:QTIMING_CAPTURE_DIR
+        $seqPath = Join-Path $dir "seq"
+        $seq = 0
+        if (Test-Path -LiteralPath $seqPath) { $seq = [int]([IO.File]::ReadAllText($seqPath)) }
+        [IO.File]::WriteAllText($seqPath, ([string]($seq + 1)))
+        $seen = Join-Path $dir ("seen-" + $seq)
+        $code = [int]$env:QTIMING_CHILD_EXIT
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "QUALIFICATION_CAPTURE_SHELL"
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        [void]$psi.ArgumentList.Add("-c")
+        [void]$psi.ArgumentList.Add(('printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi; exit ' + $code))
+        if ($Environment) {
+            foreach ($key in @($Environment.Keys)) {
+                $name = [string]$key
+                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_")) { continue }
+                $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
+            }
+        }
+        $seenForShell = $seen
+        if ($seenForShell -match '^[A-Za-z]:\\') {
+            $drive = $seenForShell.Substring(0, 1).ToLowerInvariant()
+            $tail = $seenForShell.Substring(2) -replace '\\', '/'
+            $seenForShell = '/' + $drive + $tail
+        }
+        $psi.EnvironmentVariables["QTIMING_SEEN"] = $seenForShell
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        [void]$proc.WaitForExit()
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [IO.File]::WriteAllText((Join-Path $dir ("stdout-" + $seq)), $stdout, $utf8)
+        [IO.File]::WriteAllText((Join-Path $dir ("stderr-" + $seq)), $stderr, $utf8)
+        [IO.File]::WriteAllText((Join-Path $dir ("exit-" + $seq)), ([string]$proc.ExitCode))
+        return @{ ExitCode = [int]$proc.ExitCode; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = $proc.Id; LogText = ($stdout + $stderr) }
+    }
+}
+'@
+    [IO.File]::WriteAllText($Path, $body.Replace('QUALIFICATION_CAPTURE_SHELL', $literal))
+}
+
+if ($Case -eq 'CaptureShell') {
+    Invoke-CaptureShellWitness
+    if ($failed -gt 0) {
+        Write-Host ('FAILED ' + $failed)
+        exit 1
+    }
+    Write-Host 'OK'
+    exit 0
 }
 
 function Initialize-HarnessFifo {
@@ -497,12 +751,18 @@ $payload = [ordered]@{
 '@
         [IO.File]::WriteAllText($hugeScript, $hugeBody.Replace("`r", ''))
         $hugeRun = Invoke-QualificationWitness -ScriptPath $hugeScript -Arguments @($huge, $hugeResult, $lib) -TimeoutMilliseconds 8000
-        $hugeOk = $false
-        if ($hugeRun.Exited -and $hugeRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $hugeResult)) {
-            $hugeDoc = Get-Content -LiteralPath $hugeResult -Raw -Encoding UTF8 | ConvertFrom-Json
-            $hugeOk = ([double]$hugeDoc.seconds -lt 0.2 -and [int64]$hugeDoc.peak -lt 256MB -and -not [bool]$hugeDoc.complete -and [int]$hugeDoc.count -eq 0)
-        }
-        Assert-Check $hugeOk 'oversized-line-stays-inside-byte-and-time-cap'
+        $hugePresent = Test-Path -LiteralPath $hugeResult
+        $hugeDoc = $null
+        if ($hugePresent) { $hugeDoc = Get-Content -LiteralPath $hugeResult -Raw -Encoding UTF8 | ConvertFrom-Json }
+        # Keep the child facts in captured stdout/TRX before the temporary root is removed.
+        Write-Host ('MEASURED oversized-child ' + (@{ run = $hugeRun; resultPresent = $hugePresent; reader = $hugeDoc } | ConvertTo-Json -Depth 5 -Compress))
+        Assert-Check $hugeRun.Exited 'oversized-line-child-exited'
+        Assert-Check ($hugeRun.Exited -and $hugeRun.ExitCode -eq 0) 'oversized-line-child-exit-code'
+        Assert-Check $hugePresent 'oversized-line-child-result-present'
+        Assert-Check ($null -ne $hugeDoc -and [double]$hugeDoc.seconds -lt 0.2) 'oversized-line-reader-wall-budget'
+        Assert-Check ($null -ne $hugeDoc -and [int64]$hugeDoc.peak -lt 256MB) 'oversized-line-peak-memory'
+        Assert-Check ($null -ne $hugeDoc -and -not [bool]$hugeDoc.complete) 'oversized-line-incomplete'
+        Assert-Check ($null -ne $hugeDoc -and [int]$hugeDoc.count -eq 0) 'oversized-line-no-records'
 
         $fifoDir = Join-Path $boundTiming 'fifo-dir'
         New-Item -ItemType Directory -Path $fifoDir -Force | Out-Null
@@ -517,8 +777,23 @@ param([string]$Path, [string]$Result, [string]$Timing, [string]$Lib)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'nightly-common.ps1')
 . (Join-Path $Lib 'test-phase-evidence.ps1')
+$script:fifoOpenCalls = 0
+$script:fifoListCalls = 0
+$script:fifoListedEntries = 0
+$script:fifoListedFolder = ''
+$fifoOpen = ${function:Open-TestPhaseReadStream}
+function Open-TestPhaseReadStream {
+    param([string]$Path)
+    $script:fifoOpenCalls++
+    & $fifoOpen @PSBoundParameters
+}
+$fifoSums = ${function:Get-QualificationPhaseSums}.ToString()
+$list = '$entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)'
+$countedList = $list + '; $script:fifoListCalls++; $script:fifoListedEntries += $entries.Count; $script:fifoListedFolder = $folder'
+Set-Item -LiteralPath Function:Get-QualificationPhaseSums -Value ([scriptblock]::Create($fifoSums.Replace($list, $countedList)))
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
+$readSeconds = $sw.Elapsed.TotalSeconds
 $sums = Get-QualificationPhaseSums -TimingRoot $Timing -Chunk 'g1' -RunId 'run-fifo' -Suite 'antiphon' -Attempt '1'
 $sw.Stop()
 $waitNull = ($null -ne $sums -and $null -eq $sums.processWaitSeconds)
@@ -527,17 +802,31 @@ $payload = [ordered]@{
     complete = [bool]$read.Complete
     count = @($read.Records).Count
     waitNull = [bool]$waitNull
+    readSeconds = $readSeconds
+    openCalls = $script:fifoOpenCalls
+    listCalls = $script:fifoListCalls
+    listedEntries = $script:fifoListedEntries
+    listedFolder = $script:fifoListedFolder
 }
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($fifoScript, $fifoBody.Replace("`r", ''))
-        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 5000
+        $fifoRun = Invoke-QualificationWitness -ScriptPath $fifoScript -Arguments @($fifo, $fifoResult, $fifoDir, $lib) -TimeoutMilliseconds 15000
+        Assert-Check $fifoRun.Exited 'fifo-cases-file-child-exited'
+        Assert-Check ($fifoRun.ExitCode -eq 0) 'fifo-cases-file-child-exit-code'
         $fifoOk = $false
         if ($fifoOkCreated -and $fifoRun.Exited -and $fifoRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $fifoResult)) {
             $fifoDoc = Get-Content -LiteralPath $fifoResult -Raw -Encoding UTF8 | ConvertFrom-Json
-            $fifoOk = ([double]$fifoDoc.seconds -lt 0.2 -and -not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
+            Write-Host ('MEASURED fifo-child=' + $fifoRun.Seconds + ' body=' + $fifoDoc.seconds + ' read=' + $fifoDoc.readSeconds + ' opens=' + $fifoDoc.openCalls + ' lists=' + $fifoDoc.listCalls + ' entries=' + $fifoDoc.listedEntries)
+            Assert-Check ([int]$fifoDoc.openCalls -eq 0) 'fifo-cases-file-never-opens-stream'
+            Assert-Check ([int]$fifoDoc.listCalls -eq 1 -and [int]$fifoDoc.listedEntries -eq 1 -and [string]$fifoDoc.listedFolder -eq $fifoChunk) 'fifo-cases-file-lists-only-own-chunk'
+            # These two calls have independent product watches. Refusal before
+            # stream open and one bounded listing are the regression oracle;
+            # this outer wall allowance includes shared-host scheduling.
+            Assert-Check ([double]$fifoDoc.seconds -lt 0.5) 'fifo-cases-file-in-process-budget'
+            $fifoOk = (-not [bool]$fifoDoc.complete -and [int]$fifoDoc.count -eq 0 -and [bool]$fifoDoc.waitNull)
         }
-        Assert-Check $fifoOk 'fifo-cases-file-returns-inside-budget'
+        Assert-Check $fifoOk 'fifo-cases-file-refuses-unsafe-input'
 
         $denied = Join-Path $boundTiming 'cases-82-denied.jsonl'
         [IO.File]::WriteAllText($denied, '{"recordKind":"header"}' + "`n")
@@ -562,13 +851,16 @@ $payload = [ordered]@{
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
         [IO.File]::WriteAllText($deniedScript, $deniedBody.Replace("`r", ''))
-        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 5000
+        $deniedRun = Invoke-QualificationWitness -ScriptPath $deniedScript -Arguments @($denied, $deniedResult, $lib) -TimeoutMilliseconds 15000
+        Assert-Check $deniedRun.Exited 'unreadable-timing-file-child-exited'
+        Assert-Check ($deniedRun.ExitCode -eq 0) 'unreadable-timing-file-child-exit-code'
         $deniedOk = $false
         if ($deniedRun.Exited -and $deniedRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $deniedResult)) {
             $deniedDoc = Get-Content -LiteralPath $deniedResult -Raw -Encoding UTF8 | ConvertFrom-Json
-            $deniedOk = ([double]$deniedDoc.seconds -lt 0.2 -and -not [bool]$deniedDoc.complete -and [int]$deniedDoc.count -eq 0 -and [bool]$deniedDoc.sideNull)
+            Assert-Check ([double]$deniedDoc.seconds -lt 0.2) 'unreadable-timing-file-in-process-budget'
+            $deniedOk = (-not [bool]$deniedDoc.complete -and [int]$deniedDoc.count -eq 0 -and [bool]$deniedDoc.sideNull)
         }
-        Assert-Check $deniedOk 'unreadable-timing-file-returns-inside-budget'
+        Assert-Check $deniedOk 'unreadable-timing-file-refuses-unsafe-input'
         Set-HarnessUnixMode $denied '644'
 
         $launchRoot = Join-Path $boundRoot 'launch'
@@ -587,7 +879,14 @@ $NightlySeams = @{
         param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
         $argsText = @($ArgumentList) -join ' '
         if ($argsText -match '--report-trx' -and $argsText -notmatch '--list-tests') {
-            [IO.File]::WriteAllText($env:QTIMING_LAUNCH_MARKER, 'launched')
+            $script:launchWitnessCount++
+            $script:launchWitnessReached = $true
+            $marker = [ordered]@{
+                seconds = $script:launchWitnessWatch.Elapsed.TotalSeconds
+                sidecarReads = $script:launchWitnessSidecarReads
+                fifoOpens = $script:launchWitnessFifoOpens
+            }
+            [IO.File]::WriteAllText($env:QTIMING_LAUNCH_MARKER, ($marker | ConvertTo-Json -Compress))
         }
         return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
     }
@@ -596,7 +895,7 @@ $NightlySeams = @{
         [IO.File]::WriteAllText($launchSeam, $launchSeamBody.Replace("`r", ''))
         $launchScript = Join-Path $launchRoot 'launch.ps1'
         $launchBody = @'
-param([string]$Repo, [string]$LogRoot, [string]$Seam, [string]$Marker)
+param([string]$Repo, [string]$LogRoot, [string]$Seam, [string]$Marker, [string]$ResultPath)
 $ErrorActionPreference = 'Stop'
 $env:QTIMING_LAUNCH_MARKER = $Marker
 . (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
@@ -605,15 +904,56 @@ $env:QTIMING_LAUNCH_MARKER = $Marker
 . (Join-Path $Repo 'scripts/lib/release-gate.ps1')
 . (Join-Path $Repo 'scripts/lib/release-selection.ps1')
 . (Join-Path $Repo 'scripts/lib/nightly-tests-impl.ps1')
+$script:launchWitnessCount = 0
+$script:launchWitnessReached = $false
+$script:launchWitnessSidecarReads = 0
+$script:launchWitnessFifoOpens = 0
+$launchSidecar = ${function:Read-QualificationSidecar}
+function Read-QualificationSidecar {
+    param([string]$Path, $Watch = $null, [int]$DeadlineMilliseconds = 200)
+    if (-not $script:launchWitnessReached) { $script:launchWitnessSidecarReads++ }
+    & $launchSidecar @PSBoundParameters
+}
+$launchOpen = ${function:Open-TestPhaseReadStream}
+function Open-TestPhaseReadStream {
+    param([string]$Path)
+    if (-not $script:launchWitnessReached -and $Path -eq (Join-Path $LogRoot 'antiphon-all.timing.json')) { $script:launchWitnessFifoOpens++ }
+    & $launchOpen @PSBoundParameters
+}
 $sw = [Diagnostics.Stopwatch]::StartNew()
+$script:launchWitnessWatch = $sw
 $result = Invoke-AntiphonNightlyTests -RepoRoot $Repo -LogRoot $LogRoot -TimingRoot (Join-Path $LogRoot 'timing') -Suites @('antiphon') -Profile 'nightly' -Sha 'd3fd72f941abda0fd6026f5e564d66ac410bdf47' -RunId 'fifo-launch' -Trigger 'manual' -SeamsPath $Seam -AllowSharedTree
 $sw.Stop()
 $launched = Test-Path -LiteralPath $Marker
-if ($launched -and $null -ne $result -and $sw.Elapsed.TotalSeconds -lt 12) { exit 0 }
+$payload = [ordered]@{
+    seconds = $sw.Elapsed.TotalSeconds
+    launched = $launched
+    resultPresent = ($null -ne $result)
+    launchCount = $script:launchWitnessCount
+}
+[IO.File]::WriteAllText($ResultPath, ($payload | ConvertTo-Json -Compress))
+if ($launched -and $null -ne $result) { exit 0 }
 exit 1
 '@
         [IO.File]::WriteAllText($launchScript, $launchBody.Replace("`r", ''))
-        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker) -TimeoutMilliseconds 12000
+        $launchResult = Join-Path $launchRoot 'result.json'
+        # 20 cold children per arm: worse p95 body=6.971 s, child=12.396 s.
+        # Keep startup separate from body and protect launch order structurally.
+        $launchRun = Invoke-QualificationWitness -ScriptPath $launchScript -Arguments @($repo, $launchLog, $launchSeam, $launchMarker, $launchResult) -TimeoutMilliseconds 26000
+        Write-Host ('MEASURED launch-child=' + $launchRun.Seconds + ' exited=' + $launchRun.Exited + ' exit=' + $launchRun.ExitCode + ' marker=' + (Test-Path -LiteralPath $launchMarker))
+        Assert-Check $launchRun.Exited 'fifo-sidecar-launch-child-exited'
+        Assert-Check ($launchRun.ExitCode -eq 0) 'fifo-sidecar-launch-child-exit-code'
+        if (Test-Path -LiteralPath $launchResult) {
+            $launchDoc = Get-Content -LiteralPath $launchResult -Raw | ConvertFrom-Json
+            Write-Host ('MEASURED launch-body=' + $launchDoc.seconds + ' count=' + $launchDoc.launchCount)
+            Assert-Check ([double]$launchDoc.seconds -lt 15) 'fifo-sidecar-launch-body-budget'
+            Assert-Check ([bool]$launchDoc.resultPresent -and [int]$launchDoc.launchCount -eq 1) 'fifo-sidecar-launch-result-and-count'
+        } else { Assert-Check $false 'fifo-sidecar-launch-result-and-count' }
+        if (Test-Path -LiteralPath $launchMarker) {
+            $launchMark = Get-Content -LiteralPath $launchMarker -Raw | ConvertFrom-Json
+            Write-Host ('MEASURED launch-marker=' + $launchMark.seconds + ' reads-before-launch=' + $launchMark.sidecarReads + ' fifo-opens=' + $launchMark.fifoOpens)
+            Assert-Check ([int]$launchMark.sidecarReads -eq 0 -and [int]$launchMark.fifoOpens -eq 0) 'fifo-sidecar-no-reads-before-launch'
+        } else { Assert-Check $false 'fifo-sidecar-no-reads-before-launch' }
         $launchOk = ($launchCreated -and $launchRun.Exited -and $launchRun.ExitCode -eq 0 -and (Test-Path -LiteralPath $launchMarker))
         Assert-Check $launchOk 'fifo-sidecar-does-not-delay-launch'
     }
@@ -806,17 +1146,54 @@ try {
     for ($n = 0; $n -lt 100000; $n++) { [void]$aggDense.Append('0,') }
     [void]$aggDense.Append('0]}')
     [IO.File]::WriteAllText((Join-Path $aggLog 'antiphon-g9.timing.json'), $aggDense.ToString())
+    $aggSavedReaders = @{}
+    $script:aggReadBytes = 0L
+    $script:aggOpenPaths = New-Object System.Collections.Generic.List[string]
+    $script:aggSuccessfulPaths = New-Object System.Collections.Generic.List[string]
+    $aggSavedOpen = ${function:Open-TestPhaseReadStream}
+    function Open-TestPhaseReadStream {
+        param([string]$Path)
+        $script:aggOpenPaths.Add($Path)
+        $opened = & $aggSavedOpen @PSBoundParameters
+        if (-not $opened.Refused -and $null -ne $opened.Stream) { $script:aggSuccessfulPaths.Add($Path) }
+        return $opened
+    }
+    foreach ($readerName in @('Read-TestPhaseBoundedBytes', 'Read-QualificationShardHeader', 'Read-QualificationTimingJsonl', 'Get-QualificationTrxStats')) {
+        $reader = Get-Item -LiteralPath ('Function:' + $readerName)
+        $aggSavedReaders[$readerName] = $reader.ScriptBlock
+        $dispose = 'try { $opened.Stream.Dispose() } catch { }'
+        $instrumented = $reader.ScriptBlock.ToString().Replace($dispose, ('$script:aggReadBytes += $opened.Stream.Position; ' + $dispose))
+        Set-Item -LiteralPath ('Function:' + $readerName) -Value ([scriptblock]::Create($instrumented))
+    }
     $aggWatch = [Diagnostics.Stopwatch]::StartNew()
     $agg = Invoke-QualificationPostRunAggregation -ChunkExitCode 7 -ChunkResult 'KEEP-7' -LogRoot $aggLog -TimingRoot $aggTiming -Suite 'antiphon' -Chunk 'g9' -TrxPath $aggFifo -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'agg' -Attempt '1'
     $aggWatch.Stop()
+    foreach ($readerName in $aggSavedReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $aggSavedReaders[$readerName] }
+    Set-Item -LiteralPath Function:Open-TestPhaseReadStream -Value $aggSavedOpen
     $aggDoc = Get-Content -LiteralPath (Join-Path $aggLog 'antiphon-g9.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED hostile-aggregation=' + $aggWatch.Elapsed.TotalSeconds + ' exit=' + $agg.ChunkExitCode + ' result=' + $agg.ChunkResult + ' why=' + $aggDoc.why)
     $aggPhases = ($null -eq $aggDoc.p50Seconds -and $null -eq $aggDoc.p95Seconds -and $null -eq $aggDoc.maxSeconds -and $null -eq $aggDoc.fixtureSetupSeconds -and $null -eq $aggDoc.fixtureTeardownSeconds -and $null -eq $aggDoc.processSpawnSeconds -and $null -eq $aggDoc.processWaitSeconds)
-    $aggOk = ($aggFifoOk -and $aggWatch.Elapsed.TotalSeconds -lt 0.2 -and [int]$agg.ChunkExitCode -eq 7 -and [string]$agg.ChunkResult -eq 'KEEP-7' -and [string]$aggDoc.why -eq 'timing-read-refused' -and $aggPhases -and @($aggDoc.slowest).Count -eq 0)
+    $aggAllowedPaths = @((Join-Path $aggLog 'antiphon-g9.timing.json'), $aggHuge)
+    $aggUnexpectedOpens = @($script:aggOpenPaths | Where-Object { $_ -notin ($aggAllowedPaths + @($aggDenied)) })
+    $aggUnexpectedStreams = @($script:aggSuccessfulPaths | Where-Object { $_ -notin $aggAllowedPaths })
+    # The header scanner can consume one extra 8 KiB refill to detect an
+    # overlong line. A regular mode-000 file may reach a refused native open.
+    $aggMaxReadBytes = [Text.Encoding]::UTF8.GetByteCount($aggDense.ToString()) + 262144 + 8192
+    Write-Host ('MEASURED hostile-read-bytes=' + $script:aggReadBytes + ' max=' + $aggMaxReadBytes + ' opens=' + $script:aggOpenPaths.Count + ' streams=' + $script:aggSuccessfulPaths.Count)
+    Assert-Check ($script:aggReadBytes -le $aggMaxReadBytes -and $script:aggOpenPaths.Count -le 3 -and $script:aggSuccessfulPaths.Count -le 2 -and $aggUnexpectedOpens.Count -eq 0 -and $aggUnexpectedStreams.Count -eq 0) 'post-run-hostile-files-bounded-reads'
+    # Base witness: 200 samples, p95=144 ms, max=672 ms, 7 old wall failures.
+    # Bound actual reads; allow 2x the observed wall maximum for scheduling/IO.
+    Assert-Check ($aggWatch.Elapsed.TotalSeconds -lt 1.5) 'post-run-hostile-files-wall-budget'
+    $aggOk = ($aggFifoOk -and [int]$agg.ChunkExitCode -eq 7 -and [string]$agg.ChunkResult -eq 'KEEP-7' -and [string]$aggDoc.why -eq 'timing-read-refused' -and $aggPhases -and @($aggDoc.slowest).Count -eq 0)
     Assert-Check $aggOk 'post-run-hostile-files-keep-exit-inside-budget'
 } catch {
     Write-Host ('FAIL post-run-hostile-files-keep-exit-inside-budget ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $aggSavedReaders) {
+        foreach ($readerName in $aggSavedReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $aggSavedReaders[$readerName] }
+    }
+    if ($null -ne $aggSavedOpen) { Set-Item -LiteralPath Function:Open-TestPhaseReadStream -Value $aggSavedOpen }
     if (Test-Path -LiteralPath $aggDenied) { Set-HarnessUnixMode $aggDenied '644' }
     Remove-Item -LiteralPath $aggRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -898,56 +1275,20 @@ exit $LASTEXITCODE
 }
 }
 
+# Windows-shaped capture shell: Git sh.exe through the resolver, never a literal /bin/sh.
+Invoke-CaptureShellWitness
+
 # Stdout, stderr, and the chunk exit stay the same with the phase environment forwarded or stripped.
+$captureShell = Resolve-QualificationCaptureShell
+if ([string]::IsNullOrWhiteSpace([string]$captureShell)) {
+    Write-Host 'SKIP capture-identity shell-absent: no sh.exe on PATH and no Git for Windows sh.exe beside git'
+    Write-Host 'DIAG capture-identity shell-absent'
+} else {
+Write-Host ('DIAG capture-identity shell=' + $captureShell)
 $capRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-cap-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $capRoot -Force | Out-Null
 $capSeam = Join-Path $capRoot 'seam.ps1'
-@'
-$NightlySeams = @{
-    DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
-    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-    StartProcess = {
-        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-        $argsText = @($ArgumentList) -join " "
-        if ($argsText -notmatch "--report-trx" -or $argsText -match "--list-tests") {
-            return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
-        }
-        $dir = [string]$env:QTIMING_CAPTURE_DIR
-        $seqPath = Join-Path $dir "seq"
-        $seq = 0
-        if (Test-Path -LiteralPath $seqPath) { $seq = [int]([IO.File]::ReadAllText($seqPath)) }
-        [IO.File]::WriteAllText($seqPath, ([string]($seq + 1)))
-        $seen = Join-Path $dir ("seen-" + $seq)
-        $code = [int]$env:QTIMING_CHILD_EXIT
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "/bin/sh"
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        [void]$psi.ArgumentList.Add("-c")
-        [void]$psi.ArgumentList.Add(('printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi; exit ' + $code))
-        if ($Environment) {
-            foreach ($key in @($Environment.Keys)) {
-                $name = [string]$key
-                if ($env:QTIMING_FORWARD -ne "1" -and $name.StartsWith("ANTIPHON_TEST_PHASE_")) { continue }
-                $psi.EnvironmentVariables[$name] = [string]$Environment[$key]
-            }
-        }
-        $psi.EnvironmentVariables["QTIMING_SEEN"] = $seen
-        $proc = New-Object System.Diagnostics.Process
-        $proc.StartInfo = $psi
-        [void]$proc.Start()
-        $stdout = $proc.StandardOutput.ReadToEnd()
-        $stderr = $proc.StandardError.ReadToEnd()
-        [void]$proc.WaitForExit()
-        $utf8 = New-Object System.Text.UTF8Encoding $false
-        [IO.File]::WriteAllText((Join-Path $dir ("stdout-" + $seq)), $stdout, $utf8)
-        [IO.File]::WriteAllText((Join-Path $dir ("stderr-" + $seq)), $stderr, $utf8)
-        [IO.File]::WriteAllText((Join-Path $dir ("exit-" + $seq)), ([string]$proc.ExitCode))
-        return @{ ExitCode = [int]$proc.ExitCode; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = $proc.Id; LogText = ($stdout + $stderr) }
-    }
-}
-'@ | Set-Content -LiteralPath $capSeam -Encoding ascii
+New-QualificationCaptureSeam -Path $capSeam -Shell ([string]$captureShell)
 function Get-QualificationCapturePayload {
     param([string]$Dir)
     $logs = @(Get-ChildItem -LiteralPath $Dir -Recurse -Filter '*-tests.log' -File -ErrorAction SilentlyContinue | Sort-Object FullName)
@@ -1005,13 +1346,14 @@ try {
         Assert-Check $same ('capture-identity-exit-' + $childExit)
     }
 } catch {
-    Write-Host ('FAIL capture-identity ' + $_.Exception.Message)
+    Write-Host ('FAIL capture-identity shell=' + $captureShell + ' ' + $_.Exception.Message)
     $script:failed++
 } finally {
     Remove-Item Env:QTIMING_CHILD_EXIT -ErrorAction SilentlyContinue
     Remove-Item Env:QTIMING_FORWARD -ErrorAction SilentlyContinue
     Remove-Item Env:QTIMING_CAPTURE_DIR -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $capRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 }
 
 # A several-thousand-result TRX and a JSONL shard past the old 256 KiB / 4000 line
@@ -1127,16 +1469,33 @@ try {
     } finally {
         $hugeTagWriter.Dispose()
     }
+    $savedHugeBudget = ${function:New-QualificationReadBudget}
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $savedHugeStats = (Get-Item -LiteralPath 'Function:Get-QualificationTrxStats').ScriptBlock
+    $script:hugeTagReadBytes = 0L
+    $hugeDispose = 'try { $opened.Stream.Dispose() } catch { }'
+    $hugeInstrumented = $savedHugeStats.ToString().Replace($hugeDispose, ('$script:hugeTagReadBytes += $opened.Stream.Position; ' + $hugeDispose))
+    Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value ([scriptblock]::Create($hugeInstrumented))
     $hugeSw = [Diagnostics.Stopwatch]::StartNew()
     $hugeAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 4 -ChunkResult 'KEEP-4' -LogRoot $hugeLog -TimingRoot $hugeTiming -Suite 'antiphon' -Chunk 'g6' -TrxPath $hugeTag -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'run-huge' -Attempt '1'
     $hugeSw.Stop()
+    Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value $savedHugeStats
+    ${function:New-QualificationReadBudget} = $savedHugeBudget
     $hugeDoc = Get-Content -LiteralPath (Join-Path $hugeLog 'antiphon-g6.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $hugePhases = ($null -eq $hugeDoc.p50Seconds -and $null -eq $hugeDoc.fixtureSetupSeconds -and @($hugeDoc.slowest).Count -eq 0)
-    Assert-Check ($hugeSw.Elapsed.TotalSeconds -lt 0.2 -and [int]$hugeAgg.ChunkExitCode -eq 4 -and [string]$hugeAgg.ChunkResult -eq 'KEEP-4' -and [string]$hugeDoc.why -eq 'timing-read-refused' -and $hugePhases) 'unterminated-trx-tag-stays-inside-budget'
+    Write-Host ('MEASURED unterminated-trx-tag ' + (@{ seconds = $hugeSw.Elapsed.TotalSeconds; bytes = $script:hugeTagReadBytes; verdict = $hugeAgg; document = $hugeDoc } | ConvertTo-Json -Depth 5 -Compress))
+    # The real scanner stops at its 256 KiB tag cap plus one 8 KiB refill.
+    # A stopped reader clock tests that cap rather than host scheduling.
+    Assert-Check ($script:hugeTagReadBytes -gt 0 -and $script:hugeTagReadBytes -le (262144 + 8192)) 'unterminated-trx-tag-bounded-read-bytes'
+    Assert-Check ($hugeAgg.ChunkExitCode -eq 4 -and $hugeAgg.ChunkResult -eq 'KEEP-4') 'unterminated-trx-tag-verdict-preserved'
+    Assert-Check ($hugeDoc.why -eq 'timing-read-refused') 'unterminated-trx-tag-refused'
+    Assert-Check $hugePhases 'unterminated-trx-tag-null-metrics'
 } catch {
     Write-Host ('FAIL five-thousand-result-trx ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $savedHugeStats) { Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value $savedHugeStats }
+    if ($null -ne $savedHugeBudget) { ${function:New-QualificationReadBudget} = $savedHugeBudget }
     Remove-Item -LiteralPath $wideRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -1348,24 +1707,53 @@ try {
     $listSw = [Diagnostics.Stopwatch]::StartNew()
     $listedForeign = @(Get-ChildItem -LiteralPath $foreignTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $listSw.Stop()
+    # Count actual bytes through the real reader, including accidental foreign reads.
+    $savedForeignReaders = @{}
+    $script:foreignReadBytes = 0L
+    foreach ($readerName in @('Read-QualificationTimingJsonl', 'Read-QualificationShardHeader')) {
+        $reader = Get-Item -LiteralPath ('Function:' + $readerName)
+        $savedForeignReaders[$readerName] = $reader.ScriptBlock
+        $dispose = 'try { $opened.Stream.Dispose() } catch { }'
+        $instrumented = $reader.ScriptBlock.ToString().Replace($dispose, ('$script:foreignReadBytes += $opened.Stream.Position; ' + $dispose))
+        Set-Item -LiteralPath ('Function:' + $readerName) -Value ([scriptblock]::Create($instrumented))
+    }
+    $savedForeignBudget = ${function:New-QualificationReadBudget}
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $phaseReader = Get-Item -LiteralPath 'Function:Get-QualificationPhaseSums'
+    $savedForeignReaders['Get-QualificationPhaseSums'] = $phaseReader.ScriptBlock
+    $script:foreignListedPaths = [Collections.Generic.List[string]]::new()
+    $script:foreignListedCounts = [Collections.Generic.List[int]]::new()
+    $listStatement = '$entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)'
+    $phaseInstrumented = $phaseReader.ScriptBlock.ToString().Replace($listStatement, ($listStatement + '; $script:foreignListedPaths.Add($folder); $script:foreignListedCounts.Add($entries.Count)'))
+    Set-Item -LiteralPath 'Function:Get-QualificationPhaseSums' -Value ([scriptblock]::Create($phaseInstrumented))
     $foreignSw = [Diagnostics.Stopwatch]::StartNew()
     $foreignAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 5 -ChunkResult 'KEEP-5' -LogRoot $foreignLog -TimingRoot $foreignTiming -Suite 'antiphon' -Chunk 'g-own' -TrxPath $ownTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:01:00.0000000Z' -RunId 'run-own' -Attempt '1'
     $foreignSw.Stop()
+    foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
     $foreignDoc = Get-Content -LiteralPath (Join-Path $foreignLog 'antiphon-g-own.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED foreign-journal-files=' + $listedForeign.Count + ' bytes=' + $foreignBytes + ' list-ms=' + [math]::Round($listSw.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($foreignSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$foreignDoc.why + ' trx-bytes=' + $ownTrxBytes)
     $foreignOwn = ([string]$foreignDoc.why -eq '' -and [int]$foreignDoc.testCount -eq 2 -and [math]::Abs([double]$foreignDoc.p50Seconds - 1) -lt 0.001 -and [math]::Abs([double]$foreignDoc.p95Seconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.maxSeconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$foreignDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $foreignDoc.processWaitSeconds -and $null -eq $foreignDoc.fixtureTeardownSeconds)
-    $foreignBound = ($foreignSw.Elapsed.TotalSeconds -lt 0.2 -and $listedForeign.Count -eq 40 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192)
+    Assert-Check ($listedForeign.Count -eq 40 -and $foreignBytes -gt 150MB -and $ownTrxBytes -ge 8192) 'foreign-journal-corpus-size'
+    $ownJournalBytes = [int64](Get-Item -LiteralPath (Join-Path $ownChunk $ownName)).Length
+    Write-Host ('MEASURED journal-read-bytes=' + $script:foreignReadBytes + ' own-journal-bytes=' + $ownJournalBytes)
+    Assert-Check ($script:foreignReadBytes -eq $ownJournalBytes) 'own-chunk-reads-only-own-journal-bytes'
+    Assert-Check ($script:foreignListedPaths.Count -eq 1 -and $script:foreignListedPaths[0] -eq $ownChunk -and $script:foreignListedCounts[0] -eq 2) 'own-chunk-lists-only-own-directory'
     $foreignExit = ([int]$foreignAgg.ChunkExitCode -eq 5 -and [string]$foreignAgg.ChunkResult -eq 'KEEP-5')
-    Assert-Check ($foreignOwn -and $foreignBound -and $foreignExit) 'own-chunk-ignores-foreign-journals'
+    Assert-Check ($foreignOwn -and $foreignExit) 'own-chunk-ignores-foreign-journals'
 } catch {
     Write-Host ('FAIL own-chunk-ignores-foreign-journals ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $savedForeignReaders) {
+        foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
+    }
+    if ($null -ne $savedForeignBudget) { ${function:New-QualificationReadBudget} = $savedForeignBudget }
     Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# CARD-1598: the post-exit read must stay inside 200 ms when the shared timing
-# root holds 600 other journals, and a rerun must not open the earlier attempt.
+# CARD-1598: the product retains its 200 ms read deadline when the shared timing
+# root holds 600 other journals. Correctness uses an injected unexhausted budget.
+# A rerun must not open the earlier attempt.
 $crowdRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-crowd-' + [guid]::NewGuid().ToString('N'))
 $crowdLog = Join-Path $crowdRoot 'logs'
 $crowdTiming = Join-Path $crowdLog 'timing'
@@ -1421,19 +1809,65 @@ try {
     $crowdList = [Diagnostics.Stopwatch]::StartNew()
     $crowdListed = @(Get-ChildItem -LiteralPath $crowdTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $crowdList.Stop()
+    $defaultCrowdBudget = New-QualificationReadBudget
+    Assert-Check ($defaultCrowdBudget.DeadlineMilliseconds -eq 200 -and $defaultCrowdBudget.Watch.IsRunning) 'terminal-reader-default-budget-unchanged'
+    $savedCrowdBudget = ${function:New-QualificationReadBudget}
+    $savedCrowdOpen = ${function:Open-TestPhaseReadStream}
+    $script:crowdOpens = [Collections.Generic.List[string]]::new()
+    function Open-TestPhaseReadStream {
+        param([string]$Path)
+        $script:crowdOpens.Add($Path)
+        & $savedCrowdOpen -Path $Path
+    }
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $crowdArgs = @{ ChunkExitCode = 0; ChunkResult = 'KEEP-0'; LogRoot = $crowdLog; TimingRoot = $crowdTiming; Suite = 'antiphon'; Chunk = 'g-600'; TrxPath = $crowdTrx; LastPhase = 'complete'; StartedAt = '2026-10-28T00:00:00.0000000Z'; CompletedAt = '2026-10-28T00:01:00.0000000Z'; RunId = 'run-600'; Attempt = '2' }
     $crowdSw = [Diagnostics.Stopwatch]::StartNew()
-    $crowdAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 0 -ChunkResult 'KEEP-0' -LogRoot $crowdLog -TimingRoot $crowdTiming -Suite 'antiphon' -Chunk 'g-600' -TrxPath $crowdTrx -LastPhase 'complete' -StartedAt '2026-10-28T00:00:00.0000000Z' -CompletedAt '2026-10-28T00:01:00.0000000Z' -RunId 'run-600' -Attempt '2'
+    $crowdAgg = Invoke-QualificationPostRunAggregation @crowdArgs
     $crowdSw.Stop()
-    $crowdDoc = Get-Content -LiteralPath (Join-Path $crowdLog 'antiphon-g-600.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    Write-Host ('MEASURED six-hundred-journals files=' + $crowdListed.Count + ' root-list-ms=' + [math]::Round($crowdList.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($crowdSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$crowdDoc.why + ' setup=' + $crowdDoc.fixtureSetupSeconds + ' teardown=' + $crowdDoc.fixtureTeardownSeconds + ' spawn=' + $crowdDoc.processSpawnSeconds + ' wait=' + $crowdDoc.processWaitSeconds)
-    $crowdPhases = ([string]$crowdDoc.why -eq '' -and [math]::Abs([double]$crowdDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$crowdDoc.fixtureTeardownSeconds - 0.5) -lt 0.001 -and [math]::Abs([double]$crowdDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $crowdDoc.processWaitSeconds)
-    $crowdBound = ($crowdSw.Elapsed.TotalSeconds -lt 0.2 -and $crowdListed.Count -eq 601)
-    $crowdExit = ([int]$crowdAgg.ChunkExitCode -eq 0 -and [string]$crowdAgg.ChunkResult -eq 'KEEP-0')
-    Assert-Check ($crowdPhases -and $crowdBound -and $crowdExit) 'six-hundred-journals-stay-inside-budget'
+    $crowdPath = Join-Path $crowdLog 'antiphon-g-600.timing.json'
+    $crowdDoc = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED six-hundred-journals terminal-ms=' + $crowdSw.Elapsed.TotalMilliseconds + ' opens=' + $script:crowdOpens.Count + ' document=' + ($crowdDoc | ConvertTo-Json -Compress -Depth 5))
+    $crowdAllowed = @($crowdTrx, (Join-Path $crowdDir 'cases-42-own1.jsonl'), (Join-Path $crowdDir 'cases-7-bare.jsonl'))
+    Assert-Check ($crowdListed.Count -eq 601) 'six-hundred-journal-corpus-size'
+    Assert-Check ($script:crowdOpens.Count -eq 4 -and @($script:crowdOpens | Where-Object { $_ -notin $crowdAllowed }).Count -eq 0) 'six-hundred-journals-only-own-bounded-reads'
+    Assert-Check ([string]$crowdDoc.why -eq '' -and $crowdDoc.fixtureSetupSeconds -eq 1.25 -and $crowdDoc.fixtureTeardownSeconds -eq 0.5 -and $crowdDoc.processSpawnSeconds -eq 0.4 -and $null -eq $crowdDoc.processWaitSeconds -and $crowdDoc.testCount -eq 1) 'six-hundred-journals-unexhausted-complete'
+    Assert-Check ($crowdAgg.ChunkExitCode -eq 0 -and $crowdAgg.ChunkResult -eq 'KEEP-0') 'six-hundred-journals-unexhausted-verdict'
+
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 0 } }
+    $crowdArgs.ChunkExitCode = 7
+    $crowdArgs.ChunkResult = 'KEEP-7'
+    $crowdExhausted = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdGap = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED exhausted-publication ' + ($crowdGap | ConvertTo-Json -Compress -Depth 5))
+    Assert-Check ($crowdGap.why -eq 'timing-read-refused') 'six-hundred-journals-exhausted-refused'
+    $crowdMetrics = @('fixtureSetupSeconds','fixtureTeardownSeconds','processSpawnSeconds','processWaitSeconds','p50Seconds','p95Seconds','maxSeconds')
+    Assert-Check (@($crowdMetrics | Where-Object { $null -ne $crowdGap.$_ }).Count -eq 0 -and $crowdGap.testCount -eq 0 -and @($crowdGap.slowest).Count -eq 0) 'six-hundred-journals-exhausted-null-metrics'
+    Assert-Check ($crowdExhausted.ChunkExitCode -eq 7 -and $crowdExhausted.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-exhausted-verdict'
+
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $crowdRecovered = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdRecovery = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host ('MEASURED recovered-publication ' + ($crowdRecovery | ConvertTo-Json -Compress -Depth 5))
+    Assert-Check ($crowdRecovery.why -eq '' -and $crowdRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdRecovery.fixtureTeardownSeconds -eq 0.5 -and $crowdRecovery.processSpawnSeconds -eq 0.4 -and $crowdRecovery.testCount -eq 1) 'six-hundred-journals-next-publication-recovers'
+    Assert-Check ($crowdRecovered.ChunkExitCode -eq 7 -and $crowdRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-recovery-verdict'
+    # Repeat without process memory to exercise recovery from the persisted sidecar.
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 0 } }
+    $null = Invoke-QualificationPostRunAggregation @crowdArgs
+    $script:QualificationChunkMemory.Remove($crowdLog + '|antiphon|g-600')
+    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $crowdDiskRecovered = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdDiskRecovery = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Check ($crowdDiskRecovery.why -eq '' -and $crowdDiskRecovery.testCount -eq 1 -and $crowdDiskRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdDiskRecovered.ChunkExitCode -eq 7 -and $crowdDiskRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-persisted-gap-recovers'
+    $crowdArgs.Why = 'suite-failed'
+    $null = Invoke-QualificationPostRunAggregation @crowdArgs
+    $crowdExplicit = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Check ($crowdExplicit.why -eq 'suite-failed') 'six-hundred-journals-explicit-failure-preserved'
 } catch {
     Write-Host ('FAIL six-hundred-journals-stay-inside-budget ' + $_.Exception.Message)
     $script:failed++
 } finally {
+    if ($null -ne $savedCrowdBudget) { ${function:New-QualificationReadBudget} = $savedCrowdBudget }
+    if ($null -ne $savedCrowdOpen) { ${function:Open-TestPhaseReadStream} = $savedCrowdOpen }
     Remove-Item -LiteralPath $crowdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

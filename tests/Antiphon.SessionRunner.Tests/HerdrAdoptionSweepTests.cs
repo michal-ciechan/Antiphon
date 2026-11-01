@@ -968,6 +968,7 @@ public class HerdrAdoptionSweepTests
             TabId = tabId,
             PaneId = paneId,
             ChildPid = childPid,
+            ChildLinuxIdentity = childPid is int pid ? LinuxProcessIdentity.TryRead(pid) : null,
             ShellPid = 1,
             LaunchedAtUtc = launched,
             Cwd = settings.SessionLogPath,
