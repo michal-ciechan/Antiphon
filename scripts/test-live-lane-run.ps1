@@ -10,8 +10,13 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/live-lane-run.ps1"
 $ResultsDirectory = New-C487Root $ResultsDirectory
 $repo = Split-Path $PSScriptRoot -Parent
-# Commission base, never repinned to make a candidate pass.
-$base = 'f1b957c7fe5bf2474ea01256891e66c611a40fc8'
+# These five inputs are the census. Compare them to this commit's own blobs with
+# newlines normalised: an LF checkout and a CRLF checkout of the same blob agree,
+# and a real policy or reader edit does not. The old commission SHA is not an
+# ancestor of this line, so a whole-tree diff against it stays red after later commits.
+$script:ProtectedInputs = @(
+    'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
+    'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
 $method = $Case -replace '^C1545_', ''
 function Check([string]$Id, [bool]$Ok) { Assert-C487 $Ok "C1545 $method/$Id" 'contract mismatch (synthetic inputs only)' }
 function New-Fixture {
@@ -154,29 +159,25 @@ function Test-LockBeforeSlot {
         Check $id ($r.ExitCode -eq 2 -and (No-Starts))
     }
 }
+function ConvertTo-LfText([string]$Text) {
+    if ($null -eq $Text) { return '' }
+    return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
+}
+function Get-OwnBlobText([string]$Path) {
+    $rev = (& git -C $repo rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $rev.Length -ne 40) { throw 'own blob unavailable' }
+    $text = (& git -C $repo show "${rev}:${Path}") -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw 'own blob unavailable' }
+    return (ConvertTo-LfText ($text + "`n"))
+}
 function Test-ProtectedInputs([string]$Overlay = '') {
-    # All pre-existing executable/config inputs, including definitions and old tests,
-    # are protected. New executable paths are enumerated individually.
-    $allowed = @('scripts/run-live-lane.ps1','scripts/lib/live-lane-run.ps1','scripts/test-live-lane-run.ps1',
-        'tests/live-lane-checkpoints/live-claude-core-windows.yaml','tests/Antiphon.Tests/Scripts/LiveLaneRunnerTests.cs',
-        'scripts/lib/live-lane-outcome.ps1','scripts/test-live-lane-outcome.ps1',
-        'tests/Antiphon.Tests/Scripts/LiveLaneOutcomeTests.cs')
-    $existing = @(& git -C $repo ls-tree -r --name-only $base)
-    if ($LASTEXITCODE -ne 0 -or $existing.Count -lt 100) { throw 'base tree unavailable' }
-    $changed = @(& git -C $repo diff --name-only $base --)
-    if ($LASTEXITCODE -ne 0) { throw 'candidate diff unavailable' }
-    $changed += @(& git -C $repo ls-files --others --exclude-standard)
-    foreach ($path in $changed) {
-        if ($path -cmatch '^docs/superpowers/plans/[^/]+\.md$' -or $path -cmatch '^\.antiphon/task-[^/]+\.md$') { continue }
-        if ($existing -contains $path -or $allowed -cnotcontains $path) { return $false }
-    }
-    if ($Overlay) {
-        foreach ($path in @('scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
-            'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')) {
-            $expected = & git -C $repo rev-parse "${base}:$path"
-            $actual = & git -C $repo hash-object -- (Join-Path $Overlay $path)
-            if ($LASTEXITCODE -ne 0 -or $actual -cne $expected) { return $false }
-        }
+    # Protected inputs match this commit's own blobs after newline normalisation.
+    $root = if ([string]::IsNullOrWhiteSpace($Overlay)) { $repo } else { $Overlay }
+    foreach ($path in $script:ProtectedInputs) {
+        $actualPath = Join-Path $root $path
+        if (-not (Test-Path -LiteralPath $actualPath)) { return $false }
+        $actual = ConvertTo-LfText ([IO.File]::ReadAllText($actualPath))
+        if ($actual -cne (Get-OwnBlobText $path)) { return $false }
     }
     return $true
 }
@@ -223,17 +224,21 @@ function Test-WrapperOnlyPaidManifest {
     $q = New-Fixture; $q.Request.Mode = 'Native'; $r = Run-Fixture $q
     Check 'native-disabled' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'native-unqualified' -and (No-Starts))
     $beforeRoot = Join-Path $ResultsDirectory 'pinned'
-    $paths = @('scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
-        'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-    foreach ($path in $paths) {
-        $dest = Join-Path $beforeRoot $path
-        [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
-        $text = (& git -C $repo show "${base}:$path") -join "`n"
-        if ($LASTEXITCODE -ne 0) { throw 'pinned object unavailable' }
-        [IO.File]::WriteAllText($dest, $text + "`n")
+    $crlfRoot = Join-Path $ResultsDirectory 'crlf'
+    foreach ($path in $script:ProtectedInputs) {
+        $lf = Get-OwnBlobText $path
+        $copies = @(
+            [pscustomobject]@{ Root = $beforeRoot; Text = $lf },
+            [pscustomobject]@{ Root = $crlfRoot; Text = $lf.Replace("`n", "`r`n") }
+        )
+        foreach ($copy in $copies) {
+            $dest = Join-Path $copy.Root $path
+            [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
+            [IO.File]::WriteAllText($dest, $copy.Text)
+        }
     }
-    $before = Read-Census $beforeRoot; $after = Read-Census $repo
-    Check 'full-inputs' ((Test-ProtectedInputs) -and $before -ceq $after -and $before.Contains('sentinel-c680') -and $before.Contains('sentinel-excluded'))
+    $before = Read-Census $beforeRoot; $after = Read-Census $repo; $crlf = Read-Census $crlfRoot
+    Check 'full-inputs' ((Test-ProtectedInputs) -and (Test-ProtectedInputs $crlfRoot) -and $before -ceq $after -and $crlf -ceq $after -and $before.Contains('sentinel-c680') -and $before.Contains('sentinel-excluded'))
     # Real candidate policy edit, with correctly recomputed policy hash.
     $policyPath = Join-Path $beforeRoot 'tests/test-execution-policy.json'
     $original = [IO.File]::ReadAllText($policyPath)
