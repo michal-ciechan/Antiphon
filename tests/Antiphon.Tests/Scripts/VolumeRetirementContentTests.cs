@@ -140,7 +140,16 @@ public sealed class VolumeRetirementContentTests
         }
 
         using var elevation = new C1008HostFixture(main: false);
-        var denied = await elevation.Run("retire-temp-runner", "sudo() { return 1; }");
+        // Evidence setup still uses sudo -n install. Refuse only the mount probe.
+        var denied = await elevation.Run("retire-temp-runner", """
+            sudo() {
+                if [ "$1" = -n ] && [ "$2" = true ]; then return 1; fi
+                [ "$1" = -n ] && shift
+                if [ "$1" = install ]; then mkdir -p "${@: -1}"
+                elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'
+                else "$@"; fi
+            }
+            """);
         denied.Exit.ShouldBe(2, "a sudo refusal is fail-closed; " + VolumeRetirementFixture.Truncate(denied.Output));
         denied.Output.ShouldContain("reason=state-elevation-unavailable");
         denied.Output.ShouldNotContain("reason=state-credential");
