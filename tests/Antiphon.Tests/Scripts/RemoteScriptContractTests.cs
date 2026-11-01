@@ -3240,6 +3240,19 @@ public sealed class RemoteScriptContractTests
             await VolumeRetirementFixture.ReadyPreview(accepted);
             var run = await accepted.Run("retire-temp-runner");
             accepted.Removed.Length.ShouldBe(4, "retire-host-proof: absent/null success removes four; " + run.Output);
+            // CARD-1609 deletes each exact volume. Compose down -v would also take every compose-declared volume.
+            accepted.Trace.Any(a => a.Length > 0 && a[0] == "compose" && a.Contains("down")).ShouldBeFalse(
+                "retire-host-proof: temp retirement never deletes through compose down");
+        }
+        using (var unpreviewed = new C1008HostFixture(main: false))
+        {
+            // The fixture grants the apply token. A Ready preview is still required.
+            var refused = await unpreviewed.Run("retire-temp-runner");
+            refused.Exit.ShouldBe(2, "retire-host-proof: apply without a Ready preview; " + refused.Output);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown reason=preview-required");
+            unpreviewed.Removed.ShouldBeEmpty("retire-host-proof: no preview, no removal");
+            unpreviewed.Trace.Any(a => a.Length > 0 && a[0] is "stop" or "rm").ShouldBeFalse(
+                "retire-host-proof: no preview, no container stop or rm");
         }
         foreach (var (field, value) in new (string, JsonNode?)[] {
             ("retiredAt", JsonValue.Create("2026-10-03T09:31:00Z")), ("retiredAt", null),
@@ -3251,16 +3264,21 @@ public sealed class RemoteScriptContractTests
             var refused = await invalid.Run("retire-temp-runner");
             invalid.Removed.ShouldBeEmpty("retire-host-proof: fresh host predicate " + field); refused.Exit.ShouldBe(2);
         }
-        foreach (var fault in new[] { "down-retains-volume", "ps-error", "counterpart" })
+        foreach (var fault in new[] { "rm-retains-volume", "ps-error", "counterpart" })
         {
             using var invalid = new C1008HostFixture(main: false);
             if (fault == "counterpart") invalid.Statuses["server2"]!["acceptingNewWork"] = false;
             else invalid.Docker["fault"] = fault;
-            // down-retains-volume is observed at compose down. A Ready preview keeps that fault reachable.
-            if (fault == "down-retains-volume") await VolumeRetirementFixture.ReadyPreview(invalid);
+            // rm-retains-volume is observed after the first exact volume rm. A Ready preview keeps that fault reachable.
+            if (fault == "rm-retains-volume") await VolumeRetirementFixture.ReadyPreview(invalid);
             var refused = await invalid.Run("retire-temp-runner");
-            refused.Exit.ShouldBe(2, "retire-host-proof: checked down/census/counterpart " + fault);
+            refused.Exit.ShouldBe(2, "retire-host-proof: checked removal/census/counterpart " + fault + "; " + refused.Output);
             invalid.Removed.ShouldBeEmpty();
+            if (fault != "rm-retains-volume") continue;
+            // A zero exit is not absence. The first retained volume stops every later rm.
+            refused.Output.ShouldContain("RecycleRemoveFailed");
+            invalid.Trace.Count(a => a.Length >= 2 && a[0] == "volume" && a[1] == "rm").ShouldBe(1,
+                "retire-host-proof: a retained volume stops the remaining deletes");
         }
         using (var present = new C1008HostFixture(main: false))
         {
@@ -3317,7 +3335,11 @@ public sealed class RemoteScriptContractTests
                 args.Any(arg => arg.Contains(",readonly", StringComparison.Ordinal)).ShouldBeTrue(
                     "recycle-preview-readonly: the content helper is a read-only run");
             }
-            run.Output.ShouldContain("auditPending=true");
+            // CARD-1609: temp audits content with the current tooling, so a passing preview is Ready, not pending.
+            // Main keeps the v1 preview, which has no content audit and stays pending.
+            run.Output.ShouldContain(main ? "auditPending=true" : "auditPending=false");
+            if (main) run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker, Case.Sensitive);
+            else run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker, Case.Sensitive);
             f.Statuses[main ? "server2" : "server2-temp"]!["sessions"] = 1;
             var apply = await f.Run(main ? "deploy-parent" : "retire-temp-runner");
             apply.Exit.ShouldBe(2, "recycle-preview-readonly: apply rechecks changed facts");
@@ -3345,19 +3367,41 @@ public sealed class RemoteScriptContractTests
             .Select(line => line.TrimEnd('\r'))
             .Where(line => line.StartsWith("C1008_PREVIEW remove=", StringComparison.Ordinal))
             .ToArray();
+        // CARD-1609 deletion order: state, dind, tmp, then work last, so a partial failure keeps repository data.
         removes.ShouldBe(new[]
         {
-            "C1008_PREVIEW remove=antiphon-runner-temp_work",
-            "C1008_PREVIEW remove=antiphon-runner-temp_runner-tmp",
+            "C1008_PREVIEW remove=antiphon-runner-temp_runner-state",
             "C1008_PREVIEW remove=antiphon-runner-temp_dind-data",
-            "C1008_PREVIEW remove=antiphon-runner-temp_runner-state"
+            "C1008_PREVIEW remove=antiphon-runner-temp_runner-tmp",
+            "C1008_PREVIEW remove=antiphon-runner-temp_work"
         });
+        // The current tooling audits the content during the preview, so the preview is Ready, not pending.
         run.Output.ShouldContain(
-            "C1008_PREVIEW preserve=antiphon-runner_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true");
+            "C1008_PREVIEW preserve=antiphon-runner_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=false");
+        run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker, Case.Sensitive);
         f.Removed.ShouldBeEmpty("c1338-preview: dry-run removes nothing");
-        f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0])
+        f.Trace.Any(a => new[] { "stop", "rm", "create", "start" }.Contains(a[0])
             || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+        foreach (var args in f.Trace.Where(a => a.Length > 0 && a[0] == "run"))
+        {
+            // The only container a preview starts is the read-only content helper.
+            args.ShouldContain("--rm");
+            var dropped = Array.IndexOf(args, "--cap-drop");
+            dropped.ShouldBeGreaterThanOrEqualTo(0, "c1338-preview: helper drops capabilities");
+            args[dropped + 1].ShouldBe("ALL");
+            args.Any(arg => arg.Contains(",readonly", StringComparison.Ordinal)).ShouldBeTrue(
+                "c1338-preview: the content helper is a read-only run");
+        }
         File.Exists(C1105Journal(f)).ShouldBeFalse("c1338-preview: dry-run writes no journal");
+        // A Ready preview is not an apply authority on its own. With the gate off, apply refuses and changes nothing.
+        var traced = f.Trace.Length;
+        var blocked = await f.Run("retire-temp-runner", "C1609_FIXTURE_APPLY_GATE=off\nunset RUNNER_GROK_STORE_DIR");
+        blocked.Exit.ShouldBe(2, "c1338-preview: gate-off apply; " + blocked.Output);
+        blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+        f.Removed.ShouldBeEmpty("c1338-preview: gate-off apply removes nothing");
+        f.Trace.Skip(traced).Any(a => a.Length > 0 && (a[0] is "stop" or "rm" or "create" or "start" or "run"
+            || a.Take(2).SequenceEqual(new[] { "volume", "rm" }))).ShouldBeFalse("c1338-preview: gate-off apply has no Docker effect");
+        File.Exists(C1105Journal(f)).ShouldBeFalse("c1338-preview: gate-off apply writes no journal");
     }
 
     // CARD-1105 V-2. The running roster is the previous generation; the replacement must carry the new bind.

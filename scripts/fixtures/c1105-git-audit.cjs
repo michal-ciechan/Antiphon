@@ -861,7 +861,9 @@ try {
             const initial = {image:'sha256:'+'a'.repeat(64), volumes:{antiphon_runner_work:{}}, phase:'preflight', audit:proof.stdout.trim().split('\n').sort().join('\n')};
             const journal = path.join(root,'journal.json'); fs.writeFileSync(journal, JSON.stringify(initial));
             const slice = resumeCallerSlice();
-            const wrapper = `set -euo pipefail\nC1008_PROJECT=antiphon-runner\nC1008_RESUME=1\nC1008_RECORD="$(cat "$C1105_JOURNAL")"\nc1008_volume() { echo '{}'; }\nc1008_save() { printf '%s' "$C1008_RECORD" > "$C1105_JOURNAL"; }\nc1008_refuse() { echo "$1"; exit 2; }\nc1008_git_program() { cat "$C1105_HELPER"; }\ndocker() { case "$1 $2" in 'image inspect') echo sha256:${'a'.repeat(64)} ;; 'create --user') echo ${'b'.repeat(64)} ;; 'start -a') bash "$C1105_HELPER" ;; 'rm --') return 0 ;; *) return 2 ;; esac; }\n`;
+            // CARD-1609: c1008_audit_checked tells main from temp by the c590-remote.sh global TEMP_PROJECT.
+            // Only main may reuse a saved audit, so the wrapper names temp as a different project.
+            const wrapper = `set -euo pipefail\nC1008_PROJECT=antiphon-runner\nTEMP_PROJECT=antiphon-runner-temp\nC1008_RESUME=1\nC1008_RECORD="$(cat "$C1105_JOURNAL")"\nc1008_volume() { echo '{}'; }\nc1008_save() { printf '%s' "$C1008_RECORD" > "$C1105_JOURNAL"; }\nc1008_refuse() { echo "$1"; exit 2; }\nc1008_git_program() { cat "$C1105_HELPER"; }\ndocker() { case "$1 $2" in 'image inspect') echo sha256:${'a'.repeat(64)} ;; 'create --user') echo ${'b'.repeat(64)} ;; 'start -a') bash "$C1105_HELPER" ;; 'rm --') return 0 ;; *) return 2 ;; esac; }\n`;
             const script = path.join(root,'resume.sh'); fs.writeFileSync(script, wrapper + resumeExtraction(slice) + '\n' + slice);
             const opts = {env:{...env, C1105_WORK:work, C1105_HELPER:path.join(root,'helper.sh'), C1105_RUNNER_TMP:runnerTmp, C1105_JOURNAL:journal}, encoding:'utf8'};
             git('remote','set-url','origin',path.join(root,'absent'));
