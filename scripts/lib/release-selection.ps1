@@ -379,6 +379,81 @@ function Resolve-ReleaseSelectionMembers {
     throw 'selected-execution-unqualified'
 }
 
+function Get-ReleaseSelectionDeclaredSwitches {
+    # Switches come from the target script's own parameter metadata. A hand list
+    # drifts the moment a new [switch] is added, and a bare switch then swallows
+    # the next token.
+    param([string]$ScriptPath)
+    $command = Get-Command -Name $ScriptPath -ErrorAction Stop
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($parameter in @($command.Parameters.Values)) {
+        if ($parameter.SwitchParameter) { [void]$names.Add([string]$parameter.Name) }
+    }
+    return ,$names.ToArray()
+}
+
+function Get-ReleaseSelectionAstSwitches {
+    # Independent of Get-Command so the drift guard is not the same lookup it checks.
+    param([string]$ScriptPath)
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors -and @($parseErrors).Count -gt 0) { throw 'selection-hop-script-parse' }
+    $names = New-Object System.Collections.Generic.List[string]
+    if ($ast -and $ast.ParamBlock) {
+        foreach ($parameter in @($ast.ParamBlock.Parameters)) {
+            $isSwitch = $false
+            foreach ($attribute in @($parameter.Attributes)) {
+                $typeName = [string]$attribute.TypeName.Name
+                if ($typeName -eq 'switch' -or $typeName -eq 'SwitchParameter') { $isSwitch = $true; break }
+            }
+            if ($isSwitch) { [void]$names.Add([string]$parameter.Name.VariablePath.UserPath) }
+        }
+    }
+    return ,$names.ToArray()
+}
+
+function Assert-ReleaseSelectionHopSwitchDrift {
+    param([string]$ScriptPath, [string[]]$ForwardedAsSwitch)
+    $declared = [string[]](Get-ReleaseSelectionAstSwitches -ScriptPath $ScriptPath)
+    $forwardedNames = [string[]]$ForwardedAsSwitch
+    foreach ($name in $declared) {
+        $found = $false
+        foreach ($forwarded in $forwardedNames) {
+            if ([string]$forwarded -ceq [string]$name) { $found = $true; break }
+        }
+        if (-not $found) { throw ('selection-hop-switch-drift:' + $name) }
+    }
+}
+
+function ConvertTo-ReleaseSelectionHopParameters {
+    param([string[]]$ArgumentList)
+    $fileIndex = [array]::IndexOf($ArgumentList, '-File')
+    if ($fileIndex -lt 0 -or ($fileIndex + 1) -ge $ArgumentList.Count) { throw 'selection-hop-script' }
+    $script = [string]$ArgumentList[$fileIndex + 1]
+    if ([string]::IsNullOrWhiteSpace($script)) { throw 'selection-hop-script' }
+    $switches = [string[]](Get-ReleaseSelectionDeclaredSwitches -ScriptPath $script)
+    Assert-ReleaseSelectionHopSwitchDrift -ScriptPath $script -ForwardedAsSwitch $switches
+    $parameters = @{}
+    for ($i = $fileIndex + 2; $i -lt $ArgumentList.Count; $i++) {
+        $key = ([string]$ArgumentList[$i]).TrimStart('-')
+        $isSwitch = $false
+        foreach ($name in $switches) {
+            if ([string]$name -eq $key) { $isSwitch = $true; $key = [string]$name; break }
+        }
+        if ($isSwitch) {
+            $parameters[$key] = $true
+        } else {
+            $i++
+            if ($i -ge $ArgumentList.Count -or $null -eq $ArgumentList[$i]) { throw 'selection-hop-value' }
+            # ConvertFrom-Json on newer pwsh converts ISO strings to DateTime.
+            # Encode string values so even lock timestamps retain their exact bytes.
+            $parameters[$key] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$ArgumentList[$i]))
+        }
+    }
+    return $parameters
+}
+
 function Invoke-ReleaseSelectionHop {
     # JSON splatting preserves spaces/Unicode through a 5.1 parent as well as 7.
     # The existing orchestration owns/waits this child; its workload still uses
@@ -386,17 +461,7 @@ function Invoke-ReleaseSelectionHop {
     param([string[]]$ArgumentList, [string]$WorkingDirectory)
     $fileIndex = [array]::IndexOf($ArgumentList, '-File')
     if ($fileIndex -lt 0) { throw 'selection-hop-script' }
-    $parameters = @{}
-    for ($i = $fileIndex + 2; $i -lt $ArgumentList.Count; $i++) {
-        $key = $ArgumentList[$i].TrimStart('-')
-        if ($key -in @('NoSync', 'NoReport', 'WhatIf')) { $parameters[$key] = $true }
-        else {
-            $i++
-            # ConvertFrom-Json on newer pwsh converts ISO strings to DateTime.
-            # Encode string values so even lock timestamps retain their exact bytes.
-            $parameters[$key] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ArgumentList[$i]))
-        }
-    }
+    $parameters = ConvertTo-ReleaseSelectionHopParameters -ArgumentList $ArgumentList
     $request = [IO.Path]::GetTempFileName()
     try {
         [IO.File]::WriteAllText($request, (ConvertTo-Json @{script=$ArgumentList[$fileIndex + 1];parameters=$parameters} -Depth 8), [Text.Encoding]::UTF8)

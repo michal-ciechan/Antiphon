@@ -59,6 +59,35 @@ function Test-NightlyCompleteGreenPredicate {
     return ([string]$verdict.CreditKind -eq $want)
 }
 
+function Write-NightlyHopFailure {
+    # A hop exception used to reach only the supervisor console. The run log
+    # directory stayed empty and last-run.json carried the exit code alone.
+    param(
+        $State,
+        [string]$StatePath,
+        [string]$LogDir,
+        [string]$ErrorMessage,
+        [string]$Command
+    )
+    if (-not $State) { $State = [ordered]@{} }
+    if ($null -eq $State.exitCode) { $State.exitCode = 1 }
+    $State.error = [string]$ErrorMessage
+    $State.command = [string]$Command
+    if (-not [string]::IsNullOrWhiteSpace($LogDir)) {
+        if (-not (Test-Path -LiteralPath $LogDir)) {
+            New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+        }
+        $failurePath = Join-Path $LogDir 'hop-failure.txt'
+        $body = "error: $ErrorMessage`ncommand: $Command`n"
+        [System.IO.File]::WriteAllText($failurePath, $body)
+        $State.failureLog = $failurePath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($StatePath)) {
+        [void](Write-NightlyRunState -Path $StatePath -State $State -AllowFailure)
+    }
+    return $State
+}
+
 function Write-NightlyRunState {
     param(
         [string]$Path,
@@ -262,6 +291,7 @@ function Invoke-AntiphonNightlyRunCore {
     $runDir = $null
     $phase = 'init'
     $hopped = $false
+    $script:NightlyHopCommand = ''
     $result = [ordered]@{
         ExitCode = 1
         RunId = $RunId
@@ -609,6 +639,7 @@ function Invoke-AntiphonNightlyRunCore {
                         $pwshArgs += '-TimingRoot'
                         $pwshArgs += [string]$TimingRoot
                     }
+                    $script:NightlyHopCommand = 'pwsh ' + ($pwshArgs -join ' ')
                     $hop = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $pwshArgs -WorkingDirectory $CheckoutRoot
                     $hopped = $true
                     $exitCode = [int]$hop.ExitCode
@@ -675,6 +706,7 @@ function Invoke-AntiphonNightlyRunCore {
         $gitRefLabel = ('origin/{0}' -f $Ref)
         $testArgs = New-NightlyTestsHopArgumentList -TestsScript $testsScript -CheckoutRoot $CheckoutRoot -RunDir $runDir -Sha $sha -GitRefLabel $gitRefLabel -Trigger $Trigger -Profile $Profile -RunId $RunId -Repository $Repository -SelectionMode $SelectionMode -BaselineSha $BaselineSha -BaselineReceiptPath $BaselineReceiptPath -QualificationPath $QualificationPath -TimingRoot $TimingRoot -TrainManifestPath $TrainManifestPath -ReleaseIntentPath $ReleaseIntentPath -SelectionAttemptPath $SelectionAttemptPath -SelectionAttemptDigest $SelectionAttemptDigest -SelectionPath $SelectionPath -SelectionDigest $SelectionDigest -Attempt $Attempt -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId -ExpectedSha $ExpectedSha -Suites $Suites -SeamsPath $SeamsPath -PriorFailuresPath $PriorFailuresPath -PriorFailuresDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId
         Write-NightlyRunLine ('running {0}' -f $testsScript)
+        $script:NightlyHopCommand = 'pwsh ' + ($testArgs -join ' ')
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
         $testExit = [int]$testRun.ExitCode
         if ($null -eq $testExit) { $testExit = 1 }
@@ -798,11 +830,12 @@ function Invoke-AntiphonNightlyRunCore {
         }
     } catch {
         if ($exitCode -eq 0) { $exitCode = 1 }
-        Write-NightlyRunLine $_.Exception.Message
+        $failureMessage = [string]$_.Exception.Message
+        Write-NightlyRunLine $failureMessage
+        if (-not $stateObj) { $stateObj = [ordered]@{ phase = $phase } }
         $stateObj.phase = $phase
         $stateObj.exitCode = $exitCode
-        $stateObj.error = $_.Exception.Message
-        [void](Write-NightlyRunState -Path $paths.LastAttempt -State $stateObj -AllowFailure)
+        [void](Write-NightlyHopFailure -State $stateObj -StatePath $paths.LastAttempt -LogDir ([string]$runDir) -ErrorMessage $failureMessage -Command ([string]$script:NightlyHopCommand))
     } finally {
         # D-4: released only after this run's owned children are accounted for, which the
         # tests hop guarantees by waiting for its child before returning.
