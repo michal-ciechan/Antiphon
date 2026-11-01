@@ -64,6 +64,95 @@ function Write-SeedSummary([string]$RunDir,[string]$TimingRoot,[string]$RunId,[s
     $text=$text+',"timingChunks": INVALID}'
     [IO.File]::WriteAllText((Join-Path $RunDir 'summary.json'),$text)
 }
+# Unix modes where they exist. Elsewhere a current-user deny ACL, or a counted not-applicable.
+# $script:NightlySeedPlatformSeam.UnixModesSupported = $false forces the Windows branch.
+$script:SeedCustodyNotApplicableLine='SEED-CUSTODY not-applicable: Windows ACL custody is not checkable on this platform'
+function Test-SeedUnixModesSupported {
+    $seam=$script:NightlySeedPlatformSeam
+    if($seam -and $seam.Contains('UnixModesSupported')){return [bool]$seam.UnixModesSupported}
+    return ($env:OS -cne 'Windows_NT')
+}
+function Write-SeedCustodyNotApplicable {
+    Write-Host $script:SeedCustodyNotApplicableLine
+    $script:NightlySeedCustodyNote=$script:SeedCustodyNotApplicableLine
+    $script:NightlySeedCustodyNotApplicable=1+[int]$script:NightlySeedCustodyNotApplicable
+}
+function Use-SeedUnixFileMode([string]$Path,$Mode){
+    if(-not (Test-SeedUnixModesSupported)){throw 'SEED-CUSTODY unix-mode-on-unsupported-platform'}
+    $script:NightlySeedUnixModeCalls=1+[int]$script:NightlySeedUnixModeCalls
+    if($null -eq $Mode){return [IO.File]::GetUnixFileMode($Path)}
+    [IO.File]::SetUnixFileMode($Path,$Mode)
+}
+function Deny-SeedWindowsCurrentUserRead([string]$Path){
+    try {
+        $idType=[type]::GetType('System.Security.Principal.WindowsIdentity, System.Security.Principal.Windows')
+        $ruleType=[type]::GetType('System.Security.AccessControl.FileSystemAccessRule, System.IO.FileSystem.AccessControl')
+        $extType=[type]::GetType('System.IO.FileSystemAclExtensions, System.IO.FileSystem.AccessControl')
+        $sectionsType=[type]::GetType('System.Security.AccessControl.AccessControlSections, System.Security.AccessControl')
+        $rightsType=[type]::GetType('System.Security.AccessControl.FileSystemRights, System.IO.FileSystem.AccessControl')
+        $accessType=[type]::GetType('System.Security.AccessControl.AccessControlType, System.IO.FileSystem.AccessControl')
+        if(-not ($idType -and $ruleType -and $extType -and $sectionsType -and $rightsType -and $accessType)){return $null}
+        $current=$idType.GetMethod('GetCurrent',[type[]]@()).Invoke($null,@())
+        $sid=$current.User
+        if(-not $sid){return $null}
+        $file=[IO.FileInfo]::new($Path)
+        $sections=[enum]::Parse($sectionsType,'Access')
+        $get=$null;$set=$null
+        foreach($method in $extType.GetMethods()){
+            $parameters=$method.GetParameters()
+            if($parameters.Count -ne 2 -or $parameters[0].ParameterType -ne [IO.FileInfo]){continue}
+            if($method.Name -ceq 'GetAccessControl'){$get=$method}
+            elseif($method.Name -ceq 'SetAccessControl'){$set=$method}
+        }
+        if(-not $get -or -not $set){return $null}
+        $acl=$get.Invoke($null,@($file,$sections))
+        $rights=[enum]::Parse($rightsType,'Read')
+        $deny=[enum]::Parse($accessType,'Deny')
+        $rule=$null
+        foreach($ctor in $ruleType.GetConstructors()){
+            if($ctor.GetParameters().Count -eq 3){$rule=$ctor.Invoke(@($sid,$rights,$deny));break}
+        }
+        if(-not $rule){return $null}
+        if([string]$rule.IdentityReference.Value -cne [string]$sid.Value){throw 'SEED-CUSTODY acl-not-current-user'}
+        $acl.AddAccessRule($rule)
+        $set.Invoke($null,@($file,$acl))
+        $readable=$true
+        try{[void][IO.File]::ReadAllBytes($Path)}catch{$readable=$false}
+        if($readable){
+            [void]$acl.RemoveAccessRule($rule)
+            $set.Invoke($null,@($file,$acl))
+            throw 'SEED-CUSTODY windows-acl-did-not-deny-current-user'
+        }
+        return { [void]$acl.RemoveAccessRule($rule); $set.Invoke($null,@($file,$acl)) }.GetNewClosure()
+    } catch {
+        $inner=$_.Exception
+        while($inner.InnerException){$inner=$inner.InnerException}
+        if($inner -is [PlatformNotSupportedException] -or $inner.Message -like '*not supported on this platform*'){return $null}
+        if($inner.Message -like 'SEED-CUSTODY*'){throw}
+        throw
+    }
+}
+function Enter-SeedUnreadableTiming([string]$Path){
+    if(Test-SeedUnixModesSupported){
+        $script:NightlySeedDenialBranch='unix-mode'
+        $mode=Use-SeedUnixFileMode $Path $null
+        Use-SeedUnixFileMode $Path ([IO.UnixFileMode]::None)
+        return { Use-SeedUnixFileMode $Path $mode }.GetNewClosure()
+    }
+    $script:NightlySeedDenialBranch='windows-acl'
+    $script:NightlySeedWindowsBranchRan=$true
+    $seam=$script:NightlySeedPlatformSeam
+    if($seam -and $seam.WindowsAcl){
+        $applied=& $seam.WindowsAcl $Path
+        if($applied -and $applied.Restore){return $applied.Restore}
+        Write-SeedCustodyNotApplicable
+        return $null
+    }
+    $restore=Deny-SeedWindowsCurrentUserRead $Path
+    if($restore){return $restore}
+    Write-SeedCustodyNotApplicable
+    return $null
+}
 try {
     $before=@(Snapshot)
     $seedPath=Join-Path $root 'seed.json'
@@ -331,26 +420,79 @@ try {
             } catch { $openDetail=$_.Exception.Message }
             finally { [IO.File]::WriteAllText($passed,$passedText) }
             $denied=Join-Path $run 'antiphon-all-group-2.timing.json'
-            $deniedMode=[IO.File]::GetUnixFileMode($denied)
+            $script:NightlySeedPlatformSeam=$null
+            $script:NightlySeedUnixModeCalls=0
+            $script:NightlySeedWindowsBranchRan=$false
+            $script:NightlySeedCustodyNotApplicable=0
+            $script:NightlySeedCustodyNote=''
+            $script:NightlySeedDenialBranch=''
             $deniedOk=$false;$deniedDetail=''
+            $deniedRestore=$null
             try {
-                [IO.File]::SetUnixFileMode($denied,[IO.UnixFileMode]::None)
-                $deniedOut=Join-Path $root 'denied-seed.json'
+                $deniedRestore=Enter-SeedUnreadableTiming $denied
+                if($deniedRestore){
+                    $deniedOut=Join-Path $root 'denied-seed.json'
+                    try {
+                        [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $deniedOut -PassThru)
+                        $deniedDoc=Read-NightlyStoppedRunSeed $deniedOut
+                        $row=@($deniedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
+                        $deniedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
+                        $deniedDetail=[string]$row.unfinishedReason+' branch='+$script:NightlySeedDenialBranch
+                    } catch { $deniedDetail=$_.Exception.Message }
+                } else {
+                    $deniedOk=($script:NightlySeedDenialBranch -ceq 'windows-acl' -and [int]$script:NightlySeedCustodyNotApplicable -ge 1 -and $script:NightlySeedCustodyNote -ceq $script:SeedCustodyNotApplicableLine)
+                    $deniedDetail='not-applicable count='+[int]$script:NightlySeedCustodyNotApplicable
+                }
+            } finally { if($deniedRestore){ & $deniedRestore } }
+            $windowsOk=$true;$windowsDetail='native-windows'
+            $naOk=$true;$naDetail='native-windows'
+            if($script:NightlySeedDenialBranch -ceq 'unix-mode'){
+                $savedCalls=[int]$script:NightlySeedUnixModeCalls
+                $script:NightlySeedWindowsBranchRan=$false
+                $script:NightlySeedPlatformSeam=@{
+                    UnixModesSupported=$false
+                    WindowsAcl={
+                        param($Target)
+                        $prior=[IO.File]::GetUnixFileMode($Target)
+                        [IO.File]::SetUnixFileMode($Target,[IO.UnixFileMode]::None)
+                        return @{ Applied=$true; Restore={ [IO.File]::SetUnixFileMode($Target,$prior) }.GetNewClosure() }
+                    }
+                }
+                $windowsRestore=$null
                 try {
-                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $deniedOut -PassThru)
-                    $deniedDoc=Read-NightlyStoppedRunSeed $deniedOut
-                    $row=@($deniedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
-                    $deniedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
-                    $deniedDetail=[string]$row.unfinishedReason
-                } catch { $deniedDetail=$_.Exception.Message }
-            } finally { [IO.File]::SetUnixFileMode($denied,$deniedMode) }
+                    $windowsRestore=Enter-SeedUnreadableTiming $denied
+                    if(-not $script:NightlySeedWindowsBranchRan){ throw 'windows-branch-did-not-run' }
+                    if([int]$script:NightlySeedUnixModeCalls -ne $savedCalls){ throw 'unix-mode-used-on-windows-branch' }
+                    if($script:NightlySeedDenialBranch -cne 'windows-acl'){ throw 'windows-branch-not-selected' }
+                    if(-not $windowsRestore){ throw 'windows-custody-not-applied' }
+                    $windowsOut=Join-Path $root 'windows-denied-seed.json'
+                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $windowsOut -PassThru)
+                    $windowsDoc=Read-NightlyStoppedRunSeed $windowsOut
+                    $row=@($windowsDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
+                    $windowsOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
+                    $windowsDetail=[string]$row.unfinishedReason
+                } catch { $windowsOk=$false; $windowsDetail=$_.Exception.Message }
+                finally { if($windowsRestore){ & $windowsRestore }; $script:NightlySeedPlatformSeam=$null }
+                $script:NightlySeedWindowsBranchRan=$false
+                $naBefore=[int]$script:NightlySeedCustodyNotApplicable
+                $script:NightlySeedPlatformSeam=@{ UnixModesSupported=$false }
+                $naRestore=$null;$naThrew=$false;$naPrinted=$false
+                try {
+                    $captured=@(Enter-SeedUnreadableTiming $denied 6>&1)
+                    foreach($item in $captured){ if([string]$item -ceq $script:SeedCustodyNotApplicableLine){ $naPrinted=$true } }
+                    $naRestore=$captured | Where-Object { $_ -is [scriptblock] } | Select-Object -First 1
+                } catch { $naThrew=$true; $naDetail=$_.Exception.Message }
+                finally { if($naRestore){ & $naRestore }; $script:NightlySeedPlatformSeam=$null }
+                $naOk=(-not $naThrew -and $naPrinted -and $script:NightlySeedWindowsBranchRan -and [int]$script:NightlySeedCustodyNotApplicable -eq ($naBefore+1) -and $script:NightlySeedCustodyNote -ceq $script:SeedCustodyNotApplicableLine)
+                if(-not $naThrew){ $naDetail='printed='+$naPrinted+' count='+[int]$script:NightlySeedCustodyNotApplicable }
+            }
             $tamper=New-SeedSiblingLayout (Join-Path $root 'tamper-logs') 'd47848cce896471db1cc8ca346707cad' '2026-10-30-0824-d47848cc'
             Write-SeedSummary $tamper.Run $tamper.Timing 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' $sha
             $tamperMsg=''
             try { [void](Export-NightlyStoppedRunSeed -RunDirectory $tamper.Run -OutputPath (Join-Path $root 'tamper-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru) }
             catch { $tamperMsg=$_.Exception.Message }
             $tamperOk=($tamperMsg -like '*seed-timing-run-mismatch*' -or $tamperMsg -like '*seed-plan-run-mismatch*' -or $tamperMsg -like '*seed-summary*')
-            Check ($lockedOk -and $changedOk -and $openOk -and $deniedOk -and $tamperOk) ('locked='+$lockedDetail+'; changed='+$changedDetail+'; open='+$openDetail+'; denied='+$deniedDetail+'; tamper='+$tamperMsg)
+            Check ($lockedOk -and $changedOk -and $openOk -and $deniedOk -and $tamperOk -and $windowsOk -and $naOk) ('locked='+$lockedDetail+'; changed='+$changedDetail+'; open='+$openDetail+'; denied='+$deniedDetail+'; tamper='+$tamperMsg+'; windows='+$windowsDetail+'; na='+$naDetail)
         }
         'LinkCacheRefusesReplacement' {
             $fileLink=Join-Path $run 'linked-file.txt'
