@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using Antiphon.Checkpoints.Coverage;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -276,5 +277,41 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
         }
 
         return Task.CompletedTask;
+    }
+
+    [Test]
+    public void linked_shared_sources_are_literal_compile_items()
+    {
+        var root = CheckpointFixtures.RepoRoot;
+        var directory = Path.Combine(root, "tests", "Shared", "LiveClaude");
+        var files = Directory.GetFiles(directory, "*.cs", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        files.ShouldNotBeEmpty();
+        foreach (var project in new[] { "tests/Antiphon.Tests/Antiphon.Tests.csproj", "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj" })
+        {
+            var includes = XDocument.Load(Path.Combine(root, project)).Descendants("Compile").Attributes("Include")
+                .Select(attribute => attribute.Value.Replace('\\', '/')).ToArray();
+            includes.Any(WildcardSharedInclude).ShouldBeFalse(project + " wildcard linked Shared source");
+            var live = includes.Where(include => include.StartsWith("../Shared/LiveClaude/", StringComparison.Ordinal)
+                && include.EndsWith(".cs", StringComparison.Ordinal)).ToArray();
+            foreach (var file in files)
+                live.ShouldContain("../Shared/LiveClaude/" + file, project);
+            foreach (var include in live)
+            {
+                var name = Path.GetFileName(include.Replace('\\', '/'));
+                files.ShouldContain(name, project + " lists " + include);
+                File.Exists(Path.Combine(directory, name!)).ShouldBeTrue(include);
+            }
+        }
+        WildcardSharedInclude("../Shared/LiveClaude/*.cs").ShouldBeTrue("a glob include is the refused shape");
+        WildcardSharedInclude("../Shared/LiveClaude/LiveClaudeOutcome.cs").ShouldBeFalse("a literal include is admitted");
+    }
+
+    private static bool WildcardSharedInclude(string include)
+    {
+        var value = include.Replace('\\', '/');
+        return value.Contains("Shared", StringComparison.Ordinal) && (value.Contains('*') || value.Contains('?'));
     }
 }

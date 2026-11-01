@@ -72,6 +72,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly Action<string, string>? _onBound;
     private readonly Action? _onUnbound;
     private readonly IKnownSessionProbe? _knownSessions;
+    private readonly string? _projectsRoot;
     private readonly CancellationTokenSource _cts = new();
     private volatile bool _claimRevoked;
     private int _bindGeneration;
@@ -125,7 +126,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         Action? onUnbound = null,
         IKnownSessionProbe? knownSessions = null,
         TimeSpan? refusalFaultDelay = null,
-        TimeSpan? refusalFaultRepeat = null)
+        TimeSpan? refusalFaultRepeat = null,
+        string? projectsRoot = null)
     {
         _sessionId = sessionId;
         _cwd = cwd;
@@ -144,6 +146,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _onBound = onBound;
         _onUnbound = onUnbound;
         _knownSessions = knownSessions;
+        _projectsRoot = string.IsNullOrWhiteSpace(projectsRoot) ? null : projectsRoot;
         ForkScanInterval = forkScanInterval ?? DefaultForkScanInterval;
         _firstInputObservedUtc = firstInputUtc;
         _unboundReason = InputDelivered ? "locating" : "awaiting-input";
@@ -613,7 +616,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private async Task<string?> LocateAsync(CancellationToken ct)
     {
         var fileName = _sessionId.ToString("D") + ".jsonl";
-        var projectsRoot = ResolveProjectsRoot();
+        var projectsRoot = _projectsRoot ?? ResolveProjectsRoot(null);
 
         // Consecutive polls that could not even look. A transcript that simply has not been written
         // yet is normal and stays silent; a root that is missing or unreadable is a fault, and
@@ -1215,14 +1218,19 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 null));
     }
 
-    // Mirror Claude Code's transcript root: CLAUDE_CONFIG_DIR if set, else ~/.claude — then /projects.
-    private static string ResolveProjectsRoot()
+    /// <summary>
+    /// Claude's transcript root is <c>{CLAUDE_CONFIG_DIR}/projects</c>, else <c>~/.claude/projects</c>.
+    /// The launch environment is the one the child writes into. Process environment is only the fallback.
+    /// </summary>
+    public static string ResolveProjectsRoot(IReadOnlyDictionary<string, string>? launchEnv)
     {
-        var configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-        var root = !string.IsNullOrWhiteSpace(configDir)
-            ? configDir
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-        return Path.Combine(root, "projects");
+        string? configDir = null;
+        launchEnv?.TryGetValue("CLAUDE_CONFIG_DIR", out configDir);
+        if (string.IsNullOrWhiteSpace(configDir))
+            configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+        if (string.IsNullOrWhiteSpace(configDir))
+            configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
+        return Path.Combine(configDir, "projects");
     }
 
     public async ValueTask DisposeAsync()
