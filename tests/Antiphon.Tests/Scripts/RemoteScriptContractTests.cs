@@ -3585,8 +3585,16 @@ public sealed class RemoteScriptContractTests
         Order(deploy, "ensure_runner_boot_files", "c1008_recycle").ShouldBeTrue();
         Order(deploy, "cmp -s", "compose_host up -d").ShouldBeTrue();
         var recycle = Block(text, "c1008_recycle");
-        Order(recycle, "cmp -s", "c1008_lock").ShouldBeTrue("the target compose is compared before the rollout lock");
+        // The eight-space c1008_lock is the temp preview branch. Deploy-parent passes
+        // HOST_PROJECT, skips that branch, and compares the materialized target compose
+        // before the apply lock. A CRLF checkout has to reach the same verdict.
+        Order(recycle, "cmp -s", "\n    c1008_lock\n").ShouldBeTrue("the target compose is compared before the rollout lock");
+        LockLineBefore(recycle, "cmp -s").ShouldBe("        c1008_lock", "only the temp preview lock may precede the target compose compare");
         Order(recycle, "cmp -s", "docker stop").ShouldBeTrue("the target compose is compared before removal");
+        var crlf = Block(text.Replace("\n", "\r\n", StringComparison.Ordinal), "c1008_recycle");
+        crlf.Contains('\r').ShouldBeFalse("Block normalises a CRLF checkout before slicing");
+        Order(crlf, "cmp -s", "\n    c1008_lock\n").ShouldBeTrue("a CRLF checkout reports the same compare-before-lock order");
+        LockLineBefore(crlf, "cmp -s").ShouldBe("        c1008_lock");
         var late = deploy.IndexOf("cmp -s", StringComparison.Ordinal);
         deploy[late..].ShouldContain("c1008_refuse RecycleComposeMismatch");
         var marker = "# Preview intercepts before generic checkout, recursive ownership or boot setup.";
@@ -9337,11 +9345,32 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    private static string UnixNewlines(string text) =>
+        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
     private static bool Order(string text, string first, string second)
     {
-        var a = text.IndexOf(first, StringComparison.Ordinal);
-        var b = text.IndexOf(second, StringComparison.Ordinal);
+        var normalised = UnixNewlines(text);
+        var a = normalised.IndexOf(UnixNewlines(first), StringComparison.Ordinal);
+        var b = normalised.IndexOf(UnixNewlines(second), StringComparison.Ordinal);
         return a >= 0 && b >= 0 && a < b;
+    }
+
+    // The line of the first c1008_lock that precedes marker, or empty when none does.
+    private static string LockLineBefore(string text, string marker)
+    {
+        var normalised = UnixNewlines(text);
+        var limit = normalised.IndexOf(UnixNewlines(marker), StringComparison.Ordinal);
+        if (limit < 0)
+            return "";
+        var hit = normalised.IndexOf("c1008_lock", StringComparison.Ordinal);
+        if (hit < 0 || hit >= limit)
+            return "";
+        var lineStart = normalised.LastIndexOf('\n', hit) + 1;
+        var lineEnd = normalised.IndexOf('\n', hit);
+        if (lineEnd < 0)
+            lineEnd = normalised.Length;
+        return normalised[lineStart..lineEnd];
     }
 
     private static IReadOnlyList<string> Executable(string text, string token) =>
@@ -9363,7 +9392,7 @@ public sealed class RemoteScriptContractTests
 
     private static string Block(string text, string function)
     {
-        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var lines = UnixNewlines(text).Split('\n');
         var start = Array.FindIndex(lines, line => line.StartsWith(function + "() {", StringComparison.Ordinal));
         start.ShouldBeGreaterThanOrEqualTo(0, "function " + function + " is missing");
         var end = Array.FindIndex(lines, start + 1, line => line == "}");
