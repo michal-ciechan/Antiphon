@@ -198,18 +198,20 @@ function Test-CensusSentinels([string]$Census) {
         $required -cnotcontains 'sentinel-excluded')
 }
 function Test-FullInputs([string]$Root) {
+    # The pin covers both line endings; crlf-inputs also reads a CRLF census.
+    $script:FullInputsCensus = $null
     if (-not (Test-ProtectedInputs $Root)) { return $false }
     $crlf = Join-Path $ResultsDirectory ('crlf-' + [guid]::NewGuid().ToString('N'))
     Copy-ProtectedInputs $Root $crlf "`r`n"
     if (-not (Test-ProtectedInputs $crlf)) { return $false }
-    $census = Read-Census $Root
-    return ((Read-Census $crlf) -ceq $census -and (Test-CensusSentinels $census))
+    $script:FullInputsCensus = Read-Census $Root
+    return (Test-CensusSentinels $script:FullInputsCensus)
 }
 function New-CommittedInputRepo([string]$Root) {
     # A scratch repository whose HEAD commits the protected inputs, like a clean
     # CI/nightly checkout of a candidate that edited them.
     [void][IO.Directory]::CreateDirectory($Root)
-    & git -C $Root init -q
+    & git -C $Root init -q --template=
     if ($LASTEXITCODE -ne 0) { throw 'scratch repo unavailable' }
     foreach ($path in $script:ProtectedInputs) {
         $dest = Join-Path $Root $path
@@ -279,7 +281,7 @@ function Test-WrapperOnlyPaidManifest {
         ' to the value printed by: pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest')
     $beforeRoot = Join-Path $ResultsDirectory 'pinned'
     Copy-ProtectedInputs $repo $beforeRoot
-    $after = Read-Census $repo
+    $after = if ($script:FullInputsCensus) { $script:FullInputsCensus } else { Read-Census $repo }
     $policyPath = Join-Path $beforeRoot 'tests/test-execution-policy.json'
     $original = [IO.File]::ReadAllText($policyPath)
     Add-PolicyExclusion $beforeRoot
@@ -288,15 +290,17 @@ function Test-WrapperOnlyPaidManifest {
     $reader = Join-Path $beforeRoot 'scripts/lib/nightly-coverage.ps1'
     [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryDisposition { param(`$Node, `$ProfileExclusions, [switch]`$ProfileAware) return @{ Disposition = 'excluded'; Reason = 'fixture'; Owner = 'CARD-1545' } }`n")
     Check 'reader-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
-    # The same policy edit committed, as a clean CI/nightly/rc checkout sees it.
-    # A second commit excludes an unrelated class: no sentinel moves, so only the pin catches it.
+    # Committed edits, as a clean CI/nightly/rc checkout sees them, each with a recomputed
+    # policyHash. The first excludes an unrelated class: no sentinel moves, so only the pin
+    # catches it. The second adds the reviewer's C680 exclusion on top.
     $committed = Join-Path $ResultsDirectory 'committed'
     New-CommittedInputRepo $committed
+    Add-PolicyExclusion $committed 'Antiphon.Tests.Fixture.UnrelatedTests'; Save-ScratchCommit $committed 'exclude unrelated'
+    $neutralRed = -not (Test-FullInputs $committed)
     Add-PolicyExclusion $committed; Save-ScratchCommit $committed 'exclude C680'
-    $neutral = Join-Path $ResultsDirectory 'committed-neutral'
-    New-CommittedInputRepo $neutral
-    Add-PolicyExclusion $neutral 'Antiphon.Tests.Fixture.UnrelatedTests'; Save-ScratchCommit $neutral 'exclude unrelated'
-    Check 'committed-edit' (-not (Test-FullInputs $committed) -and -not (Test-FullInputs $neutral))
+    Check 'committed-edit' ($neutralRed -and -not (Test-FullInputs $committed))
+    # Git objects are read-only; drop the scratch repository so result cleanup stays cheap.
+    Remove-Item -LiteralPath $committed -Recurse -Force
     # A CRLF checkout of the unchanged inputs keeps the verdict.
     $crlfRoot = Join-Path $ResultsDirectory 'crlf-checkout'
     Copy-ProtectedInputs $repo $crlfRoot "`r`n"
