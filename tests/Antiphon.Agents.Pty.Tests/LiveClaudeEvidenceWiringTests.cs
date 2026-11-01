@@ -289,7 +289,28 @@ public class LiveClaudeEvidenceWiringTests
             ("N3", "Skip.Test(runner.SnapshotScreen());", "raw-skip"),
             ("N4", "Assert.Fail(\"screen \" + runner.SnapshotScreen());", "raw-assertion"),
             ("N6", "throw new InvalidOperationException(\"home \" + Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));", "raw-skip"),
-            ("N7", "System.Diagnostics.Trace.WriteLine(runner.SnapshotScreen());", "raw-console")
+            ("N7", "System.Diagnostics.Trace.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-Alias", "var err = Console.Error; err.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-AliasOut", "var sink = Console.Out; sink.Write(runner.SnapshotScreen());", "raw-console"),
+            ("SM-Group", "Action<string> log = Console.WriteLine; log(runner.SnapshotScreen());", "raw-console"),
+            ("SM-GroupArg", "var rows = new[] { runner.SnapshotScreen() }; rows.ToList().ForEach(Console.WriteLine);", "raw-console"),
+            ("SM-Cond", "Console.Out?.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-CondW", "TestContext.OutputWriter?.WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-Create", "File.Create(runner.SnapshotScreen());", "raw-file"),
+            ("SM-Move", "File.Move(runner.SnapshotScreen(), \"b\");", "raw-file"),
+            ("SM-Lines", "File.WriteAllLines(\"a.txt\", new[] { runner.SnapshotScreen() });", "raw-file"),
+            ("SM-Dir", "Directory.CreateDirectory(runner.SnapshotScreen());", "raw-file"),
+            ("SM-Stream", "new StreamWriter(\"a.txt\").Write(runner.SnapshotScreen());", "raw-file"),
+            ("SM-When", "Skip.When(true, runner.SnapshotScreen());", "raw-skip"),
+            ("SM-Unless", "Skip.Unless(false, runner.SnapshotScreen());", "raw-skip"),
+            ("SM-Sb", "var sb = new StringBuilder(); sb.Append(runner.SnapshotScreen()); throw new InvalidOperationException(sb.ToString());", "raw-skip"),
+            ("SM-Hold", "var held = new StringBuilder(); held.Append($\"{runner.SnapshotScreen()}\"); throw new InvalidOperationException(held.ToString());", "raw-skip"),
+            ("SM-Box", "var box = new string[1]; box[0] = runner.SnapshotScreen(); throw new InvalidOperationException(box[0]);", "raw-skip"),
+            ("SM-Pair", "var (part, rest) = (runner.SnapshotScreen(), 1); throw new InvalidOperationException(part);", "raw-skip"),
+            ("SM-Split", "runner.SnapshotScreen().Split('x').ShouldBeEmpty();", "raw-actual"),
+            ("SM-Arr", "new[] { runner.SnapshotScreen() }.ShouldBeEmpty();", "raw-actual"),
+            ("SM-Fast", "Environment.FailFast(runner.SnapshotScreen());", "raw-assertion"),
+            ("SM-Dbg", "Debug.Assert(false, runner.SnapshotScreen());", "raw-assertion")
         };
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
         {
@@ -330,6 +351,33 @@ public class LiveClaudeEvidenceWiringTests
         if (Count([caller]).Console <= 0)
             throw new InvalidOperationException("C1545 N8 did not reach expected assertion");
         Console.WriteLine("C1545 N8 assertion-red; restored-green " + Callers[0].Method + " raw-console");
+        var usingCases = new (string Pc, string Using, string Code, string Assertion)[]
+        {
+            ("SM-Using", "using static System.Console;", "WriteLine(runner.SnapshotScreen());", "raw-console"),
+            ("SM-UAlias", "using Out = System.Console;", "Out.WriteLine(runner.SnapshotScreen());", "raw-console")
+        };
+        var usingSource = LiveClaudeExecutableAudit.Read(Callers[0].Path);
+        var usingMethod = LiveClaudeExecutableAudit.Method(usingSource, Callers[0].Method);
+        var usingBody = usingMethod.Body ?? throw new InvalidOperationException("C1545 using/no-body");
+        var usingClose = usingBody.ToString();
+        var usingBrace = usingClose.LastIndexOf('}');
+        foreach (var insert in usingCases)
+        {
+            var mutatedBody = usingClose[..usingBrace] + insert.Code + usingClose[usingBrace..];
+            var mutated = insert.Using + "\n" + usingSource.Replace(usingClose, mutatedBody, StringComparison.Ordinal);
+            var found = Count([LiveClaudeExecutableAudit.Method(mutated, Callers[0].Method)]);
+            var red = insert.Assertion switch
+            {
+                "raw-console" => found.Console > 0,
+                "raw-assertion" => found.Assertion > 0,
+                "raw-skip" => found.Skip > 0,
+                "raw-file" => found.File > 0,
+                "raw-process" => found.Process > 0,
+                _ => found.Actual > 0
+            };
+            if (!red) throw new InvalidOperationException("C1545 " + insert.Pc + " did not reach expected assertion");
+            Console.WriteLine("C1545 " + insert.Pc + " assertion-red; restored-green " + Callers[0].Method + " " + insert.Assertion);
+        }
     }
 
     private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0);
