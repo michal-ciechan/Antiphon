@@ -231,6 +231,37 @@ public sealed class OwnedProcessTreeTests
         await Task.CompletedTask;
     }
 
+    /// <summary>Windows does not reap a killed process before the next instruction, and git can
+    /// spawn the hook sleeper in that gap. The sleeper's parent is a pid we just signalled.
+    /// The sealed wave must not contain it; the follow read must.</summary>
+    [Test]
+    public async Task C448_ChildBornAsTheRootIsSignalledIsKilled()
+    {
+        var rows = new List<ProcessTableRow> { Row(10, 1, 1_000), Row(20, 10, 1_100) };
+        var killed = new List<int>();
+        var log = new List<string>();
+        OwnedProcessTree.Execute(
+            () => new ProcessSnapshot(rows.ToArray(), null),
+            pid => rows.Last(row => row.Pid == pid).StartTicks,
+            pid =>
+            {
+                killed.Add(pid);
+                if (pid == 10)
+                    rows.Add(Row(30, 20, 1_200));
+            },
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            log.Add);
+        log.ShouldContain(line => line.Contains("repository_child_tree_kill root=10", StringComparison.Ordinal)
+            && line.Contains("killed=10,20", StringComparison.Ordinal)
+            && !line.Contains("killed=10,20,30", StringComparison.Ordinal));
+        killed.ShouldContain(30);
+        await Task.CompletedTask;
+    }
+
     [Test]
     public async Task C448_StartAfterTheSnapshotClockIsNotKilled()
     {
