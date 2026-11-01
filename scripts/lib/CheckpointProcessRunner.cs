@@ -30,7 +30,7 @@ namespace Antiphon.Checkpoints
         // An already-exited child lost the job-assignment race and still has a result.
         // A live child that cannot be assigned is process custody, not a timeout.
         public static string? CustodyRefusal(bool assigned, bool exited) =>
-            assigned ? null : exited ? "process custody unavailable" : "process custody unavailable";
+            assigned || exited ? null : "process custody unavailable";
 
         public static Result Run(ProcessStartInfo start, int timeoutMs, bool git, CancellationToken cancellationToken = default)
             => RunObserved(start, timeoutMs, git, null, cancellationToken);
@@ -157,8 +157,10 @@ namespace Antiphon.Checkpoints
                 if (OperatingSystem.IsWindows())
                 {
                     job = CreateJobObject(IntPtr.Zero, null);
-                    if (job == IntPtr.Zero || !AssignProcessToJobObject(job, process.Handle))
-                        throw new InvalidOperationException("process custody unavailable");
+                    var assigned = job != IntPtr.Zero && AssignProcessToJobObject(job, process.Handle);
+                    var refusal = CustodyRefusal(assigned, Exited(process));
+                    if (refusal is not null)
+                        throw new InvalidOperationException(refusal);
                 }
                 var stdout = readStdout(process, cancellationToken);
                 var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
@@ -174,6 +176,12 @@ namespace Antiphon.Checkpoints
                 // Abandon pipes on expiry; never synchronously join a drain here.
                 try { if (!process.HasExited) process.WaitForExit(1000); } catch (InvalidOperationException) { }
             }
+        }
+
+        private static bool Exited(Process process)
+        {
+            try { return process.HasExited; }
+            catch (InvalidOperationException) { return false; }
         }
 
         [DllImport("libc", EntryPoint = "kill")] private static extern int Kill(int pid, int signal);

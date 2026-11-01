@@ -10,7 +10,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.HostCleanup.Checkpoints;
 
-public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo
+public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo, ICheckpointReadHolders
 {
     public int CurrentProcessId => Environment.ProcessId;
     public string MachineName => Environment.MachineName;
@@ -510,6 +510,75 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo
         { return new("unknown", 0, 0, 0, 0, 0); }
     }
 
+    public string? Holder(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsLinux()) return LinuxHolder(path);
+            if (OperatingSystem.IsWindows()) return WindowsHolder(path);
+        }
+        catch (Exception)
+        { }
+        return null;
+    }
+
+    // A miss leaves the stall text unchanged. The scan is synchronous and bounded so the
+    // refusal path does not queue thread-pool work, and it skips this process: the reader
+    // itself has the file open.
+    private static string? LinuxHolder(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var self = Environment.ProcessId;
+        var seen = 0;
+        foreach (var entry in Directory.EnumerateDirectories("/proc"))
+        {
+            var name = Path.GetFileName(entry);
+            if (!int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) || pid == self) continue;
+            if (++seen > 32) break;
+            var fds = 0;
+            IEnumerable<string> links;
+            try { links = Directory.EnumerateFiles(Path.Combine(entry, "fd")); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+            foreach (var link in links)
+            {
+                if (++fds > 64) break;
+                var buffer = new byte[4096];
+                var count = ReadLink(link, buffer, (nuint)buffer.Length);
+                if (count <= 0 || count >= buffer.Length) continue;
+                if (!string.Equals(Encoding.UTF8.GetString(buffer, 0, (int)count), full, StringComparison.Ordinal)) continue;
+                try
+                {
+                    var comm = File.ReadAllText(Path.Combine(entry, "comm")).Trim();
+                    if (comm.Length > 0) return comm;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                return name;
+            }
+        }
+        return null;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? WindowsHolder(string path)
+    {
+        var source = new Diagnostics.NativeWindowsFileUseSource();
+        if (source.Start(out var session) != 0) return null;
+        try
+        {
+            if (source.Register(session, [path]) != 0) return null;
+            var list = source.List(session, 8);
+            if (list.Error != 0) return null;
+            var self = Environment.ProcessId;
+            foreach (var row in list.Processes)
+            {
+                if (row.Pid == self || string.IsNullOrWhiteSpace(row.Name) || row.Name == "[unavailable]") continue;
+                return row.Name;
+            }
+            return null;
+        }
+        finally { source.End(session); }
+    }
+
     public ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
     {
         SafeFileHandle handle;
@@ -539,9 +608,97 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo
         }
     }
 
+    // FileStream.Read on an overlapped handle completes through the pool. Wait on the event here
+    // instead, and keep the offset ourselves: overlapped I/O does not advance the file pointer.
+    // Read must not call the base implementation, which would re-enter that pool completion.
+    private sealed class WindowsReadStream(SafeFileHandle handle) : FileStream(handle, FileAccess.Read)
+    {
+        private long _offset;
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            var rented = System.Buffers.ArrayPool<byte>.Shared.Rent(buffer.Length);
+            var pin = GCHandle.Alloc(rented, GCHandleType.Pinned);
+            try
+            {
+                var read = ReadPinned(rented, buffer.Length, CancellationToken.None);
+                if (read > 0) rented.AsSpan(0, read).CopyTo(buffer);
+                return read;
+            }
+            finally
+            {
+                pin.Free();
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rented = System.Buffers.ArrayPool<byte>.Shared.Rent(buffer.Length);
+            var pin = GCHandle.Alloc(rented, GCHandleType.Pinned);
+            try
+            {
+                var read = ReadPinned(rented, buffer.Length, cancellationToken);
+                if (read > 0) rented.AsSpan(0, read).CopyTo(buffer.Span);
+                return ValueTask.FromResult(read);
+            }
+            finally
+            {
+                pin.Free();
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+
+        private int ReadPinned(byte[] buffer, int count, CancellationToken cancellationToken)
+        {
+            var ev = CreateEvent(IntPtr.Zero, true, false, null);
+            if (ev == IntPtr.Zero) throw new IOException("read event unavailable: win32=" + Marshal.GetLastWin32Error());
+            try
+            {
+                var overlapped = new System.Threading.NativeOverlapped
+                {
+                    OffsetLow = unchecked((int)_offset),
+                    OffsetHigh = unchecked((int)(_offset >> 32)),
+                    EventHandle = ev
+                };
+                if (!ReadFile(handle, buffer, count, out var read, ref overlapped))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error == 38) return 0; // ERROR_HANDLE_EOF
+                    if (error != 997) throw new IOException("read failed: win32=" + error); // ERROR_IO_PENDING
+                    while (true)
+                    {
+                        var wait = WaitForSingleObject(ev, 50);
+                        if (wait == 0) break;
+                        if (wait == 258 && !cancellationToken.IsCancellationRequested) continue;
+                        CancelIoEx(handle, ref overlapped);
+                        WaitForSingleObject(ev, 100);
+                        if (cancellationToken.IsCancellationRequested)
+                            throw new OperationCanceledException(cancellationToken);
+                        throw new IOException("read wait failed: win32=" + (wait == 0xFFFFFFFFu ? Marshal.GetLastWin32Error() : wait));
+                    }
+                    if (!GetOverlappedResult(handle, ref overlapped, out read, false))
+                    {
+                        var pending = Marshal.GetLastWin32Error();
+                        if (pending == 38) return 0; // ERROR_HANDLE_EOF
+                        if (pending == 995 || cancellationToken.IsCancellationRequested)
+                            throw new OperationCanceledException(cancellationToken);
+                        throw new IOException("read failed: win32=" + pending);
+                    }
+                }
+                if (read > 0) _offset += read;
+                return read;
+            }
+            finally { CloseHandle(ev); }
+        }
+    }
+
     private sealed class NativeHandle(SafeFileHandle handle) : ICheckpointReadHandle
     {
-        public Stream OpenStream() => OperatingSystem.IsLinux() ? new LinuxReadStream(handle) : new FileStream(handle, FileAccess.Read);
+        public Stream OpenStream() => OperatingSystem.IsLinux() ? new LinuxReadStream(handle) : new WindowsReadStream(handle);
         public void Dispose() => handle.Dispose();
         public CheckpointHandleStat Inspect()
         {
@@ -656,6 +813,12 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out WindowsInfo info);
     [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint capacity, uint flags);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint GetFileType(SafeFileHandle handle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr CreateEvent(IntPtr attributes, bool manualReset, bool initialState, string? name);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ReadFile(SafeFileHandle handle, byte[] buffer, int count, out int read, ref System.Threading.NativeOverlapped overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetOverlappedResult(SafeFileHandle handle, ref System.Threading.NativeOverlapped overlapped, out int read, bool wait);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CancelIoEx(SafeFileHandle handle, ref System.Threading.NativeOverlapped overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int fileInformationClass, out FileBasicInfo info, uint size);
     [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
     [DllImport("advapi32.dll")] private static extern uint GetSecurityInfo(IntPtr handle, int objectType, uint securityInfo, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
