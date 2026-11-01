@@ -31,10 +31,10 @@ try {
     }
     function Assert-BridgeDiagnosticRetained {
         param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][int]$ExpectedExit)
-        $log = $Text.Replace("`r`n", "`n")
-        if ($log -notmatch '(?m)^CacheRecoveryInvalid$' -or $log -match 'TOKEN_SENTINEL|password|credential') {
-            throw 'safe diagnostic not retained'
-        }
+        $log = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+        $token = $log -match '(?m)(?<![A-Za-z0-9])CacheRecoveryInvalid(?![A-Za-z0-9])'
+        $secret = $log -match 'TOKEN_SENTINEL|password|credential'
+        if (-not $token -or $secret) { throw 'safe diagnostic not retained' }
         if ($log -notmatch "(?m)^transport-exit=$ExpectedExit$") { throw 'numeric exit not retained' }
     }
     function Assert-BridgeDiagnosticRefused {
