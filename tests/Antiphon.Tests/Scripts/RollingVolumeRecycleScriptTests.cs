@@ -1580,7 +1580,7 @@ public sealed class RollingVolumeRecycleScriptTests
         applied.Exit.ShouldBe(2, "recycle-preview-receipt: apply after a " + refusal + " preview refuses; " + applied.Output);
         applied.Output.ShouldContain("RecycleGitAuditUnknown reason=preview-required", Case.Sensitive,
             "recycle-preview-receipt: a refused preview is not Ready; " + applied.Output);
-        applied.Output.ShouldNotContain("C1008_RECYCLE");
+        applied.Output.ShouldNotContain("outcome=completed");
         fixture.Removed.ShouldBeEmpty("recycle-preview-receipt: a refusing apply removes nothing");
         fixture.Trace.Any(args => args.Length > 0 && args[0] is "create" or "run" or "stop").ShouldBeFalse(
             "recycle-preview-receipt: a refusing apply starts and stops nothing");
