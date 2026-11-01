@@ -104,7 +104,7 @@ public sealed class VolumeRetirementHostProofTests
                 }
             }
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally { DeleteOwned(root, "c1609-h1-"); }
     }
 
     [Test]
@@ -137,7 +137,7 @@ public sealed class VolumeRetirementHostProofTests
                 text.ShouldNotContain("password");
                 wrote.Output.ShouldNotContain("ghp_");
             }
-            finally { Directory.Delete(root, recursive: true); }
+            finally { DeleteOwned(root, "c1609-h2-"); }
         }
 
         var refuseRoot = Directory.CreateTempSubdirectory("c1609-h2-refuse-").FullName;
@@ -151,7 +151,7 @@ public sealed class VolumeRetirementHostProofTests
             refused.Output.ShouldNotContain("ghp_PRIVATE_SENTINEL");
             Directory.GetFiles(refuseRoot).ShouldBeEmpty();
         }
-        finally { Directory.Delete(refuseRoot, recursive: true); }
+        finally { DeleteOwned(refuseRoot, "c1609-h2-refuse-"); }
     }
 
     [Test]
@@ -170,7 +170,7 @@ public sealed class VolumeRetirementHostProofTests
             run.Output.ShouldNotContain("fatal:");
             Directory.GetFiles(proof).ShouldBeEmpty();
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally { DeleteOwned(root, "c1609-h3-"); }
     }
 
     [Test]
@@ -204,7 +204,7 @@ public sealed class VolumeRetirementHostProofTests
             bad.Output.ShouldContain("RecycleGitAuditUnknown");
             Directory.GetFiles(proof).ShouldBeEmpty();
         }
-        finally { Directory.Delete(proof, recursive: true); }
+        finally { DeleteOwned(proof, "c1609-h4-"); }
 
         var bound = Directory.CreateTempSubdirectory("c1609-h4-v2-").FullName;
         try
@@ -222,7 +222,7 @@ public sealed class VolumeRetirementHostProofTests
             body.ShouldNotContain("fixture.invalid");
             body.ShouldNotContain(bound);
         }
-        finally { Directory.Delete(bound, recursive: true); }
+        finally { DeleteOwned(bound, "c1609-h4-v2-"); }
     }
 
     [Test]
@@ -248,7 +248,7 @@ public sealed class VolumeRetirementHostProofTests
             local.Output.ShouldContain("RecycleGitAuditUnknown");
             Directory.GetFiles(Path.Combine(denied, "proof")).ShouldBeEmpty();
         }
-        finally { Directory.Delete(denied, recursive: true); }
+        finally { DeleteOwned(denied, "c1609-h5-v2-"); }
     }
 
     [Test]
@@ -283,7 +283,7 @@ public sealed class VolumeRetirementHostProofTests
             if (File.Exists(log)) (await File.ReadAllTextAsync(log)).ShouldNotContain("SENTINEL_STDERR_C1609");
             Directory.GetFiles(proof).ShouldBeEmpty();
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally { DeleteOwned(root, "c1609-h6-"); }
     }
 
     [Test]
@@ -494,7 +494,6 @@ public sealed class VolumeRetirementHostProofTests
 
     private static string Quote(string path) => "'" + path.Replace("'", "''") + "'";
 
-    // Red witness: this delete does not clear read-only git objects yet.
     private static void DeleteOwned(
         string root,
         string prefix,
@@ -507,7 +506,10 @@ public sealed class VolumeRetirementHostProofTests
             var full = OwnedTempRoot(root, prefix);
             if (!Directory.Exists(full))
                 return;
-            (delete ?? Directory.Delete)(full, true);
+            if (delete is null)
+                ReadOnlyDirectory.Delete(full);
+            else
+                ReadOnlyDirectory.Delete(full, delete);
         }
         catch (Exception error)
         {

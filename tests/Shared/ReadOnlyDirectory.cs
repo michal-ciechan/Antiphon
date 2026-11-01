@@ -7,12 +7,15 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 internal static class ReadOnlyDirectory
 {
-    public static void Delete(string path)
+    public static void Delete(string path) =>
+        Delete(path, static (candidate, recursive) => Directory.Delete(candidate, recursive));
+
+    internal static void Delete(string path, Action<string, bool> delete)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "delete-tree");
         if (Directory.Exists(path))
             ClearReadOnly(path);
-        Directory.Delete(path, recursive: true);
+        delete(path, true);
     }
 
     internal static void ClearReadOnly(string path)
