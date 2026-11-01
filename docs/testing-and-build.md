@@ -1292,6 +1292,21 @@ Commit before each big run and record the commit and temporary PC mutations it e
 
 ## Nightly
 
+A stopped-run seed orders the next run and grants no execution credit. The operator's
+order is failures first, then the oldest things which have not run, then the other
+chunks of a class that failed (affected by the same fix) before everything that passed.
+Failures first means the failing tests. Match class plus method, and ignore a
+parenthesised parameterised-case suffix, which is how the seed stores the method.
+A chunk whose node list contains a failed method leads. A whole-class chunk, and any
+chunk whose node list is missing, also leads when one of its classes has a failed
+method, so a regrouped plan cannot drop a failure out of the front by omitting nodes.
+The other chunks of that class run after the never-run and unfinished chunks. A missing
+timestamp stays ahead of a known one, and known timestamps run oldest first. A failed
+method the new plan does not contain is ignored. A failed method that moved follows
+the chunk that now contains it. The schedule stays a permutation. A bad `sourceSha`,
+`sourceRunId`, seed marker, or a wholly unmapped plan restores the original order
+with the same reason as before.
+
 For local rc inspection, emergency manual stop and evidence-preserving stale-lock
 recovery, use [Inspecting and stopping a qualification](release-gates.md#inspecting-and-stopping-a-qualification).
 The shared `native-run.lock` serializes native work across lanes and is never
