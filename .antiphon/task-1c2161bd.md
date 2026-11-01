@@ -37,9 +37,9 @@ One run of that output, lease c371616f-09c3-4034-a695-305c5c9ba956, `--timeout 2
 
 ## Other gates
 
-- check-evidence-diff ce291773..3cba1be6: commits=2 entries=0 violations=0.
-- merge-tree onto origin/master and origin/rc/2026-11-01, both 679b696bd178e3c8bb14b32fcd04a1c26b148435: clean, tree d9f0087fc6ed36d463f35d3748810bfe19b9de00.
-- land graph -Check, no -Update, tool from the same build: `digest=D92450D9AABCBF9C783B506F73DF06C45635F415D03E65C5F1A97AF415CC36BE count=69`, `approved`, exit 0.
+- check-evidence-diff ce291773..3cba1be6: commits=2 entries=0 violations=0. Including the report commit fba2ae5a3: commits=3 entries=1 violations=0.
+- merge-tree onto origin/master and origin/rc/2026-11-01, both 679b696bd178e3c8bb14b32fcd04a1c26b148435: clean at the fix (tree d9f0087fc6ed36d463f35d3748810bfe19b9de00) and clean again at fba2ae5a3 (tree 36157433cc52315429b54d1cf3263f534c087675).
+- land graph -Check at fba2ae5a3, no -Update, tool from the test build: `digest=D92450D9AABCBF9C783B506F73DF06C45635F415D03E65C5F1A97AF415CC36BE count=69`, `approved`, exit 0.
 
 ## Native Windows rerun of group 126
 
