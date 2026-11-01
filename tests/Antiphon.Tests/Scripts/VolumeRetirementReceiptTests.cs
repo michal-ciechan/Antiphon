@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Antiphon.TestSupport;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -6,6 +7,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+[NativeLinuxOnly(NativeLinuxReason)]
 [Timeout(600_000)]
 [Category("Unit")]
 public sealed class VolumeRetirementReceiptTests
