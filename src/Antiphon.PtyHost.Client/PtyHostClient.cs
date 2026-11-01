@@ -65,9 +65,13 @@ public sealed class PtyHostClient : IAsyncDisposable
                 return new PtyHostClient(pipe, hello);
             }
             catch (Exception ex) when (
-                ex is IOException or TimeoutException
+                ex is IOException or TimeoutException or InvalidOperationException or EndOfStreamException
                 || (ex is OperationCanceledException && !ct.IsCancellationRequested))
             {
+                // A detached host closes the current pipe and listens again. The reconnect can be
+                // accepted by the socket that is already closing, so hello reads EOF. That is the
+                // same "server not ready" condition as a refused connect: retry inside this budget.
+                // Failing the first EOF made adoption kill a live host (CARD-1632).
                 last = ex;
                 await pipe.DisposeAsync();
                 await Task.Delay(150, ct);

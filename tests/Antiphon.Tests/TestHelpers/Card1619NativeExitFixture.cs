@@ -14,6 +14,15 @@ namespace Antiphon.Tests.TestHelpers;
 /// <summary>A fresh owned real Linux PTY lifetime, using the production detached host resolver.</summary>
 internal sealed class Card1619NativeExitFixture : IAsyncDisposable
 {
+    /// <summary>
+    /// Outer bound for one real host launch, connect, and exit envelope. Launch and connect
+    /// ceilings are 30s and 15s; five more seconds cover the exit envelope after a start
+    /// that used both. A 10s token cancelled a still-legal start and the next await reported
+    /// that as TaskCanceledException in AttachAsync (CARD-1632). Unloaded and CPU-pinned
+    /// starts finish near 1s; this bound is the product ceiling, not 2x that p95.
+    /// </summary>
+    public static readonly TimeSpan CaptureBudget = TimeSpan.FromSeconds(50);
+
     public Guid Id { get; } = Guid.NewGuid();
     public DateTime Generation { get; } = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-1));
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "card1619-s3a-" + Guid.NewGuid().ToString("N"));
@@ -32,7 +41,10 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
 
     private async Task<string> RunAsync(int signal, int code, bool requested, bool planted)
     {
-        using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var ct = new CancellationTokenSource(CaptureBudget);
+        var clock = Stopwatch.StartNew();
+        void Mark(string phase) =>
+            Console.WriteLine($"card1619-phase signal={signal} code={code} {phase} ms={clock.ElapsedMilliseconds}");
         Directory.CreateDirectory(Root);
         _runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings {
             SessionLogPath = Root, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false
@@ -43,13 +55,25 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
             var script = planted
                 ? "printf 'card1619-ready\\n'; while [ ! -f release-self ]; do sleep 0.02; done; kill -9 $$"
                 : $"printf 'card1619-ready\\n'; read line; exit {code}";
-            var dto = await _runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
-                ["-c", script],
-                new Dictionary<string, string>(), Root, 80, 24, AcceptedStartedAt: Generation), ct.Token);
+            Mark("before-start");
+            RunnerSessionDto dto;
+            try
+            {
+                dto = await _runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
+                    ["-c", script],
+                    new Dictionary<string, string>(), Root, 80, 24, AcceptedStartedAt: Generation), ct.Token);
+            }
+            catch (Exception ex)
+            {
+                Mark($"start-failed {ex.GetType().Name}");
+                throw;
+            }
+            Mark("after-start");
             _child = Process.GetProcessById(dto.Pid!.Value);
             _host = Process.GetProcessById(dto.HostPid!.Value);
             _startTicks = StartTicks(_child.Id);
             while (!_runtime.GetBuffer(Id).Buffer.Contains("card1619-ready")) await Task.Delay(10, ct.Token);
+            Mark("ready");
             dto.Status.ShouldBe("Running");
             LaunchManifest = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(Path.Combine(Root, "pty-hosts", "manifests"), Id))!;
             LaunchManifest.ShouldNotBeNull("capture the real manifest before the runner acknowledges exit");
@@ -92,6 +116,7 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
                         exit.AcceptedStartedAt.ShouldBe(Generation);
                         exit.ExitSignal.ShouldBe(signal);
                         exit.ExitCode.ShouldBe(code);
+                        Mark("exit-envelope");
                         return value.Json;
                     }
         }
