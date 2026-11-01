@@ -1570,19 +1570,20 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
+    // CARD-1609: a refused preview leaves no Ready receipt, so even the token apply
+    // refuses preview-required before any helper, stop, or remove. The completed
+    // cleanup receipt bound here lends no authority.
     private static async Task AssertApplyMatchesPreview(C1008HostFixture fixture, string refusal)
     {
-        var preview = fixture.Trace.Single(args => args.Length > 0 && args[0] == "run");
-        var previewNetwork = FlagValue(preview, "--network");
         ResetPreviewTrace(fixture);
         var applied = await fixture.Run("retire-temp-runner", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation);
-        applied.Exit.ShouldBe(2, "recycle-preview-receipt: apply refusal matches the preview; " + applied.Output);
-        applied.Output.ShouldContain(refusal);
-        foreach (var other in new[] { "RecycleWorktreeDirty", "RecycleUnpublishedWork", "RecycleGitAuditUnknown" })
-            if (other != refusal) applied.Output.ShouldNotContain(other);
+        applied.Exit.ShouldBe(2, "recycle-preview-receipt: apply after a " + refusal + " preview refuses; " + applied.Output);
+        applied.Output.ShouldContain("RecycleGitAuditUnknown reason=preview-required", Case.Sensitive,
+            "recycle-preview-receipt: a refused preview is not Ready; " + applied.Output);
+        applied.Output.ShouldNotContain("C1008_RECYCLE");
         fixture.Removed.ShouldBeEmpty("recycle-preview-receipt: a refusing apply removes nothing");
-        var created = fixture.Trace.Single(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint"));
-        FlagValue(created, "--network").ShouldBe(previewNetwork, "recycle-preview-readonly: preview network matches apply");
+        fixture.Trace.Any(args => args.Length > 0 && args[0] is "create" or "run" or "stop").ShouldBeFalse(
+            "recycle-preview-receipt: a refusing apply starts and stops nothing");
     }
 
     private static string? FlagValue(string[] args, string flag)
