@@ -1,6 +1,6 @@
 #requires -Version 7.0
 # Offline CARD-1545 admission contracts. Boundaries never contact a provider.
-param([string]$Case, [string]$ResultsDirectory)
+param([string]$Case, [string]$ResultsDirectory, [switch]$PrintInputDigest)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-policy.ps1"
@@ -8,15 +8,32 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/release-gate.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 . "$PSScriptRoot/lib/live-lane-run.ps1"
-$ResultsDirectory = New-C487Root $ResultsDirectory
 $repo = Split-Path $PSScriptRoot -Parent
-# These five inputs are the census. Compare them to this commit's own blobs with
-# newlines normalised: an LF checkout and a CRLF checkout of the same blob agree,
-# and a real policy or reader edit does not. The old commission SHA is not an
-# ancestor of this line, so a whole-tree diff against it stays red after later commits.
+# These five inputs are the census the paid wrapper-only manifest was commissioned
+# against. A change to any of them must be a deliberate, reviewed act: the same
+# change updates $script:PinnedInputDigest to the value printed by
+#   pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest
+# The digest is over newline-normalised text, so LF and CRLF checkouts agree.
 $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
+$script:PinnedInputDigest = '11880ff5aa61b70f68b1d1bd280de45e5c1a9467f773db540d2b02c16421bad6'
+function ConvertTo-LfText([string]$Text) {
+    if ($null -eq $Text) { return '' }
+    return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
+}
+function Get-ProtectedInputDigest([string]$Root) {
+    $text = [Text.StringBuilder]::new()
+    foreach ($path in $script:ProtectedInputs) {
+        $actualPath = Join-Path $Root $path
+        if (-not (Test-Path -LiteralPath $actualPath -PathType Leaf)) { return '' }
+        [void]$text.Append($path).Append("`n").Append((ConvertTo-LfText ([IO.File]::ReadAllText($actualPath)))).Append("`0")
+    }
+    $hash = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text.ToString()))
+    return [Convert]::ToHexString($hash).ToLowerInvariant()
+}
+if ($PrintInputDigest) { Get-ProtectedInputDigest $repo; exit 0 }
+$ResultsDirectory = New-C487Root $ResultsDirectory
 $method = $Case -replace '^C1545_', ''
 function Check([string]$Id, [bool]$Ok) { Assert-C487 $Ok "C1545 $method/$Id" 'contract mismatch (synthetic inputs only)' }
 function New-Fixture {
@@ -159,46 +176,34 @@ function Test-LockBeforeSlot {
         Check $id ($r.ExitCode -eq 2 -and (No-Starts))
     }
 }
-function ConvertTo-LfText([string]$Text) {
-    if ($null -eq $Text) { return '' }
-    return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
-}
-function Get-OwnBlobText([string]$Root, [string]$Path) {
-    $rev = (& git -C $Root rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $rev.Length -ne 40) { throw 'own blob unavailable' }
-    $text = (& git -C $Root show "${rev}:${Path}") -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw 'own blob unavailable' }
-    return (ConvertTo-LfText ($text + "`n"))
-}
-function Test-ProtectedInputs([string]$Overlay = '', [string]$Owner = $repo) {
-    # Protected inputs match this commit's own blobs after newline normalisation.
-    $root = if ([string]::IsNullOrWhiteSpace($Overlay)) { $Owner } else { $Overlay }
-    foreach ($path in $script:ProtectedInputs) {
-        $actualPath = Join-Path $root $path
-        if (-not (Test-Path -LiteralPath $actualPath)) { return $false }
-        $actual = ConvertTo-LfText ([IO.File]::ReadAllText($actualPath))
-        if ($actual -cne (Get-OwnBlobText $Owner $path)) { return $false }
-    }
-    return $true
+function Test-ProtectedInputs([string]$Root) {
+    # Protected inputs match the deliberate pin, never this commit's own blobs:
+    # a clean checkout always matches its own commit.
+    return ((Get-ProtectedInputDigest $Root) -ceq $script:PinnedInputDigest)
 }
 function Copy-ProtectedInputs([string]$From, [string]$To, [string]$NewLine = "`n") {
     foreach ($path in $script:ProtectedInputs) {
-        $text = Get-OwnBlobText $From $path
+        $text = ConvertTo-LfText ([IO.File]::ReadAllText((Join-Path $From $path)))
         $dest = Join-Path $To $path
         [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
         [IO.File]::WriteAllText($dest, $text.Replace("`n", $NewLine))
     }
 }
 function Test-CensusSentinels([string]$Census) {
-    return ($Census.Contains('sentinel-c680') -and $Census.Contains('sentinel-excluded'))
+    # Membership in the right set, not a name anywhere in the census.
+    $c = $Census | ConvertFrom-Json -AsHashtable
+    $required = @($c.Required); $excluded = @($c.Excluded)
+    return ($required -ccontains 'sentinel-c680' -and $required -ccontains 'sentinel-ordinary' -and
+        $excluded -ccontains 'sentinel-excluded' -and $excluded -cnotcontains 'sentinel-c680' -and
+        $required -cnotcontains 'sentinel-excluded')
 }
 function Test-FullInputs([string]$Root) {
-    $id = [guid]::NewGuid().ToString('N')
-    $pinned = Join-Path $ResultsDirectory "pinned-$id"; $crlf = Join-Path $ResultsDirectory "crlf-$id"
-    Copy-ProtectedInputs $Root $pinned; Copy-ProtectedInputs $Root $crlf "`r`n"
-    if (-not ((Test-ProtectedInputs '' $Root) -and (Test-ProtectedInputs $crlf $Root))) { return $false }
-    $before = Read-Census $pinned; $after = Read-Census $Root
-    return ($before -ceq $after -and (Read-Census $crlf) -ceq $after -and (Test-CensusSentinels $before))
+    if (-not (Test-ProtectedInputs $Root)) { return $false }
+    $crlf = Join-Path $ResultsDirectory ('crlf-' + [guid]::NewGuid().ToString('N'))
+    Copy-ProtectedInputs $Root $crlf "`r`n"
+    if (-not (Test-ProtectedInputs $crlf)) { return $false }
+    $census = Read-Census $Root
+    return ((Read-Census $crlf) -ceq $census -and (Test-CensusSentinels $census))
 }
 function New-CommittedInputRepo([string]$Root) {
     # A scratch repository whose HEAD commits the protected inputs, like a clean
@@ -268,7 +273,10 @@ function Test-WrapperOnlyPaidManifest {
     }
     $q = New-Fixture; $q.Request.Mode = 'Native'; $r = Run-Fixture $q
     Check 'native-disabled' ($r.ExitCode -eq 20 -and $r.Reason -ceq 'native-unqualified' -and (No-Starts))
-    Check 'full-inputs' (Test-FullInputs $repo)
+    $digest = Get-ProtectedInputDigest $repo
+    Assert-C487 (Test-FullInputs $repo) "C1545 $method/full-inputs" ("census inputs digest $digest, pinned $($script:PinnedInputDigest)" +
+        '; if this census/policy input change is deliberate and reviewed, set $script:PinnedInputDigest in scripts/test-live-lane-run.ps1' +
+        ' to the value printed by: pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest')
     $beforeRoot = Join-Path $ResultsDirectory 'pinned'
     Copy-ProtectedInputs $repo $beforeRoot
     $after = Read-Census $repo
