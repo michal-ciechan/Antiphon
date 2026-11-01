@@ -104,6 +104,58 @@ function Invoke-CaptureShellWitness {
         $seen = @(Get-ChildItem -LiteralPath $probeDir -Filter 'seen-*' -File -ErrorAction SilentlyContinue)
         $started = ($markerText -eq $besideText) -and ($stdout -eq 'QUAL-OUT') -and ($stderr -eq 'QUAL-ERR') -and ($exitText -eq '0') -and (@($seen).Count -ge 1)
         Assert-Check $started 'capture-shell-seam-starts-resolved-shell'
+        $phaseNames = @(
+            'ANTIPHON_TEST_PHASE_ROOT',
+            'ANTIPHON_TEST_PHASE_RUN_ID',
+            'ANTIPHON_TEST_PHASE_GROUP_ID',
+            'ANTIPHON_TEST_PHASE_ATTEMPT',
+            'ANTIPHON_TEST_PHASE_SUITE'
+        )
+        $savedPhase = @{}
+        foreach ($phaseName in $phaseNames) {
+            $savedPhase[$phaseName] = [Environment]::GetEnvironmentVariable($phaseName)
+            [Environment]::SetEnvironmentVariable($phaseName, ('inherited-' + $phaseName))
+        }
+        try {
+            $env:QTIMING_FORWARD = '0'
+            $env:QTIMING_ENV_WITNESS = '1'
+            $env:QTIMING_CHILD_EXIT = '0'
+            $null = & $NightlySeams.StartProcess 'dotnet' @('--report-trx') $probeRoot 10000 @{
+                ANTIPHON_TEST_PHASE_ROOT = 'forwarded-phase'
+                QTIMING_KEEP = 'kept-value'
+            }
+            $envDump = @(Get-ChildItem -LiteralPath $probeDir -Filter 'env-*' -File -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1)
+            $dumpText = ''
+            if ($envDump.Count -ge 1) { $dumpText = [IO.File]::ReadAllText($envDump[-1].FullName) }
+            $names = New-Object System.Collections.Generic.List[string]
+            $values = @{}
+            foreach ($row in ($dumpText -split "`n")) {
+                $trim = $row.TrimEnd("`r")
+                $eq = $trim.IndexOf('=')
+                if ($eq -gt 0) {
+                    $keyName = $trim.Substring(0, $eq)
+                    $names.Add($keyName)
+                    $values[$keyName] = $trim.Substring($eq + 1)
+                }
+            }
+            $phaseHits = @($names | Where-Object { $_.StartsWith('ANTIPHON_TEST_PHASE_', [StringComparison]::Ordinal) })
+            $pathValue = ''
+            foreach ($keyName in $names) {
+                if ($keyName -ceq 'PATH' -or $keyName -ceq 'Path') { $pathValue = [string]$values[$keyName] }
+            }
+            $keepValue = ''
+            if ($values.ContainsKey('QTIMING_KEEP')) { $keepValue = [string]$values['QTIMING_KEEP'] }
+            $kept = (-not [string]::IsNullOrWhiteSpace($pathValue)) -and ($keepValue -eq 'kept-value') -and ($phaseHits.Count -eq 0)
+            if (-not $kept) {
+                Write-Host ('DIAG capture-seam-off count=' + $names.Count + ' path=' + $(if ([string]::IsNullOrWhiteSpace($pathValue)) { '0' } else { '1' }) + ' keep=' + $(if ($keepValue -eq 'kept-value') { '1' } else { '0' }) + ' phase=' + $phaseHits.Count + ' names=' + ($names -join ','))
+            }
+            Assert-Check $kept 'capture-seam-off-keeps-non-phase'
+        } finally {
+            foreach ($phaseName in $phaseNames) {
+                [Environment]::SetEnvironmentVariable($phaseName, $savedPhase[$phaseName])
+            }
+            Remove-Item Env:QTIMING_ENV_WITNESS -ErrorAction SilentlyContinue
+        }
     } catch {
         Write-Host ('FAIL capture-shell-witness ' + $_.Exception.Message)
         $script:failed++
@@ -111,6 +163,7 @@ function Invoke-CaptureShellWitness {
         Remove-Item Env:QTIMING_CAPTURE_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:QTIMING_CHILD_EXIT -ErrorAction SilentlyContinue
         Remove-Item Env:QTIMING_FORWARD -ErrorAction SilentlyContinue
+        Remove-Item Env:QTIMING_ENV_WITNESS -ErrorAction SilentlyContinue
         Remove-Item Env:QTIMING_CAPTURE_SHELL_MARKER -ErrorAction SilentlyContinue
         Remove-Variable -Name NightlySeams -Scope Script -ErrorAction SilentlyContinue
         Remove-Variable -Name NightlySeams -ErrorAction SilentlyContinue
@@ -227,7 +280,20 @@ $NightlySeams = @{
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         [void]$psi.ArgumentList.Add("-c")
-        [void]$psi.ArgumentList.Add(('printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi; exit ' + $code))
+        # The dump path is embedded in the command. A variable would be removed by the
+        # strip under test, and /usr/bin/env does not need PATH.
+        $shellCommand = 'printf QUAL-OUT; printf QUAL-ERR 1>&2; if [ -n "$ANTIPHON_TEST_PHASE_ROOT" ]; then printf yes > "$QTIMING_SEEN"; fi;'
+        if ($env:QTIMING_ENV_WITNESS -eq "1") {
+            $dumpLiteral = Join-Path $dir ("env-" + $seq)
+            if ($dumpLiteral -match '^[A-Za-z]:\\') {
+                $dumpDrive = $dumpLiteral.Substring(0, 1).ToLowerInvariant()
+                $dumpTail = $dumpLiteral.Substring(2) -replace '\\', '/'
+                $dumpLiteral = "/" + $dumpDrive + $dumpTail
+            }
+            $shellCommand = $shellCommand + " /usr/bin/env > '" + $dumpLiteral + "';"
+        }
+        $shellCommand = $shellCommand + " exit " + $code
+        [void]$psi.ArgumentList.Add($shellCommand)
         if ($Environment) {
             foreach ($key in @($Environment.Keys)) {
                 $name = [string]$key
