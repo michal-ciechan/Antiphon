@@ -106,6 +106,91 @@ function Invoke-NightlyWatchedCommand {
 
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
 
+function New-NightlyTestsHopArgumentList {
+    # The rc profile always reaches nightly-tests.ps1 through the selection hop.
+    # Keep this the only builder so a seed witness and the run core share one list.
+    param(
+        [string]$TestsScript,
+        [string]$CheckoutRoot,
+        [string]$RunDir,
+        [string]$Sha,
+        [string]$GitRefLabel,
+        [string]$Trigger,
+        [string]$Profile,
+        [string]$RunId,
+        [string]$Repository,
+        [string]$SelectionMode,
+        [string]$BaselineSha,
+        [string]$BaselineReceiptPath,
+        [string]$QualificationPath,
+        [string]$TimingRoot,
+        [string]$TrainManifestPath,
+        [string]$ReleaseIntentPath,
+        [string]$SelectionAttemptPath,
+        [string]$SelectionAttemptDigest,
+        [string]$SelectionPath,
+        [string]$SelectionDigest,
+        [int]$Attempt = 1,
+        [string]$ReleaseRoot,
+        [string]$CandidateId,
+        [string]$ExpectedSha,
+        [string[]]$Suites,
+        [string]$SeamsPath,
+        [string]$PriorFailuresPath,
+        [string]$PriorFailuresDigest,
+        [switch]$AcceptCrossCandidateSeed,
+        [string]$SeedSourceCandidateId
+    )
+    $testArgs = @(
+        '-NoProfile', '-NonInteractive', '-File', $TestsScript,
+        '-RepoRoot', $CheckoutRoot,
+        '-LogRoot', $RunDir,
+        '-Sha', $Sha,
+        '-GitRef', $GitRefLabel,
+        '-Trigger', $Trigger,
+        '-Profile', $Profile,
+        '-RunId', $RunId
+    )
+    if ($SelectionAttemptPath) {
+        $testArgs += '-Repository'; $testArgs += [string]$Repository
+        $testArgs += '-SelectionMode'; $testArgs += [string]$SelectionMode
+        $testArgs += '-BaselineSha'; $testArgs += [string]$BaselineSha
+        $testArgs += '-BaselineReceiptPath'; $testArgs += [string]$BaselineReceiptPath
+        $testArgs += '-QualificationPath'; $testArgs += [string]$QualificationPath
+        $testArgs += '-TimingRoot'; $testArgs += [string]$TimingRoot
+        $testArgs += '-TrainManifestPath'; $testArgs += [string]$TrainManifestPath
+        $testArgs += '-ReleaseIntentPath'; $testArgs += [string]$ReleaseIntentPath
+        $testArgs += '-SelectionAttemptPath'; $testArgs += [string]$SelectionAttemptPath
+        $testArgs += '-SelectionAttemptDigest'; $testArgs += [string]$SelectionAttemptDigest
+        $testArgs += '-SelectionPath'; $testArgs += [string]$SelectionPath
+        $testArgs += '-SelectionDigest'; $testArgs += [string]$SelectionDigest
+        $testArgs += '-Attempt'; $testArgs += [string]$Attempt
+        $testArgs += '-ReleaseRoot'; $testArgs += $ReleaseRoot
+        $testArgs += '-CandidateId'; $testArgs += $CandidateId
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$TimingRoot) -and ($testArgs -notcontains '-TimingRoot')) {
+        $testArgs += '-TimingRoot'
+        $testArgs += [string]$TimingRoot
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
+        $testArgs += '-ExpectedSha'
+        $testArgs += $ExpectedSha
+    }
+    if ($Suites -and $Suites.Count -gt 0) {
+        $testArgs += '-Suites'
+        $testArgs += ($Suites -join ',')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
+        $testArgs += '-SeamsPath'
+        $testArgs += $SeamsPath
+    }
+    if ($PriorFailuresPath) { $testArgs += @('-PriorFailuresPath', $PriorFailuresPath, '-PriorFailuresDigest', $PriorFailuresDigest) }
+    if ($AcceptCrossCandidateSeed) { $testArgs += '-AcceptCrossCandidateSeed' }
+    if ($SeedSourceCandidateId) { $testArgs += @('-SeedSourceCandidateId', $SeedSourceCandidateId) }
+    if ($testArgs -notcontains '-Attempt') { $testArgs += @('-Attempt', [string]$Attempt) }
+    return ,$testArgs
+}
+
 function Invoke-AntiphonNightlyRunCore {
     param(
         [string[]]$Suites,
@@ -588,54 +673,8 @@ function Invoke-AntiphonNightlyRunCore {
             $testsScript = Join-Path $PSScriptRoot '..\nightly-tests.ps1'
         }
         $gitRefLabel = ('origin/{0}' -f $Ref)
-        $testArgs = @(
-            '-NoProfile', '-NonInteractive', '-File', $testsScript,
-            '-RepoRoot', $CheckoutRoot,
-            '-LogRoot', $runDir,
-            '-Sha', $sha,
-            '-GitRef', $gitRefLabel,
-            '-Trigger', $Trigger,
-            '-Profile', $Profile,
-            '-RunId', $RunId
-        )
-        if ($SelectionAttemptPath) {
-            $testArgs += '-Repository'; $testArgs += [string]$Repository
-            $testArgs += '-SelectionMode'; $testArgs += [string]$SelectionMode
-            $testArgs += '-BaselineSha'; $testArgs += [string]$BaselineSha
-            $testArgs += '-BaselineReceiptPath'; $testArgs += [string]$BaselineReceiptPath
-            $testArgs += '-QualificationPath'; $testArgs += [string]$QualificationPath
-            $testArgs += '-TimingRoot'; $testArgs += [string]$TimingRoot
-            $testArgs += '-TrainManifestPath'; $testArgs += [string]$TrainManifestPath
-            $testArgs += '-ReleaseIntentPath'; $testArgs += [string]$ReleaseIntentPath
-            $testArgs += '-SelectionAttemptPath'; $testArgs += [string]$SelectionAttemptPath
-            $testArgs += '-SelectionAttemptDigest'; $testArgs += [string]$SelectionAttemptDigest
-            $testArgs += '-SelectionPath'; $testArgs += [string]$SelectionPath
-            $testArgs += '-SelectionDigest'; $testArgs += [string]$SelectionDigest
-            $testArgs += '-Attempt'; $testArgs += [string]$Attempt
-            $testArgs += '-ReleaseRoot'; $testArgs += $ReleaseRoot
-            $testArgs += '-CandidateId'; $testArgs += $CandidateId
-        }
-        if (-not [string]::IsNullOrWhiteSpace([string]$TimingRoot) -and ($testArgs -notcontains '-TimingRoot')) {
-            $testArgs += '-TimingRoot'
-            $testArgs += [string]$TimingRoot
-        }
-        if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
-            $testArgs += '-ExpectedSha'
-            $testArgs += $ExpectedSha
-        }
-        if ($Suites -and $Suites.Count -gt 0) {
-            $testArgs += '-Suites'
-            $testArgs += ($Suites -join ',')
-        }
-        if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
-            $testArgs += '-SeamsPath'
-            $testArgs += $SeamsPath
-        }
+        $testArgs = New-NightlyTestsHopArgumentList -TestsScript $testsScript -CheckoutRoot $CheckoutRoot -RunDir $runDir -Sha $sha -GitRefLabel $gitRefLabel -Trigger $Trigger -Profile $Profile -RunId $RunId -Repository $Repository -SelectionMode $SelectionMode -BaselineSha $BaselineSha -BaselineReceiptPath $BaselineReceiptPath -QualificationPath $QualificationPath -TimingRoot $TimingRoot -TrainManifestPath $TrainManifestPath -ReleaseIntentPath $ReleaseIntentPath -SelectionAttemptPath $SelectionAttemptPath -SelectionAttemptDigest $SelectionAttemptDigest -SelectionPath $SelectionPath -SelectionDigest $SelectionDigest -Attempt $Attempt -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId -ExpectedSha $ExpectedSha -Suites $Suites -SeamsPath $SeamsPath -PriorFailuresPath $PriorFailuresPath -PriorFailuresDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId
         Write-NightlyRunLine ('running {0}' -f $testsScript)
-        if($PriorFailuresPath){$testArgs += @('-PriorFailuresPath',$PriorFailuresPath,'-PriorFailuresDigest',$PriorFailuresDigest)}
-        if($AcceptCrossCandidateSeed){$testArgs += '-AcceptCrossCandidateSeed'}
-        if($SeedSourceCandidateId){$testArgs += @('-SeedSourceCandidateId',$SeedSourceCandidateId)}
-        if($testArgs -notcontains '-Attempt'){$testArgs += @('-Attempt',[string]$Attempt)}
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
         $testExit = [int]$testRun.ExitCode
         if ($null -eq $testExit) { $testExit = 1 }
