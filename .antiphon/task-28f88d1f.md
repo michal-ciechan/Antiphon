@@ -54,7 +54,7 @@ path (c) breaks both the review binding and CP-30 seed ancestry.
   land of a new SHA, but that launders the review. It also breaks CP-30 seed ancestry, because 49b77d40b
   would no longer be an ancestor. Land verification does not run CP-30: the verifier is
   `dotnet build; dotnet run --project tests/Antiphon.Tests` with a filter, or skip(non-code)
-  (`AgentTaskLandingProtocol.cs:310`, and LandVerificationPolicy has no checkpoint use). CP-30 is
+  (`AgentTaskLandingProtocol.cs:313`, and LandVerificationPolicy has no checkpoint use). CP-30 is
   only the commission gate. I did not prepare the branch, by choice.
 - (d) RECOMMENDED, the documented Merge-role path. Master is still df92aa7b7, the first parent of
   8f721e971, so publishing 0493af102 is a pure fast-forward. It keeps the reviewed ffeaa28f0 commits
