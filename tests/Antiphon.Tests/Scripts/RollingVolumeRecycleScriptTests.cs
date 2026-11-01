@@ -1586,12 +1586,6 @@ public sealed class RollingVolumeRecycleScriptTests
             "recycle-preview-receipt: a refusing apply starts and stops nothing");
     }
 
-    private static string? FlagValue(string[] args, string flag)
-    {
-        var index = Array.IndexOf(args, flag);
-        return index < 0 ? null : args[index + 1];
-    }
-
     // Timeout and abort must kill and remove the helper this run created. A name
     // that already belongs to another container is refused and left in place.
     // The hang stub ignores SIGTERM, so a client-only timeout leaves it running.
