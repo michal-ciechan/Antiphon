@@ -136,7 +136,7 @@ internal sealed class HostCleanupReceiptFixture
     public void ClearEvents() { Io.Events.Clear(); Io.Opens.Clear(); Io.ReadRequests.Clear(); }
 }
 
-internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, CheckpointPlatform platform = CheckpointPlatform.Linux) : ICheckpointCleanupIo, ICheckpointGitRunner
+internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, CheckpointPlatform platform = CheckpointPlatform.Linux) : ICheckpointCleanupIo, ICheckpointGitRunner, ICheckpointReadHolders
 {
     internal sealed class Node
     {
@@ -173,6 +173,8 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
     public Func<CheckpointGitRequest, CheckpointGitResult>? GitResult { get; set; }
     public Func<CheckpointHandleStat, CheckpointHandleStat>? HandleMetadata { get; set; }
     public Func<Stream>? StreamFactory { get; set; }
+    public string? ReadHolder { get; set; }
+    public string? Holder(string path) => ReadHolder;
     public bool InspectFails { get; set; }
     public string Repository { get; set; } = "/c987";
     public CheckpointPlatform Platform { get; set; } = platform;
