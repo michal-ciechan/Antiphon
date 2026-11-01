@@ -35,9 +35,10 @@ function Assert-MpOffset {
     if ([string]::IsNullOrWhiteSpace($raw)) { return }
     $expect = [int]$raw
     $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
-    $got = [int][System.TimeZoneInfo]::Local.GetUtcOffset($moment).TotalMinutes
+    $tz = Get-TestPhasePinnedTimeZone
+    $got = [int]$tz.GetUtcOffset($moment).TotalMinutes
     if ($got -ne $expect) {
-        Fail-Mp ("timezone-offset expected=" + $expect + " actual=" + $got + " id=" + [System.TimeZoneInfo]::Local.Id)
+        Fail-Mp ("timezone-offset expected=" + $expect + " actual=" + $got + " id=" + [string]$tz.Id)
     }
 }
 
@@ -461,7 +462,13 @@ function Start-MpCase {
     foreach ($key in @($Env.Keys)) {
         $psi.Environment[[string]$key] = [string]$Env[$key]
     }
-    return [System.Diagnostics.Process]::Start($psi)
+    $process = [System.Diagnostics.Process]::Start($psi)
+    if ($null -eq $script:MpChildReads) { $script:MpChildReads = New-Object System.Collections.Generic.List[object] }
+    # Windows anonymous pipes default to 4096 bytes. An unread redirect stalls the
+    # child once that buffer fills, and the successor wait then expires.
+    [void]$script:MpChildReads.Add($process.StandardOutput.ReadToEndAsync())
+    [void]$script:MpChildReads.Add($process.StandardError.ReadToEndAsync())
+    return $process
 }
 
 function Wait-MpSignal {
@@ -664,7 +671,7 @@ function Invoke-V4 {
         Publish-MpChunk -LogRoot $prod -TrxPath $trxPath -Suite $suite -Chunk $chunk -RunId 'run-v4' -Attempt $attempt -HostWallSeconds (1.0 + $i) -Coverage $verdict.coverageComplete -Passed $verdict.testsPassed -ExitCode ([int]$verdict.ExitCode)
     }
     if ($null -ne $ctx -and -not $ctx.Refused -and (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue)) {
-        Complete-TestPhaseExecutedProjection -Context $ctx -Terminal 'success'
+        Complete-TestPhaseExecutedProjection -Context $ctx -Terminal 'success' | Out-Null
         Close-MpContext -Context $ctx
     }
     $script:QualificationTimingRoot = $null
@@ -745,7 +752,7 @@ function Invoke-V4Successor {
     New-MpTrx -Path $trx -Rows @((New-MpResultRow -Id 'next' -Outcome 'Passed'))
     Publish-MpChunk -LogRoot $logRoot -TrxPath $trx -Suite 'antiphon' -Chunk 'g0' -RunId 'run-v4' -Attempt '1' -HostWallSeconds 3
     if (Get-Command Complete-TestPhaseExecutedProjection -ErrorAction SilentlyContinue) {
-        Complete-TestPhaseExecutedProjection -Context $ctx
+        Complete-TestPhaseExecutedProjection -Context $ctx | Out-Null
     }
     Close-MpContext -Context $ctx
     $gens = @(Get-ChildItem -LiteralPath (Join-Path $timing 'groups-executed.journal') -Directory)

@@ -1422,8 +1422,6 @@ function Get-TestPhaseSha256File {
     }
 }
 
-# Direct lookup only. IANA ids that a Windows-shaped finder refuses stay unresolved
-# until the Windows-id mapping is applied.
 function Find-TestPhaseTimeZoneById {
     param([string]$Id)
     if ($null -ne $script:TestPhaseTimeZoneFinder) {
@@ -1434,12 +1432,59 @@ function Find-TestPhaseTimeZoneById {
     try { return [System.TimeZoneInfo]::FindSystemTimeZoneById([string]$Id) } catch { return $null }
 }
 
+function Test-TestPhaseTimeZoneMethod {
+    param([string]$Name)
+    foreach ($method in @([System.TimeZoneInfo].GetMethods())) {
+        if ([string]$method.Name -eq $Name) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-TestPhaseWindowsTimeZoneId {
+    param([string]$IanaId)
+    if (-not (Test-TestPhaseTimeZoneMethod -Name 'TryConvertIanaIdToWindowsId')) { return '' }
+    $windows = ''
+    $ok = $false
+    try { $ok = [System.TimeZoneInfo]::TryConvertIanaIdToWindowsId([string]$IanaId, [ref]$windows) } catch { return '' }
+    if ($ok) { return [string]$windows }
+    return ''
+}
+
+function ConvertTo-TestPhaseIanaTimeZoneId {
+    param([string]$WindowsId)
+    if (-not (Test-TestPhaseTimeZoneMethod -Name 'TryConvertWindowsIdToIanaId')) { return '' }
+    $iana = ''
+    $ok = $false
+    try { $ok = [System.TimeZoneInfo]::TryConvertWindowsIdToIanaId([string]$WindowsId, [ref]$iana) } catch { return '' }
+    if ($ok) { return [string]$iana }
+    return ''
+}
+
 function Resolve-TestPhaseTimeZone {
     param([string]$Id)
     if ([string]::IsNullOrWhiteSpace($Id)) { return [System.TimeZoneInfo]::Local }
     $direct = Find-TestPhaseTimeZoneById -Id $Id
     if ($direct -is [System.TimeZoneInfo]) { return $direct }
+    $windows = ConvertTo-TestPhaseWindowsTimeZoneId -IanaId $Id
+    if (-not [string]::IsNullOrWhiteSpace($windows)) {
+        $mapped = Find-TestPhaseTimeZoneById -Id $windows
+        if ($mapped -is [System.TimeZoneInfo]) { return $mapped }
+    }
+    $iana = ConvertTo-TestPhaseIanaTimeZoneId -WindowsId $Id
+    if (-not [string]::IsNullOrWhiteSpace($iana)) {
+        $mapped = Find-TestPhaseTimeZoneById -Id $iana
+        if ($mapped -is [System.TimeZoneInfo]) { return $mapped }
+    }
     return $null
+}
+
+function Get-TestPhasePinnedTimeZone {
+    $requested = ''
+    try { $requested = [string][Environment]::GetEnvironmentVariable('TZ') } catch { $requested = '' }
+    if ([string]::IsNullOrWhiteSpace($requested)) { return [System.TimeZoneInfo]::Local }
+    $resolved = Resolve-TestPhaseTimeZone -Id $requested
+    if ($resolved -is [System.TimeZoneInfo]) { return $resolved }
+    return [System.TimeZoneInfo]::Local
 }
 
 function Get-TestPhaseWriterEnvironment {
@@ -1451,7 +1496,7 @@ function Get-TestPhaseWriterEnvironment {
     $ui = ''
     try { $culture = [string][System.Threading.Thread]::CurrentThread.CurrentCulture.Name } catch { }
     try { $ui = [string][System.Threading.Thread]::CurrentThread.CurrentUICulture.Name } catch { }
-    $tz = [System.TimeZoneInfo]::Local
+    $tz = Get-TestPhasePinnedTimeZone
     $offset = $tz.GetUtcOffset([datetime]::Now)
     $sign = '+'
     if ($offset.Ticks -lt 0) { $sign = '-' }
