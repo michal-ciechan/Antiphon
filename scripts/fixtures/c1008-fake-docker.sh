@@ -478,7 +478,10 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  if(args.length!==4||args[2]!=='--')fail();
  if(state.containers.some(c=>c.Mounts.some(m=>m.Name===name))){process.stderr.write('volume is in use\n');process.exit(1);}
  if(fault==='rm-first-failed'&&state.removed.length===0||fault==='rm-second-failed'&&state.removed.length===1||fault==='rm-third-failed'&&state.removed.length===2)fail();
- if(!state.volumes[name])fail();delete state.volumes[name];state.removed.push(name);
+ if(!state.volumes[name])fail();
+ // A zero exit that leaves the volume. Callers must confirm absence, not trust the exit code.
+ if(fault==='rm-retains-volume'){save();out(name+'\n');process.exit(0);}
+ delete state.volumes[name];state.removed.push(name);
  if(fault==='c1609-late-temp-busy'&&state.removed.length===1){const p=path.join(root,'statuses.json'),v=JSON.parse(fs.readFileSync(p));v['server2-temp'].sessions=1;fs.writeFileSync(p,JSON.stringify(v));}
  save();out(name+'\n');
 } else if(args[0]==='compose') {
