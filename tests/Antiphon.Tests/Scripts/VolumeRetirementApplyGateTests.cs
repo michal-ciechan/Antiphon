@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -30,7 +31,7 @@ public sealed class VolumeRetirementApplyGateTests
                 c1609_apply_gate
             fi
         """;
-        recycle.ShouldContain(earlyGate, Case.Sensitive,
+        recycle.ShouldContain(SourceLines(earlyGate), Case.Sensitive,
             "apply-gate: a non-dry-run entry calls the gate once, immediately after context validation");
         Count(recycle, "c1609_apply_gate").ShouldBe(1,
             "apply-gate: c1008_recycle has one gate call, so a later copy cannot authorize deletion");
@@ -102,12 +103,45 @@ public sealed class VolumeRetirementApplyGateTests
                 c1609_apply_gate
             fi
         """;
-        // A Windows checkout of this file embeds CR in the raw literal. Those
-        // bytes are the needle the assertion above uses against the LF script.
+        // A Windows checkout of this file embeds CR in the raw literal. The
+        // production assertion normalises those bytes before comparing them
+        // with the LF script.
         var crlf = expected.Replace("\n", "\r\n", StringComparison.Ordinal);
         crlf.Contains('\r').ShouldBeTrue("the Windows checkout embeds CR in this raw literal");
-        recycle.ShouldContain(crlf, Case.Sensitive,
+        recycle.Contains(crlf, StringComparison.Ordinal).ShouldBeFalse(
+            "the CRLF copy is not present in the LF script until newlines are normalised");
+        recycle.ShouldContain(SourceLines(crlf), Case.Sensitive,
             "apply-gate: a CRLF copy of the expected block matches the LF script");
+    }
+
+    [Test]
+    public void Multiline_raw_source_needles_are_newline_normalised()
+    {
+        var root = Path.Combine(DelegateScriptRunner.RepoRoot, "tests");
+        var failures = new List<string>();
+        foreach (var path in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+        {
+            if (path.Contains($"{Path.DirectorySeparatorChar}bin", StringComparison.Ordinal) ||
+                path.Contains($"{Path.DirectorySeparatorChar}obj", StringComparison.Ordinal))
+                continue;
+            var text = File.ReadAllText(path);
+            foreach (Match match in MultilineRawNeedle.Matches(text))
+            {
+                if (!match.Groups["body"].Value.Contains('\n'))
+                    continue;
+                var name = match.Groups["name"].Value;
+                var tailStart = match.Index + match.Length;
+                var after = text.Substring(tailStart, Math.Min(800, text.Length - tailStart));
+                if (!Regex.IsMatch(after, @"\b(?:ShouldContain|Contains|IndexOf)\(\s*" + Regex.Escape(name) + @"\b"))
+                    continue;
+                var normalised = after.Contains("SourceLines(" + name, StringComparison.Ordinal)
+                    || after.Contains(name + ".Replace(", StringComparison.Ordinal);
+                if (!normalised)
+                    failures.Add(Path.GetRelativePath(root, path) + ":" + name);
+            }
+        }
+
+        failures.ShouldBeEmpty("a multi-line raw literal compared as a source needle must normalise newlines");
     }
 
     [Test]
@@ -473,6 +507,15 @@ public sealed class VolumeRetirementApplyGateTests
         return File.WriteAllTextAsync(path, Sort(value).ToJsonString(new JsonSerializerOptions
         { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }) + "\n");
     }
+
+    private static readonly Regex MultilineRawNeedle = new(
+        "(?m)^[ \\t]*(?:const\\s+string|string|var)\\s+(?<name>\\w+)\\s*=\\s*\"\"\"\\r?\\n(?<body>.*?)\\r?\\n[ \\t]*\"\"\";",
+        RegexOptions.Singleline | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    // A Windows checkout stores this test as CRLF, so a raw literal's newlines
+    // are not the LF bytes of an eol=lf script. Compare one newline form.
+    private static string SourceLines(string text) =>
+        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative));
