@@ -555,10 +555,320 @@ try {
             $splitIds=@($split.entries.chunk) -join ','
             $byId=@{}
             foreach($entry in @($split.entries)){$byId[$entry.chunk]=$entry}
-            # Code rule: any chunk a failed class maps onto is priority 0, including a mixed passed+failed chunk and every chunk of a split class.
+            # These chunks carry no node list, so the class is the whole chunk: mixed, split-a and split-b all lead.
             # Unfinished with no failure stays priority 1. A class the seed never saw stays priority 1 with no timestamp, so it sorts before a timestamped unfinished chunk.
             $ruleOk=($split.orderingReason -like 'operator-seed-order*' -and $splitIds -ceq 'mixed,split-a,split-b,never,unfinished,passed-only' -and $byId['mixed'].priorFailure -and $byId['split-a'].priorFailure -and $byId['split-b'].priorFailure -and -not $byId['unfinished'].priorFailure -and -not $byId['never'].priorFailure -and -not $byId['passed-only'].priorFailure -and @($split.entries|ForEach-Object {$_.chunk}) -cnotcontains 'old-zeta')
             Check ($packOk -and $ruleOk) ('pack='+$schedule.orderingReason+'/'+($ids -join ',')+'; moved='+$moved+'; delta='+($newMethods-$oldMethods)+'; beta='+$betaOld+'->'+$betaNew+'; split='+$split.orderingReason+'/'+$splitIds)
+        }
+        'FailedMethodBands' {
+            $script:bandN=0
+            $stamp=$now.AddHours(-3).ToString('o')
+            $openStamp=$now.AddHours(-2).ToString('o')
+            function Write-BandSeed($Rows,$Failed){
+                $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
+                $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-method';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
+                $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+                $script:bandN++
+                $path=Join-Path $root ('band-seed-'+$script:bandN+'.json')
+                [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
+                return Read-NightlyStoppedRunSeed $path
+            }
+            function New-BandChunk([string]$Id,[string]$Class,[string[]]$Methods,[bool]$OmitNodes){
+                $chunk=[pscustomobject]@{id=$Id;classes=@($Class)}
+                if(-not $OmitNodes){
+                    $nodes=@(foreach($method in @($Methods)){[pscustomobject]@{Uid=($Class+'/'+$method);ClassName=$Class;Method=$method;Type='T';Categories=@()}})
+                    $chunk|Add-Member -NotePropertyName nodes -NotePropertyValue $nodes
+                }
+                return $chunk
+            }
+            function Invoke-BandOrder($Doc,$Chunks){
+                $suiteNodes=New-Object System.Collections.Generic.List[object]
+                $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                foreach($chunk in @($Chunks)){
+                    $class=[string]@($chunk.classes)[0]
+                    $chunkNodes=@()
+                    if(($chunk.PSObject.Properties.Name -contains 'nodes') -and $null -ne $chunk.nodes){$chunkNodes=@($chunk.nodes)}
+                    if($chunkNodes.Count -eq 0){
+                        $key=$class+'/Run'
+                        if($seen.Add($key)){[void]$suiteNodes.Add([pscustomobject]@{Uid=$key;ClassName=$class;Method='Run';Type='T';Categories=@()})}
+                    }else{
+                        foreach($node in @($chunkNodes)){if($seen.Add([string]$node.Uid)){[void]$suiteNodes.Add($node)}}
+                    }
+                }
+                $suite=@([pscustomobject]@{id='antiphon';chunks=@($Chunks);nodes=@($suiteNodes.ToArray());exclusions=@()})
+                $resolved=Resolve-NightlyPriorFailures $Doc $suite Full
+                return New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $now
+            }
+            function ConvertTo-BandIds($Schedule){return (@($Schedule.entries|ForEach-Object {$_.chunk}) -join ',')}
+            $split='Synthetic.Method.Split'
+            $torn='Synthetic.Method.Torn'
+            $ok='Synthetic.Method.Ok'
+            $chunks=@(
+                (New-BandChunk 's0' $split @('M0') $false),
+                (New-BandChunk 's1' $split @('M1') $false),
+                (New-BandChunk 's2' $split @('M2') $false),
+                (New-BandChunk 's3' $split @('M3') $false),
+                (New-BandChunk 's4' $split @('M4(case)') $false),
+                (New-BandChunk 's5' $split @('M5') $false),
+                (New-BandChunk 'whole' $split @() $false),
+                (New-BandChunk 'torn' $torn @() $false),
+                (New-BandChunk 'never' 'Synthetic.Method.Never' @() $false),
+                (New-BandChunk 'ok' $ok @() $false)
+            )
+            $rows=@(
+                [ordered]@{suite='antiphon';chunk='seed-split';classes=@($split);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='seed-torn';classes=@($torn);completed=$false;started=$true;lastRunAtUtc=$openStamp},
+                [ordered]@{suite='antiphon';chunk='seed-ok';classes=@($ok);completed=$true;started=$true;lastRunAtUtc=$stamp}
+            )
+            $failed=@(
+                [ordered]@{suite='antiphon';chunk='seed-split';className=$split;method='M1';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk='seed-split';className=$split;method='M4';outcome='Failed'}
+            )
+            $doc=Write-BandSeed $rows $failed
+            $splitIds=ConvertTo-BandIds (Invoke-BandOrder $doc $chunks)
+            $splitOk=($splitIds -ceq 's1,s4,whole,never,torn,s0,s2,s3,s5,ok')
+            $red='Synthetic.Method.Red'
+            $missingChunks=@(
+                (New-BandChunk 'bare' $red @() $true),
+                (New-BandChunk 'sib' $red @('M9') $false),
+                (New-BandChunk 'open' $torn @() $false),
+                (New-BandChunk 'ok' $ok @() $false)
+            )
+            $missingRows=@(
+                [ordered]@{suite='antiphon';chunk='seed-red';classes=@($red);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='seed-torn';classes=@($torn);completed=$false;started=$true;lastRunAtUtc=$openStamp},
+                [ordered]@{suite='antiphon';chunk='seed-ok';classes=@($ok);completed=$true;started=$true;lastRunAtUtc=$stamp}
+            )
+            $missingFailed=@(
+                [ordered]@{suite='antiphon';chunk='seed-red';className=$red;method='Run';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk='seed-red';className=$red;method='RunAgain';outcome='Timeout'}
+            )
+            $missingDoc=Write-BandSeed $missingRows $missingFailed
+            $missingIds=ConvertTo-BandIds (Invoke-BandOrder $missingDoc $missingChunks)
+            $missingOk=($missingIds -ceq 'bare,open,sib,ok')
+            $other='Synthetic.Method.Other'
+            $vanishedChunks=@(
+                (New-BandChunk 'r0' $red @('M0') $false),
+                (New-BandChunk 'r1' $red @('M1') $false),
+                (New-BandChunk 'r2' $red @('M2') $false),
+                (New-BandChunk 'other' $other @() $false),
+                (New-BandChunk 'open' $torn @() $false)
+            )
+            $vanishedRows=@(
+                [ordered]@{suite='antiphon';chunk='seed-red';classes=@($red);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='seed-other';classes=@($other);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='seed-torn';classes=@($torn);completed=$false;started=$true;lastRunAtUtc=$openStamp}
+            )
+            $vanishedFailed=@(
+                [ordered]@{suite='antiphon';chunk='seed-red';className=$red;method='Gone';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk='seed-other';className=$other;method='Run';outcome='Error'}
+            )
+            $vanishedDoc=Write-BandSeed $vanishedRows $vanishedFailed
+            $vanishedIds=ConvertTo-BandIds (Invoke-BandOrder $vanishedDoc $vanishedChunks)
+            $vanishedOk=($vanishedIds -ceq 'other,open,r0,r1,r2')
+            $movedChunks=@(
+                (New-BandChunk 'old' $split @('M0') $false),
+                (New-BandChunk 'new' $split @('M1','M2') $false)
+            )
+            $movedRows=@([ordered]@{suite='antiphon';chunk='old';classes=@($split);completed=$true;started=$true;lastRunAtUtc=$stamp})
+            $movedFailed=@(
+                [ordered]@{suite='antiphon';chunk='old';className=$split;method='M1';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk='old';className=$split;method='M2';outcome='Aborted'}
+            )
+            $movedDoc=Write-BandSeed $movedRows $movedFailed
+            $movedIds=ConvertTo-BandIds (Invoke-BandOrder $movedDoc $movedChunks)
+            $movedOk=($movedIds -ceq 'new,old')
+            $blank=$doc.PSObject.Copy();$blank.PSObject.Properties.Remove('sourceSha')
+            $blankSchedule=Invoke-BandOrder $blank $chunks
+            $badSha=$doc.PSObject.Copy();$badSha.sourceSha='G'*40
+            $badSchedule=Invoke-BandOrder $badSha $chunks
+            $noRun=$doc.PSObject.Copy();$noRun.PSObject.Properties.Remove('sourceRunId')
+            $noRunSchedule=Invoke-BandOrder $noRun $chunks
+            $canonical=@($chunks|ForEach-Object {$_.id}) -join ','
+            $corruptOk=($blankSchedule.orderingReason -ceq 'seed-candidate-missing' -and (ConvertTo-BandIds $blankSchedule) -ceq $canonical -and $badSchedule.orderingReason -ceq 'seed-candidate-malformed' -and (ConvertTo-BandIds $badSchedule) -ceq $canonical -and $noRunSchedule.orderingReason -ceq 'seed-run-missing' -and (ConvertTo-BandIds $noRunSchedule) -ceq $canonical)
+            Check ($splitOk -and $missingOk -and $vanishedOk -and $movedOk -and $corruptOk) ('split='+$splitIds+'; missing='+$missingIds+'; vanished='+$vanishedIds+'; moved='+$movedIds+'; blank='+$blankSchedule.orderingReason+'; sha='+$badSchedule.orderingReason+'; run='+$noRunSchedule.orderingReason)
+        }
+        'RealPackerFailedMethodFollows' {
+            $class='Antiphon.Tests.PackWitness.LandProbe'
+            $unfinished='Antiphon.Tests.PackWitness.Delta'
+            $never='Antiphon.Tests.OtherPack.NeverSeen'
+            $stamp=$now.AddHours(-3).ToString('o')
+            function New-ProbeNodes([string]$Bare,[string[]]$Methods,[string[]]$Categories){
+                $type=($Bare.Split('.')[-1])
+                $nodes=New-Object System.Collections.Generic.List[object]
+                foreach($method in @($Methods)){
+                    [void]$nodes.Add([pscustomobject]@{ClassName=$Bare;Method=[string]$method;Type=$type;Categories=@($Categories);Uid=($Bare+'/'+$method)})
+                }
+                return @($nodes.ToArray())
+            }
+            function Convert-ProbePlan([object[]]$Nodes,[string[]]$Classes){
+                $leaves=@(foreach($name in @($Classes)){[pscustomobject]@{id=('leaf-'+$name.Split('.')[-1]);classes=@($name);exactFilter='';nodes=@()}})
+                return @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $Nodes)
+            }
+            function Write-ProbeSeed($Rows,$Failed){
+                $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
+                $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-packer-method';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
+                $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+                $path=Join-Path $root 'packer-method-seed.json'
+                [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
+                return Read-NightlyStoppedRunSeed $path
+            }
+            $oldMethods=@(0..319|ForEach-Object { 'M'+$_.ToString('000') })
+            $oldMethods[200]='M200(case)'
+            $added=@(0..19|ForEach-Object { 'A'+$_.ToString('00') })
+            $newMethods=@($added)+@($oldMethods)
+            $oldNodes=@(New-ProbeNodes $class $oldMethods @('Slow'))+(New-ProbeNodes $unfinished @('Run') @())+(New-ProbeNodes $never @('Run') @())
+            $newNodes=@(New-ProbeNodes $class $newMethods @('Slow'))+(New-ProbeNodes $unfinished @('Run') @())+(New-ProbeNodes $never @('Run') @())
+            $classes=@($class,$unfinished,$never)
+            $oldPlan=@(Convert-ProbePlan $oldNodes $classes)
+            $newPlan=@(Convert-ProbePlan $newNodes $classes)
+            function Find-MethodChunk($Plan,[string]$Method){
+                foreach($group in @($Plan)){
+                    foreach($node in @($group.nodes)){
+                        $name=[string]$node.Method
+                        $open=$name.IndexOf('(')
+                        if($open -gt 0){$name=$name.Substring(0,$open)}
+                        if($name -ceq $Method){return [string]$group.id}
+                    }
+                }
+                return ''
+            }
+            $oldId=Find-MethodChunk $oldPlan 'M200'
+            $newId=Find-MethodChunk $newPlan 'M200'
+            $methodChunks=@(foreach($group in @($newPlan)){
+                $hit=$false
+                foreach($node in @($group.nodes)){
+                    $name=[string]$node.Method
+                    $open=$name.IndexOf('(')
+                    if($open -gt 0){$name=$name.Substring(0,$open)}
+                    if($name -ceq 'M200'){$hit=$true}
+                }
+                if($hit){[string]$group.id}
+            })
+            $rows=@(
+                [ordered]@{suite='antiphon';chunk=$oldId;classes=@($class);completed=$true;started=$true;lastRunAtUtc=$stamp},
+                [ordered]@{suite='antiphon';chunk='seed-delta';classes=@($unfinished);completed=$false;started=$true;lastRunAtUtc=$stamp}
+            )
+            $failed=@(
+                [ordered]@{suite='antiphon';chunk=$oldId;className=$class;method='M200';outcome='Failed'},
+                [ordered]@{suite='antiphon';chunk=$oldId;className=$class;method='M200(case)';outcome='Failed'}
+            )
+            $doc=Write-ProbeSeed $rows $failed
+            $suiteChunks=@(foreach($group in @($newPlan)){[pscustomobject]@{id=[string]$group.id;classes=@($group.classes);nodes=@($group.nodes)}})
+            $suiteNodes=New-Object System.Collections.Generic.List[object]
+            foreach($node in @($newNodes)){[void]$suiteNodes.Add($node)}
+            $suite=@([pscustomobject]@{id='antiphon';chunks=$suiteChunks;nodes=@($suiteNodes.ToArray());exclusions=@()})
+            $resolved=Resolve-NightlyPriorFailures $doc $suite Full
+            $schedule=New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
+            $again=New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
+            $ids=@($schedule.entries.chunk)
+            $againIds=@($again.entries.chunk)
+            $lead=@($ids[0..($methodChunks.Count-1)])
+            $leadOk=((@($lead|Sort-Object) -join ',') -ceq ((@($methodChunks)|Sort-Object) -join ',') -and $ids[0] -ceq $newId)
+            $sibling=''
+            foreach($group in @($newPlan)){
+                if(@($group.classes) -ccontains $class -and $methodChunks -cnotcontains [string]$group.id){$sibling=[string]$group.id;break}
+            }
+            $openId=[string]@($newPlan|Where-Object { @($_.classes) -ccontains $unfinished })[0].id
+            $neverId=[string]@($newPlan|Where-Object { @($_.classes) -ccontains $never })[0].id
+            $openAt=[array]::IndexOf($ids,$openId)
+            $neverAt=[array]::IndexOf($ids,$neverId)
+            $siblingAt=[array]::IndexOf($ids,$sibling)
+            $moved=($oldId -cne $newId -and -not [string]::IsNullOrWhiteSpace($oldId) -and $methodChunks.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace($sibling))
+            $packOk=($moved -and $leadOk -and $neverAt -eq $methodChunks.Count -and $openAt -eq ($neverAt+1) -and $siblingAt -gt $openAt -and ($ids -join ',') -ceq ($againIds -join ',') -and $schedule.orderingReason -like 'operator-seed-order*')
+            Check $packOk ('old='+$oldId+'; new='+$newId+'; lead='+($lead -join ',')+'; openAt='+$openAt+'; sibling='+$sibling+'@'+$siblingAt+'; reason='+$schedule.orderingReason+'; ids='+($ids -join ','))
+        }
+        'RealShapeFailedMethodBand' {
+            $stamp=$now.AddHours(-4).ToString('o')
+            $openStamp=$now.AddHours(-1).ToString('o')
+            $passStamp=$now.AddHours(-2).ToString('o')
+            $remote='Antiphon.Tests.SeedShape.RemoteSplit'
+            $land='Antiphon.E2E.SeedShape.LandSplit'
+            $lanes=[ordered]@{antiphon=638;e2e=75;'agents-pty'=9;'markdown-pdf'=11;'session-runner'=53;'pty-host'=53;messaging=1;observability=1}
+            $suites=New-Object System.Collections.Generic.List[object]
+            $seedRows=New-Object System.Collections.Generic.List[object]
+            $failed=New-Object System.Collections.Generic.List[object]
+            $failedIds=New-Object System.Collections.Generic.List[string]
+            $suiteNodes=New-Object System.Collections.Generic.List[object]
+            function Add-ShapeNode([string]$Class,[string]$Method){
+                [void]$suiteNodes.Add([pscustomobject]@{Uid=($Class+'/'+$Method);ClassName=$Class;Method=$Method;Type='T';Categories=@()})
+            }
+            function Add-ShapeChunk([string]$Lane,[string]$Id,[string]$Class,[string]$Kind,[string]$Method,[bool]$Split){
+                $nodes=@()
+                if($Split){
+                    $nodes=@([pscustomobject]@{Uid=($Class+'/'+$Method);ClassName=$Class;Method=$Method;Type='T';Categories=@()})
+                    Add-ShapeNode $Class $Method
+                }elseif($Kind -ceq 'fail'){
+                    Add-ShapeNode $Class 'Run'
+                }
+                $completed=($Kind -cne 'open')
+                $when=$(if($Kind -ceq 'open'){$openStamp}elseif($Kind -ceq 'pass'){$passStamp}else{$stamp})
+                [void]$seedRows.Add([ordered]@{suite=$Lane;chunk=$Id;classes=@($Class);completed=$completed;started=$true;lastRunAtUtc=$when})
+                if($Kind -ceq 'fail'){
+                    [void]$failed.Add([ordered]@{suite=$Lane;chunk=$Id;className=$Class;method=$Method;outcome='Failed'})
+                    [void]$failedIds.Add($Id)
+                }
+                return [pscustomobject]@{id=$Id;classes=@($Class);nodes=$nodes}
+            }
+            foreach($lane in @($lanes.Keys)){
+                $count=[int]$lanes[$lane]
+                $chunks=New-Object System.Collections.Generic.List[object]
+                $n=0
+                if($lane -ceq 'antiphon'){
+                    for($i=0;$i -lt 11;$i++){[void]$chunks.Add((Add-ShapeChunk $lane ('fail-antiphon-'+$i) ('Antiphon.Tests.SeedShape.Fail'+$i) 'fail' 'Run' $false));$n++}
+                    for($i=0;$i -lt 181;$i++){
+                        $kind=$(if($i -eq 10 -or $i -eq 20){'fail'}else{'sibling'})
+                        [void]$chunks.Add((Add-ShapeChunk $lane ('rs-'+$i) $remote $kind ('M'+$i) $true));$n++
+                    }
+                    for($i=0;$i -lt 8;$i++){[void]$chunks.Add((Add-ShapeChunk $lane ('open-antiphon-'+$i) ('Antiphon.Tests.SeedShape.Open'+$i) 'open' 'Run' $false));$n++}
+                }elseif($lane -ceq 'e2e'){
+                    [void]$chunks.Add((Add-ShapeChunk $lane 'fail-e2e-0' 'Antiphon.E2E.SeedShape.Fail0' 'fail' 'Run' $false));$n++
+                    $failedSplit=@(1,2,3,4,32,33)
+                    for($i=0;$i -lt 36;$i++){
+                        $kind=$(if($failedSplit -contains $i){'fail'}else{'sibling'})
+                        [void]$chunks.Add((Add-ShapeChunk $lane ('e2-'+$i) $land $kind ('E'+$i) $true));$n++
+                    }
+                }elseif($lane -ceq 'agents-pty'){
+                    [void]$chunks.Add((Add-ShapeChunk $lane 'fail-agents-0' 'Antiphon.Tests.SeedShape.AgentsFail' 'fail' 'Run' $false));$n++
+                    [void]$chunks.Add((Add-ShapeChunk $lane 'open-agents-0' 'Antiphon.Tests.SeedShape.AgentsOpen' 'open' 'Run' $false));$n++
+                }elseif($lane -ceq 'session-runner'){
+                    for($i=0;$i -lt 2;$i++){[void]$chunks.Add((Add-ShapeChunk $lane ('fail-sr-'+$i) ('Antiphon.Tests.SeedShape.SrFail'+$i) 'fail' 'Run' $false));$n++}
+                }elseif($lane -ceq 'pty-host'){
+                    for($i=0;$i -lt 2;$i++){[void]$chunks.Add((Add-ShapeChunk $lane ('fail-pty-'+$i) ('Antiphon.Tests.SeedShape.PtyFail'+$i) 'fail' 'Run' $false));$n++}
+                }
+                while($n -lt $count){
+                    [void]$chunks.Add((Add-ShapeChunk $lane ('pass-'+$lane+'-'+$n) ('Antiphon.Tests.SeedShape.Pass'+$lane.Replace('-','')+$n) 'pass' 'Run' $false))
+                    $n++
+                }
+                if($n -ne $count){throw ('lane count '+$lane+' '+$n)}
+                [void]$suites.Add([pscustomobject]@{id=$lane;chunks=@($chunks.ToArray());nodes=@();exclusions=@()})
+            }
+            if($suites.Count -ne 8 -or $failedIds.Count -ne 25){throw ('shape suites='+$suites.Count+' failed='+$failedIds.Count)}
+            $total=0
+            $preparedSuites=@($suites.ToArray())
+            foreach($shapeSuite in $preparedSuites){
+                $shapeSuite.nodes=@($suiteNodes.ToArray())
+                $total+=@($shapeSuite.chunks).Count
+            }
+            if($total -ne 841){throw ('shape total '+$total)}
+            $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($seedRows.ToArray());failedTests=@($failed.ToArray())}
+            $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-shape';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
+            $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+            $path=Join-Path $root 'shape-seed.json'
+            [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
+            $doc=Read-NightlyStoppedRunSeed $path
+            $resolved=Resolve-NightlyPriorFailures $doc $preparedSuites Full
+            $schedule=New-NightlyDispatchSchedule -PreparedSuites $preparedSuites -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
+            $again=New-NightlyDispatchSchedule -PreparedSuites $preparedSuites -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
+            $ids=@($schedule.entries.chunk)
+            $lead=@($ids[0..24])
+            $leadOk=((($lead -join ',') -ceq (($failedIds.ToArray()) -join ',')))
+            $openAt=[array]::IndexOf($ids,'open-antiphon-0')
+            $siblingAt=[array]::IndexOf($ids,'rs-0')
+            $e2Sibling=[array]::IndexOf($ids,'e2-0')
+            $unique=@($ids|Select-Object -Unique).Count
+            $shapeOk=($leadOk -and $openAt -eq 25 -and $siblingAt -gt $openAt -and $e2Sibling -gt $openAt -and $unique -eq 841 -and $ids.Count -eq 841 -and ($ids -join ',') -ceq ((@($again.entries.chunk) -join ',')) -and $schedule.orderingReason -like 'operator-seed-order*' -and @($resolved.unresolved).Count -eq 0)
+            Check $shapeOk ('lead='+($lead -join ',')+'; openAt='+$openAt+'; rs0='+$siblingAt+'; e20='+$e2Sibling+'; unique='+$unique+'; unresolved='+@($resolved.unresolved).Count+'; reason='+$schedule.orderingReason)
         }
         'SummaryPrefixTamper' {
             $runId='d47848cce896471db1cc8ca346707cad'
