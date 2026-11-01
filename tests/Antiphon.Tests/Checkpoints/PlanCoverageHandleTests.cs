@@ -4,6 +4,7 @@ using Antiphon.Checkpoints.Coverage;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -11,6 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class PlanCoverageHandleTests : CheckpointTestBase
 {
+    [NativeLinuxOnly("hardlink sentinel requires Linux link(2)")]
     [Test]
     [Arguments("project")]
     [Arguments("source")]
@@ -46,6 +48,7 @@ public sealed class PlanCoverageHandleTests : CheckpointTestBase
         output.ToString().ShouldContain("selected file exceeds size limit", Case.Sensitive, "coverage-size-limit-finding");
     }
 
+    [NativeLinuxOnly("FIFO sentinel requires Linux mkfifo")]
     [Test]
     public async Task in_repo_fifo_project_is_refused_within_15_seconds()
     {

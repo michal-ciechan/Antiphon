@@ -34,7 +34,9 @@ internal sealed class RunnerTerminalSession
     /// Null when that call did not report one (including <see cref="AgentExitReason.Unknown"/>).
     /// </summary>
     public AgentExitReason? GenerationKillCause { get; private set; }
-    public Task<int> Exited { get; private set; } = Task.FromResult(0);
+    public Task<int> Exited { get; private set; } = Task.FromResult(-1);
+    private readonly TaskCompletionSource<AgentExitObservation> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<AgentExitObservation> Completion => _completion.Task;
 
     public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
     {
@@ -309,7 +311,7 @@ internal sealed class RunnerTerminalSession
         EnsureStarted();
         var session = await _client.KillAsync(_sessionId, ct);
         ExitReason = session.ExitReason;
-        return session.Status == "Exited" || session.ExitCode is not null;
+        return session.Status == "Exited" || session.ExitCode is not null || session.ExitSignal is > 0;
     }
 
     public async Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, CancellationToken ct)
@@ -349,6 +351,7 @@ internal sealed class RunnerTerminalSession
                     && session.AcceptedStartedAt is { } current
                     && !SessionGeneration.Equal(current, mine))
                 {
+                    _completion.TrySetResult(new(null));
                     return -1;
                 }
 
@@ -358,15 +361,18 @@ internal sealed class RunnerTerminalSession
                         && session.AcceptedStartedAt is { } exitedGen
                         && !SessionGeneration.Equal(exitedGen, expected))
                     {
+                        _completion.TrySetResult(new(null));
                         return -1;
                     }
 
                     ExitReason = session.ExitReason;
-                    return session.ExitCode ?? 0;
+                    _completion.TrySetResult(new(session.ExitCode, session.ExitSignal, session.ExitStopIntent));
+                    return new AgentExitObservation(session.ExitCode, session.ExitSignal, session.ExitStopIntent).CompatibilityCode;
                 }
             }
             catch
             {
+                _completion.TrySetResult(new(null));
                 return -1;
             }
 
@@ -376,10 +382,12 @@ internal sealed class RunnerTerminalSession
             }
             catch (OperationCanceledException)
             {
+                _completion.TrySetResult(new(null));
                 return -1;
             }
         }
 
+        _completion.TrySetResult(new(null));
         return -1;
     }
 

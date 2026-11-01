@@ -3,9 +3,11 @@ using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Infrastructure;
 
+[NativeLinuxOnly("The POSIX credential helper runs on Linux.")]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class GithubCredentialHelperTests

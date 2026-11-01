@@ -30,6 +30,21 @@ fixtures are retained for release B and excluded from A's nine-row checkpoint ma
 Typed/paste parity peers explicitly use modern and choose unwrapped/wrapped encoding through
 the shared helper; changing the backend alone does not preserve a typed-input experiment.
 
+C1022 backend-launch teardown retains native handles for the test-owned host, child and
+OpenConsole before requesting stop. It joins those handles even after an assertion or stop
+failure; deletion requires confirmed exit and successful ownership cleanup. Unresolved cleanup
+retains the directory and reports PID, process name and elapsed wait, preserving the original
+failure. After that join, a Windows-shaped access denial on the staged host directory is retried
+for 75 seconds (native rerun e960ffeb saw the staged Antiphon.Agents.Pty.dll released about one
+minute after the denied delete, with no process whose image was under that directory). Backoff
+is 250ms doubling through 32s. Each denial names the holder: a Linux /proc fd or map, or on
+Windows the Restart Manager owner plus a loaded module of the test process. A hold that outlasts
+the budget fails with that holder and keeps the original body or stop exception as the first
+aggregate inner. `Cleanup_joins_owned_child_even_when_body_or_stop_fails` covers owned-exit joins.
+`Cleanup_retries_staged_hold_for_five_seconds_then_deletes` and
+`Cleanup_names_holder_and_preserves_original_when_staged_file_stays_open` cover the five-second
+and permanent holds. These witnesses do not replace the Windows ConPTY run.
+
 CARD-1049: `AmServiceDeployReadinessTests` uses native loopback and real curl on
 Windows. The held, non-listening fixture admits raw curl 7/28 on Windows (7 on
 Linux); accepted stalls remain exact 28 and HTTP 503 remains exact 22. Its
@@ -42,6 +57,28 @@ An incomplete earlier installation, such as Grok's bundled Git missing sleep.exe
 Run the [plan's exact native lane rows](superpowers/plans/2026-10-04-card-1049-windows-readiness-retry-plan.md#checkpoints)
 through the checkpoint tool; the production readiness deadlines/retries are unchanged.
 
+
+CARD-1613: the rc Linux-only Windows exclusions are pinned `[NativeLinuxOnly]` markers
+witnessed by reflection in each of the four suites (`NativeLinuxPolicyWitnessTests`).
+`scripts/lib/linux-only-gate-witness.cs` is retired. `test-rc-platform.ps1 -Case
+LinuxOnlyWindowsExclusionPolicy` checks the shipped rows and census gaps; the old
+`-Case LinuxOnlyWindowsExclusions` refuses. The native child is
+`tests/Antiphon.NativeLinuxPolicy.Probe`, staged for `NativeLinuxPolicyExecutionTests`.
+
+CARD-0849: the C1192 driver's deadline/go witness projects generated `/fixture` paths
+into its private filesystem model and fakes only the `dotnet` restore boundary. It
+requires no user/mount namespace, bind mounts or `pivot_root` under WSL. The
+`C849_Driver_deadline_witness_does_not_require_mount_namespaces` regression refuses
+those tools and checks both the intact deadline and the existing m7 control.
+The group INT witness also records whether its handler returns: ordinary refusal
+or EXIT cleanup after an interrupted poll cannot satisfy the m6 control. Complete
+CID/lease/volume cleanup and the existing accepted exit codes remain required.
+`C849_Signal_during_exit_finishes_custody_cleanup` holds ordinary EXIT after both
+probe CIDs publish, then delivers TERM or group INT; the actual finalizer must
+remove every admitted volume before the handler exits 143/130. Readiness files
+fix the ordering. Its 10-second synchronization guards are provisional, about
+2x the six loaded full-witness p95 of 5.14 seconds measured by Debug fc629ae4;
+the existing production deadlines and custody assertions remain unchanged.
 
 ## Performance standards
 
@@ -101,6 +138,23 @@ qualification, release gate credit or production timeouts.
 
 - **E2E browser tests serve `client/dist` — rebuild it or they mean nothing.** `UsePrebuiltFrontend = true` serves the last `npm run build` output, which nothing rebuilds automatically. A stale bundle made new UI tests fail for no visible reason (dist was a month old, 2026-08-08) and would let a test of *removed* UI keep passing. `AntiphonAppFixture.EnsureClientBundleIsCurrent` now hard-fails when any `client/src` file is newer than `client/dist/index.html`, naming the file — run `npm run build` in `client/`.
 - **Native Land delivery protocol waits use progress evidence** (CARD-0550). A protocol-bound wait has a 60-second quiet deadline that renews while `protocol-git-*.json` records grow, with a 600-second absolute cap. Its `wait-*.json` record names the evidence, elapsed time, before/after git counts, and whether it renewed. A timeout says `quiet 60s after <elapsed>s; progress <count>`; a stalled protocol still fails after 60 quiet seconds. Scan-count and clock waits keep their plain deadlines.
+  Native receipt timeouts also name the awaited kind, task/caller/request/notification identities,
+  the last completed Git record, and bounded request/operation/notification/queue/transcript metadata.
+  `receipt-timeout-<identity>.txt` under the fixture evidence root retains the diagnostic before teardown.
+  Server, child and isolated-runner log paths include timestamp/level tails with fixed categories;
+  payloads, Git arguments, raw errors and credentials are omitted. Producer-state collection has a
+  separate five-second diagnostic bound. A Git count is completed commands, not a delivery verdict:
+  verification, build-slot admission and native delivery can be silent between Git records.
+  The C488/C467 polling witness selects attention by task, request and kind because the feed
+  collapses Outcome/Aged receipts to the newest notice. Missing or duplicate matches fail
+  immediately with ID/kind-only sequence metadata and the same bounded producer diagnostics,
+  persisted as `polling-attention-<request>.txt`; no receipt eligibility or wait budget changes.
+  The C459 busy-caller queued-outcome wait uses the same protocol-git heartbeat and the same
+  60-second quiet window and 600-second cap. A plain wait ignored completed Git commands and
+  could fail while the land was still moving. A silent land still fails one quiet window after
+  the last Git record. Its timeout keeps the original exception and records the recipient hold
+  and release files, the awaited condition, the last Git record and the safe log tail in
+  `queued-outcome-<task>.txt`.
 
 ### Preserved Gotcha #21
 
@@ -1498,7 +1552,14 @@ native sealed receipts for every accepted generation. Receipt import checks bind
 creation, expected runner store, original host/container, successful zero accounting and drained
 I/O; status/PIDs/kill acknowledgements cannot substitute. NeverReserved is a separate proven
 empty history. The fresh DB evidence reader and Git/filesystem checks run under the genuine
-repository lease before output/ref/tree deletion; unknown custody remains residue, never a kill.
+repository lease before output/ref/tree deletion. Unknown custody remains residue. Terminal-task
+CleanupVerification can terminate Linux containment; a Windows seal does not terminate, and the
+existing linger and kill-on-close job remain. The task orchestrator invokes that cleanup after
+Succeeded, Failed, or Canceled settlement and retries unresolved residue. It is not periodic and
+it has no age deadline. Dead-host recovery kills only the recorded container and stays Unknown.
+A live host that adoption could not take stays alive until the operator stops that exact host.
+Missing or unreadable accounting is never zero. Prolonged Draining and unresolved Unknown are
+warnings only. A successful kill is not a receipt and is not a source-clean verdict.
 Publication, report disposition and cleanup are independent verdicts. Deploy all source/custody/
 cleanup/contracts together and directly inspect loaded selector, bundle hashes and runner/host
 tracking before commissioning the feature's own PCs; caller-owned rollout cannot be fixture proof.
@@ -1665,7 +1726,7 @@ Nightly and rc qualification, including `scripts/release-cut.ps1`, retain a timi
 
 Every chunk writes `<LogRoot>/<suite>-<chunk>.timing.json` beside the TRX path, including native chunks, e2e class splits, client, scripts, an e2e prerequisite failure (`chunk` `prereq`, `why` `e2e-prerequisite-failed`), and a suite the build or preflight never started (`chunk` `unstarted`). A copy is also placed under the timing root when that directory is different. The sidecar written before the long process (`lastPhase` `run`, `lastPhaseUtc` set) comes from the call arguments only. JSONL shards, TRX-derived durations, and sidecar content are read only after that chunk process has exited and its exit code is recorded. TRX results and JSONL shards are streamed: memory is capped per start tag and per JSONL line at 256 KiB, and per captured StdOut at 16 KiB, while the shared post-exit stopwatch still stops the read at 200 ms. The stream does not cap the file size or the result count. The timing.json sidecar keeps a 256 KiB whole-document cap. A refused or budget-expired read leaves the phase fields empty and sets `why` to `timing-read-refused` when the chunk did not already have a why. It does not change the chunk exit code. A timeout keeps `lastPhase` `timeout` and `why` `timeout` and does not invent `completedAt`. A chunk with no TRX still has a row: `missing-trx`, `no-trx:client`, `missing-client-json`, `no-trx:scripts`, or `script-failed`. A timing write failure does not change the suite verdict.
 
-`LogRoot/summary.json` lists `timingRoot`, `timingChunks`, and `suiteTimeline`. Each chunk row has queue wait, build, discovery, and run wall seconds, per-test p50/p95/max, the slowest 20 tests, `lastPhase`, `lastPhaseUtc`, and `why`. `suiteTimeline` is the per-suite start and end in UTC (minimum `startedAt`, maximum non-empty `completedAt`). The qualification wrapper does not take a build slot, so `buildSlot` is `not-used` and `buildSlotWaitSeconds` is null. Output distillation is not a phase of this wrapper, so `distillationSeconds` is null. Fixture setup, fixture teardown, process spawn, and process wait come from the JSONL phase spans when a matching complete record exists, and stay null when they do not. Unknown stays null rather than zero. Native children, including e2e splits, receive `ANTIPHON_TEST_PHASE_ROOT` set to that timing root. JSONL shards are `cases-<pid>-<nonce>.jsonl` in `chunk-<sha256>/` under the timing root. The hash is SHA-256 of the length-prefixed chunk, run id, attempt, and suite. The owner sidecar in that directory is `own-<same hash>-<pid>-<nonce>.txt`. The post-exit read lists only that directory, so another chunk or an earlier attempt is not enumerated. A journal there with no matching sidecar is attributed from its first record, and a sidecar for a different identity does not hide it. Planned and executed manifests and `timing/summary.json`, `timing/tests.csv`, and `timing/summary.md` are written at the timing root.
+`LogRoot/summary.json` lists `timingRoot`, `timingChunks`, and `suiteTimeline`. Each chunk row has queue wait, build, discovery, and run wall seconds, per-test p50/p95/max, the slowest 20 tests, `lastPhase`, `lastPhaseUtc`, and `why`. `suiteTimeline` is the per-suite start and end in UTC (minimum `startedAt`, maximum non-empty `completedAt`). The qualification wrapper does not take a build slot, so `buildSlot` is `not-used` and `buildSlotWaitSeconds` is null. Output distillation is not a phase of this wrapper, so `distillationSeconds` is null. Fixture setup, fixture teardown, process spawn, and process wait come from the JSONL phase spans when a matching complete record exists, and stay null when they do not. Unknown stays null rather than zero. Native children, including e2e splits, receive `ANTIPHON_TEST_PHASE_ROOT` set to that timing root. JSONL shards are `cases-<pid>-<nonce>.jsonl` in `chunk-<sha256>/` under the timing root. The hash is SHA-256 of the length-prefixed chunk, run id, attempt, and suite. The owner sidecar in that directory is `own-<same hash>-<pid>-<nonce>.txt`. The post-exit read lists only that directory, so another chunk or an earlier attempt is not enumerated. A journal there with no matching sidecar is attributed from its first record, and a sidecar for a different identity does not hide it. The planned manifest and `timing/summary.json`, `timing/tests.csv`, and `timing/summary.md` are written at the timing root. The executed manifest is a journal under `groups-executed.journal/`. Its flat `groups-executed.json` is projected once at the terminal boundary (success, failed run, timeout, or orchestration error) and on an explicit snapshot or `scripts/summarize-test-phases.ps1 -RecoverExecutedManifest`. It is not rewritten after every chunk. Live publication progress is the accessor tuple `(generation, lastCommittedSequence, recordKind, publicationQuality)`, also printed by that summarizer. A stable flat file or a directory timestamp is not that signal. A gap, or a missing or mismatched `groups-executed.state.json`, makes the timing summary `complete=false` and does not change the coverage ledger, receipt, or qualification verdict. The publication plan is [docs/superpowers/plans/2026-10-30-card-1514-incremental-manifest-publication-plan.md](superpowers/plans/2026-10-30-card-1514-incremental-manifest-publication-plan.md). Historical log-mtime notes elsewhere in this document describe log finalization, not this progress contract.
 
 TRX stays authoritative. Sidecars are private and are not release-gate inputs. The JSONL `testId` is the TUnit native id (`TestDetails.TestId`), also printed as `C1514_NATIVE <phase> <id>` and copied into TRX StdOut. The TRX `testId` attribute is a different GUID. Join a JSONL row to the TRX row whose StdOut contains that native id. Do not join on the TRX GUID, class, method, display name, or time order.
 

@@ -124,7 +124,8 @@ function Update-QualificationSupervisorHeartbeat {
         $PlannedSeconds,
         [double]$IdleCpuSecondsPerMinute = 5,
         [double]$DefaultIdleMinutes = 20,
-        [double]$IdleFloorMinutes = 10
+        [double]$IdleFloorMinutes = 10,
+        $DiagnosticProgress
     )
     $now = $NowUtc.ToUniversalTime()
     $budget = Get-QualificationHeartbeatIdleBudget -PlannedSeconds $PlannedSeconds -FloorMinutes $IdleFloorMinutes -DefaultMinutes $DefaultIdleMinutes
@@ -171,7 +172,29 @@ function Update-QualificationSupervisorHeartbeat {
     }
     $cpuPerMinute = 0.0
     if ($measurable -and $elapsedMinutes -gt 0) { $cpuPerMinute = $delta / $elapsedMinutes }
-    $quiet = $measurable -and ($cpuPerMinute -lt $IdleCpuSecondsPerMinute) -and (-not $trxChanged) -and (-not $bytesChanged)
+    $diagGrew = $false
+    if ($null -ne $DiagnosticProgress) {
+        $grewValue = Get-QualificationHeartbeatField $DiagnosticProgress 'Grew'
+        if ($grewValue -eq $true) { $diagGrew = $true }
+    }
+    $quiet = $measurable -and ($cpuPerMinute -lt $IdleCpuSecondsPerMinute) -and (-not $trxChanged) -and (-not $bytesChanged) -and (-not $diagGrew)
+    $lastCompletedUid = Get-QualificationHeartbeatField $Previous 'lastCompletedUid'
+    $lastCompletedAtUtc = Get-QualificationHeartbeatField $Previous 'lastCompletedAtUtc'
+    $lastDiagGrowthAtUtc = Get-QualificationHeartbeatField $Previous 'lastDiagGrowthAtUtc'
+    $inFlightUid = Get-QualificationHeartbeatField $Previous 'inFlightUid'
+    $lastPhase = Get-QualificationHeartbeatField $Previous 'lastPhase'
+    if ($diagGrew) {
+        $lastDiagGrowthAtUtc = $now.ToString('o')
+        $completedUid = Get-QualificationHeartbeatField $DiagnosticProgress 'LastCompletedUid'
+        if (-not [string]::IsNullOrWhiteSpace([string]$completedUid)) {
+            $lastCompletedUid = [string]$completedUid
+            $lastCompletedAtUtc = $now.ToString('o')
+        }
+        $flightUid = Get-QualificationHeartbeatField $DiagnosticProgress 'InFlightUid'
+        if (-not [string]::IsNullOrWhiteSpace([string]$flightUid)) { $inFlightUid = [string]$flightUid }
+        $phaseName = Get-QualificationHeartbeatField $DiagnosticProgress 'LastPhase'
+        if (-not [string]::IsNullOrWhiteSpace([string]$phaseName)) { $lastPhase = [string]$phaseName }
+    }
     $idleSince = $null
     $idleMinutes = 0.0
     if ($quiet) {
@@ -215,6 +238,11 @@ function Update-QualificationSupervisorHeartbeat {
         idleSinceUtc = $sinceText
         observedAtUtc = $now.ToString('o')
         hostCpu = @($samples.ToArray())
+        lastCompletedUid = $lastCompletedUid
+        lastCompletedAtUtc = $lastCompletedAtUtc
+        lastDiagGrowthAtUtc = $lastDiagGrowthAtUtc
+        inFlightUid = $inFlightUid
+        lastPhase = $lastPhase
     }
 }
 
@@ -242,6 +270,14 @@ function ConvertTo-QualificationHeartbeatJsonString {
 function Format-QualificationHeartbeatNumber {
     param([double]$Value)
     return $Value.ToString('G15', [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function ConvertTo-QualificationHeartbeatOptionalJson {
+    param($Value)
+    if ($null -eq $Value) { return 'null' }
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) { return 'null' }
+    return '"' + (ConvertTo-QualificationHeartbeatJsonString $text) + '"'
 }
 
 function ConvertTo-QualificationSupervisorHeartbeatJson {
@@ -291,6 +327,11 @@ function ConvertTo-QualificationSupervisorHeartbeatJson {
     $lines.Add('"idleSinceUtc":' + $sinceJson)
     $lines.Add('"observedAtUtc":"' + $observedText + '"')
     $lines.Add('"hostCpu":[' + ($sampleText -join ',') + ']')
+    $lines.Add('"lastCompletedUid":' + (ConvertTo-QualificationHeartbeatOptionalJson (Get-QualificationHeartbeatField $Record 'lastCompletedUid')))
+    $lines.Add('"lastCompletedAtUtc":' + (ConvertTo-QualificationHeartbeatOptionalJson (Get-QualificationHeartbeatField $Record 'lastCompletedAtUtc')))
+    $lines.Add('"lastDiagGrowthAtUtc":' + (ConvertTo-QualificationHeartbeatOptionalJson (Get-QualificationHeartbeatField $Record 'lastDiagGrowthAtUtc')))
+    $lines.Add('"inFlightUid":' + (ConvertTo-QualificationHeartbeatOptionalJson (Get-QualificationHeartbeatField $Record 'inFlightUid')))
+    $lines.Add('"lastPhase":' + (ConvertTo-QualificationHeartbeatOptionalJson (Get-QualificationHeartbeatField $Record 'lastPhase')))
     $joined = New-Object System.Text.StringBuilder
     [void]$joined.Append('{')
     for ($index = 0; $index -lt $lines.Count; $index++) {
@@ -320,4 +361,87 @@ function Read-QualificationSupervisorHeartbeat {
     $utf8 = New-Object System.Text.UTF8Encoding $false, $true
     $text = [IO.File]::ReadAllText($Path, $utf8)
     return ($text | ConvertFrom-Json)
+}
+
+function Read-QualificationDiagnosticProgress {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [int64]$Offset = 0,
+        [string]$HeartbeatPath = '',
+        [int]$MaxBytes = 1048576
+    )
+    $result = [pscustomobject]@{
+        Grew = $false
+        Offset = [int64]$Offset
+        LastCompletedUid = $null
+        LastCompletedAtUtc = $null
+        InFlightUid = $null
+        LastPhase = $null
+    }
+    if (-not [string]::IsNullOrWhiteSpace($HeartbeatPath)) {
+        $left = $Path
+        $right = $HeartbeatPath
+        try { $left = [IO.Path]::GetFullPath($Path) } catch { $left = $Path }
+        try { $right = [IO.Path]::GetFullPath($HeartbeatPath) } catch { $right = $HeartbeatPath }
+        if ([string]::Equals($left, $right, [StringComparison]::OrdinalIgnoreCase)) { return $result }
+    }
+    if (-not [IO.File]::Exists($Path)) { return $result }
+    $stream = $null
+    try {
+        $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $length = $stream.Length
+        if ($Offset -lt 0) { $Offset = 0 }
+        if ($Offset -gt $length) { $Offset = $length }
+        $available = $length - $Offset
+        if ($available -le 0) {
+            $result.Offset = [int64]$Offset
+            return $result
+        }
+        $take = [int]$MaxBytes
+        if ($available -lt $take) { $take = [int]$available }
+        [void]$stream.Seek($Offset, [System.IO.SeekOrigin]::Begin)
+        $buffer = New-Object byte[] $take
+        $read = $stream.Read($buffer, 0, $take)
+        if ($read -le 0) { return $result }
+        $reachedEof = (($Offset + $read) -ge $length)
+        $use = $read
+        if (-not $reachedEof) {
+            $lastNl = -1
+            for ($i = 0; $i -lt $read; $i++) {
+                if ($buffer[$i] -eq 10) { $lastNl = $i }
+            }
+            if ($lastNl -lt 0) { return $result }
+            $use = $lastNl + 1
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $use)
+        $uidPattern = [regex]'TestNodeUid\s*\{\s*Value\s*=\s*([^\s\}]+)\s*\}'
+        $statePattern = [regex]'(Passed|Failed|Timeout|Cancelled|Skipped|InProgress|Discovered)TestNodeStateProperty'
+        $terminal = @{
+            Passed = $true
+            Failed = $true
+            Timeout = $true
+            Cancelled = $true
+            Skipped = $true
+        }
+        $grew = $false
+        foreach ($line in ($text -split "`n")) {
+            $uidMatch = $uidPattern.Match($line)
+            $stateMatch = $statePattern.Match($line)
+            if (-not $uidMatch.Success -or -not $stateMatch.Success) { continue }
+            $grew = $true
+            $uid = $uidMatch.Groups[1].Value
+            $state = $stateMatch.Groups[1].Value
+            $result.LastPhase = $state
+            if ($terminal.ContainsKey($state)) {
+                $result.LastCompletedUid = $uid
+            } elseif ($state -ceq 'InProgress') {
+                $result.InFlightUid = $uid
+            }
+        }
+        $result.Grew = $grew
+        $result.Offset = [int64]($Offset + $use)
+        return $result
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
 }

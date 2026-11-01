@@ -134,6 +134,22 @@ public class AgentTask
     public int Attempt { get; set; } = 1;
     public int MaxAttempts { get; set; } = 2;
 
+    // CARD-1610. A ceiling decision is attempt-scoped and never changes task status.
+    // Nullable coordinates preserve historical rows; an acknowledged episode remains audit.
+    public Guid? CeilingHoldEpisodeId { get; set; }
+    public DateTime? CeilingHeldAt { get; set; }
+    public int? CeilingHoldAttempt { get; set; }
+    public Guid? CeilingHoldSessionId { get; set; }
+    public DateTime? CeilingHoldSessionStartedAt { get; set; }
+    public DateTime? CeilingHoldDispatchedAt { get; set; }
+    public DateTime? CeilingAcknowledgedAt { get; set; }
+    public int? ResolvedCeilingMinutes { get; set; }
+    public string? ResolvedCeilingSource { get; set; }
+    public double? NextCeilingMinutes { get; set; }
+    public int? RequestedCeilingMinutes { get; set; }
+    public string? RequestedCeilingReason { get; set; }
+    public bool CeilingOperatorExtended { get; set; }
+
     /// <summary>
     /// Stored initializer stays Shared so existing rows and fixtures keep their mode.
     /// A fresh omitted create is Worktree at admission (CARD-0644); this default is not that decision.

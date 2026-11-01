@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -3089,12 +3089,13 @@ public sealed partial class AgentTaskDispatcher
             .ToList();
         var sessionById = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id))
-                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
+                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal, s.ExitStopIntentJson })
                 .ToListAsync(ct))
             .ToDictionary(
                 s => s.Id,
                 s => new AgentTaskLiveness.SessionSnapshot(
-                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
+                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal,
+                    SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)));
 
         var dead = new List<(AgentTask Task, AgentTaskLiveness.SessionSnapshot? Session)>();
         foreach (var task in open)
@@ -3852,12 +3853,24 @@ public sealed partial class AgentTaskDispatcher
     /// </summary>
     private async Task<bool> TryFailOverdueAsync(AgentTask task, CancellationToken ct)
     {
+        // Typed decisions are saved in another scope. A long-lived sweep context must
+        // observe acknowledgement/rearm before using its outstanding-hold shortcut.
+        if (task.CeilingHoldEpisodeId is not null)
+            await _db.Entry(task).ReloadAsync(ct);
+        if (task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+            || task.AgentSessionId is null || task.DispatchedAt is null)
+            return false;
         var sessionId = task.AgentSessionId!.Value;
 
         // First pass on the stored rows alone. TaskDeadlinePolicy returns null in one
         // comparison for anything not yet near a limit, so the ordinary tick costs nothing.
         var suspected = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
         if (suspected is not { Breached: true })
+            return false;
+
+        // An outstanding decision does not need another full pull every five seconds.
+        // Separate phase facts still bring a genuinely overdue phase through the usual gates.
+        if (CeilingHoldFacts.Active(task) && suspected.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling && suspected.Boot is null)
             return false;
 
         // Gate 1 — CARD-0072 owns this session.
@@ -3896,7 +3909,22 @@ public sealed partial class AgentTaskDispatcher
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
         var evaluatedAttempt = task.Attempt;
         var evaluatedDispatch = task.DispatchedAt;
-        await CatchUpTranscriptAsync(sessionId, ct);
+        // Boot facts already carry the accepted generation; their writer rechecks it under
+        // its ownership fence. Keep the separate pre-pull observation for non-boot paths.
+        var evaluatedGeneration = suspected.Boot?.SessionStartedAt;
+        if (suspected.Boot is null)
+            evaluatedGeneration = await _db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+                .Select(s => (DateTime?)s.StartedAt).FirstOrDefaultAsync(ct);
+        var confirmedCeilingPull = false;
+        if (suspected.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
+            && evaluatedGeneration is { } accepted && CatchUpOverride is null)
+            confirmedCeilingPull = _runtime is not null && await _runtime.CatchUpForCeilingAsync(sessionId, accepted, ct);
+        else
+        {
+            var suppliedObservation = CatchUpOverride is not null;
+            await CatchUpTranscriptAsync(sessionId, ct);
+            confirmedCeilingPull = suppliedObservation;
+        }
         var wait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, true, ct);
         await _db.Entry(task).ReloadAsync(ct);
         if (task.AgentSessionId != sessionId || task.Attempt != evaluatedAttempt || task.DispatchedAt != evaluatedDispatch
@@ -3925,6 +3953,22 @@ public sealed partial class AgentTaskDispatcher
         if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.BootModelWait)
             return false;
 
+        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling)
+        {
+            if (!confirmedCeilingPull) return false;
+            var session = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is null || evaluatedGeneration is not { } generation || generation == default
+                || session.StartedAt != generation || session.Status != SessionStatus.Running
+                || _runtime?.RemoteInventoryPending(session.RunnerId) == true
+                || !await ObserveCeilingSessionAsync(session, ct))
+                return false;
+            if (verdict.Working)
+            {
+                await TryHoldCeilingAsync(task, generation, ct);
+                return false;
+            }
+        }
+
         // Gate 3 — CARD-0085, and ONLY for the population CARD-0085 was written for: a session that
         // ingested nothing. Same predicate as the dead-session reconciler. A session with rows is
         // judged by its rows (the report path settles it; this sweep fails it, non-destructively) —
@@ -3944,6 +3988,9 @@ public sealed partial class AgentTaskDispatcher
             bindRefusal = await TryRecoverBindRefusalAsync(task, sessionId, ct);
         if (bindRefusal.Outcome == BindRefusalOutcome.Recovered)
             return false;
+
+        // Recovery can prove a result in a retained file, but absent activity cannot prove idle.
+        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling && !hasTranscript) return false;
 
         // The Summary already names the clock, the phase and the last entry's age — the failure
         // reason and the attention row are deliberately the same sentence, so a human who saw the
@@ -6144,6 +6191,7 @@ public sealed partial class AgentTaskDispatcher
                 return await FinishParallelHoldAsync(claimed, ct);
             claimed.Status = AgentTaskStatus.Dispatched;
             claimed.DispatchedAt = now;
+            CeilingHoldFacts.Resolve(claimed, _settings);
             claimed.ConcurrencyToken = Guid.NewGuid();
             ArmFirstCheck(claimed, now);
 
@@ -6597,6 +6645,7 @@ public sealed partial class AgentTaskDispatcher
 
         task.AgentSessionId = session.Id;
         task.DispatchedAt = now;
+        CeilingHoldFacts.Resolve(task, _settings);
         task.BootWedgeRelaunchCount++;
         task.ConcurrencyToken = Guid.NewGuid();
         agent.PersistentSessionId = session.Id.ToString("D");
@@ -7877,6 +7926,7 @@ public sealed partial class AgentTaskDispatcher
             At = now,
         };
         _db.AgentTaskEvents.Add(failedEvent);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(_db, task, failedEvent, now, ct);
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
         {
             var note = DelegationReportFormatter.BuildCompletionNote(
@@ -7899,6 +7949,7 @@ public sealed partial class AgentTaskDispatcher
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        _queue.SupervisionChanged(task.Id);
         _db.AgentTasks.Attach(task);
         await ReleaseTaskConsumersAsync(task);
         return true;
@@ -7923,6 +7974,7 @@ public sealed partial class AgentTaskDispatcher
             At = now,
         };
         _db.AgentTaskEvents.Add(failedEvent);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(_db, task, failedEvent, now, ct);
         AgentTaskLandNotification? notification = null;
         if ((deliveryFailureNotificationId is not null || task.DispatchedAt is null)
             && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
@@ -7954,6 +8006,7 @@ public sealed partial class AgentTaskDispatcher
     /// <summary>CARD-0664 D-2/D-3: best-effort release of a failed task's Launch rows after its commit.</summary>
     private Task ReleaseTaskConsumersAsync(AgentTask task)
     {
+        _queue.SupervisionChanged(task.Id);
         _queue.CompletionSettled(task);
         return _workspaceUse?.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None) ?? Task.CompletedTask;
     }
@@ -8566,6 +8619,7 @@ public sealed partial class AgentTaskDispatcher
             return await FinishParallelReuseAsync(claimed, ct);
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
+            CeilingHoldFacts.Resolve(claimed, _settings);
         claimed.ConcurrencyToken = Guid.NewGuid();
         ArmFirstCheck(claimed, now);
 
@@ -8824,6 +8878,7 @@ public sealed partial class AgentTaskDispatcher
         }
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
+            CeilingHoldFacts.Resolve(claimed, _settings);
         claimed.ConcurrencyToken = Guid.NewGuid();
         ArmFirstCheck(claimed, now);
 
@@ -9250,16 +9305,22 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0691 D-3: the stale arm removes rows without a kill, so it may only take a row whose
         // session is terminal. Created and Stopping (a kill that threw) are not.
         var unfinishedSessionIds = new HashSet<Guid>();
+        var sessionStartedAt = new Dictionary<Guid, DateTime>();
+        var sessionStatus = new Dictionary<Guid, SessionStatus>();
+        var sessionRunnerIds = new Dictionary<Guid, string?>();
         if (sessionIds.Count > 0)
         {
             foreach (var row in await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id)
                     && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
                         || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping))
-                .Select(s => new { s.Id, s.Status })
+                .Select(s => new { s.Id, s.Status, s.StartedAt, s.RunnerId })
                 .ToListAsync(ct))
             {
                 unfinishedSessionIds.Add(row.Id);
+                sessionStartedAt[row.Id] = row.StartedAt;
+                sessionStatus[row.Id] = row.Status;
+                sessionRunnerIds[row.Id] = row.RunnerId;
                 if (row.Status is SessionStatus.Starting or SessionStatus.Running)
                     liveSessionIds.Add(row.Id);
             }
@@ -9286,19 +9347,46 @@ public sealed partial class AgentTaskDispatcher
             .ToListAsync(ct))
             .ToHashSet();
 
-        // Protect recent work in both the TTL and cap arms. Query the whole warm set so a
-        // protected cap member is replaced by the next oldest idle member, never another worker.
+        // CARD-1610: Working is kept however old the transcript is. A Created/Stopping session, a
+        // Running session with no proved generation, or a remote inventory that has not answered
+        // cannot prove idle. Only the current Failed owner of a proved generation is held.
+        var uncertainSessionIds = new HashSet<Guid>();
+        foreach (var sid in unfinishedSessionIds)
+        {
+            var live = liveSessionIds.Contains(sid);
+            var started = sessionStartedAt.GetValueOrDefault(sid);
+            if (!live
+                || (live && started == default)
+                || _runtime?.RemoteInventoryPending(sessionRunnerIds.GetValueOrDefault(sid)) == true)
+                uncertainSessionIds.Add(sid);
+        }
+
+        var ownerSessions = new Dictionary<Guid, (SessionStatus Status, DateTime StartedAt)>(unfinishedSessionIds.Count);
+        foreach (var sid in unfinishedSessionIds)
+            ownerSessions[sid] = (sessionStatus[sid], sessionStartedAt[sid]);
+        var failedLiveSessionIds = (await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, ownerSessions, ct))
+            .Keys.ToHashSet();
+
+        // Protect in both the TTL and cap arms. Query the whole warm set so a protected cap
+        // member is replaced by the next oldest idle member, never another worker.
         var warmSessions = parsed.Where(p => warm.Contains(p.Agent) && p.SessionId.HasValue)
             .Select(p => p.SessionId!.Value).Distinct().ToList();
         var workingSessions = await SessionMessageQueueService.IsWorkingBatchAsync(_db, warmSessions, ct);
-        var lastTranscript = await _db.TranscriptEntries.AsNoTracking()
-            .Where(t => warmSessions.Contains(t.AgentSessionId))
-            .GroupBy(t => t.AgentSessionId)
-            .Select(g => new { SessionId = g.Key, At = g.Max(t => t.CreatedAt) })
-            .ToDictionaryAsync(t => t.SessionId, t => t.At, ct);
+        // Absent transcript evidence does not prove idle. Zero rows and rows with no turn
+        // boundary are retained on this TTL pass, the cap pass, and the pre-kill recheck.
+        var missingTurnBoundary = await SessionsWithoutTurnBoundaryAsync(warmSessions, ct);
+        var lastTranscript = warmSessions.Count == 0
+            ? new Dictionary<Guid, DateTime>()
+            : await _db.TranscriptEntries.AsNoTracking()
+                .Where(t => warmSessions.Contains(t.AgentSessionId))
+                .GroupBy(t => t.AgentSessionId)
+                .Select(g => new { SessionId = g.Key, At = g.Max(t => t.CreatedAt) })
+                .ToDictionaryAsync(t => t.SessionId, t => t.At, ct);
         var protectedAgents = parsed.Where(p => p.SessionId is Guid sid
-                && liveSessionIds.Contains(sid) && workingSessions.GetValueOrDefault(sid)
-                && lastTranscript.GetValueOrDefault(sid) > cutoff)
+                && ((liveSessionIds.Contains(sid) && workingSessions.GetValueOrDefault(sid))
+                    || uncertainSessionIds.Contains(sid)
+                    || failedLiveSessionIds.Contains(sid)
+                    || missingTurnBoundary.Contains(sid)))
             .Select(p => p.Agent).ToHashSet();
         var acted = 0;
         foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
@@ -9307,10 +9395,25 @@ public sealed partial class AgentTaskDispatcher
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
             agent.PoolIdleSince = now;
-            var sid = Guid.Parse(agent.PersistentSessionId!);
-            _logger.LogWarning(
-                "Deferred retirement of warm delegate '{Name}': session {Id} is mid-turn (last transcript {At:O})",
-                agent.Name, sid, lastTranscript[sid]);
+            if (!Guid.TryParse(agent.PersistentSessionId, out var sid))
+            {
+                acted++;
+                continue;
+            }
+
+            if (workingSessions.GetValueOrDefault(sid) && lastTranscript.TryGetValue(sid, out var at))
+            {
+                _logger.LogWarning(
+                    "Deferred retirement of warm delegate '{Name}': session {Id} is mid-turn (last transcript {At:O}). Detection only; the session is never killed.",
+                    agent.Name, sid, at);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Deferred retirement of warm delegate '{Name}': session {Id} is retained (unproved idle or a Failed task whose session has not exited). Detection only; the session is never killed.",
+                    agent.Name, sid);
+            }
+
             acted++;
         }
         foreach (var group in warm.GroupBy(a => (
@@ -9339,6 +9442,10 @@ public sealed partial class AgentTaskDispatcher
             stale.Add(row.Agent);
         }
 
+        acted += await RecordPooledWorkingPastTtlAsync(
+            pool, sessionStartedAt, liveSessionIds, workingSessions, busyAgentIds, failedLiveSessionIds,
+            lastTranscript, now, ct);
+
         var incidentAgentIds = (await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value))
             .Select(i => i.AgentId!.Value)
@@ -9346,15 +9453,57 @@ public sealed partial class AgentTaskDispatcher
             .ToListAsync(ct))
             .ToHashSet();
 
+        var retireSessionIds = retire
+            .Select(agent => Guid.TryParse(agent.PersistentSessionId, out var sid) ? sid : (Guid?)null)
+            .Where(sid => sid.HasValue)
+            .Select(sid => sid!.Value)
+            .Distinct()
+            .ToList();
+        var recheckWorking = await SessionMessageQueueService.IsWorkingBatchAsync(_db, retireSessionIds, ct);
+        var recheckRows = new List<(Guid Id, SessionStatus Status, DateTime StartedAt, string? RunnerId)>();
+        if (retireSessionIds.Count > 0)
+        {
+            foreach (var row in await _db.AgentSessions.AsNoTracking()
+                .Where(s => retireSessionIds.Contains(s.Id)
+                    && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
+                        || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping))
+                .Select(s => new { s.Id, s.Status, s.StartedAt, s.RunnerId })
+                .ToListAsync(ct))
+            {
+                recheckRows.Add((row.Id, row.Status, row.StartedAt, row.RunnerId));
+            }
+        }
+        var recheckUnfinished = recheckRows
+            .Where(s => s.Status is SessionStatus.Created or SessionStatus.Stopping
+                || s.StartedAt == default
+                || _runtime?.RemoteInventoryPending(s.RunnerId) == true
+                || (s.Status is SessionStatus.Starting or SessionStatus.Running
+                    && recheckWorking.GetValueOrDefault(s.Id)))
+            .Select(s => s.Id)
+            .ToHashSet();
+        var recheckSessions = recheckRows.ToDictionary(
+            s => s.Id,
+            s => (Status: s.Status, StartedAt: s.StartedAt));
+        var recheckFailed = (await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, recheckSessions, ct))
+            .Keys.ToHashSet();
+        var recheckMissingBoundary = await SessionsWithoutTurnBoundaryAsync(retireSessionIds, ct);
+
         foreach (var agent in retire)
         {
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
             if (Guid.TryParse(agent.PersistentSessionId, out var sid)
-                && workingSessions.GetValueOrDefault(sid))
+                && (recheckUnfinished.Contains(sid) || recheckFailed.Contains(sid)
+                    || recheckMissingBoundary.Contains(sid) || recheckWorking.GetValueOrDefault(sid)))
+            {
+                agent.PoolIdleSince = now;
                 _logger.LogWarning(
-                    "Retiring warm delegate '{Name}': session {Id} reads mid-turn but has been silent since {At:O} (full idle TTL elapsed)",
-                    agent.Name, sid, lastTranscript.GetValueOrDefault(sid));
+                    "Deferred retirement of warm delegate '{Name}': session {Id} is retained on recheck. Detection only; the session is never killed.",
+                    agent.Name, sid);
+                acted++;
+                continue;
+            }
+
             var idleSince = agent.PoolIdleSince;
             if (!await KillPooledSessionAsync(agent, ct))
             {
@@ -9457,6 +9606,67 @@ public sealed partial class AgentTaskDispatcher
 
         return executions.All(e => e.ReceiptBytes is { Length: > 0 }
             && e.CustodyReason is "Exited" or "NeverStarted");
+    }
+
+    /// <summary>
+    /// Sessions whose idle state is unproved: no transcript rows, or rows and no turn boundary.
+    /// Both are retained by the TTL pass, the cap pass, and the pre-kill recheck. The two reads
+    /// return session ids only; row text is filtered in SQL and is not selected.
+    /// </summary>
+    internal async Task<HashSet<Guid>> SessionsWithoutTurnBoundaryAsync(
+        IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
+    {
+        var missing = new HashSet<Guid>();
+        if (sessionIds.Count == 0)
+            return missing;
+        var ids = sessionIds as List<Guid> ?? sessionIds.ToList();
+        var entries = _db.TranscriptEntries.AsNoTracking();
+        var withAnyRow = (await SessionsWithAnyTranscriptRow(entries, ids).ToListAsync(ct)).ToHashSet();
+        var withBoundary = (await SessionsWithTurnBoundaryRow(entries, ids).ToListAsync(ct)).ToHashSet();
+        foreach (var id in ids)
+        {
+            // Zero rows (!withAnyRow) and rows without a boundary are both absent evidence.
+            if (!withAnyRow.Contains(id) || !withBoundary.Contains(id))
+                missing.Add(id);
+        }
+
+        return missing;
+    }
+
+    /// <summary>
+    /// Session ids that have at least one transcript row. The select list is the id only.
+    /// </summary>
+    internal static IQueryable<Guid> SessionsWithAnyTranscriptRow(
+        IQueryable<TranscriptEntry> entries, IReadOnlyCollection<Guid> sessionIds)
+    {
+        var ids = sessionIds as List<Guid> ?? sessionIds.ToList();
+        return entries
+            .Where(entry => ids.Contains(entry.AgentSessionId))
+            .Select(entry => entry.AgentSessionId)
+            .Distinct();
+    }
+
+    /// <summary>
+    /// Session ids that have a turn boundary. Matches IsTurnBoundary and
+    /// TranscriptWorkingStateQuery.EndPredicate. The predicate is inlined because a
+    /// StringComparison argument does not translate. Text is a filter, not a selected column.
+    /// </summary>
+    internal static IQueryable<Guid> SessionsWithTurnBoundaryRow(
+        IQueryable<TranscriptEntry> entries, IReadOnlyCollection<Guid> sessionIds)
+    {
+        var ids = sessionIds as List<Guid> ?? sessionIds.ToList();
+        return entries
+            .Where(entry => ids.Contains(entry.AgentSessionId)
+                && (entry.Kind == TranscriptKinds.TurnEnd
+                    || entry.Kind == TranscriptKinds.SessionRestartBoundary
+                    || (entry.Kind == TranscriptKinds.CompactBoundary
+                        && entry.Text != null
+                        && entry.Text.Contains("(manual)"))
+                    || (entry.Kind == TranscriptKinds.UserPrompt
+                        && entry.Text != null
+                        && entry.Text.StartsWith("[Request interrupted"))))
+            .Select(entry => entry.AgentSessionId)
+            .Distinct();
     }
 
     /// <summary>

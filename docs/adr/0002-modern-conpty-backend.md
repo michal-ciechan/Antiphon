@@ -80,6 +80,37 @@ Porta's Kill only signals the TUI; `PortaPtySession` tree-kills the pid we can s
 own that job handle. Inbox tests and fallback still need that. CARD-0221's three-state release rule
 (killed, pooled warm, or owned) is unchanged.
 
+**Linux stop evidence (CARD-1619; final ordinary/native qualification pending).**
+The PTY layer accepts a primitive low-level stop callback, keeping its dependency
+independent of the host protocol. HostSession and the runner use the same
+ProcessStopIntentStore at their authorized Linux signal boundaries, including
+launcher failure, PID cleanup, explicit custody release/recovery and helper timeout.
+The normal tree SIGKILL and Porta's pinned native SIGHUP fallback are separate
+attempts. Native PID/start checks bind the live owner; a host kill is not a child's
+wait observation. Windows spawn, kill, job and teardown order are unchanged.
+
+Issuer memory is published around the actual operation under a gate. Custody/helper
+operations run outside the shared gate between requested and final publication, so
+their bounded helper wait cannot stall an unrelated stop or status read. Direct
+signals retain atomic publication with exit observation. Herdr child PID recovery
+uses persisted Linux boot ID and kernel start ticks; a missing/unreadable/mismatched
+identity refuses the kill and retains stop debt. Issued PID kills allow at most one
+second to observe asynchronous kernel teardown. Diagnostic
+writing starts afterward, outside it, on one bounded worker with a 100 ms offer
+deadline and one pending snapshot. No stop/observer waits for disk. WriteThrough,
+Flush(true), atomic rename and Linux directory fsync protect diagnostic durability
+only; the host manifest does not itself fsync its directory. Failure or a stuck
+fsync leaves matching live issuer evidence valid and nondurable. A timeout cannot
+cancel that kernel IO. Recovered records are always unverified, including planted
+issued/LiveIssuer claims. An existing server request supports request-only wording;
+only the actual live issuer can qualify stopped by Antiphon.
+
+Porta disposal closes the master streams and calls a failure-swallowing SIGHUP
+helper. Record that request before either operation, never promote its void return
+to issued evidence, and close on Linux before joining the blocked reader. Custody
+helper success is an issued operation only: preserve post-drain accounting, Unknown
+recovery and retained containers. No diagnostic record supplies release authority.
+
 **Opt-in custody foundation (CARD-0478, incomplete Code checkpoint).**
 `StartTrackedAsync` additionally uses a native job-list attribute and suspension
 to establish containment before resuming the root. Its accounting comes from
@@ -91,6 +122,12 @@ resolved Windows backend supports it; it is not application admission or cleanup
 authority. The application checkpoint adds reservation, all-attempt sealing and
 guarded removal, with focused real receipt-to-removal tests. The complete ordinary
 acceptance matrix remains unfinished; do not deploy this checkpoint.
+Linux cgroup custody is separate and stays unadvertised (CARD-1614). Terminal-task cleanup
+can terminate that containment. The task orchestrator invokes that cleanup after Succeeded,
+Failed, or Canceled settlement. Dead-host recovery stays Unknown, and a live host that
+adoption could not take is an operator stop, not an automatic kill. Missing accounting is
+never zero. This Windows seal still does not terminate, and the existing linger and
+kill-on-close job remain. A successful kill is not a receipt.
 See the [current evidence and remaining work](../investigations/2026-09-11-card-0478-application-custody-checkpoint.md)
 and [earlier native checkpoint](../investigations/2026-09-11-card-0478-native-custody-checkpoint.md).
 Native tests on Windows 10.0.19045 showed that new-console descendants can add a

@@ -39,7 +39,12 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
     {
         var output = new StringWriter();
         new CoverageCommand().Run(w.Root, w.Plan, new[] { w.Source }.Concat(extra).ToArray(), "json", inline ? null : w.Checklist, output);
-        return JsonSerializer.Deserialize<PlanCoverageReport>(output.ToString(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var text = output.ToString();
+        var report = JsonSerializer.Deserialize<PlanCoverageReport>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        if (report.Invalid && CheckpointNativeDiagnostics.Enabled)
+            Console.WriteLine($"CHECKPOINT_NATIVE census root={w.Root} report="
+                + (text.Length <= 16 * 1024 ? text : text[..(16 * 1024)] + " [truncated]"));
+        return report;
     }
     private static string[] Census(PlanCoverageReport r) => r.Diagnostics.Where(d => d.Code.StartsWith("CLASS_CENSUS", StringComparison.Ordinal)).Select(d => d.Test + ":" + d.Detail).ToArray();
     private static string Add(World w, string path, string source)

@@ -402,6 +402,21 @@ public sealed record AgentTaskSessionDto(
     Guid SessionId, SessionStatus Status, bool Working, DateTime LastSeenAt,
     DateTime? EndedAt, DateTime? LastTranscriptAt);
 
+/// <summary>
+/// CARD-1610. Shared Failed-task session reading for task detail and attention.
+/// <see cref="Summary"/> is either "Failed, session still Running: seat held" or
+/// "session state unknown: release unconfirmed". <see cref="Activity"/> is Working, idle,
+/// or unknown. <see cref="NoticeState"/> stays null until the notice ledger exists.
+/// </summary>
+public sealed record FailedTaskSessionFactsDto(
+    string Summary,
+    string Activity,
+    Guid? TaskId,
+    Guid? CardId,
+    Guid? SessionId,
+    string? FailureSource,
+    string? NoticeState);
+
 public sealed record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,
     string Goal,
@@ -470,7 +485,22 @@ public sealed record AgentTaskDetailDto(
     IReadOnlyList<InternalDecisionQuestionHistoryDto>? InternalDecisionQuestions = null,
     TaskParkSyncDto? ParkSync = null,
     /// <summary>CARD-1082 D-7. Null when this attempt has no settlement sync debt row.</summary>
-    TaskSyncDebtDto? SyncDebt = null);
+    TaskSyncDebtDto? SyncDebt = null,
+    /// <summary>CARD-1610. Null unless this Failed task still has an unreleased session.</summary>
+    FailedTaskSessionFactsDto? FailedSession = null,
+    CeilingHoldDto? CeilingHold = null,
+    IReadOnlyList<TaskSupervisionNoticeDto>? SupervisionNotices = null);
+
+public sealed record TaskSupervisionNoticeDto(Guid Id, string Purpose, string State, string? ReasonCode,
+    int Attempt, Guid? RecipientSessionId, Guid? QueueMessageId, DateTime? ToldAt,
+    long? ConfirmingPromptSequence, string? ReportDigest, string? ReportLink);
+
+public sealed record CeilingHoldDto(Guid EpisodeId, DateTime HeldAt, int Attempt,
+    DateTime SessionStartedAt, int InitialMinutes, string InitialSource, double NextCeilingMinutes,
+    string? LastTranscriptKind, double? LastTranscriptAgeSeconds, string? PhaseKind,
+    double? PhaseLimitMinutes, DateTime? PhaseDeadlineAt, bool CapReached, string Question);
+
+public enum CeilingAction { Continue = 0, Extend = 1 }
 
 /// <summary>Desktop source readiness is independent of the historical task verdict and release.</summary>
 public sealed record TaskParkSyncDto(Guid ParkId, string State, string? SourceSha, string? ReasonCode,
@@ -644,11 +674,16 @@ public sealed record ScopeOverlapDto(
     string? Areas);
 
 public sealed record ReplyToAgentTaskRequest(
-    string Message,
+    string? Message = null,
     int? Round = null,
     AnswerOrigin? Origin = null,
     bool InterruptCurrentTurn = false,
-    Guid? RequestId = null);
+    Guid? RequestId = null,
+    CeilingAction? CeilingAction = null,
+    Guid? EpisodeId = null,
+    int? ExtendMinutes = null,
+    bool OperatorExtend = false,
+    string? CeilingReason = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
 public sealed record CommitAgentTaskRequest(IReadOnlyList<string>? Paths, string Message);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a7c88a0ab7b92daa0e9a72a8b2f377ca4a8678eaa0d469d22d1d97551c676382",
+  "policyHash": "9cd8d7281b04ee66287f1c2bf5104d1e385937cd4e34881032f9fbca3d438eea",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -491,6 +491,17 @@
         },
         {
           "suite": "pty-host",
+          "class": "HostCustodyTests",
+          "methods": [
+            "Inbox_is_unsupported_and_never_becomes_no_start_proof",
+            "C1614_Windows_tracked_linger_releases_job"
+          ],
+          "platform": "linux",
+          "reason": "Windows job-object inbox fixture. The method remains required on Windows.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "pty-host",
           "class": "Card0490NativeHandoffTests",
           "reason": "QEMU/native placeholder control",
           "owner": "CARD-0490"
@@ -820,6 +831,83 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Unix PTY argv contract requires a Unix PTY and node. The case remains required on Linux.",
           "owner": "CARD-0590"
+        },
+        {
+          "suite": "session-runner",
+          "class": "LinuxRunnerCustodyLifecycleTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux custody lifecycle executes on Linux only. The case remains required on Linux.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "session-runner",
+          "class": "CustodyNamespaceBootstrapTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux custody namespace shell executes on Linux only. The case remains required on Linux.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card1619ExitConsumerTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive the server consumers. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card1619ExitPersistenceTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real Linux PTY signal exits and child identity drive committed server storage. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Card1619StopAttributionTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: stop attribution requires actual Linux PTY signals and child identity. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1619LinuxCustodyStopIntentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native cgroup-v1 pids/freezer custody and /proc descendant checks require Linux. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1619LinuxStopIntentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: runner stop routes launch /bin/sh and validate Linux /proc process identity and signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1619RunnerExitTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real detached Linux PTY exits require /bin/sh, /proc start ticks and libc signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "Card1619UnixExitTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the native Linux Porta PTY wait path launches /bin/sh and observes libc signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card1619LinuxHostExitTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: detached Linux PTY exit observation requires /bin/sh, /proc start ticks and libc signals. The case remains required on Linux.",
+          "owner": "CARD-1619"
+        },
+        {
+          "suite": "pty-host",
+          "class": "Card1619StopIntentTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: real Linux stop boundaries require /bin/sh, libc signals and /proc storage refusal. The case remains required on Linux.",
+          "owner": "CARD-1619"
         },
         {
           "suite": "antiphon",
@@ -1306,6 +1394,18 @@
       "path": "scripts/test-rc-roster-repairs.ps1",
       "disposition": "argument-consumer",
       "wildcard": false
+    },
+    {
+      "id": "test-nightly-failed-first",
+      "path": "scripts/test-nightly-failed-first.ps1",
+      "disposition": "argument-consumer",
+      "wildcard": false
+    },
+    {
+      "id": "test-qualification-graph",
+      "path": "scripts/test-qualification-graph.ps1",
+      "disposition": "argument-consumer",
+      "wildcard": false
     }
   ],
   "watchdogs": {
@@ -1424,6 +1524,14 @@
       "project": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj"
     },
     {
+      "reason": "CARD-1613 native Linux skip probe is an explicit child host launched by NativeLinuxPolicyExecutionTests and staged by Antiphon.Tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.NativeLinuxPolicy.Probe/Antiphon.NativeLinuxPolicy.Probe.csproj"
+    },
+    {
       "role": "primary",
       "consumers": [],
       "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
@@ -1431,7 +1539,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "622274b4d95a49bb26d277fcee23085ab61339cc1372ab83799f79835a100c24",
+    "hash": "00387e84f79db4135cf29345883c459e717d60427a7cf0345b326734248f3776",
     "path": "tests/test-selection-policy.json"
   }
 }

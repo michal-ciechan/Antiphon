@@ -4,6 +4,7 @@ using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -12,6 +13,7 @@ namespace Antiphon.Tests.Infrastructure;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class FileUseCaptureTests
 {
+    [NativeLinuxOnly("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.")]
     [Test]
     [Arguments("exclusive-file")]
     [Arguments("mapped-file")]
@@ -67,6 +69,7 @@ public sealed class FileUseCaptureTests
         catch (UnauthorizedAccessException actual) { ReferenceEquals(actual, sentinel).ShouldBeTrue(); actual.StackTrace.ShouldContain(nameof(C1539_trigger_and_original_error)); actual.HResult.ShouldBe(sentinel.HResult); }
     }
 
+    [NativeLinuxOnly("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.")]
     [Test]
     [Arguments("denied")]
     [Arguments("already-free")]
@@ -91,6 +94,7 @@ public sealed class FileUseCaptureTests
         }
     }
 
+    [NativeLinuxOnly("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.")]
     [Test]
     public async Task C1539_budget_and_caps()
     {
@@ -155,6 +159,7 @@ public sealed class FileUseCaptureTests
         var suppressed = await service.TryCaptureAsync(new(scratch.Path + "ninth", new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation });
         suppressed.Reasons.ShouldContain(FileUseReason.Suppressed); provider.Calls.ShouldBe(8);
     }
+    [NativeLinuxOnly("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.")]
     [Test]
     public async Task C1539_redaction_before_sinks()
     {
@@ -174,6 +179,7 @@ public sealed class FileUseCaptureTests
         result.Owners[0].CommandLine.ShouldBeNull(); result.Reasons.ShouldContain(FileUseReason.RedactionUnavailable);
     }
 
+    [NativeLinuxOnly("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.")]
     [Test]
     public async Task C1539_persistence_fail_safe()
     {
@@ -199,6 +205,7 @@ public sealed class FileUseCaptureTests
         sink.Published.ShouldBeFalse();
     }
 
+    [NativeLinuxOnly("Requires Linux /proc or the Linux no-follow evidence writer; Windows capture has separate provider coverage.")]
     [Test]
     public async Task C1539_generation_and_ownership()
     {

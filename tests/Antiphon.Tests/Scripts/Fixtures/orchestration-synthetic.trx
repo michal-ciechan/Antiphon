@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+    <UnitTestResult testId="synthetic-failed" testName="Synthetic.WindowsInputFails" duration="00:00:01.2500000" outcome="Failed">
+      <Output>
+        <ErrorInfo>
+          <Message>Expected Windows-shaped input to remain intact.</Message>
+          <StackTrace>   at Synthetic.First() in C:\synthetic\Test.cs:line 10
+   at Synthetic.Second()
+   at Synthetic.Third()
+   at Synthetic.Fourth()</StackTrace>
+        </ErrorInfo>
+        <StdOut>Synthetic diagnostic output only.</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult testId="synthetic-passed" testName="Synthetic.Passes" duration="00:00:00.1000000" outcome="Passed" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest id="synthetic-failed"><TestMethod className="Synthetic.WindowsInputTests" name="WindowsInputFails" /></UnitTest>
+    <UnitTest id="synthetic-passed"><TestMethod className="Synthetic.WindowsInputTests" name="Passes" /></UnitTest>
+  </TestDefinitions>
+  <ResultSummary outcome="Failed"><Counters total="2" passed="1" failed="1" /></ResultSummary>
+</TestRun>

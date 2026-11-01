@@ -3,6 +3,7 @@ using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -178,6 +179,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         report.Rows.Single().State.ShouldNotBe("green");
     }
 
+    [NativeLinuxOnly("the statx stamp (inode and ctime) is read on Linux only")]
     [Test]
     [Timeout(300_000)]
     public Task unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted()

@@ -58,10 +58,11 @@ public sealed class CustodyHelperContractTests
         text.ShouldContain("refuse InvalidExecutionId");
         text.ShouldContain("require_guid \"$EXECUTION_ID\"");
         text.ShouldContain("refuse CustodyTreeNotEmpty");
+        text.ShouldContain("refuse CustodyTreeUnreadable");
         text.ShouldContain("require_under_root");
 
-        // Both hierarchies get the same emptiness check on v1; neither may be skipped.
-        Occurrences(text, "refuse CustodyTreeNotEmpty").ShouldBe(2);
+        // Both hierarchies get the same emptiness check; neither prepare may skip it.
+        Occurrences(text, "require_empty_tree \"").ShouldBe(2);
         Order(text, "require_guid \"$EXECUTION_ID\"", "prepare_tree_v2 \"$EXECUTION_ID\"")
             .ShouldBeTrue("the id is validated before any tree is created");
     }
@@ -79,6 +80,9 @@ public sealed class CustodyHelperContractTests
 
         Rules(text).Count(line => line.Contains("NOPASSWD", StringComparison.Ordinal)).ShouldBe(1);
         Rules(text).ShouldContain("Defaults:#1654 env_reset");
+        Rules(text).ShouldContain("Defaults:#1654 !use_pty");
+        Rules(text).ShouldContain("Defaults:#1654 !pam_session");
+        Rules(text).ShouldContain("Defaults:#1654 !pam_setcred");
 
         // No path outside the two helpers may appear in an effective line, and no rule may
         // grant every command or target a user other than uid 1654.
@@ -122,7 +126,9 @@ public sealed class CustodyHelperContractTests
     public void Kill_helper_never_kills_outside_tree()
     {
         var text = Kill();
-        text.ShouldContain("for pid in $(tree_pids \"$pids_dir/tree/cgroup.procs\" || true); do");
+        text.ShouldContain("pids=\"$(tree_pids \"$pids_dir/tree/cgroup.procs\")\"");
+        text.ShouldContain("for pid in $pids; do");
+        text.ShouldNotContain("tree_pids \"$pids_dir/tree/cgroup.procs\" || true");
         text.ShouldContain("kill -KILL \"$pid\"");
         Occurrences(text, "kill -KILL").ShouldBe(1, "exactly one signalling site");
 
@@ -190,8 +196,11 @@ public sealed class CustodyHelperContractTests
         stage.ShouldContain("COPY docker/session-runner-grok/antiphon-custody-enter.sh /usr/local/bin/antiphon-custody-enter");
         stage.ShouldContain("COPY docker/session-runner-grok/antiphon-custody-kill.sh /usr/local/bin/antiphon-custody-kill");
         stage.ShouldContain("COPY docker/session-runner-grok/sudoers-antiphon-custody /etc/sudoers.d/antiphon-custody");
+        stage.ShouldContain("COPY docker/session-runner-grok/antiphon-custody-common.sh /usr/local/lib/antiphon-custody-common.sh");
         stage.ShouldContain("chown 0:0 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill");
         stage.ShouldContain("chmod 0755 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill");
+        stage.ShouldContain("chown 0:0 /usr/local/lib/antiphon-custody-common.sh");
+        stage.ShouldContain("chmod 0444 /usr/local/lib/antiphon-custody-common.sh");
         stage.ShouldContain("chmod 0440 /etc/sudoers.d/antiphon-custody");
         stage.ShouldContain("visudo -c");
         stage.ShouldContain("setpriv --help | grep -F -- '--no-new-privs'");

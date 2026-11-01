@@ -29,7 +29,7 @@ namespace Antiphon.Server.Application.Services;
 /// Singleton — invoked from the singleton <see cref="AgentSessionRuntime"/> transcript observer,
 /// with a DI scope per operation, mirroring the channel dispatcher's pattern.
 /// </summary>
-public sealed class AgentTaskReplyService
+public sealed partial class AgentTaskReplyService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly DelegationSettings _settings;
@@ -213,6 +213,13 @@ public sealed class AgentTaskReplyService
         Func<CancellationToken, Task>? onStillUncorrelated,
         CancellationToken ct, long? boundaryCeiling = null)
     {
+        if (task.CeilingHeldAt is not null && task.AgentSessionId is { } heldSession
+            && task.CeilingHoldSessionStartedAt is { } heldGeneration)
+        {
+            if (!await db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == heldSession && s.StartedAt == heldGeneration, ct))
+                return TurnOutcome.Nothing;
+            db.RuntimeActionTaskFence ??= new(task.Id, task.Attempt, heldSession, heldGeneration);
+        }
         var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct, boundaryCeiling);
 
         if (turn.Interrupted is { } interrupted)
@@ -1280,6 +1287,7 @@ public sealed class AgentTaskReplyService
             handoff = InterimVerificationPolicy.CapHandoff(task, handoff);
             task.NextStage = handoff.Kind;
             task.NextHandoff = handoff.Handoff;
+            await TaskSuccessorFence.ApplyAsync(db, task, now, ct);
             if (remoteBlock is not null)
             {
                 // Nobody dispatches Review against an unknown SHA.
@@ -1321,6 +1329,8 @@ public sealed class AgentTaskReplyService
         // Completed event, and the completion obligation is keyed to this settlement's event only.
         var settlementEvent = NewEvent(task.Id, eventType, eventDetail, now);
         db.AgentTaskEvents.Add(settlementEvent);
+        if (task.Status == AgentTaskStatus.Failed)
+            await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, settlementEvent, now, ct);
         string? remoteBlockWarning = null;
         if (remoteBlock is not null)
         {
@@ -1507,6 +1517,9 @@ public sealed class AgentTaskReplyService
                 && services.GetService<IOptions<BlockedTaskParkingOptions>>()?.Value.Enabled == true
             ? TaskCompletionNotification.AppliesToRunnerSyncBlock(task)
             : TaskCompletionNotification.Applies(task);
+        // Snapshot the final successor observation before composing the caller's header.
+        // Child reservation rechecks under the existing card/handoff admission locks.
+        await TaskSuccessorFence.ApplyAsync(db, task, now, ct);
         var completion = owesCompletion
             ? await AddCompletionObligationAsync(services, db, task, settlementEvent, settledBody, now,
                 workspaceNote, callerWarning, drift, gitHeader, ct)
@@ -1875,7 +1888,9 @@ public sealed class AgentTaskReplyService
         task.FailureReason = reason;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
+        var failed = NewEvent(task.Id, AgentTaskEventType.Failed, reason, now);
+        db.AgentTaskEvents.Add(failed);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, failed, now, ct);
 
         await PersistDeliverThenReleaseAsync(
             services, db, task, now, reason, ct,
@@ -2074,7 +2089,9 @@ public sealed class AgentTaskReplyService
             task.FailureCode = AgentTaskFailureCode.AuthenticationRequired;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
+        var failed = NewEvent(task.Id, AgentTaskEventType.Failed, reason, now);
+        db.AgentTaskEvents.Add(failed);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, failed, now, ct);
 
         await PersistDeliverThenReleaseAsync(
             services, db, task, now, reason, ct,
@@ -2696,6 +2713,8 @@ public sealed class AgentTaskReplyService
         try
         {
             // CARD-0664 D-2/D-3: the settlement is committed; give back the task's Launch rows.
+            if (task.Status == AgentTaskStatus.Failed)
+                services.GetRequiredService<SessionMessageQueueService>().SupervisionChanged(task.Id);
             // Best-effort, and never on Blocked (the owner is still live).
             if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled
                 && services.GetService<WorkspaceUseAdmission>() is { } workspaceUse)
@@ -3007,7 +3026,8 @@ public sealed class AgentTaskReplyService
             && task.NextHandoff?.StartsWith(ReviewRepairRefusalPrefix, StringComparison.Ordinal) == true;
         return task.NextStage == PipelineHandoffKind.Decide
             && parsed.Kind != PipelineHandoffKind.Decide
-            && (repairRefusal || task.Status == AgentTaskStatus.Blocked && RemoteWorkspaceService.IsEligible(task))
+            && (TaskSuccessorFence.Forced(task) || repairRefusal
+                || task.Status == AgentTaskStatus.Blocked && RemoteWorkspaceService.IsEligible(task))
                 ? parsed with { Found = true, Kind = PipelineHandoffKind.Decide, Handoff = task.NextHandoff ?? parsed.Handoff }
                 : parsed;
     }

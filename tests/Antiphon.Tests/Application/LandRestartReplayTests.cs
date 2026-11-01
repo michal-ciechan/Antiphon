@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -69,32 +70,43 @@ public sealed class LandRestartReplayTests
             await scope.ServiceProvider.GetRequiredService<AgentTaskLandService>()
                 .RequestAsync(newer, new LandAgentTaskRequest(null, sha), CancellationToken.None);
 
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // Provisional Windows budget after the qualification's 30 s cancellation;
+        // CARD-1379's owed native sample is recorded in the 2026-10-30 Debug investigation.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var hosted = new AgentTaskLandHostedService(h.Queue,
             h.Services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<AgentTaskLandHostedService>.Instance);
-        await hosted.StartAsync(timeout.Token);
+        var waitingFor = "first replay selection";
+        LandingEvidence.Write(h.Fixture.TaskId, "replay_wait_started", new { deadlineSeconds = 60 });
         try
         {
+            // The observer owns its deadline; StopAsync owns the worker's lifetime.
+            await hosted.StartAsync(CancellationToken.None);
             var first = await boundary.Consumed.Reader.ReadAsync(timeout.Token);
-            // Observe a committed admitted attempt and real publication, not a sorted helper.
-            while (true)
-            {
-                await using var observer = h.CreateContext();
-                var request = await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.TaskId == first);
-                if (!request.IsPending)
-                {
-                    request.Attempt.ShouldBe(1);
-                    (await observer.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == first))
-                        .RemoteConfirmedAt.ShouldNotBeNull();
-                    break;
-                }
-                await Task.Delay(20, timeout.Token);
-            }
             first.ShouldBe(h.Fixture.TaskId,
                 "c1379-replay-order: an accepted newer wake must not overtake an older durable Held request");
+            // Observe a committed admitted attempt and real publication, not a sorted helper.
+            waitingFor = "first replay's committed terminal result";
+            (await boundary.Terminal.Reader.ReadAsync(timeout.Token)).ShouldBe(first,
+                "c1379-replay-publication: the first replay must finish before the newer request");
+            await using (var observer = h.CreateContext())
+            {
+                var request = await observer.AgentTaskLandRequests.AsNoTracking()
+                    .SingleAsync(r => r.TaskId == first, timeout.Token);
+                request.IsPending.ShouldBeFalse();
+                request.Attempt.ShouldBe(1);
+                (await observer.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == first, timeout.Token))
+                    .RemoteConfirmedAt.ShouldNotBeNull();
+            }
+            waitingFor = "second replay selection";
             var second = await boundary.Consumed.Reader.ReadAsync(timeout.Token);
             second.ShouldBe(newer);
+        }
+        catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"c1379-replay-deadline: waiting for {waitingFor}; pending={h.Queue.PendingCount}; "
+                + $"boundaries={string.Join(",", boundary.Observed)}", ex);
         }
         finally
         {
@@ -106,10 +118,15 @@ public sealed class LandRestartReplayTests
     {
         public bool Drop { get; set; } = true;
         public Channel<Guid> Consumed { get; } = Channel.CreateUnbounded<Guid>();
+        public Channel<Guid> Terminal { get; } = Channel.CreateUnbounded<Guid>();
+        public ConcurrentQueue<string> Observed { get; } = new();
         public override bool DropWakeup(string boundary, Guid identity) => Drop;
         public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
+            Observed.Enqueue($"{boundary}:{taskId:N}");
+            LandingEvidence.Write(taskId, "replay_boundary", new { boundary, identity });
             if (boundary == "before-execution") Consumed.Writer.TryWrite(taskId);
+            if (boundary == "terminal-committed") Terminal.Writer.TryWrite(taskId);
             return Task.CompletedTask;
         }
     }

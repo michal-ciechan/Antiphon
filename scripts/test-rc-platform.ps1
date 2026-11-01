@@ -1,6 +1,6 @@
 #requires -Version 7.0
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
-param([string]$Case, [string]$ResultsDirectory)
+param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
 foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-authority', 'test-selection', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
@@ -126,6 +126,12 @@ function Test-C1323_PlatformPolicy {
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $shipRows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')
     Assert-C1323 ($shipped.SchemaVersion -eq 4 -and $shipRows.Count -eq 3 -and @($shipRows | Where-Object { $_.platform -cne 'linux' -or $_.suite -cne 'e2e' }).Count -eq 0 -and (Same-C1323Set $shipRows.class $scoped.Class)) 'shipped-three-linux-rows'
+    $c1614 = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1614')
+    $inbox = @($c1614 | Where-Object { [string]$_.class -ceq 'HostCustodyTests' -and [string]$_.platform -ceq 'linux' })
+    $life = @($c1614 | Where-Object { [string]$_.class -ceq 'LinuxRunnerCustodyLifecycleTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' })
+    $boot = @($c1614 | Where-Object { [string]$_.class -ceq 'CustodyNamespaceBootstrapTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' })
+    $inboxMethods = @($inbox | ForEach-Object { $_.methods })
+    Assert-C1323 ($c1614.Count -eq 3 -and $inbox.Count -eq 1 -and @($inboxMethods) -contains 'Inbox_is_unsupported_and_never_becomes_no_start_proof' -and @($inboxMethods) -contains 'C1614_Windows_tracked_linger_releases_job' -and [string]$inbox[0].reason -notlike 'Linux-only by construction:*' -and $life.Count -eq 1 -and $boot.Count -eq 1 -and $shipped.Hash -ceq [string]$shipped.Object.policyHash) 'card-1614-mixed-platform-rows'
     $shippedCensus = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $shipped.Object
     Assert-C1323 ($shippedCensus.Ok -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved' $shippedCensus.Message
 
@@ -502,15 +508,10 @@ function Test-LinuxSessionRunnerAdmission {
     Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
 }
 
-function Test-LinuxOnlyWindowsExclusions {
+function Test-LinuxOnlyWindowsExclusionPolicy {
     # Windows rc exclusions for skips that are Linux-only by construction. Gap classes stay required.
-    # Each test is sliced to its own body by scripts/lib/linux-only-gate-witness.cs. A fixed window
-    # after the signature is not a gate: the next test's skip must not cover an ungated neighbour.
+    # CARD-1613: compiled NativeLinuxPolicyWitnessTests owns the marker proof. This case checks shipped rows only.
     $prefix = 'Linux-only by construction:'
-    $forbid = [regex]::new('(?i)unverified|junction|case-sensitive|case-twin|opt-in')
-    if (-not ('RcPlatformWitness.LinuxOnlyGate' -as [type])) {
-        Add-Type -Path (Join-Path $PSScriptRoot 'lib/linux-only-gate-witness.cs')
-    }
     $inventory = @(
         @{ s='antiphon'; c='PhoneHomeMirrorJoinTests'; o='CARD-1032'; m=@() }
         @{ s='antiphon'; c='UnixDelegateLaunchArgvTests'; o='CARD-0590'; m=@() }
@@ -537,6 +538,8 @@ function Test-LinuxOnlyWindowsExclusions {
         @{ s='antiphon'; c='CheckpointInheritedFileTests'; o='CARD-0590'; m=@() }
         @{ s='pty-host'; c='LinuxCgroupCustodyTests'; o='CARD-0590'; m=@() }
         @{ s='agents-pty'; c='UnixPtyArgvTests'; o='CARD-0590'; m=@() }
+        @{ s='session-runner'; c='LinuxRunnerCustodyLifecycleTests'; o='CARD-1614'; m=@() }
+        @{ s='session-runner'; c='CustodyNamespaceBootstrapTests'; o='CARD-1614'; m=@() }
         @{ s='antiphon'; c='PhoneHomeCompletedCardTransportTests'; o='CARD-1032'; m=@('C1032_TransportQueueRecipientReplay') }
         @{ s='antiphon'; c='LandGraphEvaluationTests'; o='CARD-1483'; m=@('C1483_S1_UnreadableLinkComponentDenies') }
         @{ s='antiphon'; c='CheckpointConfinementLedgerTests'; o='CARD-0590'; m=@('unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted') }
@@ -566,384 +569,8 @@ function Test-LinuxOnlyWindowsExclusions {
         'RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused'
     )
     $documentClasses = @(
-        'ClaudeDialogWatchdogCanaryTests','LandGraphEvaluationTests','PhoneHomeCompletedCardTransportTests','PhoneHomeMirrorJoinTests','UnixDelegateLaunchArgvTests','CheckpointConfinementLedgerTests','CheckpointReceiptSafetyTests','CheckpointBoundedReaderTests','OutputCleanupTests','AnchoredPathDeleteWitnessTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointSourceGitBoundsTests','CheckpointVerifierBoundsTests','PlanCoverageHandleTests','CheckpointFixtureProcessTests','DetachedLauncherTests','SafeDeleteProcessBoundaryTests','CodexRootExecContractTests','FileUseCaptureTests','GrokSha256PinTests','JqRunnerImageContractTests','GithubCredentialHelperTests','GitMinimumVersionGuardTests','RollingVolumeRecycleScriptTests','RetiredTempContainerScriptTests','RetiredTempContainerHostTests','BuildSlotScriptTests','HostJqPrerequisiteScriptTests','ScriptHarnessLinuxOwnershipTests','C1364BoundLandWaitProofTests','RollingProductionMountTests','RefreshGithubTokenRemoteCommandTests','NightlyProbeSupervisorTests','RetiredTempContainerDockerTests','RollingVolumeRecycleDockerTests','RollingVolumeRecycleCensusChurnTests','RemoteScriptContractTests','CompletedCardWorkspaceRemovalTests','RunnerWorkspaceBindingTests','HostStatsProbeLiveTests','LinuxCgroupCustodyTests','UnixPtyArgvTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointRecoveryLinuxTests','CheckpointStampSafetyTests','CheckpointOutputConfinementTests','CheckpointFixtureRoutingTests','CheckpointInheritedFileTests','CheckpointTempRootSweepTests','PlanCoverageCommandTests'
+        'ClaudeDialogWatchdogCanaryTests','LandGraphEvaluationTests','PhoneHomeCompletedCardTransportTests','PhoneHomeMirrorJoinTests','UnixDelegateLaunchArgvTests','CheckpointConfinementLedgerTests','CheckpointReceiptSafetyTests','CheckpointBoundedReaderTests','OutputCleanupTests','AnchoredPathDeleteWitnessTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointSourceGitBoundsTests','CheckpointVerifierBoundsTests','PlanCoverageHandleTests','CheckpointFixtureProcessTests','DetachedLauncherTests','SafeDeleteProcessBoundaryTests','CodexRootExecContractTests','FileUseCaptureTests','GrokSha256PinTests','JqRunnerImageContractTests','GithubCredentialHelperTests','GitMinimumVersionGuardTests','RollingVolumeRecycleScriptTests','RetiredTempContainerScriptTests','RetiredTempContainerHostTests','BuildSlotScriptTests','HostJqPrerequisiteScriptTests','ScriptHarnessLinuxOwnershipTests','C1364BoundLandWaitProofTests','RollingProductionMountTests','RefreshGithubTokenRemoteCommandTests','NightlyProbeSupervisorTests','RetiredTempContainerDockerTests','RollingVolumeRecycleDockerTests','RollingVolumeRecycleCensusChurnTests','RemoteScriptContractTests','CompletedCardWorkspaceRemovalTests','RunnerWorkspaceBindingTests','HostStatsProbeLiveTests','LinuxCgroupCustodyTests','UnixPtyArgvTests','LinuxRunnerCustodyLifecycleTests','CustodyNamespaceBootstrapTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointRecoveryLinuxTests','CheckpointStampSafetyTests','CheckpointOutputConfinementTests','CheckpointFixtureRoutingTests','CheckpointInheritedFileTests','CheckpointTempRootSweepTests','PlanCoverageCommandTests'
     )
-    function Read-ClassLines([string]$class) {
-        $rels = @(
-            "tests/Antiphon.Tests/Checkpoints/$class.cs"
-            "tests/Antiphon.Tests/Scripts/$class.cs"
-            "tests/Antiphon.Tests/Infrastructure/$class.cs"
-            "tests/Antiphon.Tests/Application/$class.cs"
-            "tests/Antiphon.SessionRunner.Tests/$class.cs"
-            "tests/Antiphon.PtyHost.Tests/$class.cs"
-            "tests/Antiphon.Agents.Pty.Tests/$class.cs"
-        )
-        if ($class -eq 'CompletedCardWorkspaceRemovalTests') {
-            $rels = @(
-                'tests/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceInspectionR3Tests.cs'
-                'tests/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceS5Tests.cs'
-            )
-        }
-        $all = New-Object System.Collections.Generic.List[string]
-        $found = $false
-        foreach ($rel in $rels) {
-            $path = Join-Path $repoRoot $rel
-            if (-not (Test-Path -LiteralPath $path)) { continue }
-            $found = $true
-            foreach ($line in [IO.File]::ReadAllLines($path)) { $all.Add($line) }
-        }
-        return @{ Found = $found; Lines = $all }
-    }
-    function Read-ClassSource([string]$class) {
-        $loaded = Read-ClassLines $class
-        if (-not $loaded.Found) { return $null }
-        return ($loaded.Lines -join "`n")
-    }
-    $script:SuiteSources = @{}
-    function Get-SuiteSources([string]$Suite) {
-        if ($script:SuiteSources.ContainsKey($Suite)) { return ,$script:SuiteSources[$Suite] }
-        $rootRel = switch ($Suite) {
-            'antiphon' { 'tests/Antiphon.Tests' }
-            'session-runner' { 'tests/Antiphon.SessionRunner.Tests' }
-            'pty-host' { 'tests/Antiphon.PtyHost.Tests' }
-            'agents-pty' { 'tests/Antiphon.Agents.Pty.Tests' }
-            default { throw "unknown suite $Suite" }
-        }
-        $root = Join-Path $repoRoot $rootRel
-        $paths = @(Get-ChildItem -LiteralPath $root -Recurse -Filter *.cs -File | Where-Object {
-            $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.FullName -notmatch '[\\/]bin-'
-        } | Sort-Object -Property FullName)
-        $texts = New-Object string[] $paths.Count
-        for ($i = 0; $i -lt $paths.Count; $i++) { $texts[$i] = [IO.File]::ReadAllText($paths[$i].FullName) }
-        $script:SuiteSources[$Suite] = $texts
-        return ,$texts
-    }
-    function Test-SourceGated([string]$Source, [string]$Class, [string[]]$Methods) {
-        return @([RcPlatformWitness.LinuxOnlyGate]::RowProblems($Source, $Class, $Methods))
-    }
-    function Test-SourcesGated([string[]]$Sources, [string]$Class, [string[]]$Methods) {
-        return @([RcPlatformWitness.LinuxOnlyGate]::RowProblemsMany($Sources, $Class, $Methods))
-    }
-    function Test-RowGated($row) {
-        $sources = Get-SuiteSources ([string]$row.s)
-        return @([RcPlatformWitness.LinuxOnlyGate]::CachedRowProblems([string]$row.s, $sources, [string]$row.c, [string[]]@($row.m)))
-    }
-    $gateProblems = @()
-    foreach ($row in $inventory) {
-        $problems = @(Test-RowGated $row)
-        if ($problems.Count -gt 0) { $gateProblems += ($row.c + ':' + ($problems -join ',')) }
-    }
-    $noise = Read-ClassLines 'AttentionFeedNoiseTests'
-    $noiseAdmitted = $false
-    if ($noise.Found) {
-        $noiseAdmitted = @((Test-RowGated @{ s = 'antiphon'; c = 'AttentionFeedNoiseTests'; m = @() })).Count -eq 0
-    }
-    $synthetic = 'if (!OperatingSystem.IsLinux()) Skip.Test("Windows junction variant is unverified");'
-    $syntheticSkip = [regex]::Match($synthetic, 'Skip\.Test\(\s*"([^"]*)"').Groups[1].Value
-    $forbidSource = "public sealed class ForbidSkipTests { [Test] public void Case() { $synthetic } }"
-    $forbidProblems = @(Test-SourceGated $forbidSource 'ForbidSkipTests' ([string[]]@()))
-    $syntheticRefused = $forbid.IsMatch($syntheticSkip) -and (($forbidProblems -join ' ') -eq 'forbid Case')
-    $noiseProblems = @()
-    if ($noise.Found) { $noiseProblems = @((Test-RowGated @{ s = 'antiphon'; c = 'AttentionFeedNoiseTests'; m = @() })) }
-    $noiseParsed = -not (($noiseProblems -join ',') -like '*parse-failed*')
-    Assert-C1323 ((-not $noiseAdmitted) -and $syntheticRefused -and $noise.Found -and $noiseParsed) 'ungated-class-refused' "noise=$noiseAdmitted synthetic=$syntheticRefused parsed=$noiseParsed"
-    $gateType = @'
-
-internal static class NativeLinuxGate {
-    internal static void Require(string reason) {
-        if (!OperatingSystem.IsLinux()) throw new SkipTestException(reason);
-    }
-}
-'@
-    $neighbour = @'
-public sealed class NeighbourGateTests {
-    [Test] public void Ungated_runs_on_windows() { var value = 1; value.ToString(); }
-    [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $returnTrueTool = @'
-public sealed class ReturnTrueToolTests {
-    [Test] public void Case() { if (!Linux()) return; Work(); }
-    private static bool Linux() { if (OperatingSystem.IsLinux()) return true; return File.Exists("C:\\tools\\wsl-sh.exe"); }
-    private static void Work() { }
-}
-'@
-    $returnTrueGood = @'
-public sealed class ReturnTrueGoodTests {
-    [Test] public void Case() { if (!Linux()) return; Work(); }
-    private static bool Linux() { if (OperatingSystem.IsLinux()) return true; Skip.Test("native"); return false; }
-    private static void Work() { }
-}
-'@
-    $envWrapped = @'
-public sealed class EnvWrappedGateTests {
-    [Test] public void Case() { if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $removedGate = @'
-public sealed class RemovedGateTests {
-    [Test] public void C1008_Recycle_exact_default_volumes() { Work(); }
-    [Test] public void Sibling_is_gated() { NativeLinuxGate.Require("linux only"); }
-    private static void Work() { }
-}
-'@ + $gateType
-    $compound = @'
-public sealed class CompoundConditionTests {
-    [Test] public void Case() {
-        if (!OperatingSystem.IsLinux() && !File.Exists("C:\\tools\\wsl-sh.exe")) Skip.Test("compound");
-    }
-}
-'@
-    $holes = @()
-    if (@(Test-SourceGated $neighbour 'NeighbourGateTests' ([string[]]@())).Count -eq 0) { $holes += 'neighbour-class-admitted' }
-    if (@(Test-SourceGated $neighbour 'NeighbourGateTests' ([string[]]@('Ungated_runs_on_windows'))).Count -eq 0) { $holes += 'neighbour-ungated-admitted' }
-    if (@(Test-SourceGated $neighbour 'NeighbourGateTests' ([string[]]@('Gated_next'))).Count -gt 0) { $holes += 'neighbour-gated-refused' }
-    if (@(Test-SourceGated $returnTrueTool 'ReturnTrueToolTests' ([string[]]@())).Count -eq 0) { $holes += 'return-true-tool-admitted' }
-    if (@(Test-SourceGated $returnTrueGood 'ReturnTrueGoodTests' ([string[]]@())).Count -gt 0) { $holes += 'return-true-skip-refused' }
-    if (@(Test-SourceGated $envWrapped 'EnvWrappedGateTests' ([string[]]@())).Count -eq 0) { $holes += 'env-wrapped-gate-admitted' }
-    if (@(Test-SourceGated $removedGate 'RemovedGateTests' ([string[]]@('C1008_Recycle_exact_default_volumes'))).Count -eq 0) { $holes += 'removed-method-gate-admitted' }
-    if (@(Test-SourceGated $removedGate 'RemovedGateTests' ([string[]]@('Sibling_is_gated'))).Count -gt 0) { $holes += 'sibling-gate-refused' }
-    if (@(Test-SourceGated $compound 'CompoundConditionTests' ([string[]]@())).Count -eq 0) { $holes += 'compound-condition-admitted' }
-    $lambda = @'
-public sealed class LambdaGateTests {
-    [Test] public void Case() { System.Action never = () => NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $localFn = @'
-public sealed class LocalFnGateTests {
-    [Test] public void Case() { static void Never() => NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $blockFn = @'
-public sealed class BlockFnGateTests {
-    [Test] public void Case() { void Never() { NativeLinuxGate.Require("linux only"); } }
-}
-'@ + $gateType
-    $ternaryNew = @'
-public sealed class TernaryNewTests {
-    [Test] public void Case() { using var fixture = Env("X") is null ? null : new HelperFixture(); }
-    static string Env(string name) { return null; }
-    sealed class HelperFixture { public HelperFixture() { if (!OperatingSystem.IsLinux()) throw new SkipTestException("linux"); } }
-}
-'@
-    $taskRun = @'
-public sealed class TaskRunGateTests {
-    [Test] public void Case() { _ = Task.Run(() => NativeLinuxGate.Require("linux only")); }
-}
-'@ + $gateType
-    $ternaryCall = @'
-public sealed class TernaryCallTests {
-    [Test] public void Case() { _ = Env("X") is null ? 0 : Gated(); }
-    static string Env(string name) { return null; }
-    static int Gated() { NativeLinuxGate.Require("linux only"); return 1; }
-}
-'@ + $gateType
-    $charU = @'
-public sealed class CharUTests {
-    [Test] public void Case() { System.Console.Write('\u0041'); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $charX = @'
-public sealed class CharXTests {
-    [Test] public void Case() { System.Console.Write('\x41'); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $charSlash = @'
-public sealed class CharSlashTests {
-    [Test] public void Case() { System.Console.Write('\\'); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $charQuote = @'
-public sealed class CharQuoteTests {
-    [Test] public void Case() { System.Console.Write('\''); if (Environment.GetEnvironmentVariable("X") is null) NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $charPositive = @'
-public sealed class CharPositiveTests {
-    [Test] public void Ungated_chars() {
-        System.Console.Write('\u0041');
-        System.Console.Write('\x41');
-        System.Console.Write('\\');
-        System.Console.Write('\'');
-    }
-    [Test] public void Gated_after_chars() { NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $preIf = @'
-public sealed class PreprocessorGateTests {
-    [Test] public void Case() {
-#if ANTIPHON_NEVER_DEFINED
-        NativeLinuxGate.Require("linux only");
-#endif
-        var value = 1;
-    }
-}
-'@ + $gateType
-    $nopClass = @'
-public sealed class NopProbeTests {
-    [Test] public void Case() { NopProbe.RequireLinux(); }
-}
-'@
-    $nopHelper = @'
-public static class NopProbe { public static void RequireLinux() { } }
-'@
-    $overload = @'
-public sealed class OverloadGateTests {
-    [Test] public void Case() { NativeLinuxGate.Require("linux only"); }
-    [Test] public void Case(int value) { var x = value; }
-}
-'@ + $gateType
-    $caseTwin = @'
-public sealed class CaseTwinTests {
-    [Test] public void Case() { NativeLinuxGate.Require("linux only"); }
-    [Test] public void case() { var x = 1; }
-}
-'@ + $gateType
-    $twinA = @'
-namespace One;
-public sealed class TwinClassTests { [Test] public void Case() { NativeLinuxGate.Require("linux only"); } }
-'@ + $gateType
-    $twinB = @'
-namespace Two;
-public sealed class TwinClassTests { [Test] public void Case() { var x = 1; } }
-'@
-    $partialA = @'
-namespace Same;
-public sealed partial class PartialGateTests { [Test] public void Case() { NativeLinuxGate.Require("linux only"); } }
-'@ + $gateType
-    $partialB = @'
-namespace Same;
-public sealed partial class PartialGateTests { [Test] public void Other() { var x = 1; } }
-'@
-    $inheritBase = @'
-namespace Inherited;
-public class InheritBaseTests { [Test] public void Inherited_runs_on_windows() { var x = 1; } }
-'@
-    $inheritDerived = @'
-namespace Inherited;
-[InheritsTests]
-public class InheritDerivedTests : InheritBaseTests {
-    [Test] public void Own() { NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $inheritPlain = @'
-namespace Inherited;
-public class InheritPlainTests : InheritBaseTests {
-    [Test] public void Own() { NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $preamble = @'
-public sealed class PreambleGateTests {
-    [Test] public void Case() { WindowsWork(); NativeLinuxGate.Require("linux only"); }
-    static void WindowsWork() { Assert.Fail("windows"); }
-}
-'@ + $gateType
-    $commentGate = @'
-public sealed class CommentGateTests {
-    [Test] public void Case() {
-        // NativeLinuxGate.Require("linux only");
-        var x = 1;
-    }
-}
-'@ + $gateType
-    $stringGate = @'
-public sealed class StringGateTests {
-    [Test] public void Case() { var x = "NativeLinuxGate.Require(\"linux only\");"; }
-}
-'@ + $gateType
-    $blockComment = @'
-public sealed class BlockCommentTests {
-    [Test] public void Ungated_comment() { /* } */ var x = 1; }
-    [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $afterReturn = @'
-public sealed class AfterReturnTests {
-    [Test] public void Case() { return; NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $afterIfReturn = @'
-public sealed class AfterIfReturnTests {
-    [Test] public void Case() { if (true) return; NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $tryGate = @'
-public sealed class TryGateTests {
-    [Test] public void Case() { try { NativeLinuxGate.Require("linux only"); } catch (Exception) { } }
-}
-'@ + $gateType
-    $skipWhen = @'
-public sealed class SkipWhenTests {
-    [Test, SkipWhen(false)] public void Case() { var x = 1; }
-}
-'@
-    $braceNoise = @'
-public sealed class BraceNoiseTests {
-    [Test] public void Ungated_noise() {
-        var a = @"} } ""x"" ";
-        var b = """
-        }
-        """;
-        var c = '{';
-        var d = '}';
-        var e = $"{{ {(true ? "}" : "{")} }}";
-    }
-    [Test] public void Gated_next() { NativeLinuxGate.Require("linux only"); }
-}
-'@ + $gateType
-    $misparse = @'
-public sealed class MisparseTests {
-    [Test] public void Case() { System.Console.Write('); }
-}
-'@
-    function Add-Refused([string]$Name, [string]$Source, [string]$Class, [string[]]$Methods) {
-        if (@(Test-SourceGated $Source $Class $Methods).Count -eq 0) { $script:HoleList += $Name }
-    }
-    $script:HoleList = @($holes)
-    Add-Refused 'lambda-admitted' $lambda 'LambdaGateTests' @()
-    Add-Refused 'local-fn-admitted' $localFn 'LocalFnGateTests' @()
-    Add-Refused 'block-fn-admitted' $blockFn 'BlockFnGateTests' @()
-    Add-Refused 'ternary-new-admitted' $ternaryNew 'TernaryNewTests' @()
-    Add-Refused 'task-run-admitted' $taskRun 'TaskRunGateTests' @()
-    Add-Refused 'ternary-call-admitted' $ternaryCall 'TernaryCallTests' @()
-    Add-Refused 'char-u-admitted' $charU 'CharUTests' @()
-    Add-Refused 'char-x-admitted' $charX 'CharXTests' @()
-    Add-Refused 'char-slash-admitted' $charSlash 'CharSlashTests' @()
-    Add-Refused 'char-quote-admitted' $charQuote 'CharQuoteTests' @()
-    if (@(Test-SourceGated $charPositive 'CharPositiveTests' ([string[]]@('Ungated_chars'))).Count -eq 0) { $script:HoleList += 'char-positive-ungated-admitted' }
-    if (@(Test-SourceGated $charPositive 'CharPositiveTests' ([string[]]@('Gated_after_chars'))).Count -gt 0) { $script:HoleList += 'char-positive-gated-refused' }
-    Add-Refused 'preprocessor-admitted' $preIf 'PreprocessorGateTests' @()
-    if (@(Test-SourcesGated ([string[]]@($nopClass, $nopHelper)) 'NopProbeTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'nop-probe-admitted' }
-    if (@(Test-SourceGated $overload 'OverloadGateTests' ([string[]]@('Case'))).Count -eq 0) { $script:HoleList += 'overload-admitted' }
-    if (@(Test-SourceGated $caseTwin 'CaseTwinTests' ([string[]]@('Case'))).Count -eq 0) { $script:HoleList += 'case-twin-admitted' }
-    if (@(Test-SourcesGated ([string[]]@($twinA, $twinB)) 'TwinClassTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'other-file-admitted' }
-    if (@(Test-SourcesGated ([string[]]@($partialA, $partialB)) 'PartialGateTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'partial-sibling-admitted' }
-    if (@(Test-SourcesGated ([string[]]@($inheritBase, $inheritDerived)) 'InheritDerivedTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'inherits-base-admitted' }
-    if (@(Test-SourcesGated ([string[]]@($inheritBase, $inheritPlain)) 'InheritPlainTests' ([string[]]@())).Count -gt 0) { $script:HoleList += 'inherits-without-attribute-refused' }
-    Add-Refused 'preamble-admitted' $preamble 'PreambleGateTests' @()
-    Add-Refused 'comment-admitted' $commentGate 'CommentGateTests' @()
-    Add-Refused 'string-admitted' $stringGate 'StringGateTests' @()
-    if (@(Test-SourceGated $blockComment 'BlockCommentTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'block-comment-admitted' }
-    if (@(Test-SourceGated $blockComment 'BlockCommentTests' ([string[]]@('Gated_next'))).Count -gt 0) { $script:HoleList += 'block-comment-gated-refused' }
-    Add-Refused 'after-return-admitted' $afterReturn 'AfterReturnTests' @()
-    Add-Refused 'after-if-return-admitted' $afterIfReturn 'AfterIfReturnTests' @()
-    Add-Refused 'try-admitted' $tryGate 'TryGateTests' @()
-    Add-Refused 'skip-when-admitted' $skipWhen 'SkipWhenTests' @()
-    if (@(Test-SourceGated $braceNoise 'BraceNoiseTests' ([string[]]@())).Count -eq 0) { $script:HoleList += 'brace-noise-admitted' }
-    if (@(Test-SourceGated $braceNoise 'BraceNoiseTests' ([string[]]@('Gated_next'))).Count -gt 0) { $script:HoleList += 'brace-noise-gated-refused' }
-    $misparseProblems = @(Test-SourceGated $misparse 'MisparseTests' ([string[]]@()))
-    if (($misparseProblems -join ' ') -notlike 'misparse*') { $script:HoleList += ('misparse-admitted:' + ($misparseProblems -join '|')) }
-    $once = @((Test-RowGated $inventory[0])) -join '|'
-    $twice = @((Test-RowGated $inventory[0])) -join '|'
-    if ($once -cne $twice) { $script:HoleList += 'nondeterministic' }
-    $compileRefused = $false
-    try { Add-Type -TypeDefinition 'public class {' -ErrorAction Stop } catch { $compileRefused = $true }
-    if (-not $compileRefused) { $script:HoleList += 'compile-failure-admitted' }
-    $loadRefused = $false
-    try { Add-Type -Path (Join-Path $repoRoot 'scripts/lib/no-such-witness.cs') -ErrorAction Stop } catch { $loadRefused = $true }
-    if (-not $loadRefused) { $script:HoleList += 'load-failure-admitted' }
-    $holes = @($script:HoleList)
-    Assert-C1323 ($holes.Count -eq 0) 'synthetic-gate-holes-refused' ($holes -join ',')
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
     $expectedKeys = @()
@@ -961,8 +588,8 @@ public sealed class MisparseTests {
         $want = @($inventory | Where-Object { $_.s -ceq [string]$row.suite -and $_.c -ceq [string]$row.class })
         if ($want.Count -ne 1 -or [string]$want[0].o -cne [string]$row.owner) { $rowProblems += "$key owner" }
     }
-    $rowsMatch = (Same-C1323Set $actualKeys $expectedKeys) -and $rowProblems.Count -eq 0 -and $gateProblems.Count -eq 0
-    Assert-C1323 $rowsMatch 'every-new-row-has-linux-gate' (($gateProblems + $rowProblems + @('actual=' + $actualKeys.Count + ' expected=' + $expectedKeys.Count)) -join '; ')
+    $rowsMatch = (Same-C1323Set $actualKeys $expectedKeys) -and $rowProblems.Count -eq 0
+    Assert-C1323 $rowsMatch 'every-new-row-has-linux-gate' (($rowProblems + @('actual=' + $actualKeys.Count + ' expected=' + $expectedKeys.Count)) -join '; ')
     $excludedClasses = @($shippedRows | ForEach-Object { [string]$_.class })
     $missingDoc = @($documentClasses | Where-Object { $excludedClasses -cnotcontains $_ -and $decisionClasses -cnotcontains $_ })
     $extraDoc = @($excludedClasses | Where-Object { $documentClasses -cnotcontains $_ })
@@ -994,7 +621,7 @@ public sealed class MisparseTests {
         @{ s='antiphon'; c='CheckpointOwnedOutputTests'; m='changed_inventory_is_refused' }
         @{ s='antiphon'; c='CheckpointScriptReaderDeadlineTests'; m='script_reader_re_arms_its_stall_window_and_the_stamp_reports_unreadable_apart_from_tampered' }
         @{ s='session-runner'; c='CompletedCardWorkspaceRemovalTests'; m='C1032_InspectionHoldShapes' }
-        @{ s='antiphon'; c='CheckpointShapeConflictTests'; m='shape_conflict_rule' }
+        @{ s='antiphon'; c='CheckpointShapeConflictTests'; m='shape_directory_on_file' }
         @{ s='antiphon'; c='CheckpointTrackedBaselineTests'; m='local_output_property_tampering_is_reported' }
         @{ s='antiphon'; c='CheckpointOutputConfinementTests'; m='imported_props_build_preserves_the_tracked_dependency' }
         @{ s='session-runner'; c='RunnerWorkspaceBindingTests'; m='C1032_StoreIdentityRefused' }
@@ -1030,13 +657,131 @@ public sealed class MisparseTests {
     Assert-C1323 ($linuxLaunched.Count -eq $linuxOnly.Count -and $linuxOnly.Count -gt 0) 'linux-still-requires-the-rows' ("linux=" + $linuxLaunched.Count + ' inventory=' + $linuxOnly.Count)
 }
 
+function Test-C1199_WindowsRequiredRoster {
+    # The wrapper passes compiled S/T/O identities. Do not scan test source for that roster.
+    $expected = @(
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_directory_on_file'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_file_on_directory'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_symlink_on_file'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_untracked_descendant'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_ignored_descendant'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_staged_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_modified_tracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_tracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_clean_build'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_regular_user_move'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_deleted_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_changed_untracked'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_stamp'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_compiler_collision'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_directory'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.shape_existing_output_symlink'
+        'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.missing_receipt_is_not_negative_success'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.local_output_property_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.intermediate_output_path_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.generated_target_file_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.imported_props_reference_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.transitive_reference_tampering_is_reported'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.dirty_tracked_tree_is_refused_and_unmodified'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.clean_untracked_output_build_exits_zero'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.fresh_checkout_run_executes_a_test'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.tracked_snapshot_contains_committed_files'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_untracked_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.staged_ignored_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.index_added_file_is_kept_and_indexed'
+        'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.passing_script_requires_writable_source_receipt'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.imported_props_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.directory_build_props_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.conditional_import_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.transitive_import_build_preserves_the_tracked_dependency'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.unevaluable_import_is_refused_before_the_build'
+    )
+    if ([string]::IsNullOrWhiteSpace($CompiledRosterPath) -or -not (Test-Path -LiteralPath $CompiledRosterPath -PathType Leaf)) {
+        foreach ($name in @('c1199-roster-35', 'c1199-windows-required', 'c1199-linux-required', 'c1199-each-gap-incomplete', 'c1199-all-passed-complete', 'c1199-residual-skips-exact')) {
+            Assert-C1323 $false $name 'compiled roster path missing'
+        }
+        return
+    }
+    $parsed = Get-Content -LiteralPath $CompiledRosterPath -Raw | ConvertFrom-Json
+    $roster = @($parsed | ForEach-Object { [string]$_ })
+    $groups = @($roster | Group-Object -CaseSensitive)
+    $rosterOk = ($roster.Count -eq 35 -and $groups.Count -eq 35 -and (Same-C1323Set $roster $expected))
+    $legacy = @($roster | Where-Object { $_ -like '*.shape_conflict_rule' }).Count
+    Assert-C1323 $rosterOk 'c1199-roster-35' ("count=" + $roster.Count + " unique=" + $groups.Count + " shape_conflict_rule=" + $legacy)
+
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $exclusionCache = @{}
+    function Test-C1199Excluded([string]$ClassName, [string]$Method, [string]$Platform) {
+        $key = 'antiphon|' + $Platform
+        if (-not $exclusionCache.ContainsKey($key)) {
+            $exclusionCache[$key] = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'antiphon' -Platform $Platform)
+        }
+        $probe = [pscustomobject]@{ ClassName = $ClassName; Type = $ClassName; Method = $Method }
+        return (Test-NightlyProfileNodeExcluded $probe $exclusionCache[$key])
+    }
+    $windowsMiss = @()
+    $linuxMiss = @()
+    foreach ($id in $expected) {
+        $dot = $id.LastIndexOf('.')
+        $class = $id.Substring(0, $dot)
+        $method = $id.Substring($dot + 1)
+        if (Test-C1199Excluded $class $method 'windows') { $windowsMiss += $id }
+        if (Test-C1199Excluded $class $method 'linux') { $linuxMiss += $id }
+    }
+    Assert-C1323 ($windowsMiss.Count -eq 0) 'c1199-windows-required' ($windowsMiss -join ',')
+    Assert-C1323 ($linuxMiss.Count -eq 0) 'c1199-linux-required' ($linuxMiss -join ',')
+
+    function New-C1199Verdict([object[]]$Rows) {
+        return (ConvertTo-NightlyCoverageVerdict -TerminalRows $Rows -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash)
+    }
+    $gapMiss = @()
+    foreach ($id in $expected) {
+        $rows = @($expected | ForEach-Object {
+            [pscustomobject]@{ Identity = $_; Outcome = $(if ($_ -ceq $id) { 'NotExecuted' } else { 'Passed' }) }
+        })
+        $verdict = New-C1199Verdict $rows
+        $reason = @($verdict.reasons) -join ','
+        if ($verdict.coverageComplete -or $reason -notlike ('*' + $id + '*')) { $gapMiss += $id }
+    }
+    Assert-C1323 ($gapMiss.Count -eq 0) 'c1199-each-gap-incomplete' ($gapMiss -join ',')
+    $passed = @($expected | ForEach-Object { [pscustomobject]@{ Identity = $_; Outcome = 'Passed' } })
+    $complete = New-C1199Verdict $passed
+    $completeReason = @($complete.reasons) -join ','
+    Assert-C1323 ($complete.coverageComplete -and $complete.passed -eq 35 -and $completeReason -notlike '*unexecuted-outcome*') 'c1199-all-passed-complete' $completeReason
+
+    . "$PSScriptRoot/lib/checkpoint-usage.ps1"
+    $census = Get-NamespaceCensus
+    $expectedWindows = @(
+        'Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*'
+        'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
+        'Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests.*'
+        'Antiphon.Tests.Checkpoints.SafeDeleteProcessBoundaryTests.*'
+        'Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests.*'
+        'Antiphon.Tests.Checkpoints.CheckpointConfinementLedgerTests.unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted'
+    )
+    $expectedLinux = @(
+        'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'
+        'Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests.*'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_quick_row_finishes_beside_a_slow_row'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_arguments_round_trip_intact'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_chatty_row_drains_interleaved_stdout_and_stderr'
+        'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_timeout_kills_the_start_b_grandchild'
+        'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.windows_confined_build_leaves_use_app_host_unset'
+    )
+    $windowsOk = Same-C1323Set @($census.windowsSkips) $expectedWindows
+    $linuxOk = Same-C1323Set @($census.linuxSkips) $expectedLinux
+    Assert-C1323 ($windowsOk -and $linuxOk) 'c1199-residual-skips-exact' ("windows=" + @($census.windowsSkips).Count + " linux=" + @($census.linuxSkips).Count)
+}
+
 try {
     switch ($Case) {
         'C1323_PlatformPolicy' { Test-C1323_PlatformPolicy }
         'C1323_PlatformExecution' { Test-C1323_PlatformExecution }
         'C1415_SkipExclusions' { Test-C1415_SkipExclusions }
         'LinuxSessionRunnerAdmission' { Test-LinuxSessionRunnerAdmission }
-        'LinuxOnlyWindowsExclusions' { Test-LinuxOnlyWindowsExclusions }
+        'LinuxOnlyWindowsExclusions' { throw 'LinuxOnlyWindowsExclusions was retired by CARD-1613. Use -Case LinuxOnlyWindowsExclusionPolicy for the shipped rows. The compiled witness is NativeLinuxPolicyWitnessTests.' }
+        'LinuxOnlyWindowsExclusionPolicy' { Test-LinuxOnlyWindowsExclusionPolicy }
+        'C1199_WindowsRequiredRoster' { Test-C1199_WindowsRequiredRoster }
         default { throw "unknown case: $Case" }
     }
 } catch {

@@ -215,6 +215,10 @@ $ItemMetadata['StagedHelper'] = @('Folder', 'Glob')
 $PinnedItemMetadata = @{
     'ProjectReference' = @{ 'SetTargetFramework' = 'TargetFramework=net10.0'; 'SkipGetTargetFrameworkProperties' = 'true' }
     'StagedHelper' = @{ 'HelperTargetFramework' = 'net10.0' }
+    # CARD-1613: *.cs.txt is Czech to AssignCulture. The fixture include and the post-split
+    # target hold culture off. Only these exact attribute values are admitted; any other value,
+    # the child-element form, or a Remove still refuses.
+    'EmbeddedResource' = @{ 'WithCulture' = 'false'; 'Culture' = '' }
 }
 # Item element attributes that are not metadata (compared ordinally, as MSBuild reads them).
 $ItemElementAttributes = @('Include', 'Exclude', 'Update', 'Remove', 'Condition', 'Label')
@@ -238,7 +242,8 @@ $AllowedDocumentPatterns = @(
     'server/Bundles/*.md', 'server/Bundles/Presets/*.md', 'server/Bundles/Fragments/*.md',
     'tests/Antiphon.Agents.Pty.Tests/golden/**/*', 'tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/**/*',
     'tests/Antiphon.Agents.Pty.Tests/probes/**/*', 'tests/Antiphon.Tests/Agents/Fixtures/**',
-    'tests/Antiphon.Messaging.Tests/Fixtures/*')
+    'tests/Antiphon.Messaging.Tests/Fixtures/*',
+    'tests/Antiphon.Tests/Fixtures/NativeLinuxPolicy/*.cs.txt')
 $AllowedDocumentNames = @('PublicAPI.Shipped.txt', 'PublicAPI.Unshipped.txt', 'slow-tests-allowlist.txt')
 $AllowedDocumentPaths = @('server/Application/Services/LandVerificationBuildGraph.manifest.txt')
 # A property function that reads the file system; its first argument must be rooted at an output root.

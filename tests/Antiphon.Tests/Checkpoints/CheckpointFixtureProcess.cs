@@ -41,12 +41,21 @@ internal static class CheckpointFixtureProcess
         Task.Run(() => Run(start, Timeout.Infinite, cancellationToken), cancellationToken);
 
     // Installed Git in a scratch repository; exit 0 is required.
-    public static string Git(string root, params string[] args)
+    public static string Git(string root, params string[] args) =>
+        Git(root, environment: null, args);
+
+    // Extra child variables are opt-in. A null environment keeps the historical three removals only.
+    public static string Git(string root, IReadOnlyDictionary<string, string>? environment, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = root };
         start.Environment.Remove("GIT_DIR");
         start.Environment.Remove("GIT_WORK_TREE");
         start.Environment.Remove("GIT_INDEX_FILE");
+        if (environment is not null)
+        {
+            foreach (var pair in environment)
+                start.Environment[pair.Key] = pair.Value;
+        }
         foreach (var arg in args)
             start.ArgumentList.Add(arg);
         var output = Run(start, 30_000);

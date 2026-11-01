@@ -468,8 +468,11 @@ public class GrokDelegateDispatchTests
         // The other half of the same rule — widening the group key must not have widened the cap.
         using var workspace = new TempWorkspace();
         var (dispatcher, _) = CreateDispatchHarness(poolMaxIdlePerDirectory: 1);
-        await SeedWarmAgentAsync(workspace.Path, AgentKind.Grok, idleMinutes: 1);
-        await SeedWarmAgentAsync(workspace.Path, AgentKind.Grok, idleMinutes: 2);
+        // Both are proved idle, so the cap — not a missing transcript — retires the surplus.
+        var (_, newer) = await SeedWarmAgentAsync(workspace.Path, AgentKind.Grok, idleMinutes: 1);
+        var (_, older) = await SeedWarmAgentAsync(workspace.Path, AgentKind.Grok, idleMinutes: 2);
+        await SeedTurnEndAsync(newer);
+        await SeedTurnEndAsync(older);
 
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
 
@@ -819,6 +822,21 @@ public class GrokDelegateDispatchTests
         });
         await db.SaveChangesAsync();
         return (agentId, sessionId);
+    }
+
+    private static async Task SeedTurnEndAsync(Guid session)
+    {
+        await using var db = CreateContext();
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = session,
+            Sequence = 2,
+            Kind = TranscriptKinds.TurnEnd,
+            StopReason = "end_turn",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     private static AgentTaskService CreateService(AppDbContext db) => new(

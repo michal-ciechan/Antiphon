@@ -336,19 +336,24 @@ internal static class SolutionAudit
             }
 
             var next = Path.Combine(current, component);
-            var target = new FileInfo(next).LinkTarget;
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(next);
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                current = next;
+                continue;
+            }
+
+            // Ordinary components need no link-target handle. Keep the attribute read on
+            // every walk so access failures still refuse and no directory state is cached.
+            var target = (attributes & FileAttributes.ReparsePoint) != 0
+                ? new FileInfo(next).LinkTarget
+                : null;
             if (target is null)
             {
-                // LinkTarget is also null when readlink fails (EACCES on Linux): only a missing
-                // component counts as a plain path; any other error fails the evaluation (exit 2).
-                try
-                {
-                    File.GetAttributes(next);
-                }
-                catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-                {
-                }
-
                 current = next;
                 continue;
             }

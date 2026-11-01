@@ -5,6 +5,7 @@ using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -170,6 +171,7 @@ public sealed class AnchoredPathDeleteWitnessTests
         AnchoredDelete.Allowed(true, true, false, recorded, recorded with { Created = 1 }, false).ShouldBeFalse();
     }
 
+    [NativeLinuxOnly("a colon is a legal Linux file name")]
     [Test]
     public void linux_colon_in_a_file_name_stays_deletable()
     {
@@ -189,6 +191,7 @@ public sealed class AnchoredPathDeleteWitnessTests
         finally { RemoveScratch(sandbox); }
     }
 
+    [NativeLinuxOnly("Linux unlinkat removes one directory entry")]
     [Test]
     public void hard_link_sibling_survives_anchored_delete()
     {
@@ -211,6 +214,7 @@ public sealed class AnchoredPathDeleteWitnessTests
         finally { RemoveScratch(sandbox); }
     }
 
+    [NativeLinuxOnly("requires a Linux directory symlink")]
     [Test]
     public void ancestor_symlink_to_a_different_inode_is_refused()
     {

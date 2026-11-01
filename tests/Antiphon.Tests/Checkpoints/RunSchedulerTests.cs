@@ -34,7 +34,10 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var result = await task;
         driver.MaxInFlightFor(CheckpointFixtures.IsBuild).ShouldBe(1);
         result.State.MaxConcurrentBuilds.ShouldBe(1);
-        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+        result.Rows.Count(row => row.State == "green").ShouldBe(2,
+            string.Join(Environment.NewLine, result.Rows.Select(row =>
+                $"{row.Id}: {row.State}; terminal={row.TerminalReason}; slot={row.SlotReason}; "
+                + $"trx={row.Trx?.Error}; {row.Line}; {row.Output}")));
     }
 
     [Test]

@@ -1,0 +1,48 @@
+using Antiphon.Tests.TestHelpers;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Scripts;
+
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class RcFailureHistoryTests
+{
+    // Provisional CARD-1404 budget: one shared replay, 120s owned process + 10s cleanup.
+    [Test, Timeout(180_000)]
+    public Task EvidenceUnion(CancellationToken cancellationToken) =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(EvidenceUnion), 10,
+            ["FF EvidenceUnion.trx36", "FF EvidenceUnion.diag7", "FF EvidenceUnion.hang1",
+             "FF EvidenceUnion.classes34", "FF EvidenceUnion.fallback", "FF EvidenceUnion.replay",
+             "FF EvidenceUnion.allSplits", "FF EvidenceUnion.transitions", "FF EvidenceUnion.exactObservations",
+             "FF EvidenceUnion.immutable"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
+    [Test, Timeout(180_000)]
+    public Task RefusesIncompleteEvidence(CancellationToken cancellationToken) =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(RefusesIncompleteEvidence), 47,
+            ["FF RefusesIncompleteEvidence.ordinary-bound-full", "FF RefusesIncompleteEvidence.ordinary-bound-partial",
+             "FF RefusesIncompleteEvidence.ordinary-unbound-full", "FF RefusesIncompleteEvidence.ordinary-unbound-partial",
+             "FF RefusesIncompleteEvidence.validControl", "FF RefusesIncompleteEvidence.chunk-exit",
+             "FF RefusesIncompleteEvidence.chunk-result", "FF RefusesIncompleteEvidence.chunk-detail",
+             "FF RefusesIncompleteEvidence.chunk-short", "FF RefusesIncompleteEvidence.chunk-crash",
+             "FF RefusesIncompleteEvidence.chunk-crash-unbound", "FF RefusesIncompleteEvidence.chunk-missing-bound",
+             "FF RefusesIncompleteEvidence.missingContextWarning", "FF RefusesIncompleteEvidence.standaloneMissingTrx",
+             "FF RefusesIncompleteEvidence.wrongSuiteFull",
+             "FF RefusesIncompleteEvidence.wrongSuitePartial", "FF RefusesIncompleteEvidence.missingFull",
+             "FF RefusesIncompleteEvidence.missingPartial", "FF RefusesIncompleteEvidence.renamed",
+             "FF RefusesIncompleteEvidence.excluded", "FF RefusesIncompleteEvidence.methodExclusions",
+             "FF RefusesIncompleteEvidence.exclusionMismatch", "FF RefusesIncompleteEvidence.contextBindings",
+             "FF RefusesIncompleteEvidence.noOldChunk",
+             "FF RefusesIncompleteEvidence.empty", "FF RefusesIncompleteEvidence.digest",
+             "FF RefusesIncompleteEvidence.schema", "FF RefusesIncompleteEvidence.provenance-sourceRunId",
+             "FF RefusesIncompleteEvidence.provenance-sourceSha", "FF RefusesIncompleteEvidence.provenance-policyHash",
+             "FF RefusesIncompleteEvidence.provenance-profile", "FF RefusesIncompleteEvidence.provenance-platform",
+             "FF RefusesIncompleteEvidence.provenance-sourceAttempt",
+             "FF RefusesIncompleteEvidence.evidenceTamper", "FF RefusesIncompleteEvidence.escape",
+             "FF RefusesIncompleteEvidence.link", "FF RefusesIncompleteEvidence.working",
+             "FF RefusesIncompleteEvidence.outputInside", "FF RefusesIncompleteEvidence.duplicateUid",
+             "FF RefusesIncompleteEvidence.invalidMapping", "FF RefusesIncompleteEvidence.ambiguous",
+             "FF RefusesIncompleteEvidence.malformedFallback", "FF RefusesIncompleteEvidence.boundPlan",
+             "FF RefusesIncompleteEvidence.caseSensitive", "FF RefusesIncompleteEvidence.invalidSelector",
+             "FF RefusesIncompleteEvidence.executionJson", "FF RefusesIncompleteEvidence.relocation"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10)), cancellationToken);
+}

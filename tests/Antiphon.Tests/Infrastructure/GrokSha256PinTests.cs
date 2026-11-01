@@ -4,12 +4,14 @@ using System.Text;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Infrastructure;
 
 // CARD-0989: execute the runtime-base Grok pin check. A value that is not exactly
 // 64 lowercase hex characters must fail before curl. The checksum must accept only
 // the downloaded artifact.
+[NativeLinuxOnly("CARD-1210: Grok SHA pin contracts require native Linux (/bin/sh and POSIX executable semantics); Windows skips explicitly.")]
 [Timeout(600_000)]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]

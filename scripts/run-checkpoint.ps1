@@ -129,7 +129,28 @@ function Invoke-CheckpointGit {
     # Raw bytes, then strict UTF-8 in this function. A loader that imports only
     # Invoke-CheckpointGit must still fail closed. CheckpointProcessRunner.Run follows the console code page.
     try { $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::RunBytes($psi, 15000, $true, [Threading.CancellationToken]::None) }
-    catch { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' } }
+    catch {
+        $ex = $_.Exception
+        $win = $null
+        while ($null -ne $ex) {
+            if ($ex -is [System.ComponentModel.Win32Exception]) { $win = $ex; break }
+            $ex = $ex.InnerException
+        }
+        # Code 2 is a missing executable and stays git-unavailable. Every other Win32
+        # start failure names the native code, the OS message, and the argument length.
+        if ($null -ne $win -and $win.NativeErrorCode -ne 2) {
+            $length = 0
+            $first = $true
+            foreach ($arg in $psi.ArgumentList) {
+                if (-not $first) { $length++ }
+                $first = $false
+                $length += $arg.Length
+            }
+            $reason = 'git-start-failed: Win32Exception win32=' + $win.NativeErrorCode + ' ' + $win.Message + ' argumentCharacters=' + $length
+            return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = $reason }
+        }
+        return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' }
+    }
     if ($result.TimedOut) { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' } }
     $stdout = ''
     try {
@@ -199,6 +220,27 @@ function Test-CheckpointStampRefusal {
 
 function Test-CheckpointPreflight {
     param([string]$Repository, [string[]]$Roots)
+    # Kept inside this function: inventory and owned-output tests extract it alone.
+    $measure = {
+        param([string[]]$Arguments)
+        $total = 0L
+        $first = $true
+        foreach ($arg in @($Arguments)) {
+            if (-not $first) { $total++ }
+            $first = $false
+            $total += ([string]$arg).Length
+        }
+        if ($total -gt [int]::MaxValue) { return [int]::MaxValue }
+        return [int]$total
+    }
+    $flush = {
+        param([string]$Owner, [string[]]$Arguments, $State)
+        $listed = Invoke-CheckpointGit -WorkDir $Owner -GitArgs $Arguments
+        if ($listed.Reason) { return [string]$listed.Reason }
+        if ([int]$listed.Exit -ne 0) { return 'git-failed' }
+        if (-not [string]::IsNullOrEmpty([string]$listed.Stdout)) { $State.Matched = $true }
+        return $null
+    }
     if ($null -eq $Roots -or @($Roots).Count -eq 0) { return 'git-failed' }
     foreach ($one in @($Roots)) {
         $linked = Test-CheckpointComponentLink $one
@@ -213,11 +255,34 @@ function Test-CheckpointPreflight {
     $owner = Find-CheckpointGitDir $start
     if ($null -eq $owner) { return $null }
     $fullRoots = @($Roots | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
-    $gitArgs = @('-C', $owner, 'ls-files', '-z', '--') + $fullRoots
-    $listed = Invoke-CheckpointGit $owner $gitArgs
-    if ($listed.Reason) { return [string]$listed.Reason }
-    if ([int]$listed.Exit -ne 0) { return 'git-failed' }
-    if (-not [string]::IsNullOrEmpty([string]$listed.Stdout)) { return 'tracked' }
+    # Same 8,000-character budget as CheckpointDelete.DefaultCommandLineBudget.
+    # A list that fits is still one ls-files invocation, in the same order.
+    $budget = 8000
+    $prefix = @('-C', $owner, 'ls-files', '-z', '--')
+    $batch = [System.Collections.Generic.List[string]]::new()
+    foreach ($arg in $prefix) { [void]$batch.Add($arg) }
+    $state = @{ Matched = $false }
+    foreach ($root in $fullRoots) {
+        if ($batch.Count -gt $prefix.Count) {
+            $trial = [long](& $measure -Arguments ($batch.ToArray())) + 1 + ([string]$root).Length
+            if ($trial -gt $budget) {
+                $flushed = & $flush -Owner $owner -Arguments ($batch.ToArray()) -State $state
+                if ($null -ne $flushed) { return $flushed }
+                $batch = [System.Collections.Generic.List[string]]::new()
+                foreach ($arg in $prefix) { [void]$batch.Add($arg) }
+            }
+        }
+        [void]$batch.Add([string]$root)
+        $used = [int](& $measure -Arguments ($batch.ToArray()))
+        if ($used -gt $budget) {
+            $usedText = $used.ToString([Globalization.CultureInfo]::InvariantCulture)
+            $budgetText = $budget.ToString([Globalization.CultureInfo]::InvariantCulture)
+            return ('git-start-failed: argumentCharacters=' + $usedText + ' budget=' + $budgetText + ' one path exceeds the command-line budget')
+        }
+    }
+    $last = & $flush -Owner $owner -Arguments ($batch.ToArray()) -State $state
+    if ($null -ne $last) { return $last }
+    if ($state.Matched) { return 'tracked' }
     return $null
 }
 

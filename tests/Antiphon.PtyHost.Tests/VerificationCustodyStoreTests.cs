@@ -151,7 +151,7 @@ public class VerificationCustodyStoreTests
         var journal = new HostCustodyJournal(fixture.Store, fixture.Binding, Guid.NewGuid());
         journal.RecordLaunchFailure(unsupported: false);
         using var runner = new RunnerOwner();
-        var status = journal.ObserveAsync(runner.Value, () => false, CancellationToken.None).GetAwaiter().GetResult();
+        var status = journal.ObserveAsync(runner.Value, () => false, seal: true, CancellationToken.None).GetAwaiter().GetResult();
         status.State.ShouldBe(VerificationCustodyState.NeverStarted);
         status.Receipt.ShouldNotBeNull();
     }

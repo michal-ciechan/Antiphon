@@ -4,9 +4,11 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
+[NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
 [Category("Unit")]
 public sealed class RollingProductionMountTests
 {

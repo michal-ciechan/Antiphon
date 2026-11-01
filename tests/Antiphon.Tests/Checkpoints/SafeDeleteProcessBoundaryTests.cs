@@ -4,6 +4,7 @@ using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -12,6 +13,7 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class SafeDeleteProcessBoundaryTests : CheckpointTestBase
 {
+    [NativeLinuxOnly("FIFO-held monitor proof runs on Linux")]
     [Test]
     [Timeout(60_000)]
     public void configured_fsmonitor_hook_is_not_run_by_the_preflight_reader(CancellationToken cancellationToken)
@@ -58,6 +60,7 @@ public sealed class SafeDeleteProcessBoundaryTests : CheckpointTestBase
         }
     }
 
+    [NativeLinuxOnly("process-group custody proof runs on Linux")]
     [Test]
     [Timeout(60_000)]
     public void exited_git_parent_with_pipe_holding_descendant_meets_one_deadline_and_is_killed(CancellationToken cancellationToken)

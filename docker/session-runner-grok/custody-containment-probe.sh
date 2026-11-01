@@ -23,12 +23,24 @@ KILL=/usr/local/bin/antiphon-custody-kill
 WORK="$(mktemp -d)"
 FAILURES=""
 
+NS_MARKER=/run/antiphon-custody/namespace
+if [ -L "$NS_MARKER" ] || [ ! -r "$NS_MARKER" ]; then
+  echo "containment=no"
+  echo "reason=NamespaceUnavailable"
+  exit 1
+fi
+NS="$(tr -d '[:space:]' < "$NS_MARKER")"
+if [[ ! "$NS" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  echo "containment=no"
+  echo "reason=NamespaceUnavailable"
+  exit 1
+fi
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
   CGROUP_VERSION=v2
-  PROCS="/sys/fs/cgroup/antiphon-custody/$EXECUTION_ID/tree/cgroup.procs"
+  PROCS="/sys/fs/cgroup/antiphon-custody/$NS/$EXECUTION_ID/tree/cgroup.procs"
 else
   CGROUP_VERSION=v1
-  PROCS="/sys/fs/cgroup/pids/antiphon-custody/$EXECUTION_ID/tree/cgroup.procs"
+  PROCS="/sys/fs/cgroup/pids/antiphon-custody/$NS/$EXECUTION_ID/tree/cgroup.procs"
 fi
 echo "cgroup_version=$CGROUP_VERSION"
 echo "execution_id=$EXECUTION_ID"

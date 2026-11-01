@@ -73,6 +73,12 @@ public sealed class SessionRunnerSettings
     /// </summary>
     public double PtyHostLingerHours { get; set; } = 24;
 
+    /// <summary>
+    /// CARD-1614. Linux custody stays unadvertised unless this is explicitly true.
+    /// cgroup v2 is never admitted. The shipped value is false.
+    /// </summary>
+    public bool LinuxCustodyQualified { get; set; }
+
     public string ResolvedPtyHostDir => PtyHostDir ?? Path.Combine(SessionLogPath, "pty-hosts");
     public string PtyHostManifestDir => Path.Combine(ResolvedPtyHostDir, "manifests");
     public string PtyHostBinDir => Path.Combine(ResolvedPtyHostDir, "bin");

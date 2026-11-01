@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-1610: real queue/runtime receipt round trips and isolated failure-writer restart cuts.
+Antiphon.Tests.Application.TaskSupervisionReceiptTests
+
 # CARD-1537: real Git graph seeding and isolated PostgreSQL landing; native Windows cases take 35-83s.
 Antiphon.Tests.Application.LandNonCodeSkipTests
 

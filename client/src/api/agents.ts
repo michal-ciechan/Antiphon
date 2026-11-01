@@ -314,6 +314,7 @@ export interface AgentIncidentDto {
   severity: AlertSeverity
   message: string
   exitCode: number | null
+  exitSignal?: number | null
   failureReason: string | null
   createdAt: string
 }

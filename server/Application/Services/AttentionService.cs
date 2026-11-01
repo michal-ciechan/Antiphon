@@ -252,6 +252,7 @@ public sealed partial class AttentionService
         items.AddRange(await BuildTaskInputUnreadableItemsAsync(open.Concat(blocked).ToList(), ct));
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
+        items.AddRange(await BuildSupervisionNoticeItemsAsync(ct));
         items.AddRange(await BuildPendingNotesAgedItemsAsync(now, ct));
         items.AddRange(await BuildLandItemsAsync(now, ct));
         items.AddRange(await BuildDispatchHeldItemsAsync(now, ct));
@@ -289,6 +290,30 @@ public sealed partial class AttentionService
             items.AddRange(BuildSeatIdleItems(occupancy, now));
             items.AddRange(BuildOccupancyDivergenceItems(occupancy, now));
             items.AddRange(BuildSlotOrphanItems(occupancy, now));
+        }
+        var supervision = await BuildSupervisionVisibilityItemsAsync(now, ct);
+        // CARD-0691 already folds a Stopping session's Failed task into the one SessionStopStuck
+        // feed row. A second FailedTaskSessionHeld row would split that contract.
+        var stopStuckSessions = items
+            .Where(item => item.Kind == AttentionKind.SessionStopStuck && item.SessionId is not null)
+            .Select(item => item.SessionId!.Value)
+            .ToHashSet();
+        if (stopStuckSessions.Count > 0)
+        {
+            supervision.RemoveAll(item => item.Kind == AttentionKind.FailedTaskSessionHeld
+                && item.SessionId is Guid sid
+                && stopStuckSessions.Contains(sid));
+        }
+        items.AddRange(supervision);
+        var heldSessions = supervision
+            .Where(item => item.Kind == AttentionKind.FailedTaskSessionHeld && item.SessionId is not null)
+            .Select(item => item.SessionId!.Value)
+            .ToHashSet();
+        if (heldSessions.Count > 0)
+        {
+            items.RemoveAll(item => item.SessionId is Guid sid
+                && heldSessions.Contains(sid)
+                && item.Kind is AttentionKind.SeatIdle or AttentionKind.SlotOrphan);
         }
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
@@ -878,12 +903,13 @@ public sealed partial class AttentionService
 
         var sessions = await _db.AgentSessions.AsNoTracking()
             .Where(s => sessionIds.Contains(s.Id))
-            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
+            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal, s.ExitStopIntentJson })
             .ToListAsync(ct);
         var sessionById = sessions.ToDictionary(
             s => s.Id,
             s => new AgentTaskLiveness.SessionSnapshot(
-                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
+                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock, s.ExitSignal,
+                    SessionExitEvidence.ReadIntent(s.ExitStopIntentJson)));
 
         // "Has the session written anything at all" — the FailNeverStartedAsync predicate, asked in
         // one query for the whole candidate set rather than once per task.
@@ -990,6 +1016,12 @@ public sealed partial class AttentionService
             if (AgentTaskLiveness.IsDeadSession(task.AgentSessionId, session))
             {
                 var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
+                var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session,
+                    task.AgentSessionId is Guid id && withTranscript.Contains(id));
+                // Keep task-level diagnostics, but never let a missing FailureReason hide an
+                // observed normal/signal exit. Use the same evidence as the acting sweep.
+                var detail = session?.FailureReason is null && task.FailureReason is { Length: > 0 } taskReason
+                    ? taskReason + "; " + classified.Reason : classified.Reason;
 
                 items.Add(new AttentionItemDto(
                     AttentionKind.DeadSession,
@@ -1000,7 +1032,7 @@ public sealed partial class AttentionService
                     null,
                     task.Title,
                     $"Still {task.Status} but {what}.",
-                    Evidence(session?.FailureReason ?? task.FailureReason ?? what, digest),
+                    Evidence(detail, digest),
                     session?.EndedAt ?? task.DispatchedAt,
                     cost,
                     [AttentionAction.Retry, AttentionAction.Cancel, AttentionAction.Escalate]));
@@ -1224,6 +1256,17 @@ public sealed partial class AttentionService
                 continue;
             }
 
+            if (await CeilingHoldFacts.DescribeAsync(_db, task, now, _delegation, ct) is { } ceilingHold)
+            {
+                items.Add(new AttentionItemDto(AttentionKind.CeilingHold, AlertSeverity.Warning,
+                    task.Id, task.AgentSessionId, task.AgentId, null, task.Title,
+                    "Ceiling decision needed; the delegate continues and still consumes capacity.",
+                    ceilingHold.Question, ceilingHold.HeldAt, cost,
+                    [AttentionAction.OpenDrawer, AttentionAction.Cancel],
+                    ConditionKey: $"ceiling-hold:{task.Id:N}:{ceilingHold.EpisodeId:N}"));
+                continue;
+            }
+
             if (providerWait is { IsWait: true })
             {
                 var last = await TaskDeadlinePolicy.LoadLastEntryAsync(_db, task.AgentSessionId!.Value, ct);
@@ -1333,16 +1376,21 @@ public sealed partial class AttentionService
                     task.AgentId,
                     null,
                     task.Title,
-                    deadline.Breached
+                    deadline.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
+                        ? (deadline.Breached
+                            ? "Past its deadline: a role ceiling decision is due. "
+                            : "Closing on the deadline: a role ceiling decision is approaching. ")
+                            + $"Working remains counted; unknown observations defer action. {deadline.Summary}"
+                        : deadline.Breached
                         ? $"Past its deadline — the next sweep will fail it. {deadline.Summary}"
                         : $"Closing on the deadline that will fail it. {deadline.Summary}",
                     Evidence(
                         deadline.Kind switch
                         {
                             TaskDeadlinePolicy.DeadlineKind.Ceiling =>
-                                "The hard wall-clock ceiling for this role. Crossing it fails the task "
-                                + "with the phase named; nothing is killed and nothing is retried, so "
-                                + "a reply, a check or a cancel are all still open to you.",
+                                "A confirmed Working session receives a ceiling hold and remains Working and counted. "
+                                + "A confirmed idle session retains the overdue failure path. Unknown observations remain for a decision. "
+                                + "No ceiling observation kills or retries a session.",
                             _ =>
                                 "The session is mid-turn and the phase it is in has run past its own "
                                 + "deadline. Crossing it fails the task; the session is not killed.",

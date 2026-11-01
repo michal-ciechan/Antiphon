@@ -9,6 +9,14 @@ public class ClaudeDialogObservationTests
     // Permission/idle shapes transcribed in ClaudeStartupTrustPromptTests (Claude 2.1.258).
     // Question variants are protocol fixtures; native qualification is separately owed.
     private const string Idle = "────────────────────\n❯ \n────────────────────\n? for shortcuts";
+    // Live AZ Care screen, 2026-10-26: the 120-column hint bar wraps its "/rc" badge onto its own row.
+    private static readonly string WrappedRcIdle =
+        new string('─', 110) + " AZ Care ─\n>\n" + new string('─', 120) + "\n"
+        + "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" + new string(' ', 38) + "◐ medium · /effort\n"
+        + new string(' ', 115) + "/rc";
+    private static string WrappedRcComposer(string draft, string hints) =>
+        new string('─', 102) + " school-revision ─\n" + draft + "\n" + new string('─', 120) + "\n"
+        + hints + "\n" + new string(' ', 115) + "/rc";
     private const string Permission = "Bash command\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to confirm · Esc to cancel";
 
     [Test]
@@ -26,6 +34,16 @@ public class ClaudeDialogObservationTests
             ("unknown choice", "Select mode\n❯ Fast\n  Slow\nEnter to confirm", ClaudeDialogState.Blocked),
             ("effort choice", "Use Fable 5.1 at high effort by default?\n> Keep xhigh\nSwitch Fable 5.1 to high effort", ClaudeDialogState.Blocked),
             ("idle", Idle, ClaudeDialogState.Clear),
+            ("idle with wrapped /rc badge (Claude 2.1.310)", WrappedRcIdle, ClaudeDialogState.Clear),
+            ("weekly usage banner (Claude 2.1.310)", WrappedRcComposer("> ",
+                "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+                + "  You've used 77% of your weekly limit · resets Oct 28, 11pm (Europe/London) · /usage-credits to keep using Claude Co…"),
+                ClaudeDialogState.Clear),
+            ("pasted draft hint (Claude 2.1.310)", WrappedRcComposer("> [Pasted text #1 +4 lines]",
+                "  paste again to expand" + new string(' ', 92) + "/rc"), ClaudeDialogState.Clear),
+            ("wrapped /rc badge with status (Claude 2.1.310)", WrappedRcIdle.Replace("/rc", "/rc connecting…"),
+                ClaudeDialogState.Clear),
+            ("prose under the composer", Idle + "\n/rc is a command", ClaudeDialogState.Unknown),
             ("working", "Reading files…\n✻ Working… (esc to interrupt)", ClaudeDialogState.Clear),
             ("stale working prose", "Earlier: esc to interrupt\nSome new unrecognized screen", ClaudeDialogState.Unknown),
             ("missing", null, ClaudeDialogState.Unknown),

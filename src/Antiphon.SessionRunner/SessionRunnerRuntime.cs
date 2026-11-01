@@ -38,6 +38,27 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
     // the only thing that knows which sessions are live.
     private readonly TranscriptClaimRegistry _transcriptClaims = new();
+    private ProcessStopIntentStore? _stopIntents;
+    public ProcessStopIntentStore StopIntents
+    {
+        get => _stopIntents ??= new(Path.Combine(_settings.SessionLogPath, "stop-intents"),
+            warning: message => _logger.LogWarning("{StopDiagnostic}", message));
+        set
+        {
+            if (ReferenceEquals(_stopIntents, value)) return;
+            _stopIntents?.Dispose();
+            _stopIntents = value;
+            if (_launcher is not null) _launcher.StopIntents = value;
+            if (_custody?.IsValueCreated == true) _custody.Value.StopIntents = value;
+            foreach (var session in _sessions.Values) session.StopIntents = value;
+        }
+    }
+    internal void StopOwnedProcess(int pid, DateTime start, Guid sessionId, DateTime generation, ProcessStopTarget target,
+        LinuxProcessIdentity? linuxIdentity = null)
+    {
+        KillPidBestEffort(pid, StopIntents, sessionId, generation, target, start, linuxIdentity, _logger);
+    }
+
     private readonly SessionRunnerSettings _settings;
     private readonly RunnerWorkspaceParkService? _workspacePark;
     public bool SupportsWorkspacePark => _workspacePark is not null;
@@ -75,10 +96,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // The DI singleton owns samples. Reads never launch a child.
     internal CodexCliVersionProbe? CodexCliProbe { get; set; }
 
+    private readonly ILinuxCustodyRecovery? _linuxRecovery;
+
     private string? DetectCustodyBackend() => BackendPlatformIsWindows
         ? BackendDecision.Backend == PtyBackend.ModernConPty
             ? VerificationCustodyBackends.WindowsJob : null
-        : LinuxCgroupCustodyProbe.Detect(CustodyEnvironment);
+        : LinuxCgroupCustodyProbe.Detect(
+            CustodyEnvironment ?? new LinuxCustodyEnvironment(_settings.LinuxCustodyQualified));
 
     /// <summary>Test seam for the Linux probe. Production leaves it null and probes for real.</summary>
     internal ILinuxCustodyEnvironment? CustodyEnvironment { get; init; }
@@ -183,16 +207,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         TimeProvider? timeProvider = null,
         CodexCliVersionProbe? codexCliProbe = null,
         IOptions<PhoneHomeSettings>? phoneHomeSettings = null,
-        RunnerWorkspaceParkService? workspaceParkService = null)
+        RunnerWorkspaceParkService? workspaceParkService = null,
+        ILinuxCustodyRecovery? linuxRecovery = null)
     {
         _settings = settings.Value;
+        _linuxRecovery = linuxRecovery;
+        _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _workspacePark = workspaceParkService;
         if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
             _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
         if (_workspacePark is null) LocalWorkspaceVerifier = new();
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
-        _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
+        _custody = new(() => new RunnerCustodyLedger(
+            Path.Combine(_settings.SessionLogPath, "verification-custody"),
+            recovery: _linuxRecovery ?? new LinuxInstalledCustodyRecovery(_processLiveness)) { StopIntents = StopIntents });
         _custodyBackend = new(DetectCustodyBackend);
         _logger = logger;
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
@@ -200,9 +229,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _labelClock = timeProvider ?? TimeProvider.System;
         _herdrPaneReadTimeout = TimeSpan.FromMilliseconds(
             Math.Max(250, _herdrClient?.Settings.PaneReadTimeoutMs ?? new HerdrSettings().PaneReadTimeoutMs));
-        _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
+        if (OperatingSystem.IsLinux()) _launcher.StopIntents = StopIntents;
         _transcriptClaims.ClaimDisplaced += OnTranscriptClaimDisplaced;
         _absence = CreateAbsenceEvidence(phoneHomeSettings?.Value is { Enabled: true } ph ? ph.LaunchGenerationsPath : null);
     }
@@ -486,19 +515,67 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             using var custodyLease = _custody.Value.AcquireSession(binding.Generation.SessionId);
             if (seal) _custody.Value.Seal(binding);
             else _custody.Value.Store.RequireBinding(binding);
-            if (_custody.Value.ReadFinal(binding) is { } final) return final;
+            if (_custody.Value.ReadFinal(binding) is { } final) return NoteUnresolved(final);
             if (_sessions.TryGetValue(binding.Generation.SessionId, out var session)
                 && session.VerificationBinding == binding)
-                return await session.CollectCustodyAsync(ct);
+                return NoteUnresolved(await session.CollectCustodyAsync(seal, ct));
             if (_custody.Value.ReadProducer(binding) is { } producer)
-                return _custody.Value.Accept(producer);
-            return _custody.Value.ReadUnavailable(binding);
+                return NoteUnresolved(_custody.Value.Accept(producer));
+            if (seal && binding.Backend == VerificationCustodyBackends.LinuxCgroup)
+                return NoteUnresolved(_custody.Value.ReleaseDeadHost(binding));
+            return NoteUnresolved(_custody.Value.ReadUnavailable(binding));
         }
         finally { gate.Release(); }
     }
 
+    private VerificationCustodyStatus NoteUnresolved(VerificationCustodyStatus status)
+    {
+        if (status.Binding.Backend != VerificationCustodyBackends.LinuxCgroup || status.Receipt is not null)
+            return status;
+        if (status.State is not (VerificationCustodyState.Draining or VerificationCustodyState.Unknown))
+            return status;
+        var store = _custody.Value.Store;
+        var binding = status.Binding;
+        var now = _labelClock.GetUtcNow().UtcDateTime;
+        if (now.Kind != DateTimeKind.Utc)
+            now = DateTime.SpecifyKind(now, DateTimeKind.Utc);
+        var first = store.ReadRecord<LinuxUnresolvedRecord>(binding, "linux-unresolved.json");
+        if (first is null)
+        {
+            store.WriteRecord(binding, "linux-unresolved.json",
+                new LinuxUnresolvedRecord(1, now, status.State.ToString()));
+            return status;
+        }
+
+        var seen = first.FirstSeenUtc.Kind == DateTimeKind.Utc
+            ? first.FirstSeenUtc
+            : DateTime.SpecifyKind(first.FirstSeenUtc, DateTimeKind.Utc);
+        if (now - seen < TimeSpan.FromMinutes(30))
+            return status;
+        if (store.ReadRecord<LinuxUnresolvedWarning>(binding, "linux-unresolved-warning.json") is not null)
+            return status;
+        store.WriteRecord(binding, "linux-unresolved-warning.json",
+            new LinuxUnresolvedWarning(1, seen, now, status.State.ToString()));
+        var container = status.Host?.ContainerId ?? Guid.Empty;
+        _logger.LogWarning(
+            "custody-unresolved execution {ExecutionId} container {ContainerId}",
+            binding.ExecutionId.ToString("D"),
+            container.ToString("D"));
+        return status;
+    }
+
     public VerificationExecutionBinding ResolveCustodyBinding(Guid sessionId, Guid executionId, DateTime acceptedStartedAt) =>
         _custody.Value.Resolve(sessionId, executionId, acceptedStartedAt);
+
+    internal RunnerCustodyLedger CustodyForTests => _custody.Value;
+
+    internal void AdoptSessionForTests(RunnerSession session)
+    {
+        if (!_sessions.TryAdd(session.SessionId, session))
+            throw new InvalidOperationException("session already adopted");
+    }
+
+    internal RunnerSession SessionForTests(Guid sessionId) => _sessions[sessionId];
 
     private async Task<RunnerSessionDto> StartCoreAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
@@ -589,7 +666,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         request = CodexWindowsLaunchPolicy.Apply(request, useHerdr);
         RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
 
-        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
         session.RetainCheckout(request.Cwd);
         if (request.VerificationBinding is { } binding)
@@ -755,7 +832,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         // and precedes the runtime registration and the pane binding.
         RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
         await CreationEffectAsync(request.SessionId, "attach");
-        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
         if (!_sessions.TryAdd(request.SessionId, session))
         {
@@ -1118,6 +1195,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId, false, KillGenerationOutcomes.AlreadyExited, session.AcceptedStartedAt, session.ToDto().ExitReason);
             }
 
+            session.StopIntents = StopIntents;
             await session.KillAsync(timeout, ct);
             return new RunnerKillGenerationResult(
                 sessionId, true, KillGenerationOutcomes.Killed, session.AcceptedStartedAt, session.ToDto().ExitReason);
@@ -1173,6 +1251,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
 
             CompactionStopSignals.Add((sessionId, request.AttemptId));
+            session.StopIntents = StopIntents;
             await session.KillAsync(timeout, ct);
             var confirmed = session.HasExited;
             var result = new CompactionContinuationStopResult(
@@ -1709,7 +1788,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             try
             {
-                await session.KillAsync(timeout, ct);
+                session.StopIntents = StopIntents;
+            await session.KillAsync(timeout, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && !session.TerminalReleaseInProgress)
             {
@@ -1789,7 +1869,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             try
             {
-                await session.KillAsync(timeout, ct);
+                session.StopIntents = StopIntents;
+            await session.KillAsync(timeout, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -2015,7 +2096,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
-                var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
+                var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims) { StopIntents = StopIntents };
                 session.BindAcceptedGeneration(manifest.AcceptedStartedAt);
                 if (manifest.VerificationBinding is { } binding)
                     session.SetCustody(_custody.Value, binding);
@@ -2042,14 +2123,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                             manifest, _settings, _events, _logger));
                         continue;
                     }
-                    if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid);
+                    if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid, StopIntents,
+                        manifest.SessionId, manifest.AcceptedStartedAt ?? DateTime.MinValue, ProcessStopTarget.Host, null);
                 }
             }
 
-            // Dead (or unadoptable) host: the ConPTY died with it, so the child is gone too.
-            // Register the session as Exited with the fate the manifest recorded so the server
-            // sees a real exit instead of an unknown session.
-            var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger);
+            // A dead unbound host took its ConPTY child with it. A live host that still carries
+            // a verification binding was not killed: adoption failure is not an automatic stop.
+            // The operator verifies that host's pid and start identity, stops it through an owned
+            // handle, then reissues CleanupVerification. Registering the discovered session as
+            // Exited reports the manifest's fate. It is not proof a bound child has exited.
+            var ownHostStop = manifest.AcceptedStartedAt is { } stoppedGeneration
+                ? StopIntents.Snapshot(manifest.SessionId, stoppedGeneration, 9) : null;
+            var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger,
+                ownHostStop is { Target: ProcessStopTarget.Host, Outcome: ProcessStopOutcome.Issued } ? ownHostStop : null);
             if (manifest.VerificationBinding is { } exitedBinding)
                 exitedSession.SetCustody(_custody.Value, exitedBinding);
             _sessions.TryAdd(manifest.SessionId, exitedSession);
@@ -2129,7 +2216,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 case HerdrBarVerdict.Adopt:
                     var session = new RunnerSession(
-                        sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+                        sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
                     session.BindAcceptedGeneration(sidecar.AcceptedStartedAt);
                     await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
                     _sessions.TryAdd(sidecar.SessionId, session);
@@ -2176,8 +2263,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             catch (HerdrApiException)
             {
                 // R4/R5: unknown pane. OS-alive → orphan kill (R5); then RestartPresumedDead.
-                TryKillOrphanedChild(sidecar, probe);
-                return HerdrBarVerdict.RestartPresumedDead;
+                var killed = TryKillOrphanedChild(sidecar, probe);
+                return OperatingSystem.IsLinux() && !killed && IsOsAlive(sidecar, probe)
+                    && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
+                    ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
             }
 
             var proc = await _herdrClient.PaneProcessInfoAsync(sidecar.PaneId, ct);
@@ -2186,8 +2275,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (!childPresent)
             {
                 // R2/R3: restored-but-empty (P7) or orphan. OS-alive → kill by pid (R3).
-                TryKillOrphanedChild(sidecar, probe);
-                return HerdrBarVerdict.RestartPresumedDead;
+                var killed = TryKillOrphanedChild(sidecar, probe);
+                return OperatingSystem.IsLinux() && !killed && IsOsAlive(sidecar, probe)
+                    && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
+                    ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
             }
 
             // R1: pid present — also require pane.read to answer.
@@ -2204,8 +2295,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _logger.LogWarning(ex,
                 "Herdr adoption bar failed for session {SessionId}; treating as RestartPresumedDead",
                 sidecar.SessionId);
-            TryKillOrphanedChild(sidecar, probe);
-            return HerdrBarVerdict.RestartPresumedDead;
+            var killed = TryKillOrphanedChild(sidecar, probe);
+            return OperatingSystem.IsLinux() && !killed && IsOsAlive(sidecar, probe)
+                && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase)
+                ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.RestartPresumedDead;
         }
     }
 
@@ -2273,11 +2366,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return false;
         }
 
-        KillPidBestEffort(pid);
-        _logger.LogWarning(
-            "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but not listed in the pane; killed by pid",
+        var killed = KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+            ProcessStopTarget.Child, sidecar.ChildStartedAtUtc, sidecar.ChildLinuxIdentity, _logger);
+        _logger.LogWarning(killed
+            ? "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid}; kill issued and exit observed"
+            : "HerdrOrphanedChildStopUnconfirmed: pane {PaneId} session {SessionId} pid {Pid}; stop refused, failed or exit unobserved",
             sidecar.PaneId, sidecar.SessionId, pid);
-        return true;
+        return killed;
     }
 
     private static bool IsOsAlive(HerdrPaneSidecar sidecar, IProcessLivenessProbe probe) =>
@@ -2352,16 +2447,30 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
-    private static void KillPidBestEffort(int pid)
+    private static bool KillPidBestEffort(int pid, ProcessStopIntentStore? intents, Guid sessionId,
+        DateTime generation, ProcessStopTarget target, DateTime? expectedStart,
+        LinuxProcessIdentity? linuxIdentity = null, ILogger? logger = null)
     {
         try
         {
-            System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            if (process.HasExited) return false;
+            if (OperatingSystem.IsLinux() && target == ProcessStopTarget.Child
+                && (linuxIdentity is null || LinuxProcessIdentity.TryRead(pid) != linuxIdentity))
+            {
+                logger?.LogWarning("Owned child stop refused for pid {Pid}: Linux start identity missing, unreadable or changed", pid);
+                return false;
+            }
+            if (OperatingSystem.IsLinux() && intents is not null)
+            {
+                var intent = intents.StopProcess(process, sessionId, generation, target, ProcessStopPath.ProcessTree);
+                if (intent.Outcome != ProcessStopOutcome.Issued) return false;
+            }
+            else process.Kill(entireProcessTree: true);
+            // A successful syscall is not immediate death: at most one second of exit observation.
+            return !OperatingSystem.IsLinux() || process.WaitForExit(1000);
         }
-        catch
-        {
-            // Already gone.
-        }
+        catch { return false; /* already gone; never manufacture observed child exit */ }
     }
 
     /// <summary>
@@ -2427,16 +2536,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _sessions.TryRemove(sessionId, out _);
             await session.DisposeAsync();
         }
+        _stopIntents?.Dispose();
     }
 
-    private RunnerSession GetSession(Guid sessionId) =>
-        _sessions.TryGetValue(sessionId, out var session)
-            ? session
-            : throw new KeyNotFoundException($"Session '{sessionId}' was not found.");
+    private RunnerSession GetSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            throw new KeyNotFoundException($"Session '{sessionId}' was not found.");
+        session.StopIntents = StopIntents;
+        return session;
+    }
 
     /// <summary>Per-session state. Internal so <see cref="HerdrEventPumpService"/> can verify/apply status.</summary>
     internal sealed class RunnerSession : IAsyncDisposable
     {
+        private ProcessStopIntentStore? _stopIntents;
+        internal ProcessStopIntentStore? StopIntents
+        {
+            get => _stopIntents;
+            set { _stopIntents = value; if (_herdrChild is HerdrPaneChild child) child.StopIntents = value; }
+        }
         internal string? CheckoutPath { get; private set; }
         internal void RetainCheckout(string? cwd) => CheckoutPath = string.IsNullOrWhiteSpace(cwd)
             ? null : RunnerWorkspaceService.TryResolveFinal(cwd);
@@ -2454,6 +2573,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             VerificationBinding = binding;
             _custodyLedger = ledger;
         }
+
+        /// <summary>Production leaves this null. Tests return a non-final status without a live host pipe.</summary>
+        internal Func<VerificationExecutionBinding, CancellationToken, Task<VerificationCustodyStatus>>? CustodyObserveOverride { get; set; }
+
+        /// <summary>
+        /// Test seam. When set, stands in for the live host client and receives the seal flag
+        /// the Linux or Windows formula computed. Production leaves it unset.
+        /// </summary>
+        internal Func<bool, CancellationToken, Task<VerificationCustodyStatus>>? CustodySealProbeForTests { get; set; }
+
+        internal void MarkLaunchFinishedForTests() => _launchFinished.TrySetResult();
+
+        internal Task StartCustodyObserverForTests()
+        {
+            lock (_gate)
+                _custodyShutdown ??= Task.Run(ObserveCustodyThenShutdownAsync);
+            return _custodyShutdown;
+        }
+
+        internal Task ShutdownForTests() => ShutdownHostAsync();
         private readonly Guid _sessionId;
         internal Guid SessionId => _sessionId;
         private readonly SessionRunnerSettings _settings;
@@ -2482,6 +2621,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private DateTime? _herdrAgentStatusSinceUtc;
         private Action? _onHerdrPaneSetChanged;
         private int _hostPid;
+        private DateTime? _hostStartTimeUtc;
         private int? _childPid;
         private DateTime _startedAt;
         private TerminalScreen? _screen;
@@ -2491,6 +2631,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private long _lastSequence;
         private string _status = "Starting";
         private int? _exitCode;
+        private int? _exitSignal;
+        private ProcessStopIntentDto? _exitStopIntent;
         private string _exitReason = PtyExitReason.Unknown.ToString();
         private string? _exitReasonOverride;
         private bool _adopted;
@@ -2686,8 +2828,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             lock (_gate) _deliveryEvidence.Invalidate();
         }
 
-        private RunnerSessionExitedEvent ExitEnvelope(int? exitCode, string reason, long lastSequence) =>
-            new(_sessionId, exitCode, reason, lastSequence, AcceptedStartedAt: _acceptedStartedAt);
+        private RunnerSessionExitedEvent ExitEnvelope(int? exitCode, string reason, long lastSequence, int? exitSignal = null, ProcessStopIntentDto? exitStopIntent = null) =>
+            new(_sessionId, exitCode, reason, lastSequence, AcceptedStartedAt: _acceptedStartedAt, ExitSignal: exitSignal, ExitStopIntent: exitStopIntent);
 
         public RunnerSession(
             Guid sessionId,
@@ -2843,10 +2985,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (sidecar.ChildPid is int pid && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
-                KillPidBestEffort(pid);
-                _logger.LogWarning(
-                    "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but not listed in the pane; killed by pid",
+                var killed = KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, sidecar.ChildStartedAtUtc, sidecar.ChildLinuxIdentity, _logger);
+                _logger.LogWarning(killed
+                    ? "HerdrOrphanedChildKilled: pane {PaneId} session {SessionId} pid {Pid}; kill issued and exit observed"
+                    : "HerdrOrphanedChildStopUnconfirmed: pane {PaneId} session {SessionId} pid {Pid}; stop refused, failed or exit unobserved",
                     sidecar.PaneId, sidecar.SessionId, pid);
+                if (OperatingSystem.IsLinux() && !killed && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc)) return;
                 herdr.RaiseVerifiedClosed(HerdrExitReasons.RestartPresumedDead);
                 return;
             }
@@ -2876,7 +3021,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _herdrChild = new HerdrPaneChild(
                     herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
                     placement,
-                    findBound);
+                    findBound) { StopIntents = StopIntents };
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -2884,6 +3029,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         if (_status == "Exited") return;
                         _status = "Exited";
                         _exitCode = exit.ExitCode;
+                        _exitSignal = exit.ExitSignal;
+                        _exitStopIntent = exit.ExitStopIntent;
                         _exitReason = exit.Reason;
                     }
 
@@ -2891,7 +3038,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exited.TrySetResult();
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
-                        ExitEnvelope(exit.ExitCode, exit.Reason, 0));
+                        ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal, exit.ExitStopIntent));
                     _onHerdrPaneSetChanged?.Invoke();
                 };
 
@@ -2955,7 +3102,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _herdrChild = new HerdrPaneChild(
                     herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
                     placement,
-                    findBound) { RequiredWorkspacePath = checkout };
+                    findBound) { RequiredWorkspacePath = checkout, StopIntents = StopIntents };
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -2963,6 +3110,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         if (_status == "Exited") return;
                         _status = "Exited";
                         _exitCode = exit.ExitCode;
+                        _exitSignal = exit.ExitSignal;
+                        _exitStopIntent = exit.ExitStopIntent;
                         _exitReason = exit.Reason;
                     }
 
@@ -2970,7 +3119,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exited.TrySetResult();
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
-                        ExitEnvelope(exit.ExitCode, exit.Reason, 0));
+                        ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal, exit.ExitStopIntent));
                     _onHerdrPaneSetChanged?.Invoke();
                 };
 
@@ -3226,8 +3375,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     // required to equal this binding's backend -- so the binding is the same
                     // answer, reachable from inside the per-session state.
                     custodyBackend: VerificationBinding?.Backend,
+                    acceptedStartedAt: _acceptedStartedAt,
                     ct: ct);
 
+                using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
+                    _hostStartTimeUtc = host.StartTime.ToUniversalTime();
                 _client = await PtyHostClient.ConnectAsync(
                     PtyHostProtocol.PipeNameFor(_sessionId),
                     TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
@@ -3336,6 +3488,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     .VerifyAsync(_sessionId, receipt, ct))
                 GrokRulesReceipt = receipt;
             _hostPid = manifest.HostPid;
+            _hostStartTimeUtc = null;
             _childPid = manifest.ChildPid;
             _adopted = true;
             _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc;
@@ -3346,6 +3499,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
             _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
+            if (OperatingSystem.IsLinux())
+            {
+                using var connectedHost = System.Diagnostics.Process.GetProcessById(_hostPid);
+                _hostStartTimeUtc = connectedHost.StartTime.ToUniversalTime();
+            }
             if (VerificationBinding is { } binding)
             {
                 var identity = manifest.VerificationHost
@@ -3374,7 +3532,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (status.Status == PtyHostStatus.Exited)
             {
                 // HandleExited publishes the missed event and acks Shutdown.
-                HandleExited(new ExitedMessage(status.ExitCode, status.ExitReason ?? "Unknown", status.LastSeq));
+                HandleExited(new ExitedMessage(status.ExitCode, status.ExitReason ?? "Unknown", status.LastSeq, status.ExitSignal, status.ExitStopIntent));
                 return false;
             }
 
@@ -3492,7 +3650,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             PtyHostManifest manifest,
             SessionRunnerSettings settings,
             SessionRunnerEventHub events,
-            ILogger logger)
+            ILogger logger,
+            ProcessStopIntentDto? liveHostStop = null)
         {
             var session = new RunnerSession(manifest.SessionId, settings, events, logger)
             {
@@ -3503,7 +3662,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _ansiLogPath = manifest.AnsiLogPath,
                 _adopted = true,
                 _status = "Exited",
-                _exitCode = manifest.ExitCode ?? -1,
+                _exitCode = manifest.ExitCode,
+                _exitSignal = manifest.ExitSignal,
+                _exitStopIntent = liveHostStop ?? ProcessStopIntent.Recovered(manifest.ExitStopIntent)
+                    ?? (manifest.AcceptedStartedAt is { } gen ? ProcessStopIntentStore.ReadRecovered(
+                        Path.Combine(settings.SessionLogPath, "pty-hosts", "stop-intents"), manifest.SessionId, gen) : null),
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
                 _acceptedStartedAt = manifest.AcceptedStartedAt is { } accepted
                     ? SessionGeneration.Normalize(accepted) : null,
@@ -3514,7 +3677,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                session.ExitEnvelope(session._exitCode, session._exitReason, 0));
+                session.ExitEnvelope(session._exitCode, session._exitReason, 0, session._exitSignal, session._exitStopIntent));
             return session;
         }
 
@@ -3691,7 +3854,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 liveAntiphonPanes: () => Array.Empty<HerdrPaneAllocator.LivePane>(),
                 _processLiveness,
                 placement,
-                findBound);
+                findBound) { StopIntents = StopIntents };
             // Re-bind the existing pane without re-launching: reconstruct the child's identity fields.
             await herdrChild.AttachExistingAsync(sidecar, ct);
             herdrChild.Exited += exit =>
@@ -3701,6 +3864,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     if (_status == "Exited") return;
                     _status = "Exited";
                     _exitCode = exit.ExitCode;
+                    _exitSignal = exit.ExitSignal;
+                        _exitStopIntent = exit.ExitStopIntent;
                     _exitReason = exit.Reason;
                 }
 
@@ -3708,7 +3873,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exited.TrySetResult();
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    ExitEnvelope(exit.ExitCode, exit.Reason, 0));
+                    ExitEnvelope(exit.ExitCode, exit.Reason, 0, exit.ExitSignal, exit.ExitStopIntent));
                 _onHerdrPaneSetChanged?.Invoke();
             };
             if (beforePublication is not null)
@@ -3865,7 +4030,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         internal void BindChildForTest(ISessionChild child, ITranscriptTailer tailer, DateTime acceptedStartedAt)
         {
             _herdrChild = child;
-            child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence));
+            child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence, exit.ExitSignal, exit.ExitStopIntent));
             Tailer = tailer;
             _sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
             BindAcceptedGeneration(acceptedStartedAt);
@@ -3933,7 +4098,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     HerdrOrigin: _herdrOrigin,
                         GrokRulesReceipt: GrokRulesReceipt,
                         VerificationBinding: VerificationBinding,
-                        AcceptedStartedAt: _acceptedStartedAt);
+                        AcceptedStartedAt: _acceptedStartedAt,
+                        ExitSignal: _exitSignal, ExitStopIntent: _exitStopIntent);
             }
         }
 
@@ -4189,7 +4355,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 && sidecar?.ChildPid is int pid
                 && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
-                KillPidBestEffort(pid);
+                var killed = KillPidBestEffort(pid, StopIntents, sidecar.SessionId, sidecar.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, sidecar.ChildStartedAtUtc, sidecar.ChildLinuxIdentity, _logger);
+                if (OperatingSystem.IsLinux() && !killed && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
+                {
+                    _logger.LogWarning("Pending session {SessionId} stop remains unobserved; retaining owner and sidecar", _sessionId);
+                    return;
+                }
             }
 
             HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
@@ -4226,7 +4398,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (_status != "Running")
                     return false; // a real exit event won the race — keep its verdict
                 _status = "Exited";
-                _exitCode ??= -1;
+                // No native wait status exists for a vanished process; keep the code unknown.
                 _exitReason = "ProcessVanished";
                 exitCode = _exitCode;
                 lastSequence = _lastSequence;
@@ -4302,6 +4474,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private void HandleExited(ExitedMessage exited)
         {
+            if (exited.ExitStopIntent is { Provenance: ProcessStopProvenance.LiveIssuer } intent
+                && (intent.SessionId != _sessionId || _acceptedStartedAt is not { } generation
+                    || !SessionGeneration.Equal(intent.AcceptedStartedAt, generation)
+                    || intent.HostInstanceId == Guid.Empty || intent.HostInstanceId != _client?.Hello.HostInstanceId
+                    || intent.Target is not (ProcessStopTarget.Child or ProcessStopTarget.Custody)
+                    || intent.TargetPid != _childPid || intent.TargetStartedAtUtc is not { } childStart
+                    || !SessionGeneration.Equal(childStart, _startedAt)))
+                exited = exited with { ExitStopIntent = ProcessStopIntent.Recovered(intent) };
             bool transitioned;
             string exitReason;
             lock (_gate)
@@ -4317,6 +4497,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     _status = "Exited";
                     _exitCode = exited.ExitCode;
+                    _exitSignal = exited.ExitSignal;
+                    _exitStopIntent = exited.ExitStopIntent;
                     _exitReason = exitReason;
                     _lastSequence = Math.Max(_lastSequence, exited.LastSeq);
                 }
@@ -4326,7 +4508,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    ExitEnvelope(exited.ExitCode, exitReason, exited.LastSeq));
+                    ExitEnvelope(exited.ExitCode, exitReason, exited.LastSeq, exited.ExitSignal, exited.ExitStopIntent));
             }
 
             _clientReady.TrySetResult(false);
@@ -4428,8 +4610,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             try
             {
                 using var host = System.Diagnostics.Process.GetProcessById(_hostPid);
-                if (!host.HasExited && IsPtyHostProcessName(host.ProcessName))
-                    host.Kill(entireProcessTree: true);
+                if (!host.HasExited && IsPtyHostProcessName(host.ProcessName)
+                    && (!OperatingSystem.IsLinux() || _hostStartTimeUtc is null || SessionGeneration.Equal(host.StartTime.ToUniversalTime(), _hostStartTimeUtc.Value)))
+                {
+                    if (OperatingSystem.IsLinux() && StopIntents is { } intents)
+                    {
+                        var intent = intents.StopProcess(host, _sessionId, _acceptedStartedAt ?? DateTime.MinValue,
+                            ProcessStopTarget.Host, ProcessStopPath.OwnerShutdown, _client?.Hello.HostInstanceId ?? Guid.Empty);
+                        lock (_gate) _exitStopIntent ??= intent;
+                    }
+                    else host.Kill(entireProcessTree: true);
+                }
             }
             catch
             {
@@ -4461,7 +4652,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
-        internal async Task<VerificationCustodyStatus> CollectCustodyAsync(CancellationToken ct)
+        internal async Task<VerificationCustodyStatus> CollectCustodyAsync(bool explicitSeal, CancellationToken ct)
         {
             var binding = VerificationBinding
                 ?? throw new VerificationCustodyException("verification_custody_binding_required");
@@ -4473,9 +4664,35 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 var observed = _custodyLedger.ReadProducer(binding);
                 if (observed is null)
                 {
-                    if (_client is not { } client) return _custodyLedger.ReadUnavailable(binding);
-                    var seal = HasExited || _custodyLedger.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
-                    observed = await client.GetCustodyAsync(binding, seal, ct);
+                    if (CustodyObserveOverride is { } observe)
+                        observed = await observe(binding, ct);
+                    else if (_client is null && CustodySealProbeForTests is null)
+                    {
+                        // A prior runner-seal.json is not a request. Recovery runs once per
+                        // explicit seal, never from an ordinary read or the observer.
+                        if (explicitSeal && binding.Backend == VerificationCustodyBackends.LinuxCgroup)
+                            return _custodyLedger.ReleaseDeadHost(binding);
+                        return _custodyLedger.ReadUnavailable(binding);
+                    }
+                    else
+                    {
+                        var linux = binding.Backend == VerificationCustodyBackends.LinuxCgroup;
+                        var runnerSeal = RunnerSealPresent(binding);
+                        // Linux must not treat root exit as a seal. Windows still does.
+                        var seal = linux ? runnerSeal : HasExited || runnerSeal;
+                        try
+                        {
+                            if (CustodySealProbeForTests is { } probe)
+                                observed = await probe(seal, ct);
+                            else
+                                observed = await _client!.GetCustodyAsync(binding, seal, ct);
+                        }
+                        catch (Exception ex) when (explicitSeal && linux
+                            && ex is not OperationCanceledException and not VerificationCustodyException)
+                        {
+                            return _custodyLedger.ReleaseDeadHost(binding);
+                        }
+                    }
                 }
                 if (observed.Receipt is not null && _tailer is { } tailer)
                 {
@@ -4499,13 +4716,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 try
                 {
-                    var custody = await CollectCustodyAsync(ct);
+                    if (ReleaseDispositionMatched())
+                        return;
+                    var custody = await CollectCustodyAsync(explicitSeal: false, ct);
+                    if (ReleaseDispositionMatched())
+                        return;
                     if (custody.Receipt is not null && _client is { } client)
                     {
                         await client.ShutdownAsync(ct);
                         return;
                     }
                     if (custody.Reason == "custody_observer_unavailable") return;
+                    // No client and no receipt is a dead host. Stop. Do not kill. Draining
+                    // with a live override keeps polling until the disposition matches.
+                    if (_client is null && custody.Receipt is null
+                        && custody.State == VerificationCustodyState.Unknown)
+                        return;
                     await Task.Delay(TimeSpan.FromSeconds(1), ct);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
@@ -4516,6 +4742,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 }
             }
         }
+
+        private bool RunnerSealPresent(VerificationExecutionBinding binding) =>
+            _custodyLedger!.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null;
+
+        private bool ReleaseDispositionMatched() =>
+            VerificationBinding is { } binding && _custodyLedger!.MatchesReleaseDisposition(binding);
 
         /// <summary>
         /// The connected client, waiting out the cold-start window when necessary. On a cold

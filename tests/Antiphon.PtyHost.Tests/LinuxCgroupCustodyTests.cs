@@ -1,10 +1,13 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
+using Antiphon.PtyHost;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
-using System.Diagnostics;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.PtyHost.Tests;
 
@@ -26,7 +29,9 @@ namespace Antiphon.PtyHost.Tests;
 /// so everything else skips. A skip here is not a pass: CP-17 requires each method to have
 /// executed.</para>
 /// </summary>
+[NativeLinuxOnly("The linux-cgroup-v1 backend executes on Linux only.")]
 [Category("Integration")]
+[Category("Slow")]
 [NotInParallel("LinuxCustody")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class LinuxCgroupCustodyTests
@@ -56,12 +61,22 @@ public class LinuxCgroupCustodyTests
     {
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
-        var launched = await world.LaunchAsync("echo placed-marker", "sleep 120");
+        var launched = await world.LaunchAsync("echo placed-marker", world.HoldLine());
         launched.ChildPid.ShouldBeGreaterThan(0);
 
         var pids = await world.WaitForTreeAsync(atLeast: 1);
         pids.ShouldContain(launched.ChildPid,
             "the shim writes its own pid before it execs, so the spawned pid is the tracked root");
+        var tracking = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json");
+        tracking.ShouldNotBeNull();
+        tracking!.Pid.ShouldBe(launched.ChildPid);
+        var trackedStart = Process.GetProcessById(launched.ChildPid).StartTime.ToUniversalTime();
+        Math.Abs((tracking.StartTimeUtc - trackedStart).TotalSeconds).ShouldBeLessThan(2);
+        var manifest = world.Store.ReadRecord<PtyHostManifest>(world.Binding, "running-manifest.json");
+        manifest.ShouldNotBeNull();
+        manifest!.ChildPid.ShouldBe(launched.ChildPid);
+        foreach (var members in ActiveHierarchyMembers(tracking.ContainerId))
+            members.ShouldContain(launched.ChildPid);
         // The seam reads the same file the container owns, not a process-name census.
         world.Containment.ReadActive().Count.ShouldBeGreaterThanOrEqualTo(1u);
         (await world.CustodyAsync()).State.ShouldBe(VerificationCustodyState.Tracking);
@@ -76,9 +91,11 @@ public class LinuxCgroupCustodyTests
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
         var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
         await world.LaunchAsync(
-            "setsid sh -c 'echo $$ > \"" + daemonPidFile + "\"; exec sleep 120' < /dev/null > /dev/null 2>&1 &",
-            "sleep 120");
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
+            world.HoldLine());
 
         var daemonPid = await WaitForPidFileAsync(daemonPidFile);
         SessionIdOf(daemonPid).ShouldBe(daemonPid, "setsid must actually have made it a session leader");
@@ -98,8 +115,10 @@ public class LinuxCgroupCustodyTests
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
         var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
         await world.LaunchAsync(
-            "setsid sh -c 'echo $$ > \"" + daemonPidFile + "\"; exec sleep 120' < /dev/null > /dev/null 2>&1 &",
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
             "exit 0");
 
         var daemonPid = await WaitForPidFileAsync(daemonPidFile);
@@ -107,17 +126,175 @@ public class LinuxCgroupCustodyTests
         (await world.ReadTreeAsync()).ShouldContain(daemonPid,
             "the root exited and its orphan is still contained");
 
-        // Nothing was sealed and nothing was certified by the exit alone.
         File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
         File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
 
-        var observed = await world.CustodyAsync(seal: true);
-        observed.State.ShouldBe(VerificationCustodyState.Exited);
-        observed.Receipt.ShouldNotBeNull();
-        var receipt = world.Validate(observed);
+        var ordinary = await world.CustodyAsync(seal: false);
+        ordinary.State.ShouldBe(VerificationCustodyState.Draining);
+        ordinary.Receipt.ShouldBeNull();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+
+        var again = await world.CustodyAsync(seal: false);
+        again.State.ShouldBe(VerificationCustodyState.Draining);
+        again.Receipt.ShouldBeNull();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+
+        var released = await world.CustodyAsync(seal: true);
+        released.State.ShouldBe(VerificationCustodyState.Exited);
+        released.Receipt.ShouldNotBeNull();
+        var receipt = world.Validate(released);
         receipt.ActiveProcesses.ShouldBe(0u);
-        receipt.ObservationMethod.ShouldBe(VerificationCustodyBackends.CgroupProcsEmpty);
-        (await world.ReadTreeAsync()).ShouldBeEmpty();
+        receipt.TerminationSucceeded.ShouldBe(true);
+        Directory.Exists("/proc/" + daemonPid).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Natural_descendant_exit_finalizes_without_release()
+    {
+        RequireLinuxCustody();
+        await using var world = await CustodyWorld.StartAsync();
+        var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
+        await world.LaunchAsync(
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
+            "exit 0");
+        var daemonPid = await WaitForPidFileAsync(daemonPidFile);
+        await world.WaitForRootExitAsync();
+
+        var whileAlive = await world.CustodyAsync(seal: false);
+        whileAlive.Receipt.ShouldBeNull();
+        whileAlive.State.ShouldNotBe(VerificationCustodyState.Exited);
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+
+        await File.WriteAllTextAsync(world.ReleasePath, "release");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        VerificationCustodyStatus final;
+        do
+        {
+            final = await world.CustodyAsync(seal: false);
+            if (final.Receipt is null)
+                await Task.Delay(100, timeout.Token);
+        } while (final.Receipt is null);
+        var receipt = world.Validate(final);
+        receipt.ActiveProcesses.ShouldBe(0u);
+        receipt.TerminationSucceeded.ShouldBeNull();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Root_exit_retains_observer_past_linger()
+    {
+        RequireLinuxCustody();
+        await using var world = await CustodyWorld.StartAsync(TimeSpan.FromMilliseconds(400));
+        var daemonPidFile = Path.Combine(world.Scratch, "daemon.pid");
+        var nonceFile = Path.Combine(world.Scratch, "daemon.nonce");
+        await world.LaunchAsync(
+            world.DetachedHold(daemonPidFile, nonceFile),
+            world.WaitForNonce(nonceFile),
+            "exit 0");
+        var daemonPid = await WaitForPidFileAsync(daemonPidFile);
+        await world.WaitForRootExitAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(1200));
+        world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
+        Directory.Exists("/proc/" + daemonPid).ShouldBeTrue();
+        File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+        File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1614_Missing_tree_never_finalizes_naturally()
+    {
+        RequireLinuxCustody();
+        if (!File.Exists("/run/antiphon-custody/namespace"))
+            throw new SkipTestException("Requires the entrypoint namespace marker.");
+        await using var world = await CustodyWorld.StartAsync();
+        HostCustodyJournal.BeforeOrdinaryAccountingForTests.Value = () =>
+        {
+            var tracked = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json");
+            if (tracked is null)
+                return Task.CompletedTask;
+            var procs = LinuxCgroupContainment.ExecutionProcsPath(
+                Guid.ParseExact(CurrentNamespace(), "D"), tracked.ContainerId);
+            var tree = Path.GetDirectoryName(procs)!;
+            if (Directory.Exists(tree))
+                Directory.Delete(tree, recursive: false);
+            return Task.CompletedTask;
+        };
+        try
+        {
+            await world.LaunchAsync("echo missing-tree-payload");
+            await world.WaitForRootExitAsync();
+            var procs = LinuxCgroupContainment.ExecutionProcsPath(
+                Guid.ParseExact(CurrentNamespace(), "D"),
+                world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!.ContainerId);
+            var tree = Path.GetDirectoryName(procs)!;
+            VerificationCustodyStatus status = null!;
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            do
+            {
+                status = await world.CustodyAsync(seal: false);
+                if (!Directory.Exists(tree))
+                    break;
+                await Task.Delay(100);
+            }
+            while (DateTime.UtcNow < deadline);
+
+            Directory.Exists(tree).ShouldBeFalse();
+            status.State.ShouldBe(VerificationCustodyState.Unknown);
+            status.Receipt.ShouldBeNull();
+            File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+            File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
+            world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
+        }
+        finally
+        {
+            HostCustodyJournal.BeforeOrdinaryAccountingForTests.Value = null;
+        }
+    }
+
+    [Test]
+    public async Task C1614_Failed_tracking_explicit_release_terminates_without_receipt()
+    {
+        RequireLinuxCustody();
+        if (!File.Exists("/run/antiphon-custody/namespace"))
+            throw new SkipTestException("Requires the entrypoint namespace marker.");
+        var ttl = TimeSpan.FromMilliseconds(400);
+        var files = new TrackingRefusal();
+        await using var world = await CustodyWorld.StartAsync(ttl, files);
+        try
+        {
+            var reply = await world.Host.Session.LaunchAsync(
+                world.Spec(world.Binding, "sleep 30"), CancellationToken.None);
+            reply.ShouldBeOfType<ErrorMessage>();
+            files.Failures.ShouldBeGreaterThan(0);
+            File.Exists(world.StorePath("native-start-intent.json")).ShouldBeTrue();
+            File.Exists(world.StorePath("tracking.json")).ShouldBeFalse();
+
+            world.Store.WriteRecord(world.Binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
+            var status = await world.CustodyAsync(seal: true);
+            status.Receipt.ShouldBeNull();
+            status.State.ShouldBe(VerificationCustodyState.Unknown);
+            File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeTrue();
+            File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
+
+            var done = await Task.WhenAny(world.Host.RunTask, Task.Delay(ttl + TimeSpan.FromSeconds(2)));
+            done.ShouldBe(world.Host.RunTask);
+            await world.Host.RunTask;
+        }
+        finally
+        {
+            try
+            {
+                if (files.Child is { HasExited: false })
+                    files.Child.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+            files.Child?.Dispose();
+            KillOwnedContainer(world);
+        }
     }
 
     // V-30 (d): the seal is what terminates on Linux, and the zero it reports is read back out of
@@ -127,7 +304,7 @@ public class LinuxCgroupCustodyTests
     {
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
-        await world.LaunchAsync("echo still-running", "sleep 300");
+        await world.LaunchAsync("echo still-running", world.HoldLine());
         var pids = await world.WaitForTreeAsync(atLeast: 1);
 
         var status = await world.CustodyAsync(seal: true);
@@ -158,7 +335,7 @@ public class LinuxCgroupCustodyTests
             "echo $$ > \"" + root + "/cgroup.procs\" 2>/dev/null; echo root=$? >> \"" + report + "\"",
             "echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; echo unified=$? >> \"" + report + "\"",
             "echo done >> \"" + report + "\"",
-            "sleep 120");
+            world.HoldLine());
 
         var lines = await WaitForLineAsync(report, "done");
         Outcome(lines, "sudo").ShouldNotBe(0, "no_new_privs must make sudo inert inside the tree");
@@ -179,13 +356,15 @@ public class LinuxCgroupCustodyTests
         var world = await CustodyWorld.StartAsync();
         try
         {
-            await world.LaunchAsync("echo tracked", "sleep 300");
+            await world.LaunchAsync("echo tracked", world.HoldLine());
             await world.WaitForTreeAsync(atLeast: 1);
             File.Exists(world.StorePath("tracking.json")).ShouldBeTrue();
 
             await world.Host.DisposeAsync();
             File.Exists(world.StorePath("producer-receipt.json"))
                 .ShouldBeFalse("a lost host never leaves terminal evidence");
+            File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+            File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
 
             // A second host over the same store cannot answer for an execution it never launched.
             await using var successor = HostHarness.Start(o => o with
@@ -220,10 +399,10 @@ public class LinuxCgroupCustodyTests
         world.Store.Reserve(foreign);
         world.Store.WriteRecord(foreign, "runner-start-intent.json", new CustodyStamp(1, DateTime.UtcNow));
 
-        (await world.Host.Session.LaunchAsync(world.Spec(foreign, "sleep 120"), CancellationToken.None))
+        (await world.Host.Session.LaunchAsync(world.Spec(foreign, "true"), CancellationToken.None))
             .ShouldBeOfType<ErrorMessage>();
         File.Exists(world.StorePath("native-start-intent.json", foreign)).ShouldBeFalse();
-        Directory.Exists(Path.Combine(CustodyRoot(), foreign.ExecutionId.ToString("D"))).ShouldBeFalse(
+        Directory.Exists(Path.Combine(CustodyRoot(), CurrentNamespace(), foreign.ExecutionId.ToString("D"))).ShouldBeFalse(
             "a refused binding must never reach the placement shim");
     }
 
@@ -234,7 +413,7 @@ public class LinuxCgroupCustodyTests
     {
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
-        await world.LaunchAsync("echo idempotent-marker", "sleep 300");
+        await world.LaunchAsync("echo idempotent-marker", world.HoldLine());
         await world.WaitForTreeAsync(atLeast: 1);
 
         var first = await world.CustodyAsync(seal: true);
@@ -247,11 +426,120 @@ public class LinuxCgroupCustodyTests
         world.Validate(second).ObservedAtUtc.ShouldBe(world.Validate(first).ObservedAtUtc);
     }
 
+    // P-2 / NP-35. Candidate image only: a live member, then the installed enter helper
+    // and the installed drain function. This standing runner must not execute it.
+    [Test]
+    public async Task C1614_Populated_tree_refuses_entry_and_drain_success()
+    {
+        RequireLinuxCustody();
+        await using var world = await CustodyWorld.StartAsync();
+        var launched = await world.LaunchAsync("echo hold-marker", world.HoldLine());
+        var members = await world.WaitForTreeAsync(atLeast: 1);
+        var procs = LinuxCgroupContainment.ExecutionProcsPath(
+            Guid.ParseExact(CurrentNamespace(), "D"), world.Containment.ContainerId);
+        new FileInfo(procs).Length.ShouldBe(0L, "a live cgroup.procs seq_file reports size zero");
+        File.ReadAllText(procs).ShouldContain(launched.ChildPid.ToString());
+        var marker = Path.Combine(world.Scratch, "second-payload");
+        var enter = await SpawnAsync(LinuxCgroupContainment.SudoExe, "-n", EnterHelper,
+            world.Containment.ContainerId.ToString("D"), "--", "/bin/sh", "-c",
+            "printf second > \"" + marker + "\"");
+        var drain = await SpawnAsync("/bin/bash", "-c",
+            "source /usr/local/lib/antiphon-custody-common.sh; custody_drain \"$1\" 1",
+            "bash", procs);
+        var alive = members.All(pid => Directory.Exists("/proc/" + pid));
+        var markerWritten = File.Exists(marker);
+        enter.Code.ShouldNotBe(0);
+        enter.Text.ShouldContain("CustodyTreeNotEmpty");
+        markerWritten.ShouldBeFalse();
+        drain.Code.ShouldNotBe(0);
+        alive.ShouldBeTrue();
+    }
+
     // --- helpers -------------------------------------------------------------------------
+
+    private readonly record struct Spawned(int Code, string Text);
+
+    private static async Task<Spawned> SpawnAsync(string file, params string[] args)
+    {
+        var psi = new ProcessStartInfo(file)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException(file);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException(file);
+        }
+
+        return new Spawned(process.ExitCode, (await stdout) + (await stderr));
+    }
 
     private static string CustodyRoot() => File.Exists("/sys/fs/cgroup/cgroup.controllers")
         ? "/sys/fs/cgroup/" + CustodyRootName
         : "/sys/fs/cgroup/pids/" + CustodyRootName;
+
+    private static void KillOwnedContainer(CustodyWorld world)
+    {
+        var host = world.Store.ReadRecord<VerificationHostIdentity>(world.Binding, "host-identity.json");
+        if (host is null || host.ContainerId == Guid.Empty)
+            return;
+        try
+        {
+            using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+            {
+                ArgumentList = { "-n", KillHelper, host.ContainerId.ToString("D") },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            kill?.WaitForExit(10_000);
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch
+        {
+            // The fixture dispose reports a tree this helper could not start against.
+        }
+    }
+
+    /// <summary>Fails the tracking.json commit after the child exists, and keeps that pid.</summary>
+    private sealed class TrackingRefusal : IVerificationCustodyFiles
+    {
+        private readonly VerificationCustodyFiles _files = new();
+        public int Failures { get; private set; }
+        public Process? Child { get; private set; }
+        public byte[]? Read(string path) => _files.Read(path);
+        public void CommitImmutable(string path, byte[] bytes)
+        {
+            if (Path.GetFileName(path) == "tracking.json")
+            {
+                var root = JsonSerializer.Deserialize<CustodyRoot>(bytes,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                Child = Process.GetProcessById(root.Pid);
+                Failures++;
+                throw new IOException("Injected tracking persistence refusal");
+            }
+
+            _files.CommitImmutable(path, bytes);
+        }
+    }
+
+    private static string CurrentNamespace()
+    {
+        var text = File.ReadAllText("/run/antiphon-custody/namespace").Trim();
+        if (!Guid.TryParseExact(text, "D", out var id) || id == Guid.Empty)
+            throw new IOException("verification_custody_tree_unreadable");
+        return id.ToString("D");
+    }
 
     private static async Task<int> WaitForPidFileAsync(string path)
     {
@@ -289,6 +577,26 @@ public class LinuxCgroupCustodyTests
         return int.Parse(line[(key.Length + 1)..].Trim());
     }
 
+    private static IEnumerable<int[]> ActiveHierarchyMembers(Guid containerId)
+    {
+        var id = containerId.ToString("D");
+        var roots = File.Exists("/sys/fs/cgroup/cgroup.controllers")
+            ? new[] { "/sys/fs/cgroup/" + CustodyRootName }
+            : new[]
+            {
+                "/sys/fs/cgroup/pids/" + CustodyRootName,
+                "/sys/fs/cgroup/freezer/" + CustodyRootName,
+            };
+        foreach (var root in roots)
+        {
+            var procs = Path.Combine(root, CurrentNamespace(), id, "tree", "cgroup.procs");
+            yield return File.ReadAllLines(procs)
+                .Where(line => line.Length != 0)
+                .Select(int.Parse)
+                .ToArray();
+        }
+    }
+
     /// <summary>Session id from /proc/&lt;pid&gt;/stat, parsed after the comm field's closing paren.</summary>
     private static int SessionIdOf(int pid)
     {
@@ -314,14 +622,27 @@ public class LinuxCgroupCustodyTests
         public VerificationCustodyStore Store { get; }
         public VerificationExecutionBinding Binding { get; }
         public string Scratch { get; }
+        public string ReleasePath => Path.Combine(Scratch, "release");
         public int RootPid { get; private set; }
+
+        /// <summary>Hold at most 10s, or until <see cref="ReleasePath"/> appears.</summary>
+        public string HoldLine() =>
+            "i=0; while [ ! -f \"" + ReleasePath + "\" ] && [ \"$i\" -lt 100 ]; do i=$((i+1)); sleep 0.1; done";
+
+        /// <summary>setsid child redirects stdio, then publishes its pid and a nonce, then holds.</summary>
+        public string DetachedHold(string pidFile, string nonceFile) =>
+            "setsid sh -c 'exec </dev/null >/dev/null 2>&1; echo $$ > \"" + pidFile + "\"; echo ready > \"" + nonceFile + "\"; " + HoldLine() + "' &";
+
+        public string WaitForNonce(string nonceFile) =>
+            "j=0; while [ ! -f \"" + nonceFile + "\" ] && [ \"$j\" -lt 100 ]; do j=$((j+1)); sleep 0.1; done";
 
         private Guid? TrackedContainerId => Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
 
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
             TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
 
-        public static Task<CustodyWorld> StartAsync()
+        public static Task<CustodyWorld> StartAsync(TimeSpan? linger = null,
+            IVerificationCustodyFiles? files = null)
         {
             // The Linux lane spawns through Porta, so the pty backend name here is only the
             // pseudoconsole; the containment is the cgroup, stated separately and independently.
@@ -330,8 +651,9 @@ public class LinuxCgroupCustodyTests
                 PtyBackend = "inbox",
                 CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
                 CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
-            });
-            var store = new VerificationCustodyStore(host.Options.CustodyStoreRoot!);
+                LingerTtl = linger ?? o.LingerTtl,
+            }, files);
+            var store = new VerificationCustodyStore(host.Options.CustodyStoreRoot!, files: files);
             var snapshot = Path.Combine(host.TempDir, "snapshot");
             var scratch = Path.Combine(host.TempDir, "scratch");
             Directory.CreateDirectory(snapshot);
@@ -382,9 +704,8 @@ public class LinuxCgroupCustodyTests
 
         public Task<IReadOnlyList<int>> ReadTreeAsync()
         {
-            var procs = Path.Combine(CustodyRoot(),
-                (TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json.")).ToString("D"),
-                "tree", "cgroup.procs");
+            var id = TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json.");
+            var procs = LinuxCgroupContainment.ExecutionProcsPath(Guid.ParseExact(CurrentNamespace(), "D"), id);
             if (!File.Exists(procs)) return Task.FromResult<IReadOnlyList<int>>([]);
             return Task.FromResult<IReadOnlyList<int>>(File.ReadAllLines(procs)
                 .Where(line => line.Length != 0).Select(int.Parse).ToArray());
@@ -418,30 +739,67 @@ public class LinuxCgroupCustodyTests
 
         public async ValueTask DisposeAsync()
         {
-            // Never leave a populated cgroup behind: the next execution's "exists and is empty"
-            // precondition would refuse for a reason nobody could see.
-            try
+            try { File.WriteAllText(ReleasePath, "release"); }
+            catch (IOException) { }
+
+            var released = await WaitUntilGoneAsync(TimeSpan.FromSeconds(10));
+            if (!released)
             {
-                var containerId = TrackedContainerId;
-                if (containerId is not null)
+                try
                 {
-                    using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+                    var containerId = TrackedContainerId;
+                    if (containerId is not null)
                     {
-                        ArgumentList = { "-n", KillHelper, containerId.Value.ToString("D") },
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                    });
-                    kill?.WaitForExit(45_000);
+                        using var kill = Process.Start(new ProcessStartInfo(LinuxCgroupContainment.SudoExe)
+                        {
+                            ArgumentList = { "-n", KillHelper, containerId.Value.ToString("D") },
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                        });
+                        kill?.WaitForExit(10_000);
+                    }
                 }
-            }
-            catch
-            {
-                // Teardown is best-effort; the case's own assertions are the verdict.
+                catch (InvalidOperationException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // The watchdog below reports a tree the helper could not start against.
+                }
+
+                released = await WaitUntilGoneAsync(TimeSpan.FromSeconds(10));
             }
 
-            // The lost-host case disposes the harness itself, so a second dispose is expected.
-            try { await Host.DisposeAsync(); } catch (ObjectDisposedException) { }
+            try { await Host.DisposeAsync(); }
+            catch (ObjectDisposedException) { }
+
+            if (!released)
+                throw new InvalidOperationException("custody fixture residue survived the 10s watchdog");
+        }
+
+        private async Task<bool> WaitUntilGoneAsync(TimeSpan bound)
+        {
+            if (RootPid <= 0)
+                return true;
+            var deadline = DateTime.UtcNow + bound;
+            while (DateTime.UtcNow < deadline)
+            {
+                var rootGone = !Directory.Exists("/proc/" + RootPid);
+                var treeEmpty = true;
+                if (TrackedContainerId is not null)
+                {
+                    var pids = await ReadTreeAsync();
+                    treeEmpty = pids.Count == 0;
+                }
+
+                if (rootGone && treeEmpty)
+                    return true;
+                await Task.Delay(100);
+            }
+
+            return false;
         }
     }
 }

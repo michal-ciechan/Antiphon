@@ -35,7 +35,9 @@ public sealed record SessionRunnerSessionDto(
     global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null,
     DateTime? AcceptedStartedAt = null,
     global::Antiphon.SessionRunner.Contracts.HerdrLabelObservation? LabelObservation = null,
-    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null);
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,
@@ -61,7 +63,9 @@ public sealed record SessionRunnerExitedEvent(
     int? ExitCode,
     AgentExitReason ExitReason,
     long LastSequence,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    int? ExitSignal = null,
+    ProcessStopIntentDto? ExitStopIntent = null);
 
 public sealed record SessionRunnerTranscriptEvent(
     Guid SessionId,

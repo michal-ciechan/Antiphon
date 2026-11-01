@@ -155,6 +155,9 @@
       "codex-runner",
       "shared-pty-runner"
     ],
+    "tests/Antiphon.NativeLinuxPolicy.Probe/Antiphon.NativeLinuxPolicy.Probe.csproj": [
+      "test-support"
+    ],
     "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj": [
       "test-support"
     ],
@@ -194,6 +197,7 @@
     "tests/Antiphon.Checkpoints.FilterHost/Antiphon.Checkpoints.FilterHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
     "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
     "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "tests/Antiphon.NativeLinuxPolicy.Probe/Antiphon.NativeLinuxPolicy.Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
     "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite."
   }
 }

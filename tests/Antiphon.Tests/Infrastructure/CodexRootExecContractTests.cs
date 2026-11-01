@@ -4,6 +4,7 @@ using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -53,6 +54,7 @@ public sealed class CodexRootExecContractTests
         dockerd.ShouldBeGreaterThan(heal);
     }
 
+    [NativeLinuxOnly("CARD-1210: Codex heal contracts require native Linux with unshare user+mount namespaces and a bind-mountable /state")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void Entrypoint_heal_chowns_the_tmp_directory_once()
@@ -105,6 +107,7 @@ public sealed class CodexRootExecContractTests
         Between(output, "--- vanished ---\n", "\n--- vanished-end ---\n").ShouldBe(once);
     }
 
+    [NativeLinuxOnly("CARD-1210: Codex heal contracts require native Linux with unshare user+mount namespaces and a bind-mountable /state")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void Entrypoint_heal_never_names_a_path_outside_tmp()

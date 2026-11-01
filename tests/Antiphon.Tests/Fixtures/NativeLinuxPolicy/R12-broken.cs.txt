@@ -1,0 +1,7 @@
+using TUnit.Core;
+
+public class Broken : NativeLinuxMissing.Needed
+{
+    [Test]
+    public void Run() { }
+}

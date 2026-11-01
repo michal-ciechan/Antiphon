@@ -53,7 +53,13 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
         };
     }
 
-    public Task<int> Exited => _runner.Exited;
+    public Task<int> Exited => AgentExitObservation.CompatibilityAsync(Completion);
+    public Task<AgentExitObservation> Completion => ObserveCompletionAsync();
+    private async Task<AgentExitObservation> ObserveCompletionAsync()
+    {
+        var observation = await _runner.Completion;
+        return new AgentExitObservation(observation.ExitCode, observation.ExitSignal);
+    }
     public int? Pid => _runner.Pid;
     public AgentExitReason ExitReason => MapExitReason(_runner.ExitReason);
     public string? AuditDirectory => _runner.AuditDirectory;

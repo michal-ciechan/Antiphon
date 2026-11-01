@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Antiphon.Server.Application.Dtos;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -36,9 +37,22 @@ public static class OverdueSweepHarness
         string? claudeProjectsRoot = null,
         SaveChangesInterceptor? saveInterceptor = null,
         TimeProvider? clock = null,
-        ISessionRunnerClient? runner = null)
+        ISessionRunnerClient? runner = null,
+        string? connectionString = null)
     {
         var stopper = new RecordingSessionStopper();
+        var seededObservation = runner is null;
+        runner ??= new FakeSessionRunnerClient
+        {
+            GetOverride = async (id, ct) =>
+            {
+                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+                var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == id, ct);
+                return new SessionRunnerSessionDto(id, null, session.StartedAt, session.Status.ToString(),
+                    session.ExitCode, AgentExitReason.Unknown, 0,
+                    AcceptedStartedAt: session.StartedAt);
+            },
+        };
         var settings = new DelegationSettings
         {
             DefaultTimeoutMinutes = Ceiling,
@@ -57,7 +71,7 @@ public static class OverdueSweepHarness
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o =>
         {
-            o.UseNpgsql(TestDbFixture.ConnectionString);
+            o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString);
             if (saveInterceptor is not null)
                 o.AddInterceptors(saveInterceptor);
         });
@@ -103,6 +117,8 @@ public static class OverdueSweepHarness
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
-        return new(provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), stopper, provider);
+        var dispatcher = provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        if (seededObservation) dispatcher.CatchUpOverride = (_, _) => Task.CompletedTask;
+        return new(dispatcher, stopper, provider);
     }
 }

@@ -1,0 +1,12 @@
+using Antiphon.TestSupport;
+using TUnit.Core;
+
+public class KeptUsing
+{
+    [Test]
+    [NativeLinuxOnly("Linux-only by construction: kept")]
+    public void Run()
+    {
+        var n = 1;
+    }
+}

@@ -82,7 +82,9 @@
     <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.Checkpoints.GitFixture\Antiphon.Checkpoints.GitFixture.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" ReferenceOutputAssembly="false" />
     <!-- CARD-1483: net10.0 (the SDK MSBuild runtime), so it is built for its own framework. -->
     <ProjectReference Include="..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" ReferenceOutputAssembly="false" Private="false"
                       SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net10.0" />
@@ -110,7 +112,9 @@
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" Folder="checkpoint-lifecycle-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.GitFixture\Antiphon.Checkpoints.GitFixture.csproj" Folder="checkpoint-git-fixture" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" Folder="timing-probe" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" Folder="native-linux-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" Folder="fakeclaude" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Folder="fakegrok" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" Folder="land-graph-audit" Glob="**\*" HelperTargetFramework="net10.0" />
@@ -152,6 +156,21 @@
   </Target>
 
   <ItemGroup>
+    <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
+    <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
+    <Compile Include="..\..\tools\Antiphon.NativeLinuxMigrationAudit\NativeLinuxWindowsReasonAudit.cs" Link="TestSupport\NativeLinuxWindowsReasonAudit.cs" />
+    <EmbeddedResource Include="..\Shared\NativeLinuxOnlyAttribute.cs">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\Shared\NativeLinuxWindowsBaseline.json">
+      <LogicalName>Antiphon.TestSupport.NativeLinuxWindowsBaseline.json</LogicalName>
+    </EmbeddedResource>
+    <!-- AssignCulture reads the .cs infix of *.cs.txt as Czech (cs) and emits a satellite. -->
+    <None Remove="Fixtures\NativeLinuxPolicy\*.cs.txt" />
+    <EmbeddedResource Include="Fixtures\NativeLinuxPolicy\*.cs.txt" WithCulture="false" Culture="">
+      <LogicalName>NativeLinuxPolicy.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <Compile Include="../Antiphon.Agents.Pty.Tests/EffortTestScreen.cs" Link="Agents/EffortTestScreen.cs" />
     <Compile Include="../Antiphon.Messaging.Tests/KestrelLoopback.cs" Link="TestHelpers/KestrelLoopback.cs" />
     <Compile Include="../Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs" Link="TestHelpers/FakeSlackServer.cs" />
@@ -163,6 +182,13 @@
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json" LogicalName="Card0449.EffortCaptures.json" />
   </ItemGroup>
+  <!-- *.cs.txt is a Czech culture name to AssignCulture. Force the fixtures into the main assembly. -->
+  <Target Name="KeepNativeLinuxPolicyFixturesInMainAssembly" AfterTargets="SplitResourcesByCulture">
+    <ItemGroup>
+      <EmbeddedResource Update="Fixtures\NativeLinuxPolicy\*.cs.txt" WithCulture="false" Culture="" />
+    </ItemGroup>
+  </Target>
+
   <!-- The detached pty-host relaunches Environment.ProcessPath. Build its real
        native apphost even when a Linux checkpoint uses UseAppHost=false. -->
   <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">

@@ -24,6 +24,16 @@ internal static class OuterRowBuildStamp
     public static CheckpointBuildBinding EnsureForBuildOutput(string baseDirectory, string repositoryRoot, SourceObservation source)
     {
         var binding = Binding(repositoryRoot, OutputDirectory(baseDirectory), source);
+        if (File.Exists(binding.PathName) && binding.Check() != "verified")
+        {
+            // The checkpoint driver adds these two properties for isolated output.
+            // Derive them from this output, never from the stamp being checked.
+            var isolated = CheckpointBuildBinding.Expected(repositoryRoot, "tests/Antiphon.Tests", binding.OutputPath,
+                ["--property:ArtifactsPath=" + Path.Combine(binding.OutputPath, "artifacts").Replace('\\', '/'),
+                 "--property:UseArtifactsOutput=true"], source);
+            if (isolated.Check() == "verified")
+                return isolated;
+        }
         // A row-built stamp stays where the runner wrote it, including a corrupt or stale one.
         // Qualification output has none: CheckpointBuildBinding.Write records this build.
         if (!File.Exists(binding.PathName))

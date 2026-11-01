@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -32,8 +31,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 internal sealed class RemoteControlPtyLane : IAsyncDisposable
 {
-    /// <summary>CARD-0045: fakeclaude models the INBOX conhost's typed-input path; say so rather
-    /// than inheriting whatever the launching shell exported.</summary>
+    /// <summary>CARD-0045: pin the legacy Windows typed-input lane; on Linux this resolves to
+    /// UnixPty. Never inherit the launching shell's backend selection.</summary>
     public const string PinnedBackend = "inbox";
 
     public required DirectSessionRunnerClient Client { get; init; }
@@ -52,13 +51,13 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
     public RemoteControlRecoveryService Recovery => Provider.GetRequiredService<RemoteControlRecoveryService>();
 
     public static string FakeClaudeExe =>
-        Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
+        Path.Combine(AppContext.BaseDirectory, "fakeclaude", OperatingSystem.IsWindows() ? "fakeclaude.exe" : "fakeclaude");
 
-    /// <summary>Real ConPTY plus a staged child; a lane test cannot be faked past either.</summary>
+    /// <summary>Real platform PTY plus a staged child; a lane test cannot be faked past either.</summary>
     public static void SkipIfUnavailable()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            throw new SkipTestException("ConPTY only on Windows");
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+            throw new SkipTestException("RC lane requires Windows ConPTY or Linux UnixPty");
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
     }
@@ -71,7 +70,8 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
     public static async Task<RemoteControlPtyLane> CreateAsync(
         string? rcScenario = null,
         IReadOnlyDictionary<string, string>? extraEnv = null,
-        Action<SupervisionSettings>? configureSupervision = null)
+        Action<SupervisionSettings>? configureSupervision = null,
+        Func<Task>? beforeTranscriptSave = null)
     {
         SkipIfUnavailable();
 
@@ -174,7 +174,8 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
 
             var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
             var pumpCts = new CancellationTokenSource();
-            var pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pumpCts.Token);
+            var pumping = SessionQueueTranscriptPump.RunAsync(
+                transcriptPath, sessionId, pumpCts.Token, beforeSave: beforeTranscriptSave);
 
             return new RemoteControlPtyLane
             {
@@ -268,6 +269,58 @@ internal sealed class RemoteControlPtyLane : IAsyncDisposable
         }
 
         return false;
+    }
+
+    /// <summary>Finish the real child turn before a test inserts synthetic busy/idle facts.</summary>
+    public async Task<bool> WaitForPersistedIdleAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var db = CreateDb();
+            if (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId
+                    && t.Sequence > Baseline && t.Kind == TranscriptKinds.TurnEnd)
+                && !await SessionMessageQueueService.IsWorkingAsync(db, SessionId, CancellationToken.None))
+                return true;
+            await Task.Delay(150);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// This fixture ingests the child's records but has no hosted turn-end queue worker.
+    /// Drive the production idle flush, whose working gate reads those persisted records,
+    /// while waiting for the complete native UserPrompt receipts. A screen marker alone
+    /// cannot admit the next body.
+    /// </summary>
+    public async Task<bool> DrainQueuedPromptsAsync(IReadOnlyCollection<string> bodies, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var seen = await PersistedUserPromptsAsync();
+            if (bodies.All(b => seen.Contains(b)))
+                return true;
+            await Queue.FlushIfIdleAsync(SessionId, CancellationToken.None);
+            await Task.Delay(150);
+        }
+        return false;
+    }
+
+    public async Task<string> DeliveryEvidenceAsync()
+    {
+        await using var db = CreateDb();
+        var transcript = await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.Kind, t.Text, t.StopReason }).ToArrayAsync();
+        var queue = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId)
+            .OrderBy(m => m.Sequence)
+            .Select(m => new { m.Sequence, m.Body, m.Status, m.DeliveryAttempts, m.DeliveryVerdict,
+                m.MaintenanceEvidence }).ToArrayAsync();
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            child = ChildFileUserPrompts(), transcript, queue, screen = RawOutput(),
+        });
     }
 
     /// <summary>Reserve then execute one automatic arm under the production per-session queue lock.</summary>

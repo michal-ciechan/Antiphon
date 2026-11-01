@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -370,6 +371,7 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         TestRootGuard.Read(live).ShouldNotBeNull();
     }
 
+    [NativeLinuxOnly("a FIFO is the persistent stand-in for a Linux dotnet-diagnostic socket")]
     [Test]
     public void fifo_or_socket_root_is_reclaimed()
     {

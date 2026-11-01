@@ -5,9 +5,11 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
+[NativeLinuxOnly("C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups).")]
 [Category("Integration")]
 [Category("Slow")]
 public sealed class RetiredTempContainerDockerTests

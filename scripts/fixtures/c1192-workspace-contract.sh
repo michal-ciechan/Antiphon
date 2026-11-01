@@ -4412,13 +4412,57 @@ c1192_note_signal_trap() {
     fi
 }
 
+# A returned handler can be followed by ordinary refusal/EXIT cleanup after the
+# group signal interrupts a poll. That cleanup is not proof the handler exited.
+c1192_note_signal_return() {
+    if [ -n "${C1192_TRAP_MARK:-}" ]; then
+        printf 'trap-returned %s %s\n' "$1" "$C1192_TRAP_MARK" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    fi
+}
+
+c1192_exit_signal_mode() {
+    case "$mode" in slot-int-group-exit|slot-term-exit) return 0 ;; *) return 1 ;; esac
+}
+
+# Force ordinary EXIT after both CIDs publish, then deliver the existing group
+# signal while finalization owns cleanup. Entry/ready files fix the ordering;
+# the ten-second guards are provisional: six loaded full witnesses measured
+# p95 5.14s (Debug fc629ae4), approximately half that bound. Readiness files
+# establish the ordering; a longer sleep cannot satisfy this regression.
+c1192_exit_signal_hook() {
+    cat <<'C1192_EXIT_SIGNAL_HOOK'
+C1192_FINALIZER_ENTERED=0
+eval "$(declare -f c849_fixture_finalize | sed '1s/c849_fixture_finalize/c1192_real_finalize/')"
+c849_fixture_finalize() {
+    if [ "$C1192_FINALIZER_ENTERED" != 1 ]; then
+        C1192_FINALIZER_ENTERED=1
+        : > "$C1192_ROOT/cleanup-ready"
+        local until_at=$(( $(date +%s) + 10 ))
+        while [ "$(date +%s)" -lt "$until_at" ]; do command sleep 0.05; done
+        printf 'C1192_FAIL cleanup signal not delivered\n'
+        return 2
+    fi
+    c1192_real_finalize
+}
+c849_fixture_wait_slot_markers() {
+    local until_at=$(( $(date +%s) + 10 ))
+    while [ "$(date +%s)" -lt "$until_at" ]; do
+        if c1192_copied_live_cids "$CASE_DIR/.fixture-live-probes"; then exit 2; fi
+        command sleep 0.01
+    done
+    printf 'C1192_FAIL exit signal CIDs not published\n'
+    exit 2
+}
+C1192_EXIT_SIGNAL_HOOK
+}
+
 c1192_signal_witness() {
     local sig="$1" expected="$2" delivery="${3:-pid}"
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
     local prefix="signal-${sig}" traps pid i code=0 present=0 cid_kills=0 volumes=0 released=0
     local child armed monitor=0 foreign="" probe_pid cid name nrestore=0 containers=0 procs=0
     local accepted=0 foreign_ok=0 planted=0 deadline_seconds=0 started=0 elapsed=0
-    local trap_ran=0 bounded=0 name_kills=0
+    local trap_ran=0 handler_returned=0 bounded=0 name_kills=0
     [ "$delivery" = group ] && prefix="signal-${sig}-group"
     traps="$(c1192_fixture_traps)"
     if ! c1192_has_exact_line "trap 'c849_fixture_on_signal INT' INT" "$traps" \
@@ -4435,6 +4479,7 @@ c1192_signal_witness() {
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-bounded" 0
             emit "${prefix}-trap" 0
+            emit "${prefix}-handler-returned" 0
         else
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-lease" 0
@@ -4470,8 +4515,9 @@ c1192_signal_witness() {
     {
         printf '%s\n' '#!/bin/bash' 'shopt -s nullglob'
         c1192_dump_shell_state
+        if c1192_exit_signal_mode; then c1192_exit_signal_hook; fi
         printf '%s\n' 'set -euo pipefail' "eval $(printf '%q' "$traps")" \
-            "trap 'c1192_note_signal_trap INT; c849_fixture_on_signal INT' INT"
+            "trap 'c1192_note_signal_trap INT; c849_fixture_on_signal INT; c1192_note_signal_return INT' INT"
         printf '%s\n' \
             'armed=0' \
             'trap_text=$(trap -p INT)' \
@@ -4501,7 +4547,8 @@ c1192_signal_witness() {
             && [ -f "$CASE_DIR/.fixture-live-probes" ] \
             && c1192_file_has_substr 'BUILD SLOT granted lease=' "$SERVER2_ROOT/race-p1.log" \
             && cp -f -- "$CASE_DIR/.fixture-live-probes" "$C1192_ROOT/live-before" \
-            && c1192_copied_live_cids "$C1192_ROOT/live-before"; then
+            && c1192_copied_live_cids "$C1192_ROOT/live-before" \
+            && { ! c1192_exit_signal_mode || [ -f "$C1192_ROOT/cleanup-ready" ]; }; then
             armed=1
             break
         fi
@@ -4524,6 +4571,7 @@ c1192_signal_witness() {
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-bounded" 0
             emit "${prefix}-trap" 0
+            emit "${prefix}-handler-returned" 0
         else
             emit "${prefix}-cid-kills" 0
             emit "${prefix}-lease" 0
@@ -4618,11 +4666,16 @@ c1192_signal_witness() {
             && grep -Fxq "trap-ran INT ${C1192_TRAP_MARK}" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
             trap_ran=1
         fi
+        if [ -n "${C1192_TRAP_MARK:-}" ] && [ -f "$CASE_DIR/fixture-cleanup-ledger.txt" ] \
+            && grep -Fxq "trap-returned INT ${C1192_TRAP_MARK}" "$CASE_DIR/fixture-cleanup-ledger.txt"; then
+            handler_returned=1
+        fi
         # Well under the slot deadline, so the deadline path cannot pass.
         if [ "$deadline_seconds" -gt 0 ] && [ "$elapsed" -lt "$deadline_seconds" ] && [ "$elapsed" -le 10 ]; then
             bounded=1
         fi
-        if [ "$cid_kills" = 1 ] && [ "$name_kills" = 0 ] && [ "$trap_ran" = 1 ] && [ "$bounded" = 1 ]; then
+        if [ "$cid_kills" = 1 ] && [ "$name_kills" = 0 ] && [ "$trap_ran" = 1 ] \
+            && [ "$handler_returned" = 0 ] && [ "$bounded" = 1 ]; then
             case "$code" in
                 2|130) accepted=1 ;;
             esac
@@ -4643,6 +4696,7 @@ c1192_signal_witness() {
         emit "${prefix}-cid-kills" "$cid_kills"
         emit "${prefix}-bounded" "$bounded"
         emit "${prefix}-trap" "$trap_ran"
+        emit "${prefix}-handler-returned" "$handler_returned"
         emit "${prefix}-elapsed" "$elapsed"
     else
         cid_kills=1
@@ -4811,6 +4865,8 @@ c1192_group_contract() {
         val=$(c1192_out_fact "$key" "$text")
         [ "$val" = 1 ] || return 1
     done
+    val=$(c1192_out_fact signal-INT-group-handler-returned "$text")
+    [ "$val" = 0 ] || return 1
     val=$(c1192_out_fact signal-INT-group-exit "$text")
     case "$val" in
         2|130) return 0 ;;
@@ -4818,34 +4874,45 @@ c1192_group_contract() {
     return 1
 }
 
-# Run the generated driver.sh. No go file: exit 4 before ready. Go present:
-# ready is written. The go path is /fixture/race/go, so that leg runs after
-# pivot_root into a private mount namespace.
+# Project the container's /fixture paths into the same private filesystem model
+# used by run_script. Execute the generated control flow without requiring WSL
+# to support user/mount namespaces, bind mounts or pivot_root. Only dotnet is
+# faked: it must see both markers, and records the actual restore arguments.
+c1192_driver_prepare() {
+    local script="$1" root body
+    root=$(mktemp -d "$C1192_ROOT/driver-root.XXXXXX") || return 1
+    mkdir -p "$root/fixture/race" "$root/proj" "$root/bin"
+    body=$(cat -- "$script") || return 1
+    printf '%s\n' "${body//\/fixture\//$root/fixture/}" > "$root/driver.sh"
+    cat > "$root/bin/dotnet" <<'SH'
+#!/bin/sh
+set -eu
+[ -f slot-held ]
+[ -f ready ]
+printf '%s\n' "$*" > restore-argv
+SH
+    chmod 700 "$root/bin/dotnet"
+    printf '%s\n' "$root"
+}
+
+# A fresh go-present root cannot inherit ready from the no-go leg. Success
+# requires the generated driver to finish and reach restore after both markers.
 c1192_driver_go_leg() {
-    local script="$1" root deadline
-    root=$(mktemp -d "$C1192_ROOT/driver-root.XXXXXX")
-    mkdir -p "$root/fixture/race" "$root/proj" "$root/old" "$root/bin" "$root/lib" "$root/lib64"
-    cp -- "$script" "$root/driver.sh"
+    local root deadline
+    root=$(c1192_driver_prepare "$1") || return 1
     printf '1\n' > "$root/fixture/race/go"
     deadline=$(( $(date +%s) + 30 ))
-    timeout 8 unshare --user --mount --map-root-user bash -c '
-        root=$1
-        deadline=$2
-        mkdir -p "$root/bin" "$root/lib" "$root/lib64" "$root/old"
-        mount --bind "$root" "$root" || exit 23
-        mount --bind /usr/bin "$root/bin" || exit 20
-        mount --bind /usr/lib "$root/lib" || exit 21
-        mount --bind /usr/lib64 "$root/lib64" || exit 22
-        cd "$root" || exit 24
-        pivot_root . old || exit 25
-        exec /bin/sh /driver.sh /proj "$deadline"
-    ' bash "$root" "$deadline" >/dev/null 2>&1 || true
-    [ -f "$root/proj/ready" ]
+    if ! PATH="$root/bin:$PATH" timeout 8 sh "$root/driver.sh" "$root/proj" "$deadline" > "$root/driver.log" 2>&1; then
+        cat -- "$root/driver.log" >&2
+        return 1
+    fi
+    [ -f "$root/proj/slot-held" ] && [ -f "$root/proj/ready" ] && [ -f "$root/proj/restore-argv" ] \
+        && [ "$(cat -- "$root/proj/restore-argv")" = "restore proj.csproj --configfile $root/fixture/race/NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1" ]
 }
 
 c1192_driver_deadline_witness() {
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
-    local data script proj nogo_rc=0 exit4=0 ready=0 start
+    local data script driver_root proj nogo_rc=0 exit4=0 ready=0 start
     c1192_slot_plant "$packages" "$scratch"
     c849_fixture_race_materialize "$ADMITTED"
     data=$(volume_data_for_target /fixture) || { emit driver-exit4 0; emit driver-ready 0; return 0; }
@@ -4855,9 +4922,10 @@ c1192_driver_deadline_witness() {
         emit driver-ready 0
         return 0
     fi
-    proj=$(mktemp -d "$C1192_ROOT/driver-proj.XXXXXX")
+    driver_root=$(c1192_driver_prepare "$script")
+    proj="$driver_root/proj"
     start=$(date +%s)
-    timeout 3 sh "$script" "$proj" $((start - 1)) || nogo_rc=$?
+    PATH="$driver_root/bin:$PATH" timeout 3 sh "$driver_root/driver.sh" "$proj" $((start - 1)) || nogo_rc=$?
     if [ "$nogo_rc" = 4 ] && [ ! -e "$proj/ready" ]; then
         exit4=1
     fi
@@ -4879,6 +4947,7 @@ c1192_red_group() {
     if [ "$installed" = 1 ] && ! c1192_group_contract "$out"; then
         emit "red-$id" 1
     else
+        printf 'C1192_RED_CONTROL_UNDETECTED id=%s\n%s\n' "$id" "$out" >&2
         emit "red-$id" 0
     fi
 }
@@ -4937,6 +5006,8 @@ case "$mode" in
     slot-delay) mode_slot_delay ;;
     slot-timeout) mode_slot_timeout ;;
     slot-refusal) mode_slot_refusal ;;
+    slot-int-group-exit) c1192_signal_witness INT 130 group ;;
+    slot-term-exit) c1192_signal_witness TERM 143 ;;
     slot-round2) mode_slot_round2 ;;
     slot-int-group) c1192_signal_witness INT 130 group ;;
     slot-driver-deadline) c1192_driver_deadline_witness ;;

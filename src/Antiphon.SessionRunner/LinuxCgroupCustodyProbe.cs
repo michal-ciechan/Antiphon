@@ -25,6 +25,10 @@ public static class LinuxCgroupCustodyProbe
     {
         var env = environment ?? LinuxCustodyEnvironment.Real;
         if (!env.IsLinux) return null;
+        // Qualification and hierarchy are decided before any sudo probe. v2 stays unadvertised
+        // even when the setting is explicitly true.
+        if (!env.Qualified) return null;
+        if (env.Hierarchy != LinuxCustodyHierarchy.V1) return null;
         if (!env.CustodyRootExists(CustodyRootName)) return null;
         // /proc/self/status reports NoNewPrivs: 1 once the bit is set, and it is irreversible.
         // A runner started under it can never reach sudo, so it must not claim it can.
@@ -48,13 +52,49 @@ public interface ILinuxCustodyEnvironment
 
     /// <summary>`sudo -n &lt;helper&gt; --probe` exited 0.</summary>
     bool HelperProbeSucceeds(string helperPath);
+
+    /// <summary>True only when this runtime was explicitly qualified for Linux custody.</summary>
+    bool Qualified { get; }
+
+    /// <summary>The cgroup hierarchy this environment will admit. v2 and unknown stay unadvertised.</summary>
+    LinuxCustodyHierarchy Hierarchy { get; }
+}
+
+/// <summary>Which cgroup hierarchy a custody probe is allowed to admit.</summary>
+public enum LinuxCustodyHierarchy
+{
+    V1,
+    V2,
+    Unknown,
 }
 
 internal sealed class LinuxCustodyEnvironment : ILinuxCustodyEnvironment
 {
-    public static readonly LinuxCustodyEnvironment Real = new();
+    private readonly bool? _qualified;
+
+    public static readonly LinuxCustodyEnvironment Real = new(null);
+
+    private LinuxCustodyEnvironment(bool? qualified) => _qualified = qualified;
+
+    public LinuxCustodyEnvironment(bool qualified) : this((bool?)qualified) { }
 
     public bool IsLinux => OperatingSystem.IsLinux();
+
+    public bool Qualified => _qualified ?? EnvironmentQualified();
+
+    private static bool EnvironmentQualified()
+    {
+        var raw = Environment.GetEnvironmentVariable("SessionRunner__LinuxCustodyQualified");
+        return bool.TryParse(raw, out var value) && value;
+    }
+
+    public LinuxCustodyHierarchy Hierarchy =>
+        File.Exists("/sys/fs/cgroup/cgroup.controllers")
+            ? LinuxCustodyHierarchy.V2
+            : Directory.Exists($"/sys/fs/cgroup/pids/{LinuxCgroupCustodyProbe.CustodyRootName}")
+                && Directory.Exists($"/sys/fs/cgroup/freezer/{LinuxCgroupCustodyProbe.CustodyRootName}")
+                ? LinuxCustodyHierarchy.V1
+                : LinuxCustodyHierarchy.Unknown;
 
     public bool CustodyRootExists(string rootName) =>
         File.Exists("/sys/fs/cgroup/cgroup.controllers")

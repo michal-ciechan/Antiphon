@@ -18,6 +18,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Application;
 
@@ -31,6 +32,7 @@ namespace Antiphon.Tests.Application;
 /// Each task branch is <c>DelegateBranchName.Legacy</c> for that task id.
 /// CARD-1213 refuses any other name before the runner is asked.
 /// </summary>
+[NativeLinuxOnly("CP-21 phone-home join requires Linux FIFOs and Unix file modes.")]
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]

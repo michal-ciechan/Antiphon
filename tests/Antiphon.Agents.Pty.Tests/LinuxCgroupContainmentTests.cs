@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -14,6 +16,7 @@ namespace Antiphon.Agents.Pty.Tests;
 // Losing the `--`, or letting the class reach for a relative `antiphon-custody-enter` a session
 // could shadow on PATH, would each quietly undo that.
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LinuxCgroupContainmentTests
 {
     [Test]
@@ -94,6 +97,284 @@ public sealed class LinuxCgroupContainmentTests
     public void An_empty_container_id_is_refused()
     {
         Should.Throw<ArgumentException>(() => new LinuxCgroupContainment(Guid.Empty, new FakeOperations()));
+    }
+
+    [Test]
+    public void C1614_Namespace_identity_cannot_cross_container_roots()
+    {
+        var execution = Guid.NewGuid();
+        var current = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        var currentPath = LinuxCustodyOperations.ResolveProcsPath(current, execution);
+        var otherPath = LinuxCustodyOperations.ResolveProcsPath(other, execution);
+        var legacyPath = LinuxCustodyOperations.ResolveProcsPath(Guid.Empty, execution);
+
+        currentPath.ShouldContain(current.ToString("D"));
+        otherPath.ShouldContain(other.ToString("D"));
+        currentPath.ShouldNotBe(otherPath);
+        legacyPath.ShouldNotBe(currentPath);
+        LinuxCgroupContainment.ExecutionProcsPath(current, execution).ShouldBe(currentPath);
+    }
+
+    // The production reader must use the runtime namespace. A legacy tree at the old
+    // global root is a different container and must not be reported as this one.
+    [Test]
+    public void C1614_Production_reader_uses_namespace_and_refuses_unknown()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1614-reader-" + Guid.NewGuid().ToString("N"));
+        var ns = Guid.NewGuid();
+        var execution = Guid.NewGuid();
+        var marker = Path.Combine(root, "run", "namespace");
+        try
+        {
+            WriteProcs(root, Path.Combine(ns.ToString("D"), execution.ToString("D")), "41\n42\n");
+            WriteProcs(root, execution.ToString("D"), "99\n");
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+
+            var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
+            operations.ReadTreePids(execution).ShouldBe([41, 42]);
+            // A missing tree is unknown. An empty procs file, covered below, stays observed zero.
+            Should.Throw<IOException>(() => operations.ReadTreePids(Guid.NewGuid()))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var malformed = Guid.NewGuid();
+            WriteProcs(root, Path.Combine(ns.ToString("D"), malformed.ToString("D")), "nope\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(malformed))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            File.WriteAllText(marker, "not-a-guid\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(execution))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+            File.WriteAllText(marker, Guid.Empty.ToString("D") + "\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(execution))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            File.Delete(marker);
+            Should.Throw<IOException>(() => operations.ReadTreePids(execution))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var record = Path.Combine(root, "linux-namespace.json");
+            File.WriteAllText(record,
+                "{\"revision\":1,\"namespaceId\":\"" + ns.ToString("D") + "\",\"containerId\":\"" + execution.ToString("D") + "\"}");
+            var fromRecord = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, record));
+            fromRecord.ReadTreePids(execution).ShouldBe([41, 42]);
+
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+            var missingProcs = Guid.NewGuid();
+            Directory.CreateDirectory(Path.Combine(
+                root, "pids", "antiphon-custody", ns.ToString("D"), missingProcs.ToString("D"), "tree"));
+            Should.Throw<IOException>(() => operations.ReadTreePids(missingProcs))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            if (OperatingSystem.IsLinux())
+            {
+                var elsewhere = Path.Combine(root, "elsewhere");
+                File.WriteAllText(elsewhere, Guid.NewGuid().ToString("D") + "\n");
+                var link = Path.Combine(root, "run", "linked-namespace");
+                File.CreateSymbolicLink(link, elsewhere);
+                var linked = new LinuxCustodyOperations(new LinuxCustodyLayout(root, link, record));
+                Should.Throw<IOException>(() => linked.ReadTreePids(execution))
+                    .Message.ShouldBe("verification_custody_tree_unreadable");
+
+                var hidden = Guid.NewGuid();
+                var hiddenProcs = Path.Combine(root, "pids", "antiphon-custody", ns.ToString("D"),
+                    hidden.ToString("D"), "tree", "cgroup.procs");
+                Directory.CreateDirectory(Path.GetDirectoryName(hiddenProcs)!);
+                File.WriteAllText(hiddenProcs, "7\n");
+                File.SetUnixFileMode(hiddenProcs, UnixFileMode.None);
+                try
+                {
+                    Should.Throw<IOException>(() => operations.ReadTreePids(hidden))
+                        .Message.ShouldBe("verification_custody_tree_unreadable");
+                }
+                finally
+                {
+                    File.SetUnixFileMode(hiddenProcs, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    // The installed enter helper writes the namespaced tree. The production
+    // reader must return that pid, not a decoy left at the pre-namespace path.
+    [Test]
+    public async Task C1614_Helper_written_tree_is_read_by_production_reader()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The custody helper tree is created with unshare on Linux only.");
+
+        var root = Path.Combine(Path.GetTempPath(), "c1614-joint-" + Guid.NewGuid().ToString("N"));
+        var ns = Guid.NewGuid();
+        var execution = Guid.NewGuid();
+        var cgroup = Path.Combine(root, "cgroup");
+        var marker = Path.Combine(root, "run", "antiphon-custody", "namespace");
+        var tree = Path.Combine(cgroup, "pids", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree");
+        var procs = Path.Combine(tree, "cgroup.procs");
+        try
+        {
+            Directory.CreateDirectory(tree);
+            Directory.CreateDirectory(Path.Combine(
+                cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree"));
+            File.WriteAllText(procs, "");
+            File.WriteAllText(Path.Combine(
+                cgroup, "freezer", "antiphon-custody", ns.ToString("D"), execution.ToString("D"), "tree", "cgroup.procs"), "");
+            var decoyDir = Path.Combine(cgroup, "pids", "antiphon-custody", execution.ToString("D"), "tree");
+            Directory.CreateDirectory(decoyDir);
+            File.WriteAllText(Path.Combine(decoyDir, "cgroup.procs"), "99\n");
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+            var usr = Path.Combine(root, "usr", "lib");
+            Directory.CreateDirectory(usr);
+            File.Copy(CustodyLibrary(), Path.Combine(usr, "antiphon-custody-common.sh"));
+
+            var placed = await PlaceTreeAsync(root, execution);
+            placed.ExitCode.ShouldBe(0, placed.Text);
+            placed.Text.ShouldContain("enter_rc=");
+            File.ReadAllText(procs).Trim().ShouldNotBe("");
+
+            var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(cgroup, marker, null));
+            var pids = operations.ReadTreePids(execution);
+            pids.Count.ShouldBe(1);
+            pids[0].ShouldBeGreaterThan(0);
+            pids.ShouldNotContain(99);
+            int.Parse(File.ReadAllText(procs).Trim(), System.Globalization.CultureInfo.InvariantCulture)
+                .ShouldBe(pids[0]);
+            LinuxCustodyOperations.ResolveProcsPath(ns, execution).ShouldContain(ns.ToString("D"));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static string CustodyLibrary()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(dir.FullName, "docker", "session-runner-grok", "antiphon-custody-common.sh");
+            if (File.Exists(path))
+                return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("antiphon-custody-common.sh");
+    }
+
+    private static async Task<(int ExitCode, string Text)> PlaceTreeAsync(string root, Guid execution)
+    {
+        var libraryDir = Path.GetDirectoryName(CustodyLibrary())!;
+        var enter = Path.Combine(libraryDir, "antiphon-custody-enter.sh");
+        var psi = new ProcessStartInfo("unshare")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-rm");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("""
+            set -euo pipefail
+            host=$1
+            enter=$2
+            id=$3
+            mount --bind "$host/cgroup" /sys/fs/cgroup
+            mount --bind "$host/run" /run
+            mount --bind "$host/usr" /usr/local
+            set +e
+            bash "$enter" "$id" -- /bin/true
+            echo "enter_rc=$?"
+            exit 0
+            """);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(root);
+        psi.ArgumentList.Add(enter);
+        psi.ArgumentList.Add(execution.ToString("D"));
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("unshare");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException("antiphon-custody-enter");
+        }
+
+        var text = (await stdout) + (await stderr);
+        return (process.ExitCode, text);
+    }
+
+    private static void WriteProcs(string root, string relative, string body)
+    {
+        var procs = Path.Combine(root, "pids", "antiphon-custody", relative, "tree", "cgroup.procs");
+        Directory.CreateDirectory(Path.GetDirectoryName(procs)!);
+        File.WriteAllText(procs, body);
+    }
+
+    // CP-34. A missing tree directory is unknown. Today's reader returns an empty list.
+    [Test]
+    public void C1614_Missing_tree_throws_before_termination()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1614-missing-" + Guid.NewGuid().ToString("N"));
+        var ns = Guid.NewGuid();
+        var marker = Path.Combine(root, "run", "namespace");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+            var operations = new LinuxCustodyOperations(new LinuxCustodyLayout(root, marker, null));
+            var missing = Guid.NewGuid();
+            Should.Throw<IOException>(() => operations.ReadTreePids(missing))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var absentRoot = Path.Combine(root, "no-such-root");
+            var gone = new LinuxCustodyOperations(new LinuxCustodyLayout(absentRoot, marker, null));
+            Should.Throw<IOException>(() => gone.ReadTreePids(missing))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            var other = Guid.NewGuid();
+            File.WriteAllText(marker, other.ToString("D") + "\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(missing))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+            File.WriteAllText(marker, ns.ToString("D") + "\n");
+
+            var malformed = Guid.NewGuid();
+            WriteProcs(root, Path.Combine(ns.ToString("D"), malformed.ToString("D")), "nope\n");
+            Should.Throw<IOException>(() => operations.ReadTreePids(malformed))
+                .Message.ShouldBe("verification_custody_tree_unreadable");
+
+            if (OperatingSystem.IsLinux())
+            {
+                var hidden = Guid.NewGuid();
+                var hiddenProcs = Path.Combine(root, "pids", "antiphon-custody", ns.ToString("D"),
+                    hidden.ToString("D"), "tree", "cgroup.procs");
+                Directory.CreateDirectory(Path.GetDirectoryName(hiddenProcs)!);
+                File.WriteAllText(hiddenProcs, "7\n");
+                File.SetUnixFileMode(hiddenProcs, UnixFileMode.None);
+                try
+                {
+                    Should.Throw<IOException>(() => operations.ReadTreePids(hidden))
+                        .Message.ShouldBe("verification_custody_tree_unreadable");
+                }
+                finally
+                {
+                    File.SetUnixFileMode(hiddenProcs, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+            }
+
+            var empty = Guid.NewGuid();
+            WriteProcs(root, Path.Combine(ns.ToString("D"), empty.ToString("D")), "");
+            operations.ReadTreePids(empty).ShouldBeEmpty();
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
     }
 
     [Test]

@@ -4,11 +4,11 @@
 
 if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
+. (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
 }
-
 # CARD-0599 D-6: kept as the pre-existing nightly inventory. Native ownership is now
 # decided from the suite definition itself (Test-NightlySuiteIsNative) so a profile can
 # add e2e without a second hard-coded list drifting out of step.
@@ -428,7 +428,13 @@ function ConvertTo-NightlyProfileLaunchGroups {
 }
 
 function Get-NightlyProfileLaunchPlan {
-    param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
+    param(
+        [object[]]$DiscoveryNodes,
+        [object[]]$Chunks,
+        [object[]]$Exclusions,
+        [string]$SuiteId = 'antiphon',
+        $PolicyObject = $null
+    )
     $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
     $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
     # CARD-1567: the 60-minute native watchdog detects hangs, not ordinary
@@ -443,6 +449,19 @@ function Get-NightlyProfileLaunchPlan {
         if ([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0 -or $seconds -gt $ceiling) {
             throw ('launch-estimate-ceiling id={0} seconds={1} ceiling={2}' -f $launch.id, $seconds, $ceiling)
         }
+        $suiteForWatchdog = 'antiphon'
+        if (-not [string]::IsNullOrWhiteSpace([string]$SuiteId)) { $suiteForWatchdog = [string]$SuiteId }
+        foreach ($class in @($launch.classes)) {
+            if ([string]$class -clike 'Antiphon.E2E.*') { $suiteForWatchdog = 'e2e' }
+        }
+        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteForWatchdog -PlannedSeconds $seconds -Basis 'default' -PolicyObject $PolicyObject
+        if (-not $admission.Admitted) {
+            $watchdogText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0}', [double]$admission.WatchdogSeconds)
+            throw ('watchdog-admission-refused id={0} reason={1} watchdogSeconds={2}' -f $launch.id, $admission.Reason, $watchdogText)
+        }
+        Add-Member -InputObject $launch -NotePropertyName watchdogSeconds -NotePropertyValue ([double]$admission.WatchdogSeconds) -Force | Out-Null
+        Add-Member -InputObject $launch -NotePropertyName watchdogReason -NotePropertyValue ([string]$admission.Reason) -Force | Out-Null
+        Add-Member -InputObject $launch -NotePropertyName watchdogAdmitted -NotePropertyValue ([bool]$admission.Admitted) -Force | Out-Null
     }
     return $plan
 }
@@ -455,10 +474,12 @@ function Resolve-NightlySuiteChunks {
         [object[]]$Chunks,
         [object[]]$Exclusions,
         [bool]$ProfileAware,
-        [bool]$Native
+        [bool]$Native,
+        [string]$SuiteId = 'antiphon',
+        $PolicyObject = $null
     )
     if ($Native -and $ProfileAware -and @($Exclusions).Count -gt 0) {
-        return @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+        return @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions -SuiteId $SuiteId -PolicyObject $PolicyObject)
     }
     return @($Chunks)
 }
@@ -540,6 +561,147 @@ function Resolve-NightlyTestHost {
     }
     $legacy = Join-Path $RepoRoot ('tests\{0}\bin\Debug\net9.0\{0}.exe' -f $Assembly)
     return [pscustomobject]@{ FilePath = $legacy; Prefix = @(); AssemblyPath = $legacy }
+}
+
+function Resolve-NightlyChunkDiscoverySeconds {
+    param(
+        [double]$SuiteDiscoverySeconds,
+        $ChunkMarkerSeconds,
+        [switch]$SupplementalLaunch
+    )
+    $chunk = $null
+    $copied = $false
+    if ($SupplementalLaunch) {
+        $extra = 0.0
+        if ($null -ne $ChunkMarkerSeconds) { $extra = [double]$ChunkMarkerSeconds }
+        $chunk = [math]::Round(([double]$SuiteDiscoverySeconds + $extra), 3)
+    } elseif ($null -ne $ChunkMarkerSeconds) {
+        $chunk = [double]$ChunkMarkerSeconds
+    }
+    return [pscustomobject]@{
+        chunkDiscoverySeconds = $chunk
+        copiedFromSuite = [bool]$copied
+        suiteDiscoverySeconds = [double]$SuiteDiscoverySeconds
+    }
+}
+
+function Add-NightlyOwnerObservation {
+    param($Verdict, $Run)
+    if ($null -eq $Verdict -or $null -eq $Run) { return }
+    $names = @($Run.PSObject.Properties.Name)
+    $map = @(
+        @('RootStartedAtUtc', 'rootStartedAtUtc'),
+        @('rootStartedAtUtc', 'rootStartedAtUtc'),
+        @('RootExitedAtUtc', 'rootExitedAtUtc'),
+        @('rootExitedAtUtc', 'rootExitedAtUtc'),
+        @('JobEmptyObserved', 'jobEmpty'),
+        @('jobEmpty', 'jobEmpty'),
+        @('DrainMilliseconds', 'drainMilliseconds'),
+        @('drainMilliseconds', 'drainMilliseconds'),
+        @('ExecutionMilliseconds', 'executionMilliseconds'),
+        @('executionMilliseconds', 'executionMilliseconds'),
+        @('LaunchMilliseconds', 'launchMilliseconds'),
+        @('launchMilliseconds', 'launchMilliseconds'),
+        @('CleanupMilliseconds', 'cleanupMilliseconds'),
+        @('cleanupMilliseconds', 'cleanupMilliseconds'),
+        @('ChildrenExited', 'childrenExited'),
+        @('childrenExited', 'childrenExited'),
+        @('OutputDrained', 'outputDrained'),
+        @('outputDrained', 'outputDrained'),
+        @('RemainingProcessCount', 'remainingProcessCount'),
+        @('remainingProcessCount', 'remainingProcessCount'),
+        @('MissedDescendantPids', 'missedDescendantPids'),
+        @('missedDescendantPids', 'missedDescendantPids'),
+        @('DescendantIdentities', 'descendantIdentities'),
+        @('descendantIdentities', 'descendantIdentities'),
+        @('DescendantImages', 'descendantImages'),
+        @('descendantImages', 'descendantImages'),
+        @('DescendantExitedAtUtc', 'descendantExitedAtUtc'),
+        @('descendantExitedAtUtc', 'descendantExitedAtUtc'),
+        @('Descendants', 'descendants'),
+        @('descendants', 'descendants')
+    )
+    foreach ($pair in $map) {
+        if (-not ($names -contains $pair[0])) { continue }
+        $existing = @($Verdict.PSObject.Properties.Name)
+        if ($existing -contains $pair[1]) { continue }
+        $Verdict | Add-Member -NotePropertyName $pair[1] -NotePropertyValue $Run.($pair[0])
+    }
+}
+
+function Write-NightlyMeasuredPhase {
+    param(
+        [string]$LogRoot,
+        [string]$Name,
+        $StartedAt,
+        $Seconds
+    )
+    if ([string]::IsNullOrWhiteSpace($LogRoot) -or [string]::IsNullOrWhiteSpace($Name)) { return }
+    if ($null -eq $StartedAt -or $null -eq $Seconds) { return }
+    if ($Name -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
+    try {
+        $started = [datetime]$StartedAt
+        $ended = $started.AddSeconds([double]$Seconds)
+        Write-QualificationRunPhase -LogRoot $LogRoot -Name $Name -StartedAt $started.ToString('o') -EndedAt $ended.ToString('o') -Seconds ([double]$Seconds)
+    } catch { }
+}
+
+function Resolve-NightlyProductionChunkDiscovery {
+    param(
+        [double]$SuiteDiscoverySeconds,
+        $ChunkMarkerSeconds,
+        [switch]$SupplementalLaunch
+    )
+    $resolvedDiscovery = Resolve-NightlyChunkDiscoverySeconds -SuiteDiscoverySeconds $SuiteDiscoverySeconds -ChunkMarkerSeconds $ChunkMarkerSeconds -SupplementalLaunch:$SupplementalLaunch
+    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
+    return [pscustomobject]@{
+        chunkDiscoverySeconds = $chunkDiscoverySeconds
+        copiedFromSuite = [bool]$resolvedDiscovery.copiedFromSuite
+        suiteDiscoverySeconds = [double]$SuiteDiscoverySeconds
+    }
+}
+
+function Write-NightlyPrerequisitePhases {
+    param(
+        [string]$LogRoot,
+        $NpmCiStarted,
+        $NpmCiSeconds,
+        $NpmBuildStarted,
+        $NpmBuildSeconds,
+        $LintStarted,
+        $LintSeconds,
+        $DotnetStarted,
+        $DotnetSeconds
+    )
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-ci' -StartedAt $NpmCiStarted -Seconds $NpmCiSeconds
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'npm-build' -StartedAt $NpmBuildStarted -Seconds $NpmBuildSeconds
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'lint' -StartedAt $LintStarted -Seconds $LintSeconds
+    Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name 'dotnet-build' -StartedAt $DotnetStarted -Seconds $DotnetSeconds
+}
+
+function Publish-NightlyChunkObservation {
+    param(
+        $Run,
+        [string]$LogRoot,
+        [string]$TrxPath,
+        [string]$Suite,
+        [string]$Chunk,
+        [string]$RunId,
+        [string]$Attempt,
+        [double]$HostWallSeconds = 0,
+        $CoverageComplete = $false,
+        $TestsPassed = $false
+    )
+    $exitCode = 0
+    if ($null -ne $Run -and $Run.PSObject.Properties.Name -contains 'ExitCode' -and $null -ne $Run.ExitCode) { $exitCode = [int]$Run.ExitCode }
+    $coverage = $false
+    $passed = $false
+    if ($null -ne $CoverageComplete) { $coverage = [bool]$CoverageComplete }
+    if ($null -ne $TestsPassed) { $passed = [bool]$TestsPassed }
+    $phaseVerdict = [pscustomobject]@{ ExitCode = [int]$exitCode; coverageComplete = [bool]$coverage; testsPassed = [bool]$passed }
+    Add-NightlyOwnerObservation -Verdict $phaseVerdict -Run $Run
+    Write-TestPhaseExecutedManifest -Verdict $phaseVerdict -LogRoot $LogRoot -TrxPath $TrxPath -Suite $Suite -Chunk $Chunk -RunId $RunId -Attempt $Attempt -HostWallSeconds $HostWallSeconds
+    return $phaseVerdict
 }
 
 function Invoke-NightlyOwnedProcess {
@@ -849,6 +1011,16 @@ function Invoke-AntiphonNightlyTests {
     $invocationId = $RunId
     $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot $TimingRoot -LogRoot $LogRoot -RunId $RunId)
     $script:QualificationTimingRoot = $TimingRoot
+    $publicationContext = $null
+    $publicationSource = [string]$Sha
+    if ([string]::IsNullOrWhiteSpace($publicationSource)) { $publicationSource = 'unknown' }
+    try {
+        $publicationContext = Open-TestPhaseExecutedContext -LogRoot $LogRoot -TimingRoot $TimingRoot -RunId $invocationId -Attempt ([string]$Attempt) -Suite '' -Source $publicationSource
+    } catch {
+        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+    }
+    try {
+    # A4 host sampling is not wired. Do not load a probe DLL from the build output.
     $qualificationBuildSeconds = $null
 
     $chunksBySuite = @{}
@@ -894,10 +1066,22 @@ function Invoke-AntiphonNightlyTests {
 
         if ($dockerOk -and $diskOk) {
             $buildWatch = [Diagnostics.Stopwatch]::StartNew()
+            $npmCiStarted = $null
+            $npmCiSeconds = $null
+            $npmBuildStarted = $null
+            $npmBuildSeconds = $null
+            $lintStarted = $null
+            $lintSeconds = $null
+            $dotnetStarted = $null
+            $dotnetSeconds = $null
             $clientDir = Join-Path $RepoRoot 'client'
             $npmCiLaunch = Get-NightlyNpmLaunch -NpmArguments @('ci')
+            $npmCiStarted = Get-NightlyUtcNow
+            $npmCiWatch = [Diagnostics.Stopwatch]::StartNew()
             $npmCi = Invoke-NightlyOwnedProcess -FilePath $npmCiLaunch.FilePath -ArgumentList $npmCiLaunch.ArgumentList `
                 -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-ci.log')
+            $npmCiWatch.Stop()
+            $npmCiSeconds = [math]::Round($npmCiWatch.Elapsed.TotalSeconds, 3)
             $buildResults += [ordered]@{ name = 'npm ci'; exitCode = $npmCi.ExitCode; timedOut = $npmCi.TimedOut; result = $(if ($npmCi.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
             if ($npmCi.ExitCode -ne 0) {
                 $npmOk = $false
@@ -910,8 +1094,12 @@ function Invoke-AntiphonNightlyTests {
 
             if ($npmOk) {
                 $npmBuildLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'build')
+                $npmBuildStarted = Get-NightlyUtcNow
+                $npmBuildWatch = [Diagnostics.Stopwatch]::StartNew()
                 $npmBuild = Invoke-NightlyOwnedProcess -FilePath $npmBuildLaunch.FilePath -ArgumentList $npmBuildLaunch.ArgumentList `
                     -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-build.log')
+                $npmBuildWatch.Stop()
+                $npmBuildSeconds = [math]::Round($npmBuildWatch.Elapsed.TotalSeconds, 3)
                 $buildResults += [ordered]@{ name = 'npm run build'; exitCode = $npmBuild.ExitCode; timedOut = $npmBuild.TimedOut; result = $(if ($npmBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($npmBuild.ExitCode -ne 0) {
                     $npmOk = $false
@@ -930,8 +1118,12 @@ function Invoke-AntiphonNightlyTests {
 
             if ($npmOk) {
                 $lintLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'lint')
+                $lintStarted = Get-NightlyUtcNow
+                $lintWatch = [Diagnostics.Stopwatch]::StartNew()
                 $lint = Invoke-NightlyOwnedProcess -FilePath $lintLaunch.FilePath -ArgumentList $lintLaunch.ArgumentList `
                     -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'client-lint.log')
+                $lintWatch.Stop()
+                $lintSeconds = [math]::Round($lintWatch.Elapsed.TotalSeconds, 3)
                 $buildResults += [ordered]@{ name = 'client lint'; exitCode = $lint.ExitCode; timedOut = $lint.TimedOut; result = $(if ($lint.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($lint.ExitCode -ne 0) {
                     $lintOk = $false
@@ -968,7 +1160,11 @@ function Invoke-AntiphonNightlyTests {
                     $dotnetArgs.Environment = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId 'antiphon'
                     Remove-TestPhaseVariables -Environment $dotnetArgs.Environment
                 }
+                $dotnetStarted = Get-NightlyUtcNow
+                $dotnetWatch = [Diagnostics.Stopwatch]::StartNew()
                 $dotnetBuild = Invoke-NightlyOwnedProcess @dotnetArgs
+                $dotnetWatch.Stop()
+                $dotnetSeconds = [math]::Round($dotnetWatch.Elapsed.TotalSeconds, 3)
                 $buildResults += [ordered]@{ name = 'dotnet build Antiphon.sln'; exitCode = $dotnetBuild.ExitCode; timedOut = $dotnetBuild.TimedOut; result = $(if ($dotnetBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($dotnetBuild.ExitCode -ne 0) {
                     $dotnetOk = $false
@@ -981,6 +1177,7 @@ function Invoke-AntiphonNightlyTests {
             }
             $buildWatch.Stop()
             $qualificationBuildSeconds = [math]::Round($buildWatch.Elapsed.TotalSeconds, 3)
+            Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
             foreach ($suiteId in $selectedSuites) {
@@ -1071,6 +1268,7 @@ function Invoke-AntiphonNightlyTests {
                     $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
                     $profileEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
                     Remove-TestPhaseVariables -Environment $profileEnv
+                    $profileDiscStarted = Get-NightlyUtcNow
                     $profileDiscWatch = [Diagnostics.Stopwatch]::StartNew()
                     try {
                         $profileDiscovery = Invoke-NightlyProduceDiscovery -ExePath $suiteHost.FilePath -ArgumentPrefix @($suiteHost.Prefix) -AssemblyPath $suiteHost.AssemblyPath -OutputPath $profileDiscoveryPath `
@@ -1079,15 +1277,21 @@ function Invoke-AntiphonNightlyTests {
                             -Environment $profileEnv
                         $profileDiscWatch.Stop()
                         $suiteDiscoverySeconds = [math]::Round($profileDiscWatch.Elapsed.TotalSeconds, 3)
+                        $planningName = 'planning'
+                        if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
+                        Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
                         $suiteDiscoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
                         $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
                         $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
                         if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
-                        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative)
+                        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
                         if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
                     } catch {
                         if ($profileDiscWatch.IsRunning) { $profileDiscWatch.Stop() }
                         $suiteDiscoverySeconds = [math]::Round($profileDiscWatch.Elapsed.TotalSeconds, 3)
+                        $planningName = 'planning'
+                        if ($suiteId -match '^[a-z0-9][a-z0-9-]{0,40}$') { $planningName = 'planning-' + $suiteId }
+                        Write-NightlyMeasuredPhase -LogRoot $LogRoot -Name $planningName -StartedAt $profileDiscStarted -Seconds $suiteDiscoverySeconds
                         $discWhy = 'discovery-failed'
                         if ([string]$_.Exception.Message -match 'timed out') { $discWhy = 'discovery-timeout' }
                         $discTargets = @($chunks)
@@ -1147,7 +1351,8 @@ function Invoke-AntiphonNightlyTests {
                     $execDiagDir = ''
                     $queueWatch.Stop()
                     $queueWaitSeconds = [math]::Round($queueWatch.Elapsed.TotalSeconds, 3)
-                    $chunkDiscoverySeconds = $suiteDiscoverySeconds
+                    $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $null
+                    $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
                     $heartbeatTrx = ''
                     if ($isNative) { $heartbeatTrx = $trxPath }
                     Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'run' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
@@ -1206,10 +1411,22 @@ function Invoke-AntiphonNightlyTests {
                         $phaseEnv = @{}
                         foreach ($phaseKey in @($envMap.Keys)) { $phaseEnv[[string]$phaseKey] = [string]$envMap[$phaseKey] }
                         Enable-TestPhaseExecutionEnvironment -Environment $phaseEnv -LogRoot $LogRoot -RunId $invocationId -GroupId ([string]$chunk.id) -Attempt ([string]$Attempt) -Suite $suiteId -Profile $Profile -TimingRoot $TimingRoot
+                        $plannedSeconds = $null
+                        if ($null -ne $chunk.PSObject.Properties['seconds'] -and $null -ne $chunk.seconds) {
+                            $plannedSeconds = $chunk.seconds
+                        }
+                        $costBasis = 'default'
+                        if ($null -ne $chunk.PSObject.Properties['costBasis'] -and -not [string]::IsNullOrWhiteSpace([string]$chunk.costBasis)) {
+                            $costBasis = [string]$chunk.costBasis
+                        }
+                        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteId -PlannedSeconds $plannedSeconds -Basis $costBasis -PolicyObject $policy.Object
+                        if (-not $admission.Admitted) {
+                            throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
+                        }
                         $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
                         try {
                             $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
-                                -TimeoutMilliseconds (Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key $suiteId -Fallback 3600000) `
+                                -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
                                 -Environment $phaseEnv -LogPath $logPath
                         } catch {
                             Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
@@ -1217,8 +1434,7 @@ function Invoke-AntiphonNightlyTests {
                         }
                         $phaseWatch.Stop()
                         try {
-                            $phaseVerdict = [pscustomobject]@{ ExitCode = [int]$run.ExitCode; coverageComplete = [bool]$coverageComplete; testsPassed = [bool]$testsPassed }
-                            Write-TestPhaseExecutedManifest -Verdict $phaseVerdict -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds)
+                            [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
                         } catch {
                             Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
                         }
@@ -1280,7 +1496,8 @@ function Invoke-AntiphonNightlyTests {
                                     -DiagnosticDirectory $diagDir -LogPath $discLog -WorkingDirectory $RepoRoot `
                                     -Environment $envMap)
                                 $chunkDiscWatch.Stop()
-                                $chunkDiscoverySeconds = [math]::Round(([double]$suiteDiscoverySeconds + $chunkDiscWatch.Elapsed.TotalSeconds), 3)
+                                $resolvedDiscovery = Resolve-NightlyProductionChunkDiscovery -SuiteDiscoverySeconds $suiteDiscoverySeconds -ChunkMarkerSeconds $chunkDiscWatch.Elapsed.TotalSeconds -SupplementalLaunch
+                                $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
                             } catch {
                                 $reasons += ('discovery-produce-failed {0}' -f $_.Exception.Message)
                             }
@@ -1333,8 +1550,9 @@ function Invoke-AntiphonNightlyTests {
                     }
                     if ($run.TimedOut) {
                         $overallFailed = $true
-                        $coverageComplete = $false
-                        $testsPassed = $false
+                        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false
+                        $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
+                        $testsPassed = [bool]$timeoutDisposition.TestsPassed
                         Set-NightlyOutcome TIMEOUT
                         $reasons += ('timeout {0}' -f $suiteId)
                     } elseif ($run.ExitCode -ne 0) {
@@ -1382,7 +1600,6 @@ function Invoke-AntiphonNightlyTests {
                     if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
                     Update-QualificationChunkTiming @timingUpdate
                     $suiteResults += $row
-                    if ($run.TimedOut) { $coverageComplete = $false }
                 }
                 if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
                     $unionNodes = @()
@@ -1445,6 +1662,21 @@ function Invoke-AntiphonNightlyTests {
             $selectionForSummary.timingRoot = [string]$TimingRoot
         }
     }
+    if ($null -ne $publicationContext -and -not $publicationContext.Refused -and -not $publicationContext.Closed) {
+        $publicationTerminal = 'success'
+        if (-not [string]::IsNullOrWhiteSpace([string]$preflight.unhandledError)) {
+            $publicationTerminal = 'orchestration-error'
+        } elseif ([string]$script:NightlyTestsOutcome -eq 'TIMEOUT') {
+            $publicationTerminal = 'timeout'
+        } elseif ($overallFailed) {
+            $publicationTerminal = 'failed-run'
+        }
+        try {
+            Complete-TestPhaseExecutedProjection -Context $publicationContext -Terminal $publicationTerminal | Out-Null
+        } catch {
+            Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+        }
+    }
     $timingChunks = @()
     $suiteTimeline = @()
     try {
@@ -1489,8 +1721,10 @@ function Invoke-AntiphonNightlyTests {
         invocationId = $invocationId
     }
     try {
-        $phasePlanned = Join-Path (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot) 'groups-planned.json'
-        if (Test-Path -LiteralPath $phasePlanned) {
+        $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+        $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
+        $phaseIndex = Join-Path $phaseDir 'groups-planned-index.json'
+        if ((Test-Path -LiteralPath $phasePlanned) -or (Test-Path -LiteralPath $phaseIndex)) {
             Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
         }
     } catch {
@@ -1515,6 +1749,11 @@ function Invoke-AntiphonNightlyTests {
         Selected = $selectedSuites
         NativeActiveMax = $nativeActiveMax
         PolicyHash = $policyHash
+    }
+    } finally {
+        if ($null -ne $publicationContext) {
+            Close-TestPhaseExecutedContext -Context $publicationContext
+        }
     }
 }
 

@@ -63,10 +63,13 @@ public class AgentSession
 
     public DateTime? EndedAt { get; set; }
     public int? ExitCode { get; set; }
+    /// <summary>Null = unavailable; zero = observed without a POSIX signal; positive = actual signal.</summary>
+    public int? ExitSignal { get; set; }
+    public string? ExitStopIntentJson { get; set; }
     public string? FailureReason { get; set; }
 
     /// <summary>
-    /// Who asked for this session to end, or whether the process exited on its own (CARD-0256).
+    /// The recorded stop request or observed process exit (CARD-0256). ProcessExit never proves voluntary exit.
     /// Default <see cref="SessionTerminationSource.Unknown"/> covers every pre-existing row.
     /// A later process-exit event must not overwrite <see cref="SessionTerminationSource.OperatorRequest"/>
     /// or <see cref="SessionTerminationSource.SystemRequest"/>.

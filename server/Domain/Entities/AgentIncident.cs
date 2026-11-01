@@ -25,6 +25,8 @@ public class AgentIncident
     public AlertSeverity Severity { get; set; }
     public string Message { get; set; } = string.Empty;
     public int? ExitCode { get; set; }
+    /// <summary>Null = unavailable; zero = observed without a POSIX signal; positive = actual signal.</summary>
+    public int? ExitSignal { get; set; }
     public string? FailureReason { get; set; }
     public DateTime CreatedAt { get; set; }
 

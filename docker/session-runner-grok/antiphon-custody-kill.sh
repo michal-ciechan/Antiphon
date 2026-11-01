@@ -13,6 +13,14 @@
 # ASCII only. Never prints a secret or an argument vector.
 set -euo pipefail
 
+# Fixed install. Not a sudo command and not overridable by the caller.
+if [ ! -r /usr/local/lib/antiphon-custody-common.sh ]; then
+  echo "C604_CUSTODY_REFUSED CustodyLibraryMissing" >&2
+  exit 3
+fi
+# shellcheck disable=SC1091
+source /usr/local/lib/antiphon-custody-common.sh
+
 CUSTODY_ROOT=antiphon-custody
 V2_ROOT="/sys/fs/cgroup/$CUSTODY_ROOT"
 V1_PIDS_ROOT="/sys/fs/cgroup/pids/$CUSTODY_ROOT"
@@ -56,24 +64,18 @@ tree_pids() {
 }
 
 drain() {
-  local procs="$1" waited=0
-  while [ "$waited" -lt "$DRAIN_SECONDS" ]; do
-    if [ ! -s "$procs" ]; then
-      return 0
-    fi
-    sleep 1
-    waited=$(( waited + 1 ))
-  done
-  [ -s "$procs" ] && return 1
-  return 0
+  custody_drain "$1" "$DRAIN_SECONDS"
 }
 
 kill_v2() {
-  local id="$1" dir="$V2_ROOT/$id"
+  local id="$1"
+  local ns dir
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
+  dir="$V2_ROOT/$ns/$id"
   require_under_root "$dir" "$V2_ROOT"
   if [ ! -d "$dir/tree" ]; then
-    echo "C604_CUSTODY_KILL_OK $id empty"
-    return 0
+    echo "C604_CUSTODY_REFUSED CustodyTreeMissing" >&2
+    exit 4
   fi
   if [ -f "$dir/tree/cgroup.kill" ]; then
     echo 1 > "$dir/tree/cgroup.kill" || refuse CustodyKillFailed
@@ -88,21 +90,44 @@ kill_v2() {
 }
 
 kill_v1() {
-  local id="$1" pids_dir="$V1_PIDS_ROOT/$id" freezer_dir="$V1_FREEZER_ROOT/$id" pid
+  local id="$1"
+  local ns pids_dir freezer_dir pid pids read_failed=0 thaw_failed=0
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
+  pids_dir="$V1_PIDS_ROOT/$ns/$id"
+  freezer_dir="$V1_FREEZER_ROOT/$ns/$id"
   require_under_root "$pids_dir" "$V1_PIDS_ROOT"
   require_under_root "$freezer_dir" "$V1_FREEZER_ROOT"
   if [ ! -d "$pids_dir/tree" ]; then
-    echo "C604_CUSTODY_KILL_OK $id empty"
-    return 0
+    echo "C604_CUSTODY_REFUSED CustodyTreeMissing" >&2
+    exit 4
   fi
-  if [ -f "$freezer_dir/tree/freezer.state" ]; then
-    echo FROZEN > "$freezer_dir/tree/freezer.state" || refuse CustodyFreezeFailed
+  # Freeze must stick before any pid is read or signalled. A missing freezer, or a
+  # freeze write that fails, refuses with the tree still running. A later read or
+  # thaw failure still thaws a freeze that did stick, and still signals nothing
+  # when the pid list itself could not be read.
+  if [ ! -f "$freezer_dir/tree/freezer.state" ]; then
+    refuse CustodyFreezerMissing
   fi
-  for pid in $(tree_pids "$pids_dir/tree/cgroup.procs" || true); do
-    kill -KILL "$pid" 2>/dev/null || true
-  done
-  if [ -f "$freezer_dir/tree/freezer.state" ]; then
-    echo THAWED > "$freezer_dir/tree/freezer.state" || refuse CustodyThawFailed
+  if ! echo FROZEN > "$freezer_dir/tree/freezer.state"; then
+    refuse CustodyFreezeFailed
+  fi
+  if ! pids="$(tree_pids "$pids_dir/tree/cgroup.procs")"; then
+    read_failed=1
+    pids=""
+  fi
+  if [ "$read_failed" -eq 0 ]; then
+    for pid in $pids; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+  fi
+  if ! echo THAWED > "$freezer_dir/tree/freezer.state"; then
+    thaw_failed=1
+  fi
+  if [ "$read_failed" -ne 0 ]; then
+    refuse CustodyTreeUnreadable
+  fi
+  if [ "$thaw_failed" -ne 0 ]; then
+    refuse CustodyThawFailed
   fi
   if ! drain "$pids_dir/tree/cgroup.procs"; then
     echo "C604_CUSTODY_KILL_DRAINING $id" >&2
@@ -112,14 +137,15 @@ kill_v1() {
 }
 
 remove_tree() {
-  local id="$1" hierarchy
+  local id="$1" ns hierarchy
+  ns="$(custody_read_namespace)" || return 0
   if is_v2; then
-    rmdir "$V2_ROOT/$id/tree" 2>/dev/null || true
-    rmdir "$V2_ROOT/$id" 2>/dev/null || true
+    rmdir "$V2_ROOT/$ns/$id/tree" 2>/dev/null || true
+    rmdir "$V2_ROOT/$ns/$id" 2>/dev/null || true
   else
     for hierarchy in "$V1_PIDS_ROOT" "$V1_FREEZER_ROOT"; do
-      rmdir "$hierarchy/$id/tree" 2>/dev/null || true
-      rmdir "$hierarchy/$id" 2>/dev/null || true
+      rmdir "$hierarchy/$ns/$id/tree" 2>/dev/null || true
+      rmdir "$hierarchy/$ns/$id" 2>/dev/null || true
     done
   fi
 }
@@ -130,14 +156,16 @@ if [ "${1:-}" = "--probe" ]; then
   if [ "$#" -ne 1 ]; then
     refuse ProbeTakesNoArguments
   fi
+  ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
+  custody_acquire_probe_lock || refuse ProbeLockUnavailable
   if is_v2; then
     [ -d "$V2_ROOT" ] || refuse CustodyRootMissing
-    mkdir -p "$V2_ROOT/$PROBE_ID/tree"
-    [ -f "$V2_ROOT/$PROBE_ID/tree/cgroup.kill" ] || { remove_tree "$PROBE_ID"; refuse CgroupKillUnavailable; }
+    mkdir -p "$V2_ROOT/$ns/$PROBE_ID/tree"
+    [ -f "$V2_ROOT/$ns/$PROBE_ID/tree/cgroup.kill" ] || { remove_tree "$PROBE_ID"; refuse CgroupKillUnavailable; }
     kill_v2 "$PROBE_ID"
   else
     [ -d "$V1_PIDS_ROOT" ] && [ -d "$V1_FREEZER_ROOT" ] || refuse CustodyRootMissing
-    mkdir -p "$V1_PIDS_ROOT/$PROBE_ID/tree" "$V1_FREEZER_ROOT/$PROBE_ID/tree"
+    mkdir -p "$V1_PIDS_ROOT/$ns/$PROBE_ID/tree" "$V1_FREEZER_ROOT/$ns/$PROBE_ID/tree"
     kill_v1 "$PROBE_ID"
   fi
   remove_tree "$PROBE_ID"
@@ -161,4 +189,3 @@ else
   [ -d "$V1_PIDS_ROOT" ] && [ -d "$V1_FREEZER_ROOT" ] || refuse CustodyRootMissing
   kill_v1 "$EXECUTION_ID"
 fi
-remove_tree "$EXECUTION_ID"

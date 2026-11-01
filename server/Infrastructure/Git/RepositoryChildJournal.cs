@@ -11,21 +11,28 @@ internal sealed class RepositoryChildJournal
     // flushed temporary before the only replacement; normal server processes leave it null.
     internal static Func<string, Task>? BeforeReplaceForTests { get; set; }
     private readonly string _path;
+    private readonly Action<string> _deleteRecord;
     private ChildRecord _record;
 
-    private RepositoryChildJournal(string path, ChildRecord record) { _path = path; _record = record; }
+    private RepositoryChildJournal(string path, ChildRecord record, Action<string> deleteRecord)
+    { _path = path; _record = record; _deleteRecord = deleteRecord; }
 
     public static Task<RepositoryChildJournal> BeginAsync(string repository, CancellationToken ct)
         => BeginAsync(repository, tag: null, ct);
 
     /// <summary>CARD-1076: <paramref name="tag"/> is stored on the record. A null tag is the untagged journal.</summary>
-    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag, CancellationToken ct)
+    internal static Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag, CancellationToken ct)
+        => BeginAsync(repository, tag, File.Delete, ct);
+
+    // Instance-scoped filesystem seam: deletion sharing failures are Windows-only on real handles.
+    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag,
+        Action<string> deleteRecord, CancellationToken ct)
     {
         var common = await new LandingGit().CommonDirectoryAsync(repository, ct);
         var directory = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(directory);
         var journal = new RepositoryChildJournal(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"),
-            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId));
+            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId), deleteRecord);
         await journal.SaveAsync(ct); // Unknown/start intent is durable before Process.Start.
         return journal;
     }
@@ -75,23 +82,59 @@ internal sealed class RepositoryChildJournal
     public void Exited(Process child)
     {
         if (!child.HasExited) throw new InvalidOperationException("owned_child_still_running");
-        File.Delete(_path); // Only this operation's journal, after its exact handle exited.
+        Remove(); // Only this operation's journal, after its exact handle exited.
     }
 
     /// <summary>Removes this journal without a Process handle. The caller has already observed the
     /// root exit and is invoking this only once both redirected streams have closed. A server crash
     /// before that leaves the file for recover-repository-children.ps1.</summary>
-    internal void StreamsClosed() => File.Delete(_path);
+    internal void StreamsClosed() => Remove();
 
     /// <summary>Process.Start definitely created no child (LandingGit.CreatedNoChild), so none needs fencing.</summary>
-    public void NotStarted() => File.Delete(_path);
+    public void NotStarted() => Remove();
 
     public async Task ExitedAsync(CancellationToken ct)
     {
         if (_record.ProcessId is null || _record.StartTicks is null
             || await new LandingGit().IsProcessAliveAsync(_record.ProcessId.Value, _record.StartTicks.Value, ct) != false)
             throw new InvalidOperationException("owned_child_exit_unconfirmed");
-        File.Delete(_path);
+        Remove();
+    }
+
+    private void Remove()
+    {
+        // Cleanup must finish independently of the cancelled command token. Windows scanners
+        // and readers can briefly deny deletion even after the exact child and its pipes exit.
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                _deleteRecord(_path);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (elapsed.Elapsed < TimeSpan.FromSeconds(2))
+                {
+                    Thread.Sleep(50);
+                    continue;
+                }
+
+                // Do not clear or reinterpret an undeletable record. It remains the standing
+                // admission fence even if the caller unwinds and closes landing.lock.
+                _record = _record with { CleanupFailure = "delete_failed" };
+                Console.Error.WriteLine($"repository_child_journal_cleanup_failed path={_path}; run scripts/recover-repository-children.ps1");
+                try { SaveAsync(CancellationToken.None).GetAwaiter().GetResult(); }
+                catch (Exception saveError) when (saveError is IOException or UnauthorizedAccessException)
+                {
+                    // The same Windows handle may also deny replacement. Always emit the
+                    // diagnostic even when its durable annotation cannot be written.
+                    Console.Error.WriteLine($"repository_child_journal_cleanup_reason_unwritten path={_path}");
+                }
+                throw new IOException("repository_child_journal_cleanup_failed; run scripts/recover-repository-children.ps1", ex);
+            }
+        }
     }
 
     private async Task SaveAsync(CancellationToken ct)
@@ -201,5 +244,6 @@ internal sealed class RepositoryChildJournal
     }
 
     internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks,
-        bool Completed = false, string? Purpose = null, Guid? TaskId = null, Guid? WindowId = null);
+        bool Completed = false, string? Purpose = null, Guid? TaskId = null, Guid? WindowId = null,
+        string? CleanupFailure = null);
 }

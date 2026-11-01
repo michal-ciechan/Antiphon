@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -48,6 +49,7 @@ public sealed class JqRunnerImageContractTests
         Read("docker/session-runner-grok/verify-codex-image.sh").ShouldContain("JQ_VERSION=" + Version + "\n");
     }
 
+    [NativeLinuxOnly("CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.")]
     [Test]
     [Arguments("jq-1.7.1", 0, "", "ok")]
     [Arguments("jq-1.7", 0, "", "fail")]
@@ -82,6 +84,7 @@ public sealed class JqRunnerImageContractTests
         run.Stdout.ShouldBe($"C660_ROW jq-version {outcome} {detail}\n");
     }
 
+    [NativeLinuxOnly("CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_rejects_home_shadow()
@@ -120,6 +123,7 @@ public sealed class JqRunnerImageContractTests
             "JqPathUnapproved", f.HomeJq, f.HomeJq, "c1054-cache-cleared-refused");
     }
 
+    [NativeLinuxOnly("CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_accepts_canonical_file_and_alias()
@@ -136,6 +140,7 @@ public sealed class JqRunnerImageContractTests
         AssertAccepted(f, await f.ProbeAsync([f.HomeBin, f.DestinationDirectory]), f.Destination, "c1054-nonexecutable-fallback");
     }
 
+    [NativeLinuxOnly("CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_rejects_canonical_leaf_symlink()
@@ -171,6 +176,7 @@ public sealed class JqRunnerImageContractTests
             "JqLookupInvalid", f.Destination, "unavailable", "c1054-nonexecutable-leaf-refused");
     }
 
+    [NativeLinuxOnly("CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.")]
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_records_found_and_resolved_paths()

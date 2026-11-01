@@ -5,6 +5,7 @@ using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -12,6 +13,7 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
 {
+    [NativeLinuxOnly("Linux FIFO qualification requires Linux")]
     [Test]
     public async Task linux_fifo_receipts_refuse_within_four_seconds()
     {

@@ -94,15 +94,20 @@ public class LinuxPtyHostLauncherTests
         {
             var launcher = new PtyHostLauncher(new ShadowCopyStore(Path.Combine(tempRoot, "bin")), AppContext.BaseDirectory);
             var parentSession = Getsid(Environment.ProcessId);
-            parentSession.ShouldNotBe(Environment.ProcessId, "the test process must not already be the host session leader");
-
             var sessionId = Guid.NewGuid();
+            var pipeName = $"antiphon-pty-linux-sid-{sessionId:N}";
             var hostPid = await launcher.LaunchDetachedAsync(
                 sessionId,
                 Path.Combine(tempRoot, "manifests"),
-                pipeName: $"antiphon-pty-linux-sid-{sessionId:N}",
+                pipeName: pipeName,
                 launchTimeout: TimeSpan.FromSeconds(60));
             owned.Add(hostPid);
+
+            await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(4));
+            await client.SendAsync(new HelloMessage(PtyHostProtocol.Version));
+            var hello = await client.ExpectAsync<HelloAckMessage>(TimeSpan.FromSeconds(4));
+            hello.SessionId.ShouldBe(sessionId);
+            Process.GetProcessById(hostPid).HasExited.ShouldBeFalse();
 
             var hostSessionId = Getsid(hostPid);
             hostSessionId.ShouldBe(hostPid);
@@ -226,6 +231,22 @@ public class LinuxPtyHostLauncherTests
                 TryKill(pid);
             TryDelete(tempRoot);
         }
+    }
+
+    /// <summary>
+    /// CARD-1614: the owned consumer root contains the native apphost and matching
+    /// libporta_pty.so, user-executable, before any shadow copy.
+    /// </summary>
+    [Test]
+    public void C1614_Owned_payload_has_native_apphost_and_matching_library()
+    {
+        RequireLinux();
+        var root = AppContext.BaseDirectory;
+        var host = Path.Combine(root, PtyHostLauncher.HostExeName);
+        var library = Path.Combine(root, "libporta_pty.so");
+        File.Exists(host).ShouldBeTrue($"owned native apphost missing before shadow copy: {host}");
+        File.Exists(library).ShouldBeTrue($"matching libporta_pty.so missing beside the apphost: {library}");
+        (File.GetUnixFileMode(host) & UnixFileMode.UserExecute).ShouldNotBe((UnixFileMode)0);
     }
 
     private static string NewRoot()

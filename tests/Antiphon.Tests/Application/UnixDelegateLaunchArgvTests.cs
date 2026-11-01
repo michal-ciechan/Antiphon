@@ -7,9 +7,11 @@ using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Application;
 
+[NativeLinuxOnly("Unix PTY argv witness; Windows argv has its own native parser tests.")]
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class UnixDelegateLaunchArgvTests

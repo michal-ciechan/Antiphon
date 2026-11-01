@@ -1933,8 +1933,10 @@ function Test-C1584_E2EExpandedBudget {
         $required = @($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded $_ $exclusions -ProfileAware) })
         $reasons = New-Object System.Collections.Generic.List[string]
         # Exact census of the committed roster. The added identity is
-        # C467_RetainedEvidenceCompletesCleanup; Windows rc still excludes seven.
-        if ($nodes.Count -ne 178 -or $required.Count -ne 171) { $reasons.Add('source-census') }
+        # C467_RetainedEvidenceCompletesCleanup, the portable stalled-receipt
+        # diagnostic, two polling-attention witnesses and two C459 queued-outcome
+        # witnesses; Windows rc still excludes seven.
+        if ($nodes.Count -ne 183 -or $required.Count -ne 176) { $reasons.Add('source-census') }
         # Independent conservative per-expanded-case bounds. 600 s is 1.72x
         # the slowest supplied Windows observation (348.1 s), not a p95.
         $bounds = @{}

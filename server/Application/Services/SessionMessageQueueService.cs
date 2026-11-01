@@ -126,6 +126,15 @@ public sealed partial class SessionMessageQueueService
             _completionNotes?.Recovery.Check(task.Id);
     }
 
+    internal void SupervisionChanged(Guid taskId) => _completionNotes?.Recovery.Check(taskId);
+
+    internal Task<SessionQueueDto> EnqueueSupervisionNoticeAsync(TaskSupervisionNotice notice,
+        Action<Guid> onCreated, CancellationToken ct) =>
+        EnqueueCoreAsync(notice.RecipientSessionId!.Value, notice.Body, MessageSendMode.WhenIdle,
+            origin: QueuedMessageOrigin.Supervision, conversationKey: $"task-supervision:{notice.Id:N}",
+            sourceTaskId: notice.TaskId, contentDigest: notice.Digest, onCreated: onCreated,
+            sourceTaskSupervisionNoticeId: notice.Id, ct: ct);
+
     internal void CompletionDeliveryFailed() => _completionNotes?.Recovery.RequestSweep();
 
     internal void CompletionHoldReleased(Guid sessionId) =>
@@ -515,6 +524,7 @@ public sealed partial class SessionMessageQueueService
         Guid? mentionOccurrenceId = null, Guid? sourceChannelInboundId = null,
         IReadOnlyList<Guid>? channelMemberInboundIds = null,
         Guid? reviewThreadId = null, string? runtimeActionKey = null,
+        Guid? sourceTaskSupervisionNoticeId = null,
         CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -678,6 +688,27 @@ public sealed partial class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
 
+            if (sourceTaskSupervisionNoticeId is { } supervisionId)
+            {
+                var notice = await db.TaskSupervisionNotices.SingleAsync(n => n.Id == supervisionId, ct);
+                if (notice.RecipientSessionId != sessionId || notice.Digest != contentDigest || notice.Body != trimmed)
+                    throw new ConflictException("Supervision purpose has a different recipient or payload.");
+                if (!await TaskSupervisionNoticeService.CanSendAsync(db, notice, ct))
+                {
+                    await db.SaveChangesAsync(ct);
+                    return await GetQueueAsync(sessionId, ct);
+                }
+                var previous = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(m => m.SourceTaskSupervisionNoticeId == supervisionId, ct);
+                if (previous is not null)
+                {
+                    if (previous.AgentSessionId != sessionId || previous.ContentDigest != contentDigest)
+                        throw new ConflictException("Supervision queue identity changed.");
+                    onCreated?.Invoke(previous.Id);
+                    return await GetQueueAsync(sessionId, ct);
+                }
+            }
+
             // A recovery can be claimed just before the quota refusal is adopted. This check
             // runs under the same per-session lock as insertion and inline delivery.
             if (origin == QueuedMessageOrigin.Supervision
@@ -789,6 +820,7 @@ public sealed partial class SessionMessageQueueService
                 ConversationKey = conversationKey,
                 SourceTaskId = sourceTaskId,
                 SourceLandNotificationId = sourceLandNotificationId,
+                SourceTaskSupervisionNoticeId = sourceTaskSupervisionNoticeId,
                 SourceScheduleId = sourceScheduleId,
                 ContentDigest = contentDigest,
                 NoteHeader = noteHeader,
@@ -848,6 +880,17 @@ public sealed partial class SessionMessageQueueService
                 && scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } beforeCommit)
                 await beforeCommit.ReachedAsync("queue-before-commit", sourceTaskId ?? Guid.Empty, sourceLandNotificationId.Value, ct);
             try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException ex) when (sourceTaskSupervisionNoticeId is not null
+                && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                db.Entry(row).State = EntityState.Detached;
+                var existing = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(
+                    m => m.SourceTaskSupervisionNoticeId == sourceTaskSupervisionNoticeId, ct);
+                if (existing.AgentSessionId != sessionId || existing.ContentDigest != contentDigest)
+                    throw new ConflictException("Supervision queue identity changed.");
+                onCreated?.Invoke(existing.Id);
+                return await GetQueueAsync(sessionId, ct);
+            }
             catch (DbUpdateException ex) when (mentionOccurrenceId is not null
                 && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
@@ -900,6 +943,9 @@ public sealed partial class SessionMessageQueueService
                     _completionNotes?.Recovery.ScheduleFlush(sessionId, holdUntil ?? DateTime.MinValue);
             }
 
+            if (sourceTaskSupervisionNoticeId is not null)
+                _completionNotes?.Recovery.ScheduleFlush(sessionId, DateTime.MinValue);
+
             onCreated?.Invoke(row.Id);
             if (sourceLandNotificationId is not null && afterLandQueueInsert is not null)
                 await afterLandQueueInsert(row.Id, ct);
@@ -918,7 +964,7 @@ public sealed partial class SessionMessageQueueService
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
             }
-            else if (origin == QueuedMessageOrigin.Supervision && working)
+            else if (origin == QueuedMessageOrigin.Supervision && sourceTaskSupervisionNoticeId is null && working)
             {
                 // Cancel-not-strand (CARD-0082): a Pending /compact flushed at the *next turn end*
                 // would compact a session that just became active. Drop it; a later sweep re-derives.
@@ -1505,6 +1551,9 @@ public sealed partial class SessionMessageQueueService
                 return confirmed;
             }
 
+            if (!await SupervisionInputCurrentAsync(db, message, ct))
+                return await GetQueueAsync(sessionId, ct);
+
             if (await RecoverPointerAsync(db, sessionId, [message],
                 await CeilingsForSessionAsync(db, sessionId, ct), ct) is not null)
                 return await GetQueueAsync(sessionId, ct);
@@ -2014,7 +2063,8 @@ public sealed partial class SessionMessageQueueService
         var pending = await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId
                 && m.Status == QueuedMessageStatus.Pending
-                && m.Origin == QueuedMessageOrigin.Supervision)
+                && m.Origin == QueuedMessageOrigin.Supervision
+                && m.SourceTaskSupervisionNoticeId == null)
             .ToListAsync(ct);
         if (pending.Count == 0)
             return;
@@ -2391,8 +2441,6 @@ public sealed partial class SessionMessageQueueService
             || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
-        if (pending.Count == 0) return FlushResult.Nothing;
-
         // CARD-0330: a completion note the distiller is still improving is not in the flush's
         // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
         var nowUtc = UtcNow();
@@ -2410,6 +2458,12 @@ public sealed partial class SessionMessageQueueService
         lateConfirmed?.Record(late);
         if (late.Handled > 0)
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+
+        // Receipts first, then the same last-look gate used by interrupted recovery and
+        // SendNow. A notice retains WhenIdle semantics on every queue input path.
+        foreach (var message in pending.Where(m => m.SourceTaskSupervisionNoticeId != null).ToList())
+            if (!await SupervisionInputCurrentAsync(db, message, ct)) pending.Remove(message);
+        if (pending.Count == 0) return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         // Parked messages (at the attempts cap) stay Pending and visible, but no automatic path
         // types them again — that is what "parks for a human" means. They are still late-confirmed
@@ -3318,6 +3372,9 @@ public sealed partial class SessionMessageQueueService
             return late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
         }
 
+        foreach (var message in remaining)
+            if (!await SupervisionInputCurrentAsync(db, message, ct)) return FlushResult.Nothing;
+
         // CARD-0501 re-review F3: the attempts cap is DURABLE, but it is filtered in
         // DeliverNextLockedAsync over the PENDING set only — and interrupted-Sent recovery runs
         // before that filter, selecting purely on Status/verdict/age. A crash between the Enter-only
@@ -3385,6 +3442,8 @@ public sealed partial class SessionMessageQueueService
         CancellationToken ct,
         PtyDeliveryCeilings ceilings)
     {
+        foreach (var message in run)
+            if (!await SupervisionInputCurrentAsync(db, message, ct)) return FlushResult.Nothing;
         if (!await CanWriteResumeInputAsync(db, sessionId, ct)) return FlushResult.Nothing;
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var head = run[0];
@@ -5232,6 +5291,7 @@ public sealed partial class SessionMessageQueueService
                     && messages.All(m => m.Origin == QueuedMessageOrigin.Supervision);
                 foreach (var message in messages.Where(m =>
                              m.Origin == QueuedMessageOrigin.Supervision
+                             && m.SourceTaskSupervisionNoticeId == null
                              && m.DeliveryAttempts >= MaxAttempts))
                 {
                     // Cancel-not-park (CARD-0082): parking exists for human-owed content. An
@@ -5242,7 +5302,8 @@ public sealed partial class SessionMessageQueueService
                 }
 
                 parked = messages.Count(m =>
-                    m.Origin != QueuedMessageOrigin.Supervision && m.DeliveryAttempts >= MaxAttempts);
+                    (m.Origin != QueuedMessageOrigin.Supervision || m.SourceTaskSupervisionNoticeId != null)
+                    && m.DeliveryAttempts >= MaxAttempts);
             }
 
             // Asked before the kill decision AND before the incident text is written, so both tell

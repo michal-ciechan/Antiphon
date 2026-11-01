@@ -1,0 +1,20 @@
+{
+  "nodeIds": [
+    "fixture-build",
+    "fixture-discover",
+    "fixture-group",
+    "fixture-selection",
+    "fixture-diagnostic"
+  ],
+  "uidStrings": [
+    "Fixture.A.0",
+    "Fixture.A.1"
+  ],
+  "uidBytes": "[\"Fixture.A.0\",\"Fixture.A.1\"]",
+  "uidSetDigest": "29afb3ce875aa830333611c8d17ed6a95dc2cf925e1288e88a3e44fbb4bab9b2",
+  "graphDigest": "51a1f9e869da790df805e3f9e0078000b21dc3be25e3267c7682f1522224f45b",
+  "catalogPins": {
+    "catalog-binding-B.json": "7404795f2d0b6f4651bcb6b7c9b1fefc40334b945dfaec8944d8b8a0c7fab82f",
+    "catalog-target-B.json": "f880024484dfe38f93b1e3a660f8bcf5e1fdc3d83ac096b43ddf1f25df2acc74"
+  }
+}

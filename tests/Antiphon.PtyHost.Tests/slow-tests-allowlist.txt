@@ -1,2 +1,3 @@
-# CARD-0487: no Slow classes in Antiphon.PtyHost.Tests at initial classification.
-# Native does not automatically mean slow. Add FQN entries with reasons when measured.
+# CARD-0487: native startup alone is not Slow. Launcher classes stay off this list.
+# CARD-1614: measured cgroup custody exceeds 5s (Tracked_launch 120s, Seal_terminates 300s) and needs the privileged custody root.
+Antiphon.PtyHost.Tests.LinuxCgroupCustodyTests

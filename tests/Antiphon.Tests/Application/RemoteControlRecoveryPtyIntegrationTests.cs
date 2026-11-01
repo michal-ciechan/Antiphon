@@ -38,6 +38,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
         await lane.Queue.EnqueueAsync(lane.SessionId, work, MessageSendMode.Now, CancellationToken.None);
         (await lane.WaitForPersistedPromptsAsync([work], TimeSpan.FromSeconds(20)))
             .ShouldBeTrue("the child must record its prompt in its own JSONL");
+        (await lane.WaitForPersistedIdleAsync(TimeSpan.FromSeconds(20)))
+            .ShouldBeTrue("the child's real turn must finish before the synthetic Working marker");
 
         await lane.MarkWorkingAsync("c514 lane body the recipient is still working on");
         var busy = await lane.ReserveAndExecuteAsync();
@@ -52,7 +54,12 @@ public class RemoteControlRecoveryPtyIntegrationTests
 
         await lane.MarkIdleAsync();
         var idle = await lane.ExecuteAsync(id);
-        idle.ShouldBe(RemoteControlArmResult.ArmedObserved, "screen tail: " + Tail(lane));
+        await using (var db = lane.CreateDb())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            idle.ShouldBe(RemoteControlArmResult.ArmedObserved,
+                "maintenance evidence: " + row.MaintenanceEvidence + "; screen tail: " + Tail(lane));
+        }
 
         // The child's own output is the receipt: fakeclaude only prints these after a SUBMITTED
         // /remote-control actually reached it through the guarded conditional write.
@@ -108,8 +115,8 @@ public class RemoteControlRecoveryPtyIntegrationTests
             await lane.Queue.EnqueueAsync(lane.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
         await lane.Queue.FlushSessionAsync(lane.SessionId, CancellationToken.None);
 
-        (await lane.WaitForPersistedPromptsAsync(bodies, TimeSpan.FromSeconds(30)))
-            .ShouldBeTrue("every queued body must reach the child. Screen:\n" + lane.RawOutput());
+        (await lane.DrainQueuedPromptsAsync(bodies, TimeSpan.FromSeconds(30)))
+            .ShouldBeTrue("every queued body must reach the child. " + await lane.DeliveryEvidenceAsync());
 
         // The child wrote these; nothing in this test or its harness inserts a UserPrompt row.
         var fromChildFile = lane.ChildFileUserPrompts();
@@ -117,6 +124,50 @@ public class RemoteControlRecoveryPtyIntegrationTests
         (await lane.PersistedUserPromptsAsync()).ShouldBe(bodies);
         foreach (var body in bodies)
             fromChildFile.Count(p => p == body).ShouldBe(1, $"'{body}' must arrive exactly once");
+    }
+
+    [Test]
+    public async Task C514_Queued_prompts_resume_after_a_delayed_persisted_turn_end()
+    {
+        var saves = 0;
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var lane = await RemoteControlPtyLane.CreateAsync(beforeTranscriptSave: async () =>
+        {
+            // FakeClaude's first JSONL record is the UserPrompt. Its second contains the
+            // response and TurnEnd. Hold that commit, never fabricate a receipt or idle fact.
+            if (Interlocked.Increment(ref saves) == 2)
+            {
+                held.TrySetResult();
+                await release.Task;
+            }
+        });
+        string[] bodies =
+        [
+            "c514 delayed shared prefix alpha",
+            "c514 delayed shared prefix bravo",
+            "c514 delayed shared prefix charlie",
+        ];
+        try
+        {
+            await lane.Queue.EnqueueAsync(lane.SessionId, bodies[0], MessageSendMode.WhenIdle, CancellationToken.None);
+            await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            (await lane.PersistedUserPromptsAsync()).ShouldBe([bodies[0]]);
+            await using (var db = lane.CreateDb())
+                (await SessionMessageQueueService.IsWorkingAsync(db, lane.SessionId, CancellationToken.None)).ShouldBeTrue();
+            foreach (var body in bodies.Skip(1))
+                await lane.Queue.EnqueueAsync(lane.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+            await lane.Queue.FlushSessionAsync(lane.SessionId, CancellationToken.None);
+            lane.ChildFileUserPrompts().ShouldBe([bodies[0]], "a painted idle screen cannot override an uncommitted TurnEnd");
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        (await lane.DrainQueuedPromptsAsync(bodies, TimeSpan.FromSeconds(30)))
+            .ShouldBeTrue("the persisted turn end must wake the next queue delivery. " + await lane.DeliveryEvidenceAsync());
+        lane.ChildFileUserPrompts().ShouldBe(bodies);
+        (await lane.PersistedUserPromptsAsync()).ShouldBe(bodies);
     }
 
     [Test]

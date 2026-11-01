@@ -103,10 +103,33 @@ public sealed class VerifyDindRunnerScriptTests
     }
 
     [Test]
-    public void Containment_residue_counts_subdirectories_only()
+    [Arguments("\n")]
+    [Arguments("\r\n")]
+    public void Containment_residue_counts_subdirectories_only(string lineEnding)
     {
-        var script = Read("scripts/verify-card0604-dind-runner.ps1");
-        script.ShouldContain("find /sys/fs/cgroup/antiphon-custody -mindepth 1 -maxdepth 1 -type d");
+        var script = Read("scripts/verify-card0604-dind-runner.ps1").ReplaceLineEndings(lineEnding);
+        // CARD-1614 counts executions inside namespaces, on v2 or both v1 controllers.
+        script.ShouldContain("source /usr/local/lib/antiphon-custody-common.sh || exit 1");
+        script.ShouldContain("ns=$(custody_read_namespace) || exit 1");
+        foreach (var root in new[]
+        {
+            "/sys/fs/cgroup/antiphon-custody",
+            "/sys/fs/cgroup/pids/antiphon-custody",
+            "/sys/fs/cgroup/freezer/antiphon-custody",
+        })
+            script.ShouldContain("custody_count_execution_trees " + root + " \"$ns\" || exit 1");
+
+        var common = Read("docker/session-runner-grok/antiphon-custody-common.sh").ReplaceLineEndings(lineEnding);
+        var counter = common[common.IndexOf("custody_count_execution_trees()", StringComparison.Ordinal)..];
+        counter.ShouldContain("[ -L \"$ns_path\" ] || [ ! -d \"$ns_path\" ]");
+        counter.ShouldContain("[ -L \"$exec_path\" ] || [ ! -d \"$exec_path\" ]");
+        counter.ShouldContain("procs=\"$exec_path/tree/cgroup.procs\"");
+        script.ShouldContain("$residue.ExitCode -eq 0");
+        script.ShouldContain("$residue.Output -match '(?m)^status=ok$'");
+        script.ShouldContain("$residue.Output -match '(?m)^current=0$'");
+        foreach (var kind in new[] { "current", "foreign", "legacy" })
+            script.ShouldContain("$residue.Output -notmatch '(?m)^" + kind + "=[1-9]'");
+        script.ShouldContain("$residue.Output -notmatch '(?m)^status=read-error$'");
         script.ShouldNotContain("ls -1 /sys/fs/cgroup/antiphon-custody");
     }
 

@@ -124,8 +124,8 @@ public static partial class ClaudeScreen
                 && text.EndsWith('"'));
     }
 
-    /// <summary>The hint bar, and at most a usage banner and an effort row, sit under the composer.</summary>
-    private const int MaxHintRowsBelowComposer = 3;
+    /// <summary>The hint bar, and at most a usage banner, an effort row and a wrapped badge row, sit under the composer.</summary>
+    private const int MaxHintRowsBelowComposer = 4;
 
     /// <summary>
     /// A row of the hint bar under Claude's composer: the permission-mode line, the shortcuts hint,
@@ -142,11 +142,37 @@ public static partial class ClaudeScreen
             || compact.Contains("shifttabtocycle", StringComparison.Ordinal)
             || compact.Contains("autocompact", StringComparison.Ordinal)
             || compact.Contains("usagelimit", StringComparison.Ordinal)
+            // Claude 2.1.310: "You've used 77% of your weekly limit · resets … · /usage-credits …"
+            || (compact.Contains("youveused", StringComparison.Ordinal)
+                && compact.Contains("limit", StringComparison.Ordinal))
+            // Claude 2.1.310: shown under a "[Pasted text #1 +N lines]" draft.
+            || compact.Contains("pasteagaintoexpand", StringComparison.Ordinal)
             || (compact.Contains("effort", StringComparison.Ordinal)
                 && (compact.Contains("low", StringComparison.Ordinal)
                     || compact.Contains("medium", StringComparison.Ordinal)
                     || compact.Contains("high", StringComparison.Ordinal)
-                    || compact.Contains("max", StringComparison.Ordinal)));
+                    || compact.Contains("max", StringComparison.Ordinal)))
+            || IsWrappedHintCommandRow(row);
+    }
+
+    /// <summary>
+    /// The hint bar's right-hand slash-command badges ("/rc", "/effort") wrapped onto a row of
+    /// their own when the bar is wider than the terminal (Claude 2.1.310 added "← for agents"),
+    /// optionally followed by the remote-control status ("/rc connecting…").
+    /// </summary>
+    private static bool IsWrappedHintCommandRow(string row)
+    {
+        var tokens = row.Split([' ', '·', ' '], StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length > 0 && tokens[0] is "/rc" or "/effort"
+            && tokens.All(t => t is "/rc" or "/effort" || IsRemoteControlStatusWord(t));
+    }
+
+    private static bool IsRemoteControlStatusWord(string token)
+    {
+        var word = token.TrimEnd('…', '.');
+        return word.Length > 0 && word.All(char.IsLetter)
+            && (token.EndsWith('…') || token.EndsWith("...", StringComparison.Ordinal)
+                || word is "connected" or "disconnected" or "failed" or "offline");
     }
 
     private static int LastRuleRow(string[] rows, int from)

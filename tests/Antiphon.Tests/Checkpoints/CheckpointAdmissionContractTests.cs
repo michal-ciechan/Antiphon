@@ -2,6 +2,7 @@ using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -12,6 +13,193 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
 {
+    [Test]
+    [Timeout(60_000)]
+    public void C1616_cleanup_does_not_spawn_driver_discovery_for_index_queries(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        CheckpointFixtureProcess.Git(root, "config", "filter.c1616.clean", "c1616-driver-must-not-run");
+        CheckpointFixtureProcess.Git(root, "config", "diff.c1616.textconv", "c1616-driver-must-not-run");
+        var starts = new List<string[]>();
+        var hardened = true;
+        var runner = new CheckpointNativeGitRunner((start, timeout, git) =>
+            CheckpointProcessRunner.RunObserved(start, timeout, git, child =>
+            {
+                var arguments = child.ArgumentList.ToArray();
+                starts.Add(arguments);
+                hardened &= arguments.Contains("core.fsmonitor=false")
+                    && arguments.Contains("diff.external=")
+                    && arguments.Any(arg => arg.StartsWith("core.hooksPath=", StringComparison.Ordinal))
+                    && child.Environment["GIT_OPTIONAL_LOCKS"] == "0"
+                    && child.Environment["GIT_CONFIG_NOSYSTEM"] == "1";
+            }, cancellationToken));
+        var context = new CheckpointCleanupContext(new CheckpointNativeIo(), runner);
+        var write = new CheckpointWrite(context);
+        var ledger = new CheckpointOutputLedger(context);
+        var output = Path.Combine(root, "bin-c1616");
+        write.CreateFreshDirectory(output, write.Under(root)).ShouldBeNull();
+        for (var i = 0; i < 8; i++)
+            write.Text(Path.Combine(output, "payload-" + i), "owned", write.Under(output)).ShouldBeNull();
+        ledger.Seal(output).ShouldBeNull();
+        starts.Clear();
+        ledger.Remove(output).ShouldBeNull();
+        Directory.Exists(output).ShouldBeFalse();
+        var queries = starts.Count(args => args.Contains("ls-files"));
+        var discoveries = starts.Count(args => args.Contains("--get-regexp"));
+        var total = starts.Count;
+        Console.WriteLine($"C1616 cleanup payloads=8 indexQueries={queries} driverDiscoveryProcesses={discoveries} totalProcesses={total}");
+        queries.ShouldBeGreaterThanOrEqualTo(8, "per-entry tracked-file revalidation stays live");
+        hardened.ShouldBeTrue("all index queries retain Git hardening");
+
+        // A later index update must still veto removal; there is no cached Git verdict.
+        var tracked = Path.Combine(root, "bin-c1616-tracked");
+        write.CreateFreshDirectory(tracked, write.Under(root)).ShouldBeNull();
+        var keep = Path.Combine(tracked, "keep.txt");
+        write.Text(keep, "keep", write.Under(tracked)).ShouldBeNull();
+        ledger.Seal(tracked).ShouldBeNull();
+        ledger.Check(tracked).ShouldBeNull();
+        CheckpointFixtureProcess.Git(root, "add", "--", keep);
+        ledger.Remove(tracked).ShouldBe("tracked");
+        File.ReadAllText(keep).ShouldBe("keep");
+
+        var changed = Path.Combine(root, "bin-c1616-changed");
+        write.CreateFreshDirectory(changed, write.Under(root)).ShouldBeNull();
+        var tampered = Path.Combine(changed, "keep.txt");
+        write.Text(tampered, "owned", write.Under(changed)).ShouldBeNull();
+        ledger.Seal(changed).ShouldBeNull();
+        File.WriteAllText(tampered, "changed");
+        ledger.Remove(changed).ShouldContain("output-ledger-mismatch");
+        File.ReadAllText(tampered).ShouldBe("changed");
+        discoveries.ShouldBe(0, "an index-only query cannot invoke named filter/textconv drivers");
+        total.ShouldBe(queries, "one hardened child per index query");
+
+        // Unrecognized option shapes still take the original driver-discovery path.
+        starts.Clear();
+        var optioned = runner.Run(new("git", root,
+            ["-C", root, "ls-files", "--stage", "-z", "--", keep], 10_000));
+        optioned.Exit.ShouldBe(0);
+        optioned.Stdout.ShouldContain("keep.txt");
+        starts.Count(args => args.Contains("--get-regexp")).ShouldBe(1);
+        starts.Count.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task C1616_admitted_build_deadline_preserves_terminal_receipt()
+    {
+        await AssertAdmittedBuildTimeoutAsync(cancelBudget: false);
+    }
+
+    [Test]
+    public async Task C1616_admitted_build_budget_cancellation_is_not_slot_refusal()
+    {
+        await AssertAdmittedBuildTimeoutAsync(cancelBudget: true);
+    }
+
+    private async Task AssertAdmittedBuildTimeoutAsync(bool cancelBudget)
+    {
+        var root = TempDir();
+        Directory.CreateDirectory(Path.Combine(root, "tests", "Proof"));
+        File.WriteAllText(Path.Combine(root, "tests", "Proof", "p.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1616-deadline", Project = "tests/Proof", OutputPath = "bin-c1616-deadline/" }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-c1616-deadline", Filter = "/*/*/Proof/*", After = ["S1"] }],
+        };
+        var clock = new ControlledTimeProvider();
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, async (_, token) =>
+        {
+            if (cancelBudget)
+            {
+                // Expire the run budget after admission, reaching BuildOneAsync's OCE catch.
+                clock.Advance(TimeSpan.FromMinutes(1));
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            return new DriverResult(ExitCodes.Timeout, "", "", Killed: true, TimedOut: true);
+        });
+        var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null,
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), TimeProvider = clock,
+            Slots = new FixedSlotClient("off"), Driver = driver, Output = TextWriter.Null };
+        var run = CheckpointApp.CreateRun(manifest,
+            new RunRequest { Commit = new string('a', 40), Slots = "off", TotalTimeoutMinutes = 1, KeepOutputs = true }, root, runtime);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(5);
+        driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+        driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
+        driver.InFlight.ShouldBe(0);
+        var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+        var reason = cancelBudget ? "execution-budget-exceeded" : "build-deadline-exceeded";
+        state.Builds.Single().TerminalReason.ShouldBe(reason);
+        ReportWriter.RequiredReceiptRefusal(run, state).ShouldBeNull();
+        var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
+        report.ExitCode.ShouldBe(5);
+        report.Verdict.ShouldBe("RED");
+        var row = report.Rows.Single();
+        row.State.ShouldBe(cancelBudget ? "skipped" : reason);
+        row.Executed.ShouldBeNull("an admitted build timeout has no test execution counts");
+        row.Passed.ShouldBeNull();
+        row.Failed.ShouldBeNull();
+        row.Skipped.ShouldBeNull();
+        if (!cancelBudget)
+        {
+            row.ExitCode.ShouldBe(5);
+            row.TerminalReason.ShouldBe(reason);
+        }
+        ReportValidator.Validate(report, new string('a', 40)).ShouldBe("report_failed");
+        (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", Path.Combine(run, "report.json"),
+            "--expected-source-sha", new string('a', 40), "--repo-root", root],
+            new CheckpointApp.Runtime { Output = TextWriter.Null })).ShouldBe(2);
+        var log = File.ReadAllText(Path.Combine(run, "executor.log"));
+        foreach (var phase in new[] { "evidence", "output-discovery", "output-cleanup", "report-publication" })
+            log.ShouldContain($"FINALIZATION phase={phase} seconds=");
+    }
+
+    [Test]
+    public async Task C1616_admission_timeout_publishes_readable_nonexecuted_receipt()
+    {
+        await using var broker = await BuildSlotBrokerFixture.StartAsync(budget: 1);
+        const string endpoint = "http://slots.test/build-slots";
+        const string start = "2026-10-30T00:00:00Z";
+        var holder = new BuildSlotClient(broker.Handler, endpoint, pid: 100, processStartUtc: start);
+        var session = await holder.ProbeAsync(CancellationToken.None);
+        await using var held = await holder.AcquireAsync(session, "held-control", CancellationToken.None);
+        held.State.ShouldBe("granted");
+        var now = DateTimeOffset.UtcNow;
+        var queued = new BuildSlotClient(broker.Recording(), endpoint, pid: 101, processStartUtc: start,
+            wait: TimeSpan.FromSeconds(1), clock: () => now,
+            delay: (_, _) => { now += TimeSpan.FromSeconds(1); return Task.CompletedTask; });
+        var root = TempDir();
+        Directory.CreateDirectory(Path.Combine(root, "tests", "Proof"));
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1616", Project = "tests/Proof", OutputPath = "bin-c1616/" }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-c1616", Filter = "/*/*/Proof/*", After = ["S1"] }],
+        };
+        var driver = new FakeDriver();
+        var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null,
+            SourceCapture = _ => CheckpointFixtures.CleanSource(), Slots = queued, Driver = driver, Output = TextWriter.Null };
+        var run = CheckpointApp.CreateRun(manifest, new RunRequest(), root, runtime);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(4);
+        driver.Starts.ShouldBeEmpty("admission timeout must precede every build and test driver");
+        var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+        state.Phase.ShouldBe("done");
+        state.CreatedOutputPaths.ShouldBeEmpty();
+        ReportWriter.RequiredReceiptRefusal(run, state).ShouldBeNull("terminal admission receipt must pass the production reader");
+        var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
+        report.ExitCode.ShouldBe(4);
+        report.Verdict.ShouldBe("RED");
+        report.OutputNames.ShouldBeEmpty();
+        report.OutputPaths.ShouldBeEmpty();
+        var row = report.Rows.Single();
+        row.State.ShouldBe("slot-timeout");
+        row.Executed.ShouldBe(0);
+        row.ExitCode.ShouldBe(4);
+        row.SlotReason.ShouldBe("build_slot_busy");
+        row.TerminalReason.ShouldBe("slot-admission-deadline-exceeded");
+        Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([report]), "unexecuted evidence cannot qualify");
+        broker.Broker.List().Occupied.ShouldBe(1, "the held control must still own its slot");
+    }
+
     [Test]
     public async Task C1531_inputs_resolve_without_disabling_bounds()
     {

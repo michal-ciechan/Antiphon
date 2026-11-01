@@ -388,7 +388,9 @@ public sealed class CheckCompactionContinuationService
             session.Status = SessionStatus.Stopped;
             session.EndedAt = UtcNow();
             session.TerminationSource = SessionTerminationSource.CompactionContinuationRecovery;
-            session.ExitCode = 0;
+            // Policy-stop compatibility only, not a native wait observation. Unknown signal
+            // remains unknown and a later real observation may enrich this terminal row.
+            session.ExitCode ??= 0;
         }
 
         episode.State = CheckCompactionRecoveryState.Stopped;
@@ -679,6 +681,7 @@ public sealed class CheckCompactionContinuationService
             At = now,
         };
         _db.AgentTaskEvents.Add(failed);
+        await TaskSupervisionNoticeWriter.RecordFailureAsync(_db, task, failed, now, ct);
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
         {
             var note = DelegationReportFormatter.BuildCompletionNote(
@@ -701,6 +704,7 @@ public sealed class CheckCompactionContinuationService
 
         await _db.SaveChangesAsync(ct);
         await _boundary.ReachedAsync("failure-committed", task.Id, ct);
+        _queue?.SupervisionChanged(task.Id);
     }
 
     private async Task CancelRetiredBriefsAsync(CheckCompactionRecovery episode, CancellationToken ct)

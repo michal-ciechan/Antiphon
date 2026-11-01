@@ -38,6 +38,10 @@ tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c835-approval.cs.txt text
 
 # CARD-0490 guest scripts: packaging must preserve LF working-file bytes.
 tests/fixtures/card0490-linux/*.sh text eol=lf
+
+# CARD-1613: the pinned skip attribute and Windows reason baseline are hashed as LF bytes.
+tests/Shared/NativeLinuxOnlyAttribute.cs text eol=lf
+tests/Shared/NativeLinuxWindowsBaseline.json text eol=lf
 docker/session-runner-grok/Dockerfile text eol=lf
 docker-compose.runner-grok.yml text eol=lf
 

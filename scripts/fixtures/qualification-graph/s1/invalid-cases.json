@@ -1,0 +1,566 @@
+[
+  {
+    "id": "missing-platform",
+    "path": "/nodes/0/platformOfRecord",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-role",
+    "path": "/nodes/0/coverageRole",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-profile",
+    "path": "/profile",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/root",
+    "path": "/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/root",
+    "path": "/runId",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/root",
+    "path": "",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/candidate",
+    "path": "/candidate/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/candidate",
+    "path": "/candidate/repositoryId",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/candidate",
+    "path": "/candidate",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/planner",
+    "path": "/planner/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/planner",
+    "path": "/planner/kind",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/planner",
+    "path": "/planner",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/history",
+    "path": "/history/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/history",
+    "path": "/history/fallbackReason",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/history",
+    "path": "/history",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/target",
+    "path": "/targets/0/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/target",
+    "path": "/targets/0/id",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/target",
+    "path": "/targets/0",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/capability",
+    "path": "/targets/0/capability/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/capability",
+    "path": "/targets/0/capability/hostLabel",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/capability",
+    "path": "/targets/0/capability",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/node",
+    "path": "/nodes/0/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/node",
+    "path": "/nodes/0/id",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/node",
+    "path": "/nodes/0",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/selection",
+    "path": "/nodes/3/selection/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/selection",
+    "path": "/nodes/3/selection/expectedCount",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/selection",
+    "path": "/nodes/3/selection",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/estimate",
+    "path": "/nodes/0/estimate/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/estimate",
+    "path": "/nodes/0/estimate/basis",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/estimate",
+    "path": "/nodes/0/estimate",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/priority",
+    "path": "/nodes/0/priority/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/priority",
+    "path": "/nodes/0/priority/rank",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/priority",
+    "path": "/nodes/0/priority",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "unknown-field/edge",
+    "path": "/edges/0/fixtureUnexpected",
+    "op": "set",
+    "value": true,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "missing-other/edge",
+    "path": "/edges/0/from",
+    "op": "remove",
+    "value": null,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "wrong-type/edge",
+    "path": "/edges/0",
+    "op": "set",
+    "value": 42,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "version/0",
+    "path": "/schemaVersion",
+    "op": "set",
+    "value": 0,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "version/2",
+    "path": "/schemaVersion",
+    "op": "set",
+    "value": 2,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "version/string",
+    "path": "/schemaVersion",
+    "op": "set",
+    "value": "1",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "platform-enum",
+    "path": "/nodes/0/platformOfRecord",
+    "op": "set",
+    "value": "Solaris",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "role-enum",
+    "path": "/nodes/0/coverageRole",
+    "op": "set",
+    "value": "optional",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "digest",
+    "path": "/policyDigest",
+    "op": "set",
+    "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "sha",
+    "path": "/candidate/sourceSha",
+    "op": "set",
+    "value": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "number-type",
+    "path": "/nodes/3/selection/expectedCount",
+    "op": "set",
+    "value": "2",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "number-range",
+    "path": "/targets/0/parallelism",
+    "op": "set",
+    "value": 0,
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "phase-enum",
+    "path": "/phase",
+    "op": "set",
+    "value": "other",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "kind-enum",
+    "path": "/nodes/0/kind",
+    "op": "set",
+    "value": "other",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "edge-enum",
+    "path": "/edges/0/condition",
+    "op": "set",
+    "value": "other",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "date-format",
+    "path": "/history/closedAtUtc",
+    "op": "set",
+    "value": "2026-02-31T00:00:00Z",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "live-provider/target",
+    "path": "/targets/0/capability/liveProvider",
+    "op": "set",
+    "value": "Claude",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "live-provider/node",
+    "path": "/nodes/0/requires/liveProvider",
+    "op": "set",
+    "value": "Claude",
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "live-quota",
+    "path": "/targets/0/quota",
+    "op": "set",
+    "value": {
+      "authorizationDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "maxPrompts": 1,
+      "maxExecutionSeconds": 1
+    },
+    "boundary": "schema",
+    "category": "schema"
+  },
+  {
+    "id": "profile-foreign",
+    "path": "/profile",
+    "op": "set",
+    "value": "foreign",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "policy-foreign",
+    "path": "/policyDigest",
+    "op": "set",
+    "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "roster-foreign",
+    "path": "/rosterDigest",
+    "op": "set",
+    "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "platform-forged",
+    "path": "/nodes/0/platformOfRecord",
+    "op": "set",
+    "value": "Any",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "role-flipped/required-to-diagnostic",
+    "path": "/nodes/0/coverageRole",
+    "op": "set",
+    "value": "diagnostic",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "role-flipped/diagnostic-to-required",
+    "path": "/nodes/4/coverageRole",
+    "op": "set",
+    "value": "required",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "action-unknown",
+    "path": "/nodes/0/action",
+    "op": "set",
+    "value": "unknown",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "live-action",
+    "path": "/nodes/0/action",
+    "op": "set",
+    "value": "live.Claude",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "project-unknown",
+    "path": "/nodes/0/project",
+    "op": "set",
+    "value": "tests/Other/Other.csproj",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "path-alias/traversal",
+    "path": "/nodes/0/project",
+    "op": "set",
+    "value": "tests/Fixture/../Fixture/Fixture.csproj",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "path-alias/case",
+    "path": "/nodes/0/project",
+    "op": "set",
+    "value": "tests/fixture/Fixture.csproj",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "target-unknown",
+    "path": "/targets/0/id",
+    "op": "set",
+    "value": "unknown",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "live-target",
+    "path": "/targets/0/id",
+    "op": "set",
+    "value": "live-Claude",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "binding-wrong",
+    "path": "/targets/0/bindingDigest",
+    "op": "set",
+    "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "node-kind",
+    "path": "/nodes/3/kind",
+    "op": "set",
+    "value": "selection",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "selection/filter",
+    "path": "/nodes/3/selection/filter",
+    "op": "set",
+    "value": "/*/*/*/*",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "selection/uid",
+    "path": "/nodes/3/selection/uidSetDigest",
+    "op": "set",
+    "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "boundary": "identity",
+    "category": "identity"
+  },
+  {
+    "id": "selection/count",
+    "path": "/nodes/3/selection/expectedCount",
+    "op": "set",
+    "value": 1,
+    "boundary": "identity",
+    "category": "identity"
+  }
+]

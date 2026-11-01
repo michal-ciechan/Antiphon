@@ -22,6 +22,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Bootstrap, AppHost, Docker, ports, logging, scheduled tasks, and recovery | [docs/bootstrap.md](docs/bootstrap.md) |
 | Staged remote Docker rollout and server2 runner handoff | [docs/docker-stack.md](docs/docker-stack.md#staged-server2-rolling-rollout-card-0934) |
 | Tests, builds, E2E diagnostics, and test-time process safety | [docs/testing-and-build.md](docs/testing-and-build.md) |
+| Antiphon rc qualification: watchers, failure repair, integration and rerun obligations | [.claude/skills/antiphon-rc-qualification/SKILL.md](.claude/skills/antiphon-rc-qualification/SKILL.md) |
 | Test performance, timeouts, setup sharing, observability | [docs/test-performance-standards.md](docs/test-performance-standards.md) |
 | Nightly backstop, watchdog and qualification | [docs/nightly-watchdog.md](docs/nightly-watchdog.md), [docs/testing-and-build.md](docs/testing-and-build.md) (Nightly) |
 | Long-lived `rc/YYYY-MM-DD` line, `vYYYY.MM.DD.N-rc.K` pre-release tags, final CalVer tags, RC coverage, Interim activation | [docs/release-gates.md](docs/release-gates.md) |

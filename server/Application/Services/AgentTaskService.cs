@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -80,6 +81,9 @@ public sealed class AgentTaskService
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
     private readonly SessionMessageQueueService? _messageQueue;
+    // CARD-1610. Optional. Absent, a Failed task's detail cannot tell a fresh listed seat from
+    // an unconfirmed one and reports the release as unknown.
+    private readonly SeatOccupancyState? _seats;
 
     public AgentTaskService(
         AppDbContext db,
@@ -120,8 +124,10 @@ public sealed class AgentTaskService
         AgentTaskWorktreeBaseResolver? baseResolver = null,
         SessionMessageQueueService? messageQueue = null,
         IServiceScopeFactory? seatReleaseScopes = null,
-        DispatchConcurrencySettingsService? dispatchConcurrency = null)
+        DispatchConcurrencySettingsService? dispatchConcurrency = null,
+        SeatOccupancyState? seats = null)
     {
+        _seats = seats;
         _dispatchConcurrency = dispatchConcurrency;
         _seatReleaseScopes = seatReleaseScopes;
         _messageQueue = messageQueue;
@@ -1614,6 +1620,8 @@ public sealed class AgentTaskService
                         && e.AgentTaskId == handoff.PredecessorTaskId && e.Type == AgentTaskEventType.Completed
                         && e.At == predecessor.CompletedAt && e.At == handoff.SettledAt, ct))
                     throw new ConflictException("The handoff predecessor changed.", "handoff_predecessor_changed");
+                if (await TaskSuccessorFence.ReasonAsync(_db, predecessor, ct) is { } successorReason)
+                    throw new ConflictException(successorReason, "handoff_successor_held");
                 if (admissionCard?.ActiveWorkflowRunId != handoff.WorkflowRunId)
                     throw new ConflictException("The handoff workflow changed.", "handoff_workflow_changed");
                 if (handoff.WorkflowRunId is Guid runId)
@@ -2624,9 +2632,10 @@ public sealed class AgentTaskService
         var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
         var (items, excluded) = AgentTaskScope.Partition(candidates, labels, scope);
         var models = await LoadEffectiveModelIdsAsync(items, ct);
+        var rollup = AgentTaskCostWalk.Rollup(candidates);
         return new AgentTaskListEnvelopeDto(
             AgentTaskScope.Echo(scope, labels),
-            items.Select(t => ToSummary(t, candidates, labels, RecordedEffectiveModel(t, models))).ToList(),
+            items.Select(t => ToSummary(t, rollup, labels, RecordedEffectiveModel(t, models))).ToList(),
             excluded);
     }
 
@@ -2823,6 +2832,7 @@ public sealed class AgentTaskService
             catch (JsonException) { }
         }
         AgentTaskSessionDto? sessionDetail = null;
+        FailedTaskSessionFactsDto? failedSession = null;
         if (task.AgentSessionId is Guid sessionId)
         {
             var session = await _db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
@@ -2834,6 +2844,27 @@ public sealed class AgentTaskService
                     .Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (DateTime?)t.CreatedAt, ct);
                 sessionDetail = new AgentTaskSessionDto(sessionId, session.Status, working,
                     session.LastSeenAt, session.EndedAt, lastTranscriptAt);
+                if (task.Status == AgentTaskStatus.Failed
+                    && session.Status is SessionStatus.Created or SessionStatus.Starting
+                        or SessionStatus.Running or SessionStatus.Stopping)
+                {
+                    var owners = await FailedTaskSessionOwnership.CurrentOwnersAsync(
+                        _db,
+                        new Dictionary<Guid, (SessionStatus Status, DateTime StartedAt)>
+                        {
+                            [session.Id] = (session.Status, session.StartedAt),
+                        },
+                        ct);
+                    if (owners.TryGetValue(session.Id, out var owner) && owner.Id == task.Id)
+                    {
+                        failedSession = FailedTaskSessionFacts.Describe(
+                            task, session, working, _seats?.Current, _timeProvider.GetUtcNow().UtcDateTime,
+                            (await _db.TaskSupervisionNotices.AsNoTracking().Where(n => n.TaskId == task.Id
+                                    && n.Attempt == task.Attempt && n.Purpose == TaskSupervisionNoticePurpose.FailureDelegate)
+                                .OrderByDescending(n => n.CreatedAt).Select(n => (TaskSupervisionNoticeState?)n.State)
+                                .FirstOrDefaultAsync(ct))?.ToString());
+                    }
+                }
             }
         }
         return new AgentTaskDetailDto(
@@ -2874,7 +2905,14 @@ public sealed class AgentTaskService
                 .OrderByDescending(d => d.CreatedAt).ThenByDescending(d => d.Id)
                 .Select(d => new TaskSyncDebtDto(d.Id, d.State.ToString(), d.SourceSha,
                     d.ConfirmedSha, d.ReasonCode, d.Attempts, d.NextAttemptAt, d.SourceReadyAt))
-                .FirstOrDefaultAsync(ct));
+                .FirstOrDefaultAsync(ct),
+            FailedSession: failedSession,
+            CeilingHold: await CeilingHoldFacts.DescribeAsync(_db, task, UtcNow(), _settings, ct),
+            SupervisionNotices: (await _db.TaskSupervisionNotices.AsNoTracking().Where(n => n.TaskId == task.Id)
+                .OrderByDescending(n => n.CreatedAt).ThenBy(n => n.Id).Take(32).ToListAsync(ct))
+                .Select(n => new TaskSupervisionNoticeDto(n.Id, n.Purpose.ToString(), n.State.ToString(), n.ReasonCode,
+                    n.Attempt, n.RecipientSessionId, n.QueueMessageId, n.ToldAt, n.ConfirmingPromptSequence, n.ReportDigest,
+                    n.ReportFromSequence is { } from ? $"/api/sessions/{n.SessionId:D}/transcript?since={from - 1}" : null)).ToList());
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>
@@ -2936,8 +2974,27 @@ public sealed class AgentTaskService
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct, string? reason = null)
     {
+        var observed = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), id);
+        var gate = (observed.Status == AgentTaskStatus.Working || observed.CeilingHeldAt is not null)
+            && observed.AgentSessionId is { } sessionId ? _messageQueue?.GetLock(sessionId) : null;
+        if (gate is not null) await gate.WaitAsync(ct);
+        AgentTask canceled;
+        try
+        {
+            canceled = await CancelCoreAsync(id, observed.Attempt, observed.AgentSessionId, reason, ct);
+        }
+        finally { gate?.Release(); }
+        return await AfterCancelCommitAsync(canceled, ct);
+    }
+
+    private async Task<AgentTask> CancelCoreAsync(Guid id, int attempt, Guid? sessionId, string? reason, CancellationToken ct)
+    {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.Attempt != attempt || task.AgentSessionId != sessionId)
+            throw new ConflictException("The task attempt changed before cancellation.");
 
         if (IsSettled(task.Status))
             throw new ConflictException($"Task {DelegationReportFormatter.Short(id)} has already finished.");
@@ -2961,6 +3018,13 @@ public sealed class AgentTaskService
         AddEvent(task.Id, AgentTaskEventType.Canceled, null, trimmed is null ? "Canceled." : "Canceled: " + trimmed, now);
         await MergeHelperOutcome.RecordUnresolvedAsync(_db, task, now, ct);
         await _db.SaveChangesAsync(ct);
+        return task;
+    }
+
+    // Seat and workspace release probe the queue gate themselves. Only the Canceled
+    // commit belongs inside that gate; Continue must reload the terminal row afterward.
+    private async Task<AgentTaskSummaryDto> AfterCancelCommitAsync(AgentTask task, CancellationToken ct)
+    {
         if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
         if (_seatReleaseScopes is not null)
         {
@@ -2971,7 +3035,7 @@ public sealed class AgentTaskService
         // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.
         if (_workspaceUse is not null)
             await _workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);
-        await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
+        await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
 
         return await SummaryOfAsync(task, ct);
     }
@@ -3866,6 +3930,7 @@ public sealed class AgentTaskService
 
         var now = UtcNow();
         task.Attempt++;
+        CeilingHoldFacts.Reset(task);
         if (acceptedAnswerId is null)
         {
             task.ReleasedSeatAnswer = null;
@@ -4672,24 +4737,22 @@ public sealed class AgentTaskService
         CancellationToken ct)
     {
         var models = await LoadEffectiveModelIdsAsync([task], ct);
-        return ToSummary(task, family, labels, RecordedEffectiveModel(task, models));
+        return ToSummary(task, AgentTaskCostWalk.Rollup(family), labels, RecordedEffectiveModel(task, models));
     }
 
-    private static AgentTaskSummaryDto ToSummary(
+    internal static AgentTaskSummaryDto ToSummary(
         AgentTask task,
-        IReadOnlyList<AgentTask> family,
+        IReadOnlyDictionary<Guid, AgentTaskSubtreeFigures> rollup,
         AgentTaskScopeLabels labels,
         string? effectiveModelId = null)
     {
-        // Walk the parent chain rather than recursing children — the same O(n) pass answers both
-        // "my subtree's cost" and "my child count" for every row in a run.
-        var subtreeCost = AgentTaskCostWalk.Calculate([task], family)[task.Id];
-        var childCount = 0;
-        foreach (var other in family)
-        {
-            if (other.Id == task.Id) continue;
-            if (other.ParentTaskId == task.Id) childCount++;
-        }
+        // ListAsync rolls the whole candidate family up once. A missing id is the task's own cost.
+        // The caller's row wins when it is a different instance from the family copy, the same
+        // adjustment Calculate applies.
+        if (!rollup.TryGetValue(task.Id, out var figures))
+            figures = new AgentTaskSubtreeFigures(task.CostUsd, 0, task.CostUsd);
+        var subtreeCost = figures.SubtreeCostUsd + (task.CostUsd - figures.StoredCostUsd);
+        var childCount = figures.ChildCount;
 
         var resolved = AgentTaskScope.Resolve(task, labels);
         return new AgentTaskSummaryDto(
@@ -4786,19 +4849,29 @@ public sealed class AgentTaskService
 
     /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board
     /// does — two answers to "what has this run cost" would eventually differ.</summary>
-    internal static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family)
+    internal static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family) =>
+        IsDescendantOf(candidate, ancestorId, AgentTaskCostWalk.IndexById(family), family.Count);
+
+    internal static bool IsDescendantOf(
+        AgentTask candidate,
+        Guid ancestorId,
+        IReadOnlyDictionary<Guid, AgentTask> byId,
+        int familyCount)
     {
         var seen = 0;
         var current = candidate;
         while (current.ParentTaskId is { } parentId)
         {
-            if (parentId == ancestorId) return true;
+            if (parentId == ancestorId)
+                return true;
             // A cycle can't happen through the API, but a hand-edited row shouldn't hang the server.
-            if (++seen > family.Count) return false;
-            var next = family.FirstOrDefault(t => t.Id == parentId);
-            if (next is null) return false;
+            if (++seen > familyCount)
+                return false;
+            if (!byId.TryGetValue(parentId, out var next))
+                return false;
             current = next;
         }
+
         return false;
     }
 

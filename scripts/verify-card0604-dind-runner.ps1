@@ -308,14 +308,20 @@ try {
 
             # Step 15: nothing is left behind. A surviving cgroup would make the next execution's
             # "exists and is empty" precondition fail for a reason nobody could see.
-            $residue = Invoke-Docker @('exec', '--user', '1654:1654', $containerName, '/bin/sh', '-c',
-                'find /sys/fs/cgroup/antiphon-custody -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l') 'containment-residue.txt'
+            $residue = Invoke-Docker @('exec', '--user', '1654:1654', $containerName, 'bash', '-c',
+                'source /usr/local/lib/antiphon-custody-common.sh || exit 1; ns=$(custody_read_namespace) || exit 1; if [ -f /sys/fs/cgroup/cgroup.controllers ]; then custody_count_execution_trees /sys/fs/cgroup/antiphon-custody "$ns" || exit 1; else custody_count_execution_trees /sys/fs/cgroup/pids/antiphon-custody "$ns" || exit 1; printf "controller=freezer\n"; custody_count_execution_trees /sys/fs/cgroup/freezer/antiphon-custody "$ns" || exit 1; fi') 'containment-residue.txt'
 
             $ownershipOk = $custody.Output -match 'root:root:755' -and $custody.Output -match 'root:root:440'
             $grantOk = $custody.Output -match 'antiphon-custody-enter' -and $custody.Output -match 'antiphon-custody-kill'
             $advertised = $capabilities.Output -match 'linux-cgroup-v1' -and $capabilities.Output -notmatch 'windows-job-v1'
             $probeOk = $probe.ExitCode -eq 0 -and $probe.Output -match 'containment=ok'
-            $residueOk = ($residue.Output -replace '\s', '') -eq '0'
+            $residueOk = $residue.ExitCode -eq 0 -and
+                $residue.Output -match '(?m)^status=ok$' -and
+                $residue.Output -match '(?m)^current=0$' -and
+                $residue.Output -notmatch '(?m)^current=[1-9]' -and
+                $residue.Output -notmatch '(?m)^foreign=[1-9]' -and
+                $residue.Output -notmatch '(?m)^legacy=[1-9]' -and
+                $residue.Output -notmatch '(?m)^status=read-error$'
 
             if ($advertised -and $ownershipOk -and $grantOk -and $probeOk -and $residueOk) {
                 $containmentState = 'ok'

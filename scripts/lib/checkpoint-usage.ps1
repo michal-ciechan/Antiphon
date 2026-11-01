@@ -669,9 +669,6 @@ function Get-NamespaceCensus {
         windowsSkips = @(
             'Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*'
             'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
-            'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.*'
-            'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.*'
-            'Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests.*'
             'Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests.*'
             'Antiphon.Tests.Checkpoints.SafeDeleteProcessBoundaryTests.*'
             'Antiphon.Tests.Checkpoints.CheckpointFixtureProcessTests.*'
@@ -684,6 +681,7 @@ function Get-NamespaceCensus {
             'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_arguments_round_trip_intact'
             'Antiphon.Tests.Checkpoints.TimeoutTests.windows_chatty_row_drains_interleaved_stdout_and_stderr'
             'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_timeout_kills_the_start_b_grandchild'
+            'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.windows_confined_build_leaves_use_app_host_unset'
         )
     }
 }

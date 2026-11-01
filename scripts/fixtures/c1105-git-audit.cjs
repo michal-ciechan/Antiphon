@@ -17,6 +17,82 @@ function block(name) {
     assert.ok(start > 0, name);
     return source.slice(start, source.indexOf('\n}\n', start) + 3);
 }
+// Resume pastes production functions. A later call must be pasted or stubbed;
+// commenting out a name is not a call. c1008_forward_host_proof is the witness.
+const resumeStubs = new Set(['c1008_volume', 'c1008_save', 'c1008_refuse', 'c1008_git_program']);
+const resumeRoots = ['c1008_resolve_audit_cap', 'c1008_audit', 'c1008_audit_checked'];
+function stripShellComments(text) {
+    return text.split('\n').map(line => {
+        let quote = '';
+        for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (quote) {
+                if (c === quote && line[i - 1] !== '\\') quote = '';
+                continue;
+            }
+            if (c === '"' || c === "'") { quote = c; continue; }
+            if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i).replace(/\s+$/, '');
+        }
+        return line;
+    }).join('\n');
+}
+function definedFunctionNames(text) {
+    return [...text.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)\(\) \{$/gm)].map(match => match[1]);
+}
+function calledFunctions(body, universe) {
+    const text = stripShellComments(body);
+    const found = [];
+    for (const name of universe) {
+        const re = new RegExp('(?:^|[^A-Za-z0-9_])' + name + '(?![A-Za-z0-9_])', 'g');
+        let match;
+        while ((match = re.exec(text))) {
+            const lineStart = text.lastIndexOf('\n', match.index) + 1;
+            const lineEnd = text.indexOf('\n', match.index);
+            const line = text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd);
+            if (line.startsWith(name + '() {')) continue;
+            found.push(name);
+            break;
+        }
+    }
+    return found;
+}
+function resumeCallerSlice() {
+    const start = source.indexOf('    c1008_audit_checked; audit="$C1008_AUDIT"');
+    const end = source.indexOf('    while IFS= read -r id;', start);
+    assert.ok(start > 0 && end > start, 'resume caller slice');
+    return source.slice(start, end);
+}
+function resumeExtraction(slice) {
+    const universe = new Set(definedFunctionNames(source));
+    const queue = [...resumeRoots];
+    for (const call of calledFunctions(slice, universe)) queue.push(call);
+    const seen = new Set();
+    const order = [];
+    while (queue.length) {
+        const name = queue.shift();
+        if (seen.has(name) || resumeStubs.has(name)) continue;
+        assert.ok(universe.has(name), 'resume extraction calls ' + name + ', which c590-remote.sh does not define');
+        seen.add(name);
+        order.push(name);
+        for (const call of calledFunctions(block(name), universe)) queue.push(call);
+    }
+    order.sort((a, b) => source.indexOf('\n' + a + '() {') - source.indexOf('\n' + b + '() {'));
+    const bodies = order.map(name => block(name)).join('\n');
+    const defined = new Set([...resumeStubs, ...definedFunctionNames(bodies)]);
+    const missing = [];
+    for (const name of definedFunctionNames(bodies)) {
+        for (const call of calledFunctions(block(name), universe)) {
+            if (!defined.has(call)) missing.push(name + ' calls ' + call + ', which is not in the extracted set');
+        }
+    }
+    for (const call of calledFunctions(slice, universe)) {
+        if (!defined.has(call)) missing.push('resume caller calls ' + call + ', which is not in the extracted set');
+    }
+    assert.deepEqual(missing, [], 'resume extraction is not closed:\n' + missing.join('\n'));
+    assert.ok(bodies.includes('\nc1008_forward_host_proof() {') || bodies.startsWith('c1008_forward_host_proof() {'),
+        'resume extraction omitted c1008_forward_host_proof');
+    return bodies;
+}
 function remove(target) {
     assert.ok(fs.realpathSync(target).startsWith(fs.realpathSync(root) + '/'));
     fs.rmSync(target, {recursive: true});
@@ -664,6 +740,11 @@ const hidden = {
     'antiphon-symlink': [P, () => { put('antiphon/landing.lock', ''); fs.symlinkSync('landing.lock', gd('antiphon/linked.lock')); }],
 };
 try {
+    if (mode === 'closure') {
+        resumeExtraction(resumeCallerSlice());
+        console.log('PASS closure');
+        process.exitCode = 0;
+    } else {
     setup(); helper();
     let expected = 'RecycleUnpublishedWork', expectedCheck, after = () => {};
     switch (mode) {
@@ -779,10 +860,9 @@ try {
             const proof = audit(); assert.equal(proof.status, 0, proof.stdout);
             const initial = {image:'sha256:'+'a'.repeat(64), volumes:{antiphon_runner_work:{}}, phase:'preflight', audit:proof.stdout.trim().split('\n').sort().join('\n')};
             const journal = path.join(root,'journal.json'); fs.writeFileSync(journal, JSON.stringify(initial));
-            const start = source.indexOf('    c1008_audit_checked; audit="$C1008_AUDIT"'), end = source.indexOf('    while IFS= read -r id;', start);
-            assert.ok(start > 0 && end > start);
+            const slice = resumeCallerSlice();
             const wrapper = `set -euo pipefail\nC1008_PROJECT=antiphon-runner\nC1008_RESUME=1\nC1008_RECORD="$(cat "$C1105_JOURNAL")"\nc1008_volume() { echo '{}'; }\nc1008_save() { printf '%s' "$C1008_RECORD" > "$C1105_JOURNAL"; }\nc1008_refuse() { echo "$1"; exit 2; }\nc1008_git_program() { cat "$C1105_HELPER"; }\ndocker() { case "$1 $2" in 'image inspect') echo sha256:${'a'.repeat(64)} ;; 'create --user') echo ${'b'.repeat(64)} ;; 'start -a') bash "$C1105_HELPER" ;; 'rm --') return 0 ;; *) return 2 ;; esac; }\n`;
-            const script = path.join(root,'resume.sh'); fs.writeFileSync(script, wrapper + block('c1008_resolve_audit_cap') + '\n' + block('c1008_audit') + '\n' + block('c1008_audit_checked') + '\n' + source.slice(start,end));
+            const script = path.join(root,'resume.sh'); fs.writeFileSync(script, wrapper + resumeExtraction(slice) + '\n' + slice);
             const opts = {env:{...env, C1105_WORK:work, C1105_HELPER:path.join(root,'helper.sh'), C1105_RUNNER_TMP:runnerTmp, C1105_JOURNAL:journal}, encoding:'utf8'};
             git('remote','set-url','origin',path.join(root,'absent'));
             const failed = cp.spawnSync('bash',[script],opts); assert.equal(failed.status,2,failed.stdout); assert.match(failed.stdout,/RecycleGitAuditUnknown/);
@@ -805,5 +885,6 @@ try {
         else assert.match(result.stdout, /repositories=\d+ partial=\d+/);
         after();
         console.log('PASS ' + mode);
+    }
     }
 } finally { if (fs.existsSync(root)) { assert.ok(root.startsWith('/tmp/c1105-audit-')); fs.rmSync(root,{recursive:true}); } }

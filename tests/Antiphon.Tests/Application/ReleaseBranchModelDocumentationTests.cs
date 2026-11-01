@@ -40,4 +40,18 @@ public sealed class ReleaseBranchModelDocumentationTests
         })
             Read(relative).ShouldContain("rc/YYYY-MM-DD", Case.Sensitive, string.Join('/', relative));
     }
+
+    [Test]
+    public void C1199_FinalClosureDocumentation()
+    {
+        var text = Read("docs", "release-gates.md");
+        text.ShouldContain("CARD-1199 runtime skip census: 0 of 35.", Case.Sensitive,
+            "c1199-doc-runtime-closure: S-C2 removed the last three runtime gates");
+        text.ShouldContain("Native Windows verification remains owed", Case.Sensitive,
+            "c1199-doc-native-incomplete: gate removal is not a native execution receipt");
+        text.ShouldContain("S-F-cost requires S3 admission on its target base", Case.Sensitive,
+            "c1199-doc-cost-prerequisite: successful native class costs are still required");
+        text.ShouldContain("R-2 junction and custody qualification stays pending/required", Case.Sensitive);
+        text.ShouldNotContain("Ten shape mutations, eight tracked-baseline cases, and five\nconfinement cases stay runtime-skipped", Case.Sensitive);
+    }
 }

@@ -231,12 +231,25 @@ public static class AgentTaskEndpoints
             ReplyToAgentTaskRequest request,
             AgentTaskService service,
             AgentTaskReplyService replies,
+            HttpContext http,
+            IOptions<PhoneHomeRunnerSettings> operatorSettings,
             CancellationToken ct) =>
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
+            if (request.CeilingAction is not null || request.EpisodeId is not null || request.ExtendMinutes is not null
+                || request.OperatorExtend || request.CeilingReason is not null)
+            {
+                CeilingOperatorAuthorization? authority = null;
+                if (request.OperatorExtend)
+                {
+                    OperatorCredential.Require(http, operatorSettings.Value, "Operator Extend requires the operator credential.");
+                    authority = new("operator");
+                }
+                return Results.Ok(await replies.AnswerCeilingAsync(taskId, request, authority, ct));
+            }
             return Results.Ok(await replies.AnswerAsync(
                 taskId,
-                request.Message,
+                request.Message ?? "",
                 request.Origin ?? AnswerOrigin.Web,
                 request.Round,
                 ct));

@@ -161,6 +161,30 @@ fi
 # Nothing under the custody root is chowned to the app uid: the child must not be able to
 # leave the cgroup it is placed in.
 
+# --- step 3b: custody namespace (CARD-1614) -------------------------------------------
+# A failed namespace leaves custody unadvertised. It must not refuse dockerd or the runner.
+# The guid is never printed. Success does not turn qualification on.
+# The library is sourced only when it is readable. A missing library is the same
+# custody-unready continuation as a failed boot, not an entrypoint refusal.
+if [ -r /usr/local/lib/antiphon-custody-common.sh ]; then
+  # shellcheck disable=SC1091
+  # A readable library that fails to load is the same continuation as a missing
+  # one. The step call stays bare: its own failure path returns 0.
+  if source /usr/local/lib/antiphon-custody-common.sh \
+    && declare -F custody_namespace_entrypoint_step >/dev/null 2>&1; then
+    custody_namespace_entrypoint_step \
+      /var/lib/antiphon-custody \
+      /run/antiphon-custody \
+      /usr/local/lib/antiphon-custody-common.sh
+  else
+    echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2 || true
+    export SessionRunner__LinuxCustodyQualified=false || true
+  fi
+else
+  echo "C604_ENTRYPOINT_NOTE CustodyNamespaceUnready" >&2 || true
+  export SessionRunner__LinuxCustodyQualified=false || true
+fi
+
 # --- step 4: iptables backend (D-4) ---------------------------------------------------
 if ! iptables -nL >/dev/null 2>&1; then
   refuse IptablesUnusable

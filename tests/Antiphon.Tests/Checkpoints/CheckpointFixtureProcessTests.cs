@@ -4,6 +4,7 @@ using System.Text;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -13,6 +14,7 @@ namespace Antiphon.Tests.Checkpoints;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
 {
+    [NativeLinuxOnly("FIFO config proof runs on Linux")]
     [Test]
     [Timeout(60_000)]
     public async Task fixture_git_blocked_opening_its_config_fails_within_the_limit(CancellationToken cancellationToken)
@@ -52,6 +54,7 @@ public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
         }
     }
 
+    [NativeLinuxOnly("process-group custody proof runs on Linux")]
     [Test]
     [Timeout(60_000)]
     public async Task fixture_child_whose_descendant_holds_a_pipe_fails_within_the_limit_and_is_killed(CancellationToken cancellationToken)

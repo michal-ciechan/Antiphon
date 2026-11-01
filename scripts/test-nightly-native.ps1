@@ -22,6 +22,7 @@ function Assert-Native([bool]$Condition, [string]$Label) {
     $script:passed++
     Write-Host ('PASS C1039 ' + $Label)
 }
+. (Join-Path $PSScriptRoot 'test-rc-speed-os-witness.ps1')
 function Wait-Native([scriptblock]$Condition, [string]$Label) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while (-not (& $Condition)) {
@@ -201,6 +202,10 @@ try {
             Assert-Native ($refused.WaitForExit(1000)) 'assignment refusal exact root handle signalled'
         }
         'C1039_DescendantExit' {
+            $witnessRoot = Join-Path $ResultsDirectory 'owner exit witness'
+            $null = New-Item -ItemType Directory -Path $witnessRoot
+            $script:roots += $witnessRoot
+            $script:owners += Invoke-RcWindowsOwnerExitWitness -FilePath $FixtureExecutable -WorkingDirectory $witnessRoot -TimeoutMilliseconds 30000 -LogPath (Join-Path $witnessRoot 'native.log')
             $r = New-NativeRun 'child held' 'descendant'
             Wait-Native { $r.Owner.Observation.Pid -gt 0 } 'root identity'
             $rootHandle = [Diagnostics.Process]::GetProcessById($r.Owner.Observation.Pid)
@@ -213,6 +218,12 @@ try {
             $result = Complete-Native $r
             Assert-Native ($child.WaitForExit(1000) -and $result.RemainingProcessCount -eq 0) 'independent child handle and zero job count'
             Assert-Native ($result.DescendantIdentities.Count -gt 0) 'descendant start identities recorded'
+            $childImages = @(for ($i = 0; $i -lt $result.DescendantIdentities.Count; $i++) {
+                if ($result.DescendantIdentities[$i].StartsWith([string]$child.Id + ':')) {
+                    $result.DescendantImages[$i]
+                }
+            })
+            Assert-Native ($childImages.Count -eq 1 -and $childImages[0] -ceq [IO.Path]::GetFileNameWithoutExtension($FixtureExecutable)) 'descendant image survives process exit'
             $r = New-NativeRun 'root wait held' 'root-held' @('root-wait') $false $true
             Wait-Native { Test-Path (Join-Path $r.Root 'root-wait.entered') } 'root wait barrier'
             $rootHandle = [Diagnostics.Process]::GetProcessById($r.Owner.Observation.Pid)
@@ -267,9 +278,9 @@ while (!(Test-Path (Join-Path $Root 'child.pid'))) { Start-Sleep -Milliseconds 1
                 $guardRoot = Join-Path $ResultsDirectory 'packaged admission'
                 $null = New-Item -ItemType Directory -Path $guardRoot
                 $script:roots += $guardRoot
-                $raw = [Antiphon.Nightly.NativeProcessOwner]::Start($packaged[0],
-                    [string[]]@('-NoProfile','-File',$childScript,'-Root',$guardRoot,'-Fixture',$FixtureExecutable),
-                    $guardRoot, 30000, (Join-Path $guardRoot 'native.log'), $null, $null)
+                $raw = Invoke-RcWindowsNativeProcessOwner -FilePath $packaged[0] `
+                    -ArgumentList ([string[]]@('-NoProfile','-File',$childScript,'-Root',$guardRoot,'-Fixture',$FixtureExecutable)) `
+                    -WorkingDirectory $guardRoot -TimeoutMilliseconds 30000 -LogPath (Join-Path $guardRoot 'native.log')
                 $script:owners += $raw
                 Wait-Native { $raw.Completion.IsCompleted } 'packaged admission refusal'
                 $refused = $raw.Completion.GetAwaiter().GetResult()

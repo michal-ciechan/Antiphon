@@ -5,9 +5,11 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.TestSupport;
 
 namespace Antiphon.Tests.Scripts;
 
+[NativeLinuxOnly("CARD-1210: C1025/C1058 host jq contracts require native Linux (bash, flock, /proc/self/fd, GNU coreutils); Windows skips explicitly.")]
 [Timeout(600_000)]
 [Category("Unit")]
 public sealed class HostJqPrerequisiteScriptTests

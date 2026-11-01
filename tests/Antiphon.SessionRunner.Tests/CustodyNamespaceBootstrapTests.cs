@@ -1,0 +1,598 @@
+using System.Diagnostics;
+using Antiphon.TestSupport;
+using Shouldly;
+using TUnit.Core;
+using TUnit.Core.Exceptions;
+
+namespace Antiphon.SessionRunner.Tests;
+
+/// <summary>
+/// CARD-1614: namespace boot and residue counting over a private filesystem.
+/// The extracted shell is what runs; these methods do not touch a live cgroup.
+/// </summary>
+[NativeLinuxOnly("Linux custody namespace shell executes on Linux only.")]
+[Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class CustodyNamespaceBootstrapTests
+{
+    private static readonly string[] ComposeFiles =
+    [
+        "docker-compose.server2-runner.yml",
+        "docker-compose.server2-runner.temp.yml",
+        "docker-compose.runner-grok.yml",
+    ];
+
+    [Test]
+    public async Task C1614_Namespace_lifecycle_and_boot_failure_are_safe()
+    {
+        RequireLinux();
+        var script = CommonScript();
+        var state = NewDir();
+        var run = NewDir();
+        try
+        {
+            var first = await BootAsync(script, state, run);
+            Guid.TryParse(NamespaceOf(first.Stdout), out var guid).ShouldBeTrue(
+                "namespace boot must record a guid, actual '" + first.Stdout + "'");
+            var restart = await BootAsync(script, state, run);
+            NamespaceOf(restart.Stdout).ShouldBe(guid.ToString("D"));
+
+            var recreated = await BootAsync(script, NewDir(), NewDir());
+            var fresh = NamespaceOf(recreated.Stdout);
+            Guid.TryParse(fresh, out var other).ShouldBeTrue(recreated.Stdout);
+            other.ShouldNotBe(guid);
+
+            var linked = NewDir();
+            var target = Path.Combine(linked, "target");
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "namespace"), guid.ToString("D"));
+            File.CreateSymbolicLink(Path.Combine(linked, "namespace"), Path.Combine(target, "namespace"));
+            var invalid = await BootAsync(script, linked, NewDir());
+            NamespaceOf(invalid.Stdout).ShouldBeNull();
+            File.Exists(Path.Combine(linked, "capability")).ShouldBeFalse();
+
+            // Real entrypoint step: the state directory's parent is mode 555, so the
+            // missing directory cannot be created. The step must return and the shell
+            // must still print the sentinel. No fail_step argument exists.
+            var blocked = await StepScriptAsync(script, """
+                set -euo pipefail
+                base=$(mktemp -d)
+                trap 'chmod 755 "$base/blocked" 2>/dev/null || true; rm -rf "$base"' EXIT
+                mkdir -p "$base/blocked" "$base/run"
+                chmod 555 "$base/blocked"
+                source "$1"
+                custody_namespace_entrypoint_step "$base/blocked/missing" "$base/run" "$1"
+                echo "continued=yes"
+                echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+                if [ -e "$base/blocked/missing/namespace" ]; then echo "missing_namespace=present"; else echo "missing_namespace=absent"; fi
+                if [ -e "$base/blocked/missing/capability" ]; then echo "missing_capability=present"; else echo "missing_capability=absent"; fi
+                """);
+            blocked.ExitCode.ShouldBe(0, blocked.Stdout);
+            blocked.Stdout.ShouldContain("continued=yes");
+            blocked.Stdout.ShouldContain("qualified=false");
+            blocked.Stdout.ShouldContain("CustodyNamespaceUnready");
+            blocked.Stdout.ShouldContain("missing_namespace=absent");
+            blocked.Stdout.ShouldContain("missing_capability=absent");
+        }
+        finally
+        {
+            TryDelete(state);
+            TryDelete(run);
+        }
+    }
+
+    [Test]
+    public async Task C1614_Read_only_namespace_marker_does_not_stop_boot()
+    {
+        RequireLinux();
+        var failed = await StepAsync(CommonScript());
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("continued=yes");
+        failed.Stdout.ShouldContain("qualified=false");
+    }
+
+    // The entrypoint's own step 3b, extracted from dind-entrypoint.sh by the
+    // step markers. A bare source of a missing or broken library exits the
+    // entrypoint before dockerd; the guard must continue unadvertised instead.
+    [Test]
+    public async Task C1614_Entrypoint_library_guard_continues_unadvertised()
+    {
+        RequireLinux();
+        var block = ExtractStep3b(File.ReadAllText(EntrypointPath()));
+        block.ShouldContain("/usr/local/lib/antiphon-custody-common.sh");
+        foreach (var mode in new[] { "missing", "broken", "functionless", "readonly-marker" })
+        {
+            var continued = await GuardBlockAsync(block, mode);
+            continued.ExitCode.ShouldBe(0, mode + " " + continued.Stdout);
+            continued.Stdout.ShouldContain("SENTINEL_AFTER_STEP_3B");
+            continued.Stdout.ShouldContain("qualified=false");
+            continued.Stdout.ShouldContain("CustodyNamespaceUnready");
+        }
+
+        // Same harness against the guard replaced by a plain source. Missing
+        // exits 1 and a syntax error exits 2, before the sentinel. A library
+        // that loads without the step function continues with qualification unset.
+        var bareSource = "source /usr/local/lib/antiphon-custody-common.sh\n";
+        var missing = await GuardBlockAsync(bareSource, "missing");
+        missing.ExitCode.ShouldBe(1, missing.Stdout);
+        missing.Stdout.ShouldNotContain("SENTINEL_AFTER_STEP_3B");
+        var broken = await GuardBlockAsync(bareSource, "broken");
+        broken.ExitCode.ShouldBe(2, broken.Stdout);
+        broken.Stdout.ShouldNotContain("SENTINEL_AFTER_STEP_3B");
+        var functionless = await GuardBlockAsync(bareSource, "functionless");
+        functionless.ExitCode.ShouldBe(0, functionless.Stdout);
+        functionless.Stdout.ShouldContain("qualified=unset");
+        functionless.Stdout.ShouldNotContain("CustodyNamespaceUnready");
+        var stale = await GuardBlockAsync(bareSource, "readonly-marker");
+        stale.ExitCode.ShouldBe(0, stale.Stdout);
+        stale.Stdout.ShouldContain("qualified=unset");
+        stale.Stdout.ShouldNotContain("CustodyNamespaceUnready");
+    }
+
+    [Test]
+    public async Task C1614_Failed_namespace_boot_still_clears_a_writable_marker()
+    {
+        RequireLinux();
+        var failed = await StepScriptAsync(CommonScript(), """
+            set -euo pipefail
+            base=$(mktemp -d)
+            trap 'chmod 755 "$base/blocked" 2>/dev/null || true; rm -rf "$base"' EXIT
+            mkdir -p "$base/blocked" "$base/run"
+            chmod 555 "$base/blocked"
+            printf 'stale\n' > "$base/run/namespace"
+            source "$1"
+            custody_namespace_entrypoint_step "$base/blocked/state" "$base/run" "$1"
+            echo "continued=yes"
+            echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+            if [ -e "$base/run/namespace" ]; then echo "marker=present"; else echo "marker=absent"; fi
+            """);
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("continued=yes");
+        failed.Stdout.ShouldContain("qualified=false");
+        failed.Stdout.ShouldContain("marker=absent");
+    }
+
+    [Test]
+    public async Task C1614_Empty_namespace_paths_do_not_stop_boot()
+    {
+        RequireLinux();
+        var failed = await StepScriptAsync(CommonScript(), """
+            set -euo pipefail
+            source "$1"
+            custody_namespace_entrypoint_step "" "" ""
+            echo "continued=yes"
+            echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+            """);
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("continued=yes");
+        failed.Stdout.ShouldContain("qualified=false");
+    }
+
+    [Test]
+    public async Task C1614_Population_and_drain_read_content_not_size()
+    {
+        RequireLinux();
+        var observed = await StepScriptAsync(CommonScript(), """
+            set -euo pipefail
+            source "$1"
+            base=$(mktemp -d)
+            trap 'chmod 644 "$base/closed" 2>/dev/null || true; rm -rf "$base"' EXIT
+            : > "$base/empty"
+            printf '41\n' > "$base/pids"
+            printf 'secret\n' > "$base/closed"
+            chmod 000 "$base/closed"
+            report() {
+              local name="$1" file="$2" pop=0 drain=0
+              if custody_procs_populated "$file"; then pop=0; else pop=$?; fi
+              if custody_drain "$file" 0; then drain=0; else drain=$?; fi
+              echo "${name}_pop=$pop"
+              echo "${name}_drain=$drain"
+            }
+            report empty "$base/empty"
+            report populated "$base/pids"
+            echo "status_size=$(stat -c %s /proc/self/status)"
+            echo "status_bytes=$(wc -c < /proc/self/status | tr -d '[:space:]')"
+            report status /proc/self/status
+            report closed "$base/closed"
+            """);
+        observed.ExitCode.ShouldBe(0, observed.Stdout);
+        Field(observed.Stdout, "empty_pop").ShouldBe("1");
+        Field(observed.Stdout, "empty_drain").ShouldBe("0");
+        Field(observed.Stdout, "populated_pop").ShouldBe("0");
+        Field(observed.Stdout, "populated_drain").ShouldBe("1");
+        Field(observed.Stdout, "status_size").ShouldBe("0");
+        Field(observed.Stdout, "status_bytes").ShouldNotBe("0");
+        Field(observed.Stdout, "status_pop").ShouldBe("0");
+        Field(observed.Stdout, "status_drain").ShouldBe("1");
+        Field(observed.Stdout, "closed_pop").ShouldBe("2");
+        Field(observed.Stdout, "closed_drain").ShouldBe("2");
+    }
+
+    [Test]
+    public async Task C1614_Freeze_failure_kills_nothing()
+    {
+        RequireLinux();
+        var failed = await UnshareAsync(CommonScript(), KillScript(), """
+            set -euo pipefail
+            library=$1
+            kill_helper=$2
+            ns=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+            id=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+            victim=0
+            fstate=""
+            trap 'if [ "$victim" -ne 0 ]; then kill "$victim" 2>/dev/null || true; wait "$victim" 2>/dev/null || true; fi
+              if [ -n "$fstate" ]; then umount "$fstate" 2>/dev/null || true; fi
+              umount /usr/local 2>/dev/null || true
+              umount /sys/fs/cgroup 2>/dev/null || true
+              umount /run 2>/dev/null || true' EXIT
+            mount -t tmpfs tmpfs /usr/local
+            mount -t tmpfs tmpfs /sys/fs/cgroup
+            mount -t tmpfs tmpfs /run
+            mkdir -p /usr/local/lib /run/antiphon-custody \
+              /sys/fs/cgroup/pids/antiphon-custody \
+              /sys/fs/cgroup/freezer/antiphon-custody
+            cp "$library" /usr/local/lib/antiphon-custody-common.sh
+            printf '%s\n' "$ns" > /run/antiphon-custody/namespace
+            miss=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+            mdir=/sys/fs/cgroup/pids/antiphon-custody/$ns/$miss/tree
+            mkdir -p "$mdir" /sys/fs/cgroup/freezer/antiphon-custody/$ns/$miss/tree
+            sleep 30 &
+            victim=$!
+            printf '%s\n' "$victim" > "$mdir/cgroup.procs"
+            set +e
+            bash "$kill_helper" "$miss"
+            missing_rc=$?
+            set -e
+            if kill -0 "$victim" 2>/dev/null; then echo missing_victim=alive; else echo missing_victim=dead; fi
+            echo "missing_rc=$missing_rc"
+            kill "$victim" 2>/dev/null || true
+            wait "$victim" 2>/dev/null || true
+            victim=0
+            pdir=/sys/fs/cgroup/pids/antiphon-custody/$ns/$id/tree
+            fdir=/sys/fs/cgroup/freezer/antiphon-custody/$ns/$id/tree
+            mkdir -p "$pdir" "$fdir"
+            sleep 30 &
+            victim=$!
+            printf '%s\n' "$victim" > "$pdir/cgroup.procs"
+            printf 'THAWED\n' > "$fdir/freezer.state"
+            fstate=$fdir/freezer.state
+            mount --bind -o ro "$fstate" "$fstate"
+            set +e
+            bash "$kill_helper" "$id"
+            kill_rc=$?
+            set -e
+            if kill -0 "$victim" 2>/dev/null; then echo victim=alive; else echo victim=dead; fi
+            echo "kill_rc=$kill_rc"
+            if kill -0 "$victim" 2>/dev/null && [ "$kill_rc" -ne 0 ] && [ "$missing_rc" -ne 0 ]; then
+              exit 0
+            fi
+            exit 1
+            """);
+        failed.ExitCode.ShouldBe(0, failed.Stdout);
+        failed.Stdout.ShouldContain("victim=alive");
+        failed.Stdout.ShouldContain("missing_victim=alive");
+        failed.Stdout.ShouldContain("CustodyFreezeFailed");
+        failed.Stdout.ShouldContain("CustodyFreezerMissing");
+    }
+
+    [Test]
+    public async Task C1614_Verifiers_count_execution_trees_in_current_namespace()
+    {
+        RequireLinux();
+        var script = CommonScript();
+        var root = NewDir();
+        var blocked = Path.Combine(NewDir(), "blocked");
+        try
+        {
+            var current = Guid.NewGuid();
+            var foreign = Guid.NewGuid();
+            WriteTree(root, current, Guid.NewGuid(), "4321\n");
+            WriteTree(root, current, Guid.NewGuid(), "");
+            WriteTree(root, foreign, Guid.NewGuid(), "4322\n");
+            WriteTree(root, "legacy-root", Guid.NewGuid(), "4323\n");
+
+            var counted = await CountAsync(script, root, current);
+            Field(counted.Stdout, "current").ShouldBe("2");
+            Field(counted.Stdout, "populated").ShouldBe("1");
+            Field(counted.Stdout, "foreign").ShouldBe("1");
+            Field(counted.Stdout, "legacy").ShouldBe("1");
+            counted.ExitCode.ShouldBe(0);
+
+            Directory.CreateDirectory(blocked);
+            File.SetUnixFileMode(blocked, UnixFileMode.None);
+            var unreadable = await CountAsync(script, blocked, current);
+            unreadable.ExitCode.ShouldNotBe(0);
+            Field(unreadable.Stdout, "status").ShouldBe("read-error");
+
+            var repo = RepoRoot();
+            foreach (var relative in ComposeFiles)
+            {
+                var text = File.ReadAllText(Path.Combine(repo, relative));
+                text.ShouldNotContain("/var/lib/antiphon-custody");
+                text.ShouldNotContain("/run/antiphon-custody");
+            }
+
+            var dockerfile = File.ReadAllText(Path.Combine(repo, "docker", "session-runner-grok", "Dockerfile"));
+            foreach (var line in dockerfile.Split('\n'))
+            {
+                if (!line.TrimStart().StartsWith("VOLUME", StringComparison.Ordinal))
+                    continue;
+                line.ShouldNotContain("/var/lib/antiphon-custody");
+                line.ShouldNotContain("/run/antiphon-custody");
+            }
+        }
+        finally
+        {
+            try { File.SetUnixFileMode(blocked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+            catch { }
+            TryDelete(root);
+            TryDelete(Path.GetDirectoryName(blocked)!);
+        }
+    }
+
+    private static void WriteTree(string root, Guid namespaceId, Guid execution, string procs) =>
+        WriteTree(root, namespaceId.ToString("D"), execution, procs);
+
+    private static void WriteTree(string root, string namespaceName, Guid execution, string procs)
+    {
+        var tree = Path.Combine(root, namespaceName, execution.ToString("D"), "tree");
+        Directory.CreateDirectory(tree);
+        File.WriteAllText(Path.Combine(tree, "cgroup.procs"), procs);
+    }
+
+    private static void RequireLinux()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("Linux custody namespace shell executes on Linux only.");
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "docker", "session-runner-grok", "antiphon-custody-common.sh")))
+                return dir.FullName;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("antiphon-custody-common.sh");
+    }
+
+    private static string CommonScript() =>
+        Path.Combine(RepoRoot(), "docker", "session-runner-grok", "antiphon-custody-common.sh");
+
+    // ANTIPHON_C1614_ENTRYPOINT_OVERLAY is the red-proof seam. Unset reads the
+    // real entrypoint. A proof run points it at a copy whose step 3b guard was
+    // replaced by a plain source, then the copy is discarded before commit.
+    private static string EntrypointPath()
+    {
+        var overlay = Environment.GetEnvironmentVariable("ANTIPHON_C1614_ENTRYPOINT_OVERLAY");
+        if (!string.IsNullOrWhiteSpace(overlay))
+            return overlay;
+        return Path.Combine(RepoRoot(), "docker", "session-runner-grok", "dind-entrypoint.sh");
+    }
+
+    private static string ExtractStep3b(string text)
+    {
+        const string startMarker = "# --- step 3b";
+        const string endMarker = "# --- step 4";
+        var start = text.IndexOf(startMarker, StringComparison.Ordinal);
+        var end = text.IndexOf(endMarker, StringComparison.Ordinal);
+        if (start < 0 || end < 0 || end <= start)
+            throw new InvalidOperationException(
+                "dind-entrypoint.sh is missing the step 3b or step 4 marker");
+        return text[start..end];
+    }
+
+    private static async Task<ShellResult> GuardBlockAsync(string block, string mode)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c1614-step3b-" + Guid.NewGuid().ToString("N") + ".sh");
+        try
+        {
+            File.WriteAllText(path, block);
+            var psi = new ProcessStartInfo("unshare")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            psi.ArgumentList.Add("-rm");
+            psi.ArgumentList.Add("bash");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("""
+                set -euo pipefail
+                mode=$1
+                library=$2
+                block=$3
+                trap 'umount /usr/local 2>/dev/null || true; umount /var/lib 2>/dev/null || true; umount /run 2>/dev/null || true' EXIT
+                mount -t tmpfs tmpfs /usr/local
+                mount -t tmpfs tmpfs /var/lib
+                mount -t tmpfs tmpfs /run
+                mkdir -p /usr/local/lib /var/lib/antiphon-custody /run/antiphon-custody
+                case "$mode" in
+                  missing) ;;
+                  broken)
+                    printf 'this is not shell (\n' > /usr/local/lib/antiphon-custody-common.sh
+                    ;;
+                  functionless)
+                    printf 'true\n' > /usr/local/lib/antiphon-custody-common.sh
+                    ;;
+                  readonly-marker)
+                    cp "$library" /usr/local/lib/antiphon-custody-common.sh
+                    printf 'stale\n' > /run/antiphon-custody/namespace
+                    mount --bind /run/antiphon-custody /run/antiphon-custody
+                    mount -o remount,bind,ro /run/antiphon-custody
+                    ;;
+                  *)
+                    echo "unknown mode $mode" >&2
+                    exit 99
+                    ;;
+                esac
+                set +e
+                bash -c 'set -euo pipefail; source "$1"; echo SENTINEL_AFTER_STEP_3B; echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"' bash "$block"
+                rc=$?
+                set -e
+                echo "entry_rc=$rc"
+                exit "$rc"
+                """);
+            psi.ArgumentList.Add("bash");
+            psi.ArgumentList.Add(mode);
+            psi.ArgumentList.Add(CommonScript());
+            psi.ArgumentList.Add(path);
+            return await StartAsync(psi, "entrypoint-step-3b-" + mode);
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    private static string KillScript() =>
+        Path.Combine(RepoRoot(), "docker", "session-runner-grok", "antiphon-custody-kill.sh");
+
+    private static string? NamespaceOf(string stdout)
+    {
+        foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            if (line.StartsWith("namespace=", StringComparison.Ordinal))
+                return line["namespace=".Length..].Trim();
+        return null;
+    }
+
+    private static string Field(string stdout, string name)
+    {
+        foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var split = line.Split('=', 2);
+            if (split.Length == 2 && split[0] == name)
+                return split[1].Trim();
+        }
+
+        return "";
+    }
+
+    private static string NewDir()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c1614-boot-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { Directory.Delete(path, recursive: true); } catch { }
+    }
+
+    private static Task<ShellResult> BootAsync(string script, string state, string run) =>
+        BashAsync(script, "custody_namespace_boot", state, run);
+
+    private static Task<ShellResult> StepAsync(string script)
+    {
+        var psi = new ProcessStartInfo("unshare")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-rm");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("""
+            set -euo pipefail
+            base=$(mktemp -d)
+            trap 'umount "$base/run" 2>/dev/null || true; rm -rf "$base"' EXIT
+            mkdir -p "$base/state" "$base/run"
+            printf 'not-a-guid\n' > "$base/state/namespace"
+            chmod 444 "$base/state/namespace"
+            printf 'stale\n' > "$base/run/namespace"
+            mount --bind -o ro "$base/run" "$base/run"
+            source "$1"
+            custody_namespace_entrypoint_step "$base/state" "$base/run" "$1"
+            echo "continued=yes"
+            echo "qualified=${SessionRunner__LinuxCustodyQualified-unset}"
+            """);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(script);
+        return StartAsync(psi, "custody_namespace_entrypoint_step");
+    }
+
+    private static Task<ShellResult> StepScriptAsync(string script, string body)
+    {
+        var psi = new ProcessStartInfo("bash")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(body);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(script);
+        return StartAsync(psi, "custody_namespace_entrypoint_step");
+    }
+
+    private static Task<ShellResult> UnshareAsync(string library, string killHelper, string body)
+    {
+        var psi = new ProcessStartInfo("unshare")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-rmpf");
+        psi.ArgumentList.Add("--mount-proc");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(body);
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(library);
+        psi.ArgumentList.Add(killHelper);
+        return StartAsync(psi, "antiphon-custody-kill");
+    }
+
+    private static async Task<ShellResult> StartAsync(ProcessStartInfo psi, string name)
+    {
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("bash");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException(name);
+        }
+
+        return new ShellResult(process.ExitCode, (await stdout) + (await stderr), "");
+    }
+
+    private static Task<ShellResult> CountAsync(string script, string root, Guid namespaceId) =>
+        BashAsync(script, "custody_count_execution_trees", root, namespaceId.ToString("D"));
+
+    private static async Task<ShellResult> BashAsync(string script, string function, params string[] args)
+    {
+        var psi = new ProcessStartInfo("/bin/bash")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("set -u; source \"$1\"; shift; func=\"$1\"; shift; \"$func\" \"$@\"");
+        psi.ArgumentList.Add("bash");
+        psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add(function);
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("bash");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(10_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new System.TimeoutException(function);
+        }
+
+        return new ShellResult(process.ExitCode, (await stdout) + (await stderr), "");
+    }
+
+    private readonly record struct ShellResult(int ExitCode, string Stdout, string Stderr);
+}

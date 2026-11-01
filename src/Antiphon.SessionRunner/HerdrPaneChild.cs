@@ -1,4 +1,5 @@
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.PtyHost.Protocol;
 using Microsoft.Extensions.Logging;
 
 namespace Antiphon.SessionRunner;
@@ -13,6 +14,7 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 internal sealed partial class HerdrPaneChild : ISessionChild
 {
+    internal ProcessStopIntentStore? StopIntents { get; set; }
     private readonly HerdrClient _client;
     private readonly SessionRunnerSettings _settings;
     private readonly ILogger _logger;
@@ -249,6 +251,7 @@ internal sealed partial class HerdrPaneChild : ISessionChild
             PaneId = request.PaneId,
             ChildPid = occupant.Pid,
             ChildStartedAtUtc = _processLiveness.TryGetStartTimeUtc(occupant.Pid),
+            ChildLinuxIdentity = LinuxProcessIdentity.TryRead(occupant.Pid),
             ShellPid = inspected.Process.ShellPid,
             LaunchedAtUtc = startUtc,
             Cwd = occupant.Cwd,
@@ -1014,6 +1017,7 @@ internal sealed partial class HerdrPaneChild : ISessionChild
             PaneId = paneId,
             ChildPid = childPid,
             ChildStartedAtUtc = childPid is int exactPid ? _processLiveness.TryGetStartTimeUtc(exactPid) : null,
+            ChildLinuxIdentity = childPid is int linuxPid ? LinuxProcessIdentity.TryRead(linuxPid) : null,
             ShellPid = shellPid,
             LaunchedAtUtc = launchedAt,
             Cwd = request.Cwd,
@@ -1146,7 +1150,9 @@ internal sealed partial class HerdrPaneChild : ISessionChild
                 if (_sidecar?.ChildPid is int child
                     && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
                 {
-                    KillPidBestEffort(child);
+                    var killed = KillPidBestEffort(child);
+                    if (OperatingSystem.IsLinux() && !killed && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
+                        return false; // preserve ownership until the child actually disappears
                 }
 
                 _logger.LogWarning(
@@ -1198,15 +1204,32 @@ internal sealed partial class HerdrPaneChild : ISessionChild
         return true;
     }
 
-    private static void KillPidBestEffort(int pid)
+    private bool KillPidBestEffort(int pid)
     {
         try
         {
-            System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            if (process.HasExited) return false;
+            if (OperatingSystem.IsLinux() && (_sidecar?.ChildLinuxIdentity is not { } identity
+                || LinuxProcessIdentity.TryRead(pid) != identity))
+            {
+                _logger.LogWarning("Herdr child stop refused for pid {Pid}: Linux start identity missing, unreadable or changed", pid);
+                return false;
+            }
+            if (OperatingSystem.IsLinux() && StopIntents is { } intents)
+            {
+                var intent = intents.StopProcess(process, _sessionId, _sidecar?.AcceptedStartedAt ?? DateTime.MinValue,
+                    ProcessStopTarget.Child, ProcessStopPath.ProcessTree);
+                if (intent.Outcome != ProcessStopOutcome.Issued) return false;
+            }
+            else process.Kill(entireProcessTree: true);
+            // SIGKILL delivery is asynchronous. Observe for at most one second, never guess exit.
+            return !OperatingSystem.IsLinux() || process.WaitForExit(1000);
         }
         catch
         {
             // Already gone.
+            return false;
         }
     }
 

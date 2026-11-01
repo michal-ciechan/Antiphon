@@ -1,5 +1,63 @@
 # Session runtime invariants
 
+## Exit evidence (CARD-1619; combined qualification pending)
+
+Process exit evidence consists of an actual nullable code and a separate nullable
+signal: null is unknown, zero is observed without a POSIX signal, and a positive
+signal is an observed Linux signal. A zero legacy code does not prove success or
+self-exit. Newly observed unsolicited signals fail the session and its agent;
+already authorized policy stops and CPU-spin reclamation retain their resumable
+stop semantics. Memory kills fail. Only a report can supply a task outcome.
+
+Protocol adapters return compatibility -1 for a positive signal or missing code,
+otherwise the actual code. Persistence and launch-cleanup ownership read the
+structured observation, never that compatibility value. PtyAgentRunner.Exited
+retains the actual integer. Unknown replay cannot erase complete evidence, and
+generation/time/first-source guards remain mandatory.
+
+Dispatcher, attention, supervisor, attempts and diagnostics describe the signal,
+a known normal code, or unknown evidence. ProcessExit is an observation source,
+not proof of a voluntary exit. A stored server stop request proves a request only.
+Known signals are attributed to Antiphon's matching request only when the actual
+issuer retains successful attempt evidence in memory, bound to the accepted
+generation, issuer boot, host instance and target PID/start (or custody identity).
+Live host replay is checked against the connected host and child. Disk/manifest
+loads always become RecoveredUnverified, even when a planted file says LiveIssuer.
+A new process cannot rebuild issuer authority from that file. An observed policy
+cause alone cannot create a server request for a known signal.
+
+ProcessStopIntentStore publishes requested and issued/failed under its memory gate.
+Custody/helper operations run between those publications with the shared gate released;
+an unrelated stop or observer never waits for their helper. Direct signal publication
+remains atomic with exit observation. Retention evicts the oldest request in FIFO order.
+Only after releasing that gate does it offer diagnostic IO. TryRecordAsync enforces 100 ms from offer, including queue
+wait, on an injected clock. One worker and one pending snapshot bound each owner's
+IO; an expired in-flight writer remains owned and rejects additional work until
+it returns. Stop, observation and shutdown never await it. Timeout does not cancel
+kernel fsync. Failure/timeout/saturation leaves the record nondurable and logs once;
+it cannot revoke matching live issuer attribution. Fakes release and join stalled
+writers in teardown. A normal-exit race or failed call cannot become an issued kill.
+
+Durable diagnostic writes use create-new, WriteThrough, Flush(true), atomic rename,
+and Linux directory fsync. The ordinary host manifest's file flush alone does not
+supply directory durability. Recovered files remain untrusted regardless of their
+durability claim. Qualified text says either matching stop request recorded or stop
+record not durable; server request alone says sender unconfirmed; a planted record
+says sender unconfirmed (untrusted stop record). Host-target and helper-target stops
+never substitute for child wait evidence. Linux disposal records the existing
+master-close/SIGHUP as an unobservable request, and closes before joining the reader.
+Refused/unobserved Linux PID stops retain their existing owner/sidecar and stop debt.
+Only observed process exit or existing custody accounting discharges that debt.
+Herdr Linux child stops require the persisted boot ID and `/proc/<pid>/stat` field 22
+start ticks, parsed after the final parenthesis of comm. UTC Process.StartTime is not
+a cross-process Linux identity. Missing legacy, unreadable or mismatched identities
+refuse the PID kill with a warning and retain ownership. An issued SIGKILL gets at most
+one second of OS exit observation before it is treated as unobserved.
+
+Exit codes and diagnostic records supply no new
+custody, janitor, terminal-seat or stop-debt release authority. Windows native
+spawn, kill and signed exit-code behavior remain unchanged.
+
 CARD-1521: a queued Delegation Codex task-brief pointer requires the complete
 normalized pointer in the current bottom composer before any submitting Enter.
 Recheck after the existing settle window. A complete UserPrompt beyond the original
@@ -9,6 +67,57 @@ including canceled/capped rows; it is not a refunded pre-type attempt or proof o
 a boot wedge. Reconcile receipts first, then allow Enter-only recovery only from
 a complete idle composer. A positively changed generation can take the ordinary
 first-write path. Other providers and ordinary messages retain their existing rules.
+
+## Ceiling supervision (CARD-1610 S2)
+
+A confirmed Working task at its role ceiling stays Working and counted. Its typed,
+attempt-bound ceiling episode is separate from Blocked and ordinary question parking.
+No failure, completion, workspace release, pool-idle mark or delegate input follows a hold.
+The real 20-minute model-wait and 90-minute tool deadlines continue to apply and a breached
+phase wins over a larger ceiling fraction. Boot remains detection only. An unavailable,
+incomplete or wrong-generation transcript observation defers the ceiling decision.
+
+Typed Reply carries only ceilingAction, episodeId and optional extendMinutes. Continue
+re-arms one original ceiling interval from max(elapsed, next bound), clipped at 720 total
+elapsed minutes. Extend refuses a bound above 720. At that cap the task stays held and
+counted until Cancel or an authenticated operator Extend (1..240 minutes, bounded reason)
+re-arms elapsed+minutes. A caller-supplied origin or boolean grants no operator authority.
+The next breach holds again. These decisions preserve the report floor and send no input.
+Ordinary reports settle a hold normally; Cancel and Retry retain their explicit stop authority.
+
+The question and ceilingHold DTO expose the transcript tail, age and nullable phase clock.
+For tails without a phase clock they explicitly say the ceiling is the only deadline.
+S2 persists a separate CeilingParent notice obligation. S3 recovers that note, FailureDelegate
+and LateFailedParent through the existing completion worker and WhenIdle queue. Each purpose
+has its own queue identity and complete UserPrompt receipt beyond the recorded recipient floor;
+Sent, queue admission and another purpose's completion stamp never establish Told. Retry,
+settlement, episode and generation checks run again before queued input. Unavailable identity
+retains visible debt. Historical rows without an original accepted generation require manual
+triage; a current session row cannot supply the missing historical coordinate.
+
+Failure writers save the delegate obligation with their Failed event. The independent bounded
+report scan continues after the delegate notice is Told and can read an ended generation's final
+stored window. A complete later report produces a separate parent triage note with source range,
+digest, lineage facts and next=decide. Failed, its reason/result/completion time and stage outcomes
+stay unchanged. No report-forwarding path settles, retries, lands or reserves a handoff.
+Unresolved notices retain their source, recipient transcript, queue row and task tree.
+
+Report watches have a separate retry clock: 1, 2, 4, 8, 15, 30, then 60 minutes
+between scans (the completion worker checks due work on its existing 15-minute sweep).
+After an authoritative ended source's final stored transcript window is scanned, the
+watch closes durably. Unknown historical identities are not watchable. Closed watches
+consume no scan slots and confer no retention protection; independently pending parent
+triage/delivery debt still retains its evidence. A resumed generation is a successor:
+it never reopens the predecessor watch or supplies its accepted identity. Cancel commits
+under the queue gate, then releases that gate before post-commit seat/workspace release.
+
+A held result whose card/role has a successor since dispatch uses next=decide, including a
+replacement created before the hold or one already terminal. Missing card lineage also needs
+a decision. Handoff recording and child admission recheck under their existing card/handoff
+locks; no new card lock is acquired inside the runtime session/task save fence. Detection,
+notices and recovery grant no stop authority. S2/S3 must land together after verification.
+S2 alone is not an activation boundary. S4 dispatch budgets, client controls and Deploy
+changes remain separately ordered after their prerequisites.
 
 ## Deferred transcript effects (CARD-1259)
 
@@ -246,6 +355,7 @@ New publication and Blocked release require Enabled plus automatic release.
 Legacy discovery additionally requires ReclaimExisting.
 Disabling does not delete a publication receipt, does not abandon an accepted answer, and does not stop release reconciliation or sync-debt recovery.
 Parking never stops a Working session.
+The warm-pool janitor does not kill a Working session, a session whose idle state is unproved, or a Failed task whose session has not authoritatively exited. Unproved idle includes Created, Stopping, a missing generation, a remote inventory that has not answered, a transcript that has rows but no turn boundary, and a transcript with no rows. A transcript with no rows is absent evidence and is retained on the TTL pass, the cap pass, and the pre-kill recheck. A pooled session that never writes a row keeps its seat until a turn boundary or an operator acts. Only the current Failed task on that unfinished session and on its agent holds the seat, and the session generation is proved only by StartedAt != default (a Failed attempt from before a restart still holds; there is no DispatchedAt >= StartedAt comparison). A later task on the session or the agent releases the hold, including a Canceled never-dispatched task with no session. A pooled Working session with no open task past the pool TTL is recorded as PooledSessionWorkingPastTtl (detection only; the session is never killed). A later sweep of the same generation and turn does not rewrite that incident. A Failed task with a live or unconfirmed session is FailedTaskSessionHeld: a fresh listed Running seat of the same generation reads "Failed, session still Running: seat held", and an unavailable, stale, or unmatched sample reads "session state unknown: release unconfirmed". Those rows suppress duplicate SeatIdle and SlotOrphan items for the same session. A positively idle warm session still retires on the pool TTL and the per-directory cap. CARD-0079 remains the only automatic stop of a Working session.
 With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.
 The park bound is this release path (CARD-1083). It is dormant while BlockedTaskParking:Enabled is false, and while it is dormant nothing automatically releases a session that waits for input.
 Do not infer a release deadline from the 120-second idle proof, the 120-second reclaim interval, or the 600-second Held backoff. For a Blocked input wait, parking supplies no automatic release deadline while disabled; with its gates enabled, publication and conditional release evidence still control release.
@@ -335,6 +445,18 @@ silence. Legacy/unreachable runners and incomplete persistence leave windows ope
 Retention shares discovery eligibility and rechecks outbound protections under
 the transcript mutation gate. Activation requires both server and runner support;
 `ChannelOutbound:UnifiedRecoveryEnabled` remains false by default.
+
+CARD-1610 S3 uses a bounded no-growth alternative for Failed-task report watches.
+An ended generation stays watchable until a post-exit scan and a later scan prove
+at least 15 minutes with no growth in its stored transcript sequence frontier.
+`ScanFrontier` records that frontier; nullable `ReportTranscriptStableSince` records
+the first stable post-exit observation and resets on growth. The clock must also
+be at least 15 minutes beyond `EndedAt`. Scan backoff can extend this interval.
+A complete late report forwards immediately and closes as `report_forwarded`;
+absence of a report closes only after the drain bound. Uploads arriving after a
+durably closed drain window are not forwarded and do not reopen it. Unknown
+identity and superseded-attempt closures retain their existing fences. Recovery
+isolates each item and reports errors after processing the remaining batch.
 
 - **CARD-1022 release A uses one runtime backend decision.** Windows defaults to modern;
   Unix uses Porta and reports UnixPty without Windows discovery. The daemon composes nonempty
@@ -898,6 +1020,18 @@ the transcript mutation gate. Activation requires both server and runner support
   **do not land or deploy this checkpoint**. See the
   [application continuation](investigations/2026-09-11-card-0478-application-custody-checkpoint.md)
   and [inherited runtime evidence](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md).
+
+- **Linux containment termination is not Windows job release (CARD-1614).** Terminal-task
+  CleanupVerification can terminate a Linux cgroup tree. A Windows seal does not terminate
+  the job; the existing 24-hour tracked linger and kill-on-close close remain that fallback.
+  The task orchestrator invokes that cleanup after Succeeded, Failed, or Canceled settlement
+  and retries unresolved residue. It is not periodic and it has no age deadline. Dead-host
+  recovery kills only the recorded container and stays Unknown. A live host that adoption
+  could not take stays alive for the operator to stop through an owned handle, after checking
+  the exact binding, namespace, container, and host pid plus start identity. Missing or
+  unreadable accounting is never zero. Prolonged Draining and unresolved Unknown are warnings
+  only. Linux custody stays unadvertised until native qualification. A successful kill is not a
+  receipt and is not a source-clean verdict.
 
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch
