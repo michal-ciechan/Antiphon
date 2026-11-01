@@ -1422,6 +1422,26 @@ function Get-TestPhaseSha256File {
     }
 }
 
+# Direct lookup only. IANA ids that a Windows-shaped finder refuses stay unresolved
+# until the Windows-id mapping is applied.
+function Find-TestPhaseTimeZoneById {
+    param([string]$Id)
+    if ($null -ne $script:TestPhaseTimeZoneFinder) {
+        $found = & $script:TestPhaseTimeZoneFinder $Id
+        if ($found -is [System.TimeZoneInfo]) { return $found }
+        return $null
+    }
+    try { return [System.TimeZoneInfo]::FindSystemTimeZoneById([string]$Id) } catch { return $null }
+}
+
+function Resolve-TestPhaseTimeZone {
+    param([string]$Id)
+    if ([string]::IsNullOrWhiteSpace($Id)) { return [System.TimeZoneInfo]::Local }
+    $direct = Find-TestPhaseTimeZoneById -Id $Id
+    if ($direct -is [System.TimeZoneInfo]) { return $direct }
+    return $null
+}
+
 function Get-TestPhaseWriterEnvironment {
     $edition = 'Desktop'
     try { if ($PSVersionTable.PSEdition) { $edition = [string]$PSVersionTable.PSEdition } } catch { }
