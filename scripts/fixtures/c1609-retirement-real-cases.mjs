@@ -36,7 +36,7 @@ function call(file, args, allowFailure = false, timeout = 90000) {
 }
 const d = (...args) => call(cli, args).stdout.trim();
 const json = (...args) => JSON.parse(d(...args));
-function save() { fs.writeFileSync(scope.root + '/ownership.json', JSON.stringify(scope), {mode:0o600}); }
+function save() { fs.writeFileSync(scope.root + '/ownership.json', JSON.stringify(scope), {mode:0o644}); }
 function load(root) {
   assert.match(root || '', /^\/tmp\/c1609-real-[A-Za-z0-9]+$/);
   assert.equal(fs.realpathSync(root), root);
@@ -238,6 +238,12 @@ function proof(f) {
   f.started=Math.floor(Date.now()/1000)-5;
 }
 function shell(f, body, suffix='run') {
+  // The docker shim runs as the applier and has to read the scope and append the
+  // command log. Those files are written by this process, which does not own that uid.
+  const calls=scope.root+'/commands.jsonl';
+  if (!fs.existsSync(calls)) fs.writeFileSync(calls, '', {mode:0o666});
+  fs.chmodSync(calls, 0o666);
+  fs.chmodSync(scope.root+'/ownership.json', 0o644);
   fs.writeFileSync(scope.root+'/current-operation.json',JSON.stringify({op:f.op,receipt:f.host+'/server/retirement/'+f.op+'/receipt.json'}), {mode:0o644});
   let retirement=repo+'/scripts/c1008-retirement.sh';
   if(process.env.C1609_NATIVE_PC==='N2-name-only' && suffix==='replacement'){
