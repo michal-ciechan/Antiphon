@@ -126,6 +126,9 @@ function Test-SeededRcHopBinds {
 }
 
 function Test-SwitchDriftGuard {
+    # The harness clears this directory on the way out. An isolated case never
+    # reaches the other tests that create it.
+    [void](New-C487Root $ResultsDirectory)
     $scripts = @(
         (Join-Path $PSScriptRoot 'nightly-tests.ps1'),
         (Join-Path $PSScriptRoot 'nightly-run.ps1')
