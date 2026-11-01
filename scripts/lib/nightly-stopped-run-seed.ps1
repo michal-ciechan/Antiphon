@@ -431,14 +431,24 @@ function Export-NightlyStoppedRunSeed {
     Write-Host ('SEED '+$output+' SHA256 '+(Get-NightlyHistoryDigest $output))
 }
 
+function Get-NightlySeedMethodName {
+    # The seed stores the TRX method, so a parameterised case suffix is not a different test.
+    param([string]$Name)
+    if([string]::IsNullOrWhiteSpace($Name)){return ''}
+    $open=$Name.IndexOf('(')
+    if($open -gt 0){return $Name.Substring(0,$open)}
+    return $Name
+}
+
 function Resolve-NightlyStoppedSeedOrder {
     param([object[]]$Entries,$Seed)
     try{
         Assert-NightlyStoppedSeedContent $Seed
         # In place of a plan digest: the stopped run's own candidate sha and run id.
         # sourceSha is not the new run's candidate. Chunk ids are not binding.
-        # Failed, unfinished and passed state follow the class, so a regrouped
-        # plan keeps the failed classes' chunks and drops only seed-only chunks.
+        # Failures lead by method. A chunk node list names the methods it runs.
+        # No node list means the whole class, so that chunk stays at the front.
+        # A failed method the plan dropped is ignored. A method that moved follows its new chunk.
         $shaText=''
         if($Seed.PSObject.Properties.Name -ccontains 'sourceSha' -and $null -ne $Seed.sourceSha){$shaText=[string]$Seed.sourceSha}
         if([string]::IsNullOrWhiteSpace($shaText)){throw 'seed-candidate-missing'}
@@ -446,33 +456,107 @@ function Resolve-NightlyStoppedSeedOrder {
         $runText=''
         if($Seed.PSObject.Properties.Name -ccontains 'sourceRunId' -and $null -ne $Seed.sourceRunId){$runText=[string]$Seed.sourceRunId}
         if([string]::IsNullOrWhiteSpace($runText)){throw 'seed-run-missing'}
-        $mapped=0;$ranked=[Collections.Generic.List[object]]::new()
-        foreach($entry in $Entries){
-            $classes=@($entry.ChunkRef.classes)
-            if($classes.Count -eq 0){
-                $nodes=@($entry.ChunkRef.nodes)
-                if($nodes.Count -eq 0){$nodes=@($entry.SuiteState.nodes)}
-                $classes=@(Get-NightlyHistoryOrdinalStrings @($nodes|ForEach-Object {Get-NightlyBareClassIdentity $_.ClassName}))
+        $failedMethods=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $failedClasses=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($test in @($Seed.failedTests)){
+            $class=Get-NightlyBareClassIdentity ([string]$test.className)
+            $method=Get-NightlySeedMethodName ([string]$test.method)
+            if([string]::IsNullOrWhiteSpace($class) -or [string]::IsNullOrWhiteSpace($method)){continue}
+            $classKey=[string]$test.suite+[char]0+$class
+            [void]$failedMethods.Add($classKey+[char]0+$method)
+            [void]$failedClasses.Add($classKey)
+        }
+        $historyByClass=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach($row in @($Seed.chunks)){
+            foreach($className in @($row.classes)){
+                $key=[string]$row.suite+[char]0+(Get-NightlyBareClassIdentity ([string]$className))
+                if(-not $historyByClass.ContainsKey($key)){$historyByClass[$key]=[Collections.Generic.List[object]]::new()}
+                $historyByClass[$key].Add($row)
             }
-            $passed=($classes.Count -gt 0);$last=$null
+        }
+        $prepared=[Collections.Generic.List[object]]::new()
+        $placedMethods=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $wholeClasses=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $mapped=0
+        foreach($entry in $Entries){
+            $classSource=@($entry.ChunkRef.classes)
+            $classes=@()
+            if($classSource.Count -eq 0){
+                $fallback=@()
+                if($null -ne $entry.ChunkRef.nodes){$fallback=@($entry.ChunkRef.nodes)}
+                if($fallback.Count -eq 0 -and $null -ne $entry.SuiteState.nodes){$fallback=@($entry.SuiteState.nodes)}
+                $classes=@(Get-NightlyHistoryOrdinalStrings @($fallback|ForEach-Object {Get-NightlyBareClassIdentity ([string]$_.ClassName)}))
+            }else{
+                $classes=@(Get-NightlyHistoryOrdinalStrings @($classSource|ForEach-Object {Get-NightlyBareClassIdentity ([string]$_)}))
+            }
+            $methodKeys=[Collections.Generic.List[string]]::new()
+            $hasNodes=$false
+            if($null -ne $entry.ChunkRef.nodes){
+                foreach($node in @($entry.ChunkRef.nodes)){
+                    if($null -eq $node){continue}
+                    $nodeNames=@($node.PSObject.Properties.Name)
+                    $nodeClass=''
+                    if($nodeNames -ccontains 'ClassName'){$nodeClass=Get-NightlyBareClassIdentity ([string]$node.ClassName)}
+                    $nodeMethod=''
+                    if($nodeNames -ccontains 'Method' -and -not [string]::IsNullOrWhiteSpace([string]$node.Method)){$nodeMethod=Get-NightlySeedMethodName ([string]$node.Method)}
+                    elseif($nodeNames -ccontains 'MethodName'){$nodeMethod=Get-NightlySeedMethodName ([string]$node.MethodName)}
+                    if([string]::IsNullOrWhiteSpace($nodeClass) -or [string]::IsNullOrWhiteSpace($nodeMethod)){continue}
+                    $methodKey=[string]$entry.suite+[char]0+$nodeClass+[char]0+$nodeMethod
+                    $methodKeys.Add($methodKey)
+                    [void]$placedMethods.Add($methodKey)
+                    $hasNodes=$true
+                }
+            }
+            if(-not $hasNodes){
+                foreach($class in $classes){[void]$wholeClasses.Add([string]$entry.suite+[char]0+[string]$class)}
+            }
+            $seen=($classes.Count -gt 0);$incomplete=$false;$last=$null
             foreach($class in $classes){
-                $history=@($Seed.chunks|Where-Object {$_.suite -ceq $entry.suite -and @($_.classes) -ccontains $class})
-                if($history.Count -gt 0){$mapped++}else{$passed=$false}
-                foreach($old in $history){
-                    if(-not $old.completed -or @($Seed.failedTests|Where-Object {$_.suite -ceq $old.suite -and $_.chunk -ceq $old.chunk -and $_.className -ceq $class}).Count -gt 0){$passed=$false}
+                $key=[string]$entry.suite+[char]0+[string]$class
+                if(-not $historyByClass.ContainsKey($key)){$seen=$false;continue}
+                $mapped++
+                foreach($old in @($historyByClass[$key])){
+                    if(-not $old.completed){$incomplete=$true}
                     $time=ConvertTo-NightlySeedUtc $old.lastRunAtUtc
                     if($time -and ($null -eq $last -or $time -gt $last)){$last=$time}
                 }
             }
-            # 0: a failed class maps here, including a split class and a mixed passed+failed chunk.
-            # 2: every class was seen, completed, and not failed.
-            # 1: never-seen or unfinished. A missing timestamp sorts before a known one.
-            $priority=1
-            if($entry.priorFailure){$priority=0}elseif($passed){$priority=2}
-            $ticks=[long]::MinValue;if($last){$ticks=$last.UtcDateTime.Ticks}
-            $ranked.Add([pscustomobject]@{entry=$entry;priority=$priority;ticks=$ticks;ordinal=$entry.canonicalOrdinal})
+            $prepared.Add([pscustomobject]@{entry=$entry;classes=$classes;hasNodes=$hasNodes;methods=$methodKeys;seen=$seen;incomplete=$incomplete;last=$last})
         }
         if($mapped -eq 0){throw 'seed-plan-unmapped'}
+        $presentClass=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($methodKey in @($failedMethods)){
+            $parts=$methodKey.Split([char]0)
+            $classKey=$parts[0]+[char]0+$parts[1]
+            if($placedMethods.Contains($methodKey) -or $wholeClasses.Contains($classKey)){[void]$presentClass.Add($classKey)}
+        }
+        $ranked=[Collections.Generic.List[object]]::new()
+        foreach($row in @($prepared)){
+            $holdsFailure=$false
+            if($row.hasNodes){
+                foreach($methodKey in @($row.methods)){if($failedMethods.Contains($methodKey)){$holdsFailure=$true;break}}
+            }else{
+                foreach($class in @($row.classes)){if($failedClasses.Contains([string]$row.entry.suite+[char]0+[string]$class)){$holdsFailure=$true;break}}
+            }
+            $sibling=$false
+            if(-not $holdsFailure){
+                foreach($class in @($row.classes)){if($presentClass.Contains([string]$row.entry.suite+[char]0+[string]$class)){$sibling=$true;break}}
+            }
+            # 0: this chunk contains a failed method, or it has no node list and its class failed.
+            # 1: never-seen or unfinished. A missing timestamp sorts before a known one.
+            # 2: another chunk of a class whose failed method is already placed (P0b).
+            # 3: every class was seen, completed, and has no placed failure.
+            $priority=1
+            if($holdsFailure){$priority=0}
+            elseif($sibling){$priority=2}
+            elseif($row.seen -and -not $row.incomplete){
+                $clean=$true
+                foreach($class in @($row.classes)){if($presentClass.Contains([string]$row.entry.suite+[char]0+[string]$class)){$clean=$false;break}}
+                if($clean){$priority=3}
+            }
+            $ticks=[long]::MinValue;if($row.last){$ticks=$row.last.UtcDateTime.Ticks}
+            $ranked.Add([pscustomobject]@{entry=$row.entry;priority=$priority;ticks=$ticks;ordinal=$row.entry.canonicalOrdinal})
+        }
         $ordered=@($ranked.ToArray()|Sort-Object priority,ticks,ordinal|ForEach-Object {$_.entry})
         return [pscustomobject]@{entries=$ordered;reason='operator-seed-order: unknown timestamps retain original order; known timestamps oldest first';lanes=@()}
     }catch{return [pscustomobject]@{entries=@($Entries);reason=$_.Exception.Message;lanes=@()}}
