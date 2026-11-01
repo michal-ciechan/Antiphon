@@ -2091,5 +2091,230 @@
       "reason": "live-claude diagnostic gate"
     }
   ],
-  "additiveContract": []
+  "additiveContract": [
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeDeliveryWiringTests",
+      "method": "DroppedBridgeCannotPass",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeDeliveryWiringTests",
+      "method": "LiveMethodsUseTranscriptVerdicts",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeDeliveryWiringTests",
+      "method": "LostEnterCannotPass",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeDeliveryWiringTests",
+      "method": "PromptReceiptPrecedesVerdict",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeEvidenceWiringTests",
+      "method": "CanarySinksCannotBypassSanitizer",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeEvidenceWiringTests",
+      "method": "EvidenceIsSanitized",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeExecutableWiringTests",
+      "method": "ClSessionUsesAttestedExecutable",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeExecutableWiringTests",
+      "method": "CoreCallersRefuseMissingContext",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeExecutableWiringTests",
+      "method": "ExecutedImageMismatchRefuses",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeIsolationWiringTests",
+      "method": "CwdInstructionsCannotLeak",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeIsolationWiringTests",
+      "method": "DedicatedConfigOwnsTrustAndEvidence",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeIsolationWiringTests",
+      "method": "LaunchArgumentsKeepProductionSources",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeIsolationWiringTests",
+      "method": "ModelSelectionComesFromContext",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeIsolationWiringTests",
+      "method": "SettingsProjectionDetectsDrift",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeIsolationWiringTests",
+      "method": "UnknownConfigDisablesReuse",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeStartupWiringTests",
+      "method": "ControlRequiredForSettingsOff",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeStartupWiringTests",
+      "method": "ControlWindowBoundsOffObservation",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeStartupWiringTests",
+      "method": "ExplicitBridgeSetup",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeStartupWiringTests",
+      "method": "LoadedSettingsSurviveOffOverlay",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Agents.Pty.Tests",
+      "namespace": "Antiphon.Agents.Pty.Tests",
+      "class": "LiveClaudeStartupWiringTests",
+      "method": "StartupMethodsUseControlOracle",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Checkpoints",
+      "class": "PlanCoverageBindingTests",
+      "method": "linked_shared_sources_are_literal_compile_items",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneEvidenceTests",
+      "method": "ArtifactGateRequiresPresence",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneEvidenceTests",
+      "method": "C680EvidenceIsSanitized",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneExecutableTests",
+      "method": "C680ImageMismatchRefuses",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneExecutableTests",
+      "method": "C680RefusesMissingContext",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneExecutableTests",
+      "method": "C680UsesAttestedExecutable",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneExecutableTests",
+      "method": "S1cOutcomeFeedsS1bClassifier",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneIsolationTests",
+      "method": "CwdInstructionsCannotLeak",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneIsolationTests",
+      "method": "DedicatedConfigOwnsTrustAndEvidence",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneIsolationTests",
+      "method": "SettingsProjectionDetectsDrift",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneIsolationTests",
+      "method": "StartupArgvMatchesProductionApplyOff",
+      "arguments": []
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Scripts",
+      "class": "LiveLaneIsolationTests",
+      "method": "UnknownConfigDisablesReuse",
+      "arguments": []
+    }
+  ]
 }
