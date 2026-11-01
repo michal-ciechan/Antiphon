@@ -429,6 +429,61 @@ public sealed class WindowsUnitPlatformAdmissionTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Test]
+    public void C1210_Host_roster_matches_windows_shaped_observation()
+    {
+        // The Windows child records [NativeLinuxOnly] skips for the classes its filter
+        // selects. That observation is the host roster. A Linux-only class the filter
+        // does not select is decided once by the shipped Windows exclusion, not by the roster.
+        var observed = WindowsShapedHostObservations();
+        var expected = WindowsUnitSkipRoster.Native
+            .SelectMany(entry => Enumerable.Repeat(entry.Identity, entry.Results))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        observed.ShouldBe(expected, "c1210-host-roster");
+
+        string[] decided = ["VolumeRetirementContentTests", "VolumeRetirementDockerTests", "VolumeRetirementReceiptTests"];
+        using var policy = JsonDocument.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "tests/test-execution-policy.json")));
+        var exclusions = policy.RootElement.GetProperty("profiles").GetProperty("rc").GetProperty("exclusions");
+        foreach (var name in decided)
+        {
+            var rows = 0;
+            foreach (var row in exclusions.EnumerateArray())
+            {
+                if (row.GetProperty("suite").GetString() != "antiphon" || row.GetProperty("class").GetString() != name) continue;
+                if (!row.TryGetProperty("platform", out var platform) || platform.GetString() != "windows") continue;
+                rows++;
+            }
+            rows.ShouldBe(1, "c1210-policy-decision: " + name);
+            WindowsUnitSkipRoster.Native.Count(entry => entry.Class == name).ShouldBe(0, "c1210-host-roster: " + name);
+        }
+    }
+
+    private static string[] WindowsShapedHostObservations()
+    {
+        var selected = new HashSet<string>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(ChildFilter, @"\(([A-Za-z0-9_]+)\*\)"))
+            selected.Add(match.Groups[1].Value);
+        var observed = new List<string>();
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        foreach (var type in typeof(WindowsUnitPlatformAdmissionTests).Assembly.GetTypes())
+        {
+            if (!selected.Contains(type.Name)) continue;
+            var classSkip = type.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;
+            foreach (var method in type.GetMethods(flags))
+            {
+                if (method.GetCustomAttributes(typeof(TestAttribute), inherit: false).Length == 0) continue;
+                var methodSkip = method.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;
+                if (!classSkip && !methodSkip) continue;
+                var cases = method.GetCustomAttributes(inherit: false).Count(attribute => attribute.GetType().Name == "ArgumentsAttribute");
+                if (cases == 0) cases = 1;
+                var identity = type.Namespace + "." + type.Name + "." + method.Name;
+                for (var index = 0; index < cases; index++) observed.Add(identity);
+            }
+        }
+        return observed.Order(StringComparer.Ordinal).ToArray();
+    }
+
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1210_Windows_linux_only_outcomes_are_exact(CancellationToken cancellationToken)
     {
