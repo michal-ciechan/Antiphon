@@ -33,6 +33,9 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
     private async Task<string> RunAsync(int signal, int code, bool requested, bool planted)
     {
         using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var clock = Stopwatch.StartNew();
+        void Mark(string phase) =>
+            Console.WriteLine($"card1619-phase signal={signal} code={code} {phase} ms={clock.ElapsedMilliseconds}");
         Directory.CreateDirectory(Root);
         _runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings {
             SessionLogPath = Root, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false
@@ -43,13 +46,25 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
             var script = planted
                 ? "printf 'card1619-ready\\n'; while [ ! -f release-self ]; do sleep 0.02; done; kill -9 $$"
                 : $"printf 'card1619-ready\\n'; read line; exit {code}";
-            var dto = await _runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
-                ["-c", script],
-                new Dictionary<string, string>(), Root, 80, 24, AcceptedStartedAt: Generation), ct.Token);
+            Mark("before-start");
+            RunnerSessionDto dto;
+            try
+            {
+                dto = await _runtime.StartAsync(new RunnerLaunchRequest(Id, "/bin/sh",
+                    ["-c", script],
+                    new Dictionary<string, string>(), Root, 80, 24, AcceptedStartedAt: Generation), ct.Token);
+            }
+            catch (Exception ex)
+            {
+                Mark($"start-failed {ex.GetType().Name}");
+                throw;
+            }
+            Mark("after-start");
             _child = Process.GetProcessById(dto.Pid!.Value);
             _host = Process.GetProcessById(dto.HostPid!.Value);
             _startTicks = StartTicks(_child.Id);
             while (!_runtime.GetBuffer(Id).Buffer.Contains("card1619-ready")) await Task.Delay(10, ct.Token);
+            Mark("ready");
             dto.Status.ShouldBe("Running");
             LaunchManifest = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(Path.Combine(Root, "pty-hosts", "manifests"), Id))!;
             LaunchManifest.ShouldNotBeNull("capture the real manifest before the runner acknowledges exit");
@@ -92,6 +107,7 @@ internal sealed class Card1619NativeExitFixture : IAsyncDisposable
                         exit.AcceptedStartedAt.ShouldBe(Generation);
                         exit.ExitSignal.ShouldBe(signal);
                         exit.ExitCode.ShouldBe(code);
+                        Mark("exit-envelope");
                         return value.Json;
                     }
         }
