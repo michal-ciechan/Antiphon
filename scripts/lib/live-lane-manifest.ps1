@@ -551,6 +551,28 @@ function Get-LiveLaneLocalCoreCount {
     return $count
 }
 
+function Test-LiveLaneSubmitExtraExpansion {
+    param([string]$Project, [object[]]$Nodes, $Entries)
+    $extraNodes = @(ConvertTo-LiveLaneList $Nodes)
+    $submitNode = @($extraNodes | Where-Object { [string](Get-LiveLaneProp $_ 'method') -eq 'Submitting_via_two_writes_completes_a_turn' } | Select-Object -First 1)
+    if ($submitNode.Count -eq 1) {
+        $clone = [pscustomobject]@{
+            project = $Project
+            uid = ([string](Get-LiveLaneProp $submitNode[0] 'uid') + '-extra')
+            namespace = [string](Get-LiveLaneProp $submitNode[0] 'namespace')
+            type = [string](Get-LiveLaneProp $submitNode[0] 'type')
+            method = [string](Get-LiveLaneProp $submitNode[0] 'method')
+            displayName = 'Submitting_via_two_writes_completes_a_turn(other)'
+            arguments = @('other')
+            signature = [string](Get-LiveLaneProp $submitNode[0] 'signature')
+            categories = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $submitNode[0] 'categories'))
+        }
+        $extraNodes += $clone
+    }
+    $extraEval = Test-LiveLaneRosterAccepted -Entries $Entries -Nodes $extraNodes -Project $Project
+    return [bool](@($extraEval.Reasons) -contains 'extra-expansion')
+}
+
 function Invoke-LiveLaneRosterMatrix {
     param([string]$Project, [object[]]$Nodes, $Manifest, $Context, [string]$AssemblyHash, [string]$AssemblyPath)
     $failures = New-Object System.Collections.Generic.List[string]
@@ -613,24 +635,8 @@ function Invoke-LiveLaneRosterMatrix {
         $foreignEval = Test-LiveLaneRosterAccepted -Entries $foreign -Nodes $Nodes -Project $Project -FullManifest
         if ($foreignEval.Accepted) { $failures.Add('C1545 V-1/foreign-project exact-set') }
     } else {
-        $extraNodes = @($Nodes)
-        $submitNode = @($Nodes | Where-Object { [string](Get-LiveLaneProp $_ 'method') -eq 'Submitting_via_two_writes_completes_a_turn' } | Select-Object -First 1)
-        if ($submitNode.Count -eq 1) {
-            $clone = [pscustomobject]@{
-                project = $Project
-                uid = ([string](Get-LiveLaneProp $submitNode[0] 'uid') + '-extra')
-                namespace = [string](Get-LiveLaneProp $submitNode[0] 'namespace')
-                type = [string](Get-LiveLaneProp $submitNode[0] 'type')
-                method = [string](Get-LiveLaneProp $submitNode[0] 'method')
-                displayName = 'Submitting_via_two_writes_completes_a_turn(other)'
-                arguments = @('other')
-                signature = [string](Get-LiveLaneProp $submitNode[0] 'signature')
-                categories = @(ConvertTo-LiveLaneList (Get-LiveLaneProp $submitNode[0] 'categories'))
-            }
-            $extraNodes += $clone
-        }
-        $extraEval = Test-LiveLaneRosterAccepted -Entries $projectCore -Nodes $extraNodes -Project $Project
-        if ($extraEval.Reasons -notcontains 'extra-expansion') { $failures.Add('C1545 V-2/extra-argument expandedUidSet has no extra argument') }
+        $expanded = Test-LiveLaneSubmitExtraExpansion -Project $Project -Nodes $Nodes -Entries $projectCore
+        if (-not $expanded) { $failures.Add('C1545 V-2/extra-argument expandedUidSet has no extra argument') }
 
         $wrong = @(Copy-LiveLaneEntries $projectCore)
         foreach ($row in $wrong) { $row.project = 'Wrong.Assembly' }
