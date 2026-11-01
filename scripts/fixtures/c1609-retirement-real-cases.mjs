@@ -231,7 +231,10 @@ function proof(f) {
     '; Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+
     ' -ProofVersion 2 -PhaseNonce '+q(f.nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(f.proof)+' -CreatedUnix '+Math.floor(Date.now()/1000)+' -LogPath '+q(dir+'/proof.log')]);
   assert.equal(psi.code,0);
-  rootRun('chown -R '+applyUid+':'+applyGid+' '+q(dir)+' && chmod 0700 '+q(f.host)+' && chmod -R u=rwX,go= '+q(dir));
+  // Custody requires the applier to own the proof and forbids group/world write.
+  // The audit helper is uid 1654 and sees the proof through a read-only bind,
+  // so the proof is other-readable. The applier home stays private.
+  rootRun('chown -R '+applyUid+':'+applyGid+' '+q(dir)+' && chmod 0700 '+q(f.host)+' && chmod -R u=rwX,go=rX '+q(dir));
   f.started=Math.floor(Date.now()/1000)-5;
 }
 function shell(f, body, suffix='run') {
