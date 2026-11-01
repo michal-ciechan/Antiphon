@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
+using Antiphon.PtyHost.Client;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
@@ -39,6 +41,67 @@ public class Card1619RunnerExitTests
         var exit = await ExitAsync(events);
         AssertExit(runtime.Get(fixture.Id), exit, fixture.Generation, 15);
         runtime.Get(fixture.Id).Adopted.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A detached host drops the runner pipe and listens again. The first reconnect can be
+    /// accepted by the socket that is already closing, so hello reads EOF. That handshake
+    /// failure has to be retried for the connect budget; failing it once is what made
+    /// AdoptOrphanedHostsAsync kill a live host (CARD-1632).
+    /// </summary>
+    [Test]
+    public async Task Relisten_hello_eof_is_retried_until_ack()
+    {
+        var pipeName = PtyHostProtocol.PipeNameFor(Guid.NewGuid());
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var firstListening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = Task.Run(async () =>
+        {
+            await using (var dropped = OpenPipe(pipeName, stop.Token))
+            {
+                firstListening.TrySetResult();
+                await dropped.WaitForConnectionAsync(stop.Token);
+                // The client has finished Connect and is blocked reading helloAck. Close now so
+                // that read is a clean EOF, which is the detached-host relisten race.
+                (await PtyHostFraming.ReadAsync(dropped, stop.Token)).ShouldBeOfType<HelloMessage>();
+            }
+
+            await using var live = OpenPipe(pipeName, stop.Token);
+            await live.WaitForConnectionAsync(stop.Token);
+            var hello = await PtyHostFraming.ReadAsync(live, stop.Token);
+            hello.ShouldBeOfType<HelloMessage>();
+            await PtyHostFraming.WriteAsync(live, new HelloAckMessage(
+                PtyHostProtocol.Version, "card1632-relisten", Guid.NewGuid(), "Running"), stop.Token);
+            await Task.Delay(TimeSpan.FromSeconds(2), stop.Token);
+        }, stop.Token);
+
+        await firstListening.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await using var client = await PtyHostClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(5), CancellationToken.None);
+        client.Hello.Status.ShouldBe("Running");
+        client.Hello.HostVersion.ShouldBe("card1632-relisten");
+        stop.Cancel();
+        try { await server; } catch (OperationCanceledException) { }
+    }
+
+    private static NamedPipeServerStream OpenPipe(string pipeName, CancellationToken ct)
+    {
+        Exception? last = null;
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                return new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                last = ex;
+                Thread.Sleep(20);
+            }
+        }
+
+        throw new IOException($"Could not bind {pipeName}", last);
     }
 
     [Test]
