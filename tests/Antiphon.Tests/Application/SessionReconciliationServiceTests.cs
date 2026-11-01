@@ -132,8 +132,15 @@ public class SessionReconciliationServiceTests
             var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
             dbSession.Status.ShouldBe(SessionStatus.Failed);
             dbSession.ExitCode.ShouldBe(1);
+            // The fixture reports code 1 and no signal (null, not observed zero). The
+            // clause must say the signal is unknown and must not claim a kill or a normal exit.
+            dbSession.ExitSignal.ShouldBeNull();
             dbSession.FailureReason.ShouldBe(
-                "Reconciliation found the runner exited while the database session was still live (ProcessExited, code 1).");
+                "Reconciliation found the runner exited while the database session was still live (ProcessExited, code 1). "
+                + "process ended (exit code 1; signal unknown)");
+            dbSession.FailureReason.ShouldNotContain("exited on its own");
+            dbSession.FailureReason.ShouldNotContain("killed by signal");
+            dbSession.FailureReason.ShouldNotContain("process exited with exit code");
             dbSession.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
         }
         finally
