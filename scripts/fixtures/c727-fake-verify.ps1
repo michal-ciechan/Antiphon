@@ -64,6 +64,27 @@ if ($Case -eq 'temp-project-absent') {
     if ($state.tempContainer) { Write-Output 'fixture-temp-container' }
     exit 0
 }
+if ($Case -eq 'retirement-proof-read') {
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"proof-read"}'
+    if ($state.retirementProofError) { exit 2 }
+    @{operationId=$request.operationId;digest=('a'*64);state='Ready';mode='scripted'} | ConvertTo-Json -Compress
+    exit 0
+}
+if ($Case -eq 'temp-retirement-clearable') {
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"census","name":"temp-retirement-clearable"}'
+    if ($state.tempRetirementCensusError) { exit 2 }
+    if ($state.PSObject.Properties.Name -contains 'tempRetirementCensus' -and $null -ne $state.tempRetirementCensus) {
+        ConvertTo-Json -InputObject $state.tempRetirementCensus -Compress -Depth 8
+    } else {
+        Write-Output '{"volumes":[],"journals":[]}'
+    }
+    if ($state.tempRetirementCensusAfterRead) {
+        $state | Add-Member -NotePropertyName tempRetirementCensus -NotePropertyValue $state.tempRetirementCensusAfterRead -Force
+        $state.PSObject.Properties.Remove('tempRetirementCensusAfterRead')
+        $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
+    }
+    exit 0
+}
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
 if ($state.scenario -eq 'c1008') { $entry['recycle'] = $request.recycle; $entry['tempRetiredAt'] = $request.tempRetiredAt }
 if ($Case -eq 'retire-temp-containers') {
@@ -104,6 +125,12 @@ if ($Case -eq 'retire-temp-containers') {
 }
 
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress -Depth 20)
+if ($Case -eq 'retire-temp-runner' -and $request.recycle.dryRun -and $state.failRetirementPreview) {
+    $dest = Join-Path $request.evidenceRoot $Case
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    @{ accepted=$false; diagnosis='RecycleGitAuditUnknown'; exit=2 } | ConvertTo-Json | Set-Content (Join-Path $dest 'c590-result.json')
+    exit 2
+}
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
 if ($state.scenario -eq 'c1008' -and $Case -eq 'deploy-parent') {
     if ($state.failDeploy) { exit 2 }
@@ -150,14 +177,24 @@ if ($Case -eq 'deploy-temp-runner') {
         $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
         exit 1
     }
-    $state.tempDeployed = $true
-    $state.tempOffline = $false
-    $state.tempContainer = $true
+    # c1008 state tracks the slot under statuses and does not carry the legacy flags.
+    if ($state.PSObject.Properties.Name -contains 'tempDeployed') { $state.tempDeployed = $true }
+    if ($state.PSObject.Properties.Name -contains 'tempOffline') { $state.tempOffline = $false }
+    if ($state.PSObject.Properties.Name -contains 'tempContainer') { $state.tempContainer = $true }
+    if ($state.scenario -eq 'c1008' -and $state.statuses.'server2-temp') {
+        $temp = $state.statuses.'server2-temp'
+        $temp.buildVersion = $state.sha
+        $temp.available = $true
+        $temp.dispatchEligible = $true
+        if ($null -eq $temp.runnerSessions) { $temp.runnerSessions = 0 }
+    }
 }
 elseif ($Case -eq 'deploy-parent') {
     $state.oldDeployed = $true
     if ($state.PSObject.Properties.Name -contains 'seedImageAvailable') { $state.seedImageAvailable = $false }
 }
 elseif ($Case -notin @('runner-cache-seed', 'verify-runner-caches', 'retire-temp-runner')) { exit 2 }
-$state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
+# c1008 keeps the runner slot under statuses. The default depth drops that object.
+$jsonDepth = if ($state.scenario -eq 'c1008') { 30 } else { 2 }
+$state | ConvertTo-Json -Compress -Depth $jsonDepth | Set-Content -LiteralPath $env:C727_TEST_STATE
 exit 0

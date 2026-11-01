@@ -208,15 +208,18 @@ public sealed class RetiredTempContainerHostTests
         foreach(var fault in new[]{"valid","bind","tmpfs","private","compose","token-missing","token-source","token-writable"}) {
             using var f=Fixture("session-runner","state-init");var runner=f.Docker["containers"]!.AsArray()[1]!;
             var tokenMount=runner["Mounts"]!.AsArray().Single(m=>m!["Destination"]!.GetValue<string>()=="/run/antiphon/github-token")!;
-            if(fault=="token-missing")runner["Mounts"]!.AsArray().Remove(tokenMount);
+            // The complete older roster has no token bind and is supported.
+            // A missing expected destination with an unknown replacement still refuses.
+            if(fault=="token-missing")tokenMount["Destination"]="/run/antiphon/unknown-token";
             if(fault=="token-source")tokenMount["Source"]="/foreign";
             if(fault=="token-writable")tokenMount["RW"]=true;
             if(fault=="bind")runner["Mounts"]!.AsArray().Single(m=>m!["Destination"]!.GetValue<string>()=="/state/codex")!["Source"]="/foreign";
             if(fault=="tmpfs")runner["HostConfig"]=new JsonObject();
             if(fault=="private")f.Docker["volumes"]![Project+"_work"]!["Labels"]!["com.docker.compose.project"]="foreign";
             if(fault=="compose")f.Docker["models"]![Project]!["services"]!["state-init"]!["volumes"]![1]!["target"]="/state";
-            var run=await Cleanup(f);run.Exit.ShouldBe(fault=="valid"?0:2,"c994-mounts c994-private-identity c994-compose: "+fault+"; "+run.Output);
-            if(fault!="valid")NoMutation(f,"c994-mounts");
+            var good=fault is "valid" or "compose";
+            var run=await Cleanup(f);run.Exit.ShouldBe(good?0:2,"c994-mounts c994-private-identity c994-compose: "+fault+"; "+run.Output);
+            if(!good)NoMutation(f,"c994-mounts");
             else {
                 var candidates=Receipt(f)["candidates"]!.AsArray();
                 candidates.Select(c=>c!["Topology"]!["mounts"]!.AsArray().Count).ShouldBe(new[]{15,3},"c994-mounts: logical roster including the token bind");
@@ -377,7 +380,7 @@ public sealed class RetiredTempContainerHostTests
         NoMutation(drift,"c994-host-preview: no inherited preview authority");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C994_Image_receipt_lookup_is_bound() {
+    public async Task C1609_Cleanup_does_not_require_historical_image() {
         using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0,"c994-image-binding");var image=Receipt(f)["image"]!.GetValue<string>();
         f.ReloadDocker();var retry=await Cleanup(f,"C994_OPERATION=c99400000000000000000000000000000002");retry.Exit.ShouldBe(0,"c994-image-retention: "+retry.Output);
         Receipt(f)["image"]!.GetValue<string>().ShouldBe(image,"c994-image-retention");Receipt(f)["originalCleanupOperationId"]!.GetValue<string>().ShouldBe("c99400000000000000000000000000000001");
@@ -421,18 +424,48 @@ public sealed class RetiredTempContainerHostTests
         lookup.Exit.ShouldBe(0,"c994-image-binding c994-image-retention: "+lookup.Output);
         lookup.Output.Split('\n').Where(x=>x.StartsWith("LOOKUP_CASE ")).Select(x=>x[12..]).ShouldBe(new[]{"matching","retained","fallback","corrupt","symlink","traversal","foreign-operation","foreign-source","foreign-project","foreign-projectid","foreign-stamp","conflicting","unrelated-newest"},"c994-image-binding: exact receipt roster");
         f.ReloadDocker();var file=f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json";var record=JsonNode.Parse(File.ReadAllText(file))!;record["sourceSha"]=new string('b',40);File.WriteAllText(file,record.ToJsonString());
+        await VolumeRetirementFixture.ReadyPreview(f,"C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
         var foreign=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
         foreign.Exit.ShouldBe(0,"c994-image-binding: a completed receipt from another SHA still audits; "+foreign.Output);
         foreign.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
-        f.Removed.ShouldBe(new[]{"antiphon-runner-temp_work","antiphon-runner-temp_runner-tmp","antiphon-runner-temp_dind-data","antiphon-runner-temp_runner-state"});
-        f.Trace.Where(a=>a.Length>0&&a[0]=="create").Any(a=>a.Contains("sha256:"+new string('a',64))).ShouldBeTrue("c994-image-binding: apply uses the retired image");
+        f.Removed.ShouldBe(new[]{"antiphon-runner-temp_runner-state", "antiphon-runner-temp_dind-data",
+            "antiphon-runner-temp_runner-tmp", "antiphon-runner-temp_work"});
+        f.Trace.Where(a=>a.Length>0&&a[0]=="run").Any(a=>a.Contains(C1008HostFixture.SessionImage)).ShouldBeTrue("c1609-helper: apply runs the inspected read-only helper");
+        f.Trace.Any(a=>a.Contains("down")&&a.Contains("-v")).ShouldBeFalse("c1609-helper: no broad Compose deletion");
+
+        using var historical = Fixture("session-runner");
+        (await Cleanup(historical)).Exit.ShouldBe(0, "c1609-historical-image: seed");
+        var planted = Receipt(historical);
+        planted["operationId"] = "c99400000000000000000000000000000009";
+        planted["sourceSha"] = new string('b', 40);
+        planted["image"] = "sha256:" + new string('b', 64);
+        planted["outcome"] = "completed";
+        planted.AsObject().Remove("originalCleanupOperationId");
+        var plantedDir = Path.Combine(historical.Root, "server/temp-container-retirement");
+        File.Delete(Path.Combine(plantedDir, "c99400000000000000000000000000000001.json"));
+        File.WriteAllText(Path.Combine(plantedDir, "c99400000000000000000000000000000009.json"), planted.ToJsonString());
+        historical.ReloadDocker();
+        historical.Docker["containers"]!.AsArray().Add(historical.Container('7', Project, "session-runner", false));
+        AlignSameGeneration(historical);
+        var cross = await Cleanup(historical, "C994_OPERATION=c99400000000000000000000000000000002");
+        cross.Exit.ShouldBe(0, "c1609-historical-image: " + cross.Output);
+        cross.Output.ShouldContain("C994_IMAGE_HISTORICAL");
+        cross.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        historical.Removed.ShouldBeEmpty("c1609-historical-image: container cleanup does not remove volumes");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C994_Audit_image_is_pinned_and_required() {
-        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();if(fault=="original-image-missing")PinReceiptImage(f,"sha256:"+new string('b',64));f.Docker["fault"]=fault;
+    public async Task C1609_Audit_uses_current_image() {
+        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();if(fault=="original-image-missing"){
+            PinReceiptImage(f,"sha256:"+new string('b',64));
+            File.WriteAllText(Path.Combine(f.Root,"server/audit-current.json"), "{\"image\":\"sha256:"+new string('b',64)+"\",\"policyVersion\":1,\"protocol\":2,\"schema\":1}");
+        }f.Docker["fault"]=fault;
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");run.Exit.ShouldBe(2,"c994-image-required: "+run.Output);run.Output.ShouldContain("RecycleGitAuditUnknown");f.Removed.ShouldBeEmpty("c994-audit-required");}
         foreach(var work in new[]{"published","dirty","unpublished"}) {
             using var f=Fixture("session-runner");
+            // Both the legacy path and the read-only helper must see the same
+            // volume bytes; /work in the fixture is an alias, not a second repo.
+            Directory.Delete(Path.Combine(f.Root, "work"));
+            Directory.CreateSymbolicLink(Path.Combine(f.Root, "work"), VolumeRetirementFixture.WorkMount(f));
             var setup=await C994ScriptProcess.Run("bash","-c",$$"""
                 set -euo pipefail
                 git init -q --bare '{{f.Root}}/origin'
@@ -446,6 +479,9 @@ public sealed class RetiredTempContainerHostTests
                 git -C '{{f.Root}}/work/repo' push -qu origin main
                 """);setup.Exit.ShouldBe(0,"c994-audit-required: real Git setup; "+setup.Output);
             (await Cleanup(f)).Exit.ShouldBe(0,"c994-image-required: preserve original digest");PinReceiptImage(f,"sha256:"+new string('b',64));f.ReloadDocker();
+            // Establish Ready while clean, then mutate actual target contents.
+            // Missing Ready must not mask the dirty/unpublished refusal vectors.
+            await VolumeRetirementFixture.ReadyPreview(f,"C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
             if(work=="dirty")File.WriteAllText(f.Root+"/work/repo/dirty","unpublished-sentinel");
             if(work=="unpublished") {
                 File.WriteAllText(f.Root+"/work/repo/local","unpublished-sentinel");
@@ -453,10 +489,17 @@ public sealed class RetiredTempContainerHostTests
                 commit=await C994ScriptProcess.Run("git","-C",f.Root+"/work/repo","commit","-qm","unpublished");commit.Exit.ShouldBe(0);
             }
             var before=f.Docker["volumes"]!.ToJsonString();
+            var previousAudits = f.Trace.Count(a=>a[0]=="run"&&a.Contains("--entrypoint"));
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
             run.Exit.ShouldBe(work=="published"?0:2,"c994-image-required c994-audit-required: "+work+"; "+run.Output);
-            f.Trace.Where(a=>a[0]=="create").ShouldNotBeEmpty("c994-image-required: offline audit reached");
-            f.Trace.Where(a=>a[0]=="create").All(a=>a.Contains("sha256:"+new string('b',64))&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c994-image-required: exact pinned readonly uid-1654 helper");
+            var audits = f.Trace.Where(a=>a[0]=="run"&&a.Contains("--entrypoint")).Skip(previousAudits).ToArray();
+            audits.ShouldNotBeEmpty("c994-image-required: apply offline audit reached");
+            audits.All(a=>a.Contains(C1008HostFixture.SessionImage)&&a.Contains("1654:1654")).ShouldBeTrue("c1609-current-image: inspected current uid-1654 helper, independent of historical image");
+            audits.All(a=>a.Any(arg=>arg.StartsWith("type=volume,", StringComparison.Ordinal))).ShouldBeTrue("c1609-current-image: the helper mounts the audited volumes");
+            audits.SelectMany(a=>a.Where(arg=>arg.StartsWith("type=volume,", StringComparison.Ordinal))).All(mount => {
+                var options = mount.Split(',');
+                return options.Contains("readonly") && options.Contains("volume-nocopy");
+            }).ShouldBeTrue("c1609-current-image: every volume mount is readonly and volume-nocopy");
             if(work!="published") {
                 run.Output.ShouldContain(work=="dirty"?"RecycleWorktreeDirty":"RecycleUnpublishedWork",customMessage:"c994-audit-required");
                 f.Removed.ShouldBeEmpty("c994-audit-required");f.ReloadDocker();f.Docker["volumes"]!.ToJsonString().ShouldBe(before,"c994-audit-required: generations retained");
@@ -479,6 +522,20 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Fixture_custody_is_bounded() {
+        using (var first = new C1008HostFixture())
+        using (var second = new C1008HostFixture())
+        {
+            var firstModel = first.Docker["models"]!.ToJsonString();
+            var secondModel = second.Docker["models"]!.ToJsonString();
+            firstModel.ShouldContain(first.Root);
+            secondModel.ShouldContain(second.Root);
+            secondModel.ShouldNotContain(first.Root);
+            secondModel.ShouldBe(firstModel.Replace(first.Root, second.Root, StringComparison.Ordinal));
+            first.Docker["models"]!["antiphon-runner"]!["services"]!["session-runner"]!["volumes"] = new JsonArray();
+            second.Docker["models"]!.ToJsonString().ShouldBe(secondModel, "shared seed cannot share mutable nodes");
+            File.WriteAllText(Path.Combine(first.Root, "deploy-key"), "changed-fixture");
+            File.ReadAllText(Path.Combine(second.Root, "deploy-key")).ShouldBe("inert-fixture-deployKey\n");
+        }
         var script = """
             import fs from 'node:fs';import os from 'node:os';
             import {ownedRoot,ownedObject,ownedDaemon,boundedChild} from './scripts/fixtures/c994-real-custody.mjs';
@@ -507,7 +564,7 @@ public sealed class RetiredTempContainerHostTests
         run.Output.ShouldContain("C994_CUSTODY cases=5 reaped=true");
     }
 
-    // CARD-1105 V-6. Temp cleanup proves the containers' own generation, not the target roster.
+    // CARD-1609 D-9. Supported actual topology is independent of historical builds.
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Temp_cleanup_uses_previous_generation()
     {
@@ -516,8 +573,10 @@ public sealed class RetiredTempContainerHostTests
         {
             accepted.Docker["containers"]!.AsArray().Add(accepted.Container('7', Project, "session-runner", false, previousGeneration: true));
             accepted.Docker["containers"]!.AsArray().Add(accepted.Container('8', Project, "state-init", false, previousGeneration: true));
+            File.WriteAllText(Path.Combine(accepted.Root, "temp.env"),
+                "RUNNER_GROK_STORE_DIR=" + accepted.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
             var run = await Cleanup(accepted);
-            run.Exit.ShouldBe(0, "c1105-temp-generation: " + run.Output);
+            run.Exit.ShouldBe(0, "c1609: published content and supported topology do not require an old SHA/image; " + run.Output);
             var mounts = Receipt(accepted)["candidates"]!.AsArray().Single(candidate =>
                 candidate!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner")!
                 ["Topology"]!["mounts"]!.AsArray();
@@ -529,9 +588,43 @@ public sealed class RetiredTempContainerHostTests
         refused.Docker["containers"]!.AsArray().Add(refused.Container('8', Project, "state-init", false, previousGeneration: true));
         File.WriteAllText(Path.Combine(refused.Root, "temp.env"),
             "RUNNER_GROK_STORE_DIR=" + refused.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
+        refused.Docker["containers"]!.AsArray().Single(c =>
+            c!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner")!
+            ["Mounts"]![0]!["Destination"] = "/unknown-topology";
         var mismatch = await Cleanup(refused);
-        mismatch.Exit.ShouldBe(2, "c1105-temp-generation: a different stack SHA refuses; " + mismatch.Output);
-        mismatch.Output.ShouldContain("RecycleGenerationMismatch");
+        mismatch.Exit.ShouldBe(2, "c1609: unknown actual topology still refuses; " + mismatch.Output);
+        mismatch.Output.ShouldContain("RecycleContainerStateUnknown");
         NoMutation(refused, "c1105-temp-generation");
+
+        foreach (var unpublished in new[] { false, true })
+        {
+            using var content = new C1008HostFixture(main: false);
+            (await Cleanup(content)).Exit.ShouldBe(0, "c1609: absent historical cleanup");
+            PinReceiptImage(content, "sha256:" + new string('b', 64));
+            content.ReloadDocker();
+            content.Docker["fault"] = "original-image-missing";
+            var seed = await VolumeRetirementFixture.SeedPublishedOuter(content);
+            File.WriteAllText(Path.Combine(content.Root, "temp.env"),
+                "RUNNER_GROK_STORE_DIR=" + content.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
+            const string noHistory = "c1008_compose_source() { return 2; }; c1008_previous_model() { return 2; }";
+            await VolumeRetirementFixture.ReadyPreview(content, noHistory);
+            if (unpublished)
+            {
+                await File.WriteAllTextAsync(Path.Combine(seed.Outer, "private.txt"), "retained unpublished work\n");
+                var commit = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(seed.Outer) +
+                    " add private.txt && git -C " + VolumeRetirementFixture.Quote(seed.Outer) + " commit -qm private");
+                commit.Exit.ShouldBe(0, commit.Output);
+            }
+            content.ReloadDocker();
+            var apply = await content.Run("retire-temp-runner", noHistory);
+            apply.Exit.ShouldBe(unpublished ? 2 : 0, "c1609: content decides despite missing historical source; " + apply.Output);
+            if (unpublished)
+            {
+                apply.Output.ShouldContain("RecycleUnpublishedWork");
+                content.Removed.ShouldBeEmpty();
+                (await File.ReadAllTextAsync(Path.Combine(seed.Outer, "private.txt"))).ShouldBe("retained unpublished work\n");
+            }
+            else content.Removed.ShouldBe(new[] { Project + "_runner-state", Project + "_dind-data", Project + "_runner-tmp", Project + "_work" });
+        }
     }
 }

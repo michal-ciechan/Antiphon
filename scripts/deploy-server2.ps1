@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][switch]$Rolling,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha,
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha = '',
     [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-census', 'check-host-jq', 'provision-host-jq')]
     [string]$Phase = 'all',
     [string]$SavedDonor = '',
@@ -13,7 +13,9 @@ param(
     # CARD-1353 D-4: how long a census waits for a land bound to the recycled runner; 0 refuses on the first read.
     [ValidateRange(0, 1440)][int]$LandWaitMinutes = 30,
     [switch]$DryRun,
-    [ValidatePattern('^c1008[0-9a-f]{32}$')][ValidateNotNullOrEmpty()][string]$ResumeRecycle
+    [switch]$RecycleVolumes,
+    [ValidatePattern('^c1008[0-9a-f]{32}$')][ValidateNotNullOrEmpty()][string]$ResumeRecycle,
+    [ValidatePattern('^c1008[0-9a-f]{32}$')][ValidateNotNullOrEmpty()][string]$RetirementProof
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,8 +27,18 @@ if ($PSBoundParameters.ContainsKey('ResumeRecycle') -and $ResumeRecycle -cnotmat
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 is required' }
 if (($DryRun -or $ResumeRecycle) -and $Phase -notin @('redeploy-old', 'retire-temp')) { throw 'RecycleContextInvalid' }
 if ($DryRun -and $ResumeRecycle) { throw 'RecycleContextInvalid' }
+if ($RetirementProof -and ($Phase -ne 'retire-temp' -or $DryRun -or $ResumeRecycle)) { throw 'RecycleContextInvalid' }
+if ($RecycleVolumes -and $Phase -notin @('redeploy-old', 'all')) { throw 'RecycleContextInvalid' }
+if ([string]::IsNullOrWhiteSpace($Sha)) {
+    if ($Phase -ne 'retire-temp') { throw 'ShaRequired' }
+    # Current source identity is transport provenance only for retirement. No old
+    # checkout, Compose render or image tag is resolved from a creating SHA.
+    $Sha = (& git -C (Split-Path -Parent $PSScriptRoot) rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $Sha -cnotmatch '^[0-9a-f]{40}$') { throw 'CurrentToolingIdentityUnavailable' }
+}
 . (Join-Path $PSScriptRoot 'lib/runner-operator-token.ps1')
 . (Join-Path $PSScriptRoot 'c590-real.ps1')
+. (Join-Path $PSScriptRoot 'c1609-read-packet.ps1')
 
 $api = $env:ANTIPHON_API
 if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
@@ -264,6 +276,11 @@ function Invoke-RunnerRequest {
     $lock = $null
     try {
         if ($Method -eq 'POST') { $lock = Enter-RolloutAdmissionLock }
+        if ($Method -eq 'POST' -and $RunnerId -ceq 'server2-temp' -and $Suffix -ceq '/drain/clear') {
+            # The earlier preflight is advisory. Reobserve while this exact POST
+            # owns FD8, before the retirement epoch can be cleared.
+            Assert-TempRetirementClearable
+        }
         return Invoke-RunnerRequestCore -Method $Method -RunnerId $RunnerId -Suffix $Suffix -Body $Body
     } finally {
         if ($null -ne $lock) {
@@ -360,6 +377,11 @@ function Assert-RecycleContext {
         if ($Context.project -cne 'antiphon-runner-temp' -or $Context.resume -ne $false -or
             $Context.cleanupOperationId -isnot [string] -or $Context.cleanupOperationId -cnotmatch '^c994[0-9a-f]{32}$') { throw 'RecycleContextInvalid' }
         $expected += 'cleanupOperationId'
+    }
+    if ($keys -ccontains 'expectedProofDigest') {
+        if ($Context.project -cne 'antiphon-runner-temp' -or $Context.dryRun -ne $false -or
+            $Context.expectedProofDigest -isnot [string] -or $Context.expectedProofDigest -cnotmatch '^[0-9a-f]{64}$') { throw 'RecycleContextInvalid' }
+        $expected += 'expectedProofDigest'
     }
     if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -cnotin $expected }).Count -ne 0) { throw 'RecycleContextInvalid' }
     if ($Context.version -ne 1 -or ($Context.version -isnot [long] -and $Context.version -isnot [int]) -or
@@ -1134,6 +1156,91 @@ function Invoke-HostCase {
     }
 }
 
+# Read-only census of the four temp private volumes and every retirement journal.
+# It creates no receipt and removes nothing. Failure is before any drain POST.
+function Get-TempRetirementCensusRaw {
+    param([string]$ProofOperation = '')
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    if ($env:C727_TEST_VERIFY_STUB) {
+        $manifestPath = Join-Path $evidenceRoot 'temp-retirement-read.manifest.json'
+        @{ sourceSha=$Sha; runId=$runId; operationId=$ProofOperation } | ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $manifestPath -Encoding ascii
+        $psi.FileName = 'pwsh'
+        $case = if ($ProofOperation) { 'retirement-proof-read' } else { 'temp-retirement-clearable' }
+        $tokens = @('-NoProfile','-File',$env:C727_TEST_VERIFY_STUB,'-Case',$case,'-Manifest',$manifestPath)
+    } else {
+        $psi.FileName = 'ssh'; $psi.RedirectStandardInput = $true
+        $remote = New-C1609RetirementReadPacket -Operation $ProofOperation -Clearable:([string]::IsNullOrEmpty($ProofOperation))
+        $tokens = @('-o','BatchMode=yes','-o','ConnectTimeout=15','mc@server2','bash','-s')
+    }
+    foreach ($token in $tokens) { [void]$psi.ArgumentList.Add($token) }
+    $proc = [Diagnostics.Process]::new(); $proc.StartInfo = $psi
+    $started = $false; $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        [void]$proc.Start(); $started = $true
+        $stdout = $proc.StandardOutput.ReadToEndAsync(); $stderr = $proc.StandardError.ReadToEndAsync()
+        if (-not $env:C727_TEST_VERIFY_STUB) {
+            $write = $proc.StandardInput.WriteAsync($remote)
+            if (-not $write.Wait(30000)) { throw 'deadline' }
+            $write.GetAwaiter().GetResult(); $proc.StandardInput.Close()
+        }
+        $remaining = [Math]::Max(1,30000-[int]$watch.ElapsedMilliseconds)
+        if (-not $proc.WaitForExit($remaining)) { throw 'deadline' }
+        $remaining = [Math]::Max(1,30000-[int]$watch.ElapsedMilliseconds)
+        if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout,$stderr)).Wait($remaining)) { throw 'drain' }
+        $text = $stdout.GetAwaiter().GetResult()
+        if ($proc.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($text)) { throw 'read' }
+        return $text
+    } catch { throw 'TempRetirementJournalUnknown' }
+    finally {
+        if ($started -and -not $proc.HasExited) { $proc.Kill($true); $proc.WaitForExit() }
+        $proc.Dispose()
+    }
+}
+
+function Assert-TempRetirementClearable {
+    $raw = Get-TempRetirementCensusRaw
+    try { Assert-C994RawManifest $raw; $census = $raw | ConvertFrom-Json } catch { throw 'TempRetirementJournalUnknown' }
+    if ($census.PSObject.Properties.Name -ccontains 'error') {
+        if ($census.error -cin @('TempVolumesRetained','TempRetirementOwnerActive','TempRetirementUnresolved')) { throw $census.error }
+        throw 'TempRetirementJournalUnknown'
+    }
+    if ($census.volumes -isnot [array] -or $census.journals -isnot [array] -or
+        (($census.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'journals,volumes') { throw 'TempRetirementJournalUnknown' }
+    $allowed = @('antiphon-runner-temp_work', 'antiphon-runner-temp_runner-tmp', 'antiphon-runner-temp_dind-data', 'antiphon-runner-temp_runner-state')
+    foreach ($name in @($census.volumes)) {
+        if ($name -isnot [string] -or $name -cnotin $allowed) { throw 'TempRetirementJournalUnknown' }
+        if ($allowed -contains [string]$name) { throw "TempVolumesRetained $name" }
+    }
+    foreach ($journal in @($census.journals)) {
+        if ($null -eq $journal) { continue }
+        $schema = 0
+        try { $schema = [int]$journal.schema } catch { throw 'TempRetirementJournalUnknown' }
+        if ($schema -ne 2) { throw 'TempRetirementJournalUnknown' }
+        $owner = [string]$journal.owner
+        if (-not [string]::IsNullOrWhiteSpace($owner)) { throw 'TempRetirementOwnerActive' }
+        $effects = 0
+        $intents = 0
+        if ($null -ne $journal.effects) { $effects = [int]$journal.effects }
+        if ($null -ne $journal.intents) { $intents = [int]$journal.intents }
+        $state = [string]$journal.state
+        $closed = $false
+        if ($null -ne $journal.closed) { $closed = [bool]$journal.closed }
+        switch ($state) {
+            { $_ -in @('Ready', 'Refused', 'Pending') } {
+                if ($effects -ne 0 -or $intents -ne 0) { throw "TempRetirementUnresolved $state" }
+            }
+            { $_ -in @('Completed', 'Closed') } { }
+            { $_ -in @('Applying', 'Partial', 'PartialRefused') } {
+                if (-not $closed) { throw "TempRetirementUnresolved $state" }
+            }
+            default { throw 'TempRetirementJournalUnknown' }
+        }
+    }
+}
+
 # Read-only host census before a retired slot can be cleared. Keep stopped containers
 # in the census: any leftover may reconnect after the clear.
 function Assert-TempProjectAbsent {
@@ -1189,6 +1296,10 @@ function Invoke-Phase {
                 if ($null -eq $old -or $old.dispatchEligible -ne $true -or $old.acceptingNewWork -ne $true -or
                     $old.draining -ne $false -or $old.retiredAt) { throw 'OldRunnerRedirectNotEligible' }
                 Assert-TempProjectAbsent
+                # Read-only. The host recheck runs under c1008_rollout_lock (FD 8).
+                # This wrapper does not hold that lock across the host case: a nested
+                # flock on the same file deadlocks.
+                Assert-TempRetirementClearable
                 if ($s.retiredAt) {
                     if ($s.available -ne $false -or $s.dispatchEligible -ne $false -or
                         $s.acceptingNewWork -ne $false) { throw 'TempRunnerDrainConflict' }
@@ -1272,10 +1383,20 @@ function Invoke-Phase {
                 if ($null -eq $counterpart -or $counterpart.acceptingNewWork -isnot [bool] -or $counterpart.acceptingNewWork -ne $true) { throw 'TempRunnerNotAcceptingNewWork' }
                 $projectId = Get-RecycleProjectId
                 [void](Wait-RecycleTaskCensus -RunnerId 'server2' -ProjectId $projectId)
-                $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
-                $context = [pscustomobject]@{ version=1; project='antiphon-runner'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
-                Invoke-HostCase -Case 'deploy-parent' -Recycle $context
-                if ($DryRun) { return }
+                # Default redeploy-old replaces the runner and keeps its volumes.
+                # -DryRun previews a recycle. -RecycleVolumes and -ResumeRecycle are
+                # the only non-preview requests, and the host gate still requires
+                # enabled-<operation-id> before any stop.
+                $wantsRecycle = [bool]($RecycleVolumes -or $ResumeRecycle -or $DryRun)
+                if ($wantsRecycle) {
+                    $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
+                    $context = [pscustomobject]@{ version=1; project='antiphon-runner'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
+                    Invoke-HostCase -Case 'deploy-parent' -Recycle $context
+                    if ($DryRun) { return }
+                } else {
+                    Write-Output 'C1008_RECYCLE skipped=redeploy-old reason=not-requested'
+                    Invoke-HostCase -Case 'deploy-parent'
+                }
             }
             [void](Wait-RunnerStatus -RunnerId 'server2' -Minutes 5 -Diagnosis 'OldRunnerNotDispatchEligible' -Ready {
                 param($s) $s.dispatchEligible -eq $true -and [string]$s.buildVersion -eq $Sha
@@ -1313,7 +1434,7 @@ function Invoke-Phase {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             $projectId = Get-RecycleProjectId
             $cleanup = $null
-            if (-not $ResumeRecycle) {
+            if (-not $ResumeRecycle -and -not $RetirementProof) {
                 $cleanup = Invoke-TempContainerCleanup -Status $s -ProjectId $projectId -Preview:$DryRun
                 if ($DryRun -and $cleanup.candidates.Count -gt 0) {
                     Write-Output 'C994_PREVIEW volumeProof=pending-confirmed-absence auditPending=true'
@@ -1328,9 +1449,30 @@ function Invoke-Phase {
             Assert-TempCleanupMain -Status $old
             $projectId = Get-RecycleProjectId
             [void](Wait-RecycleTaskCensus -RunnerId 'server2-temp' -ProjectId $projectId)
-            $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
+            $operation = if ($ResumeRecycle) { $ResumeRecycle } elseif ($RetirementProof) { $RetirementProof } else { 'c1008' + [guid]::NewGuid().ToString('N') }
             $context = [pscustomobject]@{ version=1; project='antiphon-runner-temp'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
+            if ($RetirementProof) {
+                $rawProof = Get-TempRetirementCensusRaw -ProofOperation $RetirementProof
+                try {
+                    Assert-C994RawManifest $rawProof
+                    $proof = $rawProof | ConvertFrom-Json
+                    if ((($proof.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'digest,mode,operationId,state' -or
+                        $proof.operationId -cne $RetirementProof -or $proof.state -cne 'Ready' -or $proof.mode -cne 'scripted' -or
+                        $proof.digest -isnot [string] -or $proof.digest -cnotmatch '^[0-9a-f]{64}$') { throw 'proof' }
+                } catch { throw 'TempRetirementProofUnknown' }
+                $context | Add-Member -NotePropertyName expectedProofDigest -NotePropertyValue $proof.digest
+            }
             if ($null -ne $cleanup) { $context | Add-Member -NotePropertyName cleanupOperationId -NotePropertyValue $cleanup.operationId }
+            # The host's dryRun mode performs the complete read-only content
+            # Preview. Normal retirement consumes that same operation's Ready
+            # record; Resume keeps its existing intent-reconciliation path.
+            if (-not $ResumeRecycle -and -not $RetirementProof) {
+                $previewContext = $context.PSObject.Copy()
+                $previewContext.dryRun = $true
+                Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $previewContext
+                Write-Output "C1609_RETIREMENT state=Ready operation=$operation"
+            }
+            if ($DryRun) { return }
             Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $context
         }
     }

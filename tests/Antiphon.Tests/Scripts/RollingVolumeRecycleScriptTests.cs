@@ -791,10 +791,12 @@ public sealed class RollingVolumeRecycleScriptTests
         using var host = new C1008HostFixture(main: false);
         var operation = request["recycle"]!["operationId"]!.GetValue<string>();
         var stamp = request["tempRetiredAt"]!.GetValue<string>();
-        var retired = await host.Run("retire-temp-runner", $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'");
+        var retiredExtra = $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'";
+        await VolumeRetirementFixture.ReadyPreview(host, retiredExtra);
+        var retired = await host.Run("retire-temp-runner", retiredExtra);
         retired.Exit.ShouldBe(0, "retire-absent-null-accepted: actual host entry using wrapper context; " + retired.Output);
-        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
-            "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
+        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_runner-state", "antiphon-runner-temp_dind-data",
+            "antiphon-runner-temp_runner-tmp", "antiphon-runner-temp_work" });
         var journalPath = Path.Combine(host.Root, "server/recycle", operation + ".json");
         File.Exists(journalPath).ShouldBeTrue("c1050-host-operation: actual wrapper operation names the persisted journal");
         var journal = JsonNode.Parse(File.ReadAllText(journalPath))!;
@@ -873,7 +875,7 @@ public sealed class RollingVolumeRecycleScriptTests
             unbound.Exit.ShouldBe(0, "recycle-preview-receipt: unbound preview is not authority; " + unbound.Output);
             unbound.Output.ShouldContain("auditPending=true");
             unbound.Output.ShouldNotContain("auditPending=false");
-            AssertReadonlyPreview(clean, image, audited: false);
+            AssertReadonlyPreview(clean, image, audited: true);
         }
         finally
         {
@@ -1107,7 +1109,7 @@ public sealed class RollingVolumeRecycleScriptTests
             preview.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             preview.Output.ShouldContain("auditPending=true");
             preview.Output.ShouldNotContain("auditPending=false");
-            AssertReadonlyPreview(unpinned, CrossShaImage, audited: false);
+            AssertReadonlyPreview(unpinned, C1008HostFixture.SessionImage, audited: true);
             ResetPreviewTrace(unpinned);
             unpinned.Docker["fault"] = "image-inspect-error";
             var apply = await unpinned.Run("retire-temp-runner");
@@ -1156,7 +1158,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
             run.Output.ShouldContain("auditPending=true");
-            AssertReadonlyPreview(older, CrossShaImage, audited: false);
+            AssertReadonlyPreview(older, C1008HostFixture.SessionImage, audited: true);
         }
 
         using (var bound = new C1008HostFixture(main: false))
@@ -1187,7 +1189,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Exit.ShouldBe(0, "c1594-older-retirement: a partial cross-SHA receipt does not count; " + run.Output);
             run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertReadonlyPreview(partial, CrossShaImage, audited: false);
+            AssertReadonlyPreview(partial, C1008HostFixture.SessionImage, audited: true);
         }
 
         using (var dry = new C1008HostFixture(main: false))
@@ -1202,7 +1204,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Exit.ShouldBe(0, "c1594-older-retirement: a dry-run cross-SHA receipt does not count; " + run.Output);
             run.Output.ShouldContain("C994_IMAGE_UNPINNED reason=no-matching-cleanup-record");
             run.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            AssertReadonlyPreview(dry, CrossShaImage, audited: false);
+            AssertReadonlyPreview(dry, C1008HostFixture.SessionImage, audited: true);
         }
     }
 
@@ -1225,12 +1227,12 @@ public sealed class RollingVolumeRecycleScriptTests
         TouchNewer(fixture, otherOperation);
         ResetPreviewTrace(fixture);
         var run = await fixture.Run("retire-temp-runner", PreviewWitnessProbe, dryRun: true);
-        run.Exit.ShouldBe(2, "c1594-cross-sha: different images from other SHAs refuse; " + run.Output);
+        run.Exit.ShouldBe(0, "c1594-cross-sha: different images from other SHAs warn; content is the gate; " + run.Output);
         run.Output.ShouldContain("RecycleGitAuditUnknown");
-        run.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
+        run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         run.Output.ShouldNotContain(newerImage);
         fixture.Trace.Any(args => args.Length > 0 && args[0] == "create").ShouldBeFalse(
-            "c1594-cross-sha: a disagreement starts no helper");
+            "c1594-cross-sha: a disagreement does not authorize a delete");
         fixture.Removed.ShouldBeEmpty();
     }
 
@@ -1509,7 +1511,11 @@ public sealed class RollingVolumeRecycleScriptTests
             var args = runs[0];
             args.ShouldContain("--rm");
             args.ShouldContain("--init");
-            Array.IndexOf(args, "--network").ShouldBe(-1, "recycle-preview-readonly: preview uses apply's network");
+            var network = Array.IndexOf(args, "--network");
+            network.ShouldBeGreaterThanOrEqualTo(0, "temp preview and apply are offline");
+            args[network + 1].ShouldBe("none");
+            args.ShouldContain("--read-only");
+            args.ShouldContain("TMPDIR=/audit-scratch");
             var security = Array.IndexOf(args, "--security-opt");
             security.ShouldBeGreaterThanOrEqualTo(0, "recycle-preview-readonly: preview sets no-new-privileges");
             args[security + 1].ShouldBe("no-new-privileges");
@@ -1531,10 +1537,10 @@ public sealed class RollingVolumeRecycleScriptTests
             var program = Array.IndexOf(args, "-c");
             program.ShouldBeGreaterThan(0);
             args[program - 1].ShouldBe(image);
-            args.ShouldContain("type=volume,source=antiphon-runner-temp_work,target=/work,readonly");
-            args.ShouldContain("type=volume,source=antiphon-runner-temp_runner-tmp,target=/runner-tmp,readonly");
+            args.ShouldContain("type=volume,source=antiphon-runner-temp_work,target=/work,readonly,volume-nocopy");
+            args.ShouldContain("type=volume,source=antiphon-runner-temp_runner-tmp,target=/tmp,readonly,volume-nocopy");
             args.Where(arg => arg.StartsWith("type=volume,", StringComparison.Ordinal))
-                .ShouldAllBe(arg => arg.EndsWith(",readonly", StringComparison.Ordinal));
+                .ShouldAllBe(arg => arg.EndsWith(",readonly,volume-nocopy", StringComparison.Ordinal));
             var timeoutLog = Path.Combine(fixture.Root, "timeout-invocations");
             File.Exists(timeoutLog).ShouldBeTrue("recycle-preview-readonly: the helper has a hard timeout");
             var timeout = File.ReadAllText(timeoutLog);
@@ -2675,25 +2681,33 @@ public sealed class RollingVolumeRecycleScriptTests
         cancellationToken.ThrowIfCancellationRequested();
         using var fixture = new C1008WrapperFixture();
         var run = await fixture.Run("retire-temp");
-        run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case" &&
-            x["name"]?.GetValue<string>() == "retire-temp-runner").ShouldBeTrue(
-                "retire-absent-null-accepted: the retired absent/null row must reach the retirement host case; " + run.Output);
         run.Exit.ShouldBe(0);
         run.Trace.Any(x => x["method"]?.GetValue<string>() == "POST").ShouldBeFalse(
             "retire-absent-null-accepted: retirement must remain stamped");
         JsonNode.Parse(File.ReadAllText(fixture.StatePath))!["statuses"]!["server2-temp"]!["retiredAt"]!
             .GetValue<string>().ShouldBe("2026-10-03T09:30:00Z");
-        var request = run.Trace.Single(x => x["kind"]?.GetValue<string>() == "case" &&
-            x["name"]?.GetValue<string>() == "retire-temp-runner");
-        request["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse();
+        // deploy-server2 retire-temp runs Preview, then Apply, under one operation id.
+        var requests = run.Trace.Where(x => x["kind"]?.GetValue<string>() == "case" &&
+            x["name"]?.GetValue<string>() == "retire-temp-runner").ToArray();
+        requests.Length.ShouldBe(2,
+            "retire-absent-null-accepted: the retired absent/null row must preview then apply; " + run.Output);
+        requests[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue(
+            "retire-absent-null-accepted: the first host case is Preview");
+        var request = requests[1];
+        request["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse(
+            "retire-absent-null-accepted: the second host case is Apply");
+        request["recycle"]!["operationId"]!.GetValue<string>().ShouldBe(
+            requests[0]["recycle"]!["operationId"]!.GetValue<string>(),
+            "retire-absent-null-accepted: Preview and Apply share one operation id");
         request["recycle"]!["project"]!.GetValue<string>().ShouldBe("antiphon-runner-temp");
         var operation = request["recycle"]!["operationId"]!.GetValue<string>();
         Regex.IsMatch(operation, "^c1008[0-9a-f]{32}$").ShouldBeTrue();
         return request.DeepClone().AsObject();
     }
 
-    // Private-origin publication is proved only by a host ref snapshot bound to this
-    // operation. Authentication failure is the only ls-remote result that may read it.
+    // Temp publication is a v2 host snapshot bound to this operation. Every origin
+    // needs that proof. A readable origin does not bypass a mismatch, and v1 text
+    // is not temp authority.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Host_proof_admits_only_an_authenticated_private_origin()
@@ -2726,8 +2740,10 @@ public sealed class RollingVolumeRecycleScriptTests
             var url = (await C994ScriptProcess.Run("git", "-C", repo, "remote", "get-url", "origin")).Output.Trim();
             var tip = (await C994ScriptProcess.Run("git", "-C", repo, "rev-parse", "HEAD")).Output.Trim();
             var proofDir = Path.Combine(root, "host-proof");
-            var proofEnv = "export C1008_HOST_PROOF=" + BashSingle(proofDir) + "\nexport C1008_OPERATION_STARTED=" + started + "\n";
-            WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var refs = tip + "\trefs/heads/main\n";
+            var proofEnv = "export C1008_HOST_PROOF=" + BashSingle(proofDir) + "\nexport C1008_OPERATION_STARTED=" + started + "\n" +
+                WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs);
 
             ResetPreviewTrace(fixture);
             var admitted = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
@@ -2747,7 +2763,8 @@ public sealed class RollingVolumeRecycleScriptTests
             fixture.Removed.ShouldBeEmpty("private-origin: preview removes nothing");
 
             await AssertPrivateRefusal(fixture, bound, "RecycleGitAuditUnknown",
-                "audit check=ls-remote status=128 repo=" + repoRel, "private-origin: no proof refuses like today");
+                "audit check=ls-remote status=128 repo=" + repoRel + " reason=proof-missing",
+                "private-origin: no proof refuses");
 
             var child = await C994ScriptProcess.Run("bash", "-c",
                 "git -C " + BashSingle(repo) + " commit -q --allow-empty -m unpublished && git -C " + BashSingle(repo) + " rev-parse HEAD");
@@ -2756,37 +2773,52 @@ public sealed class RollingVolumeRecycleScriptTests
                 "repo=" + repoRel, "private-origin: a proof that omits the tip refuses");
             var reset = await C994ScriptProcess.Run("git", "-C", repo, "reset", "--hard", tip);
             reset.Exit.ShouldBe(0, "private-origin: restore the published tip; " + reset.Output);
+            // reset --hard records the abandoned child in ORIG_HEAD, and the
+            // reflog still names it. Both are publication tips. The 404, DNS,
+            // and timeout admissions below are the matching-proof cases, so
+            // drop that residue before they run. The unpublished refusal above
+            // already covered the child while it was the branch tip.
+            var dropAbandoned = await C994ScriptProcess.Run("bash", "-c",
+                "if [ -d " + BashSingle(repo) + "/.git/logs ]; then find " + BashSingle(repo) + "/.git/logs -type f -delete; fi" +
+                " && rm -f -- " + BashSingle(Path.Combine(repo, ".git", "ORIG_HEAD")));
+            dropAbandoned.Exit.ShouldBe(0, "private-origin: drop the abandoned child; " + dropAbandoned.Output);
 
-            WriteBoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", started, tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", now, refs);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "reason=proof-operation", "private-origin: another operation id refuses");
-            WriteBoundProof(proofDir, repoRel, url, operation, started - 1, tip + "\trefs/heads/main\n");
+                "reason=proof-binding", "private-origin: another operation id refuses");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, started - 1, refs);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-stale", "private-origin: a proof older than the operation refuses");
-            WriteProofText(proofDir, repoRel, url,
-                "c1008-host-proof 1\noperation " + operation + "\norigin " + new string('0', 64) +
-                "\nrepo " + repoRel + "\ncreated " + started + "\n" + tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, headerOrigin: new string('0', 64));
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "reason=proof-origin", "private-origin: a different origin hash refuses");
-            WriteProofText(proofDir, repoRel, url,
-                "c1008-host-proof 1\noperation " + operation + "\norigin " + Sha256Hex(url) +
-                "\nrepo repos/other\ncreated " + started + "\n" + tip + "\trefs/heads/main\n");
+                "reason=proof-binding", "private-origin: a different origin hash refuses");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, headerRepo: "repos/other");
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "reason=proof-repo", "private-origin: a different repository refuses");
+                "reason=proof-binding", "private-origin: a different repository refuses");
+            WriteV1ShapedProof(proofDir, repoRel, url);
+            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
+                "reason=proof-binding", "private-origin: a v1 proof is not temp authority");
+            WriteProofText(proofDir, repoRel, url, "c1008-host-proof 2\nnot-a-proof\n");
+            File.WriteAllBytes(Path.Combine(proofDir, ProofFileName(repoRel, url) + ".bundle"), "short"u8.ToArray());
+            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
+                "reason=proof-parse", "private-origin: a short proof refuses");
             WriteProofText(proofDir, repoRel, url, "");
+            var emptyBundle = Path.Combine(proofDir, ProofFileName(repoRel, url) + ".bundle");
+            if (File.Exists(emptyBundle)) File.Delete(emptyBundle);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-missing", "private-origin: an empty proof refuses");
 
-            WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: repository 'https://github.com/example/missing.git' not found", 128));
-            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "check=ls-remote", "private-origin: a 404 is not authentication and the proof cannot admit it");
+            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
+                "private-origin: a 404 still admits when the v2 proof matches");
+            File.Exists(Path.Combine(root, "host-git")).ShouldBeFalse("private-origin: a 404 does not invoke helper git");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: Could not resolve host: github.com", 128));
-            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "check=ls-remote", "private-origin: a DNS failure is not authentication and the proof cannot admit it");
+            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
+                "private-origin: a DNS failure still admits when the v2 proof matches");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: Connection timed out", 124));
-            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
-                "check=ls-remote", "private-origin: a timeout is not authentication and the proof cannot admit it");
+            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
+                "private-origin: a timeout still admits when the v2 proof matches");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: could not read Username for 'https://github.com': terminal prompts disabled", 128));
 
             var dirtyFile = Path.Combine(repo, "dirty");
@@ -2805,14 +2837,27 @@ public sealed class RollingVolumeRecycleScriptTests
                 " && git -C " + BashSingle(repo) + " remote set-url origin " + BashSingle(bare) +
                 " && git -C " + BashSingle(repo) + " push -q origin main");
             publish.Exit.ShouldBe(0, "private-origin: public stand-in; " + publish.Output);
-            WriteBoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", started, tip + "\trefs/heads/main\n");
-            ResetPreviewTrace(fixture);
-            var ignored = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
-            ignored.Exit.ShouldBe(0, "private-origin: a successful ls-remote ignores a mismatched proof; " + ignored.Output);
-            ignored.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            var publicUrl = (await C994ScriptProcess.Run("git", "-C", repo, "remote", "get-url", "origin")).Output.Trim();
+            WriteV2BoundProof(proofDir, repoRel, publicUrl, "c100800000000000000000000000000000002", now, refs);
+            await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
+                "reason=proof-binding", "private-origin: a readable origin still refuses a mismatched proof");
             var restore = await C994ScriptProcess.Run("git", "-C", repo, "remote", "set-url", "origin", "ext::" + origin);
             restore.Exit.ShouldBe(0, "private-origin: restore the private origin; " + restore.Output);
-            WriteBoundProof(proofDir, repoRel, url, operation, started, tip + "\trefs/heads/main\n");
+            // Freshness reads every file in the proof directory. The public
+            // stand-in left a second operation's proof beside this one.
+            foreach (var staleProof in Directory.GetFiles(proofDir))
+                File.Delete(staleProof);
+            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
+
+            // Inventory exports only origins named in the control-host registry.
+            // The helper URL is minted per run, so register that exact string.
+            var registry = Path.Combine(root, "server", "retirement-origins.json");
+            var approve = await C994ScriptProcess.Run("bash", "-c",
+                "jq -ncS --arg origin " + BashSingle(url) +
+                " --arg kept " + BashSingle(VolumeRetirementFixture.OriginUrl) +
+                " '{schema:1,projects:{\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\":{origins:[$kept,$origin]}}}' > " +
+                BashSingle(registry));
+            approve.Exit.ShouldBe(0, "private-origin: register the helper origin; " + approve.Output);
 
             ResetPreviewTrace(fixture);
             var inventory = await fixture.Run("retire-temp-inventory", "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + PreviewWitnessProbe);
@@ -2826,6 +2871,11 @@ public sealed class RollingVolumeRecycleScriptTests
             inventory.Output.ShouldNotContain("could not read Username");
             fixture.Removed.ShouldBeEmpty("private-origin: inventory removes nothing");
 
+            // Refusal vectors replace the operation's Ready artifact with Refused,
+            // and the public-origin control changes the inventory. Apply needs a
+            // fresh real preview after restoring the private origin and proof.
+            await VolumeRetirementFixture.ReadyPreview(fixture,
+                "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);
             ResetPreviewTrace(fixture);
             var applied = await fixture.Run("retire-temp-runner",
                 "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);
@@ -2833,10 +2883,15 @@ public sealed class RollingVolumeRecycleScriptTests
             applied.Output.ShouldNotContain("RecycleGitAuditUnknown");
             applied.Output.ShouldNotContain("RecycleUnpublishedWork");
             applied.Output.ShouldNotContain("RecycleWorktreeDirty");
-            var created = fixture.Trace.Where(args => args.Length > 0 && args[0] == "create" && args.Contains("--entrypoint")).ToArray();
-            created.Length.ShouldBeGreaterThan(0, "private-origin: apply forwards the proof bind");
-            foreach (var args in created)
+            var audits = fixture.Trace.Where(args => args.Length > 0 && args[0] == "run" && args.Contains("--entrypoint")).ToArray();
+            audits.Length.ShouldBeGreaterThan(0, "private-origin: apply forwards the proof bind");
+            foreach (var args in audits)
             {
+                args.ShouldContain("--rm");
+                args.ShouldContain("--init");
+                args.ShouldContain("--cap-drop");
+                args.ShouldContain("1654:1654");
+                args.ShouldContain("C1609_CONTENT_V2=1");
                 args.ShouldContain("type=bind,source=" + proofDir + ",target=/c1008-host-proof,readonly");
                 args.ShouldContain("C1008_HOST_PROOF=/c1008-host-proof");
             }
@@ -2860,13 +2915,30 @@ public sealed class RollingVolumeRecycleScriptTests
         Directory.CreateDirectory(proof);
         try
         {
+            var origin = Path.Combine(root, "origin.git");
+            var seed = Path.Combine(root, "seed");
+            var prepared = await C994ScriptProcess.Run("bash", "-c", $$"""
+                set -euo pipefail
+                git init -q --bare {{BashSingle(origin)}}
+                git init -q -b main {{BashSingle(seed)}}
+                git -C {{BashSingle(seed)}} -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm seed --allow-empty
+                git -C {{BashSingle(seed)}} push -q {{BashSingle(origin)}} main
+                git -C {{BashSingle(seed)}} rev-parse HEAD
+                """);
+            prepared.Exit.ShouldBe(0, prepared.Output);
+            var tip = prepared.Output.Trim();
+            var resolvedGit = await C994ScriptProcess.Run("bash", "-c", "command -v git");
+            resolvedGit.Exit.ShouldBe(0, resolvedGit.Output);
             var git = Path.Combine(root, "bin", "git");
             await File.WriteAllTextAsync(git,
-                "#!/bin/bash\nprintf '%s\\n' \"$*\" > \"$C1008_FAKE_GIT_ARGS\"\n" +
-                "printf '%s\\n' \"password=" + token + "\" >&2\n" +
-                "printf '%s\\n' \"note " + token + "\"\n" +
-                "printf '%s\\n' \"0123456789abcdef0123456789abcdef01234567\trefs/heads/main\"\n" +
-                "exit 0\n");
+                "#!/bin/bash\nset -euo pipefail\nprintf '%s\\n' \"$*\" >> \"$C1008_FAKE_GIT_ARGS\"\n" +
+                "args=(); for arg in \"$@\"; do\n" +
+                "  if [ \"$arg\" = https://github.com/example/private.git ]; then arg=" + BashSingle(origin) + "; fi\n" +
+                "  args+=(\"$arg\"); done\n" +
+                "if [ \"$1\" = ls-remote ]; then\n" +
+                "  printf '%s\\n' \"password=" + token + "\" >&2\n" +
+                "  printf '%s\\n' \"note " + token + "\"\nfi\n" +
+                "exec " + BashSingle(resolvedGit.Output.Trim()) + " \"${args[@]}\"\n");
             var mode = await C994ScriptProcess.Run("chmod", "0755", git);
             mode.Exit.ShouldBe(0, "private-origin: fake git; " + mode.Output);
             var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
@@ -2897,8 +2969,12 @@ public sealed class RollingVolumeRecycleScriptTests
             var output = stdout + stderr;
             proc.ExitCode.ShouldBe(0, "private-origin: host proof writer; " + output);
             var proofText = string.Join('\n', Directory.GetFiles(proof).Select(File.ReadAllText));
-            proofText.ShouldContain("0123456789abcdef0123456789abcdef01234567\trefs/heads/main");
+            proofText.ShouldContain(tip + "\trefs/heads/main");
             proofText.ShouldContain("operation c100800000000000000000000000000000001");
+            var bundle = Directory.GetFiles(proof, "*.bundle").ShouldHaveSingleItem();
+            var heads = await C994ScriptProcess.Run(resolvedGit.Output.Trim(), "bundle", "list-heads", bundle);
+            heads.Exit.ShouldBe(0, heads.Output);
+            heads.Output.ShouldContain(tip + " refs/heads/main");
             foreach (var artifact in new[] { proofText, output, File.Exists(log) ? File.ReadAllText(log) : "",
                          File.Exists(Path.Combine(root, "git-args.txt")) ? File.ReadAllText(Path.Combine(root, "git-args.txt")) : "" })
                 artifact.ShouldNotContain(token);
@@ -2923,11 +2999,75 @@ public sealed class RollingVolumeRecycleScriptTests
         File.WriteAllText(Path.Combine(directory, ProofFileName(repo, origin)), text);
     }
 
-    private static void WriteBoundProof(string directory, string repo, string origin, string operation, long created, string refs)
+    // Eleven-line v2 proof plus a dummy bundle. The audit checks the bundle hash
+    // and does not unbundle. Inventory is the one request line the audit will hash.
+    private static string WriteV2BoundProof(string directory, string repo, string origin, string operation, long created, string refs, string? headerOrigin = null, string? headerRepo = null)
     {
-        var body = "c1008-host-proof 1\noperation " + operation + "\norigin " + Sha256Hex(origin) +
-                   "\nrepo " + repo + "\ncreated " + created + "\n" + refs;
-        WriteProofText(directory, repo, origin, body);
+        const string nonce = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var originHash = Sha256Hex(origin);
+        var proofName = ProofFileName(repo, origin);
+        var request = "C1008_PRIVATE_ORIGIN repo=" + repo + " origin=" + origin +
+            " originHash=" + originHash + " proofName=" + proofName + "\n";
+        var inventory = Sha256Hex(request);
+        var completed = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (completed < created) completed = created;
+        var refText = refs.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (!refText.EndsWith('\n')) refText += "\n";
+        var refCount = refText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+        var bundleBytes = "c1609-dummy-bundle\n"u8.ToArray();
+        var bundleHash = Convert.ToHexString(SHA256.HashData(bundleBytes)).ToLowerInvariant();
+        var advertisement = Sha256Hex(refText);
+        var body = string.Join('\n', new[]
+        {
+            "c1008-host-proof 2",
+            "operation " + operation,
+            "origin " + (headerOrigin ?? originHash),
+            "repo " + (headerRepo ?? repo),
+            "created " + created.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "nonce " + nonce,
+            "inventory " + inventory,
+            "bundle " + bundleHash,
+            "advertisement " + advertisement,
+            "count " + refCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "completed " + completed.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        }) + "\n" + refText;
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, proofName);
+        File.WriteAllText(path, body, new UTF8Encoding(false));
+        File.WriteAllBytes(path + ".bundle", bundleBytes);
+        return "export C1609_PROOF_NONCE=" + nonce + "\nexport C1609_PROOF_INVENTORY=" + inventory + "\n";
+    }
+
+    private static void WriteV1ShapedProof(string directory, string repo, string origin)
+    {
+        var lines = new[]
+        {
+            "c1008-host-proof 1",
+            "operation c100800000000000000000000000000000001",
+            "origin " + new string('0', 64),
+            "repo " + repo,
+            "created 1",
+            "nonce " + new string('b', 32),
+            "inventory " + new string('c', 64),
+            "bundle " + new string('d', 64),
+            "advertisement " + new string('e', 64),
+            "count 1",
+            "completed 1"
+        };
+        WriteProofText(directory, repo, origin, string.Join('\n', lines) + "\n" + new string('a', 40) + "\trefs/heads/main\n");
+        File.WriteAllBytes(Path.Combine(directory, ProofFileName(repo, origin) + ".bundle"), "v1"u8.ToArray());
+    }
+
+    private static async Task AssertPrivateAdmission(C1008HostFixture fixture, string extra, string because)
+    {
+        ResetPreviewTrace(fixture);
+        var run = await fixture.Run("retire-temp-runner", extra + "\n" + PreviewWitnessProbe, dryRun: true);
+        run.Exit.ShouldBe(0, because + "; " + run.Output);
+        run.Output.ShouldContain("C1008_PREVIEW", Case.Sensitive, because);
+        run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+        run.Output.ShouldNotContain("RecycleUnpublishedWork");
+        run.Output.ShouldNotContain("RecycleWorktreeDirty");
+        fixture.Removed.ShouldBeEmpty(because);
     }
 
     private static async Task AssertPrivateRefusal(C1008HostFixture fixture, string extra, string diagnosis, string detail, string because)
@@ -2959,6 +3099,7 @@ internal sealed class C1008WrapperFixture : IDisposable
 
     internal C1008WrapperFixture()
     {
+        using var setupPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed");
         var vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1008-recycle-cases.json")))!;
         State = new JsonObject
@@ -3006,6 +3147,7 @@ internal sealed class C1008WrapperFixture : IDisposable
         // bounds that wait so a bound-land vector still refuses inside the 30 s run deadline.
         psi.Environment["C727_TEST_LAND_WAIT_MS"] = "100";
         foreach (var (key, value) in Environment) psi.Environment[key] = value;
+        using var processPhase = TestTiming.BeginProcess("pwsh", psi.ArgumentList.Count, "cli");
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("fixture child did not start");
         var stdout = proc.StandardOutput.ReadToEndAsync();
         var stderr = proc.StandardError.ReadToEndAsync();
@@ -3017,7 +3159,11 @@ internal sealed class C1008WrapperFixture : IDisposable
         return (proc.ExitCode, output, trace);
     }
 
-    public void Dispose() => Directory.Delete(Root, recursive: true);
+    public void Dispose()
+    {
+        using var teardownPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "delete-tree");
+        Directory.Delete(Root, recursive: true);
+    }
 }
 
 internal sealed class C1008HostFixture : IDisposable
@@ -3056,6 +3202,7 @@ internal sealed class C1008HostFixture : IDisposable
 
     internal C1008HostFixture(bool main = true, string? root = null)
     {
+        using var setupPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed");
         Root = root ?? Directory.CreateTempSubdirectory("c1008-host-").FullName;
         Directory.CreateDirectory(Root);
         Vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
@@ -3067,7 +3214,9 @@ internal sealed class C1008HostFixture : IDisposable
             ["server2-temp"] = Vectors[main ? "tempAccepting" : "tempRetiredAbsent"]!.DeepClone()
         };
         var volumes = new JsonObject();
-        var models = new JsonObject();
+        var seed = SharedDataSources.GetOrCreate(SharedType.PerTestSession, typeof(C1008HostFixture),
+            "c1008-compose", () => new C1008ComposeSeed());
+        var models = seed.CloneInto(Root);
         foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
         {
             var model = new JsonObject();
@@ -3086,43 +3235,6 @@ internal sealed class C1008HostFixture : IDisposable
                 { ["io.antiphon.owner"] = "server2-runner", ["io.antiphon.cache-schema"] = "1", ["io.antiphon.cache-role"] = role });
                 model[key] = new JsonObject { ["name"] = name, ["external"] = true };
             }
-            var psi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
-                RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
-            foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", Root, project,
-                project == "antiphon-runner-temp" ? "true" : "false" }) psi.ArgumentList.Add(arg);
-            using var process = Process.Start(psi)!;
-            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(30000)) { process.Kill(true); process.WaitForExit(); throw new InvalidOperationException("Compose config timeout"); }
-            if (process.ExitCode != 0) throw new InvalidOperationException("Compose config: " + stderr.GetAwaiter().GetResult());
-            var resolved = JsonNode.Parse(stdout.GetAwaiter().GetResult())!["model"]!.DeepClone();
-            // JSON member order is not Compose topology. Keep the existing fake
-            // down boundary's deterministic deletion order without changing its assertion.
-            var declarations = resolved["volumes"]!.AsObject();
-            var ordered = new JsonObject();
-            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
-                ordered[role] = declarations[role]!.DeepClone();
-            foreach (var (key, value) in declarations)
-                if (!ordered.ContainsKey(key)) ordered[key] = value?.DeepClone();
-            resolved["volumes"] = ordered;
-            models[project] = resolved;
-            var previousPsi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
-                RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
-            foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", Root, project,
-                project == "antiphon-runner-temp" ? "true" : "false", "previous" }) previousPsi.ArgumentList.Add(arg);
-            using var previous = Process.Start(previousPsi)!;
-            var previousOut = previous.StandardOutput.ReadToEndAsync(); var previousErr = previous.StandardError.ReadToEndAsync();
-            if (!previous.WaitForExit(30000)) { previous.Kill(true); previous.WaitForExit(); throw new InvalidOperationException("Previous compose config timeout"); }
-            if (previous.ExitCode != 0) throw new InvalidOperationException("Previous compose config: " + previousErr.GetAwaiter().GetResult());
-            var previousResolved = JsonNode.Parse(previousOut.GetAwaiter().GetResult())!["model"]!.DeepClone().AsObject();
-            var previousDeclarations = previousResolved["volumes"]!.AsObject();
-            var previousOrdered = new JsonObject();
-            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
-                previousOrdered[role] = previousDeclarations[role]!.DeepClone();
-            foreach (var (key, value) in previousDeclarations)
-                if (!previousOrdered.ContainsKey(key)) previousOrdered[key] = value?.DeepClone();
-            previousResolved["volumes"] = previousOrdered;
-            // Keyed by the previous SHA only. The target proof must keep falling back to models[project].
-            models[project + "@" + PreviousSha12] = previousResolved;
         }
         foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
             volumes[name] = Volume(name, new JsonObject());
@@ -3141,6 +3253,13 @@ internal sealed class C1008HostFixture : IDisposable
 
         Directory.CreateDirectory(Path.Combine(Root, "work"));
         Directory.CreateDirectory(Path.Combine(Root, "server/cache"));
+        // Protected current runtime, deliberately independent of stack.env and
+        // historical cleanup images. The production installer writes this shape.
+        File.WriteAllText(Path.Combine(Root, "server/audit-current.json"),
+            "{\"image\":\"" + SessionImage + "\",\"policyVersion\":1,\"protocol\":2,\"schema\":1}");
+        File.WriteAllText(Path.Combine(Root, "server/retirement-origins.json"),
+            "{\"projects\":{\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\":{\"origins\":[\"" +
+            VolumeRetirementFixture.OriginUrl + "\"]}},\"schema\":1}");
         File.WriteAllText(Path.Combine(Root, "main.env"), "SOURCE_REVISION=" + PreviousSha + "\n");
         File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=" + Root + "/grok\nSOURCE_REVISION=" + PreviousSha + "\n");
     }
@@ -3208,6 +3327,17 @@ internal sealed class C1008HostFixture : IDisposable
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false,
         Func<string, string>? sourceTransform = null)
     {
+        using var runPhase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");
+        // GNU timeout execs by name rather than calling the shell function below.
+        // Keep its real deadline and put the owned fake CLI on the child PATH.
+        // This also prevents an unprobed apply from reaching the worker daemon.
+        var dockerBin = Path.Combine(Root, "docker-cli");
+        Directory.CreateDirectory(dockerBin);
+        var dockerCli = Path.Combine(dockerBin, "docker");
+        await File.WriteAllTextAsync(dockerCli, "#!/bin/sh\nexec bash " +
+            VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh")) + " \"$@\"\n");
+        var executable = await C994ScriptProcess.Run("chmod", "0755", dockerCli);
+        if (executable.Exit != 0) throw new InvalidOperationException("fake Docker executable: " + executable.Output);
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
@@ -3219,6 +3349,9 @@ internal sealed class C1008HostFixture : IDisposable
         if (sourceTransform is not null) source = sourceTransform(source);
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
+            C1609_CONTENT_AUDIT_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-content-audit.sh'; export C1609_CONTENT_AUDIT_FILE
+            C1609_VOLUME_METADATA_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-volume-metadata.sh'; export C1609_VOLUME_METADATA_FILE
+            C1609_RETIREMENT_FILE='{{DelegateScriptRunner.RepoRoot}}/scripts/c1008-retirement.sh'; export C1609_RETIREMENT_FILE
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
             SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
             DEPLOY_KEY='{{Root}}/deploy-key'; PHONE_HOME_SECRET='{{Root}}/phone-home'
@@ -3245,6 +3378,7 @@ internal sealed class C1008HostFixture : IDisposable
             retire_c590_leftovers() { :; }
             broker_sha12() { echo aaaaaaaaaaaa; }
             build_server2_images() { write_result true '' 0; }
+            C1008_CACHE_LOCK_SOURCE_BODY="$(declare -f c849_lock)"
             c849_lock() { :; }
             c849_budget_gate() { :; }
             c849_status_body() { jq -ec --arg runner "$1" '.[$runner]' '{{Root}}/statuses.json'; }
@@ -3253,17 +3387,21 @@ internal sealed class C1008HostFixture : IDisposable
             C1008_LAND_WAIT_SECONDS=1; C1008_LAND_POLL_SECONDS=1
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
+            if [ "${C1609_FIXTURE_APPLY_GATE:-on}" = off ]; then unset ANTIPHON_VOLUME_RETIREMENT_APPLY
+            elif [ -z "${ANTIPHON_VOLUME_RETIREMENT_APPLY:-}" ]; then export ANTIPHON_VOLUME_RETIREMENT_APPLY="enabled-${C1008_OPERATION}"; fi
             """;
         source = source.Replace("trap 'ec=$?;", injection + "\ntrap 'ec=$?;", StringComparison.Ordinal);
         var script = Path.Combine(Root, "remote.sh");
         File.WriteAllText(script, source);
         var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.Environment["PATH"] = dockerBin + ":" + Environment.GetEnvironmentVariable("PATH");
         psi.ArgumentList.Add(script);
         psi.Environment["C590_CASE"] = hostCase;
         psi.Environment["C590_SHA"] = new string('a', 40);
         psi.Environment["C590_RUN"] = "c1008fixture";
         psi.Environment["C590_REEXEC"] = "1";
         psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
+        using var processPhase = TestTiming.BeginProcess("bash", psi.ArgumentList.Count, "cli");
         using var proc = Process.Start(psi)!;
         var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
         // CARD-1130. A deploy-parent Run measures 22-30s and exceeds 30s at load 19-23
@@ -3274,5 +3412,9 @@ internal sealed class C1008HostFixture : IDisposable
         return (proc.ExitCode, await stdout + await stderr);
     }
 
-    public void Dispose() => Directory.Delete(Root, recursive: true);
+    public void Dispose()
+    {
+        using var teardownPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "delete-tree");
+        Directory.Delete(Root, recursive: true);
+    }
 }

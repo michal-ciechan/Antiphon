@@ -98,6 +98,9 @@ write_result() {
     if [ "$WROTE" = 1 ]; then
         exit "$code"
     fi
+    if [ -n "${C1609_PHASE_ROOT:-}" ] && [ "$BASHPID" = "${C1609_PHASE_PID:-}" ] && ! c1609_phase_end; then
+        accepted=false; diagnosis=RecycleReceiptUnavailable; code=2
+    fi
     WROTE=1
     mkdir -p "$CASE_DIR"
     scrub_file "$CASE_DIR/build.log" || true
@@ -1345,6 +1348,10 @@ build_server2_images() {
     docker build -f "$CHECKOUT/Dockerfile" --build-arg "SOURCE_REVISION=$SHA" \
         -t "antiphon-server2/server:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
         || write_result false StateInitBuildFailed 2
+    c1609_load_retirement
+    declare -F c1609_publish_current_audit >/dev/null || write_result false CurrentAuditToolingMissing 2
+    c1609_publish_current_audit "antiphon-server2/session-testing:${SHA:0:12}" \
+        || write_result false CurrentAuditToolingUnavailable 2
 }
 
 # CARD-0849: these names are deliberately fixed. The project names never prefix them.
@@ -5990,6 +5997,11 @@ c1008_spill_record() {
 }
 
 c1008_save() {
+    if [ "${C1008_PROJECT:-}" = "$TEMP_PROJECT" ] && declare -F c1609_persist >/dev/null; then
+        printf '%s\n' "$C1008_RECORD" | c1609_persist "$C1008_JOURNAL" || return 1
+        cat -- "$C1008_JOURNAL" | c1609_persist "$CASE_DIR/recycle.json"
+        return $?
+    fi
     local tmp="$C1008_JOURNAL.new.$$"
     printf '%s\n' "$C1008_RECORD" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$C1008_JOURNAL" || return 1
     cp -- "$C1008_JOURNAL" "$CASE_DIR/recycle.json" || return 1
@@ -6012,6 +6024,9 @@ c1008_summary() {
 
 c1008_refuse() {
     local reason="$1" count
+    if [ "${C1609_APPLY_ACTIVE:-0}" = 1 ]; then
+        c1609_mark_partial_refused || reason=RecycleReceiptUnavailable
+    fi
     if [ "${C994_READY:-0}" = 1 ]; then c994_refuse "$reason"; fi
     if [ "${C1008_ACTIVE:-0}" = 1 ]; then
         count="$(printf '%s' "$C1008_RECORD" | jq '[.volumes[] | select(.outcome == "removed")] | length')"
@@ -6043,6 +6058,24 @@ c1008_volume() {
              .key=="com.docker.compose.project" or .key=="com.docker.compose.volume" or
              .key=="io.antiphon.owner" or .key=="io.antiphon.cache-schema" or .key=="io.antiphon.cache-role")))}
          else error("identity") end' || return 2
+}
+
+# Temp runner-state only. A credential-shaped name refuses before any volume delete.
+# Return 1 for a hit, 2 when the mount cannot be read or sudo is unavailable, 0 when clean or absent.
+# The mount walk lives in c1609_scan_state and uses sudo -n. A missing loader refuses closed.
+c1609_state_credential_scan() {
+    local status=0
+    c1609_scan_reason=''
+    [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] || return 0
+    c1609_load_volume_metadata
+    if ! declare -F c1609_scan_state >/dev/null 2>&1; then
+        return 2
+    fi
+    c1609_scan_state >/dev/null || status=$?
+    if [ "$status" = 0 ]; then return 0; fi
+    if [ "$status" = 1 ]; then return 1; fi
+    c1609_scan_reason="${c1609_meta_reason:-}"
+    return 2
 }
 
 # CARD-1105 D-3: every bind target this script has shipped. A removed mount keeps its row.
@@ -6091,6 +6124,13 @@ c1008_compose_source() {
 # Previous generation is the deployed stack SHA when it agrees with registration and the image.
 c1008_previous_generation() {
     local project="$1" owned="$2" envfile sha status_sha tag image_id container_image owned_count image_count
+    if [ "$project" = "$TEMP_PROJECT" ]; then
+        # Retirement never reconstructs a build. Keep this legacy reader harmless
+        # for temp callers; actual topology and content provide its admission.
+        C1008_PREVIOUS_SHA=''
+        printf '%s\n' '{"statusBuildVersion":null,"imageTag":null,"imageId":null}'
+        return 0
+    fi
     owned_count="$(printf '%s' "$owned" | jq -e 'if type!="array" then error("owned") else
         [.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or
           .Config.Labels["com.docker.compose.service"]=="state-init")] | length end')" \
@@ -6219,9 +6259,47 @@ c1008_previous_model() {
     printf '%s' "$model" | jq -Sc . || c1008_refuse RecycleGenerationUnknown
 }
 
-# Service topology is authorized by the shipped Compose contract, not inspect labels.
+# CARD-1609 D-9. A shipped, versioned topology catalog, independent of source
+# history. Inspect chooses only between the two complete supported rosters;
+# c1008_owned_mounts still validates every source/type/destination/RW bit.
+c1609_temp_topology_model() {
+    local owned="${1:-[]}" token=false
+    token="$(printf '%s' "$owned" | jq -r '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner") |
+        .Mounts[] | select(.Destination=="/run/antiphon/github-token")] | length>0')" || return 2
+    jq -ncS --arg project "$TEMP_PROJECT" --argjson owned "$owned" --argjson token "$token" \
+        --arg claude "$CLAUDE_OAUTH_TOKEN_PATH" --arg git "$GIT_IDENTITY_PATH" --arg codex "$CODEX_HOME_PATH" \
+        --arg github "$GITHUB_TOKEN_DIR_PATH" --arg grok "${RUNNER_GROK_STORE_DIR:-}" \
+        --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" '
+      def volume($role;$target;$copy): {kind:"volume",role:$role,source:(
+          if $role|startswith("runner-") and ($role!="runner-state" and $role!="runner-tmp")
+          then "antiphon-runner-cache-"+($role|ltrimstr("runner-")) else $project+"_"+$role end),target:$target,rw:true,nocopy:$copy};
+      def bind($source;$target;$rw;$file): {kind:"bind",source:$source,target:$target,rw:$rw,file:$file};
+      {volumes:(reduce ["work","runner-state","runner-tmp","dind-data","runner-nuget-packages","runner-nuget-scratch","runner-npm-content"][] as $r
+          ({}; .[$r]={name:(if $r|startswith("runner-") and ($r!="runner-state" and $r!="runner-tmp")
+              then "antiphon-runner-cache-"+($r|ltrimstr("runner-")) else $project+"_"+$r end)})),
+       c994Topology:{version:1,services:(if ($owned|length)==0 then {} else
+         {"state-init":[volume("work";"/work";false),volume("runner-state";"/runner-state";false),bind($codex;"/codex-home";true;false)],
+          "session-runner":([volume("work";"/work";false),volume("runner-state";"/state";false),
+            volume("dind-data";"/var/lib/docker";false),volume("runner-tmp";"/tmp";false),
+            volume("runner-nuget-packages";"/home/app/.nuget/packages";true),
+            volume("runner-nuget-scratch";"/var/cache/antiphon/nuget-scratch";true),
+            volume("runner-npm-content";"/home/app/.npm/_cacache";true),
+            bind($claude;"/run/antiphon/claude-oauth-token";false;true),
+            bind($git;"/run/antiphon/gitconfig";false;true),bind($codex;"/state/codex";true;false),bind($grok;"/state/grok";true;false),
+            {kind:"secret",source:$key,target:"/run/secrets/antiphon-deploy-key",rw:false,file:true},
+            {kind:"secret",source:$phone,target:"/run/secrets/phone-home",rw:false,file:true},
+            {kind:"tmpfs",source:"",target:"/run/antiphon",rw:true}] +
+            if $token then [bind($github;"/run/antiphon/github-token";false;false)] else [] end)}
+         | with_entries(select(.key as $s | any($owned[]; .Config.Labels["com.docker.compose.service"]==$s)) | .value |= sort_by(.target)) end)}}'
+}
+
+# Main recreation retains the source-bound Compose contract.
 c1008_compose_model() {
     local model role key expected grok="${RUNNER_GROK_STORE_DIR:-}" sha="${1:-$SHA}" source_dir
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        c1609_temp_topology_model
+        return $?
+    fi
     source_dir="$CASE_DIR/compose/${sha:0:12}"
     c1008_compose_source "$sha" "$source_dir" || c1008_refuse RecycleComposeMismatch
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
@@ -6347,12 +6425,20 @@ c1008_zero() {
 
 c1008_http() {
     # Only task GETs use this reader. Retry that GET, never the census or a phase.
-    local path="$1" attempt response code curl_code started elapsed outcome status items excluded retryable
+    local path="$1" attempt response code curl_code started elapsed outcome status items excluded retryable http_cap remaining
     for attempt in 1 2 3; do
+        http_cap=60
+        if [ "${C1609_CENSUS_V2:-0}" = 1 ] && [ -n "${C1609_CENSUS_DEADLINE_MS:-}" ]; then
+            remaining=$((C1609_CENSUS_DEADLINE_MS - $(c1609_monotonic_ms)))
+            if [ "$remaining" -le 0 ]; then C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Deadline'; return 2; fi
+            if [ "$remaining" -lt 60000 ]; then
+                http_cap="$(awk -v ms="$remaining" 'BEGIN { printf "%.3f", ms/1000 }')"
+            fi
+        fi
         response=''; code=''; curl_code=0; outcome=ok; status=null; items=null; excluded=null; retryable=0
         C1008_HTTP_BODY=''; C1008_TASK_ERROR=''
         started="$(date +%s%3N)"
-        response="$(curl -sS --max-time 60 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
+        response="$(curl -sS --max-time "$http_cap" -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
         elapsed=$(( $(date +%s%3N) - started ))
         if [ "$curl_code" != 0 ]; then
             if [ "$curl_code" = 28 ]; then outcome=Timeout; else outcome=Transport; fi
@@ -6380,7 +6466,13 @@ c1008_http() {
             '. + [{path:$path,attempt:$attempt,elapsedMs:$elapsed,outcome:$outcome,items:$items,excludedTotal:$excluded} + (if $status==null then {} else {status:$status} end)]')" || return 2
         [ "$outcome" != ok ] || return 0
         C1008_HTTP_BODY=''
-        if [ "$retryable" = 1 ] && [ "$attempt" -lt 3 ]; then sleep 1; continue; fi
+        if [ "$retryable" = 1 ] && [ "$attempt" -lt 3 ]; then
+            if [ "${C1609_CENSUS_V2:-0}" = 1 ] && [ -n "${C1609_CENSUS_DEADLINE_MS:-}" ] &&
+                [ "$((C1609_CENSUS_DEADLINE_MS - $(c1609_monotonic_ms)))" -le 1000 ]; then
+                C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Deadline'; return 2
+            fi
+            sleep 1; continue
+        fi
         if [ "$retryable" = 1 ]; then
             C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Http attempts=$attempt failure=$outcome"
         else C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=$outcome"; fi
@@ -6612,7 +6704,8 @@ def open_status_move($before;$after;$detail;$runner):
             C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count $drift"
             # Attempts 1 and 2 always retry. Attempt 3 refuses until the journal says
             # the containers are gone, then keeps these rows. Binding and land already ran.
-            if [ "$attempt" -lt 3 ] || ! c1008_tasks_containers_removed; then return 2; fi
+            # v2 volume-delete census never treats removed containers as permission to continue.
+            if [ "${C1609_CENSUS_V2:-}" = 1 ] || [ "$attempt" -lt 3 ] || ! c1008_tasks_containers_removed; then return 2; fi
             C1008_TASK_ERROR=''
         fi
         # CARD-1353 D-2: the compared land closure keeps bound rows only and no scopes entry, so an
@@ -6701,6 +6794,10 @@ def open_status_move($before;$after;$detail;$runner):
     done
     C1008_TASK_ERROR=''
     }
+    if [ "${C1609_CENSUS_V2:-}" = 1 ]; then
+        c1609_census_v2_loop || return $?
+        return 0
+    fi
     for attempt in 1 2 3; do
         code=0; c1008_tasks_collect_attempt || code=$?
         if [ "$code" = 0 ] || [[ "$C1008_TASK_ERROR" != 'RecycleTaskCensusUnknown cause=Drift '* ]] || [ "$attempt" = 3 ]; then return "$code"; fi
@@ -6840,7 +6937,8 @@ c1008_resolve_audit_cap() {
 }
 
 c1008_git_program() {
-    cat <<'C1008_GIT'
+    local program insert file stub
+    program="$(cat <<'C1008_GIT'
 # CARD-1105 / CARD-1316. One overall budget for the whole audit. A clean standing
 # server2 volume (800 repositories) measured 5225 s, so the default is 10800 s
 # (C1008_AUDIT_TIMEOUT_SECONDS, resolved by c1008_resolve_audit_cap on the host).
@@ -6949,7 +7047,13 @@ refuse_dirty() {
 }
 refuse_unpublished() {
     trap - ERR
-    printf 'audit check=%s status=0 repo=%s%s\n' "${2:-rev-list}" "$(rel_repo "$1")" "${3:+ $3}"
+    local detail="${3:-}" recovery=''
+    case "$detail" in
+        *gone-tracking=[1-9]*|*unadvertised-local=[1-9]*)
+            recovery=' recovery=publish-the-original-commit-to-an-origin-archive-branch-then-preview-again'
+            ;;
+    esac
+    printf 'audit check=%s status=0 repo=%s%s%s\n' "${2:-rev-list}" "$(rel_repo "$1")" "${detail:+ $detail}" "$recovery"
     printf 'RecycleUnpublishedWork\n'
     exit 2
 }
@@ -7002,6 +7106,25 @@ consider_dirty() {
     if [ -e "$index_path" ]; then index_existed=1; fi
     audit_check="$kind"
     clean="$("${g[@]}" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
+    # A nested repository is classified on its own pass. Leaving it as the
+    # parent's untracked content exits here and omits no-remote-unclassified.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ] && [ -n "$clean" ]; then
+        local kept='' nested_path
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                '?? '*)
+                    nested_path="${line#?? }"
+                    nested_path="${nested_path%/}"
+                    if [ -d "$where/$nested_path/.git" ] || [ -f "$where/$nested_path/.git" ]; then
+                        continue
+                    fi
+                    ;;
+            esac
+            kept="${kept}${line}"$'\n'
+        done <<< "$clean"
+        clean="${kept%$'\n'}"
+    fi
     seed=0
     if [ "$index_existed" = 0 ]; then
         seed=1
@@ -7369,7 +7492,8 @@ consider_gitdir() {
     while IFS= read -r -d '' entry; do
         name="${entry##*/}"
         case "$name" in
-            HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
+            FETCH_HEAD) c1609_consider_fetch_head "$entry" ;;
+            HEAD|ORIG_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
             AUTO_MERGE) consider_auto_merge "$directory" "$entry" ;;
             refs) consider_refs "$entry" ;;
             packed-refs) consider_packed "$entry" ;;
@@ -7636,6 +7760,52 @@ consider_linked() {
 # alternate's refs with a child that drops this environment; that listing is off
 # (core.alternateRefsCommand=true) and the present heads are the proof's own refs,
 # so negotiation still sends them as haves.
+# A host bundle is the advertised graph when the helper cannot fetch. It is a
+# sibling of the proof file. Tags stay in the pack; only branch tips are comparisons.
+c1609_unbundle_host_proof() {
+    local rel url name bundle n=0 oid ref type
+    [ -n "${C1008_HOST_PROOF:-}" ] || return 1
+    [ -d "$proof" ] || return 1
+    rel="$(rel_repo "${audit_repo:-}")" || return 1
+    c1008_rel_safe "$rel" || return 1
+    path_of git --git-dir="$top" remote get-url origin 2>/dev/null || return 1
+    url="$path_out"
+    c1008_scrub_origin "$url" || return 1
+    name="$(c1008_proof_name "$rel" "$c1008_scrubbed")"
+    [[ "$name" =~ ^[0-9a-f]{64}$ ]] || return 1
+    bundle="${C1008_HOST_PROOF}/${name}.bundle"
+    [ -f "$bundle" ] && [ ! -L "$bundle" ] && [ -r "$bundle" ] || return 1
+    git --git-dir="$proof" bundle unbundle "$bundle" > "$proof.bundle-refs" 2>/dev/null || return 1
+    [ -s "$proof.bundle-refs" ] || return 1
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        awk '$2!="HEAD" {print $1 "\t" $2}' "$proof.bundle-refs" | LC_ALL=C sort > "$proof.bundle-sorted" || return 1
+        sed '/\^{}$/d' "$scratch/origin" | LC_ALL=C sort > "$proof.advertised-sorted" || return 1
+        cmp -s -- "$proof.bundle-sorted" "$proof.advertised-sorted" || return 1
+    fi
+    : > "$proof.bundle-updates" || return 1
+    while read -r oid ref || [ -n "${oid:-}${ref:-}" ]; do
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+        case "$ref" in
+            refs/heads/*)
+                n=$((n + 1))
+                printf 'create refs/c1008/origin/%s %s\n' "$n" "$oid" >> "$proof.bundle-updates" || return 1
+                ;;
+            refs/tags/*|HEAD) ;;
+            *) return 1 ;;
+        esac
+    done < "$proof.bundle-refs"
+    [ "$n" -ge 1 ] || return 1
+    git --git-dir="$proof" update-ref --stdin < "$proof.bundle-updates" >/dev/null 2>&1 || return 1
+    fetched=()
+    git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ > "$proof.heads" 2>/dev/null || return 1
+    while IFS=' ' read -r oid type || [ -n "${oid:-}${type:-}" ]; do
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] && [ "$type" = commit ] || { fetched=(); return 1; }
+        fetched+=("$oid")
+    done < "$proof.heads"
+    [ "${#fetched[@]}" -gt 0 ] || return 1
+    proof_dir="$proof"
+    return 0
+}
 fetch_origin() {
     local proof="$scratch/proof-$1" url oid type n=0 cap=300 started ended status=0
     proof_dir=''
@@ -7654,13 +7824,23 @@ fetch_origin() {
     git --git-dir="$proof" config core.alternateRefsCommand true >/dev/null 2>&1 || return 1
     for oid in "${present[@]}"; do n=$((n + 1)); printf 'create refs/c1008/present/%s %s\n' "$n" "$oid"; done > "$proof.present" || return 1
     git --git-dir="$proof" update-ref --stdin < "$proof.present" >/dev/null 2>&1 || return 1
+    # Temp has no network. Its host bundle is the only publication graph;
+    # attempting fetch first both violates that boundary and hides missing proof
+    # behind an unrelated network/auth error. Main retains its v1 fetch below.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        c1609_unbundle_host_proof
+        return $?
+    fi
     started="$(date +%s%N)" && [[ "$started" =~ ^[0-9]+$ ]] || { fetch_left_ms=0; return 1; }
     timeout --kill-after=5s "${cap}s" git --git-dir="$proof" fetch -q --filter=blob:none --no-tags --no-write-fetch-head \
         --no-auto-gc --no-auto-maintenance --no-recurse-submodules origin '+refs/heads/*:refs/c1008/origin/*' \
         >/dev/null 2>&1 || status=$?
     ended="$(date +%s%N)" && [[ "$ended" =~ ^[0-9]+$ ]] || { fetch_left_ms=0; return 1; }
     fetch_left_ms=$((fetch_left_ms - (ended - started) / 1000000))
-    [ "$status" = 0 ] || return 1
+    if [ "$status" != 0 ]; then
+        c1609_unbundle_host_proof && return 0
+        return 1
+    fi
     git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ \
         > "$proof.heads" 2>/dev/null || return 1
     while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
@@ -7747,6 +7927,11 @@ c1008_rel_safe() {
 # Git stderr never reaches the receipt.
 c1008_ls_remote_status() {
     local status=0
+    # Temp's helper is offline. Every origin is proved by the current host phase,
+    # independent of whether Git would classify a network failure as auth. An
+    # absent proof must refuse in c1008_apply_host_proof, never consult local refs
+    # or a helper-visible file origin as a substitute. Main retains v1 below.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then return 3; fi
     timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads --tags origin > "$scratch/origin" 2>"$scratch/ls-remote.err" || status=$?
     if [ "$status" = 0 ]; then
         rm -f -- "$scratch/ls-remote.err"
@@ -7763,6 +7948,7 @@ c1008_ls_remote_status() {
 # with no reason, the same text as an unauthenticated ls-remote. A supplied
 # directory whose file is missing, empty, or not a regular file names proof-missing.
 c1008_apply_host_proof() {
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then c1609_apply_host_proof; return; fi
     local rel url file name line1 line2 line3 line4 line5 op oh rp created started expect n=0 lower skip line ref_re
     rel="$(rel_repo "$audit_repo")"
     if [ -z "${C1008_HOST_PROOF:-}" ]; then
@@ -7837,9 +8023,21 @@ c1008_apply_host_proof() {
     done < "$file"
     [ "$n" -ge 1 ] || fail 128 " reason=proof-parse"
 }
+# C1609_CONTENT_AUDIT_INSERT
+c1609_prepare_common() { c1609_skip_publication=0; }
+c1609_consider_fetch_head() { consider_pseudoref "$1" FETCH_HEAD; }
+c1609_list_offenders() { :; }
+c1609_finish_blocks() { :; }
 # One pass per common directory, shared by every entry that uses it.
 consider_common() {
     local rep="${common_repo[$top]}" oid ref type lines tip admin count hash proof ls_status=0
+    c1609_skip_publication=0
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        c1609_prepare_common || return $?
+        if [ "${c1609_skip_publication:-0}" = 1 ]; then
+            return 0
+        fi
+    fi
     audit_repo="$rep"
     audit_check=bare
     top_bare="$(git --git-dir="$top" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
@@ -7972,6 +8170,11 @@ consider_common() {
     while IFS= read -r tip; do
         printf 'tip=%s common=%s\n' "$tip" "$hash"
     done < "$scratch/unique"
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        while IFS=' ' read -r oid type; do
+            printf 'C1609_PROVED_OBJECT repo=%s object=%s type=%s\n' "$(rel_repo "$rep")" "$oid" "$type"
+        done < "$scratch/types"
+    fi
 }
 cleanup() {
     local pids
@@ -8010,7 +8213,12 @@ if [ -n "${C1008_TMP_MOUNT:-}" ]; then
     [ -d "$tmp_root" ] && [ "$tmp_root" != / ] || fail 2
 fi
 audit_check=scratch
-scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
+if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+    scratch="$(mktemp -d /audit-scratch/c1008-audit-XXXXXXXX)" || fail $?
+else
+    scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
+fi
+c1609_list_offenders || fail $?
 # Capture enumeration before reading it: process substitution loses find failures.
 audit_check=find-repositories
 find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/repositories" 2>/dev/null || fail $?
@@ -8172,6 +8380,7 @@ while IFS= read -r -d '' link; do
     [ "$status" = 0 ] || fail "$status"
     refuse_unknown link-confine 0 "$link"
 done < "$scratch/links"
+c1609_finish_blocks
 printf 'repositories=%s partial=%s\n' "$repos" "$partial_repos"
 # C1008_AUDIT_END
 C1008_AUDIT_BODY
@@ -8199,6 +8408,33 @@ case "$c1008_audit_status" in
 esac
 exit "$c1008_audit_status"
 C1008_GIT
+)"
+    file="${C1609_CONTENT_AUDIT_FILE:-}"
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        file="$(dirname "$0")/c1008-content-audit.sh"
+    fi
+    if [ -f "$file" ] && [ ! -L "$file" ]; then
+        insert="$(cat -- "$file")"
+        case "$insert" in
+            *C1008_AUDIT_BODY*|*C1008_GIT*|*C1609_CONTENT_AUDIT_INSERT*) insert='' ;;
+        esac
+        if [ -n "$insert" ]; then
+            # Literal splice. ${var//pat/repl} treats & as the matched text and
+            # expands ${} inside the replacement, which rewrites this file.
+            stub=$'# C1609_CONTENT_AUDIT_INSERT\nc1609_prepare_common() { c1609_skip_publication=0; }\nc1609_consider_fetch_head() { consider_pseudoref "$1" FETCH_HEAD; }\nc1609_list_offenders() { :; }\nc1609_finish_blocks() { :; }'
+            case "$program" in
+                *"$stub"*)
+                    before="${program%%"$stub"*}"
+                    after="${program#*"$stub"}"
+                    case "$after" in
+                        *"$stub"*) ;;
+                        *) program="${before}${insert}${after}" ;;
+                    esac
+                    ;;
+            esac
+        fi
+    fi
+    printf '%s\n' "$program"
 }
 
 # Retirement preserves shared cache identities without inspecting a seed marker,
@@ -8330,11 +8566,35 @@ c1008_forward_host_proof() {
     _mounts+=(--env C1008_HOST_PROOF=/c1008-host-proof)
     _mounts+=(--env "C1008_OPERATION=$C1008_OPERATION")
     _mounts+=(--env "C1008_OPERATION_STARTED=$started")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        [[ "${C1609_PROOF_NONCE:-}" =~ ^[0-9a-f]{32}$ ]] && [[ "${C1609_PROOF_INVENTORY:-}" =~ ^[0-9a-f]{64}$ ]] \
+            || { printf 'audit check=host-proof status=2 repo=.\n'; return 2; }
+        _mounts+=(--env "C1609_PROOF_NONCE=$C1609_PROOF_NONCE" --env "C1609_PROOF_INVENTORY=$C1609_PROOF_INVENTORY")
+    fi
 }
 
 c1008_audit() {
     local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image helper output code=0 program
     local -a mounts=()
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        # Temp apply and preview execute the same read-only namespace scan. The
+        # v1 create/start adapter below remains the main-recycle path.
+        image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
+        if [ -z "$image" ]; then
+            image="$(c1609_resolve_current_audit)" || return 2
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$image" '.image=$image')" || return 2
+        fi
+        c1609_load_volume_metadata
+        c1609_role_metadata > "$CASE_DIR/apply-audit.out" || code=$?
+        if [ "$code" != 0 ]; then
+            printf 'audit check=metadata status=2 repo=. reason=%s\n' "${c1609_meta_reason:-metadata}" >> "$CASE_DIR/apply-audit.out"
+            cat -- "$CASE_DIR/apply-audit.out"
+            return 2
+        fi
+        c1008_audit_readonly >> "$CASE_DIR/apply-audit.out" || code=$?
+        cat -- "$CASE_DIR/apply-audit.out"
+        return "$code"
+    fi
     facts="$(c1008_volume "$work")" || return 2
     if [ "$facts" = null ]; then
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
@@ -8365,6 +8625,9 @@ c1008_audit() {
         return 2
     fi
     mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        mounts+=(--env C1609_CONTENT_V2=1)
+    fi
     # Unset in production. The witness sets it so consider_tips can see a retained payload.
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
@@ -8388,7 +8651,7 @@ c1008_audit() {
 # or a label that is not this run's is left untouched. docker kill runs only while
 # that id is still running, so a helper --rm already removed is not killed.
 c1008_preview_release() {
-    local id="" label="" cid="" inspected="" got="" running="" watch=""
+    local id="" label="" cid="" inspected="" got="" running="" watch="" candidate=""
     id="${c1008_preview_owned_id:-}"
     label="${c1008_preview_owned_label:-}"
     cid="${c1008_preview_cidfile:-}"
@@ -8403,6 +8666,18 @@ c1008_preview_release() {
     fi
     if [ -z "$id" ] && [ -n "$cid" ] && [ -f "$cid" ]; then
         id="$(tr -d '[:space:]' < "$cid" 2>/dev/null || true)"
+    fi
+    # A cancelled Docker create may commit before its client writes --cidfile.
+    # Temp can recover only its exact operation+nonce name AND matching label;
+    # a same-prefix helper or a foreign label never establishes ownership.
+    if [[ ! "$id" =~ ^[0-9a-f]{64}$ ]] && [ -n "${TEMP_PROJECT:-}" ] &&
+        [ "${C1008_PROJECT:-}" = "$TEMP_PROJECT" ] && [[ "$label" =~ ^c1008[0-9a-f]{32}:[0-9a-f]{16}$ ]]; then
+        candidate="c1008-preview-${label/:/-}"
+        inspected="$(docker inspect "$candidate" 2>/dev/null)" || return 1
+        id="$(printf '%s' "$inspected" | jq -er --arg name "/$candidate" --arg label "$label" '
+            select(type=="array" and length==1) | .[0] |
+            select(.Name==$name and .Config.Labels["io.antiphon.preview-audit"]==$label) |
+            .Id | select(type=="string" and test("^[0-9a-f]{64}$"))')" || return 1
     fi
     [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 0
     [ -n "$label" ] || return 0
@@ -8433,8 +8708,10 @@ c1008_preview_on_signal() {
     trap '' INT TERM HUP
     if [ -n "${c1008_preview_run_pid:-}" ]; then
         kill -TERM "${c1008_preview_run_pid}" 2>/dev/null || true
+        wait "${c1008_preview_run_pid}" 2>/dev/null || true
+        c1008_preview_run_pid=''
     fi
-    c1008_preview_release || true
+    if c1008_preview_release; then c1609_phase_helpers_joined || true; fi
     c1008_preview_restore_traps
     exit 143
 }
@@ -8467,6 +8744,7 @@ c1008_preview_finish() {
     local run_code="$1" release_status=0 output=""
     c1008_preview_release || release_status=$?
     c1008_preview_restore_traps
+    if [ "$release_status" = 0 ]; then c1609_phase_helpers_joined || release_status=1; fi
     if [ "$release_status" != 0 ]; then
         printf 'audit check=preview-helper status=2 repo=.\n'
         return 2
@@ -8489,15 +8767,13 @@ c1008_preview_finish() {
     printf '%s' "$output" | sort
 }
 
-# A bound retire-temp preview runs the same program as apply inside the pinned
-# image. Docker mounts both volumes read-only and drops every capability. The
-# network is apply's: no --network argument. --init, a run-owned name and label,
-# and docker kill of that id keep the helper inside the audit budget. The host
-# does not invoke Git. A container that can write a volume is not a preview.
+# Temp preview/apply share an offline, read-only root and production /work,/tmp
+# mounts. No named mount copies image content. Scratch has its own tmpfs. Main's
+# v1 preview keeps its existing namespace and transport through this adapter.
 c1008_audit_readonly() {
     local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image cap resolve_status=0
     local name token label cidfile program code=0 run_status=0 attempt raw=""
-    local -a mounts=()
+    local -a mounts=() isolation=()
     c1008_preview_owned_id=''
     c1008_preview_owned_label=''
     c1008_preview_cidfile=''
@@ -8509,10 +8785,21 @@ c1008_audit_readonly() {
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
         return 2
     fi
-    mounts=(--mount "type=volume,source=$work,target=/work,readonly" --mount "type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        isolation=(--network none --read-only)
+        mounts=(--mount "type=volume,source=$work,target=/work,readonly,volume-nocopy"
+            --mount "type=tmpfs,destination=/audit-scratch,tmpfs-mode=1777,tmpfs-size=2147483648"
+            --env TMPDIR=/audit-scratch)
+    else
+        mounts=(--mount "type=volume,source=$work,target=/work,readonly" --mount "type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648")
+    fi
     tmp_facts="$(c1008_volume "$tmp")" || return 2
     if [ "$tmp_facts" != null ]; then
-        mounts+=(--mount "type=volume,source=$tmp,target=/runner-tmp,readonly" --env C1008_TMP_MOUNT=/runner-tmp)
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            mounts+=(--mount "type=volume,source=$tmp,target=/tmp,readonly,volume-nocopy" --env C1008_TMP_MOUNT=/tmp)
+        else
+            mounts+=(--mount "type=volume,source=$tmp,target=/runner-tmp,readonly" --env C1008_TMP_MOUNT=/runner-tmp)
+        fi
     fi
     image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
     [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
@@ -8523,6 +8810,9 @@ c1008_audit_readonly() {
         return 2
     fi
     mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        mounts+=(--env C1609_CONTENT_V2=1)
+    fi
     if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
         mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
     fi
@@ -8548,6 +8838,7 @@ c1008_audit_readonly() {
         return 2
     fi
     program="$(c1008_git_program)"
+    c1609_phase_helper "$name" "$label" || return 2
     c1008_preview_owned_label="$label"
     c1008_preview_cidfile="$cidfile"
     trap 'ec=$?; c1008_preview_release || true; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
@@ -8557,7 +8848,7 @@ c1008_audit_readonly() {
     # Stderr stays beside the audit so a helper that prints no check line can
     # name the startup failure without copying it on the success path.
     (
-        timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL \
+        timeout --kill-after=10s "${cap}s" docker run --name "$name" --rm --cap-drop ALL "${isolation[@]}" \
             --security-opt no-new-privileges --user 1654:1654 --init \
             --label "io.antiphon.preview-audit=${label}" --cidfile "$cidfile" \
             --entrypoint /bin/bash \
@@ -8602,7 +8893,9 @@ c1008_audit_readonly() {
 c1008_audit_checked() {
     local audit code=0 work_state detail
     work_state="$(printf '%s' "$C1008_RECORD" | jq -r --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome')"
-    if [ "${C1008_RESUME:-0}" = 1 ] && { [ "$work_state" = removed ] ||
+    # Only main's v1 recreation adapter may reuse a saved audit after removal.
+    # Temp must freshly prove every remaining role even when work is absent.
+    if [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 1 ] && { [ "$work_state" = removed ] ||
         { [ "$work_state" = pending ] && [ "$(printf '%s' "$C1008_RECORD" | jq -r .phase)" = removing ]; }; }; then
         if [ "$(c1008_volume "${C1008_PROJECT}_work")" = null ]; then
             printf '%s' "$C1008_RECORD" | jq -e '(.audit|type)=="string"' >/dev/null \
@@ -8619,7 +8912,7 @@ c1008_audit_checked() {
     fi
     audit="$(c1008_audit)" || code=$?
     if [ "$code" != 0 ]; then
-        detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+        detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/p' | sed -n '1p')"
         [ -n "$detail" ] || detail='audit check=unclassified status= repo='
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$detail" '.auditFailure=$audit | .audit //= $audit')" || c1008_refuse RecycleReceiptUnavailable
         c1008_save || c1008_refuse RecycleReceiptUnavailable
@@ -8752,6 +9045,16 @@ c1008_bind_generation() {
     gen_owned="$(printf '%s' "$C1008_CENSUS" | jq -c --arg project "$C1008_PROJECT" \
         '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')" \
         || c1008_refuse RecycleGenerationUnknown
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        # Container cleanup is a separate exact-ID phase. A volume capability
+        # cannot authorize a still-present container or reconstruct its build.
+        [ "$(printf '%s' "$gen_owned" | jq length)" = 0 ] || c1008_refuse RecycleContainerStateUnknown
+        C1008_PREVIOUS_SHA=''; C1008_PREVIOUS_MODEL="$model"
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.previousSha=null|.previousComposeDigest=null|.generation={statusBuildVersion:null,imageTag:null,imageId:null}')" \
+            || c1008_refuse RecycleReceiptUnavailable
+        if [ "${C1008_RESUME:-0}" = 1 ]; then c1008_lock; c1008_reconcile_owned "$model"; fi
+        return 0
+    fi
     if [ "${C1008_RESUME:-0}" = 1 ]; then
         printf '%s' "$C1008_RECORD" | jq -e 'has("previousSha") and has("previousComposeDigest") and has("generation") and
             ((.previousSha==null and .previousComposeDigest==null) or
@@ -8761,8 +9064,14 @@ c1008_bind_generation() {
         saved_sha="$(printf '%s' "$C1008_RECORD" | jq -r 'if .previousSha==null then "" else .previousSha end')"
         saved_digest="$(printf '%s' "$C1008_RECORD" | jq -r 'if .previousComposeDigest==null then "" else .previousComposeDigest end')"
         if printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true' >/dev/null; then
-            stack="$(c1008_stack_revision)"
-            [ "$stack" = "$saved_sha" ] || [ "$stack" = "$SHA" ] || c1008_refuse RecycleResumeMismatch
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                # Retirement does not recreate a generation. Once cleanup is
+                # journaled, fresh absence and v2 incarnations govern resume.
+                [ "$(printf '%s' "$gen_owned" | jq length)" = 0 ] || c1008_refuse RecycleResumeMismatch
+            else
+                stack="$(c1008_stack_revision)"
+                [ "$stack" = "$saved_sha" ] || [ "$stack" = "$SHA" ] || c1008_refuse RecycleResumeMismatch
+            fi
             C1008_PREVIOUS_SHA="$saved_sha"
         else
             # A crashed removal can resume after the session-runner is already gone.
@@ -8817,10 +9126,76 @@ c1008_bind_generation() {
     fi
 }
 
+c1609_load_volume_metadata() {
+    local meta_file="${C1609_VOLUME_METADATA_FILE:-}"
+    [ "${c1609_metadata_loaded:-}" = 1 ] && return 0
+    c1609_metadata_loaded=1
+    if [ ! -f "$meta_file" ] || [ -L "$meta_file" ]; then
+        meta_file="$(dirname "$0")/c1008-volume-metadata.sh"
+    fi
+    if [ -f "$meta_file" ] && [ ! -L "$meta_file" ]; then
+        # shellcheck disable=SC1090
+        . "$meta_file"
+    fi
+}
+
+c1609_load_retirement() {
+    local file="${C1609_RETIREMENT_FILE:-}"
+    [ "${c1609_retirement_loaded:-}" = 1 ] && return 0
+    c1609_retirement_loaded=1
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        file="$(dirname "$0")/c1008-retirement.sh"
+    fi
+    if [ -f "$file" ] && [ ! -L "$file" ]; then
+        # shellcheck disable=SC1090
+        . "$file"
+    fi
+}
+
+# CARD-1609. Volume deletion stays off until this shell holds enabled-<operation id>.
+# A fresh retirement mints a new id, so a leftover export cannot authorize it.
+# Resume repeats the same id and needs the same token. write_result exits before
+# any volume rm and does not call c1008_refuse (that would rewrite the journal).
+c1609_apply_gate() {
+    if [[ ! "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] || \
+        [ "${ANTIPHON_VOLUME_RETIREMENT_APPLY:-}" != "enabled-${C1008_OPERATION}" ]; then
+        write_result false 'apply-gate-off' 2
+    fi
+}
+
+# Host state, the three caches, and Postgres are never retirement targets.
+# Temp's own runner-state stays eligible. Refusal is before the lock and any delete.
+c1609_refuse_protected_targets() {
+    local name
+    for name in "${C1008_TARGETS[@]}"; do
+        case "$name" in
+            "${HOST_PROJECT}_runner-state"|antiphon-runner-cache-nuget-packages|antiphon-runner-cache-nuget-scratch|antiphon-runner-cache-npm-content|antiphon_pgdata)
+                write_result false RecycleProtectedVolume 2
+                ;;
+        esac
+    done
+}
+
+c1609_preview_would_delete() {
+    local name facts listed=''
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || return 2
+        if [ "$facts" != null ]; then listed="${listed:+$listed }$name"; fi
+    done
+    printf 'would delete: %s\n' "$listed"
+}
+
 c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
     require_lane host
+    c1609_load_retirement
+    C1609_CENSUS_V2=0; C1609_APPLY_ACTIVE=0; C1609_RESUME_VALIDATED=0
+    unset C1609_APPLY_INVENTORY_FILE
+    unset C1609_ADMITTED_PID C1609_ADMITTED_DIGEST C1609_ADMITTED_AT C1609_ADMITTED_MONOTONIC C1609_ADMITTED_MANUAL
+    unset C1609_PREVIEW_ADMITTED_PID C1609_PREVIEW_ADMITTED_AT C1609_PREVIEW_ADMITTED_MONOTONIC C1609_PREVIEW_ADMITTED_MANUAL
+    unset C1609_BOUND_PROOF_DIGEST C1609_BOUND_OBJECT_DIGEST C1609_EXCHANGE_DIRECTORY C1609_REQUEST_DIGEST
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1609_CENSUS_V2=1; fi
     # Inventory is a docker --env only. A shell export must not reach the helper.
     if [ -n "${C1008_AUDIT_MODE:-}" ]; then write_result false RecycleContextInvalid 2; fi
     [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] && \
@@ -8828,8 +9203,21 @@ c1008_recycle() {
         || write_result false RecycleContextInvalid 2
     case "${C1008_DRY_RUN:-0}:${C1008_RESUME:-0}" in 0:0|0:1|1:0) ;; *) write_result false RecycleContextInvalid 2 ;; esac
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
+    if [ "${C1008_DRY_RUN:-0}" != 1 ]; then
+        c1609_apply_gate
+    fi
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
-    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        C1008_TARGETS=("${C1008_PROJECT}_runner-state" "${C1008_PROJECT}_dind-data" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_work")
+        C1609_APPLY_INVENTORY_FILE="$CASE_DIR/apply-audit.out"
+    fi
+    c1609_refuse_protected_targets
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        # Preview holds the same rollout/cache locks as apply. Helper children
+        # explicitly drop these descriptors before entering their namespace.
+        c1008_lock
+        c1609_phase_begin || c1008_refuse RecycleReceiptUnavailable
+    fi
     local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha="" detail pending=true
     # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
     # case_deploy_parent has rewritten SOURCE_SHA12, so pin that compare to previousSha.
@@ -8856,32 +9244,30 @@ c1008_recycle() {
         [ -f "$C1008_JOURNAL" ] && [ ! -L "$C1008_JOURNAL" ] || c1008_refuse RecycleResumeMismatch
         current="$(cat "$C1008_JOURNAL")"
         printf '%s' "$current" | jq -e --arg sha "$SHA" --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg digest "$digest" \
-            '.schema==1 and .sourceSha==$sha and .operationId==$op and .project==$project and .context=="default" and .dryRun==false and .composeDigest==$digest' >/dev/null \
+            '.schema==1 and (.sourceSha==$sha or .project=="antiphon-runner-temp") and .operationId==$op and .project==$project and .context=="default" and .dryRun==false and .composeDigest==$digest' >/dev/null \
             || c1008_refuse RecycleResumeMismatch
         C1008_RECORD="$current"
         printf '%s' "$current" | jq -e 'all(.owned[]?; .Topology.version==1)' >/dev/null || c1008_refuse RecycleResumeMismatch
     elif [ -e "$C1008_JOURNAL" ]; then c1008_refuse RecycleResumeMismatch; fi
     c1008_status_proof
-    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
-        C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
-        if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
-            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview audit || c1008_refuse RecycleGitAuditUnknown
-        else
-            c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" audit || c1008_refuse RecycleGitAuditUnknown
-        fi
-        # No pin: warn and leave apply on the current SHA image. A chosen image that
-        # is not on the host refuses. An empty matching receipt refuses only when
-        # nothing else binds.
-        if [ -z "${C994_IMAGE:-}" ]; then
-            case "${C994_LOOKUP:-}" in
-                unpinned) printf 'C994_IMAGE_UNPINNED reason=no-matching-cleanup-record\n' ;;
-                *) c1008_refuse RecycleGitAuditUnknown ;;
-            esac
-        fi
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        declare -F c1609_resolve_current_audit >/dev/null || c1008_refuse 'RecycleGitAuditUnknown reason=current-tooling-missing'
+        C994_IMAGE="$(c1609_resolve_current_audit)" || c1008_refuse 'RecycleGitAuditUnknown reason=current-tooling-unavailable'
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleReceiptUnavailable
+        printf 'C1609_TOOLING protocol=2 policy=1 image=%s\n' "$C994_IMAGE"
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
     unset C1008_RESUME_DIGEST_SHA12
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 1 ]; then
+        c1609_prepare_resume || c1008_refuse RecycleResumeMismatch
+        C1609_RESUME_VALIDATED=1
+        C1609_APPLY_ACTIVE=1
+    fi
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            c1609_admit_manual_preview || c1008_refuse RecycleReceiptUnavailable
+            c1609_prepare_exchange || c1008_refuse RecycleGitAuditUnknown
+        fi
         if [ -n "${C994_IMAGE:-}" ]; then
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg image "$C994_IMAGE" '.image=$image')" || c1008_refuse RecycleGitAuditUnknown
             code=0
@@ -8889,19 +9275,47 @@ c1008_recycle() {
             # Current shell: the helper traps have to see this script's signals.
             c1008_audit_readonly >"$CASE_DIR/preview-audit.out" || code=$?
             audit="$(cat "$CASE_DIR/preview-audit.out" 2>/dev/null || true)"
+            meta=0
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_load_volume_metadata
+                if declare -F c1609_role_metadata >/dev/null 2>&1; then
+                    c1609_role_metadata >"$CASE_DIR/c1609-meta.out" || meta=$?
+                    if [ -s "$CASE_DIR/c1609-meta.out" ]; then
+                        cat "$CASE_DIR/c1609-meta.out"
+                        cat "$CASE_DIR/c1609-meta.out" >> "$CASE_DIR/preview-audit.out"
+                    fi
+                fi
+            fi
             if [ "$code" != 0 ]; then
-                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+                detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/p' | sed -n '1p')"
                 [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+                if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                    c1609_write_refused_preview "$detail" || true
+                fi
                 case "$code" in
                     3) c1008_refuse "RecycleUnpublishedWork $detail" ;;
                     4) c1008_refuse "RecycleWorktreeDirty $detail" ;;
                     *) c1008_refuse "RecycleGitAuditUnknown $detail" ;;
                 esac
             fi
+            if [ "$meta" != 0 ]; then
+                c1008_refuse "RecycleGitAuditUnknown reason=${c1609_meta_reason:-metadata}"
+            fi
             pending=false
+            C1609_CONTENT_READY=1
         fi
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
+        c1609_preview_would_delete || c1008_refuse RecycleVolumeCensusUnknown
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=%s\n' "$HOST_PROJECT" "$pending"
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1609_CONTENT_READY:-}" = 1 ]; then
+            c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
+            c1609_publication_gate ready || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
+            printf 'C1609_RETIREMENT state=Ready operation=%s\n' "$C1008_OPERATION"
+            if [ -n "${C1008_HOST_PROOF:-}" ]; then
+                printf 'audit check=origin-present status=0\n'
+            fi
+        fi
         write_result true '' 0
     fi
     c1008_lock
@@ -8981,9 +9395,33 @@ c1008_recycle() {
     mkdir -p "$SERVER2_ROOT/recycle" || c1008_refuse RecycleReceiptUnavailable
     c1008_save || c1008_refuse RecycleReceiptUnavailable
     C1008_ACTIVE=1
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" != 1 ]; then
+        # A missing capability refuses before starting an expensive helper. Keep
+        # the names-only state refusal diagnostic, including absent-work cases.
+        c1609_scan=0
+        c1609_state_credential_scan || c1609_scan=$?
+        if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
+        if [ "$c1609_scan" != 0 ]; then
+            if [ -n "${c1609_scan_reason:-}" ]; then c1008_refuse "RecycleGitAuditUnknown reason=${c1609_scan_reason}"; fi
+            c1008_refuse RecycleGitAuditUnknown
+        fi
+        [ -f "$(c1609_retirement_root)/receipt.json" ] || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
+        c1609_require_ready_preview admit || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
+    fi
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then c1609_prepare_exchange || c1008_refuse RecycleGitAuditUnknown; fi
     c1008_audit_checked; audit="$C1008_AUDIT"
     if [ "${C1008_RESUME:-0}" = 1 ]; then
-        [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            # Removed metadata-only roles change their present/absent rows. All
+            # remaining roles were freshly scanned; retained Git inventory must
+            # still equal the immutable preview. Main keeps its v1 comparison.
+            if [ "$(c1008_volume "${C1008_PROJECT}_work")" != null ]; then
+                [ "$(c1609_inventory_digest "$CASE_DIR/apply-audit.out")" = \
+                    "$(jq -r .inventoryDigest "$(c1609_retirement_root)/receipt.json")" ] || c1008_refuse RecycleResumeMismatch
+            fi
+        else
+            [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
+        fi
     fi
     # CARD-1105-AUDIT-STORE-BEGIN
     if [ "${C1008_RESUME:-0}" = 0 ]; then
@@ -9019,14 +9457,38 @@ c1008_recycle() {
         c1008_save || c1008_refuse RecycleReceiptUnavailable
     done < <(printf '%s' "$owned" | jq -r '.[].Id')
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="containersRemoved"|.ownedRemoved=true')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
-    c1008_audit_checked; after="$C1008_AUDIT"
-    [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
+    # No supported writer can enter while FD8 is held. When no container was
+    # removed, the first full audit is already this phase's content observation.
+    # Main and temp container effects retain the post-removal audit/comparison.
+    if [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || [ "$(printf '%s' "$owned" | jq length)" != 0 ]; then
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then c1609_publication_gate audit || c1008_refuse RecycleGitAuditUnknown; fi
+        c1008_audit_checked; after="$C1008_AUDIT"
+        [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
+    fi
+    # Temp keeps the bounded v2 census through every exact-volume effect.
     c1008_status_proof
     c1008_references "$C1008_CENSUS" '[]'
     after="$(c1008_disk)" || c1008_refuse RecycleDiskUnknown
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson disk "$after" '.diskBefore=$disk|.phase="removing"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
-        compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || c1008_refuse RecycleRemoveFailed
+        c1609_scan=0
+        c1609_state_credential_scan || c1609_scan=$?
+        if [ "$c1609_scan" = 1 ]; then c1008_refuse 'RecycleGitAuditUnknown reason=state-credential'; fi
+        if [ "$c1609_scan" != 0 ]; then
+            if [ -n "${c1609_scan_reason:-}" ]; then c1008_refuse "RecycleGitAuditUnknown reason=${c1609_scan_reason}"; fi
+            c1008_refuse RecycleGitAuditUnknown
+        fi
+        # Resume continues a journal that already passed this gate. A fresh apply does not.
+        c1609_publication_gate apply || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+        if [ "${C1008_RESUME:-0}" != 1 ]; then
+            c1609_require_ready_preview || c1008_refuse 'RecycleGitAuditUnknown reason=preview-required'
+        fi
+    fi
+    # Temp and host both delete in the loop below. The admission gate already ran,
+    # before the lock and any stop. Apply-active starts here so a later refusal can
+    # mark PartialRefused only after deletion was allowed to begin.
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        C1609_APPLY_ACTIVE=1
     fi
     for name in "${C1008_TARGETS[@]}"; do
         c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
@@ -9034,14 +9496,26 @@ c1008_recycle() {
         if [ "$facts" != null ]; then
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" '.volumes[$name].original')" ] \
                 || c1008_refuse RecycleResumeMismatch
-            [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || c1008_refuse RecycleRemoveFailed
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_publication_gate "$name" || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+                c1609_recheck_target "$name" || c1008_refuse RecycleResumeMismatch
+                c1609_target_intent "$name" || c1008_refuse RecycleReceiptUnavailable
+            fi
             docker volume rm -- "$name" >/dev/null 2>&1 || c1008_refuse RecycleVolumeInUse
             [ "$(c1008_volume "$name")" = null ] || c1008_refuse RecycleRemoveFailed
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_target_result "$name" removed || c1008_refuse RecycleReceiptUnavailable
+            fi
+        elif [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+            c1609_target_absent "$name" || c1008_refuse RecycleReceiptUnavailable
         fi
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg name "$name" \
             '.volumes[$name].outcome=(if .volumes[$name].original==null then "alreadyAbsent" else "removed" end)')"
         c1008_save || c1008_refuse RecycleReceiptUnavailable
     done
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        c1609_mark_completed || c1008_refuse RecycleReceiptUnavailable
+    fi
     after="$(c1008_disk)" || { after=null; code=2; }
     if [ "$after" != null ] && [ "$(printf '%s' "$after" | jq -Sc '{dataRoot,filesystem}')" != \
         "$(printf '%s' "$C1008_RECORD" | jq -Sc '.diskBefore|{dataRoot,filesystem}')" ]; then after=null; code=2; fi
@@ -9244,11 +9718,77 @@ EOF
     write_result true '' 0
 }
 
+# Read-only. Present temp private volumes always block. Journals block when an
+# effect, owner, or nonterminal apply is unresolved. A refused preview with no
+# effect does not. Closure is an appendix; it does not delete a volume.
+c1609_temp_retirement_clearable() {
+    local name facts root dir file state effects intents C1008_OPERATION
+    c1609_clear_reason=TempRetirementJournalUnknown
+    c1609_load_retirement
+    declare -F c1609_read_canonical >/dev/null || return 1
+    for name in antiphon-runner-temp_work antiphon-runner-temp_runner-tmp antiphon-runner-temp_dind-data antiphon-runner-temp_runner-state; do
+        facts="$(c1008_volume "$name")" || return 1
+        if [ "$facts" != null ]; then
+            c1609_clear_reason=TempVolumesRetained
+            printf 'retained=%s\nreason=TempVolumesRetained\n' "$name"
+            return 1
+        fi
+    done
+    root="$SERVER2_ROOT/retirement"
+    [ ! -L "$root" ] || return 1
+    [ -d "$root" ] || { [ ! -e "$root" ]; return $?; }
+    c1609_custody "$root" dir || return 1
+    for dir in "$root"/*; do
+        [ -e "$dir" ] || { [ ! -L "$dir" ] || return 1; continue; }
+        [[ "${dir##*/}" =~ ^c1008[0-9a-f]{32}$ ]] && c1609_custody "$dir" dir || return 1
+        C1008_OPERATION="${dir##*/}"
+        file="$dir/receipt.json"
+        c1609_lifecycle_valid "$dir/lifecycle.json" || return 1
+        jq -e '.complete==true and all(.children[];.joined==true)' "$dir/lifecycle.json" >/dev/null || return 1
+        local pid ticks current
+        pid="$(jq -r .owner.pid "$dir/lifecycle.json")"; ticks="$(jq -r .owner.startTicks "$dir/lifecycle.json")"
+        if [ -e "/proc/$pid" ]; then
+            current="$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$pid/stat")" || return 1
+            if [ "$current" = "$ticks" ]; then c1609_clear_reason=TempRetirementOwnerActive; return 1; fi
+        fi
+        if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+            jq -e '.readyPublished==false' "$dir/lifecycle.json" >/dev/null || return 1
+            [ ! -e "$dir/closure.json" ] && [ ! -L "$dir/closure.json" ] &&
+                [ ! -e "$dir/close-pending.json" ] && [ ! -L "$dir/close-pending.json" ] || return 1
+            continue
+        fi
+        c1609_read_canonical "$file" >/dev/null && c1609_close_receipt_valid "$file" || return 1
+        if [ -e "$dir/closure.json" ] || [ -L "$dir/closure.json" ]; then
+            c1609_closure_valid "$dir" || return 1
+            continue
+        fi
+        if [ -e "$dir/close-pending.json" ] || [ -L "$dir/close-pending.json" ]; then
+            c1609_clear_reason=TempRetirementUnresolved; return 1
+        fi
+        state="$(jq -r .state "$file")"
+        effects="$(jq '(.effects // [])|length' "$file")"
+        intents="$(jq '(.intents // [])|length' "$file")"
+        case "$state" in
+            Ready|Refused|Pending)
+                if [ "$effects" != 0 ] || [ "$intents" != 0 ]; then c1609_clear_reason=TempRetirementUnresolved; return 1; fi
+                ;;
+            Completed) ;;
+            Applying|Partial|PartialRefused) c1609_clear_reason=TempRetirementUnresolved; return 1 ;;
+            *) return 1 ;;
+        esac
+    done
+    c1609_clear_reason=''
+    return 0
+}
 case_deploy_temp_runner() {
     require_lane host
     c1008_rollout_lock
     # Never replace an unverified leftover, including a stopped project container.
     c849_no_temp_containers
+    # FD 8 is already held by c1008_rollout_lock. Recheck before checkout or Compose.
+    if ! c1609_temp_retirement_clearable; then
+        write_result false "${c1609_clear_reason:-TempVolumesRetained}" 2
+    fi
     ensure_checkout
     ensure_runner_boot_files
     if [ ! -s "$SERVER2_ENV" ]; then write_result false ParentStackMissing 2; fi
@@ -9524,6 +10064,13 @@ c994_lookup_image() {
         candidate="$same_image"
         found_id="$same_original"
     elif [ "$cross_conflict" = 1 ]; then
+        # Audit treats a historical image disagreement as unpinned. Cleanup does not.
+        if [ "$audit" = true ]; then
+            C994_LOOKUP=conflict
+            C994_IMAGE=''
+            C994_ORIGINAL=''
+            return 0
+        fi
         return 2
     elif [ -n "$cross_image" ]; then
         candidate="$cross_image"
@@ -9586,7 +10133,6 @@ case_retire_temp_containers() {
     C1008_PROJECT="$TEMP_PROJECT"
     if [ -s "$SERVER2_TEMP_ENV" ]; then RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"; fi
     local model census owned volumes='{}' name facts id current expected image count gen_count
-    model="$(c1008_compose_model)" || c994_refuse RecycleComposeMismatch
     census="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
     owned="$(printf '%s' "$census" | jq -c --arg project "$TEMP_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
     printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or
@@ -9594,16 +10140,7 @@ case_retire_temp_containers() {
       ([.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")]|length)<=1' >/dev/null || c994_refuse TempContainerOwnershipUnknown
     if printf '%s' "$owned" | jq -e 'any(.[]; .State.Running==true and .State.Status=="running")' >/dev/null; then c994_refuse TempContainerStillRunning; fi
     printf '%s' "$owned" | jq -e 'all(.[]; .State.Running==false and .State.Status=="exited")' >/dev/null || c994_refuse TempContainerStateUnknown
-    # CARD-1105 D-6. Exited temp containers are proved against their own generation.
-    gen_count="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or .Config.Labels["com.docker.compose.service"]=="state-init")] | length')" \
-        || c994_refuse TempContainerStateUnknown
-    if [ "$gen_count" != 0 ]; then
-        C1008_STATUS="$(c849_status_body server2-temp)" || c994_refuse RunnerStatusMissing
-        c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$TEMP_PROJECT" "$owned"
-        [ -n "${C1008_PREVIOUS_SHA:-}" ] || c994_refuse RecycleGenerationUnknown
-        c1008_capture_json "$CASE_DIR/previous-model.json" c1008_previous_model "$C1008_PREVIOUS_SHA"
-        model="$(cat "$CASE_DIR/previous-model.json")"
-    fi
+    model="$(c1609_temp_topology_model "$owned")" || c994_refuse RecycleComposeMismatch
     for name in work runner-state runner-tmp dind-data; do
         facts="$(c1008_volume "${TEMP_PROJECT}_$name")" || c994_refuse RecycleVolumeIdentityMismatch
         c1008_private_identity "$facts" "${TEMP_PROJECT}_$name" "$TEMP_PROJECT" "$name" || c994_refuse RecycleVolumeIdentityMismatch
@@ -9611,11 +10148,18 @@ case_retire_temp_containers() {
     done
     volumes="$(printf '%s' "$volumes" | jq -c --argjson caches "$(c1008_cache_preservation)" '. + $caches')" || c994_refuse RecycleVolumeIdentityMismatch
     c1008_owned_mounts "$owned" "$model" "$volumes"; owned="$C1008_OWNED"
-    c994_lookup_image || c994_refuse TempContainerReceiptUnavailable
+    # Best-effort history can enrich diagnostics but cannot admit/refuse cleanup.
+    # The actual candidate's image is observed and pinned until its exact rm.
+    read -r C994_IMAGE C994_ORIGINAL < <(c994_lookup_image >/dev/null 2>&1 && printf '%s %s\n' "${C994_IMAGE:-}" "${C994_ORIGINAL:-}") \
+        || { C994_IMAGE=''; C994_ORIGINAL=''; }
     image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
     if [ -n "$image" ]; then
         [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || c994_refuse TempContainerStateUnknown
-        [ -z "${C994_IMAGE:-}" ] || [ "$C994_IMAGE" = "$image" ] || c994_refuse TempContainerReceiptUnavailable
+        # Historical cleanup image is provenance. The live container image is the
+        # candidate. A disagreement does not refuse container removal.
+        if [ -n "${C994_IMAGE:-}" ] && [ "$C994_IMAGE" != "$image" ]; then
+            printf 'C994_IMAGE_HISTORICAL reason=observed-container-image\n'
+        fi
     else image="${C994_IMAGE:-}"; fi
     C994_RECORD="$(jq -cn --arg sha "$SHA" --arg run "$RUN" --arg op "$C994_OPERATION" --arg project "$TEMP_PROJECT" \
       --arg id "$C994_PROJECT_ID" --arg stamp "$C994_STAMP" --arg image "$image" --arg original "${C994_ORIGINAL:-}" \
@@ -9682,34 +10226,14 @@ case_retire_temp_inventory() {
     C994_PROJECT_ID="$C1008_PROJECT_ID"
     C994_STAMP="$(date -u -d "${C590_TEMP_RETIRED_AT:-}" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" \
         || write_result false RecycleGitAuditUnknown 2
-    local lookup_status=0 image='' out='' code=0 detail=''
-    if [ "${C1008_INVENTORY_ALLOW_PREVIEW:-0}" = 1 ]; then
-        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" allow-preview audit || lookup_status=$?
-    else
-        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" audit || lookup_status=$?
-    fi
-    if [ "$lookup_status" != 0 ]; then
-        write_result false RecycleGitAuditUnknown 2
-    fi
-    image="${C994_IMAGE:-}"
-    if [ -z "$image" ]; then
-        case "${C994_LOOKUP:-}" in
-            unpinned)
-                if [ "${C1008_INVENTORY_ALLOW_PREVIEW:-0}" = 1 ]; then
-                    : > "$CASE_DIR/private-origins.txt"
-                    write_result true '' 0
-                fi
-                image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
-                    || write_result false RecycleGitAuditUnknown 2
-                ;;
-            *) write_result false RecycleGitAuditUnknown 2 ;;
-        esac
-    fi
-    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false RecycleGitAuditUnknown 2
+    c1609_load_retirement
+    local image='' out='' code=0 detail=''
+    declare -F c1609_resolve_current_audit >/dev/null || write_result false RecycleGitAuditUnknown 2
+    image="$(c1609_resolve_current_audit)" || write_result false 'RecycleGitAuditUnknown reason=current-tooling-unavailable' 2
     C1008_RECORD="$(jq -cn --arg image "$image" '{image:$image}')" || write_result false RecycleGitAuditUnknown 2
     out="$(c1008_audit_readonly inventory)" || code=$?
     if [ "$code" != 0 ]; then
-        detail="$(printf '%s\n' "$out" | sed -n '/^audit check=/{p;q;}')"
+        detail="$(printf '%s\n' "$out" | sed -n '/^audit check=/p' | sed -n '1p')"
         [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
         case "$code" in
             3) write_result false "RecycleUnpublishedWork $detail" 2 ;;
@@ -9718,14 +10242,18 @@ case_retire_temp_inventory() {
         esac
     fi
     printf '%s\n' "$out" | grep '^C1008_PRIVATE_ORIGIN ' > "$CASE_DIR/private-origins.txt" || true
+    c1609_export_trusted_origins "$CASE_DIR/private-origins.txt" "$CASE_DIR/trusted-origins.json" \
+        || write_result false 'RecycleGitAuditUnknown reason=unapproved-origin' 2
     printf '%s\n' "$out"
     write_result true '' 0
 }
 
 case_retire_temp_runner() {
     require_lane host
-    if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
-    RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+    # An empty temp.env is not a content refusal. Keep a store dir already set.
+    if [ -s "$SERVER2_TEMP_ENV" ]; then
+        RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+    fi
     c1008_recycle "$TEMP_PROJECT"
     printf 'down retiredAt=%s\n' "$C590_TEMP_RETIRED_AT" > "$CASE_DIR/temp-down.txt"
     write_result true '' 0
@@ -9958,8 +10486,9 @@ if [ "${C1008_CONTEXT:-}" = default ] && [ "${C1008_DRY_RUN:-0}" = 1 ]; then
     case "$CASE" in
         deploy-parent) c1008_recycle "$HOST_PROJECT" ;;
         retire-temp-runner)
-            if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
-            RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+            if [ -s "$SERVER2_TEMP_ENV" ]; then
+                RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+            fi
             c1008_recycle "$TEMP_PROJECT"
             ;;
         retire-temp-inventory) case_retire_temp_inventory ;;

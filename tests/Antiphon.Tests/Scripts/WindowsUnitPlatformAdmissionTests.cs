@@ -49,8 +49,8 @@ public sealed class WindowsUnitPlatformAdmissionTests
     public void C1210_Native_linux_entries_guard_before_work()
     {
         var methods = SourceMethods();
-        WindowsUnitSkipRoster.Native.Length.ShouldBe(61, "c1210-native-identity-count");
-        WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(72, "c1210-native-result-count");
+        WindowsUnitSkipRoster.Native.Length.ShouldBe(90, "c1210-native-identity-count");
+        WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(101, "c1210-native-result-count");
         foreach (var entry in WindowsUnitSkipRoster.Native)
         {
             var matches = methods.Where(method => Identity(method) == entry.Identity).ToArray();
@@ -327,10 +327,12 @@ public sealed class WindowsUnitPlatformAdmissionTests
                     outcome == "NotExecuted" ? new XElement(Trx + "Output", new XElement(Trx + "DebugTrace", "Skipped: " + entry.Reason)) : null));
             }
         }
-        // CARD-1265 and CARD-1260 add four single-result native gates to the frozen audit totals.
-        var total = conditional.Length == 0 ? 76 : 109;
+        // Frozen against the roster sums. Native is 101 NotExecuted results and Portable is 4 Passed.
+        // With the storage child, add StoragePortable 31 and Conditional 2: total 138.
+        // A roster edit that does not move these constants fails c1210-counters.
+        var total = conditional.Length == 0 ? 105 : 138;
         var passed = conditional.Length == 0 ? 4 : skipped ? 35 : 37;
-        var notExecuted = conditional.Length > 0 && skipped ? 74 : 72;
+        var notExecuted = conditional.Length > 0 && skipped ? 103 : 101;
         return new XDocument(new XElement(Trx + "TestRun", new XElement(Trx + "Results", results),
             new XElement(Trx + "TestDefinitions", definitions), new XElement(Trx + "ResultSummary", new XElement(Trx + "Counters",
                 new XAttribute("total", total), new XAttribute("executed", passed), new XAttribute("passed", passed),
