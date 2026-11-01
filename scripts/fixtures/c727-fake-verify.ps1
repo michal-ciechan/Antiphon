@@ -86,6 +86,12 @@ if ($Case -eq 'temp-retirement-clearable') {
     exit 0
 }
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
+if ($request.PSObject.Properties.Name -contains 'recycle' -and $null -ne $request.recycle -and
+    $request.recycle.PSObject.Properties.Name -contains 'dryRun') {
+    # Happy-path traces do not copy the recycle object. Keep the preview/apply bit
+    # so T-1 can tell those two retire-temp-runner visits apart.
+    $entry['dryRun'] = [bool]$request.recycle.dryRun
+}
 if ($state.scenario -eq 'c1008') { $entry['recycle'] = $request.recycle; $entry['tempRetiredAt'] = $request.tempRetiredAt }
 if ($Case -eq 'retire-temp-containers') {
     $context = $request.tempContainerCleanup
