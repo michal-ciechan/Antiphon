@@ -683,6 +683,57 @@ function Invoke-V4 {
     Write-MpResult -Ok $true -Reason 'v4'
 }
 
+function Invoke-ZoneMap {
+    $moment = New-Object System.DateTime 2026, 10, 30, 12, 0, 0, ([System.DateTimeKind]::Unspecified)
+    $script:TestPhaseTimeZoneFinder = {
+        param($Id)
+        if ([string]$Id -match '/') { return $null }
+        try { return [System.TimeZoneInfo]::FindSystemTimeZoneById([string]$Id) } catch { return $null }
+    }
+    try {
+        $zone = Resolve-TestPhaseTimeZone -Id 'Asia/Kolkata'
+        if ($zone -isnot [System.TimeZoneInfo]) { Fail-Mp 'windows-shaped-iana-unmapped' }
+        if ([string]$zone.Id -ne 'India Standard Time') { Fail-Mp ('windows-shaped-id=' + [string]$zone.Id) }
+        $got = [int]$zone.GetUtcOffset($moment).TotalMinutes
+        if ($got -ne 330) { Fail-Mp ('windows-shaped-offset=' + $got) }
+        $ny = Resolve-TestPhaseTimeZone -Id 'America/New_York'
+        if ($ny -isnot [System.TimeZoneInfo] -or [string]$ny.Id -ne 'Eastern Standard Time') {
+            Fail-Mp ('windows-shaped-new-york=' + [string]$ny.Id)
+        }
+        $nyOff = [int]$ny.GetUtcOffset($moment).TotalMinutes
+        if ($nyOff -ne -240) { Fail-Mp ('windows-shaped-new-york-offset=' + $nyOff) }
+        $utc = Resolve-TestPhaseTimeZone -Id 'UTC'
+        if ($utc -isnot [System.TimeZoneInfo]) { Fail-Mp 'windows-shaped-utc-missing' }
+        if ([int]$utc.GetUtcOffset($moment).TotalMinutes -ne 0) { Fail-Mp 'windows-shaped-utc-offset' }
+    } finally {
+        $script:TestPhaseTimeZoneFinder = $null
+    }
+    $real = Resolve-TestPhaseTimeZone -Id 'Asia/Kolkata'
+    if ($real -isnot [System.TimeZoneInfo]) { Fail-Mp 'real-kolkata-unresolved' }
+    if ([int]$real.GetUtcOffset($moment).TotalMinutes -ne 330) { Fail-Mp ('real-kolkata-offset=' + [int]$real.GetUtcOffset($moment).TotalMinutes) }
+    Write-MpResult -Ok $true -Reason 'zone-map'
+}
+
+function Invoke-SuccessorDrainChild {
+    Write-Output ([string]::new('x', 200000))
+    Write-MpResult -Ok $true -Reason 'successor-drain-child'
+}
+
+function Invoke-SuccessorDrain {
+    $childWork = Join-Path $Work 'child'
+    $child = Start-MpCase -CaseName 'successor-drain-child' -ChildWork $childWork -Env @{}
+    $exited = $child.WaitForExit(20000)
+    if (-not $exited) {
+        Stop-MpProcess $child
+        Fail-Mp 'successor-drain-timeout'
+    }
+    $childResult = Join-Path $childWork 'result.json'
+    if (-not (Test-Path -LiteralPath $childResult)) { Fail-Mp 'successor-drain-no-result' }
+    $parsed = [System.IO.File]::ReadAllText($childResult) | ConvertFrom-Json
+    if (-not [bool]$parsed.ok) { Fail-Mp ('successor-drain ' + [string]$parsed.reason) }
+    Write-MpResult -Ok $true -Reason 'successor-drain'
+}
+
 function Invoke-V4Successor {
     $timing = [Environment]::GetEnvironmentVariable('MP_SOURCE')
     if ([string]::IsNullOrWhiteSpace($timing) -or -not (Test-Path -LiteralPath $timing)) { Fail-Mp 'successor-source-missing' }
@@ -1808,6 +1859,9 @@ try {
         'v3-reduce' { Invoke-V3Reduce }
         'v4' { Invoke-V4 }
         'v4-successor' { Invoke-V4Successor }
+        'zone-map' { Invoke-ZoneMap }
+        'successor-drain' { Invoke-SuccessorDrain }
+        'successor-drain-child' { Invoke-SuccessorDrainChild }
         'v5' { Invoke-V5 }
         'v5-child' { Invoke-V5Child }
         'v6' { Invoke-V6 }

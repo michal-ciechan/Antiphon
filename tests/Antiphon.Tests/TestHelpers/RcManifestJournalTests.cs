@@ -84,4 +84,22 @@ public sealed class RcManifestJournalTests
         var result = await ManifestPublicationFixture.Run(cancellationToken, "v4", root);
         result.Ok.ShouldBeTrue(result.Reason);
     }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task PinnedZoneMapsIanaWhenWindowsIdLookupRefusesIt(CancellationToken cancellationToken)
+    {
+        var root = C1514Support.FreshRoot();
+        var result = await ManifestPublicationFixture.Run(cancellationToken, "zone-map", root);
+        result.Ok.ShouldBeTrue(result.Reason);
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task SuccessorWaitDrainsRedirectedOutput(CancellationToken cancellationToken)
+    {
+        var root = C1514Support.FreshRoot();
+        var result = await ManifestPublicationFixture.Run(cancellationToken, "successor-drain", root);
+        result.Ok.ShouldBeTrue(result.Reason);
+    }
 }
