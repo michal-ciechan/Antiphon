@@ -24,9 +24,10 @@ public sealed class RcFailedFirstExecutionTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(1080), TimeSpan.FromSeconds(10)), cancellationToken);
 
     // Actual entrypoint plus S2's measured ~55s D-15 matrix, shared setup (CARD-1514).
-    // R5 (CARD-1638): execution budget 2x the reported 163s loaded run (card evidence,
-    // no retained receipt); method timeout keeps the 60s cleanup margin. Provisional: n=1.
-    [Test, Timeout(386_000)]
+    // R5 (CARD-1638): execution budget 2x the 240.257s TRX duration in checkpoint run
+    // 20261102-133640-5f80 (server2, load 32-38 on 24 cores; the card's 163s has no receipt);
+    // method timeout keeps the 60s cleanup margin. Provisional: n=2 (163s, 240.3s).
+    [Test, Timeout(541_000)]
     public Task JournalCustodySurvivesInterleaving(CancellationToken cancellationToken) =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(JournalCustodySurvivesInterleaving), 27,
             ["FF JournalCustodySurvivesInterleaving.interleaving", "FF JournalCustodySurvivesInterleaving.hostDiscovery",
@@ -42,5 +43,5 @@ public sealed class RcFailedFirstExecutionTests
              "FF JournalCustodySurvivesInterleaving.diagnosticWriteFailure", "FF JournalCustodySurvivesInterleaving.authorityBytes",
              "FF JournalCustodySurvivesInterleaving.authorityBinding", "FF JournalCustodySurvivesInterleaving.originalManifestBytes",
              "FF JournalCustodySurvivesInterleaving.artifactSchemas", "FF JournalCustodySurvivesInterleaving.phaseBindings"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(326), TimeSpan.FromSeconds(10)), cancellationToken);
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(481), TimeSpan.FromSeconds(10)), cancellationToken);
 }
