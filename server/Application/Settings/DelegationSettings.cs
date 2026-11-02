@@ -695,6 +695,13 @@ public sealed class DelegationSettings
     /// </summary>
     public int RemotePrepBackoffBaseSeconds { get; set; } = 30;
 
+    /// <summary>
+    /// CARD-0824 S1. Lease a reusable runner workspace slot (runner feature <c>workspaceSlotV1</c>)
+    /// instead of a per-task <c>task-&lt;id&gt;</c> mirror, and release it after settlement. Default
+    /// false: the mirror request and its handling are byte-identical to the per-task path.
+    /// </summary>
+    public bool WorkspaceSlotsEnabled { get; set; }
+
     /// <summary>CARD-0633 D-6: the remote-preparation backoff cap. Default 900; at least the base.</summary>
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 

@@ -2597,7 +2597,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     internal static IReadOnlyList<string> BuildSessionIdentityArgs(
         IReadOnlyList<string> args,
         Guid sessionId,
-        AgentSessionResumeMode? resumeMode)
+        AgentSessionResumeMode? resumeMode,
+        bool sharedWorkspace = false)
     {
         var filtered = new List<string>();
         for (var i = 0; i < args.Count; i++)

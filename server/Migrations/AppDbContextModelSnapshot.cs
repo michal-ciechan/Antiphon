@@ -1313,6 +1313,15 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
+                    b.Property<int?>("RemoteWorkspaceSlotGeneration")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RemoteWorkspaceSlotId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("RemoteWorkspaceSlotReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("RemoteWorktreePath")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
@@ -1521,6 +1530,9 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
+
+                    b.Property<bool>("WorkspaceColdReset")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("WorkspaceSource")
                         .HasColumnType("text");
