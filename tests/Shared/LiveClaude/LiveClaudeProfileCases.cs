@@ -169,7 +169,9 @@ internal static class LiveClaudeProfileCases
                 var spec = build(healthy, "control", f.Session, null);
                 Assert(spec.Cwd == f.Context.Cwd && !LiveClaudeProfilePaths.Within(spec.Cwd, f.Context.CandidateRoot), v, "owned-cwd", "actual launch has owned non-candidate cwd");
             }
-            var path = Path.Combine(f.Root, name);
+            // The profile looks a walked file up by its full path; on Windows that turns the
+            // variant's '/' into '\', so declare the same canonical spelling.
+            var path = Path.GetFullPath(Path.Combine(f.Root, name));
             f.Write(path, name.EndsWith(".json") ? "{}" : "synthetic unowned instructions", false);
             if (name == "import.md") f.Write(Path.Combine(f.Root, "CLAUDE.md"), "@import.md");
             Refuses(() => { using var p = new LiveClaudeProfile(f.Context); build(p,"control",f.Session,null); }, "unowned-instructions", v, "ancestor-" + name);

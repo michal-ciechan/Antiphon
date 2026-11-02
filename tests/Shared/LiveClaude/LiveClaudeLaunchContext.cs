@@ -23,7 +23,8 @@ internal sealed record LiveClaudeObservation(LiveClaudeProcess Process, LiveClau
     IReadOnlyList<LiveClaudeImage> Chain);
 internal sealed record LiveClaudeExecutableReceipt(LiveClaudeObservation ExecutedImage);
 
-internal sealed class LiveClaudeRefusal(string reason) : InvalidOperationException("20 " + reason)
+internal sealed class LiveClaudeRefusal(string reason, string? path = null)
+    : InvalidOperationException("20 " + reason + (path is null ? "" : " path=" + path))
 {
     public string Reason { get; } = reason;
     public int ExitCode => 20;

@@ -534,8 +534,9 @@ public sealed class VolumeRetirementApplyGateTests
     private static string SourceLines(string text) =>
         text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
+    // Normalise first: a CRLF literal converted again would be CR CR LF.
     private static string CrlfCopy(string text) =>
-        text.Replace("\n", "\r\n", StringComparison.Ordinal);
+        SourceLines(text).Replace("\n", "\r\n", StringComparison.Ordinal);
 
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative));
