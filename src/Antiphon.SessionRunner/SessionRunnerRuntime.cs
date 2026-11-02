@@ -2059,8 +2059,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     // A retained process is observed ownership, not a newly authorized launch.
                     // Keep its manifest and a visible pending row; do not attempt I/O or kill it.
-                    _sessions.TryAdd(manifest.SessionId, RunnerSession.CreateWorkspaceConflict(
-                        manifest, _settings, _events, _logger));
+                    _sessions.TryAdd(manifest.SessionId, RunnerSession.CreatePendingConflict(
+                        manifest, _settings, _events, _logger, WorkspaceOwnershipConflictReason));
                     continue;
                 }
             }
@@ -2117,6 +2117,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         manifest.SessionId, manifest.HostPid, running ? "running" : "exited while runner was down");
                     continue;
                 }
+                catch (PtyHostIdentityRefusedException)
+                {
+                    // CARD-1653: a peer that did not name this session and host proves nothing
+                    // about the manifest's pid, so a refusal never kills it or forgets its
+                    // manifest. The detached session sent nothing past hello; the held pending
+                    // row surfaces as the server's pending incident until the vanish sweep sees
+                    // the host pid dead or a later restart adopts a host that proves itself.
+                    await session.DisposeAsync();
+                    _sessions.TryAdd(manifest.SessionId, RunnerSession.CreatePendingConflict(
+                        manifest, _settings, _events, _logger, PtyHostIdentityRefusedException.UnprovenPendingReason));
+                    hostAttempt.Complete(0, "refused");
+                    continue;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex,
@@ -2125,8 +2138,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     await session.DisposeAsync();
                     if (WorkspaceUseGate is not null)
                     {
-                        _sessions.TryAdd(manifest.SessionId, RunnerSession.CreateWorkspaceConflict(
-                            manifest, _settings, _events, _logger));
+                        _sessions.TryAdd(manifest.SessionId, RunnerSession.CreatePendingConflict(
+                            manifest, _settings, _events, _logger, WorkspaceOwnershipConflictReason));
                         continue;
                     }
                     if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid, StopIntents,
@@ -2493,6 +2506,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         return restored;
     }
 
+    private const string WorkspaceOwnershipConflictReason = "workspace_ownership_conflict";
+
     private static void TryDeleteFile(string path)
     {
         try
@@ -2680,6 +2695,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private Action? _onHerdrPaneSetChanged;
         private int _hostPid;
         private DateTime? _hostStartTimeUtc;
+        // CARD-1653: a held pending row keeps the manifest host's start and manifest path so the
+        // vanish sweep can release it once that exact host is dead.
+        private DateTime _retainedHostStartTimeUtc;
+        private string? _retainedManifestPath;
         private int? _childPid;
         private DateTime _startedAt;
         private TerminalScreen? _screen;
@@ -3443,6 +3462,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     PtyHostProtocol.PipeNameFor(_sessionId),
                     TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
                     ct);
+                // CARD-1653 (G2): Launch carries the session's environment and its secrets, so it
+                // goes only to a peer whose hello names this session, carries a host instance and
+                // is still waiting for launch. Custody checks its own binding below. A refusal tears
+                // down the host this launch spawned (proven by spawn) and names the session only.
+                if (VerificationBinding is null && !HelloIsFreshHostForThisSession(_client.Hello, _sessionId))
+                {
+                    _logger.LogWarning("pty_host_identity_mismatch: launch refused for session {SessionId}", _sessionId);
+                    throw new PtyHostIdentityRefusedException(PtyHostIdentityRefusedException.MismatchCode);
+                }
                 _client.OnOutput += HandleOutput;
                 _client.OnExited += HandleExited;
                 _client.OnDisconnected += HandleDisconnected;
@@ -3565,7 +3593,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (VerificationBinding is null && !HelloNamesManifestHost(_client.Hello, manifest))
             {
                 _logger.LogWarning("pty_host_identity_mismatch: adoption refused for session {SessionId}", _sessionId);
-                throw new InvalidOperationException("pty_host_identity_mismatch");
+                throw new PtyHostIdentityRefusedException(PtyHostIdentityRefusedException.MismatchCode);
             }
             if (OperatingSystem.IsLinux())
             {
@@ -3755,21 +3783,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return session;
         }
 
-        // CARD-1653 red-commit shim: the reason is not yet honoured.
+        /// <summary>
+        /// A live pty host this runner observed but did not adopt: a workspace ownership conflict
+        /// or (CARD-1653) a peer that did not prove the manifest's identity. Listed as Starting +
+        /// Adopted with the reason in Pending, no client, the host left running and its manifest
+        /// retained. Only the identity reason is released by the vanish sweep.
+        /// </summary>
         public static RunnerSession CreatePendingConflict(PtyHostManifest manifest,
-            SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger, string pendingReason) =>
-            CreateWorkspaceConflict(manifest, settings, events, logger);
-
-        public static RunnerSession CreateWorkspaceConflict(PtyHostManifest manifest,
-            SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger)
+            SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger, string pendingReason)
         {
             var session = new RunnerSession(manifest.SessionId, settings, events, logger)
             {
                 CheckoutPath = RunnerWorkspaceService.TryResolveFinal(manifest.Cwd ?? ""),
                 _hostPid = manifest.HostPid, _childPid = manifest.ChildPid,
                 _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc,
-                _adopted = true, _status = "Starting", _pendingReason = "workspace_ownership_conflict",
+                _adopted = true, _status = "Starting", _pendingReason = pendingReason,
                 _acceptedStartedAt = manifest.AcceptedStartedAt,
+                _retainedHostStartTimeUtc = manifest.HostStartTimeUtc,
+                _retainedManifestPath = PtyHostManifest.PathFor(settings.PtyHostManifestDir, manifest.SessionId),
             };
             session._clientReady.TrySetResult(false);
             session._launchFinished.TrySetResult();
@@ -3840,12 +3871,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// CARD-0186 S3: a pending session reached a death verdict (R2–R5 / R7). Sidecar deletion
         /// is the caller's job so the bar's orphan-kill side effects stay in one place.
         /// </summary>
-        internal void CompletePendingAsExited(string reason, int? exitCode = null)
+        internal bool CompletePendingAsExited(string reason, int? exitCode = null)
         {
             lock (_gate)
             {
                 if (_status == "Exited")
-                    return;
+                    return false;
                 _status = "Exited";
                 _exitCode = exitCode;
                 _exitReason = reason;
@@ -3857,6 +3888,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _events.Publish(
                 SessionRunnerEventNames.SessionExited,
                 ExitEnvelope(exitCode, reason, 0));
+            return true;
         }
 
         /// <summary>
@@ -4460,6 +4492,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// </summary>
         public bool MarkVanishedIfDead(IProcessLivenessProbe probe)
         {
+            if (ReleaseUnprovenHostIfDead(probe))
+                return true;
             using var paneLease = _herdrPlacement is null || HerdrPaneId is null ? null : _herdrPlacement.LockPane(HerdrPaneId);
             int? pid;
             DateTime startedAt;
@@ -4508,6 +4542,39 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _ = Task.Run(ShutdownHostAsync);
             return true;
         }
+
+        /// <summary>
+        /// CARD-1653 D-5: a row held because its peer did not prove the manifest's identity is
+        /// released only by evidence. Once the manifest's host pid is dead at its recorded start,
+        /// the row exits as ProcessVanished, SessionExited is published once and the retained
+        /// manifest is deleted. Workspace and Herdr pending rows are not touched.
+        /// </summary>
+        private bool ReleaseUnprovenHostIfDead(IProcessLivenessProbe probe)
+        {
+            int hostPid;
+            DateTime hostStart;
+            string? manifestPath;
+            lock (_gate)
+            {
+                if (_pendingReason != PtyHostIdentityRefusedException.UnprovenPendingReason)
+                    return false;
+                hostPid = _hostPid;
+                hostStart = _retainedHostStartTimeUtc;
+                manifestPath = _retainedManifestPath;
+            }
+
+            if (probe.IsAlive(hostPid, hostStart))
+                return false;
+            if (!CompletePendingAsExited("ProcessVanished"))
+                return false;
+            if (manifestPath is not null)
+                TryDeleteFile(manifestPath);
+            return true;
+        }
+
+        private static bool HelloIsFreshHostForThisSession(HelloAckMessage hello, Guid sessionId) =>
+            hello.SessionId == sessionId && hello.HostInstanceId is not null
+            && hello.Status == PtyHostStatus.WaitingForLaunch;
 
         public async ValueTask DisposeAsync()
         {
