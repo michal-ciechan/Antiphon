@@ -259,6 +259,9 @@ public sealed class DelegateScriptLandCompatibilityTests
             "-ExpectedSourceSha", ApprovalSha);
         result.ExitCode.ShouldBe(1, result.Output);
         result.Output.ShouldContain($"-Status {id}");
+        result.Output.ShouldContain("did not complete");
+        result.Output.ShouldContain("outcome is uncertain");
+        result.Output.ShouldNotContain("Queued land");
         result.Output.ShouldNotContain("no land request was sent");
         result.Output.ShouldNotContain("zero requests");
         result.Output.ShouldNotContain("publication failed");
@@ -281,6 +284,7 @@ public sealed class DelegateScriptLandCompatibilityTests
             "-ExpectedSourceSha", ApprovalSha);
         result.ExitCode.ShouldBe(1, result.Output);
         result.Output.ShouldContain($"-Status {id}");
+        result.Output.ShouldContain("outcome is uncertain");
         result.Output.ShouldNotContain("Queued land");
     }
 
