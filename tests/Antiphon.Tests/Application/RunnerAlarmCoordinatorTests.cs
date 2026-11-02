@@ -212,6 +212,20 @@ public sealed class RunnerAlarmCoordinatorTests
         closed.Body.ShouldContain("not accepting new work");
         closed.Body.ShouldNotContain("not dispatch-eligible");
         closed.Body.ShouldNotContain("dispatches on the next tick");
+
+        // CARD-1666 A-2: past the drain bound the offline runner alarms again with the overrun
+        // sentence, and reconnecting while still draining closes it as draining, not recovered.
+        exclusion.Overran["r4"] = "the drain overran.";
+        source.Rows[0] = source.Rows[0] with { Eligible = false, DisconnectReason = "socket_closed" };
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(40), CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(43), CancellationToken.None);
+        state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldBe(T0.AddMinutes(43));
+        notes.Notes.Last().Body.ShouldEndWith(" the drain overran.");
+        source.Rows[0] = source.Rows[0] with { Eligible = true, DisconnectReason = null };
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(44), CancellationToken.None);
+        state.Current.Episodes.ShouldBeEmpty();
+        notes.Notes.Last().Header.ShouldBe("[runner r4 draining]");
+        notes.Notes.Last().Body.ShouldContain("not accepting new work");
     }
 
     [Test]

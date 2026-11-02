@@ -17,11 +17,13 @@ public sealed class AlarmSettingsValidatorTests
         settings.RunnerGraceSeconds.ShouldBe(180);
         settings.SweepMinutes.ShouldBe(15);
         settings.JournalStaleMinutes.ShouldBe(5);
+        settings.RunnerDrainMaxMinutes.ShouldBe(30);
         new AlarmSettingsValidator().Validate(null, settings).Succeeded.ShouldBeTrue();
 
         AssertNamed(new AlarmSettings { RunnerGraceSeconds = 0 }, "Alarms:RunnerGraceSeconds");
         AssertNamed(new AlarmSettings { SweepMinutes = 0 }, "Alarms:SweepMinutes");
         AssertNamed(new AlarmSettings { JournalStaleMinutes = -1 }, "Alarms:JournalStaleMinutes");
+        AssertNamed(new AlarmSettings { RunnerDrainMaxMinutes = 0 }, "Alarms:RunnerDrainMaxMinutes");
     }
 
     private static void AssertNamed(AlarmSettings settings, string key)

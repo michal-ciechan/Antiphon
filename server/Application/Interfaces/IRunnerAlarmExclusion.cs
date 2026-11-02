@@ -7,4 +7,11 @@ namespace Antiphon.Server.Application.Interfaces;
 public interface IRunnerAlarmExclusion
 {
     string? Excluded(string runnerId);
+
+    /// <summary>
+    /// CARD-1666 A-2: the outage-note sentence for a draining (not retired) runner whose drain is
+    /// older than <c>Alarms:RunnerDrainMaxMinutes</c> or has no usable start, or null. An offline
+    /// runner with this sentence alarms again; a retired runner never has one.
+    /// </summary>
+    string? DrainOverran(string runnerId, DateTimeOffset now);
 }

@@ -68,10 +68,14 @@ public sealed class RunnerAlarmCoordinator(
     {
         episodes.TryGetValue(snapshot.RunnerId, out var episode);
         var excluded = exclusion.Excluded(snapshot.RunnerId);
+        // CARD-1666 A-2: a drain past its bound no longer hides an offline runner's outage.
+        var overran = excluded == "draining" ? exclusion.DrainOverran(snapshot.RunnerId, now) : null;
+        if (overran is not null && !snapshot.Eligible)
+            excluded = null;
         if (excluded is not null)
         {
             if (episode is { RaisedAt: not null })
-                await ResolveAsync(episode, now, pending, ct, excluded);
+                await ResolveAsync(episode, now, pending, ct, excluded, snapshot.Eligible);
             if (episode is not null)
                 logger.LogDebug("Runner {RunnerId} alarm closed because it is {Reason}", snapshot.RunnerId, excluded);
             episodes.Remove(snapshot.RunnerId);
@@ -113,7 +117,7 @@ public sealed class RunnerAlarmCoordinator(
             var live = await LiveSessionsAsync(snapshot.RunnerId, ct);
             var notified = episode.NotifiedSessionIds.ToList();
             var noted = episode.NotedRows.ToList();
-            await NotifyCallersAsync(snapshot, episode.DownSince, now, counts, notified, noted, recovered: false, ct);
+            await NotifyCallersAsync(snapshot, episode.DownSince, now, counts, notified, noted, overran, ct);
             episodes[snapshot.RunnerId] = episode with
             {
                 LastReason = snapshot.DisconnectReason ?? episode.LastReason,
@@ -135,7 +139,7 @@ public sealed class RunnerAlarmCoordinator(
         var liveSessions = await LiveSessionsAsync(snapshot.RunnerId, ct);
         var stillNotified = episode.NotifiedSessionIds.ToList();
         var stillNoted = episode.NotedRows.ToList();
-        await NotifyCallersAsync(snapshot, episode.DownSince, now, refreshed, stillNotified, stillNoted, recovered: false, ct);
+        await NotifyCallersAsync(snapshot, episode.DownSince, now, refreshed, stillNotified, stillNoted, overran, ct);
         episodes[snapshot.RunnerId] = episode with
         {
             LastReason = snapshot.DisconnectReason ?? episode.LastReason,
@@ -235,14 +239,18 @@ public sealed class RunnerAlarmCoordinator(
     }
 
     private async Task ResolveAsync(RunnerOutageEpisode episode, DateTimeOffset now,
-        List<PendingRecoveryNote> pending, CancellationToken ct, string? excluded = null)
+        List<PendingRecoveryNote> pending, CancellationToken ct, string? excluded = null, bool reachable = false)
     {
         var minutes = (now - episode.DownSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
         // CARD-1663: a runner closed because it is retired or draining has not recovered.
+        // CARD-1666 A-4: a reachable draining runner is up but takes no new work.
         var header = $"[runner {episode.RunnerId} {excluded ?? "recovered"}]";
+        var standing = excluded == "draining" && reachable
+            ? "It is reachable but not accepting new work while it drains"
+            : "It is not dispatch-eligible";
         var body = header + "\n" + (excluded is null
             ? $"Runner '{episode.DisplayName}' is dispatch-eligible again after {minutes} min down (since {episode.DownSince:O}). Queued work bound to it dispatches on the next tick."
-            : $"Runner '{episode.DisplayName}' is {excluded}, so it is no longer alarming after {minutes} min down (since {episode.DownSince:O}). It is not dispatch-eligible; this is not a recovery.");
+            : $"Runner '{episode.DisplayName}' is {excluded}, so it is no longer alarming after {minutes} min down (since {episode.DownSince:O}). {standing}; this is not a recovery.");
         foreach (var session in episode.NotifiedSessionIds)
         {
             try
@@ -324,7 +332,7 @@ public sealed class RunnerAlarmCoordinator(
     }
 
     private async Task NotifyCallersAsync(RunnerEligibilitySnapshot snapshot, DateTimeOffset downSince, DateTimeOffset now,
-        List<PinnedTask> tasks, List<Guid> notified, List<NotedAlarmRow> noted, bool recovered, CancellationToken ct)
+        List<PinnedTask> tasks, List<Guid> notified, List<NotedAlarmRow> noted, string? overran, CancellationToken ct)
     {
         var minutes = (now - downSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
         var header = $"[runner {snapshot.RunnerId} unavailable]";
@@ -335,7 +343,8 @@ public sealed class RunnerAlarmCoordinator(
                 continue;
             var ids = string.Join(", ", group.Select(task => DelegationReportFormatter.Short(task.Id)));
             var body = header + "\n"
-                + $"Runner '{snapshot.DisplayName}' has not been dispatch-eligible for {minutes} min (since {downSince:O}; last reason: {snapshot.DisconnectReason}). {group.Count()} of your open tasks are pinned to it: {ids}. New dispatches to it stay Queued until it recovers; Antiphon sends a note when it does. Do not reroute them silently.";
+                + $"Runner '{snapshot.DisplayName}' has not been dispatch-eligible for {minutes} min (since {downSince:O}; last reason: {snapshot.DisconnectReason}). {group.Count()} of your open tasks are pinned to it: {ids}. New dispatches to it stay Queued until it recovers; Antiphon sends a note when it does. Do not reroute them silently."
+                + (overran is null ? "" : " " + overran);
             try
             {
                 var rowId = await notifier.NotifyAsync(group.Key, header, body, ct);
@@ -347,8 +356,6 @@ public sealed class RunnerAlarmCoordinator(
                 logger.LogWarning(ex, "Runner {RunnerId} note failed for {SessionId}", snapshot.RunnerId, group.Key);
             }
         }
-
-        _ = recovered;
     }
 
     private async Task RehintAsync(IReadOnlyCollection<Guid> rowIds, CancellationToken ct)

@@ -33,6 +33,11 @@ internal sealed class FakeExclusion : IRunnerAlarmExclusion
             throw new InvalidOperationException("exclusion failed for " + runnerId);
         return Reasons.TryGetValue(runnerId, out var reason) ? reason : null;
     }
+
+    public Dictionary<string, string> Overran { get; } = new(StringComparer.Ordinal);
+
+    public string? DrainOverran(string runnerId, DateTimeOffset now) =>
+        Overran.TryGetValue(runnerId, out var note) ? note : null;
 }
 
 internal sealed class RecordingNotifier : IRunnerAlarmNotifier
