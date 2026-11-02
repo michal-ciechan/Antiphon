@@ -148,8 +148,11 @@ pre-existing method, either through a plan amendment or by Review.
   base `5376ac529:scripts/delegate.ps1` and of HEAD's script are identical, except the script path and
   line number (`1214` vs `1405`).
 - The S4a Create path is unchanged for this request; `-PlainFailure` is not used on Create.
-- A test-level base confirmation (build and run at 5376ac529 in the detached worktree) was started
-  but had not finished when this report was written. See the final message for its outcome.
+- **Confirmed at base:** this method fails at 5376ac529 too, with the same `should contain "could not
+  be converted"` assertion. The run was a build-slot `dotnet build tests/Antiphon.Tests` plus
+  `dotnet run --no-build --treenode-filter "/*/*/DelegateScriptBindDiagnosisTests/a_bind_400_with_an_unknown_served_build_is_diagnosed"`
+  in a detached worktree. Result: total 1, failed 1, exit 2; build slot waited 150 s, run slot waited 180 s.
+  This is a Linux-host wrap red that exists before S4a; it needs its own card (assert on unwrapped text).
 
 ## Ordinary V/R
 
