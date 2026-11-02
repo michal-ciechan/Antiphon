@@ -96,7 +96,7 @@ public class LandingGit : ILandingGit
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
-        using var owned = journal is null ? null : OwnedChildMarker.Create(WriteChildLog);
+        using var owned = journal is null ? null : CreateOwnedMarker(WriteChildLog);
         owned?.Apply(start);
         Process? child;
         try { child = StartProcess(start); }
@@ -325,6 +325,9 @@ public class LandingGit : ILandingGit
         });
         return true;
     }
+
+    /// <summary>Test seam for the ownership marker of one mutating child.</summary>
+    internal virtual OwnedChildMarker CreateOwnedMarker(Action<string> log) => OwnedChildMarker.Create(log);
 
     /// <summary>Test seam for the ownership probe of the release decision.</summary>
     internal virtual bool? OwnedHolderAlive(OwnedChildMarker owned) => owned.AnyAlive();
@@ -1049,7 +1052,7 @@ public class LandingGit : ILandingGit
         // exited, not-started) as ExecuteProcessAsync. A server death mid-batch then stays visible
         // to the lease fence and recover-repository-children.ps1.
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(path, tag: null, ct) : null;
-        using var owned = journal is null ? null : OwnedChildMarker.Create(WriteChildLog);
+        using var owned = journal is null ? null : CreateOwnedMarker(WriteChildLog);
         owned?.Apply(start);
         Process? started;
         try { started = StartProcess(start); }
