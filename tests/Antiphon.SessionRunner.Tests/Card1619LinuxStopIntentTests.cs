@@ -375,7 +375,9 @@ public class Card1619LinuxStopIntentTests
                 client, new SystemProcessLivenessProbe());
             await runtime.AdoptOrphanedHostsAsync(probe, cts.Token);
             runtime.Get(sessionId).Status.ShouldBe("Running", "a failed identity check never stops adoption");
-            if (fault != "probe-throws") processInfoCalls.ShouldBeGreaterThanOrEqualTo(2, "the fault reached the re-list call");
+            if (fault != "probe-throws")
+                fake.Requests.Count(r => r.GetProperty("method").GetString() == "pane.process_info")
+                    .ShouldBeGreaterThanOrEqualTo(2, "the fault reached the re-list call");
             File.ReadAllText(path).ShouldBe(original, "a failed identity check leaves the sidecar unchanged");
             HerdrPaneSidecar.TryLoad(path)!.ChildLinuxIdentity.ShouldBeNull();
 

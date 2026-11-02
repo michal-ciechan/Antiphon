@@ -2389,21 +2389,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (!OperatingSystem.IsLinux() || sidecar.ChildLinuxIdentity is not null || sidecar.ChildPid is not int pid
             || string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
             return sidecar;
-        var before = LinuxProcessIdentity.TryRead(pid);
-        if (before is null || !probe.IsAlive(pid, sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc))
-            return sidecar;
+        LinuxProcessIdentity? before;
         try
         {
+            before = LinuxProcessIdentity.TryRead(pid);
+            if (before is null || !probe.IsAlive(pid, sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc))
+                return sidecar;
             var proc = await _herdrClient!.PaneProcessInfoAsync(sidecar.PaneId, ct);
-            if (proc.ForegroundProcesses?.Any(p => p.Pid == pid) != true)
+            if (proc.ForegroundProcesses?.Any(p => p.Pid == pid) != true
+                || LinuxProcessIdentity.TryRead(pid) != before)
                 return sidecar;
         }
-        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
+            // A failed check changes nothing and never fails adoption (CARD-1621 D-1): any herdr or
+            // probe fault leaves the sidecar unproven. Only the caller's own cancellation propagates.
+            _logger.LogWarning(
+                "Herdr sidecar identity check for session {SessionId} failed ({ExceptionType}); sidecar left unchanged",
+                sidecar.SessionId, ex.GetType().Name);
             return sidecar;
         }
-        if (LinuxProcessIdentity.TryRead(pid) != before)
-            return sidecar;
 
         var upgraded = sidecar with { ChildLinuxIdentity = before };
         try
@@ -2414,6 +2419,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             // The in-memory owner still carries the proof; the next adoption retries the write.
             _logger.LogWarning(ex, "Herdr sidecar identity upgrade for session {SessionId} was not persisted", sidecar.SessionId);
+            return upgraded;
         }
         _logger.LogInformation(
             "Recorded Linux start identity for legacy herdr sidecar {SessionId} (pid {Pid}) at adoption",
