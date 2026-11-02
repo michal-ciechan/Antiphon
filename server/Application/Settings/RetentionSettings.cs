@@ -55,6 +55,13 @@ public sealed class RetentionSettings
     public int TaskPruneMaxBatchesPerSweep { get; set; } = 50;
 
     /// <summary>
+    /// CARD-1662. Failed task-prune batch attempts one sweep may spend. When a root range ends with
+    /// the sweep at or past this many failed attempts, the Tasks pass stops for this sweep, reports
+    /// Failed and the later passes run; the scan resumes after that range next sweep. Nonpositive uses 6.
+    /// </summary>
+    public int TaskPruneMaxFailedAttemptsPerSweep { get; set; } = 6;
+
+    /// <summary>
     /// CARD-1658. Rows per batch for the row passes after Tasks (subscription-usage samples,
     /// worktree-residue Held/Preview rows, the audit FullContent archive). Each batch is one bounded
     /// statement. Nonpositive uses 1000.
