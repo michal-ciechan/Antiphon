@@ -125,8 +125,11 @@ public sealed class AgentTaskService
         SessionMessageQueueService? messageQueue = null,
         IServiceScopeFactory? seatReleaseScopes = null,
         DispatchConcurrencySettingsService? dispatchConcurrency = null,
-        SeatOccupancyState? seats = null)
+        SeatOccupancyState? seats = null,
+        // CARD-1488. Optional: absent, a cancel has no lease waiter to drop.
+        RepositoryLeaseWaiters? leaseWaiters = null)
     {
+        _leaseWaiters = leaseWaiters;
         _seats = seats;
         _dispatchConcurrency = dispatchConcurrency;
         _seatReleaseScopes = seatReleaseScopes;
@@ -166,6 +169,7 @@ public sealed class AgentTaskService
     }
 
     private readonly IServiceScopeFactory? _seatReleaseScopes;
+    private readonly RepositoryLeaseWaiters? _leaseWaiters;
 
     /// <summary>
     /// Who is calling. Resolved from the bearer token by <see cref="AuthenticateAsync"/> — a manual
@@ -3047,6 +3051,9 @@ public sealed class AgentTaskService
     // commit belongs inside that gate; Continue must reload the terminal row afterward.
     private async Task<AgentTaskSummaryDto> AfterCancelCommitAsync(AgentTask task, CancellationToken ct)
     {
+        // CARD-1488/1497: no lease waiter, closing-line nudge or parent wait note outlives the
+        // cancel. After the commit and the queue gate, best-effort, before the seat goes back.
+        await TerminalTaskResidue.RetireAsync(task, _db, _messageQueue, _leaseWaiters, _logger, CancellationToken.None);
         if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
         if (_seatReleaseScopes is not null)
         {

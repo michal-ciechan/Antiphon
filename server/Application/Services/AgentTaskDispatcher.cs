@@ -8071,7 +8071,13 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0664 D-2: outside a claim transaction the Failed status is committed now; inside
         // one, the claim path calls ReleaseTaskConsumersAsync after its own commit.
         if (_db.Database.CurrentTransaction is null)
+        {
             await ReleaseTaskConsumersAsync(task);
+            // CARD-1488/1497: a Failed task (the dead-session process-exit path among them) leaves
+            // no lease waiter, closing-line nudge or parent wait note. A claim-path failure has not
+            // run this attempt, so it has none to leave.
+            await TerminalTaskResidue.RetireAsync(task, _db, _queue, _leaseWaiters, _logger, CancellationToken.None);
+        }
         return notification;
     }
 
