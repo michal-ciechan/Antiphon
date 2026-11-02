@@ -288,6 +288,57 @@ public sealed class TaskPlatformDispatchTests
         }
     }
 
+    /// <summary>
+    /// The witness for the fixture's probe-off default: the same desktop Grok dispatch with the
+    /// probe on reads only the store it is given. Signed out it still fails before any session;
+    /// signed in (a synthetic store, never the host's) it dispatches.
+    /// </summary>
+    [Test]
+    public async Task C772_Desktop_grok_probe_reads_only_its_own_store()
+    {
+        foreach (var signedIn in new[] { false, true })
+        {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            using var workspace = new TempWorkspace();
+            using var grokHome = new TempWorkspace();
+            if (signedIn)
+                await File.WriteAllTextAsync(Path.Combine(grokHome.Path, "auth.json"),
+                    "{\"c772\":{\"key\":\"synthetic\"}}");
+            var taskId = await SeedAsync(schema, workspace.Path, "desktop", RequiredPlatform.Windows);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+                task.RunnerId = null;
+                task.AgentKind = AgentKind.Grok;
+                task.Role = AgentTaskRole.Custom;
+                await db.SaveChangesAsync();
+            }
+            var world = CreateDispatcher(schema, new StableDesktopDirectory(), grokHome: grokHome.Path);
+            try
+            {
+                await world.Dispatcher.TickAsync(CancellationToken.None);
+                await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
+                if (signedIn)
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
+                    world.Sink.Specs.ShouldHaveSingleItem();
+                }
+                else
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Failed);
+                    stored.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
+                    stored.FailureReason.ShouldNotBeNull();
+                    stored.FailureReason.ShouldContain("ProviderSignInRequired");
+                    stored.FailureReason.ShouldContain(Path.Combine(grokHome.Path, "auth.json"));
+                    stored.AgentSessionId.ShouldBeNull();
+                    world.Sink.Specs.ShouldBeEmpty();
+                }
+            }
+            finally { await world.Provider.DisposeAsync(); }
+        }
+    }
+
     [Test]
     public async Task C796_Desktop_codex_existing_session_receives_one_brief()
     {
@@ -616,8 +667,15 @@ public sealed class TaskPlatformDispatchTests
         IsolatedTestSchema schema, PhoneHomeTestHost host) =>
         CreateDispatcher(schema, host.Directory, host.AllowedRunnerId);
 
+    /// <summary>
+    /// A null <paramref name="grokHome"/> turns the desktop Grok credential probe off: these
+    /// tests are about host admission, and the probe would otherwise read the host user's real
+    /// store (a Windows host with no Grok login failed C772 on that). A non-null one turns the
+    /// probe on against that store only.
+    /// </summary>
     private static DispatchWorld CreateDispatcher(
-        IsolatedTestSchema schema, ISessionRunnerDirectory directory, string allowedRunnerId = "server2")
+        IsolatedTestSchema schema, ISessionRunnerDirectory directory, string allowedRunnerId = "server2",
+        string? grokHome = null)
     {
         var sink = new RecordingSink();
         var services = new ServiceCollection();
@@ -639,6 +697,14 @@ public sealed class TaskPlatformDispatchTests
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
             s.Definitions["grok"] = new AgentDefinition { Kind = "Grok", Exe = "grok" };
             s.Definitions["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex" };
+            s.GrokCredentialProbeEnabled = grokHome is not null;
+            if (grokHome is not null)
+            {
+                s.Definitions["grok"].Env = new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = grokHome, ["GROK_AUTH_PATH"] = Path.Combine(grokHome, "auth.json"),
+                };
+            }
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
