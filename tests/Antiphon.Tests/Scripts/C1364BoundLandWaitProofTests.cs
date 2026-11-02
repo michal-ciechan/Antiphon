@@ -213,6 +213,8 @@ public sealed class C1364BoundLandWaitProofTests
         if (!main && !preview && resumePhase is null && proof >= 3)
             await VolumeRetirementFixture.ReadyPreview(fixture);
         var removedBefore = fixture.Docker["removed"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
+        // The Ready preview shares the Docker trace; audits are counted on the observed run only.
+        var traceBefore = fixture.Trace.Length;
         var mutated = lateLand && Environment.GetEnvironmentVariable("C1364_WAIT_MUTANT") == "post-removal-zero";
         var run = await fixture.Run(hostCase,
             (resumePhase is null ? "" : "C1008_RESUME=1\n") + ObserveHost(runner, proof, inject: !lateLand),
@@ -226,22 +228,39 @@ public sealed class C1364BoundLandWaitProofTests
         if (proof >= 3)
         {
             selected["ownedRemoved"]!.GetValue<bool>().ShouldBeTrue(label);
-            var auditRuns = fixture.Trace.Count(a => a[0] == "start");
-            auditRuns.ShouldBe(2, label + ": both audits ran before this refusal");
-            fixture.Trace.Count(a => a[0] == "start" && a.Contains("-a")).ShouldBe(2, label + ": attached audits completed");
-            fixture.Trace.Count(a => a[0] == "rm" && a.Last() == new string('6', 64))
-                .ShouldBe(2, label + ": both audit helpers removed after completion");
+            var observed = fixture.Trace.Skip(traceBefore).ToArray();
+            if (main)
+            {
+                var auditRuns = observed.Count(a => a[0] == "start");
+                auditRuns.ShouldBe(2, label + ": both audits ran before this refusal");
+                observed.Count(a => a[0] == "start" && a.Contains("-a")).ShouldBe(2, label + ": attached audits completed");
+                observed.Count(a => a[0] == "rm" && a.Last() == new string('6', 64))
+                    .ShouldBe(2, label + ": both audit helpers removed after completion");
+            }
+            else
+            {
+                // CARD-1609: temp content is the read-only, self-removing preview-audit scan, not the
+                // main create/start adapter. With no temp container removed the post-removal scan is
+                // omitted (single inventory, 88ab37c77), so this fixture's run audits exactly once.
+                var scans = observed.Where(a => a[0] == "run" && a.Any(x =>
+                    x.StartsWith("io.antiphon.preview-audit=" + Operation + ":", StringComparison.Ordinal))).ToArray();
+                scans.Length.ShouldBe(1, label + ": the single temp content audit ran before this refusal");
+                scans.All(a => a.Contains("--rm") && a.Contains("--read-only"))
+                    .ShouldBeTrue(label + ": read-only audit helper removed after completion");
+                observed.Count(a => a[0] is "create" or "start").ShouldBe(0, label + ": no main audit adapter");
+            }
             var saved = ReadJson(fixture, "server/recycle/" + Operation + ".json");
             saved["phase"]!.GetValue<string>().ShouldBe(proof == 3 ? "containersRemoved" : "removing", label);
             saved["volumes"]!.AsObject().Count(v => v.Value!["outcome"]!.GetValue<string>() == "removed")
                 .ShouldBe(Math.Max(0, proof - 4), label + ": exact prior per-volume journal progress");
-            var targets = new[] { "work", "runner-tmp", "dind-data", "runner-state" }
-                .Take(main ? 3 : 4).Select(x => (main ? "antiphon-runner_" : "antiphon-runner-temp_") + x).ToArray();
-            // Temp down -v precedes V-7. It has already removed all four volumes; no further
-            // Docker mutation is permitted, while only preceding iterations may be journalled.
-            fixture.Removed.ShouldBe(main ? targets.Take(Math.Max(0, proof - 4)).ToArray() :
-                proof >= 4 ? targets : [], label);
-            fixture.Trace.Count(a => a.Contains("down")).ShouldBe(!main && proof >= 4 ? 1 : 0, label);
+            // Main and (since CARD-1609, 8536d74cf) temp remove exact volumes one per iteration in
+            // C1008_TARGETS order; temp no longer runs compose down -v. Only preceding iterations
+            // may have removed and journalled a volume.
+            var targets = (main ? new[] { "work", "runner-tmp", "dind-data" } :
+                    new[] { "runner-state", "dind-data", "runner-tmp", "work" })
+                .Select(x => (main ? "antiphon-runner_" : "antiphon-runner-temp_") + x).ToArray();
+            fixture.Removed.ShouldBe(targets.Take(Math.Max(0, proof - 4)).ToArray(), label);
+            fixture.Trace.Count(a => a.Contains("down")).ShouldBe(0, label);
             if (main)
                 fixture.Trace.Where(a => a[0] == "rm" && a.Last() != new string('6', 64)).Select(a => a.Last())
                     .ShouldBe(resumePhase is null ? new[] { new string('1', 64), new string('2', 64) } : [], label);
