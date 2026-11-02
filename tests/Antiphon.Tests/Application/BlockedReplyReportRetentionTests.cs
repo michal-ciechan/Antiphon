@@ -540,15 +540,10 @@ public sealed class BlockedReplyReportRetentionTests
         events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
         var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
         blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, "the Block records the question");
-        await using var db = world.CreateContext();
-        var notes = await db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId)
-            .OrderByDescending(m => m.CreatedAt)
-            .Select(m => m.Body).ToListAsync();
-        var note = notes.First();
-        note.ShouldContain(RetainedBody, Case.Sensitive, "the caller note carries the retained report");
-        note.ShouldContain("the retained report (marked", Case.Sensitive, "the caller warning names the retained report");
-        note.ShouldContain(question, Case.Sensitive, "the caller reads the question");
+        var warning = events.Where(e => e.Type == AgentTaskEventType.Warning).OrderBy(e => e.At).Last();
+        warning.Detail.ShouldContain("ended unmarked with a question", Case.Sensitive);
+        warning.Detail.ShouldContain("the retained report (marked", Case.Sensitive, "the record says the retained report stands");
+        warning.Detail.ShouldContain(question, Case.Sensitive, "the record names the question");
     }
 
     /// <summary>
