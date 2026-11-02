@@ -105,6 +105,13 @@ public static class DispatchHoldDetails
     }
 
     /// <summary>
+    /// CARD-0824 D-3: a slot-bound task on a draining runner moves only after that runner confirms the
+    /// slot released. Stable text (no attempt counter) so the trace dedupes.
+    /// </summary>
+    public static string WorkspaceSlotReleasePending(string runnerId, string slotId, int generation, string? redirectTo) =>
+        $"Held: {Antiphon.SessionRunner.Contracts.WorkspaceSlotCodes.ReleasePending}: runner '{runnerId}' has not confirmed the release of workspace slot {slotId} generation {generation}; the drain redirect to '{redirectTo}' waits for it.";
+
+    /// <summary>
     /// CARD-0653: the runner's declared seats are full. Occupied and capacity stay out of the
     /// dedupe key's changing half only while the fraction is stable, which is the hold itself.
     /// </summary>

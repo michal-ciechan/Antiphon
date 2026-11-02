@@ -22,6 +22,7 @@ public sealed class WorkspaceSlotReleaseService(
     AppDbContext db, RemoteWorkspaceService remote, TimeProvider clock, ILogger<WorkspaceSlotReleaseService> logger)
 {
     private static readonly AgentTaskStatus[] Terminal = [AgentTaskStatus.Succeeded, AgentTaskStatus.Failed, AgentTaskStatus.Canceled];
+    internal const int UnknownSlotAttempts = 3;
     private static readonly AgentTaskStatus[] Live =
         [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
 
