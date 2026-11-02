@@ -857,4 +857,30 @@ public sealed class VolumeRetirementContentTests
         File.Exists(Path.Combine(fixture.Root, "evidence", "retire-temp-runner", "preview-audit.out"))
             .ShouldBeTrue("c1665: the temp content audit, which arms the inner EXIT trap, ran");
     }
+
+    // CARD-1665 (review 88cb4849 A-3). When temp containers were removed, the temp apply
+    // repeats the read-only content audit after removal and compares it with the first.
+    // C1364 pins the no-container case (one scan); this pins the removed-container case.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Temp_post_removal_audit_runs_when_containers_were_removed()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        fixture.Statuses["server2-temp"]!["runnerSessions"] = 0;
+        fixture.Docker["containers"]!.AsArray().Add(
+            fixture.Container('7', "antiphon-runner-temp", "session-runner", running: false));
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        var traceBefore = fixture.Trace.Length;
+        var run = await fixture.Run("retire-temp-runner");
+        run.Exit.ShouldBe(0, "c1665-a3: temp apply with an exited owned container completes; " + run.Output);
+        var observed = fixture.Trace.Skip(traceBefore).ToArray();
+        observed.Count(a => a[0] == "rm" && a.Last() == new string('7', 64))
+            .ShouldBe(1, "c1665-a3: the owned temp container was removed; " + run.Output);
+        var scans = observed.Where(a => a[0] == "run" && a.Any(x =>
+            x.StartsWith("io.antiphon.preview-audit=c100800000000000000000000000000000001:", StringComparison.Ordinal))).ToArray();
+        scans.Length.ShouldBe(2, "c1665-a3: the content audit ran before and again after container removal; " + run.Output);
+        scans.All(a => a.Contains("--rm") && a.Contains("--read-only")).ShouldBeTrue("c1665-a3: both scans are read-only");
+        fixture.Removed.Length.ShouldBe(4, "c1665-a3: the matching post-removal audit admits every volume; " + run.Output);
+    }
 }
