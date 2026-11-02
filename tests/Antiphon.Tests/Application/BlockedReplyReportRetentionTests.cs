@@ -513,6 +513,66 @@ public sealed class BlockedReplyReportRetentionTests
     }
 
     /// <summary>
+    /// CARD-1503. The reopened turn ends unmarked with a question. The question arm still Blocks
+    /// and records the question, but it cannot replace the retained marked report: every retained
+    /// field stands and the caller reads the retained-report line beside the question.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Unmarked_question_after_reply_blocks_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retained = world.Task;
+        retained.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked, "fixture: the retained report was marked");
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+        const string question = "Nothing changed. Should I also port the fix to the rc branch?";
+
+        await world.SettleAsync(question, prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after) + " the question still Blocks");
+        after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked, "the retained evidence class stands");
+        after.Result.ShouldBe(retained.Result, Case.Sensitive, "the retained report body stands, byte-equal");
+        AssertRetained(after, retained);
+        after.ReportNudgeMessageId.ShouldBeNull("a question is not asked for a closing line");
+        var events = await world.EventsAsync();
+        events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
+        var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
+        blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, Case.Sensitive, "the Block records the question");
+        await using var db = world.CreateContext();
+        var notes = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId)
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => m.Body).ToListAsync();
+        var note = notes.First();
+        note.ShouldContain(RetainedBody, Case.Sensitive, "the caller note carries the retained report");
+        note.ShouldContain("the retained report (marked", Case.Sensitive, "the caller warning names the retained report");
+        note.ShouldContain(question, Case.Sensitive, "the caller reads the question");
+    }
+
+    /// <summary>
+    /// CARD-1503 neighbour. With no Reply, a first unmarked question has no retained report to keep:
+    /// the question arm settles it exactly as before.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task First_unmarked_question_without_retained_report_is_unchanged()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        const string question = "The plan names two checkouts. Which one should I use?";
+
+        await world.SettleAsync(question, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after));
+        after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.QuestionHeuristic);
+        after.Result.ShouldBe(question, Case.Sensitive);
+        var blocked = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
+        blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, Case.Sensitive);
+    }
+
+    /// <summary>
     /// CARD-1486 S3 (D-4). The reopened turn sends only the closing token, the one ask is recorded
     /// and never typed, and the session stays idle past <c>UnmarkedWaitingMinutes</c>. The waiting
     /// deadline Blocks it: the original marked report in the transcript predates the Reply and the
