@@ -763,6 +763,54 @@ public class AgentTaskDeadSessionReconciliationTests
         (await verify.Agents.AnyAsync(a => a.Id == task.AgentId)).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// CARD-1497 and CARD-1488 on the process-exit failure path: a task failed because its session
+    /// died leaves no never-typed closing-line nudge, no parent task-wait note and no lease waiter.
+    /// Another open task's waiter on the same repository is kept.
+    /// </summary>
+    [Test]
+    public async Task A_process_exit_failure_retires_its_nudge_wait_note_and_waiter()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Working, SessionStatus.Failed, failureReason: "the pty-host exited (code 1)");
+        var harness = scenario.Harness(task.SessionId);
+        Guid? nudgeId = null, waitId = null;
+        await harness.Queue.EnqueueAsync(task.SessionId,
+            $"{DelegationReportFormatter.TaskMarker(task.Id)} Your turn ended without the closing report line.",
+            MessageSendMode.WhenIdle, CancellationToken.None, QueuedMessageOrigin.Delegation,
+            onCreated: id => nudgeId = id, deliverIfIdle: false);
+        await harness.Queue.EnqueueAsync(scenario.ParentSessionId,
+            $"[task {DelegationReportFormatter.Short(task.Id)} waiting] idle", MessageSendMode.WhenIdle,
+            CancellationToken.None, QueuedMessageOrigin.Delegation, $"task-wait:{task.Id:N}", task.Id,
+            onCreated: id => waitId = id, deliverIfIdle: false);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.ReportNudgedAt = DateTime.UtcNow;
+            row.ReportNudgedSequence = 3;
+            row.ReportNudgeMessageId = nudgeId.ShouldNotBeNull();
+            await db.SaveChangesAsync();
+        }
+        var common = Path.Combine(Path.GetTempPath(), $"antiphon-deadsession-{Guid.NewGuid():N}", ".git");
+        var other = Guid.NewGuid();
+        harness.Waiters.Register(common, task.Id, RepositoryLeasePurposes.WorktreeSettlement, DateTimeOffset.UtcNow);
+        harness.Waiters.Register(common, other, RepositoryLeasePurposes.WorktreeSettlement, DateTimeOffset.UtcNow);
+
+        await scenario.PastGraceAsync(harness);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+        await using var verify = CreateContext();
+        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == nudgeId))
+            .Status.ShouldBe(QueuedMessageStatus.Canceled, "a failed task's closing-line ask is never typed");
+        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == waitId.ShouldNotBeNull()))
+            .Status.ShouldBe(QueuedMessageStatus.Canceled, "the parent hears the failure, not an idle wait");
+        (await scenario.ParentNoteBodiesAsync())
+            .ShouldContain(b => b.Contains("the pty-host exited (code 1)"), "the failure note still reaches the parent");
+        harness.Waiters.Snapshot(common).Select(w => w.TaskId).ShouldBe([other],
+            "the failed task's waiter is gone; another task's waiter on the repository is kept");
+    }
+
     // ---- harness ---------------------------------------------------------------------------------
 
     private sealed record SeededTask(Guid Id, Guid SessionId, Guid AgentId);
@@ -773,7 +821,9 @@ public class AgentTaskDeadSessionReconciliationTests
         RecordingSessionStopper Stopper,
         DeadSessionFirstSeenState FirstSeen,
         BootWedgeRelaunchState BootWedge,
-        FakeTimeProvider Clock);
+        FakeTimeProvider Clock,
+        RepositoryLeaseWaiters Waiters,
+        SessionMessageQueueService Queue);
 
     /// <summary>
     /// Seeds rows, remembers their ids, and deletes exactly those on dispose — the shared-database
@@ -818,6 +868,7 @@ public class AgentTaskDeadSessionReconciliationTests
             services.AddSingleton<AgentSessionLaunchQueue>();
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
+            services.AddSingleton<RepositoryLeaseWaiters>();
             services.AddSingleton<IDelegateSessionStopper>(stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddDelegationWorktreeGraph(new GitSettings
@@ -842,7 +893,9 @@ public class AgentTaskDeadSessionReconciliationTests
             var provider = services.BuildServiceProvider();
             return new Harness(
                 provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
-                runner, stopper, firstSeen, bootWedge, clock);
+                runner, stopper, firstSeen, bootWedge, clock,
+                provider.GetRequiredService<RepositoryLeaseWaiters>(),
+                provider.GetRequiredService<SessionMessageQueueService>());
         }
 
         /// <summary>Two sweeps with the grace elapsed between them: observe, wait, act.</summary>
