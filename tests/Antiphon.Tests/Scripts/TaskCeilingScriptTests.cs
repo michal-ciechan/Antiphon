@@ -210,6 +210,8 @@ public sealed class TaskCeilingScriptTests
     [Arguments("operator-over-240")]
     [Arguments("operator-no-token")]
     [Arguments("stale-episode")]
+    [Arguments("reason-without-operator")]
+    [Arguments("params-without-action")]
     public async Task C1610_Ceiling_reply(string arm)
     {
         using var stub = new CeilingStubApi();
@@ -231,6 +233,9 @@ public sealed class TaskCeilingScriptTests
                 ["-CeilingAction", "Extend", "-ExtendMinutes", "120", "-OperatorExtend", "-CeilingReason", "operator: long merge"],
             "operator-no-reason" => ["-CeilingAction", "Extend", "-ExtendMinutes", "120", "-OperatorExtend"],
             "operator-over-240" => ["-CeilingAction", "Extend", "-ExtendMinutes", "241", "-OperatorExtend", "-CeilingReason", "r"],
+            // Review e52b2bed D-2: a reason is the operator's alone, and ceiling flags need an action.
+            "reason-without-operator" => ["-CeilingAction", "Extend", "-ExtendMinutes", "60", "-CeilingReason", "r"],
+            "params-without-action" => ["-ExtendMinutes", "60"],
             _ => throw new ArgumentOutOfRangeException(nameof(arm), arm, null),
         };
         var run = await RunAsync(stub, tokenFile: arm != "operator-no-token",
@@ -277,6 +282,13 @@ public sealed class TaskCeilingScriptTests
             }
             case "operator-no-token":
                 AssertLocalRefusal(run, stub, "operator_token_unavailable:");
+                break;
+            case "reason-without-operator":
+                AssertLocalRefusal(run, stub, "ceiling_invalid: -CeilingReason on a reply applies only to -OperatorExtend.");
+                break;
+            case "params-without-action":
+                AssertLocalRefusal(run, stub,
+                    "ceiling_invalid: -EpisodeId, -ExtendMinutes, -OperatorExtend and -CeilingReason need -CeilingAction.");
                 break;
             case "stale-episode":
                 run.ExitCode.ShouldNotBe(0, run.Output);
