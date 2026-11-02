@@ -2130,6 +2130,69 @@ public class SessionReconciliationServiceTests
         }
     }
 
+    /// <summary>
+    /// CARD-1653 S1: a pty-host adoption refused for identity is held as a pending row, not
+    /// exited. Pass 1 must leave the DB session alone and pass 1b must raise the pending incident
+    /// with the runner's reason, exactly as for the workspace and Herdr pending reasons.
+    /// </summary>
+    [Test]
+    public async Task Pty_identity_unproven_pending_row_is_held_and_raises_the_pending_incident()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId, _) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+            var pendingState = new HerdrPendingAlertState();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: clock.GetUtcNow().UtcDateTime.AddHours(-1),
+                        Status: "Starting", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                        LastSequence: 0, Adopted: true, Backend: SessionBackends.PtyHost,
+                        Pending: "pty_host_identity_unproven")
+                ]
+            };
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using (var early = CreateContext())
+            {
+                var dbSession = await early.AgentSessions.SingleAsync(s => s.Id == sessionId);
+                dbSession.Status.ShouldBe(SessionStatus.Running, "a held identity row is Starting, not exited");
+                dbSession.FailureReason.ShouldBeNull();
+                (await early.AgentIncidents.AnyAsync(i => i.AgentId == agentId))
+                    .ShouldBeFalse("first observation is not yet past the alert threshold");
+            }
+
+            clock.Advance(TimeSpan.FromMinutes(6));
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents.SingleAsync(i => i.AgentId == agentId);
+            incident.SessionId.ShouldBe(sessionId);
+            incident.FailureReason.ShouldBe("pty_host_identity_unproven");
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     [Test]
     public async Task HerdrUnreachable_incident_is_critical_when_channel_bound()
     {

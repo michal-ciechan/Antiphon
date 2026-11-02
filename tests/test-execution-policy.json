@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "62f4825a4997d230e7e45c24238d681e9949811febccde76cf8059c766bc1491",
+  "policyHash": "4d38618263ee4d2eb4c90966d4301669b76dc027eb388ed111247911ed0b4c8b",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -873,6 +873,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: native cgroup-v1 pids/freezer custody and /proc descendant checks require Linux. The case remains required on Linux.",
           "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1653FreshLaunchIdentityTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the fake pty-host source is a /bin/sh script plus a copied /usr/bin/sleep. The case remains required on Linux.",
+          "owner": "CARD-1653"
         },
         {
           "suite": "session-runner",
