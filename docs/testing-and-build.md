@@ -1348,8 +1348,18 @@ parenthesised parameterised-case suffix, which is how the seed stores the method
 A chunk whose node list contains a failed method leads. A whole-class chunk, and any
 chunk whose node list is missing, also leads when one of its classes has a failed
 method, so a regrouped plan cannot drop a failure out of the front by omitting nodes.
-The other chunks of that class run after the never-run and unfinished chunks. A missing
-timestamp stays ahead of a known one, and known timestamps run oldest first. A failed
+The other chunks of that class run after the never-run and unfinished chunks.
+Never-run and unfinished work resumes each lane in place (CARD-1633), like the
+previous-run order: a lane starts at its first interrupted chunk (started, not
+completed), or after its last passed chunk when none was interrupted, and wraps to
+earlier holes. Every lane's interrupted chunks run before any lane's untouched chunks.
+The final order is failed-method chunks, interrupted chunks, untouched chunks,
+siblings of a placed failure, then passed; known timestamps run oldest first within
+the failed, sibling and passed bands. The schedule's `lanes` names each lane's
+`resumeChunk` and `lastPassedChunk`. The exporter counts a chunk complete when its only
+not-executed rows are explicit skips (`NotExecuted`, which is how MTP writes `[Skip]`,
+or `Skipped`) under a run summary that finished; any other outcome, or skips under an
+aborted summary, leaves it unfinished. A failed
 method the new plan does not contain is ignored. A failed method that moved follows
 the chunk that now contains it. The schedule stays a permutation. A bad `sourceSha`,
 `sourceRunId`, seed marker, or a wholly unmapped plan restores the original order

@@ -355,9 +355,15 @@ function Export-NightlyStoppedRunSeed {
                         if($times){$finish=ConvertTo-NightlySeedUtc $times.GetAttribute('finish')}
                         if(-not $finish -and $timing){$finish=ConvertTo-NightlySeedUtc $timing.completedAt}
                         if($finish){$last=$finish;if($finish -gt $observed){$observed=$finish}}
-                        $closed=($terminal -and $terminal.GetAttribute('outcome') -cin @('Completed','Passed','Failed','Error','Timeout','Aborted'))
+                        $summaryOutcome=$(if($terminal){$terminal.GetAttribute('outcome')}else{''})
+                        $closed=($summaryOutcome -cin @('Completed','Passed','Failed','Error','Timeout','Aborted'))
+                        # MTP writes an explicit [Skip] as NotExecuted ('Skipped' in other writers). A test that
+                        # never started has no row, which the planned-count check covers. Skips count as
+                        # completed only under a summary that ran to the end; any other outcome stays unfinished.
+                        $finished=@('Passed','Failed','Error','Timeout','Aborted')
+                        if($summaryOutcome -cin @('Completed','Passed','Failed')){$finished+=@('NotExecuted','Skipped')}
                         # $closed stays in this conjunction so a missing ResultSummary cannot count as completed.
-                        $completed=($closed -and $null -ne $finish -and $rows.Count -gt 0 -and $rows.Count -ge @($group.plannedTestIds).Count -and @($rows|Where-Object {$_.Outcome -cnotin @('Passed','Failed','Error','Timeout','Aborted')}).Count -eq 0)
+                        $completed=($closed -and $null -ne $finish -and $rows.Count -gt 0 -and $rows.Count -ge @($group.plannedTestIds).Count -and @($rows|Where-Object {$_.Outcome -cnotin $finished}).Count -eq 0)
                         if(-not $closed){Add-SeedChunkReason $reasons 'trx-result-open'}
                         foreach($row in $rows){
                             $class=Get-NightlyBareClassIdentity $row.ClassName
@@ -510,18 +516,18 @@ function Resolve-NightlyStoppedSeedOrder {
             if(-not $hasNodes){
                 foreach($class in $classes){[void]$wholeClasses.Add([string]$entry.suite+[char]0+[string]$class)}
             }
-            $seen=($classes.Count -gt 0);$incomplete=$false;$last=$null
+            $seen=($classes.Count -gt 0);$incomplete=$false;$interrupted=$false;$last=$null
             foreach($class in $classes){
                 $key=[string]$entry.suite+[char]0+[string]$class
                 if(-not $historyByClass.ContainsKey($key)){$seen=$false;continue}
                 $mapped++
                 foreach($old in @($historyByClass[$key])){
-                    if(-not $old.completed){$incomplete=$true}
+                    if(-not $old.completed){$incomplete=$true;if($old.started -eq $true){$interrupted=$true}}
                     $time=ConvertTo-NightlySeedUtc $old.lastRunAtUtc
                     if($time -and ($null -eq $last -or $time -gt $last)){$last=$time}
                 }
             }
-            $prepared.Add([pscustomobject]@{entry=$entry;classes=$classes;hasNodes=$hasNodes;methods=$methodKeys;seen=$seen;incomplete=$incomplete;last=$last})
+            $prepared.Add([pscustomobject]@{entry=$entry;classes=$classes;hasNodes=$hasNodes;methods=$methodKeys;seen=$seen;incomplete=$incomplete;interrupted=$interrupted;last=$last})
         }
         if($mapped -eq 0){throw 'seed-plan-unmapped'}
         $presentClass=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -543,7 +549,7 @@ function Resolve-NightlyStoppedSeedOrder {
                 foreach($class in @($row.classes)){if($presentClass.Contains([string]$row.entry.suite+[char]0+[string]$class)){$sibling=$true;break}}
             }
             # 0: this chunk contains a failed method, or it has no node list and its class failed.
-            # 1: never-seen or unfinished. A missing timestamp sorts before a known one.
+            # 1: never-seen or unfinished. Each lane resumes in place, below.
             # 2: another chunk of a class whose failed method is already placed (P0b).
             # 3: every class was seen, completed, and has no placed failure.
             $priority=1
@@ -555,9 +561,35 @@ function Resolve-NightlyStoppedSeedOrder {
                 if($clean){$priority=3}
             }
             $ticks=[long]::MinValue;if($row.last){$ticks=$row.last.UtcDateTime.Ticks}
-            $ranked.Add([pscustomobject]@{entry=$row.entry;priority=$priority;ticks=$ticks;ordinal=$row.entry.canonicalOrdinal})
+            $ranked.Add([pscustomobject]@{entry=$row.entry;priority=$priority;ticks=$ticks;ordinal=$row.entry.canonicalOrdinal;interrupted=$row.interrupted})
         }
-        $ordered=@($ranked.ToArray()|Sort-Object priority,ticks,ordinal|ForEach-Object {$_.entry})
-        return [pscustomobject]@{entries=$ordered;reason='operator-seed-order: unknown timestamps retain original order; known timestamps oldest first';lanes=@()}
+        # Priority 1 resumes each lane like Resolve-NightlyPreviousRunOrder. A lane starts at its first
+        # interrupted chunk (started, not completed), else after its last passed chunk, and wraps to
+        # earlier holes. Every lane's interrupted chunks run before any lane's untouched chunks.
+        $resumed=[Collections.Generic.List[object]]::new();$untouched=[Collections.Generic.List[object]]::new()
+        $lanes=[Collections.Generic.List[object]]::new()
+        $laneSeen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($item in @($ranked)){
+            $lane=[string]$item.entry.suite
+            if(-not $laneSeen.Add($lane)){continue}
+            $rows=@($ranked|Where-Object {[string]$_.entry.suite -ceq $lane})
+            $start=-1;$lastPassed=-1
+            for($i=0;$i -lt $rows.Count;$i++){
+                if($start -lt 0 -and $rows[$i].interrupted){$start=$i}
+                if($rows[$i].priority -eq 3){$lastPassed=$i}
+            }
+            if($start -lt 0){$start=($lastPassed+1)%$rows.Count}
+            $lanes.Add([pscustomobject]@{suite=$lane;resumeChunk=[string]$rows[$start].entry.chunk;lastPassedChunk=$(if($lastPassed -ge 0){[string]$rows[$lastPassed].entry.chunk}else{$null})})
+            for($offset=0;$offset -lt $rows.Count;$offset++){
+                $row=$rows[($start+$offset)%$rows.Count]
+                if($row.priority -ne 1){continue}
+                if($row.interrupted){$resumed.Add($row.entry)}else{$untouched.Add($row.entry)}
+            }
+        }
+        $band=@{}
+        foreach($p in @(0,2,3)){$band[$p]=@($ranked.ToArray()|Where-Object {$_.priority -eq $p}|Sort-Object ticks,ordinal|ForEach-Object {$_.entry})}
+        $ordered=@($band[0])+@($resumed.ToArray())+@($untouched.ToArray())+@($band[2])+@($band[3])
+        if($ordered.Count -ne $ranked.Count){throw 'seed-order-not-permutation'}
+        return [pscustomobject]@{entries=$ordered;reason='operator-seed-order: failed methods, then each lane resumed at its interrupted chunk (else after its last pass): interrupted, then untouched, then siblings, then passed; known timestamps oldest first within failed, sibling and passed';lanes=$lanes.ToArray()}
     }catch{return [pscustomobject]@{entries=@($Entries);reason=$_.Exception.Message;lanes=@()}}
 }
