@@ -98,7 +98,7 @@ function record(detail: AgentTaskDetailDto, reply?: () => Response) {
     http.post(`/api/agent-tasks/${TASK_ID}/reply`, () =>
       reply ? reply() : HttpResponse.json({ ...summary('Working') }),
     ),
-    http.post(`/api/agent-tasks/${TASK_ID}/cancel`, () => HttpResponse.json({ ...summary('Cancelled') })),
+    http.post(`/api/agent-tasks/${TASK_ID}/cancel`, () => HttpResponse.json({ ...summary('Canceled') })),
   )
 }
 
