@@ -50,6 +50,32 @@ public sealed class RunnerAlarmDeliveryTests
 
     [Test]
     [Timeout(60_000)]
+    [Arguments("retired", false, "is retired")]
+    [Arguments("draining", true, "not accepting new work")]
+    public async Task C1666_a_retired_or_draining_close_note_reaches_the_caller_as_a_user_prompt(
+        string reason, bool reachable, string text)
+    {
+        var exclusion = new FakeExclusion();
+        await using var rig = await StartAsync(exclusion: exclusion);
+        await SeedPinnedAsync(rig, AgentTaskStatus.Working);
+        await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        await UntilPromptAsync(rig, "[runner server2 unavailable]");
+
+        rig.Source.Rows[0] = rig.Source.Rows[0] with { Eligible = reachable, DisconnectReason = reachable ? null : "transport_abort" };
+        exclusion.Reasons["server2"] = reason;
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(300), CancellationToken.None);
+
+        var closed = await UntilPromptAsync(rig, $"[runner server2 {reason}]");
+        closed.ShouldContain(text);
+        closed.ShouldContain("this is not a recovery");
+        (await RowAsync(rig, closed)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await PromptsAsync(rig)).ShouldNotContain(prompt => prompt.Contains("[runner server2 recovered]", StringComparison.Ordinal));
+        await rig.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    [Timeout(60_000)]
     public async Task a_busy_caller_gets_the_note_only_after_its_turn_ends()
     {
         await using var rig = await StartAsync();
@@ -304,7 +330,8 @@ public sealed class RunnerAlarmDeliveryTests
         await rig.Worker.StopAsync(CancellationToken.None);
     }
 
-    private static async Task<Rig> StartAsync(CompletionNoteFlushQueue? flush = null, Action<DbContextOptionsBuilder>? configure = null)
+    private static async Task<Rig> StartAsync(CompletionNoteFlushQueue? flush = null, Action<DbContextOptionsBuilder>? configure = null,
+        IRunnerAlarmExclusion? exclusion = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var queue = flush ?? new CompletionNoteFlushQueue();
@@ -324,7 +351,7 @@ public sealed class RunnerAlarmDeliveryTests
         var source = new FakeEligibilitySource();
         source.Rows.Add(new RunnerEligibilitySnapshot("server2", "server2", true, false, "transport_abort", null, 0));
         var state = new RunnerAlarmState();
-        var rig = new Rig(schema, harness, scope, db, source, state, queue, worker, NewCoordinator(db, source, state, queue, harness));
+        var rig = new Rig(schema, harness, scope, db, source, state, queue, worker, NewCoordinator(db, source, state, queue, harness, exclusion));
         return rig;
     }
 
@@ -332,8 +359,8 @@ public sealed class RunnerAlarmDeliveryTests
         NewCoordinator(rig.Db, rig.Source, state, rig.Flush, rig.Harness);
 
     private static RunnerAlarmCoordinator NewCoordinator(AppDbContext db, FakeEligibilitySource source, RunnerAlarmState state,
-        CompletionNoteFlushQueue flush, BridgeQueueHarness harness) =>
-        new(source, new NeverExcluded(), state, new RepositoryChildJournalInspector(new LandingGit()), db,
+        CompletionNoteFlushQueue flush, BridgeQueueHarness harness, IRunnerAlarmExclusion? exclusion = null) =>
+        new(source, exclusion ?? new NeverExcluded(), state, new RepositoryChildJournalInspector(new LandingGit()), db,
             new QueueRunnerAlarmNotifier(harness.Queue, flush, NullLogger<QueueRunnerAlarmNotifier>.Instance), flush,
             Options.Create(new AlarmSettings()),
             NullLogger<RunnerAlarmCoordinator>.Instance);

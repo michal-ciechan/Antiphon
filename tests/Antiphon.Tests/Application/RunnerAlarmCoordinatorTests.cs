@@ -183,6 +183,38 @@ public sealed class RunnerAlarmCoordinatorTests
     }
 
     [Test]
+    public async Task C1666_a_draining_runner_that_reconnects_is_told_it_accepts_no_new_work()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var caller = Guid.NewGuid();
+        await AddSessionAsync(db, caller, "r4", SessionStatus.Running);
+        await AddTaskAsync(db, "r4", AgentTaskStatus.Working, caller, AgentTaskReplyTo.Session, AgentTaskRole.Code);
+        await db.SaveChangesAsync();
+        var source = Down("r4", "socket_closed");
+        var state = new RunnerAlarmState();
+        var notes = new RecordingNotifier();
+        var exclusion = new FakeExclusion();
+        var coordinator = Build(db, source, state, notes, exclusion);
+        await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldNotBeNull();
+
+        // CARD-1666 A-4: reachable again but draining is not "not dispatch-eligible".
+        source.Rows[0] = source.Rows[0] with { Eligible = true, DisconnectReason = null };
+        exclusion.Reasons["r4"] = "draining";
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(240), CancellationToken.None);
+
+        state.Current.Episodes.ShouldBeEmpty();
+        var closed = notes.Notes.Where(note => note.Header != "[runner r4 unavailable]").ShouldHaveSingleItem();
+        closed.SessionId.ShouldBe(caller);
+        closed.Header.ShouldBe("[runner r4 draining]");
+        closed.Body.ShouldContain("not accepting new work");
+        closed.Body.ShouldNotContain("not dispatch-eligible");
+        closed.Body.ShouldNotContain("dispatches on the next tick");
+    }
+
+    [Test]
     public async Task startup_opens_an_episode_per_enabled_remote_runner_and_a_normal_reconnect_closes_it()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
