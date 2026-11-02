@@ -595,7 +595,7 @@ If G1's measured throughput forecasts more than 30 minutes (for example, the bui
 than 10 min under load), stop. Split G1 into G1a (CP-4, 5, 6, 7, 13, 14, 17) and G1b (CP-8, 9, 10,
 11, 12) as two runs at the same SHA, and report the phase timings. Do not widen any row timeout.
 
-Import validation (this task): `dotnet /work/worktrees/task-00abf1bf/tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-11-02-card-1610-S4a-test-design.md --out .antiphon/s4a-import/manifest.yaml`. Result: `imported 18 rows`, exit 0, no warning (tool dll sha256 prefix `6c81cdb4620c1e9b`, built in a master-based worktree). Derived row timeouts: 15 min, and 30 min for CP-8 (estimate 10). No row timeout is widened.
+Import validation (this task): `dotnet /work/worktrees/task-00abf1bf/tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-11-02-card-1610-S4a-test-design.md --out .antiphon/s4a-import/manifest.yaml`. Result: `imported 18 rows`, exit 0, no warning (tool dll sha256 prefix `6c81cdb4620c1e9b`, built in the CARD-0824 S1 worktree task-00abf1bf). Derived row timeouts: 15 min, and 30 min for CP-8 (estimate 10). No row timeout is widened.
 
 ### Cost
 
