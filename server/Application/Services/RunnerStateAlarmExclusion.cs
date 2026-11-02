@@ -9,5 +9,9 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class RunnerStateAlarmExclusion(PhoneHomeRunnerDirectory directory) : IRunnerAlarmExclusion
 {
-    public string? Excluded(string runnerId) => null;
+    public string? Excluded(string runnerId) => Reason(directory.DrainState(runnerId));
+
+    /// <summary>"retired" before "draining": a retired row is also still draining.</summary>
+    public static string? Reason(RunnerState? state) =>
+        state?.RetiredAt is not null ? "retired" : state is { Draining: true } ? "draining" : null;
 }

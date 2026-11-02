@@ -351,7 +351,7 @@ try
     builder.Services.AddSingleton<IRunnerEligibilityObserver, CompositeRunnerEligibilityObserver>();
     builder.Services.AddHostedService<OrchestratorInstructionsHostedService>();
     builder.Services.AddSingleton<IRepositoryFenceObserver>(sp => sp.GetRequiredService<AlarmWakeQueue>());
-    builder.Services.AddSingleton<IRunnerAlarmExclusion, NeverExcluded>();
+    builder.Services.AddSingleton<IRunnerAlarmExclusion, RunnerStateAlarmExclusion>();
     builder.Services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
         sp.GetRequiredService<SessionRunnerHttpClient>(),
         sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
