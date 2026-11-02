@@ -1,0 +1,45 @@
+{
+  "format": "antiphon-live-lane-inputs-v1",
+  "lanes": {
+    "live-claude-core-windows": {
+      "manifest": "tests/live-lanes.json",
+      "contractFiles": [
+        "tests/live-lanes.json",
+        "tests/live-lane-inputs.json",
+        "scripts/lib/live-lane-*.ps1",
+        "scripts/live-lane-status.ps1",
+        "scripts/run-live-lane.ps1"
+      ],
+      "minimumRoots": [
+        "src/Antiphon.Agents.Pty/",
+        "src/Antiphon.PtyHost/",
+        "src/Antiphon.PtyHost.Client/",
+        "src/Antiphon.PtyHost.Protocol/",
+        "src/Antiphon.SessionRunner/",
+        "src/Antiphon.SessionRunner.Contracts/",
+        "server/",
+        "tests/Shared/"
+      ],
+      "runtimeRoots": [
+        "scripts/",
+        "tests/live-lane-checkpoints/",
+        ".claude/"
+      ],
+      "namespaceRoots": [
+        "Antiphon.Agents.Pty",
+        "Antiphon.PtyHost",
+        "Antiphon.SessionRunner",
+        "Antiphon.Server",
+        "Antiphon.Tests",
+        "Antiphon.Agents.Pty.Tests"
+      ],
+      "instructionPatterns": [
+        "CLAUDE.md",
+        "CLAUDE.local.md",
+        "AGENTS.md",
+        ".claude/**",
+        ".mcp.json"
+      ]
+    }
+  }
+}
