@@ -751,8 +751,10 @@ public partial class DispatchBaseNotificationTests
     /// V-27 / G-89, G-90: one poison row cannot abort later rows, and an intent-query fault cannot
     /// suppress the notification pass.
     /// </summary>
+    // R5 (CARD-1638): 2x the one measured sample, 90.6s on Windows rc run d47848cc.
+    // Provisional: n=1.
     [Test]
-    [Timeout(180_000)]
+    [Timeout(182_000)]
     [Arguments("row")]
     [Arguments("query")]
     public async Task C508_IntentScanIsolation(string fault, CancellationToken ct)

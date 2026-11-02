@@ -77,8 +77,10 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
         }
     }
 
+    // R5 (CARD-1638): 2x the slowest measured sample, 68.9s on Windows rc run d47848cc
+    // (Linux checkpoint receipts 11.2s and 12.5s). Provisional: n=3.
     [Test]
-    [Timeout(120_000)]
+    [Timeout(138_000)]
     public async Task C1532_second_build_and_retry_admit_large_prior_output(CancellationToken cancellationToken)
     {
         var root = Repo();

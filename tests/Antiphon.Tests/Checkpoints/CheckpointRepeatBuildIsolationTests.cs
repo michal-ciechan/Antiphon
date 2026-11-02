@@ -13,8 +13,10 @@ public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
     // One real FilterHost build, not three. A loaded Windows repeat-2 invocation
     // took 251 s and the 300 s limit cancelled the next build. The 2/1/3 sequence
     // keeps the receipt and fresh-output assertions against a stub dotnet.
+    // R5 (CARD-1638): 2x the one measured sample, 355.6s on Windows rc run d47848cc.
+    // Provisional: n=1.
     [Test]
-    [Timeout(600_000)]
+    [Timeout(712_000)]
     public async Task repeat_two_then_default_then_three_rebuilds_the_same_project(CancellationToken cancellationToken)
     {
         var root = TempDir();
