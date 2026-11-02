@@ -15,7 +15,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class RunnerSessionGenerationTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task C502_V27_fast_exit_before_Start_returns_carries_the_generation()
@@ -29,7 +30,7 @@ public class RunnerSessionGenerationTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var events = runtime.Subscribe(cts.Token);
         var dto = await runtime.StartAsync(new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/c", "exit 3"], new Dictionary<string, string>(),
+            sessionId, Cmd, OperatingSystem.IsWindows() ? ["/d", "/c", "exit 3"] : ["-c", "exit 3"], new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generation), cts.Token);
 
         dto.AcceptedStartedAt.ShouldBe(generation);
@@ -68,7 +69,7 @@ public class RunnerSessionGenerationTests
         var events = runtime.Subscribe(cts.Token);
 
         await runtime.StartAsync(new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
+            sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationA), cts.Token);
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), cts.Token);
 
@@ -76,7 +77,7 @@ public class RunnerSessionGenerationTests
         payloadA.AcceptedStartedAt.ShouldBe(generationA);
 
         await runtime.StartAsync(new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
+            sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
         runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
 
@@ -99,7 +100,7 @@ public class RunnerSessionGenerationTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         var events = runtime.Subscribe(cts.Token);
         await runtime.StartAsync(new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
+            sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
 
         var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };
@@ -137,7 +138,7 @@ public class RunnerSessionGenerationTests
         var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         await runtime.StartAsync(new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
+            sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
 
         var sidecar = new HerdrPaneSidecar
@@ -189,7 +190,7 @@ public class RunnerSessionGenerationTests
         var generationA = SessionGeneration.Normalize(DateTime.UtcNow);
         var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow.AddMinutes(1));
         using var created = await runner.Http.PostAsJsonAsync("/sessions", new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
+            sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationA));
         created.IsSuccessStatusCode.ShouldBeTrue(await created.Content.ReadAsStringAsync());
         var dto = (await created.Content.ReadFromJsonAsync<RunnerSessionDto>())!;

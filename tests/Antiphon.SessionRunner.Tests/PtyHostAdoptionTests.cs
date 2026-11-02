@@ -19,7 +19,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class PtyHostAdoptionTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task Running_session_survives_runner_restart_with_buffer_and_input_intact()
@@ -103,7 +104,7 @@ public class PtyHostAdoptionTests
         var dto = await StartInteractiveSessionAsync(runtime, sessionId);
         try
         {
-            dto.TranscriptBound.ShouldBeNull("cmd.exe launches have no transcript tailer");
+            dto.TranscriptBound.ShouldBeNull("plain shell launches have no transcript tailer");
             dto.TranscriptBindHow.ShouldBeNull();
             await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, dto.HostPid);
         }
@@ -150,13 +151,15 @@ public class PtyHostAdoptionTests
         var manifestPath = PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId);
 
         var runtimeA = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
-        var batch = Path.Combine(settings.SessionLogPath, "exit-soon.cmd");
+        var batch = Path.Combine(settings.SessionLogPath, OperatingSystem.IsWindows() ? "exit-soon.cmd" : "exit-soon.sh");
         Directory.CreateDirectory(settings.SessionLogPath);
-        File.WriteAllText(batch, "@echo off\r\necho exiting-soon\r\nping -n 3 127.0.0.1 > nul\r\nexit /b 7\r\n");
+        File.WriteAllText(batch, OperatingSystem.IsWindows()
+            ? "@echo off\r\necho exiting-soon\r\nping -n 3 127.0.0.1 > nul\r\nexit /b 7\r\n"
+            : "echo exiting-soon\nsleep 2\nexit 7\n");
 
         var generationA = SessionGeneration.Normalize(DateTime.UtcNow);
         var request = new RunnerLaunchRequest(
-            sessionId, Cmd, ["/d", "/c", batch], new Dictionary<string, string>(),
+            sessionId, Cmd, OperatingSystem.IsWindows() ? ["/d", "/c", batch] : [batch], new Dictionary<string, string>(),
             Path.GetTempPath(), Cols: 100, Rows: 25, AcceptedStartedAt: generationA);
         await runtimeA.StartAsync(request, CancellationToken.None);
 
@@ -280,7 +283,7 @@ public class PtyHostAdoptionTests
         var request = new RunnerLaunchRequest(
             sessionId,
             Cmd,
-            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            HerdrTestProcess.InteractiveArgs,
             new Dictionary<string, string>(),
             Path.GetTempPath(),
             Cols: 100,

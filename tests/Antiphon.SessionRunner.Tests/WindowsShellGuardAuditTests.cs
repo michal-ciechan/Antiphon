@@ -20,11 +20,38 @@ public sealed class WindowsShellGuardAuditTests
     private const int GuardWindow = 6;
 
     /// <summary>
-    /// Reviewed sites, keyed by file name and the trimmed source line. Each one is a string the test
-    /// never spawns, or a spawn behind a method- or fixture-level skip this line scan cannot see.
+    /// Reviewed sites, keyed by file name and the trimmed source line, with the number of identical
+    /// lines. Each one is a string the test never spawns, or a spawn behind a method- or fixture-level
+    /// skip further up than this line scan looks.
     /// </summary>
-    private static readonly (string File, string Line, string Reason)[] Reviewed =
+    private static readonly (string File, string Line, int Count, string Reason)[] Reviewed =
     [
+        ("C1022BackendLaunchTests.cs",
+            "var request = new RunnerLaunchRequest(sessionId, Path.Combine(Environment.SystemDirectory, \"cmd.exe\"),", 1,
+            "LaunchAsync throws SkipTestException off Windows before it builds the request"),
+        ("GrokRulesHttpAcceptanceTests.cs",
+            "var request = new RunnerLaunchRequest(id, Path.Combine(Environment.SystemDirectory, \"cmd.exe\"),", 1,
+            "the test throws SkipTestException off Windows on its first line"),
+        ("RunnerCustodyTests.cs",
+            "Request = new(Binding.Generation.SessionId, Path.Combine(Environment.SystemDirectory, \"cmd.exe\"),", 1,
+            "CustodyFixture's constructor throws SkipTestException off Windows before it builds the request"),
+        ("HerdrPaneDisposalGuardTests.cs",
+            "static Process Dummy() => Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, \"cmd.exe\"), \"/d /q /k\")", 1,
+            "C461_G063 calls SkipLocatorOnLinux first (CARD-0864 Unix locator gap)"),
+        ("HerdrPaneDisposalStopRegressionTests.cs",
+            "var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, \"cmd.exe\"), \"/d /q /k\")", 1,
+            "AttachedGuard calls SkipLocatorOnLinux first (CARD-0864 Unix locator gap)"),
+        ("RunnerCustodyLedgerBackendTests.cs",
+            "new(binding.Generation.SessionId, \"cmd.exe\", [], new Dictionary<string, string>(),", 1,
+            "a request the custody ledger only records; nothing is spawned"),
+        ("HerdrAttachTests.cs", "HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, \"cmd.exe\").ShouldBeTrue();", 1,
+            "a process name given to the family classifier; nothing is spawned"),
+        ("HerdrLaunchShapeTests.cs", "HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, \"cmd.exe\").ShouldBeTrue();", 1,
+            "a process name given to the family classifier; nothing is spawned"),
+        ("HerdrLaunchShapeTests.cs", "[(900, \"cmd.exe\", new[] { \"codex.cmd\", \"--ask-for-approval\", \"never\" }, (string?)null)]);", 1,
+            "a process name in fake Herdr pane info; nothing is spawned"),
+        ("HerdrPaneChildKillTests.cs", "(dummy.Id, \"cmd.exe\"),", 2, "a process name in fake Herdr pane info; nothing is spawned"),
+        ("HerdrPaneChildKillTests.cs", "[(dummy.Id, \"cmd.exe\", new[] { \"cmd\" }, settings.SessionLogPath)]);", 1, "a process name in fake Herdr pane info; nothing is spawned"),
     ];
 
     [Test]
@@ -40,12 +67,12 @@ public sealed class WindowsShellGuardAuditTests
     }
 
     [Test]
-    public void Every_reviewed_site_still_exists_exactly_once()
+    public void Every_reviewed_site_still_exists_as_counted()
     {
         var files = SourceFiles().ToDictionary(Path.GetFileName, File.ReadAllLines, StringComparer.Ordinal);
         var stale = Reviewed
             .Where(r => !files.TryGetValue(r.File, out var lines)
-                || lines.Count(l => string.Equals(l.Trim(), r.Line, StringComparison.Ordinal)) != 1)
+                || lines.Count(l => string.Equals(l.Trim(), r.Line, StringComparison.Ordinal)) != r.Count)
             .Select(r => r.File + ": " + r.Line)
             .ToList();
         stale.ShouldBeEmpty("C1652_STALE_REVIEWED_SITE:\n" + string.Join("\n", stale));

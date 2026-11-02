@@ -35,7 +35,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class PtyBackendSeamTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     /// <summary>
     /// The case the pinned tests depend on: a declared <c>inbox</c> must win against an exported
@@ -46,6 +47,10 @@ public class PtyBackendSeamTests
     [Test]
     public async Task A_declared_inbox_backend_outranks_an_exported_modern_one()
     {
+        // CARD-1652: the inbox conhost and the modern pseudoconsole are Windows backends; a Unix
+        // host logs its own pty backend, so this has nothing to compare there.
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("Windows pty backend selection (InboxConhost vs ModernConPty)");
         var restore = Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar);
         Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, "modern");
         try
@@ -140,7 +145,7 @@ public class PtyBackendSeamTests
             var request = new RunnerLaunchRequest(
                 sessionId,
                 Cmd,
-                ["/d", "/q", "/k", "@echo off & prompt $G"],
+                HerdrTestProcess.InteractiveArgs,
                 new Dictionary<string, string>(),
                 Path.GetTempPath(),
                 Cols: 100,

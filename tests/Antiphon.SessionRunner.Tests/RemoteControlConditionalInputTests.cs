@@ -11,7 +11,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class RemoteControlConditionalInputTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task C514_Input_uses_microsecond_accepted_generation()
@@ -142,7 +143,7 @@ public class RemoteControlConditionalInputTests
         }), NullLogger<SessionRunnerRuntime>.Instance);
 
     private static RunnerLaunchRequest Launch(Guid sessionId, DateTime generation) =>
-        new(sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"],
+        new(sessionId, Cmd, HerdrTestProcess.InteractiveArgs,
             new Dictionary<string, string>(), Path.GetTempPath(), 80, 24,
             AcceptedStartedAt: generation);
 }
