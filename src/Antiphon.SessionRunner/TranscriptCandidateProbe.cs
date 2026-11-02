@@ -11,10 +11,12 @@ namespace Antiphon.SessionRunner;
 /// TIMESTAMPED record (C3), and whether any user prompt — or a queued delivery of the same text
 /// (CARD-0064) — matches input this session actually sent (C4).
 ///
-/// Incremental because discovery polls four times a second and a candidate can be tens of MB: the
-/// file is append-only, so each pass reads only the bytes added since the last one. The C4 check
-/// is re-run against the most recent prompts on every pass, because the input log grows too — a
-/// candidate can legitimately go from "not yet provable" to "proven" as records flush.
+/// Incremental because discovery polls often and a candidate can be tens of MB: the file is
+/// append-only, so each pass reads only the bytes added since the last one. The C4 check is
+/// re-run against the most recent prompts whenever either side changed — new prompts in the file
+/// or new input in the log — because a candidate can legitimately go from "not yet provable" to
+/// "proven" as records flush. With neither changed the answer cannot change, so it is not
+/// recomputed (CARD-1624).
 /// </summary>
 internal sealed class TranscriptCandidateProbe
 {
@@ -33,9 +35,21 @@ internal sealed class TranscriptCandidateProbe
 
     private readonly List<byte> _pending = new();
     private readonly List<string> _recentPrompts = new();
+    private readonly TranscriptLocateCounters? _counters;
     private long _offset;
+    // CARD-1624: what the last C4 check was computed against. The verdict is a pure function of
+    // (retained prompts, input log contents), so it is recomputed only when one of them moved.
+    private long _promptsVersion;
+    private long _checkedPromptsVersion = -1;
+    private SessionInputLog? _checkedLog;
+    private long _checkedLogVersion = -1;
+    private DateTime? _observedWriteUtc;
 
-    public TranscriptCandidateProbe(string path) => Path = path;
+    public TranscriptCandidateProbe(string path, TranscriptLocateCounters? counters = null)
+    {
+        Path = path;
+        _counters = counters;
+    }
 
     public string Path { get; }
 
@@ -70,10 +84,20 @@ internal sealed class TranscriptCandidateProbe
     /// Reading is incremental across passes (the file is append-only), so discovery polling four
     /// times a second costs one read of each byte over the candidate's lifetime, not one per poll.
     /// </summary>
-    public bool Refresh(SessionInputLog? inputLog, int maxBytes = DeepScanBytes)
+    /// <param name="observed">CARD-1624: (length, last-write) the caller just read for this file
+    /// from its directory enumeration. When they equal what this probe last saw and every byte up
+    /// to that length is consumed, the file has nothing new and is not touched at all.</param>
+    public bool Refresh(SessionInputLog? inputLog, int maxBytes = DeepScanBytes, (long Length, DateTime WriteUtc)? observed = null)
     {
+        if (false && observed is { } seen && seen.Length == _offset && _observedWriteUtc == seen.WriteUtc) // CARD-1624 RED
+        {
+            RecheckContent(inputLog);
+            return true;
+        }
+
         try
         {
+            _counters?.CountStat();
             var info = new FileInfo(Path);
             if (!info.Exists)
                 return false;
@@ -86,6 +110,7 @@ internal sealed class TranscriptCandidateProbe
 
             if (info.Length > _offset)
             {
+                _counters?.CountOpen();
                 using var fs = new FileStream(
                     Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 fs.Seek(_offset, SeekOrigin.Begin);
@@ -105,19 +130,38 @@ internal sealed class TranscriptCandidateProbe
             return false;
         }
 
-        if (!ContentMatched && inputLog is not null)
+        // Only an observation taken while the whole file is consumed may skip the next pass: a
+        // capped read leaves bytes behind that the same (length, mtime) would otherwise hide.
+        _observedWriteUtc = observed is { } after && after.Length == _offset ? after.WriteUtc : null;
+        RecheckContent(inputLog);
+        return true;
+    }
+
+    private void RecheckContent(SessionInputLog? inputLog)
+    {
+        if (ContentMatched || inputLog is null)
+            return;
+
+        var logVersion = inputLog.Version;
+        if (false && ReferenceEquals(inputLog, _checkedLog) // CARD-1624 RED
+            && logVersion == _checkedLogVersion
+            && _promptsVersion == _checkedPromptsVersion)
         {
-            foreach (var prompt in _recentPrompts)
+            return;
+        }
+
+        foreach (var prompt in _recentPrompts)
+        {
+            if (inputLog.MatchesRecordedInput(prompt))
             {
-                if (inputLog.MatchesRecordedInput(prompt))
-                {
-                    ContentMatched = true;
-                    break;
-                }
+                ContentMatched = true;
+                break;
             }
         }
 
-        return true;
+        _checkedLog = inputLog;
+        _checkedLogVersion = logVersion;
+        _checkedPromptsVersion = _promptsVersion;
     }
 
     private void Reset()
@@ -125,6 +169,8 @@ internal sealed class TranscriptCandidateProbe
         _offset = 0;
         _pending.Clear();
         _recentPrompts.Clear();
+        _promptsVersion++;
+        _observedWriteUtc = null;
         Cwd = null;
         AgentName = null;
         FirstTimestamp = null;
@@ -244,6 +290,7 @@ internal sealed class TranscriptCandidateProbe
             return;
 
         _recentPrompts.Add(text);
+        _promptsVersion++;
         if (_recentPrompts.Count > MaxRetainedPrompts)
             _recentPrompts.RemoveAt(0);
     }
@@ -254,4 +301,29 @@ internal sealed class TranscriptCandidateProbe
         && v.ValueKind == JsonValueKind.String
             ? v.GetString()
             : null;
+}
+
+/// <summary>
+/// CARD-1624 diagnostics: what one tailer's discovery actually costs. Tests assert on these to
+/// prove an unchanged root is not rescanned or re-probed; production only increments them.
+/// </summary>
+internal sealed class TranscriptLocateCounters
+{
+    private int _fullScans;
+    private int _stats;
+    private int _opens;
+    private int _ticks;
+    private int _watchStats;
+
+    public int FullScans => Volatile.Read(ref _fullScans);
+    public int Stats => Volatile.Read(ref _stats);
+    public int Opens => Volatile.Read(ref _opens);
+    public int Ticks => Volatile.Read(ref _ticks);
+    public int WatchStats => Volatile.Read(ref _watchStats);
+
+    public void CountFullScan() => Interlocked.Increment(ref _fullScans);
+    public void CountStat() => Interlocked.Increment(ref _stats);
+    public void CountOpen() => Interlocked.Increment(ref _opens);
+    public void CountTick() => Interlocked.Increment(ref _ticks);
+    public void CountWatchStat() => Interlocked.Increment(ref _watchStats);
 }

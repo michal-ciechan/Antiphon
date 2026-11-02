@@ -1135,6 +1135,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
 
+    /// <summary>
+    /// The runner's working/idle judgement for a session — <see cref="TranscriptWorkingState.Classify"/>
+    /// over <see cref="GetTranscript"/>'s entries, without copying them (CARD-1624).
+    /// </summary>
+    internal TranscriptWorkingState.WorkingVerdict GetWorkingVerdict(Guid sessionId) => GetSession(sessionId).GetWorkingVerdict();
+
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(input)) return;
@@ -4028,9 +4034,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         internal void BindChildForTest(ISessionChild child) => _herdrChild = child;
 
         /// <summary>Fake child I/O with a real provider tailer; supplies no qualification verdict.</summary>
-        internal void BindChildForTest(ISessionChild child, ITranscriptTailer tailer, DateTime acceptedStartedAt)
+        internal void BindChildForTest(ISessionChild child, ITranscriptTailer tailer, DateTime acceptedStartedAt, int? childPid = null)
         {
             _herdrChild = child;
+            _childPid = childPid ?? _childPid;
             child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence, exit.ExitSignal, exit.ExitStopIntent));
             Tailer = tailer;
             _sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
@@ -4183,6 +4190,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     ObserveDialog(runtimeEpoch, clock));
             }
         }
+
+        public TranscriptWorkingState.WorkingVerdict GetWorkingVerdict() =>
+            _tailer?.WorkingVerdict ?? TranscriptWorkingState.WorkingVerdict.Unknown;
 
         public RunnerTranscriptDto GetTranscript() =>
             (_tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0))

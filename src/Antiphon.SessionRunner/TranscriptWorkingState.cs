@@ -34,17 +34,36 @@ public static class TranscriptWorkingState
     /// </summary>
     public static WorkingVerdict Classify(IReadOnlyList<RunnerTranscriptEvent> entries)
     {
-        long lastEnd = 0;
-        long lastActivity = 0;
+        var accumulator = new WorkingAccumulator();
         foreach (var entry in entries)
+            accumulator.Observe(entry);
+        return accumulator.Verdict;
+    }
+
+    /// <summary>
+    /// <see cref="Classify"/> as a running fold (CARD-1624): the judgement is a max over entries, so
+    /// feeding entries one at a time as they are parsed yields exactly the verdict a full pass over
+    /// the same entries would. The tailer keeps one so the CPU watchdog never re-walks a snapshot.
+    /// </summary>
+    public struct WorkingAccumulator
+    {
+        private long _lastEnd;
+        private long _lastActivity;
+
+        public readonly WorkingVerdict Verdict =>
+            _lastEnd == 0 && _lastActivity == 0 ? WorkingVerdict.Unknown
+            : _lastEnd > 0 && _lastActivity <= _lastEnd ? WorkingVerdict.Idle
+            : WorkingVerdict.Working;
+
+        public void Observe(RunnerTranscriptEvent entry)
         {
             if (entry.Kind == TranscriptKinds.TurnEnd
                 || entry.Kind == TranscriptKinds.SessionRestartBoundary
                 || TranscriptKinds.IsManualCompactBoundary(entry.Kind, entry.Text)
                 || TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text))
             {
-                lastEnd = Math.Max(lastEnd, entry.Sequence);
-                continue;
+                _lastEnd = Math.Max(_lastEnd, entry.Sequence);
+                return;
             }
 
             // CompactBoundary here is only ever the AUTO/trigger-less kind — the manual one ranked
@@ -64,14 +83,10 @@ public static class TranscriptWorkingState
                 || TranscriptKinds.IsCompactionContinuationPrompt(entry.Kind, entry.Text)
                 || TranscriptKinds.IsLocalCommandRecord(entry.Kind, entry.Text))
             {
-                continue; // housekeeping — neither activity nor an end
+                return; // housekeeping — neither activity nor an end
             }
 
-            lastActivity = Math.Max(lastActivity, entry.Sequence);
+            _lastActivity = Math.Max(_lastActivity, entry.Sequence);
         }
-
-        if (lastEnd == 0 && lastActivity == 0)
-            return WorkingVerdict.Unknown;
-        return lastEnd > 0 && lastActivity <= lastEnd ? WorkingVerdict.Idle : WorkingVerdict.Working;
     }
 }
