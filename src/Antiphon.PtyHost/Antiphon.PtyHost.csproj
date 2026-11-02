@@ -10,6 +10,12 @@
     <!-- The host is a long-lived detached process; keep it dependency-light on purpose.
          No ASP.NET, no DI, no Serilog - startup time and stability over convenience. -->
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- CARD-1664: the Linux test projects restore this host both with and without
+         RuntimeIdentifier=linux-x64 and all share one obj/project.assets.json. Every restore
+         keeps the net9.0/linux-x64 target, so the restore that lands last cannot drop the
+         target a parallel linux-x64 inner build needs (NETSDK1047). Restore-only: a build
+         without RuntimeIdentifier still produces the portable output. -->
+    <RuntimeIdentifiers Condition="'$(OS)' != 'Windows_NT'">linux-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
