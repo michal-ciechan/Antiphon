@@ -175,12 +175,12 @@ public sealed class C0824WorkspaceSlotResetTests
         // V-44. Siblings of the slot (another slot, a legacy mirror, a temp root) are untouched.
         using var scratch = Create();
         var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        a.Path.ShouldBe(scratch.Slot("ws-01"));
         Plant(scratch.Worktrees + "/ws-02", "keep.txt", "other slot");
         Plant(scratch.Worktrees + "/task-deadbeef", "x", "legacy");
         Plant(scratch.Work + "/tmp-c723-x", "y", "temp root");
         var before = Tree(scratch.Work + "/worktrees/ws-02").Concat(Tree(scratch.Work + "/worktrees/task-deadbeef")).Concat(Tree(scratch.Work + "/tmp-c723-x")).ToList();
-        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
-        a.Path.ShouldBe(scratch.Slot("ws-01"));
         await Release(pool, a, TaskA);
         await pool.LeaseAsync(scratch.RequestB(), ct);
         var after = Tree(scratch.Work + "/worktrees/ws-02").Concat(Tree(scratch.Work + "/worktrees/task-deadbeef")).Concat(Tree(scratch.Work + "/tmp-c723-x")).ToList();
