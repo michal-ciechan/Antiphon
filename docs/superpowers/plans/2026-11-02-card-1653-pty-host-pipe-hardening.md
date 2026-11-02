@@ -634,6 +634,10 @@ This is the closed ordinary scope per committed slice, with one After group per 
 - Linux-native rows build separately from portable rows so that they can run on another Linux host. In
   one After group, CP-3 could reuse CP-1 when both lanes share server2.
 - S3's rows are listed for completeness. They are not run unless H-1 releases S3.
+- `import --plan` (the checkpoint tool built from this base at `eef85246`) imported all 13 rows. It
+  warned only that CP-3, CP-7 and CP-13 duplicate the builds of CP-1, CP-4 and CP-10. CP-7 and CP-13
+  are the Windows lane and cannot reuse a Linux build. CP-3 may be rewritten to `CP-1` when S1's run
+  stays on server2.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
