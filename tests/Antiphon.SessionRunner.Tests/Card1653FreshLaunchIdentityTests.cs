@@ -20,7 +20,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(15_000)]
+[Timeout(10_000)]
 [NativeLinuxOnly("CARD-1653 fake pty-host is a /bin/sh script and a copied sleep; requires Linux")]
 public class Card1653FreshLaunchIdentityTests
 {
