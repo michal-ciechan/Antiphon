@@ -27,17 +27,18 @@ public sealed class LiveLaneAttestationTests
     [Test]
     public Task ConfigurationInvalidates() => Run(nameof(ConfigurationInvalidates),
         "user", "project-local", "managed", "global-state", "overlay", "model", "env-tristate", "runtime-identity",
-        "volatile-only", "credential-free");
+        "volatile-only", "credential-free", "credential-case");
 
     [Test]
     public Task UnknownSettingsRefuseReuse() => Run(nameof(UnknownSettingsRefuseReuse),
         "unknown-key", "managed-unverified", "unreadable", "missing-source-entry", "additional-source", "forged-eligible",
-        "runtime-missing", "string-boolean", "schema");
+        "runtime-missing", "string-boolean", "schema", "linked-document", "size-cap", "roster-bound");
 
     [Test]
     public Task ExternalEpochIsNotInferred() => Run(nameof(ExternalEpochIsNotInferred),
         "always-rerun-default", "no-epoch", "bounded-fresh", "expired", "future-skew", "probe-stale", "probe-foreign-nonce",
-        "probe-failed", "horizon-fixed", "host-account", "incident-revoked");
+        "probe-failed", "horizon-fixed", "host-account", "incident-revoked", "binding-missing", "probe-time-token",
+        "executed-host-account");
 
     private static async Task Run(string method, params string[] cases)
     {

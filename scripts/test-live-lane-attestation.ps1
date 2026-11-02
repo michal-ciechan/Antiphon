@@ -12,6 +12,15 @@ $script:Method=($Case -replace '^C1545_','')
 $script:StatusScript=Join-Path $PSScriptRoot 'live-lane-status.ps1'
 $script:Pwsh=(Get-Process -Id $PID).Path
 $script:Sentinel='SENTINEL-c1545-credential'
+# The lane roster, written out here as an independent oracle: the six S1 core uids
+# (LiveClaudeCore.All) in the manifest's namespace.class.method(arguments) form.
+$script:Roster=@(
+    'Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests.Submitting_via_two_writes_completes_a_turn(claude)'
+    'Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.Control_auto_connects_a_bridge_session_before_the_first_user'
+    'Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.Settings_file_prevents_auto_connect_and_keeps_startup_records'
+    'Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.Remote_control_slash_command_still_arms_after_settings_off'
+    'Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests.C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt'
+    'Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs')
 
 function Check($ok, [string]$label, [string]$detail='') { Assert-C487 ([bool]$ok) "C1545 $($script:Method)/$label" $detail }
 function Doc([string]$name) { return [IO.File]::ReadAllText((Join-Path $AttestationDirectory "$name.json")) | ConvertFrom-Json -AsHashtable }
@@ -24,7 +33,21 @@ function Forge([string]$name, [scriptblock]$edit) {
 }
 function Att([string]$nameOrPath) {
     $path=if ([IO.Path]::IsPathRooted($nameOrPath)) { $nameOrPath } else { Join-Path $AttestationDirectory "$nameOrPath.json" }
-    try { return Get-LiveLaneEnvironmentAttestation -Path $path -Lane $script:Lane } catch { return @{status='error';error=$_.Exception.Message} }
+    try { return Get-LiveLaneEnvironmentAttestation -Path $path -Lane $script:Lane -Roster $script:Roster } catch { return @{status='error';error=$_.Exception.Message} }
+}
+function Unbound([string]$name) {
+    try { return Get-LiveLaneEnvironmentAttestation -Path (Join-Path $AttestationDirectory "$name.json") -Lane $script:Lane } catch { return @{status='error';error=$_.Exception.Message} }
+}
+function Split-Uid([string]$uid) {
+    # namespace.class.method(arguments) -> one manifest core row in the fixture lane.
+    if ($uid -cnotmatch '^(.+)\.([^.]+)\.([^.(]+)(\((.*)\))?$') { throw "bad roster uid: $uid" }
+    $arguments=if ($Matches[4]) { @($Matches[5] -split ',') } else { @() }
+    return [ordered]@{project='Pty.Tests';namespace=$Matches[1];class=$Matches[2];method=$Matches[3];arguments=$arguments}
+}
+# A directory link: a junction on Windows (no privilege needed), a symbolic link elsewhere.
+function New-DirectoryLink([string]$link, [string]$target) {
+    if ($IsWindows) { New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null }
+    else { [void][IO.Directory]::CreateSymbolicLink($link,$target) }
 }
 function Differs($a, $b, [string[]]$components=@()) {
     if ($a.status -cne 'complete' -or $b.status -cne 'complete' -or $a.digest -cnotmatch '^[0-9a-f]{64}$' -or $a.digest -ceq $b.digest) { return $false }
@@ -65,7 +88,8 @@ function New-LaneFixture {
     & $put 'tests/Pty.Tests/T.cs' "namespace Antiphon.Agents.Pty.Tests;`n"
     & $put 'scripts/lib/live-lane-contract.ps1' "# contract`n"
     & $put 'CLAUDE.md' "# fixture`n"
-    & $put 'tests/live-lanes.json' '{"format":"antiphon-live-lanes-v1","core":[{"project":"Pty.Tests"}],"gates":[],"additiveContract":[]}'
+    & $put 'tests/live-lanes.json' (ConvertTo-Json -Depth 10 ([ordered]@{format='antiphon-live-lanes-v1';core=@($script:Roster | ForEach-Object { Split-Uid $_ })
+        gates=@();additiveContract=@()}))
     & $put 'tests/live-lane-inputs.json' (ConvertTo-Json -Depth 10 ([ordered]@{format='antiphon-live-lane-inputs-v1';lanes=[ordered]@{'fixture-lane'=[ordered]@{
         manifest='tests/live-lanes.json';contractFiles=@('tests/live-lanes.json','tests/live-lane-inputs.json');minimumRoots=@('tests/Pty.Tests/')
         runtimeRoots=@('scripts/');namespaceRoots=@('Antiphon.Agents.Pty');instructionPatterns=@('CLAUDE.md')}}}))
@@ -79,7 +103,7 @@ function Fp([string[]]$fixture, [string]$attestation) {
 }
 
 $expectedRows=@{C1545_CliVersionOrBytesInvalidates=5;C1545_WrapperPayloadInvalidates=4;C1545_AttestedPathMismatchRefuses=5
-    C1545_ConfigurationInvalidates=10;C1545_UnknownSettingsRefuseReuse=9;C1545_ExternalEpochIsNotInferred=11}
+    C1545_ConfigurationInvalidates=11;C1545_UnknownSettingsRefuseReuse=12;C1545_ExternalEpochIsNotInferred=14}
 if (-not $expectedRows.ContainsKey($Case)) { throw "unknown case: $Case" }
 if (-not $AttestationDirectory -or -not (Test-Path -LiteralPath (Join-Path $AttestationDirectory 'base.json'))) { throw 'attestation documents missing' }
 $base=Att 'base'
@@ -136,6 +160,13 @@ switch ($Case) {
         $forged=Invoke-Status (Forge 'base' { param($d) $d.environment['ANTHROPIC_API_KEY']="value:$($script:Sentinel)" })
         Check ((Same $credential $base) -and -not $text.Contains($script:Sentinel) -and -not $output.Contains($script:Sentinel) -and
             (Refused $forged 'credential-field-present') -and -not ($forged.stdout+$forged.stderr).Contains($script:Sentinel)) 'credential-free' "$(Show $credential) status=$($forged.exit) $($forged.stdout)"
+        # A-5: a credential name in any letter case, in a nested object or inside a list item, refuses
+        # by name (never through the generic schema fault) and never echoes the value.
+        $cased=Att (Forge 'base' { param($d) $d.environment['AccessToken']="value:$($script:Sentinel)" })
+        $listed=Att (Forge 'base' { param($d) $d.rows[0].observed['APIKEY']=$script:Sentinel })
+        $upper=Att (Forge 'base' { param($d) $d['OAUTHACCOUNT']=@{emailAddress=$script:Sentinel} })
+        Check ((@($cased,$listed,$upper) | Where-Object { $_.status -ceq 'error' -and $_.error -ceq 'credential-field-present' }).Count -eq 3 -and
+            -not ("$($cased.error)$($listed.error)$($upper.error)").Contains($script:Sentinel)) 'credential-case' "$($cased.error) / $($listed.error) / $($upper.error)"
     }
     'C1545_UnknownSettingsRefuseReuse' {
         $att=Att 'unknown-key'; Check (Unknown $att 'settings-not-reusable') 'unknown-key' (Show $att)
@@ -152,6 +183,35 @@ switch ($Case) {
         $extra=Invoke-Status (Forge 'base' { param($d) $d['extra']=1 })
         $version=Invoke-Status (Forge 'base' { param($d) $d.schemaVersion=2 })
         Check ((Refused $extra 'attestation-invalid') -and (Refused $version 'attestation-invalid')) 'schema' "$($extra.stdout) / $($version.stdout)"
+        # A-2: a linked document (file link, or a linked directory) is refused, and so is a document over the size cap.
+        $linkedDirectory=Join-Path $ResultsDirectory 'linked-attestations'
+        New-DirectoryLink $linkedDirectory $AttestationDirectory
+        try { $viaDirectory=Att (Join-Path $linkedDirectory 'base.json') } finally { [IO.Directory]::Delete($linkedDirectory) }
+        $viaFile=@{status='error';error='attestation-link'}
+        if (-not $IsWindows) {
+            $linkedFile=Join-Path $ResultsDirectory 'linked-base.json'
+            [void][IO.File]::CreateSymbolicLink($linkedFile,(Join-Path $AttestationDirectory 'base.json'))
+            try { $viaFile=Att $linkedFile } finally { [IO.File]::Delete($linkedFile) }
+        }
+        $copied=Join-Path $ResultsDirectory 'copied-base.json'
+        [IO.File]::Copy((Join-Path $AttestationDirectory 'base.json'),$copied)
+        Check (($viaDirectory.error -ceq 'attestation-link') -and ($viaFile.error -ceq 'attestation-link') -and ((Att $copied).status -ceq 'complete')) 'linked-document' "$(Show $viaDirectory) / $(Show $viaFile)"
+        $large=Join-Path $ResultsDirectory 'large-base.json'
+        $text=[IO.File]::ReadAllText((Join-Path $AttestationDirectory 'base.json'))
+        [IO.File]::WriteAllText($large,$text+(' '*(1048576-[Text.Encoding]::UTF8.GetByteCount($text)+1)))
+        $atCap=Join-Path $ResultsDirectory 'cap-base.json'
+        [IO.File]::WriteAllText($atCap,$text+(' '*(1048576-[Text.Encoding]::UTF8.GetByteCount($text))))
+        $over=Att $large; $equal=Att $atCap
+        Check (($over.error -ceq 'attestation-too-large') -and ($equal.status -ceq 'complete')) 'size-cap' "$(Show $over) / $(Show $equal)"
+        # A-3: rows bind to the lane roster. A short document, a foreign uid and an unbound call are
+        # unknown; a foreign uid is never echoed.
+        $short=Att (Forge 'base' { param($d) $d.rows=@($d.rows[0]) })
+        $foreign=Att (Forge 'base' { param($d) $d.rows[0].uid="sk-ant-$($script:Sentinel)"; $d.rows[0].attested.route='path-search' })
+        $foreignText=ConvertTo-TestSelectionCanonicalJson $foreign
+        $unbound=Unbound 'base'
+        Check ((Unknown $short "roster-missing:$($uids[1])") -and (Unknown $short "roster-missing:$($uids[5])") -and
+            (Unknown $foreign 'roster-unexpected') -and (Unknown $foreign "roster-missing:$($uids[0])") -and -not $foreignText.Contains($script:Sentinel) -and
+            (Unknown $unbound 'roster-unbound') -and ($base.status -ceq 'complete')) 'roster-bound' "$(Show $short) / $(Show $foreign) / $(Show $unbound)"
     }
     'C1545_ExternalEpochIsNotInferred' {
         $now=[DateTimeOffset]::Parse('2026-11-02T12:00:00Z',[Globalization.CultureInfo]::InvariantCulture)
@@ -185,6 +245,27 @@ switch ($Case) {
         Check ((Refuses $a 'host-mismatch') -and (Refuses $b 'account-mismatch') -and -not (@($a.reasons) -ccontains 'account-mismatch')) 'host-account' "$(Detail $a) / $(Detail $b)"
         $a=& $run @{Revocations=@(@{epoch=$epoch})}; $b=& $run @{Revocations=@(@{receiptId='receipt-A'})}; $c=& $run @{Revocations=@(@{receiptId='receipt-Z'})}
         Check ((Refuses $a 'revoked') -and (Refuses $b 'revoked') -and $c.reuseEligible) 'incident-revoked' "$(Detail $a) / $(Detail $b) / $(Detail $c)"
+        # A-1: a missing nonce, host or account is unknown, never equal (missing == missing is not a binding).
+        $bare=@((& $probe 'auth' 30 $null $null $null),(& $probe 'control' 30 $null $null $null))
+        $a=& $run @{Candidate=@{};Executed=@{epoch=$epoch};Probes=$bare}
+        $b=& $run @{Executed=@{epoch=$epoch;receiptId='receipt-A'}}
+        $c=& $run @{Probes=@((& $probe 'auth' 30 'nonce-A' $null 'account-A'),(& $probe 'control' 30))}
+        $d=& $run @{Candidate=$null}
+        Check ((Refuses $a 'candidate-binding-missing') -and (Refuses $a 'executed-binding-missing') -and (Refuses $a 'probe-binding-missing:auth') -and
+            (Refuses $b 'executed-binding-missing') -and -not (@($b.reasons) -ccontains 'candidate-binding-missing') -and
+            (Refuses $c 'probe-binding-missing:auth') -and -not (@($c.reasons) -ccontains 'probe-binding-missing:control') -and
+            (Refuses $d 'candidate-binding-missing')) 'binding-missing' "$(Detail $a) / $(Detail $b) / $(Detail $c) / $(Detail $d)"
+        # A-4: a malformed probe time refuses under a fixed token and never echoes the value.
+        $bad=& $probe 'auth' 30; $bad.atUtc="not-a-time-$($script:Sentinel)"
+        $r=& $run @{Probes=@($bad,(& $probe 'control' 30))}
+        $missing=& $probe 'control' 30; $missing.atUtc=$null
+        $m=& $run @{Probes=@((& $probe 'auth' 30),$missing)}
+        Check ((Refuses $r 'probe-time-invalid:auth') -and -not (Detail $r).Contains($script:Sentinel) -and (Refuses $m 'probe-time-invalid:control')) 'probe-time-token' "$(Detail $r) / $(Detail $m)"
+        # A-6: the executed host and account are compared on their own, with candidate and probes equal.
+        $a=& $run @{Executed=@{epoch=$epoch;host='host-B';account='account-A';receiptId='receipt-A'}}
+        $b=& $run @{Executed=@{epoch=$epoch;host='host-A';account='account-B';receiptId='receipt-A'}}
+        Check ((Refuses $a 'host-mismatch') -and -not (@($a.reasons) -ccontains 'account-mismatch') -and
+            (Refuses $b 'account-mismatch') -and -not (@($b.reasons) -ccontains 'host-mismatch')) 'executed-host-account' "$(Detail $a) / $(Detail $b)"
     }
 }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $expectedRows[$Case]

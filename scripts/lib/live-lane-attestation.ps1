@@ -67,7 +67,7 @@ function Get-LiveLaneSortedBy {
 }
 
 function Get-LiveLaneEnvironmentAttestation {
-    param([string]$Path, [string]$Lane)
+    param([string]$Path, [string]$Lane, [string[]]$Roster)
     try { $document=[IO.File]::ReadAllText($Path) | ConvertFrom-Json -AsHashtable -Depth 64 } catch { throw 'attestation-invalid' }
     Assert-LiveLaneCredentialFree $document
     Assert-LiveLaneObject $document $script:LiveLaneAttestationFields
