@@ -243,9 +243,11 @@ switch ($Case) {
             ($written.candidateSha -ceq $script:Y) -and ($written.executed -eq 0) -and ($written.passed -eq 0) -and ($written.gateCredit -is [bool]) -and
             -not $written.gateCredit -and $check.valid) 'use-record' "$(Show $s) record=$($record.error) $(ConvertTo-Json -Compress $written)"
         $after=Sha $receipt; $again=Receipt $receipt
-        Check (($before -ceq $after) -and $again.valid -and ($again.digest -ceq $before) -and -not ([IO.File]::ReadAllText($receipt)).Contains('lastUsed')) 'receipt-immutable' "$before $after"
+        Check (($before -ceq $after) -and $again.valid -and ($again.digest -ceq $before) -and -not ([IO.File]::ReadAllText($receipt)).Contains('lastUsed') -and
+            ($written.receiptDigest -ceq $after)) 'receipt-immutable' "$before $after"
         $s=State @($usePath); Check ((Due $s 'no-execution-receipt') -and ($null -eq $s.selected)) 'no-chained-reuse' (Show $s)
-        $forgedDoc=[IO.File]::ReadAllText($usePath) | ConvertFrom-Json -AsHashtable; $forgedDoc.executedNow=6
+        $forgedDoc=[ordered]@{kind='live-lane-use';schemaVersion=1;laneId=$script:Lane;candidateSha=$script:Y;receiptDigest=$before;runId='run-use'
+            fingerprintDigest=(New-Fp).digest;reused=$true;executedNow=6;executed=0;passed=0;failed=0;skipped=0;gateCredit=$false;createdUtc=(Iso $script:Now)}
         $forged=Write-Json $forgedDoc 'forged-use'
         $u=Test-LiveLaneUseRecord $forged; $s=State @($receipt,$forged)
         Check ((-not $u.valid) -and (@($u.reasons) -ccontains 'use-executed') -and (Due $s 'history-invalid')) 'forged-executed' "$(@($u.reasons) -join ',') / $(Show $s)"
