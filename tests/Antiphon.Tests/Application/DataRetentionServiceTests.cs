@@ -1363,7 +1363,7 @@ public class DataRetentionServiceTests
         fault.Thrown.ShouldBeGreaterThan(0, "the injected prune timeout must fire");
         var passes = (result.Passes ?? []).ToDictionary(p => p.Pass);
         passes["Tasks"].Status.ShouldBe(DataRetentionPassStatus.Failed);
-        passes["Tasks"].ExceptionType.ShouldBe("Npgsql.NpgsqlException > System.TimeoutException");
+        passes["Tasks"].ExceptionType.ShouldBe("System.InvalidOperationException > Npgsql.NpgsqlException > System.TimeoutException");
         passes["SubscriptionUsageSamples"].Status.ShouldBe(DataRetentionPassStatus.Completed);
         passes["WorktreeResidueHeldRows"].Status.ShouldBe(DataRetentionPassStatus.Completed);
         passes["AuditArchive"].Status.ShouldBe(DataRetentionPassStatus.Completed);
@@ -1380,7 +1380,7 @@ public class DataRetentionServiceTests
         (await verify.SubscriptionUsageSamples.AnyAsync(s => s.Id == sampleId)).ShouldBeFalse();
         (await verify.AuditRecords.AsNoTracking().SingleAsync(a => a.Id == auditId)).FullContent.ShouldBeNull();
         var failed = logger.Messages.Where(m => m.StartsWith("Data retention sweep pass ", StringComparison.Ordinal)).ToList();
-        failed.ShouldBe(["Data retention sweep pass Tasks failed: Npgsql.NpgsqlException > System.TimeoutException"]);
+        failed.ShouldBe(["Data retention sweep pass Tasks failed: System.InvalidOperationException > Npgsql.NpgsqlException > System.TimeoutException"]);
         logger.Messages.ShouldAllBe(m => !m.Contains("c1654-row-data") && !m.Contains(rootId.ToString()));
     }
 
@@ -1427,14 +1427,6 @@ public class DataRetentionServiceTests
         (await verify.AgentTasks.CountAsync(t => staleRoots.Contains(t.RootTaskId))).ShouldBe(0);
         (await verify.AgentTasks.CountAsync(t => t.RootTaskId == liveRoot)).ShouldBe(2);
         (await verify.AgentTasks.CountAsync(t => t.RootTaskId == freshRoot)).ShouldBe(2);
-        result.Tasks.ShouldBe(14);
-        result.TaskPrune.ShouldNotBeNull();
-        result.TaskPrune.Trees.ShouldBe(7);
-        result.TaskPrune.Rows.ShouldBe(14);
-        result.TaskPrune.CandidateRoots.ShouldBe(9);
-        result.TaskPrune.Batches.ShouldBeGreaterThanOrEqualTo(3);
-        result.TaskPrune.ScanComplete.ShouldBeTrue();
-
         var seeded = staleRoots.Append(liveRoot).Append(freshRoot).ToHashSet();
         var naming = recorder.Commands.Where(c => c.GuidLists.Any(l => l.Any(seeded.Contains))).ToList();
         naming.Count.ShouldBeGreaterThan(0);
@@ -1443,6 +1435,14 @@ public class DataRetentionServiceTests
         deletes.Count.ShouldBeGreaterThanOrEqualTo(3, "one delete statement set per batch");
         deletes.ShouldAllBe(c => c.Timeout == 45);
         recorder.Commands.Where(c => C1654PruneTimeout.IsEligibility(c.Text)).ShouldAllBe(c => c.Timeout == 45);
+
+        result.Tasks.ShouldBe(14);
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.Trees.ShouldBe(7);
+        result.TaskPrune.Rows.ShouldBe(14);
+        result.TaskPrune.CandidateRoots.ShouldBe(9);
+        result.TaskPrune.Batches.ShouldBeGreaterThanOrEqualTo(3);
+        result.TaskPrune.ScanComplete.ShouldBeTrue();
     }
 
     /// <summary>
@@ -1474,12 +1474,13 @@ public class DataRetentionServiceTests
         }
 
         var first = await SweepAsync();
-        first.TaskPrune!.Batches.ShouldBe(2);
-        first.TaskPrune.ScanComplete.ShouldBeFalse();
-        first.TaskPrune.Trees.ShouldBe(4);
         await using (var mid = new AppDbContext(plain))
             (await mid.AgentTasks.Where(t => roots.Contains(t.Id)).Select(t => t.Id).ToListAsync())
                 .OrderBy(g => g.ToString(), StringComparer.Ordinal).ShouldBe(roots.Skip(4));
+        first.TaskPrune.ShouldNotBeNull();
+        first.TaskPrune.Batches.ShouldBe(2);
+        first.TaskPrune.ScanComplete.ShouldBeFalse();
+        first.TaskPrune.Trees.ShouldBe(4);
         cursor.After.ShouldBe(roots[3]);
 
         var second = await SweepAsync();
