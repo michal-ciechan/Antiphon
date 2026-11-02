@@ -11,7 +11,6 @@
 #       Outcome timeout   - busy or below the memory floor for the whole wait: run nothing, exit 4
 #   Exit-AntiphonBuildSlot -Lease <result>       releases a granted lease (a no-op otherwise)
 #   Add-AntiphonMaxCpuCount -Command <tokens> -MaxCpuCount N
-#   Get-AntiphonStableOutputName -WorktreeRoot <path> [-Suffix <name>]   CARD-1629 stable bin-<id>/
 #
 # A pid-mode lease belongs to the calling process. A renew-mode lease is kept alive by a thread
 # job while the foreground command runs; the broker cannot inspect pids in another container.
@@ -213,31 +212,4 @@ function Test-AntiphonDotnetRunWithBuild {
     if ($end -lt 0) { $end = $tokens.Count }
     for ($i = 2; $i -lt $end; $i++) { if ([string]$tokens[$i] -ieq '--no-build') { return $false } }
     return $true
-}
-
-function Get-AntiphonStableOutputName {
-    # CARD-1629: the one OutputPath a worktree reuses for its direct (non-checkpoint) builds, so
-    # MSBuild stays incremental across them; a new name per build recompiles almost everything.
-    # A task worktree (task-<8hex> on a runner mirror, card-task-<8hex> on the desktop) gives
-    # bin-<8hex>/; any other worktree gives bin-wt-<first 8 hex of SHA-256 of its full path>/.
-    # -Suffix (a different configuration or property set) gives bin-<id>-<suffix>/. The result is
-    # always one relative segment ending in a forward slash: never rooted, no backslash or space.
-    param([Parameter(Mandatory = $true)][string]$WorktreeRoot, [string]$Suffix = '')
-    if ($PSBoundParameters.ContainsKey('Suffix') -and $Suffix -cnotmatch '\A[a-z0-9][a-z0-9-]{0,23}\z') {
-        throw ("-OutputSuffix '{0}' must be 1-24 lowercase letters, digits or hyphens" -f $Suffix)
-    }
-    $full = [IO.Path]::GetFullPath($WorktreeRoot)
-    $trimmed = $full.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-    if ($trimmed) { $full = $trimmed }
-    $leaf = [IO.Path]::GetFileName($full)
-    if ($leaf -match '\A(?:card-)?task-([0-9a-fA-F]{8})\z') {
-        $id = $Matches[1].ToLowerInvariant()
-    } else {
-        $key = $(if ($IsWindows) { $full.ToLowerInvariant() } else { $full })
-        $hash = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($key))
-        $id = 'wt-' + [Convert]::ToHexString($hash).Substring(0, 8).ToLowerInvariant()
-    }
-    $name = 'bin-' + $id
-    if ($Suffix) { $name += '-' + $Suffix }
-    return ($name + '/')
 }

@@ -67,7 +67,7 @@ concurrency token by default.
 - CARD-0723 checkpoint runs go through the checkpoint tool (`dotnet run --project tools/Antiphon.Checkpoints -- run --plan <plan.md>`), one run per committed slice group, then `wait` until the exit is not 75. Owner: [docs/testing-and-build.md](docs/testing-and-build.md) (Checkpoint runner tool).
 - Every build or test driver takes a host build slot from the session runner (CARD-0589): run-checkpoint.ps1 does it itself, anything else runs as pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>. The wait prints BUILD SLOT lines; exit 4 is a slot timeout to report, never a reason to run unleased. Owner: [docs/testing-and-build.md](docs/testing-and-build.md) (Build slots).
 - Overnight build+test is Windmill `u/lndcobra/antiphon_nightly_tests` (scripts/nightly-run.ps1 against C:\Antiphon\nightly\checkout). Do not add a local Scheduled Task.
-- Do not hand-quote arbitrary alternate OutputPath values. Read the testing/build guide for the current isolated-output, headed-test, test-clock, shared-Postgres, and slow-build procedures.
+- Direct builds use the worktree's native default output, one build at a time (CARD-1629); do not hand-quote arbitrary alternate OutputPath values. Read the testing/build guide for the current custom-output, headed-test, test-clock, shared-Postgres, and slow-build procedures.
 - A test host that boots real Program must never launch against the production runner. Use the established guard or an isolated runner.
 
 ### Sessions and pty

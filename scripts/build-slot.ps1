@@ -4,7 +4,6 @@
     CARD-0589 D-6: run one build or test driver under a host build slot.
 
     pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> [-SlotWaitMinutes 45] [-NoSlot] -- <command...>
-    pwsh -NoProfile -File scripts/build-slot.ps1 -StableOutput [-OutputSuffix <name>]
 
     Takes a lease from the session runner's /build-slots broker (waiting visibly in FIFO order),
     adds the grant's -maxcpucount:N to a dotnet build|test|publish|pack|msbuild command that names
@@ -25,13 +24,6 @@
     bind by name and its process exit code is returned. Windows command shims keep the call
     operator. Offline seam (tests only):
     C589_COMMAND_SHIM runs `pwsh -File <shim> <command...>` through the native launcher.
-    -StableOutput (CARD-1629) takes no lease and runs nothing: it prints this worktree's stable
-    output name, bin-<taskid8>/ (bin-wt-<hash8>/ outside a task worktree), and exits 0. Pass it
-    as --property:OutputPath=<name> to every direct (non-checkpoint) build in this worktree, so
-    MSBuild stays incremental; a new output name per build recompiles almost the whole graph.
-    -OutputSuffix <name> gives a different configuration or property set its own stable name.
-    Exit 2 outside a git worktree, for an unsafe suffix, or with a command after it. Checkpoint
-    tool runs and land verification keep their own cold outputs.
     Owner: docs/testing-and-build.md "Build slots (CARD-0589)". ASCII-only.
 #>
 
@@ -58,8 +50,6 @@ for ($i = 0; $i -lt $argv.Count; $i++) {
 $label = ''
 $waitMinutes = 45.0
 $noSlot = $false
-$stableOutput = $false
-$outputSuffix = $null
 $command = @()
 for ($i = 0; $i -lt $tokens.Count; $i++) {
     $token = [string]$tokens[$i]
@@ -70,29 +60,8 @@ for ($i = 0; $i -lt $tokens.Count; $i++) {
     if ($token -ieq '-Label' -and ($i + 1) -lt $tokens.Count) { $label = [string]$tokens[$i + 1]; $i++; continue }
     if ($token -ieq '-SlotWaitMinutes' -and ($i + 1) -lt $tokens.Count) { $waitMinutes = [double]$tokens[$i + 1]; $i++; continue }
     if ($token -ieq '-NoSlot') { $noSlot = $true; continue }
-    if ($token -ieq '-StableOutput') { $stableOutput = $true; continue }
-    if ($token -ieq '-OutputSuffix' -and ($i + 1) -lt $tokens.Count) { $outputSuffix = [string]$tokens[$i + 1]; $i++; continue }
     $command = @($tokens[$i..($tokens.Count - 1)])
     break
-}
-
-if ($stableOutput -or $null -ne $outputSuffix) {
-    # CARD-1629: print the stable output name and stop; nothing is leased or run.
-    if (-not $stableOutput -or $command.Count -gt 0) {
-        [Console]::Error.WriteLine('build-slot: -StableOutput [-OutputSuffix <name>] prints a name and takes no command')
-        exit 2
-    }
-    $root = @(& git -C (Get-Location).ProviderPath rev-parse --show-toplevel 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $root.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$root[0])) {
-        [Console]::Error.WriteLine('build-slot: -StableOutput must run inside a git worktree')
-        exit 2
-    }
-    $nameArgs = @{ WorktreeRoot = [string]$root[0] }
-    if ($null -ne $outputSuffix) { $nameArgs.Suffix = $outputSuffix }
-    try { $name = Get-AntiphonStableOutputName @nameArgs }
-    catch { [Console]::Error.WriteLine('build-slot: ' + $_.Exception.Message); exit 2 }
-    [Console]::Out.WriteLine($name)
-    exit 0
 }
 
 if ($command.Count -eq 0) {
