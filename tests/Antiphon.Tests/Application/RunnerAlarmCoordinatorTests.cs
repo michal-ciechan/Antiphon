@@ -173,8 +173,13 @@ public sealed class RunnerAlarmCoordinatorTests
         retiredExclusion.Reasons["r3"] = "retired";
         await retired.EvaluateRunnersAsync(T0.AddSeconds(181), CancellationToken.None);
         retiredState.Current.Episodes.ShouldBeEmpty();
-        retiredNotes.Notes.Where(note => note.Header == "[runner r3 recovered]").Select(note => note.SessionId)
-            .ShouldBe([p6]);
+        // CARD-1663 A-1: a retired runner is not a recovery; the notified caller is told so.
+        var retiredNote = retiredNotes.Notes.Where(note => note.Header != "[runner r3 unavailable]").ShouldHaveSingleItem();
+        retiredNote.SessionId.ShouldBe(p6);
+        retiredNote.Header.ShouldBe("[runner r3 retired]");
+        retiredNote.Body.ShouldContain("is retired");
+        retiredNote.Body.ShouldNotContain("dispatch-eligible again");
+        retiredNote.Body.ShouldNotContain("dispatches on the next tick");
     }
 
     [Test]
