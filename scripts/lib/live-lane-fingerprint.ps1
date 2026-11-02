@@ -3,6 +3,7 @@
 # gate credit or stands for execution. It reads Git objects at one commit only (no working
 # tree, no mtime) and makes the lane DUE whenever an input is not proven covered.
 . "$PSScriptRoot/rc-project-selection.ps1"
+. "$PSScriptRoot/live-lane-attestation.ps1"
 
 $script:LiveLaneDeclarationPath='tests/live-lane-inputs.json'
 $script:LiveLaneDeclarationFields=@('manifest','contractFiles','minimumRoots','runtimeRoots','namespaceRoots','instructionPatterns')
@@ -168,7 +169,7 @@ function Get-LiveLaneGrep {
 }
 
 function Get-LiveLaneFingerprint {
-    param([string]$RepositoryRoot, [string]$Sha, [string]$Lane, [hashtable]$DocumentCache = @{})
+    param([string]$RepositoryRoot, [string]$Sha, [string]$Lane, [hashtable]$DocumentCache = @{}, [string]$Attestation)
     if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     if ($Lane -cnotmatch '^[a-z0-9][a-z0-9.-]*$') { throw 'declaration-invalid' }
     $tree=Read-LiveLaneTree $RepositoryRoot $Sha
