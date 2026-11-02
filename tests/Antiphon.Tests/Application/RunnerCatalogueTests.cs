@@ -49,6 +49,36 @@ public sealed class RunnerCatalogueTests
     }
 
     [Test]
+    public async Task C1663_a_retired_runner_reads_retired_not_stale()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: Settings("secret-a"));
+        var at = new DateTimeOffset(2026, 10, 30, 0, 45, 2, TimeSpan.Zero);
+        host.Directory.ApplyState("runner-a", new RunnerState(true, at, "rolling", null, false, null, null, null));
+        host.Directory.ApplyState("runner-b", new RunnerState(true, at, "rolling", "runner-a", true, at, at, "idle"));
+
+        using var response = await host.Http.GetAsync("/api/session-runners");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var retired = doc.RootElement.EnumerateArray().Single(row => row.GetProperty("runnerId").GetString() == "runner-b");
+        retired.GetProperty("unavailableReason").GetString().ShouldBe("retired");
+        retired.GetProperty("available").GetBoolean().ShouldBeFalse();
+        retired.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse();
+        retired.GetProperty("acceptingNewWork").GetBoolean().ShouldBeFalse();
+        var draining = doc.RootElement.EnumerateArray().Single(row => row.GetProperty("runnerId").GetString() == "runner-a");
+        draining.GetProperty("unavailableReason").GetString().ShouldBe("draining");
+        draining.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse();
+
+        // The rollout gates read the status route, not the catalogue; its fields are unchanged.
+        var status = await host.Http.GetFromJsonAsync<PhoneHomeRunnerStatusDto>(
+            "/api/session-runners/runner-b/status", PhoneHomeFraming.Json);
+        status.ShouldNotBeNull();
+        status.RetiredAt.ShouldBe(at);
+        status.Available.ShouldBeFalse();
+        status.DispatchEligible.ShouldBeFalse();
+        status.AcceptingNewWork.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Unknown_id_has_no_borrowed_status()
     {
         await using var host = await PhoneHomeTestHost.StartAsync();
