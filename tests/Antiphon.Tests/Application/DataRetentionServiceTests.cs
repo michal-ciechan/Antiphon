@@ -1316,6 +1316,188 @@ public class DataRetentionServiceTests
         }
     }
 
+    /// <summary>
+    /// CARD-1654. The task prune failing the way a command timeout fails (Npgsql's own
+    /// exception shape) must not abort the sweep: the usage-sample and audit passes after it
+    /// still run, the failure is logged by pass name and exception type only, and the result
+    /// records every pass outcome.
+    /// </summary>
+    [Test]
+    public async Task C1654_FailingPassLeavesLaterPassesRunning()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var rootId = Guid.NewGuid();
+        var sampleId = Guid.NewGuid();
+        var auditId = Guid.NewGuid();
+        await using (var seed = new AppDbContext(plain))
+        {
+            seed.AgentTasks.Add(TerminalTask(rootId, "c1654-row-data", stale));
+            seed.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+            {
+                Id = sampleId, Provider = AgentKind.Codex, SubscriptionKey = "Codex", PlanLabel = "fixture",
+                RemainingPercent = 50, ObservedAt = DaysAgo(40), AgentSessionId = Guid.NewGuid(),
+                SourceCommand = "/status", ParseStatus = SubscriptionUsageParseStatus.Parsed, RawExcerpt = "seeded",
+            });
+            seed.AuditRecords.Add(new AuditRecord
+            {
+                Id = auditId, EventType = AuditEventType.LlmCall, ModelName = "test-model", Summary = "c1654",
+                FullContent = """{"prompt":"old"}""", CreatedAt = DaysAgo(40),
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var fault = new C1654PruneTimeout();
+        var logger = new C768CaptureLogger();
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(fault).Options))
+        {
+            var audit = new AuditSettings { RetentionDays = 14 };
+            result = await new DataRetentionService(db, Options.Create(new RetentionSettings()), Options.Create(audit),
+                TimeProvider.System, logger, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        fault.Thrown.ShouldBeGreaterThan(0, "the injected prune timeout must fire");
+        var passes = (result.Passes ?? []).ToDictionary(p => p.Pass);
+        passes["Tasks"].Status.ShouldBe(DataRetentionPassStatus.Failed);
+        passes["Tasks"].ExceptionType.ShouldBe("Npgsql.NpgsqlException > System.TimeoutException");
+        passes["SubscriptionUsageSamples"].Status.ShouldBe(DataRetentionPassStatus.Completed);
+        passes["WorktreeResidueHeldRows"].Status.ShouldBe(DataRetentionPassStatus.Completed);
+        passes["AuditArchive"].Status.ShouldBe(DataRetentionPassStatus.Completed);
+        passes.Keys.ShouldBe(["CheckCompactionRecoveries", "ConfirmedPublicationIdentities", "ChannelInboundPayloads",
+            "Sessions", "Transcripts", "QueuedMessages", "ResolvedModalEpisodes", "Tasks",
+            "SubscriptionUsageSamples", "WorktreeResidueHeldRows", "AuditArchive"], ignoreOrder: false);
+        passes.Values.Count(p => p.Status == DataRetentionPassStatus.Failed).ShouldBe(1);
+        result.Tasks.ShouldBe(0);
+        result.SubscriptionUsageSamples.ShouldBe(1);
+        result.AuditRecords.ShouldBe(1);
+
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.AnyAsync(t => t.Id == rootId)).ShouldBeTrue();
+        (await verify.SubscriptionUsageSamples.AnyAsync(s => s.Id == sampleId)).ShouldBeFalse();
+        (await verify.AuditRecords.AsNoTracking().SingleAsync(a => a.Id == auditId)).FullContent.ShouldBeNull();
+        var failed = logger.Messages.Where(m => m.StartsWith("Data retention sweep pass ", StringComparison.Ordinal)).ToList();
+        failed.ShouldBe(["Data retention sweep pass Tasks failed: Npgsql.NpgsqlException > System.TimeoutException"]);
+        logger.Messages.ShouldAllBe(m => !m.Contains("c1654-row-data") && !m.Contains(rootId.ToString()));
+    }
+
+    /// <summary>
+    /// CARD-1654. A backlog larger than one batch is pruned across batches: no statement names
+    /// more than <see cref="RetentionSettings.TaskPruneBatchSize"/> roots, every batch statement
+    /// carries the batch timeout, and the trees the old sweep keeps (a live member, a fresh
+    /// member) survive.
+    /// </summary>
+    [Test]
+    public async Task C1654_TaskBacklogPrunesAcrossBoundedBatches()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var staleRoots = Enumerable.Range(0, 7).Select(_ => Guid.NewGuid()).ToList();
+        var liveRoot = Guid.NewGuid();
+        var freshRoot = Guid.NewGuid();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in staleRoots)
+            {
+                seed.AgentTasks.Add(TerminalTask(root, "c1654 backlog", stale));
+                seed.AgentTasks.Add(C1654Child(root, AgentTaskStatus.Failed, stale, stale.AddHours(2)));
+            }
+            seed.AgentTasks.Add(TerminalTask(liveRoot, "c1654 live", stale));
+            seed.AgentTasks.Add(C1654Child(liveRoot, AgentTaskStatus.Working, stale, null));
+            seed.AgentTasks.Add(TerminalTask(freshRoot, "c1654 fresh", stale));
+            seed.AgentTasks.Add(C1654Child(freshRoot, AgentTaskStatus.Succeeded, DaysAgo(2), DaysAgo(1)));
+            await seed.SaveChangesAsync();
+        }
+
+        var recorder = new C1654CommandRecorder();
+        var settings = new RetentionSettings
+        {
+            TaskPruneBatchSize = 3, TaskPruneBatchCommandTimeoutSeconds = 45, TaskPruneMaxBatchesPerSweep = 10,
+        };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(recorder).Options))
+            result = await CreateService(db, settings).RunOnceAsync(CancellationToken.None);
+
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.CountAsync(t => staleRoots.Contains(t.RootTaskId))).ShouldBe(0);
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == liveRoot)).ShouldBe(2);
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == freshRoot)).ShouldBe(2);
+        result.Tasks.ShouldBe(14);
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.Trees.ShouldBe(7);
+        result.TaskPrune.Rows.ShouldBe(14);
+        result.TaskPrune.CandidateRoots.ShouldBe(9);
+        result.TaskPrune.Batches.ShouldBeGreaterThanOrEqualTo(3);
+        result.TaskPrune.ScanComplete.ShouldBeTrue();
+
+        var seeded = staleRoots.Append(liveRoot).Append(freshRoot).ToHashSet();
+        var naming = recorder.Commands.Where(c => c.GuidLists.Any(l => l.Any(seeded.Contains))).ToList();
+        naming.Count.ShouldBeGreaterThan(0);
+        naming.ShouldAllBe(c => c.GuidLists.All(l => l.Count <= 3));
+        var deletes = recorder.Commands.Where(c => c.Text.Contains("DELETE FROM \"AgentTasks\"", StringComparison.Ordinal)).ToList();
+        deletes.Count.ShouldBeGreaterThanOrEqualTo(3, "one delete statement set per batch");
+        deletes.ShouldAllBe(c => c.Timeout == 45);
+        recorder.Commands.Where(c => C1654PruneTimeout.IsEligibility(c.Text)).ShouldAllBe(c => c.Timeout == 45);
+    }
+
+    /// <summary>
+    /// CARD-1654. One sweep stops at <see cref="RetentionSettings.TaskPruneMaxBatchesPerSweep"/>;
+    /// the shared cursor resumes the scan next sweep, which finishes the backlog.
+    /// </summary>
+    [Test]
+    public async Task C1654_SweepCapStopsAndNextSweepResumes()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 7).Select(_ => Guid.NewGuid()).OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1654 cap", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var settings = new RetentionSettings { TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 2 };
+        var cursor = new DataRetentionTaskCursor();
+        async Task<DataRetentionSweepResult> SweepAsync()
+        {
+            await using var db = new AppDbContext(plain);
+            var audit = new AuditSettings();
+            return await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, NullLogger<DataRetentionService>.Instance,
+                new AuditService(db, Options.Create(audit)), taskCursor: cursor).RunOnceAsync(CancellationToken.None);
+        }
+
+        var first = await SweepAsync();
+        first.TaskPrune!.Batches.ShouldBe(2);
+        first.TaskPrune.ScanComplete.ShouldBeFalse();
+        first.TaskPrune.Trees.ShouldBe(4);
+        await using (var mid = new AppDbContext(plain))
+            (await mid.AgentTasks.Where(t => roots.Contains(t.Id)).Select(t => t.Id).ToListAsync())
+                .OrderBy(g => g.ToString(), StringComparer.Ordinal).ShouldBe(roots.Skip(4));
+        cursor.After.ShouldBe(roots[3]);
+
+        var second = await SweepAsync();
+        second.TaskPrune!.Trees.ShouldBe(3);
+        second.TaskPrune.ScanComplete.ShouldBeTrue();
+        cursor.After.ShouldBeNull();
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.CountAsync(t => roots.Contains(t.Id))).ShouldBe(0);
+    }
+
+    private static AgentTask C1654Child(Guid root, AgentTaskStatus status, DateTime createdAt, DateTime? completedAt) => new()
+    {
+        Id = Guid.NewGuid(), RootTaskId = root, ParentTaskId = root, Depth = 1, Title = "c1654 child", Goal = "retention",
+        Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, Status = status,
+        WorkingDirectory = Path.GetTempPath(), ReplyTo = AgentTaskReplyTo.None,
+        CreatedAt = createdAt, CompletedAt = completedAt,
+    };
+
     [Test]
     public async Task RunOnce_archives_old_audit_FullContent_using_the_configured_window()
     {
@@ -2568,6 +2750,60 @@ public class DataRetentionServiceTests
             base.Dispose(disposing);
         }
         public override ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>CARD-1654. Fails the task-prune eligibility query the way Npgsql reports a command timeout.</summary>
+    private sealed class C1654PruneTimeout : DbCommandInterceptor
+    {
+        public int Thrown { get; private set; }
+
+        public static bool IsEligibility(string sql) =>
+            System.Text.RegularExpressions.Regex.IsMatch(sql, @"GROUP BY \w+\.""RootTaskId""");
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (IsEligibility(command.CommandText))
+            {
+                Thrown++;
+                throw new Npgsql.NpgsqlException("Exception while reading from stream",
+                    new TimeoutException("Timeout during reading attempt"));
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>CARD-1654. Records every command's text, timeout and Guid-collection parameters.</summary>
+    private sealed class C1654CommandRecorder : DbCommandInterceptor
+    {
+        public sealed record Seen(string Text, int Timeout, IReadOnlyList<IReadOnlyList<Guid>> GuidLists);
+
+        public List<Seen> Commands { get; } = [];
+
+        private void Record(DbCommand command) => Commands.Add(new Seen(command.CommandText, command.CommandTimeout,
+            command.Parameters.Cast<DbParameter>().Select(p => p.Value).OfType<IEnumerable<Guid>>()
+                .Select(ids => (IReadOnlyList<Guid>)ids.ToList()).ToList()));
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Record(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Record(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<object> result, CancellationToken cancellationToken = default)
+        {
+            Record(command);
+            return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     private static DataRetentionService CreateService(
