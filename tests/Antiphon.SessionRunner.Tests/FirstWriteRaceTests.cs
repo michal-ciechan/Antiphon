@@ -17,7 +17,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class FirstWriteRaceTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task input_racing_a_cold_launch_waits_for_the_host_and_delivers()
@@ -41,7 +42,7 @@ public class FirstWriteRaceTests
                 new RunnerLaunchRequest(
                     sessionId,
                     Cmd,
-                    ["/d", "/q", "/k", "@echo off & prompt $G"],
+                    HerdrTestProcess.InteractiveArgs,
                     new Dictionary<string, string>(),
                     Path.GetTempPath(),
                     Cols: 100,

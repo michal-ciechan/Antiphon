@@ -78,8 +78,8 @@ public class RunnerMultilinePromptDeliveryTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId,
-            Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            HerdrTestProcess.ShellPath, // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere
+            HerdrTestProcess.InteractiveArgs,
             new Dictionary<string, string>(),
             Path.GetTempPath(),
             80, 24), cts.Token);

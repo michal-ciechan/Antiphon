@@ -37,7 +37,18 @@ public class SessionBufferBoundsTests
     private const int Cap = 1024;
     private const int FillerLines = 100;
 
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
+
+    // Windows keeps the original cmd syntax byte for byte. The sh marker is split by quotes so the
+    // tty echo of the typed line cannot satisfy the wait before the shell has run the loop.
+    private static string FillerInput => OperatingSystem.IsWindows()
+        ? $"for /l %i in (1,1,{FillerLines}) do @echo filler-%i-0123456789012345678901234567890123456789\r"
+        : $"i=1; while [ $i -le {FillerLines} ]; do echo filler-$i-0123456789012345678901234567890123456789; i=$((i+1)); done\r";
+
+    private static string MarkerInput => OperatingSystem.IsWindows()
+        ? "echo NEWEST-MARKER\r"
+        : "echo NEWEST-\"\"MARKER\r";
 
     [Test]
     public async Task Live_buffer_stays_bounded_and_keeps_the_newest_output()
@@ -53,9 +64,9 @@ public class SessionBufferBoundsTests
             // ~5KB of output - many times the 1KB cap, and well past the 2x-cap trim ceiling.
             await runtime.SendInputAsync(
                 sessionId,
-                $"for /l %i in (1,1,{FillerLines}) do @echo filler-%i-0123456789012345678901234567890123456789\r",
+                FillerInput,
                 CancellationToken.None);
-            await runtime.SendInputAsync(sessionId, "echo NEWEST-MARKER\r", CancellationToken.None);
+            await runtime.SendInputAsync(sessionId, MarkerInput, CancellationToken.None);
             await WaitForSnapshotAsync(runtime, sessionId, text => text.Contains("NEWEST-MARKER"));
 
             var raw = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput;
@@ -89,9 +100,9 @@ public class SessionBufferBoundsTests
         {
             await runtime.SendInputAsync(
                 sessionId,
-                $"for /l %i in (1,1,{FillerLines}) do @echo filler-%i-0123456789012345678901234567890123456789\r",
+                FillerInput,
                 CancellationToken.None);
-            await runtime.SendInputAsync(sessionId, "echo NEWEST-MARKER\r", CancellationToken.None);
+            await runtime.SendInputAsync(sessionId, MarkerInput, CancellationToken.None);
             await WaitForSnapshotAsync(runtime, sessionId, text => text.Contains("NEWEST-MARKER"));
 
             // The on-disk log is much bigger than the cap - that is the point of the test.
@@ -130,7 +141,7 @@ public class SessionBufferBoundsTests
         var request = new RunnerLaunchRequest(
             sessionId,
             Cmd,
-            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            HerdrTestProcess.InteractiveArgs,
             new Dictionary<string, string>(),
             Path.GetTempPath(),
             Cols: 100,

@@ -17,7 +17,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class SessionLivenessTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere; a hard-coded cmd.exe never runs on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task Sweep_marks_running_session_with_vanished_process_as_exited_and_publishes_the_missed_event()
@@ -109,7 +110,7 @@ public class SessionLivenessTests
     [Test]
     public async Task System_probe_reports_an_exited_process_dead()
     {
-        var psi = new ProcessStartInfo(Cmd, "/c exit 0")
+        var psi = new ProcessStartInfo(Cmd, OperatingSystem.IsWindows() ? "/c exit 0" : "-c \"exit 0\"")
         {
             CreateNoWindow = true,
             UseShellExecute = false
@@ -158,7 +159,7 @@ public class SessionLivenessTests
         var request = new RunnerLaunchRequest(
             sessionId,
             Cmd,
-            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            HerdrTestProcess.InteractiveArgs,
             new Dictionary<string, string>(),
             Path.GetTempPath(),
             Cols: 100,

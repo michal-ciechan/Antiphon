@@ -152,6 +152,8 @@ public sealed class HerdrPaneDisposalGuardedLiveTests
         public Task<HerdrPaneDisposalPreview> PreviewAsync() => Service.PreviewAsync(new(Pane, Session), default);
         public async Task StartOwnedCodexDummyAsync()
         {
+            if (!OperatingSystem.IsWindows())
+                Skip.Test("CARD-1652: the owned Codex dummy is a renamed Windows command interpreter");
             // A renamed Windows command interpreter is an inert dummy, with no provider home,
             // network client or authentication. Exact recorded OS identity is the proof arm.
             var dummy = Path.Combine(Root, "codex.exe"); File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), dummy);
