@@ -618,6 +618,9 @@ public class AgentTaskWorktreeBaseResolverTests
         explicitRequest.RequestedWorktreeBaseTaskId = source.Id;
         var explicitSelection = await ResolveAsync(db, explicitRequest, fault);
         if (scenario == "git_error") fault!.Calls.ShouldBeGreaterThan(0, "the common-directory fault must be reached");
+        var freshRequest = NewRequest(repo, card.Id);
+        freshRequest.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Target;
+        var fresh = await ResolveAsync(db, freshRequest, fault);
         if (scenario is "unregistered_local_branch" or "missing_original_directory")
         {
             auto.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
@@ -626,14 +629,36 @@ public class AgentTaskWorktreeBaseResolverTests
             explicitSelection.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
             explicitSelection.SourceSha.ShouldBe(sha);
         }
+        else if (scenario == "remote_only")
+        {
+            // CARD-1640 (was: Target plus a warning). The published branch is read from its local
+            // remote-tracking ref; an explicit -BaseTask keeps its local-branch refusal.
+            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            auto.SourceTaskId.ShouldBe(source.Id);
+            auto.SourceSha.ShouldBe(sha);
+            auto.CandidateWarnings.ShouldContain(w => w.Contains("origin/" + source.WorktreeBranch!, StringComparison.Ordinal));
+            explicitSelection.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
+            explicitSelection.Reason.ShouldBe("requested_source_invalid");
+        }
         else
         {
-            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+            // CARD-1640 (was: Target plus a warning). A same-card source this store cannot read never
+            // silently becomes the target: dispatch blocks (SyncUnverified) and names the remedy.
+            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
+            auto.Reason.ShouldBe("source_unreadable");
+            auto.SyncUnverified.ShouldBeTrue();
+            auto.SourceSha.ShouldBeNull();
+            auto.CandidateWarnings[0].ShouldContain(source.WorktreeBranch!);
+            auto.CandidateWarnings[0].ShouldContain("-StartRef");
+            auto.CandidateWarnings[0].ShouldContain("-FreshWorktree");
             auto.CandidateWarnings.ShouldContain(w => w.Contains(source.WorktreeBranch!, StringComparison.Ordinal)
                 && w.Contains(scenario == "git_error" ? "unknown" : "no local commit", StringComparison.Ordinal));
             explicitSelection.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
             explicitSelection.Reason.ShouldBe("requested_source_invalid");
         }
+        // -FreshWorktree stays the explicit opt-out in every scenario.
+        fresh.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+        fresh.Reason.ShouldBeNull();
         if (scenario == "remote_only")
             (await repo.GitReadAsync("rev-parse", "refs/remotes/origin/" + source.WorktreeBranch!)).Trim().ShouldBe(sha);
     }

@@ -1151,7 +1151,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(30_000)]
-    public async Task a_sibling_whose_branch_was_deleted_is_silent(CancellationToken ct)
+    public async Task a_sibling_whose_branch_was_deleted_blocks_instead_of_using_the_target(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("card0215-gone");
         await repo.CommitFileAsync("README.md", "base\n");
@@ -1168,14 +1168,17 @@ public partial class AgentTaskDispatchBaseGuardTests
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
         await dispatcher.TickInspectedAsync(ct);
 
+        // CARD-1640 (was: dispatched silently from the target). An unlanded same-card source that
+        // cannot be read here blocks with the remedy; it is never replaced by the target.
         db.ChangeTracker.Clear();
-        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
-        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        (await db.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held
-                && e.Detail != DispatchHoldDetails.SiblingInspectionPending, ct)).ShouldBe(0);
-        (await db.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
+        var blocked = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.WorktreePath.ShouldBeNull();
+        blocked.AgentSessionId.ShouldBeNull();
+        blocked.FailureReason.ShouldContain("source_unreadable");
+        blocked.FailureReason.ShouldContain(sibling.WorktreeBranch!);
+        blocked.FailureReason.ShouldContain("-StartRef");
+        blocked.FailureReason.ShouldContain("-FreshWorktree");
     }
 
     [Test]
