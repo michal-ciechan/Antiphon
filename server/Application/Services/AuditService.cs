@@ -290,7 +290,7 @@ public class AuditService
     /// </summary>
     public async Task<ArchiveResultDto> ArchiveFullContentAsync(int olderThanDays, CancellationToken cancellationToken)
     {
-        var cutoff = DateTime.UtcNow.AddDays(-olderThanDays);
+        var cutoff = ArchiveCutoff(olderThanDays);
 
         var archived = await _db.AuditRecords
             .Where(r => r.CreatedAt < cutoff && r.FullContent != null)
@@ -298,6 +298,20 @@ public class AuditService
 
         return new ArchiveResultDto(archived, cutoff);
     }
+
+    /// <summary>The <see cref="ArchiveFullContentAsync"/> cutoff for <paramref name="olderThanDays"/>.</summary>
+    public static DateTime ArchiveCutoff(int olderThanDays) => DateTime.UtcNow.AddDays(-olderThanDays);
+
+    /// <summary>
+    /// CARD-1658. One bounded batch of <see cref="ArchiveFullContentAsync"/>: the same rule and the
+    /// same effect (FullContent is nulled and no copy is kept), on at most
+    /// <paramref name="batchSize"/> records, oldest first. Returns the records changed.
+    /// </summary>
+    public Task<int> ArchiveFullContentBatchAsync(DateTime cutoff, int batchSize, CancellationToken cancellationToken) =>
+        _db.AuditRecords
+            .Where(r => r.CreatedAt < cutoff && r.FullContent != null)
+            .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id).Take(batchSize)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.FullContent, (string?)null), cancellationToken);
 
     private static async Task<CostSummaryDto> BuildCostSummaryAsync(
         IQueryable<AuditRecord> query,

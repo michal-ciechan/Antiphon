@@ -3,6 +3,8 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -81,26 +83,34 @@ public sealed class DataRetentionService
         var taskTally = new TaskPruneTally();
         await RunPassAsync(passes, "Tasks", _settings.TaskRetentionDays > 0,
             () => PruneTaskBatchesAsync(taskTally, ct), ct);
-        var usage = await RunPassAsync(passes, "SubscriptionUsageSamples", _settings.SubscriptionUsageRetentionDays > 0,
-            () => PruneSubscriptionUsageSamplesAsync(ct), ct);
-        var residueRows = await RunPassAsync(passes, "WorktreeResidueHeldRows",
-            _settings.WorktreeResidueHeldRowRetentionDays > 0, () => PruneWorktreeResidueHeldRowsAsync(ct), ct);
-        var auditRecords = await RunPassAsync(passes, "AuditArchive", _auditSettings.RetentionDays > 0,
-            async () => (await _auditService.ArchiveFullContentAsync(_auditSettings.RetentionDays, ct)).ArchivedCount, ct);
+        // CARD-1658: the passes after Tasks run as bounded batches and report their progress.
+        var usageTally = new RowBatchTally();
+        await RunPassAsync(passes, "SubscriptionUsageSamples", _settings.SubscriptionUsageRetentionDays > 0,
+            () => PruneSubscriptionUsageSamplesAsync(usageTally, ct), ct, usageTally);
+        var residueTally = new RowBatchTally();
+        await RunPassAsync(passes, "WorktreeResidueHeldRows",
+            _settings.WorktreeResidueHeldRowRetentionDays > 0, () => PruneWorktreeResidueHeldRowsAsync(residueTally, ct), ct,
+            residueTally);
+        var auditTally = new RowBatchTally();
+        await RunPassAsync(passes, "AuditArchive", _auditSettings.RetentionDays > 0,
+            () => ArchiveAuditFullContentAsync(auditTally, ct), ct, auditTally);
 
-        // A failed Tasks pass still reports the batches it committed before the failure.
+        // A failed Tasks or row pass still reports the batches it committed before the failure.
         var taskPrune = _settings.TaskRetentionDays > 0 ? taskTally.Snapshot(_taskCursor.After) : null;
-        return new DataRetentionSweepResult(transcripts, queued, sessions, taskTally.Rows, auditRecords, usage, residueRows,
-            passes, taskPrune);
+        return new DataRetentionSweepResult(transcripts, queued, sessions, taskTally.Rows, auditTally.Rows, usageTally.Rows,
+            residueTally.Rows, passes, taskPrune);
     }
 
     /// <summary>
     /// CARD-1654. Runs one pass and contains its failure. Shutdown cancellation still propagates.
     /// The log names the pass and the exception type chain only: an exception message can carry
     /// row data (a constraint detail, a parameter value), so it is never logged here.
+    /// CARD-1658: a batched row pass also records its progress, including a failed pass's
+    /// committed batches.
     /// </summary>
     private async Task<int> RunPassAsync(
-        List<DataRetentionPassOutcome> passes, string name, bool enabled, Func<Task<int>> pass, CancellationToken ct)
+        List<DataRetentionPassOutcome> passes, string name, bool enabled, Func<Task<int>> pass, CancellationToken ct,
+        RowBatchTally? tally = null)
     {
         if (!enabled)
         {
@@ -111,7 +121,7 @@ public sealed class DataRetentionService
         try
         {
             var count = await pass();
-            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Completed));
+            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Completed, null, tally?.Snapshot()));
             return count;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -120,7 +130,7 @@ public sealed class DataRetentionService
             _db.ChangeTracker.Clear();
             var types = ExceptionTypeChain(ex);
             _logger.LogWarning("Data retention sweep pass {Pass} failed: {ExceptionType}", name, types);
-            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Failed, types));
+            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Failed, types, tally?.Snapshot()));
             return 0;
         }
     }
@@ -482,6 +492,11 @@ public sealed class DataRetentionService
     /// than the cutoff, which every row of an eligible tree is, so no eligible tree is skipped and
     /// no kept tree becomes eligible. At most <see cref="RetentionSettings.TaskPruneMaxBatchesPerSweep"/>
     /// batches run per sweep; the shared cursor resumes there next sweep.
+    /// CARD-1658: the outbound-task-id protection is loaded for every batch attempt, so a task that
+    /// became referenced after an earlier batch is never deleted by a later one. A batch that fails
+    /// <see cref="TaskBatchAttempts"/> times in a row is skipped (logged by exception type only) and
+    /// the scan continues; the skipped trees are revisited when the scan wraps, and the pass still
+    /// reports the last failure after it has moved on.
     /// </summary>
     private async Task<int> PruneTaskBatchesAsync(TaskPruneTally tally, CancellationToken ct)
     {
@@ -494,7 +509,7 @@ public sealed class DataRetentionService
         var batchTimeout = TimeSpan.FromSeconds(
             _settings.TaskPruneBatchCommandTimeoutSeconds > 0 ? _settings.TaskPruneBatchCommandTimeoutSeconds : 60);
 
-        var outboundTaskIds = await LoadOutboundTaskIdsAsync(ct);
+        Exception? skipped = null;
         var previousTimeout = _db.Database.GetCommandTimeout();
         _db.Database.SetCommandTimeout(batchTimeout);
         try
@@ -515,9 +530,33 @@ public sealed class DataRetentionService
 
                 tally.Batches++;
                 tally.CandidateRoots += batch.Count;
-                var (trees, rows) = await PruneTaskBatchAsync(batch, cutoff, outboundTaskIds, ct);
-                tally.Trees += trees;
-                tally.Rows += rows;
+                var started = Stopwatch.GetTimestamp();
+                for (var attempt = 1; ; attempt++)
+                {
+                    // Not a range fault: a protection load failure (a malformed descriptor) ends the pass.
+                    var outboundTaskIds = await LoadOutboundTaskIdsAsync(ct);
+                    try
+                    {
+                        var (trees, rows) = await PruneTaskBatchAsync(batch, cutoff, outboundTaskIds, ct);
+                        tally.Trees += trees;
+                        tally.Rows += rows;
+                        break;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        _db.ChangeTracker.Clear();
+                        tally.FailedAttempts++;
+                        if (attempt < TaskBatchAttempts)
+                            continue;
+                        tally.SkippedRanges++;
+                        skipped = ex;
+                        _logger.LogWarning(
+                            "Data retention task prune skipped a failing root range after {Attempts} attempt(s): {ExceptionType}",
+                            attempt, ExceptionTypeChain(ex));
+                        break;
+                    }
+                }
+                tally.BatchMilliseconds.Add((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 if (batch.Count < batchSize)
                 {
                     _taskCursor.After = null;
@@ -536,12 +575,17 @@ public sealed class DataRetentionService
         if (tally.Rows > 0 || !tally.ScanComplete)
         {
             _logger.LogInformation(
-                "Pruned {Count} task row(s) in {Trees} tree(s) past retention over {Batches} batch(es); scan complete {ScanComplete}",
-                tally.Rows, tally.Trees, tally.Batches, tally.ScanComplete);
+                "Pruned {Count} task row(s) in {Trees} tree(s) past retention over {Batches} batch(es); scan complete {ScanComplete}; skipped range(s) {SkippedRanges}; batch ms {BatchMilliseconds}",
+                tally.Rows, tally.Trees, tally.Batches, tally.ScanComplete, tally.SkippedRanges,
+                string.Join(",", tally.BatchMilliseconds));
         }
 
+        if (skipped is not null)
+            ExceptionDispatchInfo.Capture(skipped).Throw();
         return tally.Rows;
     }
+
+    private const int TaskBatchAttempts = 3;
 
     private async Task<(int Trees, int Rows)> PruneTaskBatchAsync(
         List<Guid> batch, DateTime cutoff, HashSet<Guid> outboundTaskIds, CancellationToken ct)
@@ -680,24 +724,89 @@ public sealed class DataRetentionService
     /// Deletes subscription-usage samples older than
     /// <see cref="RetentionSettings.SubscriptionUsageRetentionDays"/>. Independent of session
     /// liveness — the quota belongs to a subscription. <c>&lt;= 0</c> disables the pass.
+    /// CARD-1658: deleted in bounded batches; see <see cref="PruneRowBatchesAsync"/>.
     /// </summary>
-    public async Task<int> PruneSubscriptionUsageSamplesAsync(CancellationToken ct)
+    public Task<int> PruneSubscriptionUsageSamplesAsync(CancellationToken ct) =>
+        PruneSubscriptionUsageSamplesAsync(new RowBatchTally(), ct);
+
+    private async Task<int> PruneSubscriptionUsageSamplesAsync(RowBatchTally tally, CancellationToken ct)
     {
         if (_settings.SubscriptionUsageRetentionDays <= 0)
             return 0;
 
         var cutoff = UtcNow().AddDays(-_settings.SubscriptionUsageRetentionDays);
-        var removed = await _db.SubscriptionUsageSamples
+        var removed = await PruneRowBatchesAsync(tally, size => _db.SubscriptionUsageSamples
             .Where(s => s.ObservedAt < cutoff)
-            .ExecuteDeleteAsync(ct);
-        if (removed > 0)
+            .OrderBy(s => s.Id).Take(size)
+            .ExecuteDeleteAsync(ct));
+        if (removed > 0 || !tally.Complete)
         {
             _logger.LogInformation(
-                "Pruned {Count} subscription-usage sample(s) past retention",
-                removed);
+                "Pruned {Count} subscription-usage sample(s) past retention over {Batches} batch(es); complete {Complete}; batch ms {BatchMilliseconds}",
+                removed, tally.Batches, tally.Complete, string.Join(",", tally.BatchMilliseconds));
         }
 
         return removed;
+    }
+
+    /// <summary>
+    /// CARD-1658. The audit pass: nulls <c>FullContent</c> on records older than
+    /// <see cref="AuditSettings.RetentionDays"/>, keeping no copy (the same cutoff and effect as
+    /// <see cref="AuditService.ArchiveFullContentAsync"/>, by design), in bounded batches.
+    /// </summary>
+    private async Task<int> ArchiveAuditFullContentAsync(RowBatchTally tally, CancellationToken ct)
+    {
+        var cutoff = AuditService.ArchiveCutoff(_auditSettings.RetentionDays);
+        var archived = await PruneRowBatchesAsync(tally,
+            size => _auditService.ArchiveFullContentBatchAsync(cutoff, size, ct));
+        if (archived > 0 || !tally.Complete)
+        {
+            _logger.LogInformation(
+                "Archived FullContent of {Count} audit record(s) past retention over {Batches} batch(es); complete {Complete}; batch ms {BatchMilliseconds}",
+                archived, tally.Batches, tally.Complete, string.Join(",", tally.BatchMilliseconds));
+        }
+
+        return archived;
+    }
+
+    /// <summary>
+    /// CARD-1658. The passes after Tasks were single unbounded statements under the 30 s default
+    /// command timeout. Each now runs <paramref name="batch"/> (one statement touching at most
+    /// <see cref="RetentionSettings.RowPruneBatchSize"/> rows, its own implicit transaction) under
+    /// <see cref="RetentionSettings.RowPruneBatchCommandTimeoutSeconds"/>, until a batch comes back
+    /// short or <see cref="RetentionSettings.RowPruneMaxBatchesPerSweep"/> is reached. The predicate
+    /// is the pass's own, so what a pass deletes is unchanged; a capped pass continues next sweep.
+    /// </summary>
+    private async Task<int> PruneRowBatchesAsync(RowBatchTally tally, Func<int, Task<int>> batch)
+    {
+        var batchSize = _settings.RowPruneBatchSize > 0 ? _settings.RowPruneBatchSize : 1000;
+        var maxBatches = _settings.RowPruneMaxBatchesPerSweep > 0 ? _settings.RowPruneMaxBatchesPerSweep : 50;
+        var batchTimeout = TimeSpan.FromSeconds(
+            _settings.RowPruneBatchCommandTimeoutSeconds > 0 ? _settings.RowPruneBatchCommandTimeoutSeconds : 60);
+        var previousTimeout = _db.Database.GetCommandTimeout();
+        _db.Database.SetCommandTimeout(batchTimeout);
+        try
+        {
+            while (tally.Batches < maxBatches)
+            {
+                var started = Stopwatch.GetTimestamp();
+                var rows = await batch(batchSize);
+                tally.Batches++;
+                tally.Rows += rows;
+                tally.BatchMilliseconds.Add((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                if (rows < batchSize)
+                {
+                    tally.Complete = true;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _db.Database.SetCommandTimeout(previousTimeout);
+        }
+
+        return tally.Rows;
     }
 
     /// <summary>
@@ -726,8 +835,12 @@ public sealed class DataRetentionService
     /// <c>Preview</c> whose <c>EvaluatedAt</c> is past <see cref="RetentionSettings.WorktreeResidueHeldRowRetentionDays"/>.
     /// Run headers and action rows (<c>Queued</c>, <c>Refused</c>, <c>Partial</c>, <c>Removed</c>) are never
     /// touched, so every queued cleanup request keeps its provenance. Nonpositive days disables the pass.
+    /// CARD-1658: deleted in bounded batches; see <see cref="PruneRowBatchesAsync"/>.
     /// </summary>
-    public async Task<int> PruneWorktreeResidueHeldRowsAsync(CancellationToken ct)
+    public Task<int> PruneWorktreeResidueHeldRowsAsync(CancellationToken ct) =>
+        PruneWorktreeResidueHeldRowsAsync(new RowBatchTally(), ct);
+
+    private async Task<int> PruneWorktreeResidueHeldRowsAsync(RowBatchTally tally, CancellationToken ct)
     {
         if (_settings.WorktreeResidueHeldRowRetentionDays <= 0)
             return 0;
@@ -735,14 +848,15 @@ public sealed class DataRetentionService
         var cutoff = UtcNow().AddDays(-_settings.WorktreeResidueHeldRowRetentionDays);
         var held = nameof(WorktreeResidueCandidateOutcome.Held);
         var preview = nameof(WorktreeResidueCandidateOutcome.Preview);
-        var removed = await _db.WorktreeResidueRunCandidates
+        var removed = await PruneRowBatchesAsync(tally, size => _db.WorktreeResidueRunCandidates
             .Where(c => (c.Outcome == held || c.Outcome == preview) && c.EvaluatedAt < cutoff)
-            .ExecuteDeleteAsync(ct);
-        if (removed > 0)
+            .OrderBy(c => c.Id).Take(size)
+            .ExecuteDeleteAsync(ct));
+        if (removed > 0 || !tally.Complete)
         {
             _logger.LogInformation(
-                "Pruned {Count} worktree-residue Held/Preview candidate row(s) past retention; run headers and action rows kept",
-                removed);
+                "Pruned {Count} worktree-residue Held/Preview candidate row(s) past retention over {Batches} batch(es); complete {Complete}; batch ms {BatchMilliseconds}; run headers and action rows kept",
+                removed, tally.Batches, tally.Complete, string.Join(",", tally.BatchMilliseconds));
         }
 
         return removed;
@@ -757,9 +871,24 @@ public sealed class DataRetentionService
         public int Trees;
         public int Rows;
         public bool ScanComplete;
+        public int FailedAttempts;
+        public int SkippedRanges;
+        public List<long> BatchMilliseconds { get; } = [];
 
         public DataRetentionTaskPruneProgress Snapshot(Guid? cursor) =>
-            new(Batches, CandidateRoots, Trees, Rows, ScanComplete, cursor);
+            new(Batches, CandidateRoots, Trees, Rows, ScanComplete, cursor, FailedAttempts, SkippedRanges,
+                BatchMilliseconds.ToList());
+    }
+
+    /// <summary>CARD-1658. Progress of one batched row pass.</summary>
+    private sealed class RowBatchTally
+    {
+        public int Batches;
+        public int Rows;
+        public bool Complete;
+        public List<long> BatchMilliseconds { get; } = [];
+
+        public DataRetentionBatchProgress Snapshot() => new(Batches, Rows, Complete, BatchMilliseconds.ToList());
     }
 
     private async Task<HashSet<Guid>> LoadOutboundTaskIdsAsync(CancellationToken ct)
