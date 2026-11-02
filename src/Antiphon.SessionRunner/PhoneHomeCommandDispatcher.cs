@@ -118,7 +118,13 @@ public sealed class PhoneHomeCommandDispatcher
     /// CARD-0604: the same DTO the Capabilities operation answers with, exposed so registration
     /// can carry it. One source, so a registration can never disagree with a later probe.
     /// </summary>
-    public RunnerCapabilitiesDto Capabilities() => _runtime.Capabilities();
+    public RunnerCapabilitiesDto Capabilities() => WithSlotFeature(_runtime.Capabilities());
+
+    /// <summary>CARD-0824 S1: <c>workspaceSlotV1</c> is advertised only while this runner's slot flag is on.</summary>
+    private RunnerCapabilitiesDto WithSlotFeature(RunnerCapabilitiesDto capabilities) =>
+        !_settings.WorkspaceSlots.Enabled || capabilities.Features?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1) == true
+            ? capabilities
+            : capabilities with { Features = [.. capabilities.Features ?? [], RunnerCapabilityFeatures.WorkspaceSlotV1] };
 
     /// <summary>The socket writer calls this only after an accepted Retire reply was sent.</summary>
     public void NotifyRetireReplyWritten()
@@ -151,6 +157,27 @@ public sealed class PhoneHomeCommandDispatcher
     private RunnerWorkspaceSlotPool SlotPool() =>
         Workspace().SlotPool ?? throw new PhoneHomeAdmissionException(
             PhoneHomeProblemTypes.UnsupportedTarget, WorkspaceSlotCodes.Disabled, 409);
+
+    private DateTimeOffset? _slotsMaintainedAt;
+
+    /// <summary>
+    /// CARD-0824 S1 pool upkeep, run under the mutation lock before a slot operation: crash recovery
+    /// once per process, then maintenance (schedule marks, deferred releases, idle retirement) at
+    /// most every 15 minutes.
+    /// </summary>
+    private async Task<RunnerWorkspaceSlotPool> MaintainedSlotPoolAsync(CancellationToken ct)
+    {
+        var pool = SlotPool();
+        var now = _time.GetUtcNow();
+        if (_slotsMaintainedAt is null)
+            await pool.StartAsync(ct);
+        else if (now - _slotsMaintainedAt >= TimeSpan.FromMinutes(15))
+            await pool.MaintainAsync(ct);
+        else
+            return pool;
+        _slotsMaintainedAt = now;
+        return pool;
+    }
 
     // CARD-1032: an unbound mirror still uses this historical fallback, including the
     // custody ledger guid when StoreIdPath cannot be parsed. A bound mirror never does.
@@ -316,7 +343,7 @@ public sealed class PhoneHomeCommandDispatcher
         {
             return request.Operation.Value switch
             {
-                PhoneHomeOperation.Capabilities => Result(request, _runtime.Capabilities()),
+                PhoneHomeOperation.Capabilities => Result(request, Capabilities()),
                 PhoneHomeOperation.CompletedCardWorkspaceInspect => await MutateAsync(request, async () =>
                 {
                     RequireCompletedCardCapability();
@@ -397,25 +424,27 @@ public sealed class PhoneHomeCommandDispatcher
                         // No later slice in the CARD-1032 plan removes this compatibility path.
                         workspace.BindRecipient(_settings.RunnerId, RecipientStoreId());
                     }
+                    if (body.Slot == true && workspace.SlotPool is not null)
+                        await MaintainedSlotPoolAsync(ct);
                     return Result(request, await workspace.MirrorAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceSlotRelease => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceSlotReleaseRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace slot release body is required.");
-                    return Result(request, await SlotPool().ReleaseAsync(body, ct));
+                    return Result(request, await (await MaintainedSlotPoolAsync(ct)).ReleaseAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceSlotColdReset => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceSlotColdResetRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace slot cold-reset body is required.");
-                    return Result(request, await SlotPool().ColdResetAsync(body, ct));
+                    return Result(request, await (await MaintainedSlotPoolAsync(ct)).ColdResetAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceSlotQuarantineRelease => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceSlotQuarantineReleaseRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace slot quarantine release body is required.");
-                    return Result(request, await SlotPool().ReleaseQuarantineAsync(body, ct));
+                    return Result(request, await (await MaintainedSlotPoolAsync(ct)).ReleaseQuarantineAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceRemove => await MutateAsync(request, async () =>
                 {

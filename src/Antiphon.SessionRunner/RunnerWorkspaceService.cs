@@ -542,6 +542,10 @@ public sealed partial class RunnerWorkspaceService
         if (!IsUnderRoot(path))
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Only a mirror under the worktree root may be removed.", 409);
+        // CARD-0824 S1 §3.6: a slot directory is the pool's, never a legacy removal's, whatever the flag.
+        if (RunnerWorkspaceSlotPool.IsSlotLeaf(Path.GetFileName(path.Replace('\\', '/').TrimEnd('/')))
+            || SlotPool?.SlotByPath(path) is not null)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, WorkspaceSlotCodes.SlotManaged, 409);
         await using var workspace = WorkspaceUseGate is null ? null :
             await WorkspaceUseGate.AcquireRemovalAsync(path, _worktreeRoot, ct);
         if (!Directory.Exists(path))
@@ -590,8 +594,14 @@ public sealed partial class RunnerWorkspaceService
     {
         var path = request.Path ?? "";
         var name = Path.GetFileName(path.TrimEnd('/', '\\'));
-        if (!IsUnderRoot(path) || !NamePattern.IsMatch(name)
-            || (!DelegateBranchName.TryParse(request.Branch, out var parsed) || parsed.Branch != request.Branch || parsed.ShortId != name[5..])
+        // CARD-0824 S1: a slot leaf is admitted only for its current lessee's own branch (by ledger).
+        var slot = RunnerWorkspaceSlotPool.IsSlotLeaf(name) ? SlotPool?.SlotByPath(path) : null;
+        var owner = slot is { State: WorkspaceSlotStates.Leased, TaskId: { } lessee }
+            && string.Equals(slot.Branch, request.Branch, StringComparison.Ordinal)
+            ? lessee.ToString("N")[..8]
+            : NamePattern.IsMatch(name) ? name[5..] : null;
+        if (!IsUnderRoot(path) || owner is null
+            || (!DelegateBranchName.TryParse(request.Branch, out var parsed) || parsed.Branch != request.Branch || parsed.ShortId != owner)
             || !ShaPattern.IsMatch(request.BaselineSha ?? "")
             || (request.RemoteSha is not null && !ShaPattern.IsMatch(request.RemoteSha)))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,

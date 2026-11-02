@@ -11,6 +11,7 @@ public static class WorkspaceSlotStates
     public const string Releasing = "Releasing";
     public const string ColdResetting = "ColdResetting";
     public const string Rehoming = "Rehoming";
+    public const string Retiring = "Retiring";
     public const string Failed = "Failed";
     public const string Retired = "Retired";
 
@@ -35,7 +36,7 @@ public sealed class WorkspaceSlotRecord
     public string CreatedAs { get; set; } = "base";
     public Guid? CreatedByTask { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
-    public string? ColdResetPending { get; set; }
+    public WorkspaceSlotColdResetRecord? ColdResetPending { get; set; }
     public WorkspaceSlotColdResetRecord? LastColdReset { get; set; }
     public string? LastResetKind { get; set; }
     public List<DateTimeOffset> Rehomes { get; set; } = [];
