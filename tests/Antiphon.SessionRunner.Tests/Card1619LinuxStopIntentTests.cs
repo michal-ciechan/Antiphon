@@ -267,6 +267,58 @@ public class Card1619LinuxStopIntentTests
             ? live with { StartTicks = live.StartTicks + 1 }
             : throw new InvalidOperationException("live child identity unreadable"));
 
+    // CARD-1621 A-1: a pre-CARD-1619 sidecar has no identity; adoption that proves the child records it.
+    [Test]
+    public async Task Legacy_herdr_sidecar_records_identity_on_adoption_and_its_P8_kill_succeeds()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var root = Path.Combine(Path.GetTempPath(), "card1621-herdr-legacy-" + Guid.NewGuid().ToString("N"));
+        var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false };
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await client.WorkspaceCreateAsync(root, "card1621-legacy", cts.Token);
+        var pane = fake.Workspaces[0].Tabs[0].Panes[0];
+        using var dummy = HerdrTestProcess.StartDummy();
+        try
+        {
+            fake.SetPaneProcessInfo(pane.PaneId, shellPid: 1, (dummy.Id, HerdrTestProcess.ShellName));
+            var launched = DateTime.UtcNow;
+            var sessionId = Guid.NewGuid();
+            var legacy = new HerdrPaneSidecar { SessionId = sessionId, WorkspaceKey = "none", WorkspaceId = pane.WorkspaceId,
+                TabId = pane.TabId, PaneId = pane.PaneId, ChildPid = dummy.Id, ShellPid = 1, LaunchedAtUtc = launched,
+                Origin = HerdrPaneOrigins.Launched, Cwd = root, UpdatedAtUtc = launched };
+            // Written as a pre-CARD-1619 file: the identity fields are absent, not null.
+            var json = JsonSerializer.SerializeToNode(legacy, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+            json.Remove("childLinuxIdentity").ShouldBeTrue();
+            json.Remove("childStartedAtUtc").ShouldBeTrue();
+            var path = HerdrPaneSidecar.PathFor(root, sessionId);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, json.ToJsonString());
+            File.ReadAllText(path).ShouldNotContain("childLinuxIdentity");
+
+            await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
+                client, new SystemProcessLivenessProbe());
+            await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), default);
+            runtime.Get(sessionId).Status.ShouldBe("Running");
+            var live = LinuxProcessIdentity.TryRead(dummy.Id);
+            live.ShouldNotBeNull();
+            HerdrPaneSidecar.TryLoad(path)!.ChildLinuxIdentity.ShouldBe(live, "a proven adoption upgrades the legacy sidecar");
+
+            // P8: a foreign foreground process makes the stop a pid kill of our child.
+            fake.SetPaneProcessInfo(pane.PaneId, shellPid: 1, (dummy.Id, HerdrTestProcess.ShellName), (99999, "pwsh"));
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), default);
+            dummy.WaitForExit(5_000).ShouldBeTrue("the recorded identity authorizes the kill of the proven child");
+        }
+        finally
+        {
+            if (!dummy.HasExited) dummy.Kill(true);
+            await dummy.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     private static async Task AssertHerdrP8KillRefusedAsync(Func<int, LinuxProcessIdentity?> recorded)
     {
         await using var fake = new FakeHerdrServer();
