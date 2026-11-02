@@ -32,8 +32,11 @@ public static class WorkspaceSlotCodes
     /// <summary>D-3: the task's runner refused a release as <see cref="UnknownSlot"/>; retried a bounded number of times.</summary>
     public const string ReleaseUnknown = "workspace_slot_release_unknown";
 
-    /// <summary>D-3: the bounded <see cref="ReleaseUnknown"/> retries are spent; the reconciler stops and an operator decides.</summary>
+    /// <summary>D-3: the bounded <see cref="ReleaseUnknown"/> retries are spent; the reconciler and the drain rebind stop asking and an operator decides.</summary>
     public const string ReleaseStuck = "workspace_slot_release_stuck";
+
+    /// <summary>Review f4c293bc D-1: an operator recorded the release of a <see cref="ReleaseStuck"/> slot by hand.</summary>
+    public const string ReleaseRecorded = "workspace_slot_release_recorded";
 
     /// <summary>Q-1: a Claude <c>--continue</c> resumes the newest conversation in the cwd, another lessee's in a slot.</summary>
     public const string ContinueInSharedWorkspace = "continue_in_shared_workspace";

@@ -324,7 +324,11 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   moves to the redirect only after the old runner confirms the slot released (`released`, `already_free`,
   `quarantined`); otherwise it stays on the old runner with a `workspace_slot_release_pending` hold. A
   runner restart keeps Leased slots (the server row still owes the release). The reconciler stops after
-  three `slot_unknown` answers per slot and generation and records `workspace_slot_release_stuck`.
+  three `slot_unknown` answers per slot and generation and records `workspace_slot_release_stuck`. The
+  drain rebind shares that bound (review f4c293bc D-1): after the third `slot_unknown` the old runner is not
+  asked again and the hold reads `workspace_slot_release_stuck`. An unknown slot is never taken as a
+  release; the operator releases the lease where it is held, or records the release with
+  `POST /api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release`.
   Do not enable either flag on a server without this rule.
 
 ## Dormant terminal runner seat integration (CARD-0667 S4b)

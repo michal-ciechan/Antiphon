@@ -171,6 +171,32 @@ public static class SessionRunnerEndpoints
             return Results.Ok(await runner.ColdResetWorkspaceSlotsAsync(request, ct));
         }).WithTags("SessionRunners");
 
+        // CARD-0824 review f4c293bc D-1. The operator's way out of workspace_slot_release_stuck: records the release
+        // of the task's slot and generation on the runner it is bound to once the bounded slot_unknown attempts are
+        // spent, so a held drain rebind (or the reconciler) can move on. Nothing is sent to the runner. Services come
+        // from the request: a phone-home host without the database still has to build this route.
+        app.MapPost("/api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release", async (
+            HttpContext http,
+            string runnerId,
+            string slotId,
+            WorkspaceSlotRecordReleaseRouteRequest body,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            ILoggerFactory loggers,
+            CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Recording a workspace slot release requires the operator token.");
+            var reason = body.Reason?.Trim() ?? "";
+            if (reason.Length is < 1 or > RunnerStateService.MaxReasonLength)
+                throw new BadRequestException("Give a reason of 1 to 200 characters.");
+            await WorkspaceSlotReleaseService.RecordOperatorReleaseAsync(
+                http.RequestServices.GetRequiredService<AppDbContext>(), http.RequestServices.GetRequiredService<TimeProvider>(),
+                runnerId, slotId, body.TaskId, body.Generation, reason, ct);
+            loggers.CreateLogger("WorkspaceSlotRecordRelease").LogWarning(
+                "Workspace slot {Slot} generation {Generation} of task {Task} on runner {RunnerId} recorded released by the operator ({Reason})",
+                slotId, body.Generation, body.TaskId, runnerId, reason);
+            return Results.Ok();
+        }).WithTags("SessionRunners");
+
         app.MapPost("/api/session-runners/{runnerId}/retire", async (
             HttpContext http,
             string runnerId,

@@ -1148,7 +1148,9 @@ public sealed partial class AgentTaskDispatcher
     /// CARD-0824 D-3 (review 3a354688): a task still bound to a workspace slot on this runner moves only
     /// after this runner confirms the slot released; until then the row keeps this runner and the slot, and
     /// the hold names <see cref="WorkspaceSlotCodes.ReleasePending"/>. A lease is never left on the old
-    /// runner while the task is bound to the new one.
+    /// runner while the task is bound to the new one. Review f4c293bc D-1: an old runner that keeps answering
+    /// <see cref="WorkspaceSlotCodes.UnknownSlot"/> is asked a bounded number of times; then the hold names
+    /// <see cref="WorkspaceSlotCodes.ReleaseStuck"/> until an operator records the release.
     /// </summary>
     private async Task<(string RunnerId, string? SlotHold)> RebindDrainingAsync(AgentTask task, string runnerId, CancellationToken ct)
     {
@@ -1167,10 +1169,16 @@ public sealed partial class AgentTaskDispatcher
             return (task.RunnerId ?? runnerId, null);
 
         var target = state.RedirectTo;
-        if (task.RemoteWorkspaceSlotId is { } slotId && task.RemoteWorkspaceSlotReleasedAt is null
-            && !await ReleaseSlotBeforeRebindAsync(task, runnerId, ct))
-            return (runnerId, DispatchHoldDetails.WorkspaceSlotReleasePending(
-                runnerId, slotId, task.RemoteWorkspaceSlotGeneration ?? 0, target));
+        if (task.RemoteWorkspaceSlotId is { } slotId && task.RemoteWorkspaceSlotReleasedAt is null)
+        {
+            var release = await ReleaseSlotBeforeRebindAsync(task, runnerId, ct);
+            if (release == SlotRelease.Stuck)
+                return (runnerId, DispatchHoldDetails.WorkspaceSlotReleaseStuck(
+                    runnerId, slotId, task.RemoteWorkspaceSlotGeneration ?? 0, target));
+            if (release != SlotRelease.Released)
+                return (runnerId, DispatchHoldDetails.WorkspaceSlotReleasePending(
+                    runnerId, slotId, task.RemoteWorkspaceSlotGeneration ?? 0, target));
+        }
         var oldPath = task.RemoteWorktreePath;
         if (_remoteWorkspace is not null && !string.IsNullOrWhiteSpace(oldPath))
         {
@@ -1208,25 +1216,40 @@ public sealed partial class AgentTaskDispatcher
     /// D-3: the idempotent slot release, sent to the runner the row is still bound to. Only a released,
     /// already free or quarantined reply stamps the release and lets the rebind go on; a refusal, a lost
     /// reply or a missing transport keeps the task on this runner for the next tick.
+    /// Review f4c293bc D-1: a <see cref="WorkspaceSlotCodes.UnknownSlot"/> answer counts against the bound the
+    /// terminal reconciler uses (<see cref="WorkspaceSlotReleaseService.UnknownSlotAttempts"/>, one shared count); once
+    /// it is spent the runner is not asked again and the task waits for an operator's recorded release. An unknown
+    /// slot is never taken as a release: the lease may still be held where the server cannot see it.
     /// </summary>
-    private async Task<bool> ReleaseSlotBeforeRebindAsync(AgentTask task, string runnerId, CancellationToken ct)
+    private async Task<SlotRelease> ReleaseSlotBeforeRebindAsync(AgentTask task, string runnerId, CancellationToken ct)
     {
         if (_remoteWorkspace is null)
-            return false;
+            return SlotRelease.Pending;
+        var unknown = await WorkspaceSlotReleaseService.UnknownAttemptsAsync(_db, task, ct);
+        if (unknown >= WorkspaceSlotReleaseService.UnknownSlotAttempts)
+            return SlotRelease.Stuck;
         PhoneHomeWorkspaceSlotReleaseResponse response;
         try
         {
             response = await _remoteWorkspace.ReleaseSlotAsync(task, ct);
         }
+        catch (Exception ex) when (WorkspaceSlotReleaseService.IsUnknownSlot(ex))
+        {
+            var stuck = WorkspaceSlotReleaseService.RecordUnknown(_db, task, unknown, UtcNow());
+            await _db.SaveChangesAsync(ct);
+            _logger.LogWarning("Workspace slot {Slot} of task {Task} is unknown to draining runner {Runner} (attempt {Attempt})",
+                task.RemoteWorkspaceSlotId, task.Id, runnerId, unknown + 1);
+            return stuck ? SlotRelease.Stuck : SlotRelease.Pending;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.LogWarning("Workspace slot {Slot} of task {Task} on draining runner {Runner} was not released: {Reason}",
                 task.RemoteWorkspaceSlotId, task.Id, runnerId, ex.Message);
-            return false;
+            return SlotRelease.Pending;
         }
 
         if (response.Outcome is not ("released" or "already_free" or "quarantined"))
-            return false;
+            return SlotRelease.Pending;
         task.RemoteWorkspaceSlotReleasedAt = UtcNow();
         task.RemoteWorktreePath = null;
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -1238,8 +1261,10 @@ public sealed partial class AgentTaskDispatcher
             At = UtcNow(),
         });
         await _db.SaveChangesAsync(ct);
-        return true;
+        return SlotRelease.Released;
     }
+
+    private enum SlotRelease { Released, Pending, Stuck }
 
     /// <summary>
     /// Re-reads <paramref name="task"/> so a drain rebind uses the row the database has now.
