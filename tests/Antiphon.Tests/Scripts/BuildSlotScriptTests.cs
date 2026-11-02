@@ -170,6 +170,24 @@ public sealed class BuildSlotScriptTests
             "C1048 Pwsh releases lease");
     }
 
+    // CARD-1629 step 1: -StableOutput names the one OutputPath a worktree reuses for its direct
+    // (non-checkpoint) builds, so MSBuild stays incremental across them. It takes no lease.
+    [Test]
+    public Task C1629_StableOutputName() => ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C1629", "C1629_StableOutputName", 6,
+        "C1629 StableOutputName prints one name and exits zero",
+        "C1629 StableOutputName a task worktree is named by its task id",
+        "C1629 StableOutputName the same worktree gets the same name every time",
+        "C1629 StableOutputName different worktrees get different names",
+        "C1629 StableOutputName is one relative bin- segment with a forward slash",
+        "C1629 StableOutputName takes no lease and runs nothing");
+
+    [Test]
+    public Task C1629_StableOutputSuffixAndRefusals() => ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C1629", "C1629_StableOutputSuffixAndRefusals", 4,
+        "C1629 StableOutputSuffix a configuration suffix gets its own stable name",
+        "C1629 StableOutputSuffix an unsafe or empty suffix exits 2 and prints no name",
+        "C1629 StableOutputSuffix a command after -StableOutput exits 2 and runs nothing",
+        "C1629 StableOutputSuffix outside a git worktree exits 2");
+
     private static Task RunC845CaseAsync(string stem, string[] scenarios, string[] suffixes) =>
         ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C845", "C845_" + stem,
             scenarios.Length * suffixes.Length,
