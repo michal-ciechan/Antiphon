@@ -12,10 +12,11 @@ internal sealed class RepositoryChildJournal
     internal static Func<string, Task>? BeforeReplaceForTests { get; set; }
     private readonly string _path;
     private readonly Action<string> _deleteRecord;
+    private readonly Action<string, string> _replaceRecord;
     private ChildRecord _record;
 
-    private RepositoryChildJournal(string path, ChildRecord record, Action<string> deleteRecord)
-    { _path = path; _record = record; _deleteRecord = deleteRecord; }
+    private RepositoryChildJournal(string path, ChildRecord record, Action<string> deleteRecord, Action<string, string> replaceRecord)
+    { _path = path; _record = record; _deleteRecord = deleteRecord; _replaceRecord = replaceRecord; }
 
     public static Task<RepositoryChildJournal> BeginAsync(string repository, CancellationToken ct)
         => BeginAsync(repository, tag: null, ct);
@@ -25,14 +26,20 @@ internal sealed class RepositoryChildJournal
         => BeginAsync(repository, tag, File.Delete, ct);
 
     // Instance-scoped filesystem seam: deletion sharing failures are Windows-only on real handles.
-    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag,
+    internal static Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag,
         Action<string> deleteRecord, CancellationToken ct)
+        => BeginAsync(repository, tag, deleteRecord, static (source, destination) => File.Move(source, destination, true), ct);
+
+    // Replacement seam: a reader holding the journal denies the replace on real Windows handles only.
+    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag,
+        Action<string> deleteRecord, Action<string, string> replaceRecord, CancellationToken ct)
     {
         var common = await new LandingGit().CommonDirectoryAsync(repository, ct);
         var directory = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(directory);
         var journal = new RepositoryChildJournal(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"),
-            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId), deleteRecord);
+            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId),
+            deleteRecord, replaceRecord);
         await journal.SaveAsync(ct); // Unknown/start intent is durable before Process.Start.
         return journal;
     }
@@ -150,7 +157,7 @@ internal sealed class RepositoryChildJournal
             stream.Flush(true);
         }
         if (BeforeReplaceForTests is { } beforeReplace) await beforeReplace(temporary);
-        File.Move(temporary, _path, true);
+        _replaceRecord(temporary, _path);
     }
 
     /// <summary>Reader-side purposes that do not fence while the recorded process is alive.</summary>
