@@ -10,6 +10,9 @@
     none, runs the command in the foreground with its output on the console, releases the lease,
     and exits with the command's exit code. `dotnet run` is leased but never given -maxcpucount
     (it would hand the switch to the program), so build first and run with --no-build to cap nodes.
+    A non-dotnet command (a `bash loop.sh`, a script) cannot be capped: it gets the grant as
+    ANTIPHON_BUILD_SLOT_MAXCPUCOUNT and a BUILD SLOT warning line (CARD-1627). Lease each build
+    separately; never wrap a loop of builds in one lease.
 
     Exit codes: the command's own; 4 when no slot came within -SlotWaitMinutes (nothing was run);
     2 for a missing command. An unreachable runner (connection refused, or an old runner without
@@ -84,6 +87,7 @@ $command = @($flatCommand.ToArray())
 if ([string]::IsNullOrWhiteSpace($label)) { $label = (@($command | Select-Object -First 2) -join ' ') }
 
 $slot = $null
+$exportedMaxCpuCount = $null
 if ($noSlot) {
     Write-Host 'BUILD SLOT skipped by -NoSlot'
 } else {
@@ -92,6 +96,11 @@ if ($noSlot) {
     $command = @(Add-AntiphonMaxCpuCount -Command $command -MaxCpuCount ([int]$slot.MaxCpuCount))
     if (Test-AntiphonDotnetRunWithBuild -Command $command) {
         Write-Host ('BUILD SLOT note: dotnet run hands -maxcpucount to the program, so its implicit build runs at the default node count; build first and use dotnet run --no-build to apply maxcpucount={0}' -f $slot.MaxCpuCount)
+    }
+    $capWarning = Get-AntiphonBuildSlotCapWarning -Command $command -MaxCpuCount ([int]$slot.MaxCpuCount)
+    if ($capWarning) {
+        Write-Host $capWarning
+        $exportedMaxCpuCount = [string][int]$slot.MaxCpuCount
     }
 }
 
@@ -118,8 +127,14 @@ function Start-AntiphonWrappedCommand {
 $code = 1
 $script:WrappedProcess = $null
 $environmentRestore = $null
+$capRestore = $null
 try {
     $environmentRestore = Enter-AntiphonBuildDriverEnvironment -Windows $IsWindows
+    if ($null -ne $exportedMaxCpuCount) {
+        # CARD-1627: the grant for a non-dotnet command; an in-process caller gets its value back.
+        $capRestore = @{ ANTIPHON_BUILD_SLOT_MAXCPUCOUNT = [Environment]::GetEnvironmentVariable('ANTIPHON_BUILD_SLOT_MAXCPUCOUNT') }
+        [Environment]::SetEnvironmentVariable('ANTIPHON_BUILD_SLOT_MAXCPUCOUNT', $exportedMaxCpuCount)
+    }
     if (-not [string]::IsNullOrWhiteSpace($env:C589_COMMAND_SHIM)) {
         $shimArgs = @('-NoProfile', '-NonInteractive', '-File', $env:C589_COMMAND_SHIM) + $command
         $code = Start-AntiphonWrappedCommand -FileName (Get-Command pwsh).Source -Arguments $shimArgs
@@ -141,6 +156,7 @@ try {
         }
     }
 } finally {
+    Exit-AntiphonBuildDriverEnvironment -Restore $capRestore
     Exit-AntiphonBuildDriverEnvironment -Restore $environmentRestore
     if ($null -ne $script:WrappedProcess) {
         if (-not $script:WrappedProcess.HasExited) {
