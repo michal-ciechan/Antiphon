@@ -10,6 +10,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -307,6 +308,151 @@ public sealed class C0824WorkspaceSlotServerTests
             body.RequestId.ShouldBe(sent.RequestId);
         }
     }
+
+    [Test]
+    public async Task C0824_LeaseRoundTripRealRunner()
+    {
+        // V-40 (D-A). Server tick -> preparer -> socket -> real runner pool: the runner ledger and the tree agree with the row.
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        var taskId = await world.SeedAsync();
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
+        var (task, slot) = await LeasedAsync(world, taskId);
+        Git(slot.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
+        Git(slot.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
+        task.RemoteWorktreePath.ShouldBe(slot.Path);
+        task.RemoteWorkspaceSlotId.ShouldBe(slot.Id);
+        task.RemoteWorkspaceSlotGeneration.ShouldBe(slot.LeaseGeneration);
+    }
+
+    [Test]
+    public async Task C0824_BusyRunnerLeaseSerialisedNotDuplicated()
+    {
+        // V-41 (D-A). A slow recipient: ticks while the lease is outstanding send no second request and grow nothing.
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        world.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var taskId = await world.SeedAsync();
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        var request = await world.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        world.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(1);
+        await world.Rig.Peer.EmitAsync(await Task.Run(() => world.Deliver(request)));
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
+        await LeasedAsync(world, taskId);
+        world.Pool.Ledger().Slots.Count.ShouldBe(1, "no overflow slot");
+    }
+
+    [Test]
+    [Arguments("reply-lost")]
+    [Arguments("runner-crash-after-leasing")]
+    public async Task C0824_LeaseRecoveryAtEachHandoff(string handoff)
+    {
+        // V-42 (D-A). A lost reply or a runner crash mid-lease: the retry resends the same preparation and ends with one lease.
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        var taskId = await world.SeedAsync();
+        var first = true;
+        world.Intercept = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.WorkspaceMirror || !first)
+                return null;
+            first = false;
+            if (handoff == "reply-lost")
+            {
+                world.Deliver(frame);
+                return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                    JsonSerializer.SerializeToElement(new { }, PhoneHomeFraming.Json));
+            }
+
+            world.Pool.PhaseCut = phase => { if (phase == "leasing") throw new InvalidOperationException("runner crashed"); };
+            return world.Deliver(frame);
+        };
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
+        (await world.Rig.ReadTaskAsync(taskId)).RemoteWorktreePath.ShouldBeNull("the first handoff failed");
+        if (handoff == "runner-crash-after-leasing")
+            world.StartRunner();
+        await world.Rig.AdvanceAsync(TimeSpan.FromHours(1));
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
+        var requests = world.Rig.Peer.Incoming.ToArray()
+            .Where(frame => frame.Kind == PhoneHomeFrameKind.Request && frame.Operation == PhoneHomeOperation.WorkspaceMirror)
+            .Select(frame => frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!.Binding!.PreparationId)
+            .ToList();
+        requests.Count.ShouldBe(2);
+        requests.Distinct().Count().ShouldBe(1, "the retry resends the same preparation");
+        var (task, slot) = await LeasedAsync(world, taskId);
+        slot.Id.ShouldBe("ws-01", "no second slot touched");
+        world.Pool.Ledger().Slots.Count.ShouldBe(1);
+        task.RemoteWorkspaceSlotGeneration.ShouldBe(slot.LeaseGeneration);
+    }
+
+    [Test]
+    [Arguments("direct")]
+    [Arguments("reply-lost")]
+    public async Task C0824_ReleaseRoundTripRealRunner(string mode)
+    {
+        // V-43 (D-B). Reconciler -> socket -> real runner: the slot is Free and detached; the row keeps the slot
+        // history and clears the path only after a success reply. A lost reply is resent as an idempotent success.
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        var taskId = await world.SeedAsync();
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
+        var (_, leased) = await LeasedAsync(world, taskId);
+        await using (var db = world.Rig.NewDb())
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(set => set
+                .SetProperty(t => t.Status, AgentTaskStatus.Succeeded).SetProperty(t => t.CompletedAt, DateTime.UtcNow));
+        if (mode == "reply-lost")
+        {
+            var lost = true;
+            world.Intercept = frame =>
+            {
+                if (frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease || !lost)
+                    return null;
+                lost = false;
+                world.Deliver(frame);
+                return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                    JsonSerializer.SerializeToElement(new { }, PhoneHomeFraming.Json));
+            };
+            (await ReconcileAsync(world)).ShouldBe(0);
+            (await world.Rig.ReadTaskAsync(taskId)).RemoteWorktreePath.ShouldBe(leased.Path, "the path is kept until a reply succeeds");
+            world.Pool.Ledger().Slot(leased.Id)!.State.ShouldBe(WorkspaceSlotStates.Free, "the runner did release");
+        }
+
+        var idle = world.Pool.Ledger().Slot(leased.Id)!.IdleSince;
+        (await ReconcileAsync(world)).ShouldBe(1);
+        var free = world.Pool.Ledger().Slot(leased.Id)!;
+        free.State.ShouldBe(WorkspaceSlotStates.Free);
+        free.LastTaskId.ShouldBe(taskId);
+        if (mode == "reply-lost")
+            free.IdleSince.ShouldBe(idle, "the resend did not reset the slot a second time");
+        C0824SlotTransportWorld.Git(free.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
+        var task = await world.Rig.ReadTaskAsync(taskId);
+        task.RemoteWorktreePath.ShouldBeNull();
+        task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
+        task.RemoteWorkspaceSlotId.ShouldBe(leased.Id);
+        task.RemoteWorkspaceSlotGeneration.ShouldBe(leased.LeaseGeneration);
+    }
+
+    private static async Task<int> ReconcileAsync(C0824SlotTransportWorld world)
+    {
+        using var scope = world.Rig.Provider.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<WorkspaceSlotReleaseService>().ReconcileAsync(CancellationToken.None).WaitAsync(Bound);
+    }
+
+    private static async Task<(AgentTask Task, Antiphon.SessionRunner.WorkspaceSlotRecord Slot)> LeasedAsync(
+        C0824SlotTransportWorld world, Guid taskId)
+    {
+        var slot = world.Pool.Ledger().Slots.Where(item => item.TaskId == taskId).ShouldHaveSingleItem("one ledger lease");
+        slot.State.ShouldBe(WorkspaceSlotStates.Leased);
+        await using var db = world.Rig.NewDb();
+        var preparation = (await db.TaskWorktreeMirrorBindings.AsNoTracking().Where(row => row.TaskId == taskId)
+            .Select(row => row.PreparationId).ToListAsync()).ShouldHaveSingleItem();
+        slot.PreparationId.ShouldBe(preparation);
+        return (await world.Rig.ReadTaskAsync(taskId), slot);
+    }
+
+    private static string Git(string directory, params string[] args) => C0824SlotTransportWorld.Git(directory, args);
 
     private static async Task<PhoneHomeFrame> WaitForAsync(PhoneHomeScriptedPeer peer, PhoneHomeOperation operation, int count)
     {
