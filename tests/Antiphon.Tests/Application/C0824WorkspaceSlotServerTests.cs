@@ -1,4 +1,9 @@
+using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -258,6 +263,62 @@ public sealed class C0824WorkspaceSlotServerTests
             .ShouldContain("--continue");
         WorkspaceSlotCodes.IsSlotPath("/work/worktrees/ws-03-d2").ShouldBeTrue();
         WorkspaceSlotCodes.IsSlotPath("/work/worktrees/task-deadbeef").ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C0824_OperatorColdResetRouteRecordsAndForwards()
+    {
+        // V-37b (pre-rc cold reset). The operator route needs the token and forwards the slot list (order and set)
+        // or all, with the requester and reason, to the runner's cold-reset operation.
+        await using var host = await PhoneHomeTestHost.StartAsync(configureServices: services =>
+            services.AddSingleton<ISessionRunnerDirectory>(provider => provider.GetRequiredService<PhoneHomeRunnerDirectory>()));
+        await using var peer = await host.ConnectPeerAsync(capabilities: SlotRunner());
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        peer.SilentFor(PhoneHomeOperation.WorkspaceSlotColdReset);
+        var route = "/api/session-runners/" + host.AllowedRunnerId + "/workspace-slots/cold-reset";
+        using (var refused = await host.PostOperatorAsync(route, new WorkspaceSlotColdResetRouteRequest(["ws-01"], false, "no token"), token: null))
+            ((int)refused.StatusCode).ShouldBeInRange(400, 403);
+        peer.RequestCount(PhoneHomeOperation.WorkspaceSlotColdReset).ShouldBe(0);
+        var token = OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath);
+        var cases = new (WorkspaceSlotColdResetRouteRequest Body, IReadOnlyList<string>? Slots, bool All)[]
+        {
+            (new(["ws-03", "ws-01"], false, "stale dlls", "operator-x"), ["ws-03", "ws-01"], false),
+            (new(null, true, "rc qualification rc/2026-11-01 0123456789ab", "orchestrator"), null, true),
+        };
+        for (var i = 0; i < cases.Length; i++)
+        {
+            var post = host.PostOperatorAsync(route, cases[i].Body, token);
+            var frame = await WaitForAsync(peer, PhoneHomeOperation.WorkspaceSlotColdReset, i + 1);
+            var sent = frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceSlotColdResetRequest>(PhoneHomeFraming.Json)!;
+            if (cases[i].Slots is { } slots)
+                sent.Slots.ShouldBe(slots, "order and set unchanged");
+            else
+                sent.Slots.ShouldBeNull();
+            sent.All.ShouldBe(cases[i].All);
+            sent.Requester.ShouldBe(cases[i].Body.Requester);
+            sent.Reason.ShouldBe(cases[i].Body.Reason);
+            sent.RequestId.ShouldNotBe(Guid.Empty);
+            await peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceSlotColdResetResponse(sent.RequestId,
+                    [new PhoneHomeWorkspaceSlotColdResetOutcome("ws-01", "pending")]), PhoneHomeFraming.Json)));
+            using var response = await post.WaitAsync(Bound);
+            response.EnsureSuccessStatusCode();
+            var body = (await response.Content.ReadFromJsonAsync<PhoneHomeWorkspaceSlotColdResetResponse>(PhoneHomeFraming.Json))!;
+            body.RequestId.ShouldBe(sent.RequestId);
+        }
+    }
+
+    private static async Task<PhoneHomeFrame> WaitForAsync(PhoneHomeScriptedPeer peer, PhoneHomeOperation operation, int count)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (peer.RequestCount(operation) >= count)
+                return peer.Incoming.ToArray().Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == operation).ElementAt(count - 1);
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException($"Expected {count} {operation} request(s); saw {peer.RequestCount(operation)}.");
     }
 
     private static void Slot(AgentTask task, AgentTaskStatus status, string? path, string slot, int generation)
