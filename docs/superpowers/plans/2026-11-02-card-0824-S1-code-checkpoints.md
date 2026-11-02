@@ -3,9 +3,10 @@
 Code task cf298805, 2026-11-02, server2 (Linux). This file amends only the `### Checkpoints` table of the
 [S1 test design](2026-11-02-card-0824-S1-test-design.md) for the Code stage's runs; the design itself is
 unchanged. Rows CP-1..CP-3, CP-5..CP-10 and CP-15..CP-17 are copied verbatim. CP-4's executed floor is
-16, not 28: the server class carries V-10a, V-10b (2 cases), V-12 (2), V-13 (2), V-37a, V-37b, V-39 and
-V-55 (6). The real-transport delivery witnesses V-40..V-43 and V-56 (base selection) are deferred to a
-follow-up Code slice and are not claimed by this table. V-54 does not apply to S1: land cleanup removes
+22, not 28: the server class carries V-10a, V-10b (2 cases), V-12 (2), V-13 (2), V-37a, V-37b, V-39, V-55
+(6) and the real-transport delivery witnesses V-40, V-41, V-42 (2: `reply-lost`,
+`runner-crash-after-leasing`) and V-43 (2). V-42's `server-restart-before-reply` case and V-56 (base
+selection) are deferred to a follow-up Code slice and are not claimed by this table. V-54 does not apply to S1: land cleanup removes
 the desktop worktree, which stays per task until S5; it never touches the runner slot.
 CP-18..CP-20 are regression rows added by Code for surfaces this slice changed outside the design's
 classes: the dispatcher's every-operation contract enumeration (three new phone-home operations), the EF
@@ -28,7 +29,7 @@ retirement and drain re-arm consumers both call it), with the cases `slot-manage
 | CP-10 | S1 | CP-3 | linux-native-slot-rehome | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotNativeRehomeTests/* | V-36 | class, 0 failed/skipped | 1 | 2 | true |
 | CP-15 | S1 | CP-1 | portable-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-4 (+ R-6 notes) | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-16 | S1 | CP-1 | portable-workspace-service-regression | /*/Antiphon.SessionRunner.Tests/RunnerWorkspaceServiceTests/* | R-3 | existing class, 0 failed/skipped | 35 | 3 | true |
-| CP-4 | S1 | tests/Antiphon.Tests -> bin-c0824-s1s/ | portable-slot-server | /*/Antiphon.Tests.Application/C0824WorkspaceSlotServerTests/* | V-10a, V-10b, V-12, V-13, V-37a, V-37b, V-39, V-55 | class, 0 failed/skipped | 16 | 14 | true |
+| CP-4 | S1 | tests/Antiphon.Tests -> bin-c0824-s1s/ | portable-slot-server | /*/Antiphon.Tests.Application/C0824WorkspaceSlotServerTests/* | V-10a, V-10b, V-12, V-13, V-37a, V-37b, V-39, V-40, V-41, V-42, V-43, V-55 | class, 0 failed/skipped | 22 | 14 | true |
 | CP-5 | S1 | CP-4 | portable-slot-regression | /*/Antiphon.Tests.Application/RemoteWorkspacePreparerTests/* | R-1 | existing class, 0 failed/skipped | 18 | 3 | true |
 | CP-17 | S1 | CP-4 | portable-seat-ambiguity-regression | /*/Antiphon.Tests.Application/TerminalRunnerSeatReleaseTests/Legacy_ambiguous_answer_requires_fresh_absence_without_another_release | R-5 | method, 0 failed/skipped | 1 | 2 | true |
 | CP-18 | S1 | CP-4 | portable-dispatcher-ops-regression | /*/Antiphon.Tests.Agents/PhoneHomeConnectionTests/Supported_operations_preserve_contracts | dispatcher handles every PhoneHomeOperation | method, 0 failed/skipped | 1 | 2 | true |
