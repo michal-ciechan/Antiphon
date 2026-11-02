@@ -23,7 +23,7 @@ dotnet run --project tests/Antiphon.Tests -- --treenode-filter "/Antiphon.Tests/
 **Foreground default (CARD-0110):** run the Unit lane, not the full ~25.5 min assembly. A `[Category=X]` predicate works:
 
 ```
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c110/ -- --treenode-filter "/*/*/*/*[Category=Unit]"
+dotnet run --project tests/Antiphon.Tests -- --treenode-filter "/*/*/*/*[Category=Unit]"
 ```
 
 ## Test projects

@@ -82,14 +82,15 @@ Goal text always goes through a file (`Write` a scratchpad `.md`, then `Get-Cont
 `-Goal`), never inline through Bash — long text with quotes/backticks/newlines gets mangled
 otherwise.
 
-A brief that restates the build rules gives one stable output per worktree, never a new output name
-per build (CARD-1629; owner: Build slots in `docs/testing-and-build.md`). Paste this sentence:
+A brief that restates the build rules sends every direct build to the worktree's native default
+output, the project's own `bin/` and `obj/`, never a custom or new output per build (CARD-1629;
+owner: Build slots in `docs/testing-and-build.md`). Paste this sentence:
 
 > BUILD-SLOT RULE: ONE build-slot lease PER BUILD (scripts/build-slot.ps1 -Label <what> -- dotnet ...);
-> every direct build in your worktree reuses ONE STABLE output, --property:OutputPath=<what
-> scripts/build-slot.ps1 -StableOutput prints>, one build at a time; explicit generous --total-timeout
-> WITH UNITS, UseAppHost=false, TEMP=/tmp. Checkpoint runs and land verification keep their own cold
-> outputs.
+> build in your worktree's NATIVE default output (no -o, --output or OutputPath), one build at a time
+> per worktree, with the same properties on the build and its --no-build run; explicit generous
+> --total-timeout WITH UNITS, UseAppHost=false, TEMP=/tmp. Checkpoint runs and land verification keep
+> their own cold outputs.
 
 ## 2. A delegate's base is chosen at dispatch; it stays on its own branch
 

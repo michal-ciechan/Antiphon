@@ -52,12 +52,11 @@ work itself.
   Restore all PC mutations. Production/test repairs require separate Code, ordinary Review, land
   and a new SourceLanding pass; preserve plan/evidence amendments externally for caller triage. See `docs/testing-and-build.md` for PC execution details.
 
-- BUILD TO ONE STABLE ALTERNATE OUTPUT PATH while the daemons hold their bin directories: every
-  direct build in this worktree uses `--property:OutputPath=<name>`, the `bin-<task>/` that
-  `scripts/build-slot.ps1 -StableOutput` prints, with a FORWARD slash (a trailing backslash makes a
-  directory name ending in a space). Reusing it keeps MSBuild incremental; a new name per build
-  recompiles everything. One build at a time per worktree. Delete every `bin-<task>` directory,
-  about one per project, before you finish (CARD-1629).
+- BUILD IN THE WORKTREE'S NATIVE DEFAULT OUTPUT: pass no `-o`, `--output` or `OutputPath` to a
+  direct build or its `--no-build` run, so each project's own `bin/` and `obj/` stay incremental
+  for the whole task (CARD-1629). One build at a time per worktree, with the same properties (such
+  as `UseAppHost=false`) on the build and the run. Checkpoint runs and land verification keep their
+  own cold outputs; a custom output that is still required ends with a FORWARD slash.
 
 - BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. `scripts/run-checkpoint.ps1` takes a slot
   itself; run any other build or test driver (`dotnet build`, `dotnet test`, `dotnet run --project

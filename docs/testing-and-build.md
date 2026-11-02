@@ -186,7 +186,7 @@ guards new runtime fixtures. The linger clock starts at child exit; a live child
 expires from linger alone. R2's opt-in owner watch supplies the test-time bound, while
 production retains restart/re-adoption with the default `PtyHostExitWithOwner=false`.
 
-- **Building while daemons run**: the always-on session-runner (and dev server) lock their `bin/` outputs. To build/test without restarting them, use an alternate output path, the worktree's stable one that `scripts/build-slot.ps1 -StableOutput` prints (CARD-1629, see [Build slots](#build-slots-card-0589)): `dotnet run --project tests/<X> --property:OutputPath=bin-<taskid8>/` (gitignored by `bin-*/`). **End it with a forward slash, never a backslash.** `'--property:OutputPath=bin-x\'` loses its trailing backslash to Windows argv quoting, and the mangled value creates junk directories — `bin-x --treenode-filter`, `bin-check --nologo`, and worst of all `bin-profile ` *with a trailing space* (see the next bullet — that one breaks the whole repo's build). `OutputPath` applies to every project in the graph, so one run drops a `bin-<name>/` in ~12 directories. Keep an exact producer-owned output inventory; a directory name or age alone does not authorize deletion. `cleanup-build-junk.ps1` requires producer creation records (see below). Non-git process-spawning tests share a 1-wide `ProcessSpawnLimit` lane (CARD-0050 S5); git-only tests share a 2-4-wide `GitProcessSpawnLimit` lane (CARD-1421). A failure on either lane is a real defect unless it also fails at the base commit (stash and re-run).
+- **Building while daemons run**: the always-on session-runner (and dev server) lock the `bin/` outputs of the checkout they run from. A task worktree is not that checkout: build there in its native default output with no custom output (CARD-1629, see [Build slots](#build-slots-card-0589)). Only a build in a daemon's own checkout without restarting it, a checkpoint row, or a script that needs an isolated producer-owned output by design uses a custom output, for example `--property:OutputPath=bin-ptyhost/` (gitignored by `bin-*/`). **End a custom output with a forward slash, never a backslash.** `'--property:OutputPath=bin-x\'` loses its trailing backslash to Windows argv quoting, and the mangled value creates junk directories — `bin-x --treenode-filter`, `bin-check --nologo`, and worst of all `bin-profile ` *with a trailing space* (see the next bullet — that one breaks the whole repo's build). `OutputPath` applies to every project in the graph, so one run drops a `bin-<name>/` in ~12 directories. Keep an exact producer-owned output inventory; a directory name or age alone does not authorize deletion. `cleanup-build-junk.ps1` requires producer creation records (see below). Non-git process-spawning tests share a 1-wide `ProcessSpawnLimit` lane (CARD-0050 S5); git-only tests share a 2-4-wide `GitProcessSpawnLimit` lane (CARD-1421). A failure on either lane is a real defect unless it also fails at the base commit (stash and re-run).
 
 - **Restoring a mutation-test source backup with `Copy-Item` preserves its old modification time** (CARD-0412 D4). An incremental build can then reuse the mutated DLL even though the source diff is restored. Update the restored file's `LastWriteTime` or explicitly rebuild, and verify the test output contains the freshly built DLL before treating the restored-green run as evidence.
 
@@ -221,7 +221,7 @@ production retains restart/re-adoption with the default `PtyHostExitWithOwner=fa
 
 ## CARD-0459 worktree residue
 
-Ordinary Code/Review uses `OutputPath=bin-c459/` (forward slash), the Unit lane, and the named
+Ordinary Code/Review builds in the worktree's native default output, runs the Unit lane, and the named
 classes in `docs/superpowers/plans/2026-09-19-card-0459-worktree-cleanup-plan.md`.
 `scripts/test-worktree-residue.ps1` covers the operator script. `WorktreeResidue:Execute` stays
 false in shipped config. Do not treat `PruneStaleAsync` or a shorter TTL as cleanup authority.
@@ -264,16 +264,16 @@ from CARD-0681's Unit-lane portability work. See the
 
 ### Default Code/Review recipe
 
-Build once into a producer-owned isolated output (forward slash on `OutputPath`). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
+Build once in the worktree's native default output (no custom output; CARD-1629). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
 
 The brief/verification section must list coverage-to-class and end with the `### Checkpoints` table (below). Code and Review report the filters they ran and the actual expanded counts. Unit-only is insufficient for native delivery, landing, leases or persistence. A broad namespace/full-assembly exception names the affected cross-cutting invariant, the classes that cannot be bounded, and the expected cost **before** the run; missing rationale is a Review defect. CI/nightly keep the broad run. Per-PC Mutation stays method-scoped. Do not silently edit `LandVerifyFilter` or the production verifier as part of a documentation policy change.
 
 Example (directory names are examples — use a fresh empty results directory per invocation):
 
 ```powershell
-dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c475/ --nologo
-dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c475/ -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c475-unit
-dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c475/ -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
+dotnet build tests/Antiphon.Tests -p:UseAppHost=false --nologo
+dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c475-unit
+dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
 ```
 
 ### Offline rolling harness jq receipts (CARD-0983)
@@ -928,8 +928,8 @@ Code builds the changed tool once through a leased bootstrap, then runs the verb
 before final ordinary checkpoints. For example:
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label coverage-tool-bootstrap -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-coverage-tool/ --nologo
-dotnet run --project tools/Antiphon.Checkpoints --no-build --property:OutputPath=bin-coverage-tool/ -- coverage --plan <plan.md>
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label coverage-tool-bootstrap -- dotnet build tools/Antiphon.Checkpoints --nologo
+dotnet run --project tools/Antiphon.Checkpoints --no-build -- coverage --plan <plan.md>
 ```
 
 Paste the **complete** text output before final CHECKPOINT lines and give a disposition
@@ -1042,11 +1042,11 @@ write `C:\src\Antiphon\.git`. Script coverage: `pwsh -File scripts/test-apphost-
 
 ### CARD-0443 Windows cleanup qualification
 
-Run the explicit Windows class against the same producer-owned build, with fresh results:
+Run the explicit Windows class against the same native build, with fresh results:
 
 ```powershell
 $c443WindowsResults = Join-Path '.antiphon' ('c443-windows-' + [Guid]::NewGuid().ToString('N'))
-dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c443/ -- --treenode-filter '/*/*/WorktreeLockDiagnosticsWindowsTests/*' --report-trx --report-trx-filename run.trx --results-directory $c443WindowsResults
+dotnet run --project tests/Antiphon.Tests --no-build -- --treenode-filter '/*/*/WorktreeLockDiagnosticsWindowsTests/*' --report-trx --report-trx-filename run.trx --results-directory $c443WindowsResults
 ```
 
 The [CARD-0443 plan](superpowers/plans/2026-09-14-card-0443-receipt-backed-cleanup-plan.md)
@@ -1138,7 +1138,7 @@ Settings `SessionRunner:BuildSlots` (`Enabled`, `MaxConcurrent`, `MaxCpuCount`, 
 **How a delegate takes one.** `scripts/run-checkpoint.ps1` takes a slot itself for every row, `-NoBuild` rows included (the test host and its Postgres are the memory), after input validation and the fresh results directory, builds with the grant's `-maxcpucount:N`, and releases after the run; its `CHECKPOINT` line ends `slot=<granted|unleased|unlimited|skipped> waited=<s>s`. Any other driver goes through the wrapper:
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label mutation-shard-1 -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-<taskid8>/ --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label mutation-shard-1 -- dotnet build tests/Antiphon.Tests -p:UseAppHost=false --nologo
 ```
 
 It adds the grant's `-maxcpucount:N` to `dotnet build|test|publish|pack|msbuild` unless the command already names `-m`/`-maxcpucount`, runs the command in the foreground and exits with its exit code. It never adds the switch to `dotnet run`: measured on SDK 10.0.401, `dotnet run -maxcpucount:2` hands `-maxcpucount:2` to the program as an argument. A wrapped `dotnet run` is leased and prints a `BUILD SLOT note:` line; build first and run with `--no-build` to cap its nodes. Under `pwsh -File` the wrapper reads its own raw command line after `--`, because the PowerShell binder splits `-m:2` into `-m` and `2`.
@@ -1151,7 +1151,7 @@ Keep one slot-owning layer: invoke `scripts/run-checkpoint.ps1` directly with `p
 
 Never chain a second driver after the gated command with a shell operator: the lease ends when build-slot.ps1 returns, so `-- dotnet build ... && dotnet exec ...` runs the exec unleased and Review flags it.
 
-**Stable output for direct builds (CARD-1629).** A direct build is any build you run through the wrapper rather than as a checkpoint row. In a task's worktree, every direct build uses one stable output for the whole task. `pwsh -NoProfile -File scripts/build-slot.ps1 -StableOutput` prints its name: `bin-<taskid8>/` in a `task-<8hex>` or `card-task-<8hex>` worktree, and `bin-wt-<hash8>/` in any other worktree. It takes no lease and runs nothing. Pass the name exactly as printed in `--property:OutputPath=<name>` to every build and `--no-build` run in that worktree.
+**Native output for direct builds (CARD-1629).** A direct build is any build or test run you start through the wrapper rather than as a checkpoint row. It uses the worktree's native default output, each project's own `bin/<Configuration>/<TFM>/` and `obj/`: pass no `-o`, `--output` or `OutputPath` to `dotnet build`, and pass the same properties to the `dotnet run --project <X> --no-build` that follows it. Every task has its own worktree, and a pool slot keeps its worktree between tasks, so the native output is already stable for the whole task and MSBuild stays incremental. Never choose an output name per build.
 
 The reason is measured. On server2, building `tests/Antiphon.Tests` with the same obj:
 
@@ -1161,22 +1161,24 @@ The reason is measured. On server2, building `tests/Antiphon.Tests` with the sam
 | One-line test edit, same output | 59% | same investigation |
 | Same build with a new output name | 97% | same investigation |
 
-A new output name changes every project's reference paths, so almost everything recompiles. Switching back and forth between two names recompiles on every switch. CARD-1629's own run measured the same pattern: 216.6 s cold, 15.8 s unchanged, 117.4 s under a new name.
+A new output name changes every project's reference paths, so almost everything recompiles, and switching between two names recompiles on every switch. CARD-1629 measured the same pattern with a custom output (216.6 s cold, 15.8 s unchanged, 117.4 s under a new name) and then with the native default output (220.3 s cold, 15.2 s unchanged).
 
-The old rule asked for a new name for every build. Each hazard it guarded against is handled as follows:
+Hazards, and how each is handled:
 
-- **Trailing backslash** (CARD-0448): the printed name is a single relative segment that always ends in a forward slash. Pass it unchanged.
-- **Another configuration or property set**: a `Configuration`, `DefineConstants` or any other `-p:` that changes the outputs needs its own stable name. Get it with `-StableOutput -OutputSuffix <name>`, which prints `bin-<taskid8>-<name>/` (the suffix is lowercase letters, digits and hyphens). Two property sets never share one output.
+- **Another configuration**: the native output is per configuration (`bin/Debug/`, `bin/Release/`), so `-c Release` uses the default output of that configuration. Another `-p:` set (`DefineConstants`, a probe property) shares the same native output and `obj/`: MSBuild recompiles what the change affects, and again when you switch back. Keep one property set for the task where you can.
+- **`UseAppHost=false`**: pass it identically on the build and on every `--no-build` run. A run without it looks for the apphost the build never wrote.
 - **A commit or checkout**: MSBuild decides what to rebuild from input timestamps and its `CoreCompileInputs` cache, so it rebuilds whatever a commit or `git checkout` in the worktree changed. The exception is a restored file that keeps its old modification time. After restoring a mutation, set that file's `LastWriteTime` (CARD-0412 D4, the bullet under "Building while daemons run") or rebuild with `--no-incremental`.
-- **A crashed or killed build**: run the same build again; it redoes whatever is out of date. If that still misbehaves, delete that stable directory by its exact paths and build again.
-- **Concurrent builds**: run one build at a time per worktree. A build slot is a share of the host budget, not a lock on a worktree or a label, and every project's `obj/` is shared by all output names. A second build running at the same time in the same worktree therefore races whatever output name it uses. PC shards use their own worktrees, and each worktree gets its own stable name.
-- **Cleanup**: at the end of the task, delete each stable directory once by its exact path. There is about one per project, as before.
+- **A crashed or killed build**: run the same build again; it redoes whatever is out of date. If that still misbehaves, rebuild with `--no-incremental`.
+- **Concurrent builds**: run one build at a time per worktree. A build slot is a share of the host budget, not a lock on a worktree or a label, so a second build in the same worktree races the first on the same `bin/` and `obj/`. PC shards use their own worktrees.
+- **Cleanup**: the native `bin/` and `obj/` belong to the worktree and are ignored residue; leave them for the next build (worktree retirement removes them). Delete anything else you create, such as a scratch worktree or a custom output, by its exact path.
 
 The checkpoint tool and land verification stay cold:
 
-- **Checkpoint rows**: each row's `bin-<id>/` is a producer-owned output that is new for that run. The tool refuses to reuse an existing output (`SourceRunGuard`), so never name the stable directory in a checkpoint plan.
-- **Land verification** builds in its own verification worktree.
+- **Checkpoint rows**: each row's output is a producer-owned directory that is new for that run, and the tool refuses to reuse an existing output (`SourceRunGuard`). Its `OutputPath` is a custom output, so it ends in a forward slash.
+- **Land verification** builds with `--artifacts-path` into its own directory outside the checkout.
 - **Running both at once**: never run a direct build in a worktree while a checkpoint run is in flight there.
+
+A custom output is still used only where the native one must not be shared: checkpoint rows, a build in the checkout a daemon runs from (see "Building while daemons run"), and scripts that build and verify an isolated producer-owned output by design (`scripts/test-isolated-helper-build.ps1`, `scripts/test-fake-provider-layout.ps1`). Each ends in a forward slash, never a backslash (CARD-0448).
 
 CARD-1629 step 2 (reusing a checkpoint build at the same commit) is separate and is not part of this rule.
 
