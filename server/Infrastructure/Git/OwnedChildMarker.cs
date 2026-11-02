@@ -28,6 +28,16 @@ internal sealed class OwnedChildMarker : IDisposable
 
     public string Value { get; }
 
+    /// <summary>Test seam: reads one <c>/proc/&lt;pid&gt;/environ</c> path.</summary>
+    internal Func<string, byte[]> ReadEnviron { get; set; } = File.ReadAllBytes;
+
+    /// <summary>Test seam: a stand-in job's active process count, read in place of the Windows job.</summary>
+    internal Func<uint?>? JobProbe { get; set; }
+
+    /// <summary>The job held the child before it could run or spawn. False when the child joined
+    /// after <see cref="Process.Start(ProcessStartInfo)"/>.</summary>
+    internal bool AssignedBeforeSpawn { get; set; }
+
     internal static OwnedChildMarker Create(Action<string> log)
     {
         var job = IntPtr.Zero;
@@ -73,18 +83,19 @@ internal sealed class OwnedChildMarker : IDisposable
     /// that cannot be established. Windows reads the job; Linux reads every readable environ.</summary>
     internal bool? AnyAlive()
     {
+        if (JobProbe is not null) return JobVerdict(AssignedBeforeSpawn, JobProbe());
         if (OperatingSystem.IsWindows())
-        {
-            if (_job == IntPtr.Zero) return null;
-            return ActiveJobProcesses() is uint active ? active > 0 : null;
-        }
-        if (OperatingSystem.IsLinux()) return AnyEnvironCarries(Value);
+            return _job == IntPtr.Zero ? null : JobVerdict(AssignedBeforeSpawn, ActiveJobProcesses());
+        if (OperatingSystem.IsLinux()) return AnyEnvironCarries(Value, ReadEnviron);
         return null;
     }
 
+    internal static bool? JobVerdict(bool assignedBeforeSpawn, uint? active) =>
+        active is uint count ? count > 0 : null;
+
     /// <summary>Linux: a live process whose initial environment carries the marker. A zombie has
     /// an empty environ and is not a writer. Another user's environ is unreadable and is not ours.</summary>
-    internal static bool? AnyEnvironCarries(string value)
+    internal static bool? AnyEnvironCarries(string value, Func<string, byte[]> readEnviron)
     {
         var needle = Encoding.UTF8.GetBytes(Variable + "=" + value + "\0");
         IEnumerable<string> entries;
@@ -97,7 +108,7 @@ internal sealed class OwnedChildMarker : IDisposable
                 if (!int.TryParse(Path.GetFileName(entry), NumberStyles.None, CultureInfo.InvariantCulture, out var pid)) continue;
                 if (pid == Environment.ProcessId) continue;
                 byte[] environ;
-                try { environ = File.ReadAllBytes(Path.Combine(entry, "environ")); }
+                try { environ = readEnviron(Path.Combine(entry, "environ")); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
                 if (Carries(environ, needle)) return true;
             }
