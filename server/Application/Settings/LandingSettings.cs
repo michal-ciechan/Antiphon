@@ -33,7 +33,10 @@ public sealed class LandingSettings
 
     /// <summary>
     /// The <c>-maxcpucount</c> of a memory-floor fallback build (default 2; the unreachable path
-    /// uses 4). Clamped to at least 1, because the verifier builds with no cap for a count of 0.
+    /// uses 4). Clamped to at least 1, because the verifier builds with no cap for a count of 0, and
+    /// (CARD-1470) to at most the host's logical cpu count (<see cref="Environment.ProcessorCount"/>).
+    /// The global bound: each land verification takes at most one fallback build at this count, so
+    /// concurrent fallbacks (lands in other repositories) use at most this count each.
     /// </summary>
     public int BuildSlotMemoryFloorFallbackMaxCpuCount { get; set; } = 2;
 }

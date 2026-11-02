@@ -17,25 +17,34 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
     internal AgentTaskLandService.LandProcessRunner? RunProcess { get; init; }
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
     {
-        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, null), ct, buildSlots, RunProcess);
-        return new(result.Ok, result.Ok ? result.Description : result.Step + " failed");
+        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, null, null), ct, buildSlots, RunProcess);
+        return new(result.Ok, result.Ok ? result.Description : result.Step + " failed", result.MemoryWait);
     }
 
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter,
         LandingVerificationCorrelation correlation, CancellationToken ct)
     {
-        var observer = new Observer(worktree, logger, correlation);
-        var generation = correlation.CommonDirectory is { } common
-            ? await (artifacts ?? new LandVerificationArtifacts()).PrepareAsync(common, worktree,
-                settings?.Value.ReuseVerificationArtifacts ?? true, observer.Line, ct)
-            : null;
-        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, observer, ct,
-            buildSlots, RunProcess, artifactsPath: generation?.Path ?? correlation.ArtifactsPath);
-        if (result.Ok) generation?.Complete();
-        return new(result.Ok, result.Ok ? result.Description : result.Step + " failed");
+        var observer = new Observer(worktree, logger, correlation, waits);
+        try
+        {
+            var generation = correlation.CommonDirectory is { } common
+                ? await (artifacts ?? new LandVerificationArtifacts()).PrepareAsync(common, worktree,
+                    settings?.Value.ReuseVerificationArtifacts ?? true, observer.Line, ct)
+                : null;
+            var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, observer, ct,
+                buildSlots, RunProcess, artifactsPath: generation?.Path ?? correlation.ArtifactsPath);
+            if (result.Ok) generation?.Complete();
+            return new(result.Ok, result.Ok ? result.Description : result.Step + " failed", result.MemoryWait);
+        }
+        finally
+        {
+            // CARD-1470/1467: the live memory state ends with the verification; the land records the rest.
+            observer.MemoryWait(null);
+        }
     }
 
-    private sealed class Observer(string repository, ILogger<LandingVerifier>? logger, LandingVerificationCorrelation? correlation) : ILandingChildObserver
+    private sealed class Observer(string repository, ILogger<LandingVerifier>? logger, LandingVerificationCorrelation? correlation,
+        LandVerificationWaits? waits) : ILandingChildObserver
     {
         private RepositoryChildJournal? _journal;
         private int? _processId;
@@ -53,6 +62,11 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
             try { logger?.LogInformation("Landing verifier task {TaskId} operation {OperationId} request {RequestId}: {BuildSlotLine}",
                 correlation?.TaskId, correlation?.OperationId, correlation?.RequestId, line); }
             catch (Exception) { }
+        }
+        public void MemoryWait(BuildSlotMemoryWait? wait)
+        {
+            if (waits is null || correlation?.RequestId is not Guid requestId) return;
+            waits.Set(requestId, wait);
         }
         public void Completed()
         {

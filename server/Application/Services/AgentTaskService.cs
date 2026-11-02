@@ -127,8 +127,11 @@ public sealed class AgentTaskService
         DispatchConcurrencySettingsService? dispatchConcurrency = null,
         SeatOccupancyState? seats = null,
         // CARD-1488. Optional: absent, a cancel has no lease waiter to drop.
-        RepositoryLeaseWaiters? leaseWaiters = null)
+        RepositoryLeaseWaiters? leaseWaiters = null,
+        // CARD-1470/1467. Optional: absent, the land status has no live memory-floor wait to show.
+        LandVerificationWaits? landWaits = null)
     {
+        _landWaits = landWaits;
         _leaseWaiters = leaseWaiters;
         _seats = seats;
         _dispatchConcurrency = dispatchConcurrency;
@@ -170,6 +173,7 @@ public sealed class AgentTaskService
 
     private readonly IServiceScopeFactory? _seatReleaseScopes;
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
+    private readonly LandVerificationWaits? _landWaits;
 
     /// <summary>
     /// Who is calling. Resolved from the bearer token by <see cref="AuthenticateAsync"/> — a manual
@@ -2905,7 +2909,7 @@ public sealed class AgentTaskService
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
             task.DistilledResult, landingDto,
             landRequest is null ? null : LandRequestStatusDto.From(landRequest, _timeProvider.GetUtcNow().UtcDateTime,
-                landNotes.Select(LandNotificationStatusDto.From).ToList()),
+                landNotes.Select(LandNotificationStatusDto.From).ToList(), _landWaits?.Find(landRequest.Id)),
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
                 legacyNote?.ConfirmedAt is not null ? "Confirmed" : task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified",
                 legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence),

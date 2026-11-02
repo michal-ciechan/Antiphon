@@ -297,6 +297,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await RecheckSourceAsync(op, ct);
                 if (ticket is not null)
                 {
+                    RecordBuildSlot(op, completedVerification, request?.Id);
                     Require(completedVerification?.Passed == true, "verification_failed");
                     op.VerificationPassed = true;
                 }
@@ -329,6 +330,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                         return new(op, null, []) { Verification = (await CaptureTicketAsync(op, request, ct)).Ticket };
                     var verification = await verifier.VerifyAsync(land, op.VerificationFilter,
                         new(op.TaskId, op.Id, request?.Id, CommonDirectory: common), ct);
+                    RecordBuildSlot(op, verification, request?.Id);
                     Require(verification.Passed, "verification_failed");
                     op.VerificationPassed = true;
                 }
@@ -978,6 +980,31 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     }
 
     private DateTime Now() => clock.GetUtcNow().UtcDateTime;
+
+    /// <summary>CARD-1470: the marker before the build-slot note on <see cref="AgentTaskLanding.VerificationCommand"/>.</summary>
+    internal const string BuildSlotMarker = "; build-slot=";
+
+    /// <summary>CARD-1470: the recorded memory-floor wait or fallback of this operation's verifier, if any.</summary>
+    internal static string? BuildSlotNote(string? verificationCommand) =>
+        verificationCommand?.LastIndexOf(BuildSlotMarker, StringComparison.Ordinal) is int at and >= 0
+            ? verificationCommand[(at + BuildSlotMarker.Length)..]
+            : null;
+
+    /// <summary>
+    /// CARD-1470/1467: a verifier that waited on the build-slot memory floor, or built with its
+    /// fallback, records that on the land operation (saved with the verification outcome), so an
+    /// operator sees why a land was slow without the server log.
+    /// </summary>
+    private void RecordBuildSlot(AgentTaskLanding op, LandingVerification? verification, Guid? requestId)
+    {
+        if (verification?.MemoryWait is not { } memory) return;
+        var note = memory.Describe();
+        if (BuildSlotNote(op.VerificationCommand) != note)
+            op.VerificationCommand += BuildSlotMarker + note;
+        try { logger?.LogInformation(
+            "Landing verifier build slot task {TaskId} operation {OperationId} request {RequestId}: {BuildSlotNote}",
+            op.TaskId, op.Id, requestId, note); } catch (Exception) { }
+    }
     private async Task RequireNoIndexLockAsync(string checkout, CancellationToken ct)
     {
         if (await TryIndexLockRefusalAsync(checkout, ct) is { } hit)

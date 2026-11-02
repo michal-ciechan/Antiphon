@@ -786,7 +786,7 @@ public sealed class AgentTaskLandService
                 Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, DurationSeconds(op, OrchestrationStage.Verify), "build failed or selected tests failed", task.WorktreePath);
             if (op?.VerifiedAt is not null)
                 Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
-                    DurationSeconds(op, OrchestrationStage.Verify), op.VerificationSkipReason ?? "verification passed");
+                    DurationSeconds(op, OrchestrationStage.Verify), VerifyDetail(op, "verification passed"));
             if (op is not null && state.IsTargetRaceRefusal(op) && raceRetries < budget)
             {
                 raceRetries++;
@@ -814,7 +814,7 @@ public sealed class AgentTaskLandService
         {
             Record(task, OrchestrationStage.Rebase, op.RebasedSourceSha is null ? StageOutcomeKind.Skipped : StageOutcomeKind.Clean, DurationSeconds(op, OrchestrationStage.Rebase));
             Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
-                DurationSeconds(op, OrchestrationStage.Verify), op.VerificationSkipReason ?? "build OK; selected verification passed");
+                DurationSeconds(op, OrchestrationStage.Verify), VerifyDetail(op, "build OK; selected verification passed"));
         }
         Record(task, OrchestrationStage.Cleanup,
             op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed,
@@ -1912,16 +1912,24 @@ public sealed class AgentTaskLandService
         {
             try { observer?.Line(line); } catch (Exception) { /* Secondary observation only. */ }
         }
+        void MemoryWait(BuildSlotMemoryWait? wait)
+        {
+            try { observer?.MemoryWait(wait); } catch (Exception) { /* Secondary observation only. */ }
+        }
         if (buildSlots is not null)
         {
             var name = Path.GetFileName(worktree.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            slot = await buildSlots.AcquireAsync("land-verify " + name, Report, ct);
+            // CARD-1470/1467: each memory-floor refusal reaches the observer (the land status), and
+            // the fallback build stays visible while it runs; a held slot clears it.
+            slot = await buildSlots.AcquireAsync("land-verify " + name, Report, MemoryWait, ct);
+            MemoryWait(slot.MemoryWait is { Fallback: true } fallback ? fallback : null);
             if (slot.Outcome == BuildSlotHoldOutcome.Timeout)
-                return LandVerification.Failure("build-slot", $"build_slot_timeout position={slot.QueuePosition}");
+                return LandVerification.Failure("build-slot", $"build_slot_timeout position={slot.QueuePosition}") with { MemoryWait = slot.MemoryWait };
         }
         try
         {
-            return await VerifyUnderSlotAsync(worktree, filter, observer, ct, slot, runProcess, artifactsPath);
+            var verified = await VerifyUnderSlotAsync(worktree, filter, observer, ct, slot, runProcess, artifactsPath);
+            return verified with { MemoryWait = slot?.MemoryWait };
         }
         finally
         {
@@ -2026,6 +2034,12 @@ public sealed class AgentTaskLandService
         });
     }
 
+    /// <summary>CARD-1470: the Verify row names a recorded build-slot memory-floor wait or fallback.</summary>
+    private static string VerifyDetail(AgentTaskLanding op, string passed) =>
+        AgentTaskLandingProtocol.BuildSlotNote(op.VerificationCommand) is { } note
+            ? AppendDetail(op.VerificationSkipReason ?? passed, "build-slot=" + note)
+            : op.VerificationSkipReason ?? passed;
+
     internal static string Clip(string detail) =>
         detail.Length <= StageOutcome.DetailMaxLength
             ? detail
@@ -2042,6 +2056,9 @@ public sealed class AgentTaskLandService
 
 internal sealed record LandVerification(bool Ok, string Step, string Tail, string Description)
 {
+    /// <summary>CARD-1470: the build-slot memory-floor wait or fallback, recorded on the land operation.</summary>
+    public BuildSlotMemoryWait? MemoryWait { get; init; }
+
     public static LandVerification Success(string description) => new(true, string.Empty, string.Empty, description);
     public static LandVerification Failure(string step, string tail) => new(false, step, tail, string.Empty);
 }
