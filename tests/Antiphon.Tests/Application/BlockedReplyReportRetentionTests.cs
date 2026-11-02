@@ -540,8 +540,8 @@ public sealed class BlockedReplyReportRetentionTests
         events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
         var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
         blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, "the Block records the question");
-        var warning = events.Where(e => e.Type == AgentTaskEventType.Warning).OrderBy(e => e.At).Last();
-        warning.Detail.ShouldContain("ended unmarked with a question", Case.Sensitive);
+        var warning = events.Single(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("ended unmarked with a question", StringComparison.Ordinal));
         warning.Detail.ShouldContain("the retained report (marked", Case.Sensitive, "the record says the retained report stands");
         warning.Detail.ShouldContain(question, Case.Sensitive, "the record names the question");
     }
