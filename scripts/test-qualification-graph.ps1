@@ -125,6 +125,36 @@ function Start-Process { throw 'unexpected-child' }
 function Invoke-WebRequest { throw 'unexpected-http' }
 function Invoke-RestMethod { throw 'unexpected-runner' }
 function Write-NightlyAtomicJson { throw 'unexpected-receipt' }
+# pwsh 7.6 Test-Json refuses a nested schema violation but writes no error
+# record; only the root schema's own required/false-schema errors surface.
+# The real cmdlet runs in a private runspace (a nested call would leak its
+# records into the caller's -ErrorVariable); native replays every record,
+# pwsh76 only those root-keyword forms.
+$script:QGraphTestJsonShape = 'native'
+$script:QGraphTestJsonRunspace = [runspacefactory]::CreateRunspace()
+$script:QGraphTestJsonRunspace.Open()
+function Test-Pwsh76RootError([string]$Message) {
+    if ($Message.Trim() -cnotmatch " at '([^']*)'$") { return $false }
+    $location = $Matches[1]
+    return ($location -ceq '' -or ($Message -cmatch 'false schema' -and $location -cmatch '^/[^/]+$'))
+}
+function Test-Json {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Json, [string]$Schema, [string]$SchemaFile)
+    $shell = [powershell]::Create()
+    try {
+        $shell.Runspace = $script:QGraphTestJsonRunspace
+        [void]$shell.AddCommand('Microsoft.PowerShell.Utility\Test-Json').AddParameter('Json', $Json)
+        if ($PSBoundParameters.ContainsKey('Schema')) { [void]$shell.AddParameter('Schema', $Schema) }
+        if ($PSBoundParameters.ContainsKey('SchemaFile')) { [void]$shell.AddParameter('SchemaFile', $SchemaFile) }
+        $ok = [bool]@($shell.Invoke())[0]
+        foreach ($record in @($shell.Streams.Error)) {
+            if ($script:QGraphTestJsonShape -ceq 'pwsh76' -and -not (Test-Pwsh76RootError $record.Exception.Message)) { continue }
+            $PSCmdlet.WriteError($record)
+        }
+        return $ok
+    } finally { $shell.Dispose() }
+}
 . "$PSScriptRoot/lib/qualification-graph.ps1"
 $setupSeconds = $clock.Elapsed.TotalSeconds
 Check ([bool](Get-Command Read-QualificationGraph -ErrorAction SilentlyContinue)) 'production-surface'
@@ -150,16 +180,23 @@ foreach ($entry in @(
     $original = $text | ConvertFrom-Json
     Check ($result.Accepted -and (Json $result.Graph) -ceq (Json $original)) $entry[0] $result.Reason
 }
-foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
-    $edited = Edit-Graph (Copy-Graph $base) $recipe
-    $text = Json $edited
+function Measure-Recipe($recipe, [string]$text) {
     $direct = Test-QualificationGraphSchema $text $schema
     $result = Read-PinnedGraph $text $catalogJson $schema
     $boundary = ($direct -eq ($recipe.boundary -ceq 'identity'))
     $path = $result.SchemaPaths -ccontains $recipe.path
     if ($recipe.boundary -ceq 'identity') { $path = $result.Path -ceq $recipe.path }
-    Check ($healthy.Accepted -and $boundary -and -not $result.Accepted -and
-        $result.Category -ceq $recipe.category -and $path) $recipe.id ("path=" + $recipe.path + " result=" + $result.Category + ':' + $result.Path)
+    $ok = ($healthy.Accepted -and $boundary -and -not $result.Accepted -and $result.Category -ceq $recipe.category -and $path)
+    return [pscustomobject]@{ Ok = $ok; Detail = ('result=' + $result.Category + ':' + $result.Path) }
+}
+foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
+    $edited = Edit-Graph (Copy-Graph $base) $recipe
+    $text = Json $edited
+    # Each row holds in both Test-Json shapes: this host's and pwsh 7.6's.
+    $native = Measure-Recipe $recipe $text
+    $script:QGraphTestJsonShape = 'pwsh76'
+    try { $seam = Measure-Recipe $recipe $text } finally { $script:QGraphTestJsonShape = 'native' }
+    Check ($native.Ok -and $seam.Ok) $recipe.id ("path=" + $recipe.path + " native " + $native.Detail + " pwsh76 " + $seam.Detail)
     if ((Inventory $fixtures) -cne $beforeInputs) { throw 'fixture-bytes-changed' }
 }
 $missing = Read-PinnedGraph $graphJson '' $schema
@@ -317,6 +354,7 @@ foreach ($shape in $shapes) {
     if ($got -cnotcontains $shape.path) { $shapesOk = $false; $shapeDetail = $shape.path + ' got=' + ($got -join '|') }
 }
 Check $shapesOk 'windows-shaped-paths' $shapeDetail
+$script:QGraphTestJsonRunspace.Dispose()
 Check ((Inventory $fixtures) -ceq $beforeInputs -and (Inventory $ResultsDirectory) -ceq $beforeScratch) 'no-side-effects'
 Write-Host ("QGRAPH TIMING setup={0:F3}s body={1:F3}s services=not-used externalCalls=fixture-io; child=owned-by-ScriptHarness" -f $setupSeconds, ($clock.Elapsed.TotalSeconds - $setupSeconds))
 Write-Host "C487: $script:C487Passed passed, $script:C487Failed failed, $script:C487Rows rows"
