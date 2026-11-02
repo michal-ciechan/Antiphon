@@ -273,6 +273,44 @@ public class CodexTranscriptTailerTests
     }
 
     /// <summary>
+    /// CARD-1624 follow-up: equal write times (one coarse filesystem tick for a burst of writes)
+    /// are broken by path, ordinal ascending, never by directory enumeration order.
+    /// </summary>
+    [Test]
+    public async Task Refusal_detail_breaks_equal_write_times_by_path()
+    {
+        using var tree = new CodexTree();
+        var stale = Enumerable.Range(0, 6).Select(_ => tree.Seed("codex-tui-turn.jsonl")).ToArray();
+        var childStart = stale[0].FirstTimestamp.AddHours(1);
+        foreach (var rollout in stale)
+            File.SetLastWriteTimeUtc(rollout.Path, childStart.AddMinutes(-6));
+        var postStart = tree.Seed("codex-tui-turn.jsonl", childStart.AddSeconds(1));
+        File.SetLastWriteTimeUtc(postStart.Path, childStart.AddMinutes(1));
+
+        var input = new SessionInputLog();
+        input.Append("A prompt unique to this session, not present in any rollout");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: childStart,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(10));
+            fault.ShouldNotBeNull();
+            var detail = fault!.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
+            var listed = detail.Split("; ").Select(part => part[..part.IndexOf(".jsonl", StringComparison.Ordinal)] + ".jsonl").ToArray();
+            listed.ShouldBe([postStart.Path, .. stale.Select(r => r.Path).Order(StringComparer.Ordinal).Take(4)]);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// A session that has not received its first input is legitimately waiting for Codex to create
     /// its rollout. Stale same-cwd rollouts must not turn that wait into refusal incidents.
     /// </summary>
