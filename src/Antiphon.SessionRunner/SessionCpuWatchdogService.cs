@@ -93,10 +93,15 @@ public sealed class SessionCpuWatchdogService : BackgroundService
                 continue;
             }
 
-            IReadOnlyList<RunnerTranscriptEvent> entries;
+            // CARD-1624: the tailer keeps this verdict as it parses, so a sweep no longer copies and
+            // re-walks every Running session's whole transcript every five seconds. Same judgement
+            // (TranscriptWorkingState.Classify), same order of gates: a pure CPU-first reorder would
+            // change the kill window (a cool sample with an unknown idle state can neither keep nor
+            // drop the detector's baseline faithfully).
+            TranscriptWorkingState.WorkingVerdict verdict;
             try
             {
-                entries = _runtime.GetTranscript(session.SessionId).Entries;
+                verdict = TranscriptWorkingState.Classify(_runtime.GetTranscript(session.SessionId).Entries); // CARD-1624 RED
             }
             catch (KeyNotFoundException)
             {
@@ -104,7 +109,7 @@ public sealed class SessionCpuWatchdogService : BackgroundService
                 continue; // removed between List() and here
             }
 
-            if (!TranscriptWorkingState.IsProvenIdle(entries))
+            if (verdict != TranscriptWorkingState.WorkingVerdict.Idle)
             {
                 _detector.Forget(session.SessionId);
                 continue;

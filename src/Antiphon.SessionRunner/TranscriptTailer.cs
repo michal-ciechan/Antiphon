@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -37,6 +38,15 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan LocatePollInterval = TimeSpan.FromMilliseconds(250);
+    // CARD-1624: the FULL discovery scan (every transcript under the root) backs off from one
+    // poll to this cap while nothing relevant changes. The per-poll watch (our input log, the
+    // cwd's project dir, the directories and files that could still become ours) brings it back
+    // to one poll the moment something does, so a new transcript in a watched place still binds
+    // within one poll and anywhere else within the cap.
+    internal static readonly TimeSpan MaxFullScanInterval = TimeSpan.FromSeconds(5);
+    // Beyond this many still-undecided candidates the per-poll watch stops stat-ing files one by
+    // one and leaves them to the backed-off full scan.
+    private const int MaxWatchedFiles = 64;
 
     // ~30s of consecutive faults before the first report, then roughly every 2 minutes.
     private const int LocateFaultFirstReportPolls = 120;
@@ -81,8 +91,12 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private DateTime? _lastExactLossReport;
     private readonly object _gate = new();
     private readonly List<RunnerTranscriptEvent> _entries = new();
-    private readonly DateTime _startedAtUtc = DateTime.UtcNow;
+    private readonly TimeProvider _time;
+    private readonly DateTime _startedAtUtc;
     private readonly Dictionary<string, TranscriptCandidateProbe> _probes = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string>? _lastScanFiles;
+    private TranscriptWorkingState.WorkingAccumulator _working;
+    private int _snapshots;
     private Task? _loop;
     private long _seq;
     private DateTime? _childExitedAtUtc;
@@ -127,8 +141,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         IKnownSessionProbe? knownSessions = null,
         TimeSpan? refusalFaultDelay = null,
         TimeSpan? refusalFaultRepeat = null,
-        string? projectsRoot = null)
+        string? projectsRoot = null,
+        TimeProvider? timeProvider = null)
     {
+        _time = timeProvider ?? TimeProvider.System;
+        _startedAtUtc = UtcNow;
         _sessionId = sessionId;
         _cwd = cwd;
         _events = events;
@@ -150,6 +167,23 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         ForkScanInterval = forkScanInterval ?? DefaultForkScanInterval;
         _firstInputObservedUtc = firstInputUtc;
         _unboundReason = InputDelivered ? "locating" : "awaiting-input";
+    }
+
+    private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
+
+    /// <summary>CARD-1624: what discovery costs this tailer (tests assert on it).</summary>
+    internal TranscriptLocateCounters LocateCounters { get; } = new();
+
+    /// <summary>How many full snapshots were taken (CARD-1624: the CPU watchdog must not take any).</summary>
+    internal int SnapshotCount => Volatile.Read(ref _snapshots);
+
+    /// <summary>
+    /// CARD-1624: <see cref="TranscriptWorkingState.Classify"/> over everything parsed so far, kept
+    /// up to date per entry instead of recomputed from a full snapshot by every caller.
+    /// </summary>
+    public TranscriptWorkingState.WorkingVerdict WorkingVerdict
+    {
+        get { lock (_gate) return _working.Verdict; }
     }
 
     /// <summary>How often the tailer looks for a mid-session conversation fork (see RunAsync).</summary>
@@ -175,7 +209,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// stop — and if input WAS delivered and nothing ever bound, that is reported now rather than
     /// polling silently for the rest of the runner's life.
     /// </summary>
-    public void NotifyChildExited() => _childExitedAtUtc ??= DateTime.UtcNow;
+    public void NotifyChildExited() => _childExitedAtUtc ??= UtcNow;
 
     public void NotifyClaimRevoked(string path, Guid newOwner)
     {
@@ -198,6 +232,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     public RunnerTranscriptDto Snapshot()
     {
+        Interlocked.Increment(ref _snapshots);
         lock (_gate)
             return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq,
                 _completion.IsComplete && !_claimRevoked, Readiness: ObserveReadiness());
@@ -410,7 +445,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
                 long offset = 0;
                 var pending = new List<byte>();
-                var lastForkScan = DateTime.UtcNow;
+                var lastForkScan = UtcNow;
                 var dropped = false;
                 while (!ct.IsCancellationRequested)
                 {
@@ -434,9 +469,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                         // session (live miss 2026-07-31: the AZ Care reply after a /clear never reached
                         // Telegram). Sequences stay monotonic across the switch; re-reading the fork from
                         // offset 0 is safe — the server dedupes by line uuid.
-                        if (DateTime.UtcNow - lastForkScan >= ForkScanInterval)
+                        if (UtcNow - lastForkScan >= ForkScanInterval)
                         {
-                            lastForkScan = DateTime.UtcNow;
+                            lastForkScan = UtcNow;
                             if (TryFindNewerFork(path) is { } fork && TryBind(fork, TranscriptBindMethods.Fork))
                             {
                                 _logger.LogWarning(
@@ -602,6 +637,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     p.IsApiError, p.ApiErrorClass, p.ApiErrorStatus, p.Model, p.ModelCalls,
                     p.ApiErrorTimeZoneId);
                 _entries.Add(evt);
+                _working.Observe(evt);
             }
             _events.Publish(SessionRunnerEventNames.SessionTranscript, evt);
         }
@@ -629,6 +665,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         // CARD-0101: how many times this CONTINUOUS fault has been reported. Reset with the fault
         // itself (below), so it is a measure of this episode and never of the session's lifetime.
         var refusalRepeat = 0;
+        // CARD-1624: the full scan is the expensive part (every transcript on the machine); it
+        // runs when due by the backoff clock or when the per-poll watch saw something move.
+        var scanInterval = LocatePollInterval;
+        DateTime? nextScanAt = null;
+        CandidateVerdict? lastVerdict = null;
+        LocateWatch? watch = null;
+        var cwdProjectDir = ClaudeProjectDirName(_cwd) is { } dirName ? Path.Combine(projectsRoot, dirName) : null;
 
         while (!ct.IsCancellationRequested)
         {
@@ -653,43 +696,73 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     faultPolls = 0;
 
                     // 2. Claude honoured --session-id: the filename IS the positive identification.
-                    foreach (var dir in Directory.EnumerateDirectories(projectsRoot))
+                    //    Claude names the project dir after the cwd, so that one is looked at on
+                    //    every poll; every other dir is part of the full scan below.
+                    if (cwdProjectDir is not null)
                     {
-                        var candidate = Path.Combine(dir, fileName);
-                        if (File.Exists(candidate) && TryBind(candidate, TranscriptBindMethods.Exact))
-                            return candidate;
+                        var expected = Path.Combine(cwdProjectDir, fileName);
+                        if (File.Exists(expected) && TryBind(expected, TranscriptBindMethods.Exact))
+                            return expected;
                     }
 
-                    // 3. Claude forked to a self-chosen id. Discover by evidence, once the exact
-                    //    file has had a fair chance to appear.
-                    if (DateTime.UtcNow - _startedAtUtc >= _exactIdGrace)
+                    var pastGrace = UtcNow - _startedAtUtc >= _exactIdGrace;
+                    var watchFired = watch is not null && watch.Changed(_inputLog, LocateCounters);
+                    if (nextScanAt is null || UtcNow >= nextScanAt || watchFired || (pastGrace && lastVerdict is null))
                     {
-                        var verdict = EvaluateCandidates(projectsRoot);
-                        if (verdict.Winner is { } winner && TryBind(winner, verdict.How))
+                        LocateCounters.CountFullScan();
+                        var relevantChange = watchFired;
+                        foreach (var dir in Directory.EnumerateDirectories(projectsRoot))
                         {
-                            _logger.LogWarning(
-                                "Session {SessionId}: <session-id>.jsonl never appeared (Claude forked the id); "
-                                + "adopting {Path} ({How}) — cwd {Cwd}",
-                                _sessionId, winner, verdict.How, _cwd);
-                            return winner;
+                            var candidate = Path.Combine(dir, fileName);
+                            if (File.Exists(candidate) && TryBind(candidate, TranscriptBindMethods.Exact))
+                                return candidate;
                         }
 
+                        // 3. Claude forked to a self-chosen id. Discover by evidence, once the exact
+                        //    file has had a fair chance to appear.
+                        if (pastGrace)
+                        {
+                            var verdict = EvaluateCandidates(projectsRoot);
+                            if (verdict.Winner is { } winner && TryBind(winner, verdict.How))
+                            {
+                                _logger.LogWarning(
+                                    "Session {SessionId}: <session-id>.jsonl never appeared (Claude forked the id); "
+                                    + "adopting {Path} ({How}) — cwd {Cwd}",
+                                    _sessionId, winner, verdict.How, _cwd);
+                                return winner;
+                            }
+
+                            lastVerdict = verdict;
+                            relevantChange |= verdict.RelevantChange;
+                        }
+
+                        watch = LocateWatch.Capture(projectsRoot, cwdProjectDir, lastVerdict, _inputLog, LocateCounters);
+                        scanInterval = relevantChange
+                            ? LocatePollInterval
+                            : TimeSpan.FromTicks(Math.Min(scanInterval.Ticks * 2, MaxFullScanInterval.Ticks));
+                        nextScanAt = null; // CARD-1624 RED: no backoff yet
+                    }
+
+                    // Fault judgement runs every poll on the latest verdict, so its clocks keep
+                    // the poll's resolution however far the full scan has backed off.
+                    if (pastGrace && lastVerdict is { } current)
+                    {
                         var inputDelivered = InputDelivered;
-                        refusingSince = verdict.ExactFileHeldBy is not null
-                            || (inputDelivered && verdict.Refusals.Count > 0)
-                            ? refusingSince ?? DateTime.UtcNow
+                        refusingSince = current.ExactFileHeldBy is not null
+                            || (inputDelivered && current.Refusals.Count > 0)
+                            ? refusingSince ?? UtcNow
                             : null;
-                        MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault, ref refusalRepeat);
+                        MaybeReportRefusal(current, ref refusingSince, ref lastRefusalFault, ref refusalRepeat);
 
                         // CARD-0073 S1: C2 itself found nothing, so Refusals is empty and the
                         // refusal path stays silent. A live child that has already been typed at
                         // and still has zero cwd-matching candidates is the 10e30ff7 shape — it
                         // must not run unbound forever with nothing on the wire.
-                        emptySince = inputDelivered && IsEmptyCensus(verdict)
-                            ? emptySince ?? DateTime.UtcNow
+                        emptySince = inputDelivered && IsEmptyCensus(current)
+                            ? emptySince ?? UtcNow
                             : null;
-                        MaybeReportNoCandidates(verdict, ref emptySince, ref lastRefusalFault, ref refusalRepeat);
-                        UpdateUnboundReason(verdict);
+                        MaybeReportNoCandidates(current, ref emptySince, ref lastRefusalFault, ref refusalRepeat);
+                        UpdateUnboundReason(current);
 
                         // The repeat counter belongs to the EPISODE, not the session: once neither
                         // shape is live any more the next fault starts again at 1, so an escalation
@@ -709,13 +782,14 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 ReportRootFault(++faultPolls, projectsRoot, ex.Message, ex);
             }
 
-            if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
+            if (_childExitedAtUtc is { } exitedAt && UtcNow - exitedAt >= ChildExitSettle)
             {
                 ReportMissingAfterChildExit();
                 return null;
             }
 
-            try { await Task.Delay(LocatePollInterval, ct); }
+            LocateCounters.CountTick();
+            try { await Task.Delay(LocatePollInterval, _time, ct); }
             catch (OperationCanceledException) { return null; }
         }
 
@@ -740,9 +814,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     var holder = _claims.OwnerOf(path);
                     _lastExactLossHolder = holder?.Owner;
                     if (_lastExactLossReport is null
-                        || DateTime.UtcNow - _lastExactLossReport.Value >= _refusalFaultRepeat)
+                        || UtcNow - _lastExactLossReport.Value >= _refusalFaultRepeat)
                     {
-                        _lastExactLossReport = DateTime.UtcNow;
+                        _lastExactLossReport = UtcNow;
                         _logger.LogWarning(
                             "Session {SessionId}: its own transcript {Path} is held by session {Holder} ({Strength}); not adopting.",
                             _sessionId, path, holder?.Owner, holder?.Strength);
@@ -796,7 +870,17 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         int FilesUnderRoot,
         int CwdMatched,
         int PostStartCandidates,
-        string? ExactFileHeldBy = null);
+        string? ExactFileHeldBy = null)
+    {
+        /// <summary>CARD-1624: a file appeared, vanished, or an undecided candidate changed.</summary>
+        public bool RelevantChange { get; init; }
+
+        /// <summary>Candidates that could still become ours (cwd unknown, or C4 not yet proven), with what was seen.</summary>
+        public IReadOnlyList<(string Path, long Length, DateTime WriteUtc)> Undecided { get; init; } = [];
+
+        /// <summary>Directories holding a cwd-matched candidate: where this session's file would appear.</summary>
+        public IReadOnlyCollection<string> CandidateDirs { get; init; } = [];
+    }
 
     /// <summary>
     /// Applies C1–C4 to every transcript under the projects root and returns the best qualifying
@@ -811,11 +895,17 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         var filesUnderRoot = 0;
         var cwdMatched = 0;
         var postStartCandidates = 0;
+        var undecided = new List<(string Path, long Length, DateTime WriteUtc)>();
+        var candidateDirs = new HashSet<string>(StringComparer.Ordinal);
+        var previous = _lastScanFiles;
+        var relevantChange = previous is null;
 
         foreach (var file in Directory.EnumerateFiles(projectsRoot, "*.jsonl", SearchOption.AllDirectories))
         {
             seen.Add(file);
             filesUnderRoot++;
+            if (previous is not null && !previous.Contains(file))
+                relevantChange = true;
 
             if (Path.GetFileNameWithoutExtension(file).Equals(_sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
                 continue; // the exact file is handled by the fast path
@@ -837,15 +927,45 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             if (_claims?.IsClaimedByOther(file, _sessionId) == true)
                 continue;
 
+            // CARD-1624: a file whose recorded cwd is already known to be someone else's is
+            // rejected below without reading anything, so it is not even stat-ed — that per-file
+            // stat of every transcript on the machine, four times a second, was the hot path.
+            var known = _probes.TryGetValue(file, out var before);
+            if (known && before!.Cwd is not null && !CwdMatches(before.Cwd))
+                continue;
+            var undecidedBefore = !known || before!.Cwd is null || !before.ContentMatched;
+
+            // One stat, from the file itself (a directory entry's copy can lag a writer that holds
+            // the file open): the write time for C2b-C4 ordering, and with the length, whether the
+            // probe has anything new to read.
             DateTime mtime;
-            try { mtime = File.GetLastWriteTimeUtc(file); }
+            long length;
+            try
+            {
+                LocateCounters.CountStat();
+                var info = new FileInfo(file);
+                mtime = info.LastWriteTimeUtc;
+                if (!info.Exists)
+                    continue; // gone: the probe would refuse to read it this pass, as before
+                length = info.Length;
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+            var observed = (length, mtime);
 
             // C2 — a different cwd is a different conversation entirely; not a near-miss worth
             // reporting. Also the cheap gate: a non-matching file is never read past its lead.
-            if (ProbeCwdMatchingCandidate(file) is not { } probe)
+            if (ProbeCwdMatchingCandidate(file, observed) is not { } probe)
+            {
+                if (_probes.TryGetValue(file, out var unknown) && unknown.Cwd is null)
+                {
+                    undecided.Add((file, length, mtime));
+                    relevantChange |= undecidedBefore && IsChangedObservation(file, observed);
+                }
                 continue;
+            }
             cwdMatched++;
+            if (Path.GetDirectoryName(file) is { } candidateDir)
+                candidateDirs.Add(candidateDir);
 
             // C2b — a name we know is not ours. Absence is neutral: operator sessions may carry
             // their own names and older Claude versions may write none at all.
@@ -872,6 +992,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             // C4 — the only positive identification: text WE sent, recorded as a prompt in there.
             if (!probe.ContentMatched)
             {
+                undecided.Add((file, length, mtime));
+                relevantChange |= undecidedBefore && IsChangedObservation(file, observed);
                 refusals.Add(new($"{file}: no prompt in it matches input delivered to this session", IsC3: false, mtime));
                 continue;
             }
@@ -880,6 +1002,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         }
 
         PruneProbes(seen);
+        if (previous is not null && previous.Any(p => !seen.Contains(p)))
+            relevantChange = true;
+        _lastScanFiles = seen;
+        foreach (var (path, length, write) in undecided)
+            _lastObservations[path] = (length, write);
+        foreach (var stale in _lastObservations.Keys.Where(p => !seen.Contains(p)).ToList())
+            _lastObservations.Remove(stale);
 
         if (qualified.Count > 0)
         {
@@ -890,12 +1019,94 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 filesUnderRoot,
                 cwdMatched,
                 postStartCandidates,
-                ExactFileHeldBy: FormatHolder(_lastExactLossHolder));
+                ExactFileHeldBy: FormatHolder(_lastExactLossHolder))
+            { RelevantChange = true };
         }
 
         return new CandidateVerdict(
             null, TranscriptBindMethods.Discovery, refusals, filesUnderRoot, cwdMatched, postStartCandidates,
-            ExactFileHeldBy: FormatHolder(_lastExactLossHolder));
+            ExactFileHeldBy: FormatHolder(_lastExactLossHolder))
+        {
+            RelevantChange = relevantChange,
+            Undecided = undecided,
+            CandidateDirs = candidateDirs,
+        };
+    }
+
+    private readonly Dictionary<string, (long Length, DateTime WriteUtc)> _lastObservations = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool IsChangedObservation(string file, (long Length, DateTime WriteUtc) observed) =>
+        !_lastObservations.TryGetValue(file, out var last) || last != observed;
+
+    /// <summary>
+    /// Claude's project directory name for a cwd: every character that is not an ASCII letter or
+    /// digit becomes '-' (<c>C:\src\Antiphon</c> -> <c>C--src-Antiphon</c>). Only a hint for where to
+    /// look first — a name that does not match is still found by the full scan.
+    /// </summary>
+    internal static string? ClaudeProjectDirName(string? cwd) =>
+        string.IsNullOrWhiteSpace(cwd) ? null : Regex.Replace(cwd, "[^a-zA-Z0-9]", "-");
+
+    /// <summary>
+    /// CARD-1624: the cheap per-poll question "could a full scan now find something new?" — our
+    /// input log moved, a watched directory (the root, the cwd's project dir, any dir holding a
+    /// cwd-matched candidate) gained or lost an entry, or an undecided candidate grew. A yes brings
+    /// the full scan back to the next poll; a no lets it keep backing off.
+    /// </summary>
+    private sealed class LocateWatch
+    {
+        private readonly SessionInputLog? _log;
+        private readonly long _logVersion;
+        private readonly List<(string Path, DateTime WriteUtc)> _dirs = new();
+        private readonly List<(string Path, long Length, DateTime WriteUtc)> _files;
+
+        private LocateWatch(SessionInputLog? log, List<(string, long, DateTime)> files)
+        {
+            _log = log;
+            _logVersion = log?.Version ?? 0;
+            _files = files;
+        }
+
+        public static LocateWatch Capture(
+            string projectsRoot, string? cwdProjectDir, CandidateVerdict? verdict, SessionInputLog? log, TranscriptLocateCounters counters)
+        {
+            var files = verdict is { } v && v.Undecided.Count <= MaxWatchedFiles ? v.Undecided.ToList() : [];
+            var watch = new LocateWatch(log, files);
+            var dirs = new HashSet<string>(StringComparer.Ordinal) { projectsRoot };
+            if (cwdProjectDir is not null)
+                dirs.Add(cwdProjectDir);
+            if (verdict is { } withDirs)
+                dirs.UnionWith(withDirs.CandidateDirs);
+            foreach (var dir in dirs)
+                watch._dirs.Add((dir, DirectoryWrite(dir, counters)));
+            return watch;
+        }
+
+        public bool Changed(SessionInputLog? log, TranscriptLocateCounters counters)
+        {
+            if (!ReferenceEquals(log, _log) || (log?.Version ?? 0) != _logVersion)
+                return true;
+            foreach (var (dir, write) in _dirs)
+            {
+                if (DirectoryWrite(dir, counters) != write)
+                    return true;
+            }
+            foreach (var (file, length, write) in _files)
+            {
+                counters.CountWatchStat();
+                var info = new FileInfo(file);
+                if (!info.Exists || info.Length != length || info.LastWriteTimeUtc != write)
+                    return true;
+            }
+            return false;
+        }
+
+        // A missing directory reads as DateTime.MinValue, so appearing is a change too.
+        private static DateTime DirectoryWrite(string dir, TranscriptLocateCounters counters)
+        {
+            counters.CountWatchStat();
+            var info = new DirectoryInfo(dir);
+            return info.Exists ? info.LastWriteTimeUtc : DateTime.MinValue;
+        }
     }
 
     /// <summary>
@@ -905,17 +1116,17 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// machine, and answering "is this even our working directory?" must not cost a full read of
     /// each one. Only a cwd match earns the deep scan that collects prompts for C4.
     /// </summary>
-    private TranscriptCandidateProbe? ProbeCwdMatchingCandidate(string file)
+    private TranscriptCandidateProbe? ProbeCwdMatchingCandidate(string file, (long Length, DateTime WriteUtc)? observed = null)
     {
         if (!_probes.TryGetValue(file, out var probe))
-            _probes[file] = probe = new TranscriptCandidateProbe(file);
+            _probes[file] = probe = new TranscriptCandidateProbe(file, LocateCounters);
 
-        if (probe.Cwd is null && !probe.Refresh(_inputLog, TranscriptCandidateProbe.LeadScanBytes))
+        if (probe.Cwd is null && !probe.Refresh(_inputLog, TranscriptCandidateProbe.LeadScanBytes, observed))
             return null;
         if (!CwdMatches(probe.Cwd))
             return null;
 
-        return probe.Refresh(_inputLog) && probe.HasRecords ? probe : null;
+        return probe.Refresh(_inputLog, observed: observed) && probe.HasRecords ? probe : null;
     }
 
     // Candidate state is per file and the projects root is shared with every other session on the
@@ -1054,8 +1265,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             return;
         }
 
-        var firstInput = _firstInputObservedUtc ??= _firstInputUtc ?? DateTime.UtcNow;
-        if (DateTime.UtcNow - firstInput < _refusalFaultDelay)
+        var firstInput = _firstInputObservedUtc ??= _firstInputUtc ?? UtcNow;
+        if (UtcNow - firstInput < _refusalFaultDelay)
         {
             _unboundReason = "locating";
             return;
@@ -1082,7 +1293,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             || refusingSince is not { } since)
             return;
 
-        var now = DateTime.UtcNow;
+        var now = UtcNow;
         if (now - since < _refusalFaultDelay)
             return;
         if (lastRefusalFault is { } last && now - last < _refusalFaultRepeat)
@@ -1141,7 +1352,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         if (!IsEmptyCensus(verdict) || emptySince is not { } since)
             return;
 
-        var now = DateTime.UtcNow;
+        var now = UtcNow;
         if (now - since < _refusalFaultDelay)
             return;
         if (lastRefusalFault is { } last && now - last < _refusalFaultRepeat)
