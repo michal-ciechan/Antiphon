@@ -16,6 +16,12 @@ public sealed record PtyHostManifest
     public global::Antiphon.SessionRunner.Contracts.VerificationHostIdentity? VerificationHost { get; init; }
     public global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt { get; init; }
     public required Guid SessionId { get; init; }
+    /// <summary>
+    /// The host's per-process instance id, the same value its helloAck carries. Adoption compares
+    /// the two, so a process that only bound this pipe name is not adopted as the session
+    /// (CARD-1636). Null on a manifest written before the host recorded it.
+    /// </summary>
+    public Guid? HostInstanceId { get; init; }
     public required string PipeName { get; init; }
     public int ProtocolVersion { get; init; } = PtyHostProtocol.Version;
     public required int HostPid { get; init; }

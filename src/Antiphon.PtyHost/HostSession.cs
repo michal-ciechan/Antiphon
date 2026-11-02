@@ -158,7 +158,7 @@ public sealed class HostSession : IAsyncDisposable
             {
                 _manifest = new PtyHostManifest
                 {
-                    SessionId = _options.SessionId, PipeName = _options.PipeName,
+                    SessionId = _options.SessionId, HostInstanceId = _hostInstanceId, PipeName = _options.PipeName,
                     HostPid = Environment.ProcessId,
                     HostStartTimeUtc = TryGetProcessStartUtc(Environment.ProcessId) ?? DateTime.UtcNow,
                     LaunchPending = true, GrokRulesReceipt = launch.GrokRulesReceipt,
@@ -217,6 +217,7 @@ public sealed class HostSession : IAsyncDisposable
         _manifest = new PtyHostManifest
         {
             SessionId = _options.SessionId,
+            HostInstanceId = _hostInstanceId,
             PipeName = _options.PipeName,
             HostPid = hostProcess,
             HostStartTimeUtc = TryGetProcessStartUtc(hostProcess) ?? DateTime.UtcNow,
