@@ -20,10 +20,11 @@ public class StableBuildOutputDocumentationTests
         @"fresh\s+(output\s+(directory|dir|name|path)|bin-)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    // A custom output taught for ordinary direct builds: the retired -StableOutput helper, a
-    // placeholder bin-<...> output, or the old "alternate output path" bullet.
+    // A custom output taught for ordinary direct builds: the retired -StableOutput helper and its
+    // per-task bin-<task>/ name, or the old "alternate output path" bullet. Checkpoint rows keep
+    // their own bin-<id>/ outputs, so a bare bin-< placeholder is not itself a defect.
     private static readonly Regex CustomDirectBuildOutput = new(
-        @"StableOutput|OutputSuffix|bin-<|alternate\s+output\s+path",
+        @"StableOutput|OutputSuffix|bin-<task|alternate\s+output\s+path",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     // Any concrete OutputPath value: the delegate bundle and the skills never teach one.
@@ -126,6 +127,21 @@ public class StableBuildOutputDocumentationTests
                      "forward slash",
                  })
             text.ShouldContain(phrase, Case.Sensitive, "docs/testing-and-build.md");
+    }
+
+    [Test]
+    public void C1629_owner_recipes_build_in_the_native_output()
+    {
+        var text = Collapse(Read("docs/testing-and-build.md"));
+        foreach (var retired in new[]
+                 {
+                     "Build once into a producer-owned isolated output",
+                     "Ordinary Code/Review uses `OutputPath=",
+                     "OutputPath=bin-c475/",
+                     "OutputPath=bin-coverage-tool/",
+                 })
+            text.ShouldNotContain(retired, Case.Sensitive, "docs/testing-and-build.md ordinary-build recipe");
+        text.ShouldContain("Build once in the worktree's native default output", Case.Sensitive, "docs/testing-and-build.md");
     }
 
     private static string Collapse(string text) => Regex.Replace(text, @"\s+", " ");
