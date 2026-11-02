@@ -456,6 +456,22 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     }
 
     /// <summary>CARD-0604 D-15: remove a mirror at retirement. Residue is reported, never forced away.</summary>
+    /// <summary>CARD-0824 S1. Releases one leased workspace slot on the runner.</summary>
+    public async Task<PhoneHomeWorkspaceSlotReleaseResponse> ReleaseWorkspaceSlotAsync(
+        PhoneHomeWorkspaceSlotReleaseRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceSlotRelease, request, ct);
+        return Read<PhoneHomeWorkspaceSlotReleaseResponse>(frame) ?? throw Missing("workspace-slot-release");
+    }
+
+    /// <summary>CARD-0824 S1. Cold-resets named slots (or all); a leased slot only records it as pending.</summary>
+    public async Task<PhoneHomeWorkspaceSlotColdResetResponse> ColdResetWorkspaceSlotsAsync(
+        PhoneHomeWorkspaceSlotColdResetRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceSlotColdReset, request, ct);
+        return Read<PhoneHomeWorkspaceSlotColdResetResponse>(frame) ?? throw Missing("workspace-slot-cold-reset");
+    }
+
     public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveWorkspaceAsync(
         PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct)
     {

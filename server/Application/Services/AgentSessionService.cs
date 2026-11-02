@@ -2386,7 +2386,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         CancellationToken ct)
     {
         var args = UsesSessionIdentityArgs(session.AgentKind)
-            ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode)
+            ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode,
+                WorkspaceSlotCodes.IsSlotPath(session.RunnerCwd))
             : launchSpec.Args;
         // Phone-home projection has already rewritten exe, cwd and env. ApplyOff runs after
         // that, so a runner-bound session must name the image file rather than the desktop
@@ -2620,6 +2621,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         if (resumeMode == AgentSessionResumeMode.Continue)
         {
+            // CARD-0824 S1 Q-1: --continue resumes the newest conversation in the cwd. In a reused
+            // workspace slot that is the previous lessee's, so it is refused; --resume <id> is not.
+            if (sharedWorkspace)
+                throw new ConflictException(
+                    "A Claude --continue cannot run in a shared workspace slot; resume by session id instead.",
+                    WorkspaceSlotCodes.ContinueInSharedWorkspace);
             filtered.Add("--continue");
             return filtered.AsReadOnly();
         }

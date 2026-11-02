@@ -40,6 +40,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly IRunnerMirrorPublisher _mirrorPublisher;
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly int _remotePrepPushBudgetMinutes;
+    private readonly bool _workspaceSlots;
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
@@ -63,6 +64,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         var configured = settings?.Value ?? new DelegationSettings();
         SyncBudget = TimeSpan.FromSeconds(configured.RunnerSyncBudgetSeconds);
         _remotePrepPushBudgetMinutes = configured.RemotePrepPushBudgetMinutes;
+        _workspaceSlots = configured.WorkspaceSlotsEnabled;
     }
 
     /// <summary>
@@ -210,10 +212,26 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             if (recipient?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceCardBranchV1, StringComparer.Ordinal) != true)
                 throw new ConflictException("runner_card_branch_unsupported");
         }
-        var response = await client.MirrorWorkspaceAsync(
-            new PhoneHomeWorkspaceMirrorRequest(branch, sentSha, MirrorName(task.Id), sentRepository, binding), ct);
-        return new RemoteWorkspaceMirrorResult(response.Path, response.Binding, expectation);
+        var request = new PhoneHomeWorkspaceMirrorRequest(branch, sentSha, MirrorName(task.Id), sentRepository, binding);
+        // CARD-0824 S1: a slot lease needs both halves on (this server's flag and the runner's
+        // workspaceSlotV1) and a committed preparation; otherwise the request stays the legacy shape.
+        if (_workspaceSlots && binding is not null
+            && (await _runners.DescribeAsync(task.RunnerId, ct))?.Capabilities?.Features
+                ?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1, StringComparer.Ordinal) == true)
+            request = request with { Slot = true, Cold = task.WorkspaceColdReset };
+        var response = await client.MirrorWorkspaceAsync(request, ct);
+        return new RemoteWorkspaceMirrorResult(response.Path, response.Binding, expectation, response.SlotId, response.Generation);
     }
+
+    /// <summary>CARD-0824 S1 D-B. Releases this task's leased slot by (slot, generation, task).</summary>
+    public Task<PhoneHomeWorkspaceSlotReleaseResponse> ReleaseSlotAsync(AgentTask task, CancellationToken ct) =>
+        Remote(task.RunnerId).ReleaseWorkspaceSlotAsync(new PhoneHomeWorkspaceSlotReleaseRequest(
+            task.RemoteWorkspaceSlotId!, task.RemoteWorkspaceSlotGeneration ?? 0, task.Id), ct);
+
+    /// <summary>CARD-0824 S1 D-C. Forwards an operator or pre-rc cold-reset request unchanged.</summary>
+    public Task<PhoneHomeWorkspaceSlotColdResetResponse> ColdResetSlotsAsync(
+        string runnerId, PhoneHomeWorkspaceSlotColdResetRequest request, CancellationToken ct) =>
+        Remote(runnerId).ColdResetWorkspaceSlotsAsync(request, ct);
 
     /// <summary>
     /// The returned binding matches the committed preparation. This does not look at the desktop filesystem.
@@ -1009,6 +1027,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     {
         if (string.IsNullOrWhiteSpace(task.RemoteWorktreePath) || string.IsNullOrWhiteSpace(task.RunnerId))
             return null;
+        // CARD-0824 S1 §3.6: a slot belongs to the runner's pool; only the release reconciler touches it.
+        if (task.RemoteWorkspaceSlotId is not null)
+            return null;
         try
         {
             var descriptor = await _runners.DescribeAsync(task.RunnerId, ct);
@@ -1018,6 +1039,12 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath,
                     PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct);
             return response.Removed ? null : response.Residue ?? task.RemoteWorktreePath;
+        }
+        catch (ConflictException ex) when (ex.Message == WorkspaceSlotCodes.SlotManaged)
+        {
+            _logger.LogInformation("Remote path {Path} for task {Task} is a runner workspace slot; nothing to remove",
+                task.RemoteWorktreePath, task.Id);
+            return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

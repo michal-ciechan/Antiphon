@@ -650,6 +650,9 @@ try
     builder.Services.AddSingleton<SweepInFlightState>();
     // CARD-0633 D-4: runner-bound remote preparation runs here, off the serial dispatch tick.
     builder.Services.AddSingleton<RemoteWorkspacePreparer>();
+    // CARD-0824 S1: the workspace slot release reconciler (inert unless Delegation:WorkspaceSlotsEnabled).
+    builder.Services.AddScoped<WorkspaceSlotReleaseService>();
+    builder.Services.AddHostedService<WorkspaceSlotReleaseHostedService>();
     // CARD-0299 S2: skip FailDeadSessionTasksAsync while a boot-wedge relaunch is in flight.
     builder.Services.AddSingleton<BootWedgeRelaunchState>();
     // CARD-0248: the deferred-report sweep's re-hand watermark. Same reason as the dead-session

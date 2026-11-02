@@ -1514,6 +1514,7 @@ public sealed class AgentTaskService
             WorktreeBaseRequestedRef = continuationSha ?? startRef,
             RequestedWorktreeBaseMode = explicitBaseTask ? RequestedWorktreeBaseMode.Task
                 : request.FreshWorktree ? RequestedWorktreeBaseMode.Target : RequestedWorktreeBaseMode.Auto,
+            WorkspaceColdReset = request.WorkspaceColdReset,
         };
 
         if (storedPolicy is not null)

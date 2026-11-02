@@ -20,7 +20,7 @@ public static class RemoteWorkspaceReadiness
             ? ReadyHold : detail;
 
     public static async Task<bool> RecordPathAsync(AppDbContext db, Guid taskId, int attempt,
-        string? runnerId, string? path, CancellationToken ct)
+        string? runnerId, string? path, CancellationToken ct, string? slotId = null, int? slotGeneration = null)
     {
         if (string.IsNullOrWhiteSpace(runnerId) || string.IsNullOrWhiteSpace(path)) return false;
         await using var owned = db.Database.CurrentTransaction is null
@@ -35,6 +35,9 @@ public static class RemoteWorkspaceReadiness
         // A late canceled attempt may still own the path; it gains no ready transition.
         await db.AgentTasks.Where(t => t.Id == taskId && t.Attempt == attempt && t.RunnerId == runnerId)
             .ExecuteUpdateAsync(update => update.SetProperty(t => t.RemoteWorktreePath, path)
+                .SetProperty(t => t.RemoteWorkspaceSlotId, t => slotId ?? t.RemoteWorkspaceSlotId)
+                .SetProperty(t => t.RemoteWorkspaceSlotGeneration, t => slotGeneration ?? t.RemoteWorkspaceSlotGeneration)
+                .SetProperty(t => t.RemoteWorkspaceSlotReleasedAt, t => slotId != null ? null : t.RemoteWorkspaceSlotReleasedAt)
                 .SetProperty(t => t.RemotePrepFailures, 0)
                 .SetProperty(t => t.DispatchNotBeforeAt, (DateTime?)null), ct);
         var latest = await db.AgentTaskEvents.AsNoTracking()
