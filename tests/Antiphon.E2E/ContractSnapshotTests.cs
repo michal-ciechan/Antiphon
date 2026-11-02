@@ -88,7 +88,9 @@ public class ContractSnapshotTests
                 // the offsets ARE the data). Uuids/apiCallIds are non-GUID strings on purpose so
                 // the GUID scrubber leaves them alone.
                 var t0 = new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc);
-                var readmePath = Path.Combine(workspace, "README.md");
+                // The tool input is a Windows-captured agent path (CARD-1648): seed it with a fixed
+                // backslash separator so every host serialises the snapshot text Windows captured.
+                var readmePath = WindowsSeedPath(workspace, "README.md");
                 db.TranscriptEntries.AddRange(
                     Entry(sessionId, 1, TranscriptKinds.UserPrompt, t0,
                         e => { e.Role = "user"; e.Text = "Update the README for the new invoice flow."; }),
@@ -1420,6 +1422,15 @@ public class ContractSnapshotTests
         }
         throw new DirectoryNotFoundException("Repo root not found from " + AppContext.BaseDirectory);
     }
+
+    /// <summary>
+    /// Joins a seed path the way <see cref="Path.Combine(string, string)"/> does on Windows, on
+    /// every host: one backslash between a root without a trailing separator and the relative
+    /// name. A seeded tool input then serialises (and double-encodes) the same on Linux as on
+    /// the Windows host that captured the fixture, instead of taking the host separator.
+    /// </summary>
+    private static string WindowsSeedPath(string root, string relative) =>
+        root.TrimEnd('\\', '/') + '\\' + relative;
 
     private static async Task<bool> GitAsync(string dir, params string[] args)
     {
