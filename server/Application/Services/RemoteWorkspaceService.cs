@@ -1024,7 +1024,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (string.IsNullOrWhiteSpace(task.RemoteWorktreePath) || string.IsNullOrWhiteSpace(task.RunnerId))
             return null;
         // CARD-0824 S1 §3.6: a slot belongs to the runner's pool; only the release reconciler touches it.
-        if (task.RemoteWorkspaceSlotId is not null)
+        // A released slot's path was cleared with the release, so a path beside a released slot id is a
+        // later per-task mirror (a drain re-arm to a runner without slots, D-3) and is removed as usual.
+        if (task.RemoteWorkspaceSlotId is not null && task.RemoteWorkspaceSlotReleasedAt is null)
             return null;
         try
         {

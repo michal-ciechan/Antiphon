@@ -1145,24 +1145,32 @@ public sealed partial class AgentTaskDispatcher
     /// earlier claim rollback can detach the instance. Reload before reading the path, reattaching
     /// when the tracker was cleared, and leave the row alone when it is no longer a queued task
     /// with no session on this runner.
+    /// CARD-0824 D-3 (review 3a354688): a task still bound to a workspace slot on this runner moves only
+    /// after this runner confirms the slot released; until then the row keeps this runner and the slot, and
+    /// the hold names <see cref="WorkspaceSlotCodes.ReleasePending"/>. A lease is never left on the old
+    /// runner while the task is bound to the new one.
     /// </summary>
-    private async Task<string> RebindDrainingAsync(AgentTask task, string runnerId, CancellationToken ct)
+    private async Task<(string RunnerId, string? SlotHold)> RebindDrainingAsync(AgentTask task, string runnerId, CancellationToken ct)
     {
         if (_runners is null || task.AgentSessionId is not null || task.SourceLandingOperationId is not null)
-            return runnerId;
+            return (runnerId, null);
         var state = _runners.DrainState(runnerId);
         if (state is not { Draining: true } || state.RetiredAt is not null || string.IsNullOrWhiteSpace(state.RedirectTo))
-            return runnerId;
+            return (runnerId, null);
         if (!DrainRedirectEligible(state.RedirectTo))
-            return runnerId;
+            return (runnerId, null);
         if (!await ReloadForDrainRebindAsync(task, ct)
             || task.Status != AgentTaskStatus.Queued
             || task.AgentSessionId is not null
             || task.SourceLandingOperationId is not null
             || !string.Equals(task.RunnerId, runnerId, StringComparison.Ordinal))
-            return task.RunnerId ?? runnerId;
+            return (task.RunnerId ?? runnerId, null);
 
         var target = state.RedirectTo;
+        if (task.RemoteWorkspaceSlotId is { } slotId && task.RemoteWorkspaceSlotReleasedAt is null
+            && !await ReleaseSlotBeforeRebindAsync(task, runnerId, ct))
+            return (runnerId, DispatchHoldDetails.WorkspaceSlotReleasePending(
+                runnerId, slotId, task.RemoteWorkspaceSlotGeneration ?? 0, target));
         var oldPath = task.RemoteWorktreePath;
         if (_remoteWorkspace is not null && !string.IsNullOrWhiteSpace(oldPath))
         {
@@ -1193,7 +1201,44 @@ public sealed partial class AgentTaskDispatcher
             At = UtcNow(),
         });
         await _db.SaveChangesAsync(ct);
-        return target;
+        return (target, null);
+    }
+
+    /// <summary>
+    /// D-3: the idempotent slot release, sent to the runner the row is still bound to. Only a released,
+    /// already free or quarantined reply stamps the release and lets the rebind go on; a refusal, a lost
+    /// reply or a missing transport keeps the task on this runner for the next tick.
+    /// </summary>
+    private async Task<bool> ReleaseSlotBeforeRebindAsync(AgentTask task, string runnerId, CancellationToken ct)
+    {
+        if (_remoteWorkspace is null)
+            return false;
+        PhoneHomeWorkspaceSlotReleaseResponse response;
+        try
+        {
+            response = await _remoteWorkspace.ReleaseSlotAsync(task, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("Workspace slot {Slot} of task {Task} on draining runner {Runner} was not released: {Reason}",
+                task.RemoteWorkspaceSlotId, task.Id, runnerId, ex.Message);
+            return false;
+        }
+
+        if (response.Outcome is not ("released" or "already_free" or "quarantined"))
+            return false;
+        task.RemoteWorkspaceSlotReleasedAt = UtcNow();
+        task.RemoteWorktreePath = null;
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = $"workspace slot {task.RemoteWorkspaceSlotId} generation {task.RemoteWorkspaceSlotGeneration} {response.Outcome} on draining runner '{runnerId}' before the drain redirect.",
+            At = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+        return true;
     }
 
     /// <summary>
@@ -1244,7 +1289,9 @@ public sealed partial class AgentTaskDispatcher
         // that exists only on the drained runner. The next tick rebinds and removes it.
         if (_remotePrep is not null && _remotePrep.IsInFlight(task.Id, out var since))
             return (HoldKind.RemotePrep, DispatchHoldDetails.RemoteMirrorRequested(runnerId, since));
-        runnerId = await RebindDrainingAsync(task, runnerId, ct);
+        (runnerId, var slotHold) = await RebindDrainingAsync(task, runnerId, ct);
+        if (slotHold is not null)
+            return (HoldKind.RunnerDraining, slotHold);
         if (task.DispatchNotBeforeAt is { } notBefore && notBefore > UtcNow())
         {
             return (HoldKind.RemotePrepBackoff,

@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -17,6 +18,9 @@ namespace Antiphon.Server.Application.Services;
 /// Pending or Held, and no live task follows up on it. The path is cleared only after the runner's reply
 /// (released, already free or quarantined); the slot id and generation stay on the task as history.
 /// A refused or lost reply leaves the task owed for the next pass. Blocked tasks are never released.
+/// A runner that does not know the slot (<c>slot_unknown</c>) is asked at most <see cref="UnknownSlotAttempts"/>
+/// times per slot and generation; then the reconciler stops and records <see cref="WorkspaceSlotCodes.ReleaseStuck"/>
+/// for an operator (D-3, review 3a354688), never a silent forever-retry and never a guessed release stamp.
 /// </summary>
 public sealed class WorkspaceSlotReleaseService(
     AppDbContext db, RemoteWorkspaceService remote, TimeProvider clock, ILogger<WorkspaceSlotReleaseService> logger)
@@ -39,10 +43,41 @@ public sealed class WorkspaceSlotReleaseService(
         {
             if (!await EligibleAsync(task, ct))
                 continue;
+            var slot = $"slot {task.RemoteWorkspaceSlotId} generation {task.RemoteWorkspaceSlotGeneration ?? 0}";
+            var unknownPrefix = WorkspaceSlotCodes.ReleaseUnknown + ": " + slot + " ";
+            var unknown = await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning && e.Detail != null && e.Detail.StartsWith(unknownPrefix), ct);
+            if (unknown >= UnknownSlotAttempts)
+                continue;
             PhoneHomeWorkspaceSlotReleaseResponse response;
             try
             {
                 response = await remote.ReleaseSlotAsync(task, ct);
+            }
+            catch (ConflictException ex) when (ex.Message.StartsWith(WorkspaceSlotCodes.UnknownSlot, StringComparison.Ordinal))
+            {
+                var at = clock.GetUtcNow().UtcDateTime;
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = task.Id,
+                    Type = AgentTaskEventType.Warning,
+                    Detail = unknownPrefix + $"was refused as {WorkspaceSlotCodes.UnknownSlot} by runner '{task.RunnerId}' (attempt {unknown + 1} of {UnknownSlotAttempts}).",
+                    At = at,
+                });
+                if (unknown + 1 >= UnknownSlotAttempts)
+                    db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentTaskId = task.Id,
+                        Type = AgentTaskEventType.Warning,
+                        Detail = $"{WorkspaceSlotCodes.ReleaseStuck}: {slot} is unknown to runner '{task.RunnerId}' after {UnknownSlotAttempts} attempts; the reconciler stopped. Find the runner that holds the lease and release it there, or record the release by hand.",
+                        At = at,
+                    });
+                await db.SaveChangesAsync(ct);
+                logger.LogWarning("Workspace slot {Slot} generation {Generation} of task {Task} is unknown to runner {Runner} (attempt {Attempt})",
+                    task.RemoteWorkspaceSlotId, task.RemoteWorkspaceSlotGeneration, task.Id, task.RunnerId, unknown + 1);
+                continue;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
