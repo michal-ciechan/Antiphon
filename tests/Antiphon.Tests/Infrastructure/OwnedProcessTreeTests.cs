@@ -339,6 +339,67 @@ public sealed class OwnedProcessTreeTests
         await Task.CompletedTask;
     }
 
+    /// <summary>CARD-1641 A-1: the root pid is reused by a stranger between the sealed wave and
+    /// the follow read. The stranger's child starts after the recorded root, so only the parent's
+    /// start time tells them apart. A child of a signalled parent whose row is gone is still taken.</summary>
+    [Test]
+    public async Task C1641_FollowPassSkipsChildrenOfARecycledParentPid()
+    {
+        var reaped = false;
+        var killed = new List<int>();
+        var log = new List<string>();
+        OwnedProcessTree.Execute(
+            () => reaped
+                ? Table(Row(10, 1, 5_000), Row(30, 10, 5_100), Row(31, 20, 1_200))
+                : Table(Row(10, 1, 1_000), Row(20, 10, 1_100)),
+            pid => pid switch
+            {
+                10 => reaped ? 5_000L : 1_000L,
+                20 => 1_100L,
+                30 => 5_100L,
+                31 => 1_200L,
+                _ => null,
+            },
+            killed.Add,
+            () => { },
+            Root,
+            serverPid: 7,
+            ownerPid: 8,
+            rootAlreadyExited: false,
+            log.Add,
+            waitForExit: _ =>
+            {
+                reaped = true;
+                return true;
+            });
+        killed.ShouldBe([10, 20, 31]);
+        log.ShouldContain(line => line.StartsWith("repository_child_tree_kill_follow ", StringComparison.Ordinal)
+            && line.Contains("followers=1 killed=31", StringComparison.Ordinal));
+        log.ShouldContain(OwnedProcessTree.KillFailed(10, "parent_identity_mismatch"));
+        await Task.CompletedTask;
+    }
+
+    /// <summary>CARD-1641 A-4: a wait with no retained handle cannot tell whether the pid exited,
+    /// so it reports alive and the journal is kept. A retained handle still answers for its pid.</summary>
+    [Test]
+    [Timeout(30_000)]
+    public async Task C1641_WaitWithNoRetainedHandleReportsAlive(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        OwnedProcessTree.WaitForRetainedHandle([], 4242, 0).ShouldBeFalse();
+
+        var start = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c exit 0", UseShellExecute = false }
+            : new ProcessStartInfo { FileName = "/bin/true", UseShellExecute = false };
+        using var exited = Process.Start(start);
+        exited.ShouldNotBeNull();
+        exited.WaitForExit(10_000).ShouldBeTrue();
+        var retained = new List<OwnedProcessTree.RetainedProcess> { new(exited, false, 4243) };
+        OwnedProcessTree.WaitForRetainedHandle(retained, 4243, 0).ShouldBeTrue();
+        OwnedProcessTree.WaitForRetainedHandle(retained, 4242, 0).ShouldBeFalse();
+        await Task.CompletedTask;
+    }
+
     [Test]
     public async Task C448_StartAfterTheSnapshotClockIsNotKilled()
     {
