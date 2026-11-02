@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -25,7 +26,8 @@ public sealed record CardWorktreeBaseSelection(
     int GitCommands = 0,
     string? LandingTarget = null,
     DateTime? ObservedAt = null,
-    IReadOnlyList<string>? UnreadableBranches = null)
+    IReadOnlyList<string>? UnreadableBranches = null,
+    IReadOnlyDictionary<string, string>? ProvenRemoteTips = null)
 {
     public IReadOnlyList<string> CandidateWarnings => Warnings ?? [];
     public bool Incomplete => Reason is "inspection_timeout" or "candidate_limit"
@@ -55,8 +57,11 @@ public sealed class AgentTaskWorktreeBaseResolver(
     public Task<CardWorktreeBaseSelection> ResolveAsync(AgentTask task, CancellationToken ct) =>
         ResolveAsync(task, null, ct);
 
+    /// <param name="fetchedBranches">Branches whose remote-tracking ref create has just fetched from
+    /// origin (CARD-1640), so their tracking tips are current.</param>
     public async Task<CardWorktreeBaseSelection> ResolveAsync(AgentTask task,
-        WorktreeBaseInspection? sharedInspection, CancellationToken ct)
+        WorktreeBaseInspection? sharedInspection, CancellationToken ct,
+        IReadOnlySet<string>? fetchedBranches = null)
     {
         var fallback = task.MergeTargetRef ?? _settings.DefaultBranch;
         CardWorktreeBaseSelection Target() => new(CardWorktreeBaseDecision.Target, fallback,
@@ -70,11 +75,13 @@ public sealed class AgentTaskWorktreeBaseResolver(
         var pendingKnown = false;
         var pendingLand = new HashSet<Guid>();
         var landed = new HashSet<Guid>();
+        var provenTips = new Dictionary<string, string>(StringComparer.Ordinal);
         AgentTask[] kept = [];
         CardWorktreeBaseSelection Result(CardWorktreeBaseDecision decision,
             Guid? id = null, string? branch = null, string? sha = null, string? reason = null) =>
             new(decision, fallback, id, branch, sha, warnings.Take(inspection.MaxCandidates).ToArray(),
-                reason, totalCandidates, inspected, inspection.Commands, task.MergeTargetRef ?? "master", _clock.GetUtcNow().UtcDateTime);
+                reason, totalCandidates, inspected, inspection.Commands, task.MergeTargetRef ?? "master", _clock.GetUtcNow().UtcDateTime,
+                ProvenRemoteTips: provenTips.Count > 0 ? provenTips : null);
         bool HasPending() => !pendingKnown || pendingLand.Count > 0;
         try
         {
@@ -133,15 +140,40 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 .Concat(inventory.PendingLands.Where(p => pendingLand.Contains(p.Task.Id))
                     .Select(p => p.Task.WorktreeBranch!)).Distinct(StringComparer.Ordinal).ToArray();
             var commits = await inspection.BranchCommitsAsync(branches);
-            // CARD-1640: a sibling published to origin whose local branch is gone (or was never synced
-            // here) is read from its local remote-tracking ref. Dispatch never fetches; create does.
+            // CARD-1640: a sibling whose local branch is gone (or was never synced here) is read from its
+            // local remote-tracking ref only when that tip is proven current (D-1). A runner task's branch
+            // is pushed from here at dispatch at its base and nothing here fetches it again, so the
+            // tracking ref is usually stale at a base the target contains. Proof is this create's fetch,
+            // the tip this task's create preview fetched, or the row's settled sync-debt source. A pending
+            // land never reads it and keeps waiting. Dispatch never fetches; create does.
+            var unproven = new Dictionary<string, string>(StringComparer.Ordinal);
+            var pendingBranches = inventory.PendingLands.Where(p => pendingLand.Contains(p.Task.Id))
+                .Select(p => p.Task.WorktreeBranch!).ToHashSet(StringComparer.Ordinal);
             if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto
-                && branches.Where(b => !commits.ContainsKey(b)).ToArray() is { Length: > 0 } missing)
+                && branches.Where(b => !commits.ContainsKey(b) && !pendingBranches.Contains(b)).ToArray()
+                    is { Length: > 0 } missing)
+            {
+                var previewed = PreviewedRemoteTips(task.WorktreeBasePreviewJson);
                 foreach (var (branch, sha) in await inspection.RemoteBranchCommitsAsync(missing))
                 {
+                    var proof = fetchedBranches?.Contains(branch) == true ? "fetched from origin by this create"
+                        : string.Equals(previewed.GetValueOrDefault(branch), sha, StringComparison.OrdinalIgnoreCase)
+                            ? "fetched from origin at create"
+                        : inspectable.Any(t => t.WorktreeBranch == branch
+                            && inventory.SyncDebts.TryGetValue(t.Id, out var debt)
+                            && string.Equals(debt.SourceSha, sha, StringComparison.OrdinalIgnoreCase))
+                            ? "its settled source"
+                        : null;
+                    if (proof is null)
+                    {
+                        unproven[branch] = sha;
+                        continue;
+                    }
                     commits[branch] = sha;
-                    warnings.Add($"Branch {branch} has no local branch here; using origin/{branch} @ {sha}.");
+                    provenTips[branch] = sha;
+                    warnings.Add($"Branch {branch} has no local branch here; using origin/{branch} @ {sha} ({proof}).");
                 }
+            }
             var unreadable = new List<string>();
             var unverified = await ApplySettledSourcesAsync(inventory, inspectable.Concat(inventory.PendingLands
                 .Where(p => pendingLand.Contains(p.Task.Id)).Select(p => p.Task)), commits, inspection, warnings);
@@ -247,7 +279,10 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 if (sha is null)
                 {
                     warnings.Add($"Task {Short(row.Id)} branch {branch} has no local commit"
-                        + (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto ? $" and no origin/{branch} here." : "."));
+                        + (task.RequestedWorktreeBaseMode != RequestedWorktreeBaseMode.Auto ? "."
+                            : unproven.TryGetValue(branch, out var stale)
+                                ? $"; origin/{branch} @ {stale} is not proven current (a dispatch-time push leaves it at the task's base)."
+                                : $" and no origin/{branch} here."));
                     if (pendingLand.Contains(row.Id))
                         return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_unknown");
                     if (!requested) unreadable.Add(branch);
@@ -445,6 +480,25 @@ public sealed class AgentTaskWorktreeBaseResolver(
         return $"Task {Short(row.Id)} branch {row.WorktreeBranch} owes a settlement sync to {settled} (sync debt {debt.State}) "
             + $"and the local branch is at {commits.GetValueOrDefault(row.WorktreeBranch!) ?? "no local commit"}; "
             + $"that source cannot be verified here. Retry after the sync, or recreate with -StartRef {settled}.";
+    }
+
+    /// <summary>CARD-1640 D-1: the remote-tracking tips this task's create fetched and recorded in its preview.</summary>
+    private static Dictionary<string, string> PreviewedRemoteTips(string? previewJson)
+    {
+        var tips = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (previewJson is null) return tips;
+        try
+        {
+            using var document = JsonDocument.Parse(previewJson);
+            if (document.RootElement.TryGetProperty("decision", out var decision)
+                && decision.TryGetProperty(nameof(CardWorktreeBaseSelection.ProvenRemoteTips), out var proven)
+                && proven.ValueKind == JsonValueKind.Object)
+                foreach (var tip in proven.EnumerateObject())
+                    if (tip.Value.GetString() is { } sha && GitObjectId.IsFull(sha))
+                        tips[tip.Name] = sha.ToLowerInvariant();
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { }
+        return tips;
     }
 
     private static bool SameDestination(string? left, string? right) =>
