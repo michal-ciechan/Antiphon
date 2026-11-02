@@ -207,8 +207,10 @@ public sealed class C1364BoundLandWaitProofTests
         }
         if (resumePhase is not null) await SeedResume(fixture, hostCase, resumePhase);
         if (lateLand) fixture.Docker["fault"] = "late-land";
-        // Temp apply reaches compose down only after a Ready preview. The observed run still owns the proof counter.
-        if (!main && !preview && resumePhase is null && proof >= 4)
+        // Temp apply passes admission only after a Ready preview (CARD-1609), so every fresh temp
+        // apply that must reach containersRemoved (proof 3) or removal needs one. Proofs 1 and 2
+        // are observed before that gate. The observed run still owns the proof counter.
+        if (!main && !preview && resumePhase is null && proof >= 3)
             await VolumeRetirementFixture.ReadyPreview(fixture);
         var removedBefore = fixture.Docker["removed"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
         var mutated = lateLand && Environment.GetEnvironmentVariable("C1364_WAIT_MUTANT") == "post-removal-zero";
@@ -342,6 +344,8 @@ public sealed class C1364BoundLandWaitProofTests
                 if printf '%s' "$C1008_RECORD" | jq -e '.phase=="{{phase}}"' >/dev/null; then exit 77; fi
             }
             """;
+        // The seed is a fresh apply; a temp one passes admission only after a Ready preview.
+        if (hostCase == "retire-temp-runner") await VolumeRetirementFixture.ReadyPreview(fixture);
         var seed = await fixture.Run(hostCase, setup);
         seed.Exit.ShouldBe(recreating ? 2 : 77, "valid resume seed: " + seed.Output);
         if (recreating) seed.Output.ShouldContain("HostComposeFailed");
