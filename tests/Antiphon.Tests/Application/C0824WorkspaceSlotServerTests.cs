@@ -41,6 +41,27 @@ public sealed class C0824WorkspaceSlotServerTests
     private static HashSet<string> PropertyNames(PhoneHomeFrame request) =>
         request.Payload!.Value.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The handoff digest of a default request from before CARD-0824 S1: <c>new CreateAgentTaskRequest("goal")</c>
+    /// through <c>AgentTaskService.HandoffRequestDigest</c> of a master build without <c>WorkspaceColdReset</c>
+    /// (143449423; the record's 41 parameters end at <c>FreshWorktree</c> and are unchanged since ead93feb0).
+    /// </summary>
+    private const string PreSlotDefaultHandoffDigest = "5DCDE154371E04DE1AD48AB39D1A7214CAF4E1D9677A6672B56CB45A85460023";
+
+    [Test]
+    public void C0824_DefaultHandoffDigestIsThePreSlotDigest()
+    {
+        // V-12 (review f4c293bc D-2). A handoff action stored before the land keeps its digest: a default request omits
+        // WorkspaceColdReset and hashes byte-identically to the pre-field record; a cold request still differs.
+        var plain = new CreateAgentTaskRequest("goal");
+        JsonSerializer.SerializeToElement(plain).TryGetProperty(nameof(CreateAgentTaskRequest.WorkspaceColdReset), out _)
+            .ShouldBeFalse("the default is omitted");
+        AgentTaskService.HandoffRequestDigest(plain).ShouldBe(PreSlotDefaultHandoffDigest);
+        var cold = plain with { WorkspaceColdReset = true };
+        JsonSerializer.SerializeToElement(cold).GetProperty(nameof(CreateAgentTaskRequest.WorkspaceColdReset)).GetBoolean().ShouldBeTrue();
+        AgentTaskService.HandoffRequestDigest(cold).ShouldNotBe(PreSlotDefaultHandoffDigest);
+    }
+
     [Test]
     [Arguments("flag-off")]
     [Arguments("runner-lacks-WorkspaceSlotV1")]
