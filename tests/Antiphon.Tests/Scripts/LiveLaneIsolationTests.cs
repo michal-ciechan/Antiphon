@@ -97,6 +97,41 @@ public class LiveLaneIsolationTests
         }
     }
     [Test] public void CwdInstructionsCannotLeak() => Run("V-14");
+    // Windows Path.Combine keeps the '/' of ".claude/settings.json" while the profile looks the
+    // walked file up by Path.GetFullPath, which writes '\'. A doubled separator gives Linux the
+    // same spelling gap: the case declares the canonical path, so the declared file is admitted.
+    [Test]
+    public void DeclaredInstructionSpellingMatchesTheWalkedPath() =>
+        LiveClaudeProfileCases.Run("V-14", Build, project: ClaudeDialogWatchdogCanaryTests.ProjectProfile, variant: ".claude//settings.json");
+    [Test]
+    public void InstructionRefusalNamesTheOffendingPath()
+    {
+        var parent = LiveClaudeProfileFixture.CleanTempSubdirectory("c1545-named-");
+        try
+        {
+            using var f = new LiveClaudeProfileFixture(Path.Combine(parent, "profile"));
+            var undeclared = Path.Combine(f.Root, "CLAUDE.md");
+            File.WriteAllText(undeclared, "undeclared owned instructions");
+            RefusalNames(f, undeclared, "undeclared");
+            File.Delete(undeclared);
+            var above = Path.Combine(parent, "AGENTS.md");
+            File.WriteAllText(above, "host instructions above the owned root");
+            RefusalNames(f, above, "above-root");
+        }
+        finally
+        {
+            Directory.Delete(parent, true);
+        }
+        static void RefusalNames(LiveClaudeProfileFixture f, string path, string variant)
+        {
+            LiveClaudeRefusal? refusal = null;
+            try { using var p = new LiveClaudeProfile(f.Context); }
+            catch (LiveClaudeRefusal e) { refusal = e; }
+            LiveClaudeProfileCases.Assert(refusal?.Reason == "unowned-instructions", "V-14", variant, "the profile refuses " + path);
+            LiveClaudeProfileCases.Assert(refusal!.Message.Contains(Path.GetFullPath(path), StringComparison.Ordinal), "V-14", variant,
+                "the refusal names the offending path; got " + refusal.Message);
+        }
+    }
     [Test] public void SettingsProjectionDetectsDrift() => Run("V-15");
     [Test] public void UnknownConfigDisablesReuse() => Run("V-16");
 
