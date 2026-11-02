@@ -497,6 +497,11 @@ public sealed class DataRetentionService
     /// <see cref="TaskBatchAttempts"/> times in a row is skipped (logged by exception type only) and
     /// the scan continues; the skipped trees are revisited when the scan wraps, and the pass still
     /// reports the last failure after it has moved on.
+    /// CARD-1662: the failed attempts are budgeted per sweep. When a range ends with
+    /// <see cref="RetentionSettings.TaskPruneMaxFailedAttemptsPerSweep"/> or more failed attempts
+    /// spent, the pass stops for this sweep and reports Failed (the last failure), the later passes
+    /// run, and the cursor resumes after that range. Without it a sweep in which every batch times
+    /// out ran every batch up to the cap three times (about 2.5 hours at the defaults).
     /// </summary>
     private async Task<int> PruneTaskBatchesAsync(TaskPruneTally tally, CancellationToken ct)
     {
@@ -506,10 +511,12 @@ public sealed class DataRetentionService
         var cutoff = UtcNow().AddDays(-_settings.TaskRetentionDays);
         var batchSize = _settings.TaskPruneBatchSize > 0 ? _settings.TaskPruneBatchSize : 100;
         var maxBatches = _settings.TaskPruneMaxBatchesPerSweep > 0 ? _settings.TaskPruneMaxBatchesPerSweep : 50;
+        var failureBudget = _settings.TaskPruneMaxFailedAttemptsPerSweep > 0 ? _settings.TaskPruneMaxFailedAttemptsPerSweep : 6;
         var batchTimeout = TimeSpan.FromSeconds(
             _settings.TaskPruneBatchCommandTimeoutSeconds > 0 ? _settings.TaskPruneBatchCommandTimeoutSeconds : 60);
 
         Exception? skipped = null;
+        Exception? lastFailure = null;
         var previousTimeout = _db.Database.GetCommandTimeout();
         _db.Database.SetCommandTimeout(batchTimeout);
         try
@@ -546,6 +553,7 @@ public sealed class DataRetentionService
                     {
                         _db.ChangeTracker.Clear();
                         tally.FailedAttempts++;
+                        lastFailure = ex;
                         if (attempt < TaskBatchAttempts)
                             continue;
                         tally.SkippedRanges++;
@@ -565,6 +573,15 @@ public sealed class DataRetentionService
                 }
 
                 _taskCursor.After = batch[^1];
+                if (tally.FailedAttempts >= failureBudget)
+                {
+                    tally.FailureBudgetSpent = true;
+                    skipped ??= lastFailure;
+                    _logger.LogWarning(
+                        "Data retention task prune stopped for this sweep after {FailedAttempts} failed attempt(s) (budget {Budget}); the scan resumes next sweep",
+                        tally.FailedAttempts, failureBudget);
+                    break;
+                }
             }
         }
         finally
@@ -873,11 +890,12 @@ public sealed class DataRetentionService
         public bool ScanComplete;
         public int FailedAttempts;
         public int SkippedRanges;
+        public bool FailureBudgetSpent;
         public List<long> BatchMilliseconds { get; } = [];
 
         public DataRetentionTaskPruneProgress Snapshot(Guid? cursor) =>
             new(Batches, CandidateRoots, Trees, Rows, ScanComplete, cursor, FailedAttempts, SkippedRanges,
-                BatchMilliseconds.ToList());
+                BatchMilliseconds.ToList(), FailureBudgetSpent);
     }
 
     /// <summary>CARD-1658. Progress of one batched row pass.</summary>
