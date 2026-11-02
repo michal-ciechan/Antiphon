@@ -23,7 +23,7 @@ function Inventory([string]$path) {
 function Edit-Graph($graph, $recipe) {
     # Changing one logical target identity must retain coherent references;
     # otherwise a dangling reference would mask the registry guard's mutant.
-    if ($recipe.path -ceq '/targets/0/id') {
+    if ($recipe.path -ceq '/targets/0/id' -and $recipe.op -ceq 'set') {
         $oldId = $graph.targets[0].id
         foreach ($node in $graph.nodes) { if ($node.targetId -ceq $oldId) { $node.targetId = $recipe.value } }
     }
@@ -180,15 +180,53 @@ foreach ($entry in @(
     $original = $text | ConvertFrom-Json
     Check ($result.Accepted -and (Json $result.Graph) -ceq (Json $original)) $entry[0] $result.Reason
 }
+function Add-JsonDiffPointers([Text.Json.JsonElement]$left, [Text.Json.JsonElement]$right, [string]$at, $into) {
+    if ($left.ValueKind -ne $right.ValueKind) { $into.Add($at); return }
+    if ($left.ValueKind -eq [Text.Json.JsonValueKind]::Object) {
+        $l = [Collections.Generic.Dictionary[string, Text.Json.JsonElement]]::new([StringComparer]::Ordinal)
+        $r = [Collections.Generic.Dictionary[string, Text.Json.JsonElement]]::new([StringComparer]::Ordinal)
+        foreach ($property in $left.EnumerateObject()) { $l[$property.Name] = $property.Value }
+        foreach ($property in $right.EnumerateObject()) { $r[$property.Name] = $property.Value }
+        $names = [Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+        $names.UnionWith($l.Keys); $names.UnionWith($r.Keys)
+        foreach ($name in $names) {
+            $child = $at + '/' + $name.Replace('~', '~0').Replace('/', '~1')
+            if ($l.ContainsKey($name) -and $r.ContainsKey($name)) { Add-JsonDiffPointers $l[$name] $r[$name] $child $into }
+            else { $into.Add($child) }
+        }
+    } elseif ($left.ValueKind -eq [Text.Json.JsonValueKind]::Array) {
+        if ($left.GetArrayLength() -ne $right.GetArrayLength()) { $into.Add($at); return }
+        for ($k = 0; $k -lt $left.GetArrayLength(); $k++) { Add-JsonDiffPointers $left[$k] $right[$k] ($at + '/' + $k) $into }
+    } elseif ($left.GetRawText() -cne $right.GetRawText()) { $into.Add($at) }
+}
+function Test-MinimalPair([string]$validText, [string]$editedText, [string]$pointer) {
+    # Location by construction: the gate accepts the valid document, refuses the
+    # edited one, and the two differ at exactly the recipe's pointer and nowhere else.
+    $diff = [Collections.Generic.List[string]]::new()
+    $left = [Text.Json.JsonDocument]::Parse($validText)
+    $right = [Text.Json.JsonDocument]::Parse($editedText)
+    try { Add-JsonDiffPointers $left.RootElement $right.RootElement '' $diff }
+    finally { $left.Dispose(); $right.Dispose() }
+    return ((Test-QualificationGraphSchema $validText $schema) -and -not (Test-QualificationGraphSchema $editedText $schema) -and
+        $diff.Count -eq 1 -and $diff[0] -ceq $pointer)
+}
+$baseText = Json $base
 function Measure-Recipe($recipe, [string]$text) {
     $direct = Test-QualificationGraphSchema $text $schema
     $result = Read-PinnedGraph $text $catalogJson $schema
     $boundary = ($direct -eq ($recipe.boundary -ceq 'identity'))
-    $path = $result.SchemaPaths -ccontains $recipe.path
-    if ($recipe.boundary -ceq 'identity') { $path = $result.Path -ceq $recipe.path }
+    # Strongest available location proof: the pointer the gate reported, else
+    # (pwsh 7.6, no error record) an explicit location-unavailable plus the minimal pair.
+    if ($recipe.boundary -ceq 'identity') { $how = 'identity'; $path = $result.Path -ceq $recipe.path }
+    elseif ($result.SchemaLocation -ceq 'reported') { $how = 'reported'; $path = $result.SchemaPaths -ccontains $recipe.path }
+    elseif ($result.SchemaLocation -ceq 'location-unavailable') {
+        $how = 'minimal-pair'
+        $path = @($result.SchemaPaths).Count -eq 0 -and (Test-MinimalPair $baseText $text $recipe.path)
+    } else { $how = 'missing'; $path = $false }
     $ok = ($healthy.Accepted -and $boundary -and -not $result.Accepted -and $result.Category -ceq $recipe.category -and $path)
-    return [pscustomobject]@{ Ok = $ok; Detail = ('result=' + $result.Category + ':' + $result.Path) }
+    return [pscustomobject]@{ Ok = $ok; How = $how; Detail = ('result=' + $result.Category + ':' + $result.Path + ' location=' + $how) }
 }
+$locationTally = [ordered]@{}
 foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
     $edited = Edit-Graph (Copy-Graph $base) $recipe
     $text = Json $edited
@@ -196,9 +234,30 @@ foreach ($recipe in (Load 'invalid-cases.json' | ConvertFrom-Json)) {
     $native = Measure-Recipe $recipe $text
     $script:QGraphTestJsonShape = 'pwsh76'
     try { $seam = Measure-Recipe $recipe $text } finally { $script:QGraphTestJsonShape = 'native' }
+    foreach ($key in @(('native=' + $native.How), ('pwsh76=' + $seam.How))) { $locationTally[$key] = 1 + [int]$locationTally[$key] }
     Check ($native.Ok -and $seam.Ok) $recipe.id ("path=" + $recipe.path + " native " + $native.Detail + " pwsh76 " + $seam.Detail)
     if ((Inventory $fixtures) -cne $beforeInputs) { throw 'fixture-bytes-changed' }
 }
+Write-Host ('QGRAPH LOCATION ' + (@($locationTally.Keys | ForEach-Object { $_ + ':' + $locationTally[$_] }) -join ' '))
+# The pair proof must exclude a refusal caused elsewhere: a second edit, an
+# invalid partner, or no difference at all.
+$pairPointer = '/nodes/0/platformOfRecord'
+$pairText = Json (Edit-Graph (Copy-Graph $base) ([pscustomobject]@{ path = $pairPointer; op = 'remove'; value = $null }))
+$stray = [pscustomobject]@{ path = '/candidate/fixtureUnexpected'; op = 'set'; value = $true }
+$strayText = Json (Edit-Graph (Copy-Graph $base) $stray)
+$twoText = Json (Edit-Graph ($pairText | ConvertFrom-Json) $stray)
+$script:QGraphTestJsonShape = 'pwsh76'
+try {
+    $pairOk = Test-MinimalPair $baseText $pairText $pairPointer
+    $twoEdits = Test-MinimalPair $baseText $twoText $pairPointer
+    $badPartner = Test-MinimalPair $strayText $twoText $pairPointer
+    $noEdit = Test-MinimalPair $baseText $baseText $pairPointer
+    $seamNested = Get-QualificationGraphSchemaResult $pairText $schema
+    $seamRoot = Get-QualificationGraphSchemaResult (Json (Edit-Graph (Copy-Graph $base) ([pscustomobject]@{ path = '/profile'; op = 'remove'; value = $null }))) $schema
+} finally { $script:QGraphTestJsonShape = 'native' }
+Check ($pairOk -and -not $twoEdits -and -not $badPartner -and -not $noEdit) 'location-minimal-pair-guard' ("pair=$pairOk two=$twoEdits partner=$badPartner none=$noEdit")
+Check (-not $seamNested.Accepted -and $seamNested.Location -ceq 'location-unavailable' -and @($seamNested.Paths).Count -eq 0 -and
+    -not $seamRoot.Accepted -and $seamRoot.Location -ceq 'reported' -and $seamRoot.Paths -ccontains '/profile') 'pwsh76-location-unavailable' ($seamNested.Location + '|' + $seamRoot.Location)
 $missing = Read-PinnedGraph $graphJson '' $schema
 Check ($healthy.Accepted -and -not $missing.Accepted -and $missing.Reason -ceq 'catalog-required' -and $missing.Path -ceq '/catalog') 'catalog-missing'
 
