@@ -103,8 +103,15 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
         if (action is "running-recovery-existing-brief" or "running-recovery-missing-brief" or "watchdog-first-recovery")
             counter.AppendFullCommands(FullCommandCounter.CreateEvidenceFile("c1529-" + action), action);
+        // No fixture's runner lists an Exited session, so CARD-1619's terminal exit
+        // enrichment read has nothing to match and must not be issued.
+        counter.Commands.Where(sql => TerminalEnrichmentRead.IsMatch(sql))
+            .ShouldBeEmpty($"action {action}: terminal exit enrichment read on an empty Exited set{Environment.NewLine}{roster}");
         total.ShouldBe(expected, $"action {action}{Environment.NewLine}{roster}");
     }
+
+    private static readonly System.Text.RegularExpressions.Regex TerminalEnrichmentRead =
+        new(@"""Id"" = ANY \(@\w*exitedIds\w*\)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static async Task<(int Total, string Roster)> MeasureTickAsync(
         string connection, FullCommandCounter counter, string action)
