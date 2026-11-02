@@ -102,28 +102,30 @@ public sealed class RunnerWorkspaceSlotPool
             if (created)
             {
                 var add = await RepositoryGitAsync(ct, "worktree", "add", "--detach", slot.Path, request.Sha);
-                if (add.ExitCode != 0)
+                if (add.ExitCode != 0 || !await StampDirectoryAsync(slot.Path, slot.Id, slot.DirectoryGeneration, ct))
                 {
                     await MutateAsync(state => Fail(state, slot.Id, "creation failed: " + Bound(add.Stderr)));
                     continue;
                 }
             }
-            else if (await CheckFreeAsync(slot, ct) is { } failure)
+            else if (await PreflightFreeAsync(slot, ct) is { } failure)
             {
                 await QuarantineAndRehomeAsync(slot, failure.Class, failure.Reason, failure.Detail, ct);
                 continue;
             }
 
             var cold = request.Cold || slot.ColdResetPending is not null;
-            var reset = await ResetForLeaseAsync(slot.Path, request, cold, ct);
+            var reset = await ResetForLeaseAsync(slot, request, cold, ct);
             var verify = reset ?? await VerifyLeaseAsync(slot.Path, request, ct);
+            if (verify is null && ProveOwnership(slot).Failure is { } broken)
+                verify = broken.Detail;
             if (verify is not null)
             {
                 await QuarantineAndRehomeAsync(slot, "filesystem", reset is null ? "verify" : "reset", verify, ct);
                 continue;
             }
 
-            await StampAsync(slot, request, ct);
+            StampLease(slot, request);
             await MutateAsync(state =>
             {
                 var record = state.Slot(slot.Id)!;
@@ -245,8 +247,13 @@ public sealed class RunnerWorkspaceSlotPool
         return pool + estimate <= Settings.PoolDiskBudgetGiB * GiB;
     }
 
-    private async Task<string?> ResetForLeaseAsync(string path, WorkspaceSlotLeaseRequest request, bool cold, CancellationToken ct)
+    private async Task<string?> ResetForLeaseAsync(WorkspaceSlotRecord slot, WorkspaceSlotLeaseRequest request, bool cold, CancellationToken ct)
     {
+        // D-1: nothing destructive runs until this directory is proven to be this slot's own worktree.
+        var (owned, broken) = ProveOwnership(slot);
+        if (owned is null)
+            return "identity: " + broken!.Detail;
+        var path = owned.Path;
         await AbortSequencersAsync(path, ct);
         var checkout = await _service.GitAsync(path, ct, "checkout", "--force", "-B", request.Branch, request.Sha);
         if (checkout.ExitCode != 0)
@@ -254,7 +261,7 @@ public sealed class RunnerWorkspaceSlotPool
         var clean = await _service.GitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
         if (clean.ExitCode != 0)
             return "clean: " + Bound(clean.Stderr);
-        await ClearWorktreeStateAsync(path, ct);
+        await ClearWorktreeStateAsync(owned, ct);
         return null;
     }
 
@@ -276,18 +283,39 @@ public sealed class RunnerWorkspaceSlotPool
         return null;
     }
 
-    private async Task StampAsync(WorkspaceSlotRecord slot, WorkspaceSlotLeaseRequest request, CancellationToken ct)
+    private void StampLease(WorkspaceSlotRecord slot, WorkspaceSlotLeaseRequest request)
+    {
+        var owned = ProveOwnership(slot).Owned ?? throw Refuse("Slot " + slot.Id + " lost its ownership proof.");
+        WriteStamp(owned.AdminDir, slot.Id, slot.DirectoryGeneration, slot.LeaseGeneration, request.TaskId, request.PreparationId);
+    }
+
+    /// <summary>D-1: a directory the pool just created carries its owner stamp before any later reset proves ownership.</summary>
+    private async Task<bool> StampDirectoryAsync(string path, string slotId, int directoryGeneration, CancellationToken ct)
+    {
+        if (await GitDirectoryAsync(path, ct) is not { } gitDir)
+            return false;
+        try
+        {
+            WriteStamp(gitDir, slotId, directoryGeneration, 0, null, null);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static void WriteStamp(string gitDir, string slotId, int directoryGeneration, int leaseGeneration, Guid? task, Guid? preparation)
     {
         // D-7: the existing owner stamp name keeps the CARD-1008 recycle audit allowlist unchanged.
-        var gitDir = await GitDirectoryAsync(slot.Path, ct) ?? throw Refuse("Slot git directory is unreadable.");
         var path = RunnerWorkspaceBindingStore.OwnerStampPath(gitDir);
         File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(new
         {
-            slotId = slot.Id,
-            leaseGeneration = slot.LeaseGeneration,
-            directoryGeneration = slot.DirectoryGeneration,
-            taskId = request.TaskId,
-            preparationId = request.PreparationId,
+            slotId,
+            leaseGeneration,
+            directoryGeneration,
+            taskId = task,
+            preparationId = preparation,
         }, StampJson));
         File.Move(path + ".tmp", path, overwrite: true);
     }
@@ -347,9 +375,10 @@ public sealed class RunnerWorkspaceSlotPool
         PhaseCut?.Invoke("releasing");
         var quarantined = new PhoneHomeWorkspaceSlotReleaseResponse("quarantined", slot.Id, slot.LeaseGeneration);
 
-        if (!Directory.Exists(slot.Path) || !File.Exists(slot.Path + "/.git") || await GitDirectoryAsync(slot.Path, ct) is null)
+        // D-1: a directory that is not provably this slot's own worktree is quarantined before any git runs in it.
+        if (ProveOwnership(slot).Failure is { } broken)
         {
-            await QuarantineAndRehomeAsync(slot, "filesystem", "identity", "slot directory or its .git identity is missing", ct);
+            await QuarantineAndRehomeAsync(slot, broken.Class, broken.Reason, broken.Detail, ct);
             return quarantined;
         }
 
@@ -402,11 +431,11 @@ public sealed class RunnerWorkspaceSlotPool
         PhaseCut?.Invoke("before-clean");
         var cold = slot.ColdResetPending is not null;
         var published = await PublishedShaAsync(ct);
-        var error = await ResetForFreeAsync(slot.Path, slot.Branch, published, cold, ct);
+        var error = await ResetForFreeAsync(slot, published, cold, ct);
         if (error is null && await CheckFreeAsync(slot, ct) is not null)
         {
             // One retry for a residue the first pass left; a second failure is an undeletable residue.
-            error = await ResetForFreeAsync(slot.Path, slot.Branch, published, cold, ct);
+            error = await ResetForFreeAsync(slot, published, cold, ct);
             if (error is null && await CheckFreeAsync(slot, ct) is { } residue)
                 error = "residue: " + residue.Detail;
         }
@@ -458,8 +487,14 @@ public sealed class RunnerWorkspaceSlotPool
         record.Detail = null;
     }
 
-    private async Task<string?> ResetForFreeAsync(string path, string? branch, string published, bool cold, CancellationToken ct)
+    private async Task<string?> ResetForFreeAsync(WorkspaceSlotRecord slot, string published, bool cold, CancellationToken ct)
     {
+        // D-1: re-proved here, immediately before the first destructive command, not only at the preflight.
+        var (owned, broken) = ProveOwnership(slot);
+        if (owned is null)
+            return "identity: " + broken!.Detail;
+        var path = owned.Path;
+        var branch = slot.Branch;
         await AbortSequencersAsync(path, ct);
         var checkout = await _service.GitAsync(path, ct, "checkout", "--force", "--detach", published);
         if (checkout.ExitCode != 0)
@@ -467,7 +502,7 @@ public sealed class RunnerWorkspaceSlotPool
         var clean = await _service.GitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
         if (clean.ExitCode != 0)
             return "clean: " + Bound(clean.Stderr);
-        await ClearWorktreeStateAsync(path, ct);
+        await ClearWorktreeStateAsync(owned, ct);
         if (branch is not null && branch != _service.PublishedBranch)
         {
             // Runner-local task refs go with the release; the unpushed check already ran.
@@ -475,8 +510,7 @@ public sealed class RunnerWorkspaceSlotPool
             await _service.GitAsync(path, ct, "update-ref", "-d", "refs/remotes/origin/" + branch);
         }
 
-        if (await GitDirectoryAsync(path, ct) is { } gitDir)
-            DeleteFile(gitDir + "/logs/HEAD");
+        DeleteFile(owned.AdminDir + "/logs/HEAD");
         return null;
     }
 
@@ -488,37 +522,117 @@ public sealed class RunnerWorkspaceSlotPool
             await _service.GitAsync(path, ct, verb, "--quit");
     }
 
-    private async Task ClearWorktreeStateAsync(string path, CancellationToken ct)
+    private async Task ClearWorktreeStateAsync(Owned owned, CancellationToken ct)
     {
-        var refs = await _service.GitAsync(path, ct, "for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/");
+        var refs = await _service.GitAsync(owned.Path, ct, "for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/");
         if (refs.ExitCode == 0)
         {
             foreach (var name in refs.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                await _service.GitAsync(path, ct, "update-ref", "-d", name);
+                await _service.GitAsync(owned.Path, ct, "update-ref", "-d", name);
         }
 
-        if (await GitDirectoryAsync(path, ct) is not { } gitDir)
-            return;
         foreach (var name in new[] { "config.worktree", "ORIG_HEAD", "AUTO_MERGE", "FETCH_HEAD", "BISECT_LOG", "BISECT_START", "BISECT_NAMES", "BISECT_EXPECTED_REV", "BISECT_TERMS", "BISECT_ANCESTORS_OK" })
-            DeleteFile(gitDir + "/" + name);
+            DeleteFile(owned.AdminDir + "/" + name);
     }
 
     // ---------------------------------------------------------------- checks
 
     private sealed record Failure(string Class, string Reason, string Detail);
 
-    /// <summary>The free invariant (§3.4): identity, detached at a published sha, only keep-list residue, no markers, no holder.</summary>
+    /// <summary>A slot directory proven to be this slot's own worktree, and its registration (admin) directory.</summary>
+    private sealed record Owned(string Path, string AdminDir);
+
+    /// <summary>
+    /// D-1 (review 3a354688). Read-only proof, required before any checkout, clean, update-ref or file delete,
+    /// that the directory IS this slot's own worktree: it is <c>&lt;worktrees&gt;/&lt;this slot's leaf&gt;</c> by canonical
+    /// path, with no link at the directory, its <c>.git</c> file or the registration; its <c>.git</c> file names a
+    /// registration directly under <c>&lt;primary&gt;/.git/worktrees</c> (never the primary <c>.git</c>); that
+    /// registration's <c>gitdir</c> back-pointer names this directory's <c>.git</c> (never a sibling's); and the
+    /// pool's owner stamp there names this slot id and directory generation. Any doubt is a failure.
+    /// </summary>
+    private (Owned? Owned, Failure? Failure) ProveOwnership(WorkspaceSlotRecord slot)
+    {
+        static (Owned?, Failure?) Broken(string detail) => (null, new Failure("filesystem", "identity", detail));
+        try
+        {
+            var path = Normalize(slot.Path);
+            var leaf = Path.GetFileName(path);
+            if (!IsSlotLeaf(leaf) || (leaf != slot.Id && !leaf.StartsWith(slot.Id + "-d", StringComparison.Ordinal))
+                || !RunnerWorkspaceService.PathsEqual(Path.GetDirectoryName(path) ?? "", _service.WorktreeRoot))
+                return Broken("slot path " + path + " is not " + slot.Id + " under the slot root");
+            if (!Path.Exists(path))
+                return Broken("slot directory is missing");
+            if (IsLink(path) || !Directory.Exists(path)
+                || RunnerWorkspaceService.TryResolveFinal(path) is not { } realPath
+                || RunnerWorkspaceService.TryResolveFinal(_service.WorktreeRoot) is not { } realRoot
+                || !RunnerWorkspaceService.PathsEqual(realPath, Path.Combine(realRoot, leaf)))
+                return Broken("slot directory " + path + " is a link or resolves outside the slot root");
+            var dotGit = path + "/.git";
+            if (!Path.Exists(dotGit) || Directory.Exists(dotGit))
+                return Broken(".git file is missing");
+            if (IsLink(dotGit))
+                return Broken(".git is a link");
+            var pointer = File.ReadAllText(dotGit).Trim();
+            if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal))
+                return Broken(".git is not a gitdir pointer");
+            var target = pointer["gitdir:".Length..].Trim();
+            var admin = Normalize(Path.IsPathRooted(target) ? target : Path.Combine(path, target));
+            var worktrees = _service.PrimaryRepository + "/.git/worktrees";
+            if (!Directory.Exists(admin) || IsLink(admin) || IsLink(_service.PrimaryRepository + "/.git") || IsLink(worktrees)
+                || RunnerWorkspaceService.TryResolveFinal(admin) is not { } realAdmin
+                || RunnerWorkspaceService.TryResolveFinal(worktrees) is not { } realWorktrees
+                || !RunnerWorkspaceService.PathsEqual(Path.GetDirectoryName(realAdmin) ?? "", realWorktrees))
+                return Broken("git directory " + admin + " is not a registration under " + Normalize(worktrees));
+            var back = admin + "/gitdir";
+            if (!File.Exists(back) || IsLink(back))
+                return Broken("registration " + admin + " has no gitdir back-pointer");
+            var backTarget = File.ReadAllText(back).Trim();
+            if (RunnerWorkspaceService.TryResolveFinal(Path.IsPathRooted(backTarget) ? backTarget : Path.Combine(admin, backTarget)) is not { } realBack
+                || RunnerWorkspaceService.TryResolveFinal(dotGit) is not { } realDotGit
+                || !RunnerWorkspaceService.PathsEqual(realBack, realDotGit))
+                return Broken("registration " + admin + " belongs to " + backTarget + ", not " + dotGit);
+            var stamp = RunnerWorkspaceBindingStore.OwnerStampPath(admin);
+            if (!File.Exists(stamp) || IsLink(stamp))
+                return Broken("registration " + admin + " has no owner stamp");
+            using var json = JsonDocument.Parse(File.ReadAllText(stamp));
+            var root = json.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("slotId", out var id) || id.ValueKind != JsonValueKind.String || id.GetString() != slot.Id
+                || !root.TryGetProperty("directoryGeneration", out var generation) || generation.ValueKind != JsonValueKind.Number
+                || !generation.TryGetInt32(out var stamped) || stamped != slot.DirectoryGeneration)
+                return Broken("owner stamp " + stamp + " does not name " + slot.Id + " directory generation " + slot.DirectoryGeneration);
+            return (new Owned(path, Normalize(realAdmin)), null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
+        {
+            return Broken("ownership unreadable: " + ex.GetType().Name + ": " + Bound(ex.Message));
+        }
+    }
+
+    // A dangling or unreadable entry throws and the caller fails closed; LinkTarget alone can return null on EACCES.
+    private static bool IsLink(string path) => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+
+    /// <summary>
+    /// D-1/D-2 read-only preflight before any destructive work on a Free slot (lease, cold reset, retirement):
+    /// the ownership proof and free invariant, then no commit outside origin in the slot's HEAD reflog.
+    /// </summary>
+    private async Task<Failure?> PreflightFreeAsync(WorkspaceSlotRecord slot, CancellationToken ct)
+    {
+        if (await CheckFreeAsync(slot, ct) is { } failure)
+            return failure;
+        return await UnpushedAsync(slot.Path, null, ct, fetch: false) is { } unpushed
+            ? new Failure("custody", "unpushed", unpushed)
+            : null;
+    }
+
+    /// <summary>The free invariant (§3.4): ownership, detached at a published sha, only keep-list residue, no markers, no holder.</summary>
     private async Task<Failure?> CheckFreeAsync(WorkspaceSlotRecord slot, CancellationToken ct)
     {
         var path = slot.Path;
-        if (!Directory.Exists(path))
-            return new Failure("filesystem", "identity", "slot directory is missing");
-        if (!File.Exists(path + "/.git"))
-            return new Failure("filesystem", "identity", ".git file is missing");
-        var gitDir = await GitDirectoryAsync(path, ct);
-        var expectedParent = Normalize(_service.PrimaryRepository + "/.git/worktrees");
-        if (gitDir is null || Normalize(Path.GetDirectoryName(gitDir) ?? "") != expectedParent)
-            return new Failure("filesystem", "identity", "git directory " + (gitDir ?? "<none>") + " is not a registration of the runner repository");
+        var (owned, broken) = ProveOwnership(slot);
+        if (owned is null)
+            return broken;
+        var gitDir = owned.AdminDir;
         if ((await _service.GitAsync(path, ct, "symbolic-ref", "-q", "HEAD")).ExitCode == 0)
             return new Failure("custody", "attached", "HEAD is on a branch");
         var contained = await _service.GitAsync(path, ct, "for-each-ref", "--count=1", "--contains", "HEAD", "--format=%(refname)", "refs/remotes/origin/");
@@ -572,11 +686,13 @@ public sealed class RunnerWorkspaceSlotPool
     /// branch tip) must be reachable from an origin head. The reflog is expired at every release, so its
     /// entries all belong to this lease.
     /// </summary>
-    private async Task<string?> UnpushedAsync(string path, string? branch, CancellationToken ct)
+    private async Task<string?> UnpushedAsync(string path, string? branch, CancellationToken ct, bool fetch = true)
     {
-        if (branch is not null)
+        // Without a fetch the origin heads are older, never newer: the check can only grow stricter.
+        if (fetch && branch is not null)
             await RepositoryGitAsync(ct, "fetch", "origin", "+refs/heads/" + branch + ":refs/remotes/origin/" + branch);
-        await PublishedShaAsync(ct);
+        if (fetch)
+            await PublishedShaAsync(ct);
         var shas = new HashSet<string>(StringComparer.Ordinal);
         var reflog = await _service.GitAsync(path, ct, "reflog", "show", "--format=%H", "HEAD");
         if (reflog.ExitCode == 0)
@@ -731,7 +847,13 @@ public sealed class RunnerWorkspaceSlotPool
         }
 
         var lockReason = "antiphon quarantine " + slot.Id + " " + cls + " " + reason;
-        var locked = await RepositoryGitAsync(ct, "worktree", "lock", "--reason", lockReason, slot.Path);
+        // A linked slot path would resolve to (and lock) whatever worktree the link names.
+        var linked = true;
+        try { linked = IsLink(slot.Path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        var locked = linked
+            ? (ExitCode: 1, Stdout: "", Stderr: "slot path is a link or unreadable; not locked")
+            : await RepositoryGitAsync(ct, "worktree", "lock", "--reason", lockReason, slot.Path);
         long bytes = 0;
         try { bytes = _disk.Measure(slot.Path); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
@@ -786,7 +908,7 @@ public sealed class RunnerWorkspaceSlotPool
             }
 
             var add = await RepositoryGitAsync(ct, "worktree", "add", "--detach", path, published);
-            if (add.ExitCode != 0)
+            if (add.ExitCode != 0 || !await StampDirectoryAsync(path, slot.Id, generation, ct))
                 continue;
             var created = generation;
             await MutateAsync(state =>
@@ -935,14 +1057,21 @@ public sealed class RunnerWorkspaceSlotPool
         foreach (var slot in run)
         {
             PhaseCut?.Invoke("cold-resetting");
-            // Never run git in a directory whose .git file vanished: git would walk up to a parent.
-            var identity = File.Exists(slot.Path + "/.git");
-            var clean = identity
-                ? await _service.GitAsync(slot.Path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold: true)])
-                : (ExitCode: 1, Stdout: "", Stderr: ".git file is missing");
-            var failure = clean.ExitCode != 0
-                ? new Failure("filesystem", "cold-reset", "clean: " + Bound(clean.Stderr))
-                : await CheckFreeAsync(slot, ct);
+            // D-2: the lease's own preflight (ownership, free invariant, unpushed reflog) runs BEFORE the clean, so
+            // a cold reset deletes only what a lease would also reset away: keep-list native output. Anything a
+            // lease would quarantine (an untracked or non-keep-list ignored file, an unpushed commit) is
+            // quarantined here with its bytes in place.
+            var failure = await PreflightFreeAsync(slot, ct);
+            if (failure is null)
+            {
+                var owned = ProveOwnership(slot);
+                var clean = owned.Owned is { } proven
+                    ? await _service.GitAsync(proven.Path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold: true)])
+                    : (ExitCode: 1, Stdout: "", Stderr: owned.Failure!.Detail);
+                failure = clean.ExitCode != 0
+                    ? new Failure("filesystem", "cold-reset", "clean: " + Bound(clean.Stderr))
+                    : await CheckFreeAsync(slot, ct);
+            }
             if (failure is not null)
             {
                 await QuarantineAndRehomeAsync(slot, failure.Class, failure.Reason, failure.Detail, ct);
@@ -1041,7 +1170,7 @@ public sealed class RunnerWorkspaceSlotPool
             if (candidate is null)
                 return;
 
-            var failure = await CheckFreeAsync(candidate, ct);
+            var failure = await PreflightFreeAsync(candidate, ct);
             if (failure is null)
             {
                 var remove = await RepositoryGitAsync(ct, "worktree", "remove", "--force", candidate.Path);
@@ -1063,7 +1192,10 @@ public sealed class RunnerWorkspaceSlotPool
     /// <summary>
     /// §3.5 crash recovery. Every slot in a transitional state, and every Leased slot the server did not
     /// confirm (when <paramref name="confirmed"/> is given), is settled by the release check: reset to Free
-    /// or quarantined and re-homed. Null leaves Leased slots to the server's release reconciler.
+    /// or quarantined and re-homed. Null (a plain restart) KEEPS every Leased slot: the runner cannot tell a
+    /// terminal task from a queued one, and the server still owes the release. The task row keeps the runner
+    /// id, slot id and generation with no release stamp, so the reconciler releases it once the task is
+    /// terminal and a drain re-arm releases it on this runner before the task may move (D-3, review 3a354688).
     /// </summary>
     public async Task RecoverAsync(IReadOnlyCollection<(string SlotId, int Generation)>? confirmed, CancellationToken ct)
     {

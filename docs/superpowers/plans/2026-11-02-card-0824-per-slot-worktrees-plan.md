@@ -341,6 +341,42 @@ slot's directory must be changeable after a catastrophic, unrecoverable failure.
   a filesystem-quarantined directory whose content is published passes it, which makes a volume recycle
   the operator's last-resort recovery for files the runner's uid cannot delete.
 
+### 3.5b Review round 1 amendments (review 3a354688 D-1..D-3) and the enablement gate
+
+- **Ownership before destruction (D-1).** Before any `checkout --force`, `clean`, `update-ref -d`, file
+  delete in the registration or the retirement `worktree remove`, the runner proves, read-only, that the directory IS this
+  slot's own worktree: it is `<worktrees>/<this slot's leaf>` by canonical path with no symlink or reparse
+  point at the directory, its `.git` file or the registration; the `.git` file names a registration
+  directly under `<primary>/.git/worktrees` (never the primary `.git`); that registration's `gitdir`
+  back-pointer canonicalizes to this directory's `.git` (never a sibling's); and the pool's owner stamp in
+  the registration names this slot id and directory generation (stamped at creation and re-home, restamped
+  at every lease). Any doubt quarantines the directory with nothing run in it. The proof runs as a
+  preflight (lease, release, cold reset, retirement) and again immediately before the destructive commands;
+  file deletes use the proven registration path, never `rev-parse --git-dir`.
+- **Cold reset runs the lease's preflight first (D-2).** Ownership, the free invariant and the unpushed
+  (HEAD reflog) check run before `git clean -ffdx`. A cold reset removes only what a warm reset keeps:
+  keep-list native output. Any untracked non-ignored path, any ignored path outside the keep-list (late
+  `.antiphon/` evidence included) and any commit outside origin quarantine the directory with its bytes in
+  place, exactly as a lease would. (A Free slot holds no other ignored output: its warm reset removed it.)
+- **Drain re-arm releases the old slot first (D-3).** A queued, unlaunched task still bound to a slot on a
+  draining runner moves to the redirect only after the old runner answers the idempotent release with
+  `released`, `already_free` or `quarantined`; that stamps the release and clears the path. Any other answer
+  (refusal, lost reply, no transport) keeps the task on the old runner with its slot and a
+  `workspace_slot_release_pending` hold, retried every tick and escalated by held age. Chosen over refusing
+  the re-arm outright because it is the same idempotent release the reconciler sends, moves the task as
+  soon as the slot is safe, and never needs a second delivery path. A runner restart (`RecoverAsync(null)`)
+  keeps every Leased slot: the runner cannot tell a terminal task from a queued one, and the server row
+  (runner id, slot id, generation, no release stamp) still owes the release. The reconciler asks a runner
+  that answers `slot_unknown` at most three times per slot and generation, then records
+  `workspace_slot_release_stuck` and stops; it never stamps a release it did not get. A released slot id
+  beside a newer path (a later per-task mirror on a runner without slots) no longer suppresses that
+  mirror's legacy removal.
+- **Enablement gate.** Either workspace-slot flag may be enabled on a host that can drain (every runner
+  with a drain redirect) only with the D-3 rule above in the running server. Witnesses:
+  `C0824_ReleaseProvesOwnershipBeforeAnyDestructiveGit` (primary, sibling, symlink),
+  `C0824_ColdResetQuarantinesWhatALeaseWould`, `C0824_DrainRebindReleasesTheOldSlotFirst`,
+  `C0824_ReconcilerBoundsSlotUnknownRetries` and `C0824_RestartKeepsLeasedSlotForTheServersRelease`.
+
 ### 3.6 Legacy removal paths against slot paths (the main custody hazard)
 
 The following consumers of `RemoteWorktreePath` must not act on a slot they no longer lease:

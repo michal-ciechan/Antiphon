@@ -313,6 +313,19 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
 - At the bound (`MaxOverflowSlots` above capacity plus headroom, or the disk budget) the lease refuses
   `workspace_slot_unavailable:<bound>`; the task stays Queued with a Held event and never gets a per-task
   mirror. Resets, re-homes and overflow creation take no build slot.
+- Nothing destructive runs in a slot directory until the runner proves it is that slot's own worktree
+  (review 3a354688 D-1): canonical path `<worktrees>/<leaf>` with no link, a `.git` file naming a
+  registration directly under `<primary>/.git/worktrees` whose `gitdir` points back at it, and the pool's
+  owner stamp for that slot id and directory generation. A `.git` naming the primary `.git` or a sibling
+  slot, or a linked directory, is quarantined with nothing run in it. A cold reset runs the same
+  ownership, free-invariant and unpushed preflight before its clean (D-2): it removes keep-list native
+  output only and quarantines anything a lease would.
+- Slots plus drains are supported only with the D-3 rule: a queued slot-bound task on a draining runner
+  moves to the redirect only after the old runner confirms the slot released (`released`, `already_free`,
+  `quarantined`); otherwise it stays on the old runner with a `workspace_slot_release_pending` hold. A
+  runner restart keeps Leased slots (the server row still owes the release). The reconciler stops after
+  three `slot_unknown` answers per slot and generation and records `workspace_slot_release_stuck`.
+  Do not enable either flag on a server without this rule.
 
 ## Dormant terminal runner seat integration (CARD-0667 S4b)
 
