@@ -96,6 +96,8 @@ public class LandingGit : ILandingGit
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
+        using var owned = journal is null ? null : OwnedChildMarker.Create(WriteChildLog);
+        owned?.Apply(start);
         Process? child;
         try { child = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
@@ -106,6 +108,7 @@ public class LandingGit : ILandingGit
         // Any other start failure is ambiguous (Windows builds the redirected streams after
         // CreateProcess), so its record stands as a fence for recover-repository-children.ps1.
         var process = child ?? throw new IOException("git_start_failed");
+        owned?.Attach(process, WriteChildLog);
         var disposeProcess = true;
         try
         {
@@ -141,7 +144,7 @@ public class LandingGit : ILandingGit
                 var drained = false;
                 try
                 {
-                    handedOff = await ReleaseChildAsync(process, journal is null ? null : journal.StreamsClosed, null, output, error);
+                    handedOff = await ReleaseChildAsync(process, owned, journal is null ? null : journal.StreamsClosed, null, output, error);
                     drained = !handedOff;
                 }
                 catch
@@ -180,10 +183,16 @@ public class LandingGit : ILandingGit
     /// journal deleter does not touch the Process. Disposing earlier closes the read ends and looks
     /// like EOF while a grandchild still holds the pipes. A crash before the streams close leaves the file.
     /// When the killed set has exited and the pipe is still open, the drain is tried once more for
-    /// <see cref="KillDrainGrace"/>. A holder that was not a child of that set keeps the record.</summary>
-    private async Task<bool> ReleaseChildAsync(Process process, Action? onStreamsClosed, IDisposable? keepUntilClosed, params Task[] streams)
+    /// <see cref="KillDrainGrace"/>. A holder that carries <paramref name="owned"/> keeps the record.
+    /// When <paramref name="owned"/> proves no such holder is alive, the pipe is held by a stranger
+    /// and the record is removed now (<c>pipe_open_unowned</c>); the handle still waits for EOF.</summary>
+    private async Task<bool> ReleaseChildAsync(Process process, OwnedChildMarker? owned, Action? onStreamsClosed,
+        IDisposable? keepUntilClosed, params Task[] streams)
     {
         var report = TryKillTree(process);
+        // Windows: the job reaches a reparented holder (an msys sleep whose parent was the exited
+        // fork stub) that the parent-pid walk cannot see.
+        owned?.TerminateMembers(SafePid(process), WriteChildLog);
         var drained = false;
         using (var grace = new CancellationTokenSource(KillDrainGrace))
         {
@@ -242,10 +251,38 @@ public class LandingGit : ILandingGit
         // then disposed the handle without removing the journal. The recorded root can exit
         // a moment later while a pipe holder is still alive; the fence drops only once both
         // are true. Waiting here would stretch the caller out to that holder's lifetime.
-        var reason = !RootExited(process) ? "root_alive" : !HoldersGone(report) ? "live_holder" : "pipe_open";
-        WriteChildLog(DecisionLine("repository_child_journal_handoff", process, report, pipeDrained, reason));
         var closeJournal = onStreamsClosed;
         var retained = keepUntilClosed;
+        // The root, the sealed set and its late children are confirmed dead and only the pipe is
+        // open. The fence stays for a holder proven ours; with no live owned process it would only
+        // wait for a stranger's lifetime, and a stale fence blocks every land on the repository.
+        bool? ownedAlive = null;
+        if (closeJournal is not null && owned is not null && RootExited(process) && HoldersGone(report))
+            ownedAlive = OwnedHolderAlive(owned);
+        if (ownedAlive == false)
+        {
+            var removed = false;
+            try
+            {
+                closeJournal!();
+                removed = true;
+            }
+            catch (IOException)
+            {
+                // Removal annotated the record and kept it. The EOF continuation below retries.
+                Console.Error.WriteLine("repository_child_journal_cleanup_continuation_failed");
+            }
+            if (removed)
+            {
+                WriteChildLog(DecisionLine("repository_child_journal_release", process, report, pipeDrained, "pipe_open_unowned"));
+                ObserveAbandoned(streams, () => DisposeAbandoned(process, retained));
+                return true;
+            }
+        }
+
+        var reason = !RootExited(process) ? "root_alive" : !HoldersGone(report) ? "live_holder"
+            : ownedAlive == true ? "owned_holder" : "pipe_open";
+        WriteChildLog(DecisionLine("repository_child_journal_handoff", process, report, pipeDrained, reason));
         ObserveAbandoned(streams, () =>
         {
             var waitForRoot = false;
@@ -288,6 +325,9 @@ public class LandingGit : ILandingGit
         });
         return true;
     }
+
+    /// <summary>Test seam for the ownership probe of the release decision.</summary>
+    internal virtual bool? OwnedHolderAlive(OwnedChildMarker owned) => owned.AnyAlive();
 
     private static bool HoldersGone(OwnedProcessTree.TreeKillReport report) =>
         report.ReapWaited && report.StillAlive == 0 && report.FollowStillAlive == 0;
@@ -1009,6 +1049,8 @@ public class LandingGit : ILandingGit
         // exited, not-started) as ExecuteProcessAsync. A server death mid-batch then stays visible
         // to the lease fence and recover-repository-children.ps1.
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(path, tag: null, ct) : null;
+        using var owned = journal is null ? null : OwnedChildMarker.Create(WriteChildLog);
+        owned?.Apply(start);
         Process? started;
         try { started = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
@@ -1017,6 +1059,7 @@ public class LandingGit : ILandingGit
             throw;
         }
         var child = started ?? throw new IOException("git_start_failed");
+        owned?.Attach(child, WriteChildLog);
         var output = new MemoryStream();
         var disposeChild = true;
         var disposeOutput = true;
@@ -1055,7 +1098,7 @@ public class LandingGit : ILandingGit
                 var drained = false;
                 try
                 {
-                    handedOff = await ReleaseChildAsync(child, journal is null ? null : journal.StreamsClosed, output, copy, error);
+                    handedOff = await ReleaseChildAsync(child, owned, journal is null ? null : journal.StreamsClosed, output, copy, error);
                     drained = !handedOff;
                 }
                 catch
