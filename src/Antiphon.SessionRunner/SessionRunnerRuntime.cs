@@ -2224,7 +2224,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     var session = new RunnerSession(
                         sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness) { StopIntents = StopIntents };
                     session.BindAcceptedGeneration(sidecar.AcceptedStartedAt);
-                    await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
+                    var adopted = await RecordLegacyLinuxIdentityAsync(sidecar, probe, ct);
+                    await session.AdoptHerdrAsync(adopted, _herdrClient!, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
                     _sessions.TryAdd(sidecar.SessionId, session);
                     NotifyPaneSetChanged();
                     _logger.LogInformation(
@@ -2328,7 +2329,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         switch (verdict)
         {
             case HerdrBarVerdict.Adopt:
-                await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), _placement, LookupBinding,
+                var adopted = await RecordLegacyLinuxIdentityAsync(sidecar, probe, ct);
+                await session.AdoptHerdrAsync(adopted, _herdrClient, () => NotifyPaneSetChanged(), _placement, LookupBinding,
                     ct, BeforePendingHerdrPublicationAsync);
                 NotifyPaneSetChanged();
                 _logger.LogInformation(
@@ -2379,6 +2381,50 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             : "HerdrOrphanedChildStopUnconfirmed: pane {PaneId} session {SessionId} pid {Pid}; stop refused, failed or exit unobserved",
             sidecar.PaneId, sidecar.SessionId, pid);
         return killed;
+    }
+
+    /// <summary>
+    /// CARD-1621: a sidecar written before CARD-1619 has no Linux identity, so every later stop of
+    /// its child is refused. R1 adoption has just found the pid in our pane. Record the identity
+    /// only when the pane still lists the pid between two equal kernel identity reads, so the
+    /// recorded generation is the one herdr listed. Anything less leaves the sidecar unchanged.
+    /// </summary>
+    private async Task<HerdrPaneSidecar> RecordLegacyLinuxIdentityAsync(
+        HerdrPaneSidecar sidecar, IProcessLivenessProbe probe, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux() || sidecar.ChildLinuxIdentity is not null || sidecar.ChildPid is not int pid
+            || string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+            return sidecar;
+        var before = LinuxProcessIdentity.TryRead(pid);
+        if (before is null || !probe.IsAlive(pid, sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc))
+            return sidecar;
+        try
+        {
+            var proc = await _herdrClient!.PaneProcessInfoAsync(sidecar.PaneId, ct);
+            if (proc.ForegroundProcesses?.Any(p => p.Pid == pid) != true)
+                return sidecar;
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            return sidecar;
+        }
+        if (LinuxProcessIdentity.TryRead(pid) != before)
+            return sidecar;
+
+        var upgraded = sidecar with { ChildLinuxIdentity = before };
+        try
+        {
+            upgraded.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sidecar.SessionId));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or GrokRulesTransportException)
+        {
+            // The in-memory owner still carries the proof; the next adoption retries the write.
+            _logger.LogWarning(ex, "Herdr sidecar identity upgrade for session {SessionId} was not persisted", sidecar.SessionId);
+        }
+        _logger.LogInformation(
+            "Recorded Linux start identity for legacy herdr sidecar {SessionId} (pid {Pid}) at adoption",
+            sidecar.SessionId, pid);
+        return upgraded;
     }
 
     private static bool IsOsAlive(HerdrPaneSidecar sidecar, IProcessLivenessProbe probe) =>
