@@ -99,6 +99,9 @@ public class TranscriptAdoptionSafetyTests
         {
             var file = tree.NewTranscript();
             await tree.AppendAsync(file, UserLine($"stale-{i}", tree.Cwd, "a prior session", childStart.AddHours(-1)));
+            // Newest-first within C3 is the promise; make the order explicit rather than relying on
+            // a burst of writes landing on distinct filesystem ticks (ext4 stamps them equal).
+            File.SetLastWriteTimeUtc(file, childStart.AddMinutes(-6 + i));
             stale.Add(file);
         }
 

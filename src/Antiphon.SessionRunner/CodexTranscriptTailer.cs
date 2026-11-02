@@ -742,6 +742,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         verdict.Refusals
             .OrderBy(r => r.IsC3)
             .ThenByDescending(r => r.LastWriteUtc)
+            .ThenBy(r => r.Detail, StringComparer.Ordinal) // ties (one coarse fs tick): by path, not enumeration order
             .ToArray();
 
     /// <summary>
