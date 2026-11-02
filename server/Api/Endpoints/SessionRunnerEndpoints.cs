@@ -173,7 +173,8 @@ public static class SessionRunnerEndpoints
 
         // CARD-0824 review f4c293bc D-1. The operator's way out of workspace_slot_release_stuck: records the release
         // of the task's slot and generation on the runner it is bound to once the bounded slot_unknown attempts are
-        // spent, so a held drain rebind (or the reconciler) can move on. Nothing is sent to the runner. Services come
+        // spent, so a held drain rebind (or the reconciler) can move on. Nothing is sent to the runner. CARD-1649: only the
+        // stuck task attempt, never a Dispatched, Working or Blocked task, and the audit names the requester. Services come
         // from the request: a phone-home host without the database still has to build this route.
         app.MapPost("/api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release", async (
             HttpContext http,
@@ -188,12 +189,19 @@ public static class SessionRunnerEndpoints
             var reason = body.Reason?.Trim() ?? "";
             if (reason.Length is < 1 or > RunnerStateService.MaxReasonLength)
                 throw new BadRequestException("Give a reason of 1 to 200 characters.");
+            // CARD-1649 A-2. The audit names who recorded the release: bounded, printable and never the operator token.
+            var requester = string.IsNullOrWhiteSpace(body.Requester) ? "operator" : body.Requester.Trim();
+            var presented = http.Request.Headers[OperatorTokenFile.Header].ToString();
+            if (requester.Length > WorkspaceSlotReleaseService.MaxRequesterLength || requester.Any(char.IsControl)
+                || (presented.Length > 0 && requester.Contains(presented, StringComparison.Ordinal)))
+                throw new BadRequestException(
+                    $"Give a requester of at most {WorkspaceSlotReleaseService.MaxRequesterLength} printable characters that is not a credential.");
             await WorkspaceSlotReleaseService.RecordOperatorReleaseAsync(
                 http.RequestServices.GetRequiredService<AppDbContext>(), http.RequestServices.GetRequiredService<TimeProvider>(),
-                runnerId, slotId, body.TaskId, body.Generation, reason, ct);
+                runnerId, slotId, body.TaskId, body.Generation, reason, requester, ct);
             loggers.CreateLogger("WorkspaceSlotRecordRelease").LogWarning(
-                "Workspace slot {Slot} generation {Generation} of task {Task} on runner {RunnerId} recorded released by the operator ({Reason})",
-                slotId, body.Generation, body.TaskId, runnerId, reason);
+                "Workspace slot {Slot} generation {Generation} of task {Task} on runner {RunnerId} recorded released by the operator {Requester} ({Reason})",
+                slotId, body.Generation, body.TaskId, runnerId, requester, reason);
             return Results.Ok();
         }).WithTags("SessionRunners");
 
