@@ -740,7 +740,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                         scanInterval = relevantChange
                             ? LocatePollInterval
                             : TimeSpan.FromTicks(Math.Min(scanInterval.Ticks * 2, MaxFullScanInterval.Ticks));
-                        nextScanAt = null; // CARD-1624 RED: no backoff yet
+                        nextScanAt = UtcNow + scanInterval;
                     }
 
                     // Fault judgement runs every poll on the latest verdict, so its clocks keep
