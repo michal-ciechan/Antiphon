@@ -197,9 +197,11 @@ public class RunnerStartupStaleObservationTests
         await session.StartAsync(spec, CancellationToken.None);
         try
         {
-            await Should.ThrowAsync<OperationCanceledException>(
-                () => session.WriteStartupAsync("x", deadline.Token));
+            Exception? thrown = null;
+            try { await session.WriteStartupAsync("x", deadline.Token); }
+            catch (Exception ex) { thrown = ex; }
 
+            thrown.ShouldBeAssignableTo<OperationCanceledException>();
             client.Attempts.ShouldBe([("x", ConditionalInputOutcomes.StaleObservation)],
                 "the readiness deadline expired during the first refusal; no further attempt is made");
         }
