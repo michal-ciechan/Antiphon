@@ -24,12 +24,17 @@ public sealed record CardWorktreeBaseSelection(
     int InspectedCandidates = 0,
     int GitCommands = 0,
     string? LandingTarget = null,
-    DateTime? ObservedAt = null)
+    DateTime? ObservedAt = null,
+    IReadOnlyList<string>? UnreadableBranches = null)
 {
     public IReadOnlyList<string> CandidateWarnings => Warnings ?? [];
     public bool Incomplete => Reason is "inspection_timeout" or "candidate_limit"
         or "git_command_limit" or "git_inspection_error";
-    public bool SyncUnverified => Reason == "source_sync_unverified";
+    /// <summary>
+    /// A same-card source this store cannot verify (CARD-1480) or cannot read at all (CARD-1640):
+    /// dispatch blocks with the remedy instead of starting from the target.
+    /// </summary>
+    public bool SyncUnverified => Reason is "source_sync_unverified" or "source_unreadable";
 }
 
 /// <summary>
@@ -128,6 +133,16 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 .Concat(inventory.PendingLands.Where(p => pendingLand.Contains(p.Task.Id))
                     .Select(p => p.Task.WorktreeBranch!)).Distinct(StringComparer.Ordinal).ToArray();
             var commits = await inspection.BranchCommitsAsync(branches);
+            // CARD-1640: a sibling published to origin whose local branch is gone (or was never synced
+            // here) is read from its local remote-tracking ref. Dispatch never fetches; create does.
+            if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto
+                && branches.Where(b => !commits.ContainsKey(b)).ToArray() is { Length: > 0 } missing)
+                foreach (var (branch, sha) in await inspection.RemoteBranchCommitsAsync(missing))
+                {
+                    commits[branch] = sha;
+                    warnings.Add($"Branch {branch} has no local branch here; using origin/{branch} @ {sha}.");
+                }
+            var unreadable = new List<string>();
             var unverified = await ApplySettledSourcesAsync(inventory, inspectable.Concat(inventory.PendingLands
                 .Where(p => pendingLand.Contains(p.Task.Id)).Select(p => p.Task)), commits, inspection, warnings);
             var merged = await inspection.MergedBranchesAsync(target, branches);
@@ -181,13 +196,11 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     continue;
                 return Result(CardWorktreeBaseDecision.Unknown, row.Id, row.WorktreeBranch, settled, "source_sync_unverified");
             }
-            foreach (var row in inspectable.Where(t => !commits.ContainsKey(t.WorktreeBranch!)
-                && !(task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
-                    && t.Id == task.RequestedWorktreeBaseTaskId)))
-                warnings.Add($"Task {Short(row.Id)} branch {row.WorktreeBranch} has no local commit.");
+            // A branch with no commit stays in the loop: once it is known to be a same-destination,
+            // same-repository source, an automatic selection cannot proceed without it.
             inspectable = inspectable.Where(t =>
                 task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task && t.Id == task.RequestedWorktreeBaseTaskId
-                || commits.ContainsKey(t.WorktreeBranch!) && !IsMerged(t.WorktreeBranch!)).ToArray();
+                || !commits.ContainsKey(t.WorktreeBranch!) || !IsMerged(t.WorktreeBranch!)).ToArray();
             totalCandidates = inspectable.Select(t => commits.GetValueOrDefault(t.WorktreeBranch!))
                 .Where(sha => sha is not null).Distinct(StringComparer.Ordinal).Count();
             if (totalCandidates > inspection.MaxCandidates)
@@ -222,6 +235,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     warnings.Add($"Task {Short(row.Id)} branch {branch} repository identity is unknown ({ex.GetType().Name}).");
                     if (pendingLand.Contains(row.Id))
                         return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_unknown");
+                    if (!requested) unreadable.Add(branch);
                     continue;
                 }
                 if (!string.Equals(common, candidateCommon, PathComparison))
@@ -232,9 +246,11 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 var sha = commits.GetValueOrDefault(branch);
                 if (sha is null)
                 {
-                    warnings.Add($"Task {Short(row.Id)} branch {branch} has no local commit.");
+                    warnings.Add($"Task {Short(row.Id)} branch {branch} has no local commit"
+                        + (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto ? $" and no origin/{branch} here." : "."));
                     if (pendingLand.Contains(row.Id))
                         return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_unknown");
+                    if (!requested) unreadable.Add(branch);
                     continue;
                 }
                 // An explicit task names its own validated commit even if that history is
@@ -299,6 +315,15 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 eligible.Add((row, sha));
             }
 
+            // CARD-1640: a same-card source this store cannot read never silently becomes the target.
+            if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto && unreadable.Count > 0)
+            {
+                warnings.Insert(0, $"Same-card branch {string.Join(", ", unreadable)} cannot be read here, so this "
+                    + $"dispatch will not start from {fallback} without it. Sync or push the branch and retry, or recreate "
+                    + "with -StartRef <its pushed sha> to continue it, or -FreshWorktree to start from the target.");
+                return Result(CardWorktreeBaseDecision.Unknown, reason: "source_unreadable") with
+                    { UnreadableBranches = unreadable.ToArray() };
+            }
             if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Target)
             {
                 foreach (var tip in eligible)

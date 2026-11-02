@@ -105,6 +105,42 @@ public sealed class StartRefAvailability(
     }
 
     /// <summary>
+    /// CARD-1640. A same-card source branch this repository cannot read is fetched from origin at
+    /// create into its remote-tracking ref (refs/remotes/origin/&lt;branch&gt;), bounded and under the
+    /// same lease as a start SHA. Returns null once the ref resolves, else why it could not be fetched;
+    /// the caller refuses with the remedy. Dispatch still never fetches.
+    /// </summary>
+    public async Task<string?> TryFetchSourceBranchAsync(string repoPath, string branch, CancellationToken ct)
+    {
+        var tracking = "refs/remotes/origin/" + branch;
+        var format = await RunBoundedAsync(repoPath, ["check-ref-format", "refs/heads/" + branch], LocalGitTimeout, ct);
+        if (format.TimedOut || !format.Result!.Succeeded || branch.StartsWith('-'))
+            return "not a valid branch name";
+        var remote = await RunBoundedAsync(repoPath, ["remote", "get-url", "origin"], LocalGitTimeout, ct);
+        if (remote.TimedOut || !remote.Result!.Succeeded)
+            return "the repository has no readable 'origin' remote";
+        var network = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await using (await AcquireLeaseAsync(repoPath, tracking, network, ct))
+            {
+                var fetch = await RunBoundedAsync(repoPath,
+                    ["fetch", "--no-tags", "--quiet", "--no-write-fetch-head", "origin", $"+refs/heads/{branch}:{tracking}"],
+                    _fetchTimeout - network.Elapsed, ct);
+                if (fetch.TimedOut)
+                    return $"fetching it from origin did not finish within {_fetchTimeout.TotalSeconds:0}s";
+                if (!fetch.Result!.Succeeded)
+                    return $"fetching it from origin failed ({fetch.Result.Diagnostic})";
+            }
+        }
+        catch (ServiceUnavailableException ex) { return ex.Message; }
+        if (!await ResolvesAsync(repoPath, tracking + "^{commit}", ct))
+            return "origin has no such branch";
+        logger.LogInformation("Fetched same-card source branch {Branch} from origin into {RepoPath} at create", branch, repoPath);
+        return null;
+    }
+
+    /// <summary>
     /// The fetch writes refs and objects, so it runs under the repository mutation lease like every
     /// other repository mutation. A busy lease is polled, never waited on past the network deadline.
     /// </summary>

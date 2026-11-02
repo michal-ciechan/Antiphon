@@ -128,9 +128,14 @@ public sealed class WorktreeBaseInspection : IDisposable
     public Task<Dictionary<string, string>> MergedBranchesAsync(string target, string[] branches) =>
         ReadBranchesAsync(branches, target);
 
-    private async Task<Dictionary<string, string>> ReadBranchesAsync(string[] branches, string? target)
+    /// <summary>CARD-1640. The local remote-tracking tips (refs/remotes/origin/&lt;branch&gt;); never a network read.</summary>
+    public Task<Dictionary<string, string>> RemoteBranchCommitsAsync(string[] branches) =>
+        ReadBranchesAsync(branches, null, "refs/remotes/origin/");
+
+    private async Task<Dictionary<string, string>> ReadBranchesAsync(string[] branches, string? target,
+        string prefix = "refs/heads/")
     {
-        var expected = branches.Select(b => "refs/heads/" + b).ToHashSet(StringComparer.Ordinal);
+        var expected = branches.Select(b => prefix + b).ToHashSet(StringComparer.Ordinal);
         var commits = new Dictionary<string, string>(StringComparer.Ordinal);
         if (expected.Count == 0) return commits;
         var args = new List<string> { "for-each-ref", "--format=%(objectname) %(refname)" };
@@ -144,7 +149,7 @@ public sealed class WorktreeBaseInspection : IDisposable
             if (parts.Length != 2) throw new IOException("git_branch_inventory_invalid");
             if (!expected.Contains(parts[1])) continue;
             if (!GitObjectId.IsFull(parts[0])) throw new IOException("git_branch_object_invalid");
-            var branch = parts[1][11..];
+            var branch = parts[1][prefix.Length..];
             var sha = parts[0].ToLowerInvariant();
             if (commits.TryGetValue(branch, out var prior) && prior != sha)
                 throw new IOException("git_branch_inventory_inconsistent");
