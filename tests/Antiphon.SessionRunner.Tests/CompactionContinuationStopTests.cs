@@ -11,7 +11,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class CompactionContinuationStopTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1650: cmd.exe on Windows, /bin/sh -i elsewhere; a hard-coded cmd.exe exits at once on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task Late_output_prevents_conditional_stop()
@@ -154,7 +155,7 @@ public class CompactionContinuationStopTests
                 NullLogger<SessionRunnerRuntime>.Instance);
             var generation = SessionGeneration.Normalize(DateTime.UtcNow);
             await runtime.StartAsync(new RunnerLaunchRequest(
-                sessionId, Cmd, ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(),
+                sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
                 Path.GetTempPath(), 80, 24, TranscriptEnabled: true, TranscriptFormat: TranscriptFormats.Claude,
                 AcceptedStartedAt: generation), CancellationToken.None);
             CompactionTailObservation? observation = null;

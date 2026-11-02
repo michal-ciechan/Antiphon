@@ -1896,11 +1896,10 @@ public class TranscriptAdoptionSafetyTests
         var logRoot = TestSessionLogRoot.Create("0180-dto");
         Directory.CreateDirectory(logRoot);
         var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };
-        var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
         var request = new RunnerLaunchRequest(
             sessionId,
-            cmd,
-            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            HerdrTestProcess.ShellPath, // CARD-1650: cmd.exe on Windows, /bin/sh -i elsewhere
+            HerdrTestProcess.InteractiveArgs,
             new Dictionary<string, string>(),
             tree.Cwd,
             Cols: 80,
