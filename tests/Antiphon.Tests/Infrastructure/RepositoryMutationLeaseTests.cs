@@ -261,6 +261,96 @@ public sealed class RepositoryMutationLeaseTests
         (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None)).ShouldContain("recover-repository-children.ps1");
     }
 
+    // Group 111 (run aa64a906): a reader holding the journal on Windows denied StartedAsync's replace.
+    [Test]
+    [Arguments("access-denied")]
+    [Arguments("sharing-violation")]
+    public async Task C1076_JournalReplaceRetriesTransientReaderDenialBeforeStartReturns(string denial)
+    {
+        using var repo = new ScratchGitRepo("c1076-replace-retry");
+        var deny = false;
+        var attempts = 0;
+        var journal = await RepositoryChildJournal.BeginAsync(repo.Path, null, File.Delete, (source, destination) =>
+        {
+            if (deny && ++attempts <= 2)
+                throw denial == "access-denied"
+                    ? new UnauthorizedAccessException("fixture reader holds the journal")
+                    : new IOException("fixture sharing violation");
+            File.Move(source, destination, true);
+        }, CancellationToken.None);
+        var common = await new LandingGit().CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        deny = true;
+
+        await Should.NotThrowAsync(() => journal.StartedAsync(Environment.ProcessId, 42L, CancellationToken.None));
+
+        attempts.ShouldBe(3, "two transient reader denials must be retried before the start record returns");
+        var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldHaveSingleItem();
+        var record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(File.ReadAllBytes(path))!;
+        record.ProcessId.ShouldBe(Environment.ProcessId);
+        record.StartTicks.ShouldBe(42L);
+        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children-staging")).ShouldBeEmpty();
+        journal.NotStarted();
+    }
+
+    [Test]
+    public async Task C1076_JournalReplaceFailureKeepsPriorRecordAndFailsLoudly()
+    {
+        using var repo = new ScratchGitRepo("c1076-replace-failure");
+        var deny = false;
+        var attempts = 0;
+        var journal = await RepositoryChildJournal.BeginAsync(repo.Path, null, File.Delete, (source, destination) =>
+        {
+            if (deny)
+            {
+                attempts++;
+                throw new UnauthorizedAccessException("fixture reader never releases the journal");
+            }
+            File.Move(source, destination, true);
+        }, CancellationToken.None);
+        var common = await new LandingGit().CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        deny = true;
+        var watch = Stopwatch.StartNew();
+
+        var failure = await Should.ThrowAsync<IOException>(() => journal.StartedAsync(Environment.ProcessId, 42L, CancellationToken.None));
+
+        failure.Message.ShouldContain("repository_child_journal_save_failed");
+        failure.InnerException.ShouldBeOfType<UnauthorizedAccessException>();
+        attempts.ShouldBeGreaterThan(1);
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "replace retries have a finite two-second allowance");
+        var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldHaveSingleItem();
+        var record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(File.ReadAllBytes(path))!;
+        record.ProcessId.ShouldBeNull("the prior durable start-intent record stays the fence");
+        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children-staging")).ShouldBeEmpty();
+        (await RepositoryChildJournal.HasUnfinishedAsync(common, new LandingGit(), CancellationToken.None)).ShouldBeTrue();
+        File.Delete(path);
+    }
+
+    // Every journal reader shares Delete, so the owner's replace is never refused by the share mode.
+    // Test readers of a live journal go through the one helper that also shares ReadWrite.
+    [Test]
+    public void C1076_JournalReadersShareDeleteWithTheReplacingOwner()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln"))) dir = dir.Parent;
+        dir.ShouldNotBeNull();
+        var violations = new List<string>();
+        foreach (var relative in new[] { "server/Infrastructure/Git/RepositoryChildJournal.cs", "server/Infrastructure/Git/RepositoryChildJournalInspector.cs" })
+            foreach (var line in File.ReadAllLines(Path.Combine(dir.FullName, relative)))
+                if (line.Contains("new FileStream(") && line.Contains("FileAccess.Read,") && !line.Contains("FileShare.Delete"))
+                    violations.Add($"{relative}: {line.Trim()}");
+        const string deserialize = "ChildRecord>(";
+        const string unsharedRead = "File.ReadAllText";
+        foreach (var relative in new[] { "tests/Antiphon.Tests/Infrastructure/LandingGitTests.cs", "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs" })
+            foreach (var line in File.ReadAllLines(Path.Combine(dir.FullName, relative)))
+                if (line.Contains(deserialize) && line.Contains(unsharedRead))
+                    violations.Add($"{relative}: {line.Trim()}");
+        var helper = Path.Combine(dir.FullName, "tests/Antiphon.Tests/TestHelpers/RepositoryChildJournalReader.cs");
+        if (!File.Exists(helper)) violations.Add("missing tests/Antiphon.Tests/TestHelpers/RepositoryChildJournalReader.cs");
+        else if (!File.ReadAllText(helper).Contains("FileShare.ReadWrite | FileShare.Delete"))
+            violations.Add("RepositoryChildJournalReader does not share ReadWrite | Delete");
+        violations.ShouldBeEmpty();
+    }
+
     private static async Task<Process?> ExitedJournalChildAsync(RepositoryChildJournal journal, string completion)
     {
         if (completion == "not-started") return null;
