@@ -1563,7 +1563,7 @@ public sealed class AgentTaskService
         if (prepareBeforeLocks && gateCreate)
             await _openGate!.PreviewCanCreateAsync(projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
         CardWorktreeBaseSelection? basePreview = prepareBeforeLocks
-            ? await PrepareWorktreeBaseAsync(task, request, now, ct) : null;
+            ? await PrepareWorktreeBaseAsync(task, request, now, ct, fetchUnreadable: true) : null;
         PipelineHandoffAction? handoff = null;
         if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null
             || task.CardId is not null || handoffActionId is not null)
@@ -1684,7 +1684,7 @@ public sealed class AgentTaskService
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
             // Recover an already-linked handoff child before consulting Git again.
             if (!prepareBeforeLocks)
-                basePreview = await PrepareWorktreeBaseAsync(task, request, now, ct);
+                basePreview = await PrepareWorktreeBaseAsync(task, request, now, ct, fetchUnreadable: false);
             // CARD-0544 D-5: the owner latch commits in the same transaction as this task, under
             // the owner row lock the land admission also takes, or neither exists.
             if (verificationAdmission is not null)
@@ -1833,7 +1833,7 @@ public sealed class AgentTaskService
         status is CardStatus.Backlog or CardStatus.InProgress or CardStatus.Review;
 
     private async Task<CardWorktreeBaseSelection?> PrepareWorktreeBaseAsync(AgentTask task,
-        CreateAgentTaskRequest request, DateTime now, CancellationToken ct)
+        CreateAgentTaskRequest request, DateTime now, CancellationToken ct, bool fetchUnreadable)
     {
         var explicitBaseTask = request.WorktreeBaseTask is not null;
         CardWorktreeBaseSelection? basePreview;
@@ -1875,12 +1875,28 @@ public sealed class AgentTaskService
 
         basePreview = _baseResolver is null ? null
             : await _baseResolver.ResolveAsync(task, ct);
+        // CARD-1640: a same-card source this repository cannot read is fetched from origin here, before
+        // any lock (dispatch never fetches); one still unreadable refuses rather than start from the target.
+        var fetchFailures = new List<string>();
+        if (basePreview is { Reason: "source_unreadable", UnreadableBranches: { Count: > 0 } unreadable }
+            && fetchUnreadable && _startRefs is not null && task.RepoPath is not null)
+        {
+            foreach (var branch in unreadable)
+                if (await _startRefs.TryFetchSourceBranchAsync(task.RepoPath, branch, ct) is { } why)
+                    fetchFailures.Add($"Fetching {branch}: {why}.");
+            basePreview = await _baseResolver!.ResolveAsync(task, ct);
+        }
         if (basePreview?.Decision == CardWorktreeBaseDecision.Ambiguous)
             throw new ConflictException(
                 "Same-card worktree histories diverge: "
                 + string.Join(" ", basePreview.CandidateWarnings)
                 + " Choose -BaseTask or -FreshWorktree.",
                 "worktree_base_ambiguous");
+        if (basePreview?.Reason == "source_unreadable")
+            throw new ConflictException(
+                "Same-card worktree source cannot be read: "
+                + string.Join(" ", basePreview.CandidateWarnings.Concat(fetchFailures)),
+                "worktree_base_unreadable");
         if (explicitBaseTask && basePreview?.Decision == CardWorktreeBaseDecision.Unknown)
             throw new ValidationException(nameof(request.WorktreeBaseTask),
                 $"Requested source cannot be validated: {basePreview.Reason}. {string.Join(" ", basePreview.CandidateWarnings)}",
