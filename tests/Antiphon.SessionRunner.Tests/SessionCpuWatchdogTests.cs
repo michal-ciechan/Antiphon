@@ -9,8 +9,8 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
-/// End-to-end coverage of the CPU spin watchdog against a REAL pty-host session (cmd.exe as the
-/// guinea-pig child) with a fabricated idle transcript and a scripted CPU probe. Pins the live
+/// End-to-end coverage of the CPU spin watchdog against a REAL pty-host session (cmd.exe, or /bin/sh
+/// off Windows, as the guinea-pig child) with a fabricated idle transcript and a scripted CPU probe. Pins the live
 /// incident 2026-08-08: a session whose transcript said the turn ended, with claude.exe pegging a
 /// core at the prompt, must be killed with exit reason CpuSpinKilled — while working sessions and
 /// fresh sessions are never touched.
@@ -19,7 +19,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class SessionCpuWatchdogTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    // CARD-1650: cmd.exe on Windows, /bin/sh -i elsewhere; a hard-coded cmd.exe exits at once on Linux.
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     [Test]
     public async Task Idle_session_burning_a_core_is_killed_with_CpuSpinKilled()
@@ -140,7 +141,7 @@ public class SessionCpuWatchdogTests
                 new RunnerLaunchRequest(
                     sessionId,
                     Cmd,
-                    ["/d", "/q", "/k", "@echo off & prompt $G"],
+                    HerdrTestProcess.InteractiveArgs,
                     new Dictionary<string, string>(),
                     cwd,
                     Cols: 100,
