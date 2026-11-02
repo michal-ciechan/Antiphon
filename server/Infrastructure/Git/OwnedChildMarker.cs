@@ -12,7 +12,8 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// starts inherit <see cref="Variable"/>. On Windows they also join one job object, assigned
 /// as soon as the child starts. The budget kill terminates that job, which reaches a reparented
 /// holder. A process that holds the redirected pipe without either proof is a stranger. It
-/// does not keep the journal fence.
+/// does not keep the journal fence. Every "cannot tell" keeps it: an environ that cannot be read,
+/// a hidden process table, and a job the child joined only after it could already spawn.
 /// </summary>
 internal sealed class OwnedChildMarker : IDisposable
 {
@@ -34,9 +35,15 @@ internal sealed class OwnedChildMarker : IDisposable
     /// <summary>Test seam: a stand-in job's active process count, read in place of the Windows job.</summary>
     internal Func<uint?>? JobProbe { get; set; }
 
-    /// <summary>The job held the child before it could run or spawn. False when the child joined
-    /// after <see cref="Process.Start(ProcessStartInfo)"/>.</summary>
+    /// <summary>The job held the child before it could run or spawn. Only then does an empty job
+    /// prove that no owned process lives. <see cref="Attach"/> runs after
+    /// <see cref="Process.Start(ProcessStartInfo)"/>, so production leaves it false: a grandchild
+    /// started before the assignment and then reparented is outside the job.</summary>
     internal bool AssignedBeforeSpawn { get; set; }
+
+    /// <summary>Linux: the root's <c>/proc/&lt;pid&gt;/stat</c> start time in clock ticks since boot.
+    /// No descendant can start before it.</summary>
+    internal long? RootStartTime { get; private set; }
 
     internal static OwnedChildMarker Create(Action<string> log)
     {
@@ -56,6 +63,7 @@ internal sealed class OwnedChildMarker : IDisposable
     /// call is outside the job; the parent-pid walk still sees it while its parent lives.</summary>
     internal void Attach(Process child, Action<string> log)
     {
+        if (OperatingSystem.IsLinux()) RootStartTime = StartTime("/proc/" + child.Id.ToString(CultureInfo.InvariantCulture));
         if (_job == IntPtr.Zero) return;
         try
         {
@@ -76,7 +84,8 @@ internal sealed class OwnedChildMarker : IDisposable
         if (_job == IntPtr.Zero) return;
         var active = ActiveJobProcesses();
         var terminated = TerminateJobObject(_job, 1);
-        log($"repository_child_job_terminate root={rootPid} active={Format(active)} terminated={terminated}");
+        var assigned = AssignedBeforeSpawn ? "before_spawn" : "after_start";
+        log($"repository_child_job_terminate root={rootPid} active={Format(active)} terminated={terminated} assigned={assigned}");
     }
 
     /// <summary>True when a live process carries this marker, false when none does, null when
@@ -86,18 +95,27 @@ internal sealed class OwnedChildMarker : IDisposable
         if (JobProbe is not null) return JobVerdict(AssignedBeforeSpawn, JobProbe());
         if (OperatingSystem.IsWindows())
             return _job == IntPtr.Zero ? null : JobVerdict(AssignedBeforeSpawn, ActiveJobProcesses());
-        if (OperatingSystem.IsLinux()) return AnyEnvironCarries(Value, ReadEnviron);
+        if (OperatingSystem.IsLinux()) return AnyEnvironCarries(Value, RootStartTime, ReadEnviron);
         return null;
     }
 
+    /// <summary>A live member is ours. An empty job proves nothing unless the child was inside it
+    /// before it could spawn (review bd90f6b5 D-2).</summary>
     internal static bool? JobVerdict(bool assignedBeforeSpawn, uint? active) =>
-        active is uint count ? count > 0 : null;
+        active is not uint count ? null
+        : count > 0 ? true
+        : assignedBeforeSpawn ? false
+        : null;
 
     /// <summary>Linux: a live process whose initial environment carries the marker. A zombie has
-    /// an empty environ and is not a writer. Another user's environ is unreadable and is not ours.</summary>
-    internal static bool? AnyEnvironCarries(string value, Func<string, byte[]> readEnviron)
+    /// an empty environ and is not a writer. An environ that cannot be read (another uid, an
+    /// undumpable or setuid descendant) is "cannot tell" unless that process started before the
+    /// root, which no descendant can (review bd90f6b5 D-1). A process that is gone by the read is skipped.</summary>
+    internal static bool? AnyEnvironCarries(string value, long? rootStartTime, Func<string, byte[]> readEnviron)
     {
         var needle = Encoding.UTF8.GetBytes(Variable + "=" + value + "\0");
+        if (HidesOtherProcesses()) return null;
+        var unknown = false;
         IEnumerable<string> entries;
         try { entries = Directory.EnumerateDirectories("/proc"); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
@@ -109,12 +127,54 @@ internal sealed class OwnedChildMarker : IDisposable
                 if (pid == Environment.ProcessId) continue;
                 byte[] environ;
                 try { environ = readEnviron(Path.Combine(entry, "environ")); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    if (!Directory.Exists(entry)) continue;
+                    if (rootStartTime is long root && StartTime(entry) is long started && started < root) continue;
+                    unknown = true;
+                    continue;
+                }
                 if (Carries(environ, needle)) return true;
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        return false;
+        return unknown ? null : false;
+    }
+
+    /// <summary>Field 22 of <c>&lt;entry&gt;/stat</c>, read after the last <c>)</c> because the
+    /// command name may hold spaces and parentheses. The file is readable for every listed pid.</summary>
+    private static long? StartTime(string entry)
+    {
+        try
+        {
+            var stat = File.ReadAllText(Path.Combine(entry, "stat"));
+            var fields = stat[(stat.LastIndexOf(')') + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return fields.Length > 19 && long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks)
+                ? ticks
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>A /proc mounted with hidepid (other than 0/off) leaves other users' processes out
+    /// of the listing, so the scan cannot inspect every live process. An unreadable mount table
+    /// counts as hidden.</summary>
+    private static bool HidesOtherProcesses()
+    {
+        try
+        {
+            foreach (var line in File.ReadLines("/proc/self/mountinfo"))
+            {
+                var fields = line.Split(' ');
+                var separator = Array.IndexOf(fields, "-");
+                if (fields.Length < 5 || fields[4] != "/proc" || separator < 0 || separator + 3 >= fields.Length) continue;
+                foreach (var option in fields[separator + 3].Split(','))
+                    if (option.StartsWith("hidepid=", StringComparison.Ordinal) && option is not ("hidepid=0" or "hidepid=off"))
+                        return true;
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
     }
 
     private static bool Carries(ReadOnlySpan<byte> environ, ReadOnlySpan<byte> needle)
