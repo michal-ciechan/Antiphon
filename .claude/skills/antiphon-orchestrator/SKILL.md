@@ -91,7 +91,8 @@ owner: Build slots in `docs/testing-and-build.md`). Paste this sentence:
 > build in your worktree's NATIVE default output (no -o, --output or OutputPath), one build at a time
 > per worktree, with the same properties on the build and its --no-build run; explicit generous
 > --total-timeout WITH UNITS, UseAppHost=false, TEMP=/tmp. Checkpoint runs and land verification keep
-> their own cold outputs.
+> their own cold outputs. A mutant loop re-leases PER MUTANT BUILD, never one lease around a loop
+> (CARD-1627).
 
 ## 2. A delegate's base is chosen at dispatch; it stays on its own branch
 

@@ -379,6 +379,7 @@ at it.
 **The standing harness rules**, composed into its `--append-system-prompt` at launch from
 `server/Bundles/delegate-basics.md` (CARD-0058) — foreground-only, no sub-delegation, commit and push
 each slice, build in the worktree's native default output (no custom output; one build at a time),
+one build-slot lease per build (never one lease around a loop of builds),
 verify pre-existing red by stashing first. A sub-orchestrator also gets
 `server/Bundles/orchestrator.md`, the contract that makes it decompose rather than do the work.
 
