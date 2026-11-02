@@ -15,7 +15,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>CARD-0726 V-36. Program wires the loop, both observers, and the default exclusion.</summary>
+/// <summary>CARD-0726 V-36. Program wires the loop, both observers, and the SessionRunnerStates exclusion (CARD-1663).</summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -31,7 +31,7 @@ public sealed class RunnerAlarmWiringTests
     {
         var hosted = _factory.Services.GetServices<IHostedService>().OfType<RunnerAlarmHostedService>().ToList();
         hosted.Count.ShouldBe(1);
-        _factory.Services.GetRequiredService<IRunnerAlarmExclusion>().ShouldBeOfType<NeverExcluded>();
+        _factory.Services.GetRequiredService<IRunnerAlarmExclusion>().ShouldBeOfType<RunnerStateAlarmExclusion>();
         _factory.Services.GetRequiredService<IRunnerEligibilitySnapshotSource>().ShouldBeOfType<PhoneHomeRunnerDirectory>();
         var directory = _factory.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
         directory.Observer.ShouldBeSameAs(_factory.Services.GetRequiredService<IRunnerEligibilityObserver>());
