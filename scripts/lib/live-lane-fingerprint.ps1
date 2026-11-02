@@ -335,13 +335,13 @@ function Get-LiveLaneFingerprint {
 }
 
 function Get-LiveLaneStatus {
-    # No receipt validator yet (S2b): every lane is DUE. The document is shadow-only. An
+    # Without receipt history (S2b -History) every lane is DUE. The document is shadow-only. An
     # attestation is validated before any Git read, so a schema fault refuses on its own.
     param([string]$RepositoryRoot, [string]$Lane, [string]$CandidateSha, [string]$Attestation)
     if ($Attestation) { [void](Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane) }
     $fingerprint=Get-LiveLaneFingerprint -RepositoryRoot $RepositoryRoot -Sha $CandidateSha -Lane $Lane -Attestation $Attestation
     return [ordered]@{format='antiphon-live-lane-status-v1';laneId=$Lane;candidateSha=$CandidateSha;state='DUE'
-        reasons=@($(if ($fingerprint.status -ceq 'complete') { 'no-receipt-validator' } else { 'unknown-input' }))
+        reasons=@($(if ($fingerprint.status -ceq 'complete') { 'no-history' } else { 'unknown-input' }))
         effectiveMode='Full';activation='shadow-only';gateCredit=$false;executionEvidence=$false
         fingerprint=[ordered]@{status=$fingerprint.status;digest=$fingerprint.digest;components=$fingerprint.components
             unknownReasons=$fingerprint.unknownReasons;observations=$fingerprint.observations

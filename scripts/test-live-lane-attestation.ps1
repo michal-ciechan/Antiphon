@@ -41,7 +41,7 @@ function Unbound([string]$name) {
 function Split-Uid([string]$uid) {
     # namespace.class.method(arguments) -> one manifest core row in the fixture lane.
     if ($uid -cnotmatch '^(.+)\.([^.]+)\.([^.(]+)(\((.*)\))?$') { throw "bad roster uid: $uid" }
-    $arguments=if ($Matches[4]) { @($Matches[5] -split ',') } else { @() }
+    $arguments=@(if ($Matches[4]) { $Matches[5] -split ',' })
     return [ordered]@{project='Pty.Tests';namespace=$Matches[1];class=$Matches[2];method=$Matches[3];arguments=$arguments}
 }
 # A directory link: a junction on Windows (no privilege needed), a symbolic link elsewhere.
