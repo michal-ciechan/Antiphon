@@ -434,6 +434,9 @@ public static class CheckpointApp
             .Distinct(StringComparer.Ordinal)
             .ToList();
         FinalizationPhase("output-discovery");
+        // CARD-1570: outputs this run created and kept because it is red are evidence, not a cleanup
+        // refusal; any other output still present after cleanup stays a refusal.
+        var keptBecauseRed = new List<string>();
         try
         {
             if (owner.Bound && !await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false))
@@ -444,7 +447,10 @@ public static class CheckpointApp
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null,
                     createdPaths: state.CreatedOutputPaths);
                 if (clean.KeptBecauseRed)
+                {
                     model.CleanedOutputs = false;
+                    keptBecauseRed.AddRange(state.CreatedOutputPaths ?? []);
+                }
                 else if (clean.Refusals.Count > 0)
                 {
                     model.CleanedOutputs = false;
@@ -496,10 +502,14 @@ public static class CheckpointApp
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (!request.KeepOutputs)
         {
-            var remaining = model.OutputPaths.Where(path => context.Io.DirectoryExists(path) || context.Io.FileExists(path)).ToList();
+            bool Kept(string path) => keptBecauseRed.Any(kept => string.Equals(
+                Path.TrimEndingDirectorySeparator(kept), Path.TrimEndingDirectorySeparator(path), context.PathComparison));
+            var present = model.OutputPaths.Where(path => context.Io.DirectoryExists(path) || context.Io.FileExists(path)).ToList();
+            if (present.Count > 0)
+                model.CleanedOutputs = false;
+            var remaining = present.Where(path => !Kept(path)).ToList();
             if (remaining.Count > 0)
             {
-                model.CleanedOutputs = false;
                 if (model.CleanupRefusals.Count == 0)
                     model.CleanupRefusals.Add("still-present");
                 if (model.ExitCode == 0)
