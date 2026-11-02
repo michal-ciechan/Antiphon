@@ -377,9 +377,10 @@ at it.
 
 **The standing harness rules**, composed into its `--append-system-prompt` at launch from
 `server/Bundles/delegate-basics.md` (CARD-0058) — foreground-only, no sub-delegation, commit and push
-each slice, `--property:OutputPath=bin-<name>/` with a forward slash, verify pre-existing red by
-stashing first. A sub-orchestrator also gets `server/Bundles/orchestrator.md`, the contract that
-makes it decompose rather than do the work.
+each slice, one stable `--property:OutputPath=bin-<task>/` per worktree from
+`scripts/build-slot.ps1 -StableOutput` (forward slash), verify pre-existing red by stashing first. A
+sub-orchestrator also gets `server/Bundles/orchestrator.md`, the contract that makes it decompose
+rather than do the work.
 
 **That directory is canonical, and this file deliberately does not restate what is in it.** A rule
 copied here would be a second version of the truth, and the copy is the one that goes stale — which
