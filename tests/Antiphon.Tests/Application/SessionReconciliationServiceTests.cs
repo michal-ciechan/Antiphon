@@ -1680,6 +1680,124 @@ public class SessionReconciliationServiceTests
         finally { await CleanupAsync(marker); }
     }
 
+    /// <summary>
+    /// Review D-1 on the group 79 fix: pass 1 owns its transaction when the caller has none, and
+    /// the REAL <see cref="AlertService"/> saves through the same scoped context inside it. A live
+    /// row the runner reports Exited with no accepted generation closes nothing, but its once-per-
+    /// process legacy alert is flushed there, and that save also carries the exit evidence the
+    /// terminal loop applied to a Stopped row. The tracker is clean afterwards, so the skipped
+    /// no-op save must not also skip the commit: disposing the transaction would roll both back,
+    /// and the latch would never raise the alert again.
+    /// </summary>
+    [Test]
+    public async Task A_pass_that_closes_nothing_commits_the_alert_and_exit_evidence_it_flushed()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Store.Value = schema.ConnectionString;
+        var marker = NewMarker();
+        try
+        {
+            var (_, legacyId, legacyStartedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: false);
+            var (_, stoppedId, stoppedStartedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Stopped, staleAgent: false);
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        legacyId, 1, legacyStartedAt, "Exited", 1, AgentExitReason.KilledByRequest, 1),
+                    new SessionRunnerSessionDto(
+                        stoppedId, 2, stoppedStartedAt, "Exited", 1, AgentExitReason.KilledByRequest, 1,
+                        ExitSignal: 9, AcceptedStartedAt: stoppedStartedAt),
+                ]
+            };
+
+            await using (var db = CreateContext())
+            {
+                var alerts = new AlertService(
+                    db, new MockEventBus(), new NullAlertRouter(),
+                    AlertScopes.GetRequiredService<IServiceScopeFactory>(),
+                    TimeProvider.System, NullLogger<AlertService>.Instance);
+                var service = BuildService(db, runner, new MockEventBus(), alerts);
+                (await service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+            }
+
+            await using var verify = CreateContext();
+            (await verify.Alerts.CountAsync(a => a.DedupKey == $"compat:generation:{legacyId}")).ShouldBe(1);
+            (await verify.AgentSessions.SingleAsync(s => s.Id == stoppedId)).ExitSignal.ShouldBe(9);
+            (await verify.AgentSessions.SingleAsync(s => s.Id == legacyId)).Status.ShouldBe(SessionStatus.Running);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    /// <summary>
+    /// The other half of D-1's invariant: committing the owned transaction on the no-change path
+    /// runs no save, so a pass that changed nothing leaves a one-shot save fault armed.
+    /// </summary>
+    [Test]
+    [Arguments("none")]
+    [Arguments("starting-in-grace")]
+    [Arguments("runner-running")]
+    public async Task A_pass_that_changes_nothing_commits_without_spending_a_one_shot_save_fault(string foreign)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Store.Value = schema.ConnectionString;
+        var marker = NewMarker();
+        try
+        {
+            var dto = foreign == "none" ? null : await SeedForeignLiveRowAsync(marker, foreign);
+            await using var db = CreateContext(new ThrowOnceSaveInterceptor());
+            var service = BuildService(db, WithForeign(new FakeRunnerClient(), dto), new MockEventBus());
+            (await service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+
+            db.Database.CurrentTransaction.ShouldBeNull();
+            (await Should.ThrowAsync<InvalidOperationException>(() => db.SaveChangesAsync()))
+                .Message.ShouldContain("ThrowOnceSaveInterceptor");
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    /// <summary>A caller-owned transaction stays the caller's: the pass neither commits nor ends it.</summary>
+    [Test]
+    public async Task A_pass_inside_a_caller_transaction_leaves_the_commit_to_the_caller()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Store.Value = schema.ConnectionString;
+        var marker = NewMarker();
+        try
+        {
+            var (_, legacyId, legacyStartedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: false);
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        legacyId, 1, legacyStartedAt, "Exited", 1, AgentExitReason.KilledByRequest, 1),
+                ]
+            };
+
+            await using (var db = CreateContext())
+            {
+                var alerts = new AlertService(
+                    db, new MockEventBus(), new NullAlertRouter(),
+                    AlertScopes.GetRequiredService<IServiceScopeFactory>(),
+                    TimeProvider.System, NullLogger<AlertService>.Instance);
+                await using var callers = await db.Database.BeginTransactionAsync();
+                var service = BuildService(db, runner, new MockEventBus(), alerts);
+                (await service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+
+                db.Database.CurrentTransaction.ShouldBeSameAs(callers);
+                await callers.RollbackAsync();
+            }
+
+            await using var verify = CreateContext();
+            (await verify.Alerts.CountAsync(a => a.DedupKey == $"compat:generation:{legacyId}")).ShouldBe(0);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
     /// <summary>Seeds one live row that is not this test's subject; returns what the runner lists for it.</summary>
     private static async Task<SessionRunnerSessionDto?> SeedForeignLiveRowAsync(string marker, string foreign)
     {
