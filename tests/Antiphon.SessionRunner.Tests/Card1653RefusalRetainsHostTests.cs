@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
@@ -118,6 +119,51 @@ public class Card1653RefusalRetainsHostTests
 
         world.Runtime.SweepVanishedSessions(probe).ShouldBeEmpty();
         world.ExitedEvents(id).ShouldBe(1, "the release publishes SessionExited exactly once");
+    }
+
+    /// <summary>
+    /// CARD-1653 A-1: once a held row is released, its relaunch's verified kill must check the
+    /// manifest host's start time. A pid recycled by another host-named process (a copied sleep
+    /// named like a host, started ten minutes after the manifest's host) is left alive.
+    /// </summary>
+    [Test]
+    [NativeLinuxOnly("CARD-1653 A-1 the relaunch kill's host start-time guard is Linux-only; the stand-in is a copied sleep")]
+    public async Task Released_identity_row_relaunch_never_kills_a_recycled_host_pid()
+    {
+        var root = TestSessionLogRoot.Create("c1653-adopt");
+        var settings = new SessionRunnerSettings { SessionLogPath = root };
+        var standInPath = Path.Combine(root, "fakePtyHost.exe");
+        File.Copy(File.Exists("/usr/bin/sleep") ? "/usr/bin/sleep" : "/bin/sleep", standInPath);
+        using var standIn = Process.Start(new ProcessStartInfo(standInPath, "60") { UseShellExecute = false })!;
+        try
+        {
+            using (var named = Process.GetProcessById(standIn.Id))
+                named.ProcessName.ShouldContain("PtyHost", Case.Sensitive, "the stand-in must be one the host kill path would accept by name");
+            var manifest = new PtyHostManifest
+            {
+                SessionId = Guid.NewGuid(),
+                PipeName = PtyHostProtocol.PipeNameFor(Guid.NewGuid()),
+                HostPid = standIn.Id,
+                HostStartTimeUtc = standIn.StartTime.ToUniversalTime().AddMinutes(-10),
+                Cols = 80, Rows = 24, CreatedAtUtc = DateTime.UtcNow,
+                AcceptedStartedAt = SessionGeneration.Normalize(DateTime.UtcNow),
+            };
+            manifest.SaveAtomic(PtyHostManifest.PathFor(settings.PtyHostManifestDir, manifest.SessionId));
+            await using var row = SessionRunnerRuntime.RunnerSession.CreatePendingConflict(manifest, settings,
+                new SessionRunnerEventHub(), new PtyHostStrangerWorld.RecordingLogger(), UnprovenReason);
+
+            row.MarkVanishedIfDead(new SystemProcessLivenessProbe())
+                .ShouldBeTrue("the pid now belongs to a process started after the manifest's host, so that host is dead");
+            row.ToDto().Status.ShouldBe("Exited");
+
+            await row.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(2.5), CancellationToken.None);
+
+            standIn.WaitForExit(500).ShouldBeFalse("the relaunch never kills a recycled pid whose start differs from the manifest host's");
+        }
+        finally
+        {
+            try { if (!standIn.HasExited) standIn.Kill(entireProcessTree: true); } catch { }
+        }
     }
 
     [Test]

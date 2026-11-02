@@ -942,6 +942,16 @@
           "owner": "CARD-1650"
         },
         {
+          "suite": "session-runner",
+          "class": "Card1653RefusalRetainsHostTests",
+          "methods": [
+            "Released_identity_row_relaunch_never_kills_a_recycled_host_pid"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the relaunch kill checks the host start time only on Linux, and the recycled-pid stand-in is a copied /usr/bin/sleep. The case remains required on Linux.",
+          "owner": "CARD-1653"
+        },
+        {
           "suite": "antiphon",
           "class": "VolumeRetirementContentTests",
           "platform": "windows",
