@@ -7,6 +7,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -547,6 +549,121 @@ public sealed class BlockedReplyReportRetentionTests
     }
 
     /// <summary>
+    /// CARD-1503 (review D-1). The question Blocks with the retained report, which the caller
+    /// already holds; the caller must still hear the question, in exactly ONE note. Replaying the
+    /// same settlement adds none (CARD-0320 stands), and a later genuine marked report still notifies.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Question_after_reply_notifies_the_caller_once()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+        const string question = "Nothing changed. Should I also port the fix to the rc branch?";
+        List<Guid> before;
+        await using (var db = world.CreateContext())
+            before = await CallerNoteIdsAsync(db, world);
+        var notesBefore = before.Count;
+
+        await world.SettleAsync(question, prompt: wire.Body, closingVerdict: false);
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world.Task));
+        SessionQueuedMessage note;
+        await using (var db = world.CreateContext())
+        {
+            (await CallerNotesAsync(db, world)).ShouldBe(notesBefore + 1, "the caller is told the delegate asked a question");
+            note = await NewCallerNoteAsync(db, world, before);
+        }
+        note.Body.ShouldContain($"asks: {question}", Case.Sensitive, "the note names the question");
+
+        // Replay: the same boundary observed again, and the same note offered to the queue again.
+        await world.Services.GetRequiredService<AgentTaskReplyService>()
+            .OnTurnEndAsync(world.SessionId, CancellationToken.None);
+        await world.Services.GetRequiredService<SessionMessageQueueService>().EnqueueAsync(
+            world.CallerSessionId, note.Body, MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, note.ConversationKey, world.TaskId, note.ContentDigest, note.NoteHeader,
+            deliverIfIdle: false);
+        await using (var db = world.CreateContext())
+            (await CallerNotesAsync(db, world)).ShouldBe(notesBefore + 1, "a replay of the same settlement adds no note");
+
+        // A later genuine marked report is a new completion and still reaches the caller.
+        await ReplyAsync(world, "No rc port. Send the complete report.");
+        var second = await ReplyWireAsync(world);
+        const string replacement = "Replacement report: no rc port; the master change is complete and pushed.";
+        await world.SettleAsync(replacement + "\n" + DelegationReportFormatter.ReportToken(world.TaskId, "done"),
+            prompt: second.Body, closingVerdict: false);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world.Task));
+        await using (var db = world.CreateContext())
+        {
+            (await CallerNotesAsync(db, world)).ShouldBe(notesBefore + 2, "the genuine completion notifies");
+            (await NewCallerNoteAsync(db, world, [.. before, note.Id])).Body.ShouldContain(replacement, Case.Sensitive);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1503 (review D-2, A-1, A-3). The attention row, the Blocked drawer and the note's
+    /// <c>asks:</c> line show the question of the latest Block, capped at 240 characters and flattened,
+    /// never the retained report; the reason says a question followed the Reply.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Question_after_reply_is_the_question_on_every_surface()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+        var paragraph = "I compared both release lines and the fix applies cleanly to each of them.\n"
+            + "Should I also port the fix to rc/2026-11-01, " + string.Join(", ", Enumerable.Range(1, 30).Select(i => $"step {i}"))
+            + ", or stop at master?";
+        var turn = "Nothing changed in the master work since the report.\n\n" + paragraph;
+        var flattened = paragraph.Replace("\n", " ", StringComparison.Ordinal);
+        flattened.Length.ShouldBeGreaterThan(240, "fixture: the question is longer than the cap");
+        var asks = flattened[..240];
+        List<Guid> before;
+        await using (var db = world.CreateContext())
+            before = await CallerNoteIdsAsync(db, world);
+
+        await world.SettleAsync(turn, prompt: wire.Body, closingVerdict: false);
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world.Task));
+        world.Task.Result.ShouldNotBeNull().ShouldStartWith(RetainedBody, Case.Sensitive, "fixture: the retained report stands");
+
+        await using (var db = world.CreateContext())
+        {
+            var attention = await new AttentionService(
+                db, new AttentionServiceTests.FakeRunnerClient(),
+                Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
+                TimeProvider.System, NullLogger<AttentionService>.Instance)
+                .GetAsync(CancellationToken.None, includeProgressProbe: false);
+            var row = attention.Items.Single(i => i.TaskId == world.TaskId && i.Kind == AttentionKind.BlockedQuestion);
+            row.Evidence.ShouldBe(asks, "the attention row is the question");
+
+            var note = await NewCallerNoteAsync(db, world, before);
+            note.Body.ShouldContain($"asks: {asks}\n", Case.Sensitive, "the note's asks line is the question");
+            note.Body.ShouldContain($"reason: {QuestionAfterReplyReason} — ", Case.Sensitive);
+            note.Body.ShouldNotContain("ended with the blocked token", Case.Sensitive);
+            note.Body.ShouldNotContain(paragraph, Case.Sensitive, "the caller warning carries the capped question");
+        }
+
+        await using (var scope = world.Services.CreateAsyncScope())
+        {
+            var detail = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .GetAsync(world.TaskId, CancellationToken.None);
+            var blocked = detail.Blocked.ShouldNotBeNull();
+            blocked.Question.ShouldBe(asks, "the drawer's current question");
+            blocked.Context.ShouldNotBeNull().ShouldNotContain(RetainedBody, Case.Sensitive);
+            blocked.Reason.ShouldBe(QuestionAfterReplyReason);
+        }
+
+        var warning = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("ended unmarked with a question", StringComparison.Ordinal));
+        warning.Detail.ShouldContain($"with a question ({paragraph.Length:N0} characters)", Case.Sensitive,
+            "the count is the question's, not the turn's");
+        warning.Detail.ShouldEndWith(BlockedQuestion.AskedPrefix + asks, Case.Sensitive);
+    }
+
+    /// <summary>
     /// CARD-1503 neighbour. With no Reply, a first unmarked question has no retained report to keep:
     /// the question arm settles it exactly as before.
     /// </summary>
@@ -638,6 +755,20 @@ public sealed class BlockedReplyReportRetentionTests
         (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Completed)
             .ShouldBe(0, "no Succeeded publication");
     }
+
+    private const string QuestionAfterReplyReason = "question-after-reply";
+
+    private static Task<List<Guid>> CallerNoteIdsAsync(AppDbContext db, RunnerSettlementWorld world) =>
+        db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId)
+            .Select(m => m.Id).ToListAsync();
+
+    /// <summary>The one caller note for this task that is not in <paramref name="before"/>.</summary>
+    private static Task<SessionQueuedMessage> NewCallerNoteAsync(
+        AppDbContext db, RunnerSettlementWorld world, IReadOnlyCollection<Guid> before) =>
+        db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId
+                && !before.Contains(m.Id));
 
     private static Task<int> CallerNotesAsync(AppDbContext db, RunnerSettlementWorld world) =>
         db.SessionQueuedMessages.AsNoTracking()
