@@ -5,10 +5,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1629 step 1: a direct (non-checkpoint) build reuses one stable <c>bin-&lt;task&gt;/</c> per
-/// worktree, named by <c>scripts/build-slot.ps1 -StableOutput</c>. A new output name per build
-/// recompiled 97% of a cold build (docs/investigations 2026-10-31), so the standing guidance must
-/// no longer ask for one. Checkpoint and land verification builds keep their own fresh layout.
+/// CARD-1629 step 1 (operator decision H-3, 2026-11-02): a direct (non-checkpoint) build uses its
+/// worktree's NATIVE default output, the project's own bin/ and obj/, with no -o, --output or
+/// OutputPath. A new output name per build recompiled 97% of a cold build (docs/investigations
+/// 2026-10-31), and the native output is already stable per worktree. The standing guidance must not
+/// ask for a fresh output per build, must not teach a custom output for ordinary direct builds, and
+/// must state the native-output and one-build-at-a-time rules. Checkpoint and land verification
+/// builds keep their own cold outputs.
 /// </summary>
 [Category("Unit")]
 public class StableBuildOutputDocumentationTests
@@ -17,8 +20,20 @@ public class StableBuildOutputDocumentationTests
         @"fresh\s+(output\s+(directory|dir|name|path)|bin-)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+    // A custom output taught for ordinary direct builds: the retired -StableOutput helper, a
+    // placeholder bin-<...> output, or the old "alternate output path" bullet.
+    private static readonly Regex CustomDirectBuildOutput = new(
+        @"StableOutput|OutputSuffix|bin-<|alternate\s+output\s+path",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    // Any concrete OutputPath value: the delegate bundle and the skills never teach one.
+    private static readonly Regex AnyOutputPathValue = new(
+        @"OutputPath\s*[=:]\s*[^\s`,;)]",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     [Test]
     [Arguments("AGENTS.md")]
+    [Arguments("TESTING.md")]
     [Arguments("docs/testing-and-build.md")]
     [Arguments("docs/orchestration-loop.md")]
     [Arguments("server/Bundles/delegate-basics.md")]
@@ -37,16 +52,63 @@ public class StableBuildOutputDocumentationTests
     }
 
     [Test]
+    [Arguments("AGENTS.md")]
+    [Arguments("TESTING.md")]
+    [Arguments("docs/testing-and-build.md")]
+    [Arguments("docs/orchestration-loop.md")]
+    [Arguments("server/Bundles/delegate-basics.md")]
+    [Arguments("server/Bundles/orchestrator.md")]
+    [Arguments("server/Bundles/stage-code.md")]
+    [Arguments("server/Bundles/stage-review.md")]
+    [Arguments("server/Bundles/stage-mutation.md")]
+    [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
+    [Arguments(".claude/skills/antiphon-orchestrator/SKILL.md")]
+    [Arguments("scripts/build-slot.ps1")]
+    [Arguments("scripts/lib/build-slot.ps1")]
+    public void C1629_standing_guidance_does_not_teach_a_custom_output_for_direct_builds(string relative)
+    {
+        var text = Collapse(Read(relative));
+        var hits = CustomDirectBuildOutput.Matches(text).Select(match => match.Value).ToList();
+        hits.ShouldBeEmpty($"{relative} still teaches a custom output for ordinary direct builds");
+    }
+
+    [Test]
+    [Arguments("TESTING.md")]
+    [Arguments("server/Bundles/delegate-basics.md")]
+    [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
+    [Arguments(".claude/skills/antiphon-orchestrator/SKILL.md")]
+    public void C1629_delegate_facing_guidance_names_no_output_path_value(string relative)
+    {
+        var text = Read(relative);
+        var hits = AnyOutputPathValue.Matches(text).Select(match => match.Value).ToList();
+        hits.ShouldBeEmpty($"{relative} names an OutputPath value for an ordinary build");
+    }
+
+    [Test]
     [Arguments("docs/testing-and-build.md")]
     [Arguments("server/Bundles/delegate-basics.md")]
     [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
     [Arguments(".claude/skills/antiphon-orchestrator/SKILL.md")]
-    [Arguments("scripts/build-slot.ps1")]
-    public void C1629_build_guidance_names_the_stable_output_helper(string relative)
+    public void C1629_build_guidance_states_the_native_output_and_one_build_at_a_time(string relative)
     {
         var text = Collapse(Read(relative));
-        text.ShouldContain("-StableOutput", Case.Sensitive, relative);
-        text.ShouldContain("stable", Case.Insensitive, relative);
+        text.ShouldContain("native", Case.Insensitive, relative);
+        text.ShouldContain("one build at a time", Case.Insensitive, relative);
+    }
+
+    [Test]
+    public void C1629_orchestrator_brief_sentence_uses_the_native_output()
+    {
+        var text = Collapse(Read(".claude/skills/antiphon-orchestrator/SKILL.md")).Replace("> ", "");
+        foreach (var phrase in new[]
+                 {
+                     "BUILD-SLOT RULE: ONE build-slot lease PER BUILD",
+                     "NATIVE default output",
+                     "no -o, --output or OutputPath",
+                     "one build at a time per worktree",
+                     "Checkpoint runs and land verification keep their own cold outputs.",
+                 })
+            text.ShouldContain(phrase, Case.Sensitive, "antiphon-orchestrator SKILL BUILD-SLOT RULE");
     }
 
     [Test]
@@ -56,10 +118,12 @@ public class StableBuildOutputDocumentationTests
         foreach (var phrase in new[]
                  {
                      "CARD-1629",
-                     "-OutputSuffix",
+                     "native default output",
                      "one build at a time per worktree",
+                     "UseAppHost=false",
                      "checkpoint tool and land verification stay cold",
                      "LastWriteTime",
+                     "forward slash",
                  })
             text.ShouldContain(phrase, Case.Sensitive, "docs/testing-and-build.md");
     }
