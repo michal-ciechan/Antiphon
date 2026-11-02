@@ -1,17 +1,18 @@
 #requires -Version 7.0
-# CARD-1545 S2a-1: prints one shadow-only live-lane state document. Exit 0 with a state,
-# exit 2 on invalid input. Receipts (-History) and attestation (-Attestation) arrive in
-# later slices; until then they refuse rather than being ignored.
+# CARD-1545 S2a-1/S2a-2: prints one shadow-only live-lane state document. Exit 0 with a state,
+# exit 2 on invalid input. -Attestation adds the environment component (S2a-2). Receipts
+# (-History) and the reuse policy (-ReusePolicy) arrive in S2b; until then they refuse rather
+# than being ignored.
 param([string]$Lane, [string]$CandidateSha, [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$Attestation, [string]$History, [string]$ReusePolicy)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/live-lane-fingerprint.ps1')
 try {
-    foreach ($option in @(@('Attestation', $Attestation), @('History', $History), @('ReusePolicy', $ReusePolicy))) {
+    foreach ($option in @(@('History', $History), @('ReusePolicy', $ReusePolicy))) {
         if ($option[1]) { throw "option-not-available:$($option[0])" }
     }
     if (-not $Lane) { throw 'lane-required' }
-    $document = Get-LiveLaneStatus -RepositoryRoot $RepositoryRoot -Lane $Lane -CandidateSha $CandidateSha
+    $document = Get-LiveLaneStatus -RepositoryRoot $RepositoryRoot -Lane $Lane -CandidateSha $CandidateSha -Attestation $Attestation
     [Console]::Out.WriteLine((ConvertTo-TestSelectionCanonicalJson $document))
     exit 0
 } catch {

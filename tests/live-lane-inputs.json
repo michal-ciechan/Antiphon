@@ -18,12 +18,15 @@
         "src/Antiphon.SessionRunner/",
         "src/Antiphon.SessionRunner.Contracts/",
         "server/",
-        "tests/Shared/"
+        "tests/Shared/",
+        "tests/Antiphon.SessionRunner.Tests/",
+        "tests/Antiphon.PtyHost.Tests/"
       ],
       "runtimeRoots": [
         "scripts/",
         "tests/live-lane-checkpoints/",
-        ".claude/"
+        ".claude/",
+        "docker/"
       ],
       "namespaceRoots": [
         "Antiphon.Agents.Pty",
