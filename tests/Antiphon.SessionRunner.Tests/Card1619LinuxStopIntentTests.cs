@@ -256,6 +256,58 @@ public class Card1619LinuxStopIntentTests
         finally { pending.TrySetResult(false); }
     }
 
+    // CARD-1621 D-1: the Herdr P8 pid-kill arm refuses an unproven Linux identity.
+    [Test]
+    public Task Herdr_P8_kill_without_recorded_identity_is_refused() =>
+        AssertHerdrP8KillRefusedAsync(_ => null);
+
+    [Test]
+    public Task Herdr_P8_kill_with_changed_start_ticks_is_refused() =>
+        AssertHerdrP8KillRefusedAsync(pid => LinuxProcessIdentity.TryRead(pid) is { } live
+            ? live with { StartTicks = live.StartTicks + 1 }
+            : throw new InvalidOperationException("live child identity unreadable"));
+
+    private static async Task AssertHerdrP8KillRefusedAsync(Func<int, LinuxProcessIdentity?> recorded)
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var root = Path.Combine(Path.GetTempPath(), "card1621-herdr-p8-" + Guid.NewGuid().ToString("N"));
+        var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostLingerHours = 0.02 };
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await client.WorkspaceCreateAsync(root, "card1621-p8", cts.Token);
+        var pane = fake.Workspaces[0].Tabs[0].Panes[0];
+        using var dummy = HerdrTestProcess.StartDummy();
+        try
+        {
+            // A foreign foreground process sends KillAsync down the P8 kill-our-child-by-pid arm.
+            fake.SetPaneProcessInfo(pane.PaneId, shellPid: 1, (dummy.Id, HerdrTestProcess.ShellName), (99999, "pwsh"));
+            var launched = DateTime.UtcNow;
+            var sidecar = new HerdrPaneSidecar { SessionId = Guid.NewGuid(), WorkspaceKey = "none", WorkspaceId = pane.WorkspaceId,
+                TabId = pane.TabId, PaneId = pane.PaneId, ChildPid = dummy.Id, ChildLinuxIdentity = recorded(dummy.Id),
+                ShellPid = 1, LaunchedAtUtc = launched, Cwd = root, UpdatedAtUtc = launched };
+            var path = HerdrPaneSidecar.PathFor(root, sidecar.SessionId);
+            sidecar.SaveAtomic(path);
+            var child = new HerdrPaneChild(client, settings, NullLogger.Instance, () => [], new SystemProcessLivenessProbe());
+            string? reason = null;
+            child.Exited += exit => reason = exit.Reason;
+            await child.AttachExistingAsync(sidecar, cts.Token);
+
+            (await child.KillAsync(cts.Token)).ShouldBeFalse("an unproven Linux identity never authorizes the pid kill");
+            dummy.WaitForExit(500).ShouldBeFalse("the refused child must stay alive");
+            File.Exists(path).ShouldBeTrue("a refused stop keeps ownership and its sidecar");
+            reason.ShouldBeNull("a refused stop raises no exit");
+            fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close").ShouldBeFalse();
+        }
+        finally
+        {
+            if (!dummy.HasExited) dummy.Kill(true);
+            await dummy.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     private static void AssertIssued(ProcessStopIntentDto? intent, Guid id, DateTime generation)
     {
         intent.ShouldNotBeNull();
