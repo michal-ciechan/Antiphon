@@ -628,7 +628,7 @@ public sealed class RollingProductionMountTests
             printf 'SOURCE_REVISION=%s\n' "$sha" > "$SERVER2_ENV"
             printf 'SOURCE_REVISION=%s\n' "$other" > "$SERVER2_TEMP_ENV"
             C1008_STATUS="$(jq -cn --arg s "$sha" '{buildVersion:$s}')"
-            run_case temp-env-mismatch c1008_previous_generation "$TEMP_PROJECT" "$owned"
+            run_case temp-env-ignored show_generation "$TEMP_PROJECT" "$owned"
             jq '.fault="image-inspect-wrong"' "$C1008_FIXTURE_ROOT/docker.json" > "$C1008_FIXTURE_ROOT/docker.json.new"
             mv -f -- "$C1008_FIXTURE_ROOT/docker.json.new" "$C1008_FIXTURE_ROOT/docker.json"
             printf 'SOURCE_REVISION=%s\n' "$sha" > "$SERVER2_ENV"
@@ -659,9 +659,15 @@ public sealed class RollingProductionMountTests
         Refused("missing-stack", "RecycleGenerationUnknown");
         Refused("stack-not-hex", "RecycleGenerationUnknown");
         Refused("status-mismatch", "RecycleGenerationMismatch");
-        Refused("temp-env-mismatch", "RecycleGenerationMismatch");
         Refused("image-mismatch", "RecycleGenerationMismatch");
         Refused("source-missing", "RecycleGenerationUnknown");
+        // CARD-1609 (91f3e7966): retirement never reconstructs a temp build, so a temp stack.env
+        // that disagrees with status no longer refuses; the temp reader yields the null generation.
+        rows["temp-env-ignored"][2].ShouldBe("0", "temp-env-ignored");
+        rows["temp-env-ignored"][4].ShouldBe("0", "temp-env-ignored journal");
+        rows["temp-env-ignored"][5].ShouldBe("0", "temp-env-ignored destructive docker");
+        rows["temp-env-ignored"][6].ShouldBe("empty", "temp-env-ignored previous sha");
+        run.Output.ShouldContain("IDENTITY_GEN temp-env-ignored {\"statusBuildVersion\":null,\"imageTag\":null,\"imageId\":null}");
         rows["none-owned"][2].ShouldBe("0", "none-owned");
         rows["none-owned"][6].ShouldBe("empty", "none-owned previous sha");
         rows["matched"][2].ShouldBe("0", "matched");
