@@ -443,6 +443,70 @@ public sealed partial class PhoneHomeRollingRunnerTests
     }
 
     [Test]
+    [Timeout(180_000)]
+    public async Task C0824_DrainSlotUnknownIsBoundedAndAnOperatorRecordsTheRelease()
+    {
+        // CARD-0824 review f4c293bc D-1. The draining runner A answers every release with 409 slot_unknown. The drain
+        // rebind asks at most three times, records workspace_slot_release_stuck once and holds with that code; it never
+        // guesses a release. The operator route records the release (operator token, matching task and generation,
+        // only once the bound is reached), and the next tick moves the task to B without asking A again.
+        await using var world = await RollingWorld.StartAsync();
+        world.PeerA.Reply = frame => frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease
+            ? null
+            : new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: PhoneHomeProblemTypes.UnsupportedTarget, ErrorDetail: WorkspaceSlotCodes.UnknownSlot, StatusCode: 409);
+        var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "slot-unknown", task =>
+        {
+            task.RemoteWorktreePath = "/work/worktrees/ws-01";
+            task.RemoteWorkspaceSlotId = "ws-01";
+            task.RemoteWorkspaceSlotGeneration = 3;
+        });
+        (await PostDrainAsync(
+                world, RollingRunnerSettings.Server2, new DrainBody("slot drain", RollingRunnerSettings.Server2Temp), token: true))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        var record = $"/api/session-runners/{RollingRunnerSettings.Server2}/workspace-slots/ws-01/record-release";
+        var token = OperatorTokenFile.ReadOrCreate(world.Host.OperatorTokenPath);
+
+        await world.TickAsync();
+        (await world.Host.PostOperatorAsync(record, new RecordReleaseBody(id, 3, "runner lost the slot"), token))
+            .StatusCode.ShouldBe(HttpStatusCode.Conflict, "the operator records a release only once the bound is reached");
+        for (var tick = 0; tick < 4; tick++)
+            await world.TickAsync();
+
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(3, "slot_unknown is asked a bounded number of times");
+        var held = await world.ReadTaskAsync(id);
+        held.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2, "an unknown slot is never a guessed release");
+        held.Task.RemoteWorkspaceSlotReleasedAt.ShouldBeNull();
+        var events = await world.EventTextAsync(id);
+        events.Count(text => text.StartsWith(WorkspaceSlotCodes.ReleaseUnknown + ": slot ws-01 generation 3 ", StringComparison.Ordinal)).ShouldBe(3);
+        events.Count(text => text.StartsWith(WorkspaceSlotCodes.ReleaseStuck + ": slot ws-01 generation 3 ", StringComparison.Ordinal)).ShouldBe(1);
+        events.ShouldContain(text => text.Contains("Held: " + WorkspaceSlotCodes.ReleaseStuck + ": ", StringComparison.Ordinal),
+            "the hold names the stuck code for the operator");
+        world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0);
+
+        (await world.Host.PostOperatorAsync(record, new RecordReleaseBody(id, 3, "runner lost the slot"), token: null))
+            .StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await world.Host.PostOperatorAsync(record, new RecordReleaseBody(id, 2, "runner lost the slot"), token))
+            .StatusCode.ShouldBe(HttpStatusCode.Conflict, "the generation must match");
+        (await world.Host.PostOperatorAsync(
+                $"/api/session-runners/{RollingRunnerSettings.Server2Temp}/workspace-slots/ws-01/record-release",
+                new RecordReleaseBody(id, 3, "runner lost the slot"), token))
+            .StatusCode.ShouldBe(HttpStatusCode.Conflict, "the runner must be the one the task is bound to");
+        (await world.Host.PostOperatorAsync(record, new RecordReleaseBody(id, 3, "runner lost the slot"), token))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await world.ReadTaskAsync(id)).Task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
+
+        await world.TickAsync();
+        var moved = await world.ReadTaskAsync(id);
+        moved.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
+        moved.Task.RemoteWorkspaceSlotId.ShouldBe("ws-01", "slot history kept");
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(3, "a recorded release is not asked again");
+        world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(0);
+        (await world.EventTextAsync(id)).ShouldContain(
+            text => text.StartsWith("workspace_slot_release_recorded: slot ws-01 generation 3 ", StringComparison.Ordinal));
+    }
+
+    [Test]
     [Timeout(120_000)]
     public async Task A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held()
     {
@@ -825,6 +889,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
     private sealed record DrainBody(string Reason, string? RedirectTo = null, bool RetireWhenIdle = false);
 
     private sealed record ClearBody(string Reason);
+
+    private sealed record RecordReleaseBody(Guid TaskId, int Generation, string Reason);
 
     private sealed partial class RollingWorld
     {
