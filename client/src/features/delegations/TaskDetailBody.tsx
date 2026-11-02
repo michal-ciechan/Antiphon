@@ -50,6 +50,7 @@ import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegat
 import { PlacementBadge } from './placement'
 import { TierBadge } from './TaskChip'
 import { BlockedQuestionCard } from './BlockedQuestionCard'
+import { CeilingHoldCard } from './CeilingHoldCard'
 import {
   STATUS_COLOR,
   WORKSPACE_LABEL,
@@ -190,6 +191,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
       {detail.blocked && (
         <BlockedQuestionCard detail={detail} variant="full" autoFocus />
       )}
+      <CeilingHoldCard detail={detail} />
       {answeredElsewhere && (
         <Text size="sm" c="dimmed" data-testid="blocked-answered-elsewhere">
           {answeredViaLine(detail.events)}

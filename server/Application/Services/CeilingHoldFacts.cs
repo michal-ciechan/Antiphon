@@ -25,6 +25,32 @@ internal static class CeilingHoldFacts
         return (int)minutes.Value;
     }
 
+    /// <summary>
+    /// CARD-1610 S4a D-2. A create-time ceiling, checked before any side effect with S2's rule, plus a
+    /// reason without minutes and control characters, which the brief would otherwise carry verbatim.
+    /// An invalid stored pair would throw at dispatch, so create never stores one.
+    /// </summary>
+    internal static void ValidateCreate(long? minutes, string? reason)
+    {
+        if (minutes is null && reason is not null)
+            throw new ValidationException("ceilingReason", "A ceiling reason needs ceilingMinutes; it is never stored alone.");
+        if (reason is not null && reason.Any(c => c < ' ' || c == '\u007f'))
+            throw new ValidationException("ceilingReason", "A ceiling reason may not contain control characters.");
+        ValidateInitial(minutes, reason);
+    }
+
+    /// <summary>CARD-1610 S4a D-3/D-4. Only an explicit create binds a requested ceiling; nothing inherits one.</summary>
+    internal static void BindRequested(AgentTask task, long? minutes, string? reason)
+    {
+        if (ValidateInitial(minutes, reason) is not { } bound) return;
+        task.RequestedCeilingMinutes = bound;
+        task.RequestedCeilingReason = reason;
+    }
+
+    internal static CeilingBudgetDto Budget(AgentTask task) => new(task.RequestedCeilingMinutes,
+        task.RequestedCeilingReason, task.ResolvedCeilingMinutes, task.ResolvedCeilingSource, task.NextCeilingMinutes,
+        AbsoluteCapMinutes);
+
     internal static void Resolve(AgentTask task, DelegationSettings settings)
     {
         ValidateInitial(task.RequestedCeilingMinutes, task.RequestedCeilingReason);

@@ -207,6 +207,11 @@ public static class DelegationReportFormatter
             sb.AppendLine();
         }
 
+        // CARD-1610 S4a: only a declared ceiling adds a line, so default briefs stay byte-identical.
+        if (task.RequestedCeilingMinutes is { } declaredCeiling)
+            sb.AppendLine($"Declared ceiling: {declaredCeiling} minutes (reason: {task.RequestedCeilingReason}). "
+                + "At it the task is held Working for a decision; nothing is killed.").AppendLine();
+
         if (RemoteWorkspaceService.IsEligible(task) && task.CommitOnSettle != CommitOnSettlePolicy.Never
             && !string.IsNullOrWhiteSpace(task.RemoteWorktreePath)
             && !string.IsNullOrWhiteSpace(task.WorktreeBranch))

@@ -928,3 +928,35 @@ If an authorized operator explicitly chooses release, the existing single-seat
 `release -RunnerId <observed-runner-id> -SessionId <id> -Reason <reason>` kills the
 process tree and works even without a server session row. Recheck ownership and
 retain the audit/result. A replacement task requires separate commissioning.
+
+### Task ceiling holds from the CLI (CARD-1610 S4a)
+
+A declared budget is a create-time field. `POST /api/agent-tasks` accepts
+`ceilingMinutes` (1..720) with `ceilingReason` (1..1000 characters, no control
+characters). A reason without minutes, or any value outside those bounds, is 422
+before any side effect. The created response echoes `requestedCeilingMinutes`.
+`delegate.ps1 -CeilingMinutes 600 -CeilingReason "long review"` checks the same
+rule locally (`ceiling_invalid:`, exit 2) and warns `ceiling_unconfirmed` when an
+older server does not echo the value. Follow-ups and children never inherit a
+ceiling. Retry keeps the requested value and re-resolves at the next dispatch.
+
+`GET /api/agent-tasks/{id}` always carries `ceilingBudget` (requested, resolved,
+source, next bound, cap 720). `ceilingHold` is present while a Working task is
+held at its ceiling, and `failedSession` is present while a Failed task still has
+a session. `delegate.ps1 -Status <id>` prints `Ceiling:`, `Ceiling hold:`,
+`Phase:`, then `Decide:` (or the final-hold guidance at 720 minutes), and
+`Seat:` with the server's own summary. It never claims a seat is held unless the
+server says so.
+
+Answer a hold with a typed decision, never an ordinary reply:
+`delegate.ps1 -Reply <id> -CeilingAction Continue|Extend -EpisodeId <episode>
+[-ExtendMinutes 1..720]`. The body is exactly `ceilingAction`, `episodeId` and
+optional `extendMinutes`, with no `origin`, `message` or `round`. The decision
+is recorded and the session continues; nothing is typed into it. A moved episode
+is 409 `ceiling_episode_stale`: run `-Status` again. At the final 720-minute hold,
+Continue and Extend refuse. An operator may add `-OperatorExtend -ExtendMinutes
+1..240 -CeilingReason "..."`. That reads the owner-only token through
+`scripts/lib/runner-operator-token.ps1` (`ANTIPHON_OPERATOR_TOKEN_FILE`) for that
+one request and fails closed with `operator_token_unavailable:` before any
+request. Otherwise use `POST /api/agent-tasks/{id}/cancel`. A hold is never
+killed or parked automatically.
