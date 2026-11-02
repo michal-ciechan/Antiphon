@@ -293,8 +293,14 @@ public sealed class SessionReconciliationService
 
         if (closedSessionIds.Count == 0)
         {
-            await _db.SaveChangesAsync(ct);
-            if (transaction is not null) await transaction.CommitAsync(ct);
+            // Same rule as the empty-live branch: a live row inside the Starting grace, or one the
+            // runner still serves, changes nothing, and a no-op save must not run the interceptors.
+            if (_db.ChangeTracker.HasChanges())
+            {
+                await _db.SaveChangesAsync(ct);
+                if (transaction is not null) await transaction.CommitAsync(ct);
+            }
+
             return 0;
         }
 
