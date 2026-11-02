@@ -1,0 +1,10 @@
+# CARD-1638 review round 2 (diff-only), task f4cf239f
+
+Clean. Reviewed range 4a0abd68507a5e3105bf7b258849b1abb033890a..1a819f55acdcbbaa65df76c4e680428660347a92 (tip afcc1b26d6ba6b8c9c4ba6c3f2440ac18aa7dea5 adds only .antiphon/task-e7d4f999.md).
+
+- (a) One file, tests/Antiphon.Tests/Scripts/RcFailedFirstExecutionTests.cs: harness budget 326 -> 481 s, [Timeout] 386_000 -> 541_000, comment (run 20261102-133640-5f80, provisional n=2). Nothing else.
+- (b) 541 - 481 = 60 s margin, as before (386 - 326). No class-level Timeout. Sibling ActualLoopFollowsSchedule in the same class already runs at 1140 s. No nightly-class-costs row for the class. Nightly chunk watchdog is 3600 s. CARD-1514 plan CP-7 (EstimatedMinutes 3) derives max(15, 9) = 15 min (900 s). No enclosing bound is below 541 s, so the raise takes effect.
+- (c) Checkpoint run 20261102-142512-397c: CHECKPOINT CP-1 commit=afcc1b26d6ba6b8c9c4ba6c3f2440ac18aa7dea5 build=ok filter=/*/*/TimeoutAuditTests/* executed=7 passed=7 failed=0 skipped=0 slot=granted waited=0s dirty=0 sourceState=clean buildSource=verified; verdict GREEN exit=0; unlisted: none; validate: CHECKPOINT SOURCE VALID source=afcc1b26d rows=1.
+- (d) Land graph -Check: approved, digest=D92450D9AABCBF9C783B506F73DF06C45635F415D03E65C5F1A97AF415CC36BE count=69, exit 0, no -Update. check-evidence-diff e18a1177d..afcc1b26d: commits=4 entries=2 violations=0. merge-tree of the whole branch is clean onto origin/master 5376ac529 and origin/rc/2026-11-01 10a826b9d. In a scratch worktree, the chain 5ce77b7ae, 4a0abd685, 1a819f55a, afcc1b26d cherry-picks cleanly onto master 5376ac529: 8 files, +119/-7. The picked RcFailedFirstExecutionTests.cs matches 1a819f55a byte for byte.
+- Builds outside the checkpoint tool, each through build-slot with native output: tools/Antiphon.Checkpoints (held 12 s) to run the plan; tools/Antiphon.LandGraphAudit Release (held 31 s) for -Check.
+- Scope: Interim. Only the brief's round-2 diff-only selection ran, not the Unit lane. JournalCustodySurvivesInterleaving was not re-run; the fix worker has 242.4 s at 1a819f55a (1.98x under 481 s).
