@@ -267,8 +267,14 @@ public sealed class RollingProductionMountTests
 
             var targetRefuses = good.DeepClone().AsObject();
             targetRefuses["owned"] = previousOwned.DeepClone();
-            targetRefuses["expectDiagnosis"] = "RecycleContainerStateUnknown";
-            add("target-refuses-previous-container", false, targetRefuses);
+            if (project.EndsWith("-temp", StringComparison.Ordinal))
+                // CARD-1609 D-9: the temp catalog admits both supported rosters, including the
+                // token-less previous one; only the Compose-sourced main target refuses it.
+                add("target-admits-previous-roster", true, targetRefuses);
+            else {
+                targetRefuses["expectDiagnosis"] = "RecycleContainerStateUnknown";
+                add("target-refuses-previous-container", false, targetRefuses);
+            }
 
             var eleventh = previous.DeepClone().AsObject();
             eleventh["owned"] = good["owned"]!.DeepClone();
