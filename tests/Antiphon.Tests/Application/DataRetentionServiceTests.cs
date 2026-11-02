@@ -1499,6 +1499,236 @@ public class DataRetentionServiceTests
         CreatedAt = createdAt, CompletedAt = completedAt,
     };
 
+    /// <summary>
+    /// CARD-1658 A-1. A task that becomes referenced by an outbound source after the first batch
+    /// committed is protected for the later batch: the outbound-task-id list is loaded per batch,
+    /// not once per pass. The unprotected trees of both batches still prune.
+    /// </summary>
+    [Test]
+    public async Task C1658_TaskProtectedBetweenBatchesSurvives()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        var session = Guid.NewGuid();
+        await SeedStoppedSessionAsync(plain, session, DateTime.UtcNow);
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1658 protect", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var protect = new C1658ProtectAfterFirstCommit(plain, session, roots[3]);
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(protect).Options))
+            await CreateService(db, new RetentionSettings { TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 10 })
+                .PruneTasksAsync(CancellationToken.None);
+
+        protect.Commits.ShouldBeGreaterThanOrEqualTo(2, "both batches must have deleted a tree");
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.AnyAsync(t => t.Id == roots[3]))
+            .ShouldBeTrue("a task referenced after the first batch committed must not be deleted by a later batch");
+        (await verify.AgentTasks.CountAsync(t => roots.Take(3).Contains(t.Id))).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// CARD-1658 A-2. A root range whose batch fails every time is retried, then skipped after
+    /// the third consecutive failure: the scan continues with the next range, the skipped trees
+    /// survive, the log names the pass and the exception type with no row data, and the Tasks
+    /// pass still reports Failed.
+    /// </summary>
+    [Test]
+    public async Task C1658_PoisonRootRangeIsSkippedAfterThreeFailures()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1658-row-data", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var fault = new C1658PoisonBatch(roots[2]);
+        var logger = new C768CaptureLogger();
+        var settings = new RetentionSettings { TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 10 };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(fault).Options))
+        {
+            var audit = new AuditSettings();
+            result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, logger, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        await using var verify = new AppDbContext(plain);
+        var surviving = (await verify.AgentTasks.Where(t => roots.Contains(t.Id)).Select(t => t.Id).ToListAsync())
+            .OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        surviving.ShouldBe([roots[2], roots[3]], "the range after the poison batch must still prune");
+        fault.Thrown.ShouldBe(3, "the same batch is tried three times before it is skipped");
+
+        var passes = (result.Passes ?? []).ToDictionary(p => p.Pass);
+        passes["Tasks"].Status.ShouldBe(DataRetentionPassStatus.Failed);
+        passes["Tasks"].ExceptionType.ShouldBe("System.InvalidOperationException > Npgsql.NpgsqlException > System.TimeoutException");
+        logger.Messages.ShouldContain(m => m.Contains("skipped a failing root range after 3 attempt(s)")
+            && m.Contains("System.InvalidOperationException > Npgsql.NpgsqlException > System.TimeoutException"));
+        logger.Messages.ShouldAllBe(m => !m.Contains("c1658-row-data") && !roots.Any(r => m.Contains(r.ToString())));
+        result.Tasks.ShouldBe(4);
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.Trees.ShouldBe(4);
+        result.TaskPrune.SkippedRanges.ShouldBe(1);
+        result.TaskPrune.FailedAttempts.ShouldBe(3);
+        result.TaskPrune.ScanComplete.ShouldBeTrue();
+        result.TaskPrune.BatchMilliseconds.ShouldNotBeNull();
+        result.TaskPrune.BatchMilliseconds.Count.ShouldBe(result.TaskPrune.Batches);
+    }
+
+    /// <summary>
+    /// CARD-1658 A-3. The passes after Tasks run in bounded batches: a backlog of five rows with a
+    /// batch of two is processed by statements that each touch at most two rows, under the row
+    /// batch timeout, at most the per-sweep cap of batches per sweep, with the next sweep
+    /// finishing. Fresh and kept rows are untouched; progress and per-batch timing are reported.
+    /// </summary>
+    [Test]
+    public async Task C1658_UsageSampleBacklogPrunesInBoundedBatches() =>
+        await C1658RowBacklogAsync("SubscriptionUsageSamples");
+
+    /// <inheritdoc cref="C1658_UsageSampleBacklogPrunesInBoundedBatches"/>
+    [Test]
+    public async Task C1658_ResidueHeldRowBacklogPrunesInBoundedBatches() =>
+        await C1658RowBacklogAsync("WorktreeResidueHeldRows");
+
+    /// <summary>
+    /// CARD-1658 A-3. The audit archive nulls FullContent with no copy (unchanged scope); it is
+    /// only bounded: same batch, timeout, cap and progress rules as the row passes.
+    /// </summary>
+    [Test]
+    public async Task C1658_AuditArchiveBacklogNullsInBoundedBatches() =>
+        await C1658RowBacklogAsync("AuditArchive");
+
+    private static async Task C1658RowBacklogAsync(string pass)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var old = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+        var kept = new List<Guid>();
+        await using (var seed = new AppDbContext(plain))
+        {
+            var run = new WorktreeResidueRun { Id = Guid.NewGuid(), StartedAt = DaysAgo(40), FinishedAt = DaysAgo(40), ActionBudget = 25 };
+            if (pass == "WorktreeResidueHeldRows") seed.WorktreeResidueRuns.Add(run);
+            void Add(Guid id, int days, string outcome = "Held")
+            {
+                switch (pass)
+                {
+                    case "SubscriptionUsageSamples":
+                        seed.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+                        {
+                            Id = id, Provider = AgentKind.Codex, SubscriptionKey = "Codex", PlanLabel = "fixture",
+                            RemainingPercent = 50, ObservedAt = DaysAgo(days), AgentSessionId = Guid.NewGuid(),
+                            SourceCommand = "/status", ParseStatus = SubscriptionUsageParseStatus.Parsed, RawExcerpt = "seeded",
+                        });
+                        break;
+                    case "WorktreeResidueHeldRows":
+                        seed.WorktreeResidueRunCandidates.Add(new WorktreeResidueRunCandidate
+                        {
+                            Id = id, RunId = run.Id, Lane = nameof(WorktreeResidueLane.SettledTask), Outcome = outcome,
+                            ReasonCode = "release_required", TaskId = Guid.NewGuid(), EvaluatedAt = DaysAgo(days),
+                        });
+                        break;
+                    default:
+                        seed.AuditRecords.Add(new AuditRecord
+                        {
+                            Id = id, EventType = AuditEventType.LlmCall, ModelName = "test-model", Summary = "c1658",
+                            FullContent = """{"prompt":"c1658"}""", CreatedAt = DaysAgo(days),
+                        });
+                        break;
+                }
+            }
+
+            foreach (var id in old) Add(id, 40);
+            var fresh = Guid.NewGuid();
+            Add(fresh, 1);
+            kept.Add(fresh);
+            if (pass == "WorktreeResidueHeldRows")
+            {
+                var queued = Guid.NewGuid();
+                Add(queued, 40, nameof(WorktreeResidueCandidateOutcome.Queued));
+                kept.Add(queued);
+            }
+            await seed.SaveChangesAsync();
+        }
+
+        var statement = pass switch
+        {
+            "SubscriptionUsageSamples" => "DELETE FROM \"SubscriptionUsageSamples\"",
+            "WorktreeResidueHeldRows" => "DELETE FROM \"WorktreeResidueRunCandidates\"",
+            _ => "UPDATE \"AuditRecords\"",
+        };
+        var settings = new RetentionSettings
+        {
+            RowPruneBatchSize = 2, RowPruneBatchCommandTimeoutSeconds = 45, RowPruneMaxBatchesPerSweep = 2,
+        };
+        var audit = new AuditSettings { RetentionDays = 14 };
+
+        async Task<(DataRetentionSweepResult Result, List<C1658RowRecorder.Seen> Statements)> SweepAsync()
+        {
+            var recorder = new C1658RowRecorder(statement);
+            await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+                .AddInterceptors(recorder).Options);
+            var result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+            return (result, recorder.Statements);
+        }
+
+        async Task<int> RemainingAsync(IReadOnlyCollection<Guid> ids)
+        {
+            await using var verify = new AppDbContext(plain);
+            return pass switch
+            {
+                "SubscriptionUsageSamples" => await verify.SubscriptionUsageSamples.CountAsync(s => ids.Contains(s.Id)),
+                "WorktreeResidueHeldRows" => await verify.WorktreeResidueRunCandidates.CountAsync(c => ids.Contains(c.Id)),
+                _ => await verify.AuditRecords.CountAsync(a => ids.Contains(a.Id) && a.FullContent != null),
+            };
+        }
+
+        int Count(DataRetentionSweepResult r) => pass switch
+        {
+            "SubscriptionUsageSamples" => r.SubscriptionUsageSamples,
+            "WorktreeResidueHeldRows" => r.WorktreeResidueHeldRows,
+            _ => r.AuditRecords,
+        };
+
+        var (first, firstStatements) = await SweepAsync();
+        firstStatements.ShouldAllBe(s => s.Rows <= 2, $"no {pass} statement may touch more rows than one batch");
+        (await RemainingAsync(old)).ShouldBe(1, "the per-sweep cap stops after two batches of two");
+        firstStatements.Count.ShouldBe(2);
+        firstStatements.ShouldAllBe(s => s.Timeout == 45);
+        Count(first).ShouldBe(4);
+
+        var (second, secondStatements) = await SweepAsync();
+        secondStatements.ShouldAllBe(s => s.Rows <= 2);
+        (await RemainingAsync(old)).ShouldBe(0, "the next sweep finishes the backlog");
+        (await RemainingAsync(kept)).ShouldBe(kept.Count, "same cutoff and keep rules: fresh and kept rows stay");
+        Count(second).ShouldBe(1);
+
+        var firstProgress = first.Passes!.Single(p => p.Pass == pass);
+        firstProgress.Status.ShouldBe(DataRetentionPassStatus.Completed);
+        firstProgress.Progress.ShouldNotBeNull();
+        firstProgress.Progress.Batches.ShouldBe(2);
+        firstProgress.Progress.Rows.ShouldBe(4);
+        firstProgress.Progress.Complete.ShouldBeFalse();
+        firstProgress.Progress.BatchMilliseconds.Count.ShouldBe(2);
+        var secondProgress = second.Passes!.Single(p => p.Pass == pass).Progress;
+        secondProgress.ShouldNotBeNull();
+        secondProgress.Batches.ShouldBe(1);
+        secondProgress.Rows.ShouldBe(1);
+        secondProgress.Complete.ShouldBeTrue();
+    }
+
     [Test]
     public async Task RunOnce_archives_old_audit_FullContent_using_the_configured_window()
     {
@@ -2804,6 +3034,70 @@ public class DataRetentionServiceTests
         {
             Record(command);
             return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1658 A-1. After the first committed prune transaction, a separate context commits an
+    /// unsettled Delegation source naming <c>target</c>, which makes it an outbound-protected task.
+    /// </summary>
+    private sealed class C1658ProtectAfterFirstCommit(DbContextOptions<AppDbContext> options, Guid session, Guid target)
+        : DbTransactionInterceptor
+    {
+        public int Commits { get; private set; }
+
+        public override async Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (++Commits == 1)
+            {
+                await using var other = new AppDbContext(options);
+                var now = DateTime.UtcNow;
+                other.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = session, Sequence = 1, Body = "c1658 protect",
+                    Status = QueuedMessageStatus.Sent, Origin = QueuedMessageOrigin.Delegation, SourceTaskId = target,
+                    DeliveryAttempts = 1, CreatedAt = now, SentAt = now,
+                });
+                await other.SaveChangesAsync(cancellationToken);
+            }
+            await base.TransactionCommittedAsync(transaction, eventData, cancellationToken);
+        }
+    }
+
+    /// <summary>CARD-1658 A-2. Fails every eligibility query whose batch names <c>poison</c>, as a command timeout.</summary>
+    private sealed class C1658PoisonBatch(Guid poison) : DbCommandInterceptor
+    {
+        public int Thrown { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (C1654PruneTimeout.IsEligibility(command.CommandText)
+                && command.Parameters.Cast<DbParameter>().Select(p => p.Value).OfType<IEnumerable<Guid>>()
+                    .Any(ids => ids.Contains(poison)))
+            {
+                Thrown++;
+                throw new Npgsql.NpgsqlException("Exception while reading from stream",
+                    new TimeoutException("Timeout during reading attempt"));
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>CARD-1658 A-3. Records rows affected and timeout of each statement whose text contains <c>marker</c>.</summary>
+    private sealed class C1658RowRecorder(string marker) : DbCommandInterceptor
+    {
+        public sealed record Seen(int Rows, int Timeout);
+
+        public List<Seen> Statements { get; } = [];
+
+        public override ValueTask<int> NonQueryExecutedAsync(DbCommand command, CommandExecutedEventData eventData,
+            int result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains(marker, StringComparison.Ordinal))
+                Statements.Add(new Seen(result, command.CommandTimeout));
+            return base.NonQueryExecutedAsync(command, eventData, result, cancellationToken);
         }
     }
 

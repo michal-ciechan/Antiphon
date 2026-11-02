@@ -53,4 +53,23 @@ public sealed class RetentionSettings
     /// sweep, so a backlog is pruned across sweeps. Nonpositive uses 50.
     /// </summary>
     public int TaskPruneMaxBatchesPerSweep { get; set; } = 50;
+
+    /// <summary>
+    /// CARD-1658. Rows per batch for the row passes after Tasks (subscription-usage samples,
+    /// worktree-residue Held/Preview rows, the audit FullContent archive). Each batch is one bounded
+    /// statement. Nonpositive uses 1000.
+    /// </summary>
+    public int RowPruneBatchSize { get; set; } = 1000;
+
+    /// <summary>
+    /// CARD-1658. Command timeout for each row-pass batch statement, sized for
+    /// <see cref="RowPruneBatchSize"/> rows. Nonpositive uses 60.
+    /// </summary>
+    public int RowPruneBatchCommandTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// CARD-1658. Batches each row pass may run per sweep; the rest waits for the next sweep.
+    /// Nonpositive uses 50.
+    /// </summary>
+    public int RowPruneMaxBatchesPerSweep { get; set; } = 50;
 }
