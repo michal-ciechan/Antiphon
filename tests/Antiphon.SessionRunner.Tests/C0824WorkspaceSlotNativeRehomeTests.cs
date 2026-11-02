@@ -9,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-10 (linux-native). A real file the runner uid cannot unlink re-homes the slot.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotNativeRehomeTests
 {
     [Test]

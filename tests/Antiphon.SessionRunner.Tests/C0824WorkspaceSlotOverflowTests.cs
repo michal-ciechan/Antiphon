@@ -9,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-7. Overflow growth, its count and disk bounds, and idle retirement (fake clock).</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotOverflowTests
 {
     [Test]

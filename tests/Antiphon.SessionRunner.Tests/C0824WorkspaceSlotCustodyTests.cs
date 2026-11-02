@@ -10,7 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-2. Unpushed work and dirt are preserved, crashes recover, slots are exclusive.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotCustodyTests
 {
     [Test]

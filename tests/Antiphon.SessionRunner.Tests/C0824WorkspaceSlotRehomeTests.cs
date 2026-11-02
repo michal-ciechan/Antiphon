@@ -9,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-8. Re-homing on injected filesystem failures, the loop guard and quarantine exits.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotRehomeTests
 {
     private const string Eacces = "warning: failed to remove src/a: Permission denied";
