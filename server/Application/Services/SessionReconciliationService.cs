@@ -7,6 +7,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -219,12 +220,7 @@ public sealed class SessionReconciliationService
         {
             // A no-op save still runs SavingChanges and SavedChanges. That stole the
             // one-shot failure the re-adoption commit is supposed to absorb.
-            if (_db.ChangeTracker.HasChanges())
-            {
-                await _db.SaveChangesAsync(ct);
-                if (transaction is not null) await transaction.CommitAsync(ct);
-            }
-
+            await CommitPassAsync(transaction, ct);
             return 0;
         }
 
@@ -295,12 +291,7 @@ public sealed class SessionReconciliationService
         {
             // Same rule as the empty-live branch: a live row inside the Starting grace, or one the
             // runner still serves, changes nothing, and a no-op save must not run the interceptors.
-            if (_db.ChangeTracker.HasChanges())
-            {
-                await _db.SaveChangesAsync(ct);
-                if (transaction is not null) await transaction.CommitAsync(ct);
-            }
-
+            await CommitPassAsync(transaction, ct);
             return 0;
         }
 
@@ -323,6 +314,21 @@ public sealed class SessionReconciliationService
         }
 
         return closedSessionIds.Count;
+    }
+
+    /// <summary>
+    /// Ends a pass-1 run that closed nothing. The save is skipped when the tracker is clean, but an
+    /// owned transaction is committed either way: the alert service saves through this context, so
+    /// a legacy-generation alert, and the terminal exit evidence that save carried, are already
+    /// flushed inside it, and disposing it uncommitted would roll them back. A commit runs no save
+    /// interceptor. A caller's transaction stays the caller's to end.
+    /// </summary>
+    private async Task CommitPassAsync(IDbContextTransaction? transaction, CancellationToken ct)
+    {
+        if (_db.ChangeTracker.HasChanges())
+            await _db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
     }
 
     /// <summary>
