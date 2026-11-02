@@ -1800,6 +1800,109 @@ public class DataRetentionServiceTests
         secondProgress.Complete.ShouldBeTrue();
     }
 
+    /// <summary>
+    /// CARD-1662 A-1. When every task-prune batch fails (the CARD-1654 command-timeout mode), the
+    /// sweep spends at most <see cref="RetentionSettings.TaskPruneMaxFailedAttemptsPerSweep"/> failed
+    /// attempts (default 6: two ranges of three) instead of three per batch up to the batch cap: the
+    /// Tasks pass stops for this sweep, reports Failed with the failure's type chain, the later passes
+    /// run, the cursor resumes after the last range tried, and nothing is deleted.
+    /// </summary>
+    [Test]
+    public async Task C1662_FailureBudgetStopsTaskPassForTheSweep()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 10).Select(_ => Guid.NewGuid()).OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1662-row-data", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var fault = new C1654PruneTimeout();
+        var logger = new C768CaptureLogger();
+        var settings = new RetentionSettings { TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 10 };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(fault).Options))
+        {
+            var audit = new AuditSettings();
+            result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, logger, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        fault.Thrown.ShouldBe(6, "two ranges of three attempts spend the default budget; the other three ranges wait");
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.FailureBudgetSpent.ShouldBeTrue();
+        result.TaskPrune.Batches.ShouldBe(2);
+        result.TaskPrune.FailedAttempts.ShouldBe(6);
+        result.TaskPrune.SkippedRanges.ShouldBe(2);
+        result.TaskPrune.ScanComplete.ShouldBeFalse();
+        result.TaskPrune.Cursor.ShouldBe(roots[3], "the next sweep resumes after the last range tried");
+        var passes = (result.Passes ?? []).ToDictionary(p => p.Pass);
+        passes["Tasks"].Status.ShouldBe(DataRetentionPassStatus.Failed);
+        passes["Tasks"].ExceptionType.ShouldBe("System.InvalidOperationException > Npgsql.NpgsqlException > System.TimeoutException");
+        passes["SubscriptionUsageSamples"].Status.ShouldBe(DataRetentionPassStatus.Completed);
+        passes["WorktreeResidueHeldRows"].Status.ShouldBe(DataRetentionPassStatus.Completed);
+        passes["AuditArchive"].Status.ShouldBe(DataRetentionPassStatus.Completed);
+        logger.Messages.ShouldContain(m => m.Contains("task prune stopped for this sweep after 6 failed attempt(s)"));
+        logger.Messages.ShouldAllBe(m => !m.Contains("c1662-row-data") && !roots.Any(r => m.Contains(r.ToString())));
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.CountAsync(t => roots.Contains(t.Id))).ShouldBe(10);
+    }
+
+    /// <summary>
+    /// CARD-1662 A-2. The audit archive cutoff is fixed for the whole sweep: a record dated 100 ms
+    /// after it, inserted between two batches and aged past a recomputed cutoff by the time the
+    /// second batch runs, keeps its FullContent, and both batch statements carry the same cutoff.
+    /// </summary>
+    [Test]
+    public async Task C1662_AuditCutoffStaysFixedAcrossBatches()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var old = Enumerable.Range(0, 2).Select(_ => Guid.NewGuid()).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var id in old)
+            {
+                seed.AuditRecords.Add(new AuditRecord
+                {
+                    Id = id, EventType = AuditEventType.LlmCall, ModelName = "test-model", Summary = "c1662",
+                    FullContent = """{"prompt":"c1662 old"}""", CreatedAt = DaysAgo(40),
+                });
+            }
+            await seed.SaveChangesAsync();
+        }
+
+        var late = Guid.NewGuid();
+        var insert = new C1662InsertAfterFirstArchive(plain, late);
+        var settings = new RetentionSettings { RowPruneBatchSize = 2, RowPruneMaxBatchesPerSweep = 10 };
+        var audit = new AuditSettings { RetentionDays = 14 };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(insert).Options))
+        {
+            result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        insert.Cutoffs.Count.ShouldBe(2, "a full first batch is followed by a second batch");
+        await using var verify = new AppDbContext(plain);
+        (await verify.AuditRecords.CountAsync(a => old.Contains(a.Id) && a.FullContent != null)).ShouldBe(0);
+        (await verify.AuditRecords.AsNoTracking().SingleAsync(a => a.Id == late)).FullContent
+            .ShouldNotBeNull("a record newer than the sweep's cutoff keeps its FullContent");
+        insert.Cutoffs.Distinct().Count().ShouldBe(1, "every batch of one sweep uses the same cutoff");
+        var progress = result.Passes!.Single(p => p.Pass == "AuditArchive");
+        progress.Status.ShouldBe(DataRetentionPassStatus.Completed);
+        progress.Progress.ShouldNotBeNull();
+        progress.Progress.Rows.ShouldBe(2);
+        progress.Progress.Batches.ShouldBe(2);
+    }
+
     [Test]
     public async Task RunOnce_archives_old_audit_FullContent_using_the_configured_window()
     {
@@ -3169,6 +3272,37 @@ public class DataRetentionServiceTests
             if (command.CommandText.Contains(marker, StringComparison.Ordinal))
                 Statements.Add(new Seen(result, command.CommandTimeout));
             return base.NonQueryExecutedAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1662 A-2. Records the cutoff of each audit archive batch. After the first batch, a
+    /// separate context inserts <c>late</c> dated 100 ms after that cutoff, then waits 250 ms so a
+    /// cutoff recomputed for the next batch would already be past it.
+    /// </summary>
+    private sealed class C1662InsertAfterFirstArchive(DbContextOptions<AppDbContext> options, Guid late) : DbCommandInterceptor
+    {
+        public List<DateTime> Cutoffs { get; } = [];
+
+        public override async ValueTask<int> NonQueryExecutedAsync(DbCommand command, CommandExecutedEventData eventData,
+            int result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("UPDATE \"AuditRecords\"", StringComparison.Ordinal))
+            {
+                Cutoffs.Add(command.Parameters.Cast<DbParameter>().Select(p => p.Value).OfType<DateTime>().Single());
+                if (Cutoffs.Count == 1)
+                {
+                    await using var other = new AppDbContext(options);
+                    other.AuditRecords.Add(new AuditRecord
+                    {
+                        Id = late, EventType = AuditEventType.LlmCall, ModelName = "test-model", Summary = "c1662 late",
+                        FullContent = """{"prompt":"c1662 late"}""", CreatedAt = Cutoffs[0].AddMilliseconds(100),
+                    });
+                    await other.SaveChangesAsync(cancellationToken);
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+                }
+            }
+            return await base.NonQueryExecutedAsync(command, eventData, result, cancellationToken);
         }
     }
 

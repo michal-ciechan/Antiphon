@@ -954,7 +954,10 @@ public sealed record DataRetentionBatchProgress(int Batches, int Rows, bool Comp
 /// batch cap stopped the scan; the next sweep resumes after <c>Cursor</c>.
 /// CARD-1658: <c>FailedAttempts</c> counts failed batch attempts, <c>SkippedRanges</c> the root ranges
 /// skipped after three consecutive failures, <c>BatchMilliseconds</c> each batch's wall time.
+/// CARD-1662: <c>FailureBudgetSpent</c> is true when <see cref="RetentionSettings.TaskPruneMaxFailedAttemptsPerSweep"/>
+/// stopped the scan for this sweep.
 /// </summary>
 public sealed record DataRetentionTaskPruneProgress(
     int Batches, int CandidateRoots, int Trees, int Rows, bool ScanComplete, Guid? Cursor,
-    int FailedAttempts = 0, int SkippedRanges = 0, IReadOnlyList<long>? BatchMilliseconds = null);
+    int FailedAttempts = 0, int SkippedRanges = 0, IReadOnlyList<long>? BatchMilliseconds = null,
+    bool FailureBudgetSpent = false);
