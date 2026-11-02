@@ -133,6 +133,7 @@ public class SessionCpuWatchdogTests
             var quietFor = DateTime.UtcNow + TimeSpan.FromSeconds(RealSustainedSeconds * 3);
             while (DateTime.UtcNow < quietFor)
             {
+                fixture.Runtime.Get(fixture.SessionId).Status.ShouldBe("Running", "an idle shell must survive every real sweep");
                 fixture.RealSample().ShouldNotBeNull("a quiet child must still be sampled, not skipped");
                 await watchdog.SweepOnceAsync(CancellationToken.None);
                 await Task.Delay(RealSweepInterval);
