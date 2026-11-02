@@ -145,8 +145,10 @@ public sealed class DelegateBranchDeliveryTests
         }
     }
 
+    // R5 (CARD-1638): 2x the one measured sample, 277.4s on Windows rc run d47848cc
+    // (92% of the old 300s). Provisional: n=1, no Linux sample retained.
     [Test]
-    [Timeout(300_000)]
+    [Timeout(555_000)]
     public async Task C1213_QueuedBranchRecovery(CancellationToken ct)
     {
         // trust lost ACK / recover with legacy ref -> enqueue-failure/lost-reply/recovered-ref fail.

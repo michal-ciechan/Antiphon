@@ -604,7 +604,12 @@ public sealed class VolumeRetirementReceiptTests
         errors.ShouldBeEmpty("J6 effect-boundary guards, bounded retries and complete attempt journal; " + string.Join(" | ", errors));
     }
 
+    // R5 (CARD-1638): 2x the slowest measured sample, 559.732s loaded (official run
+    // 20261031-173834-a268, see below). Passing Linux receipts before the Close matrix:
+    // 454.2s, 474.2s, 481.9s. Overrides the 600s class timeout for this method only.
+    // Provisional: n=4.
     [Test]
+    [Timeout(1_120_000)]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Journal_intents_and_partial_resume_are_exact()
     {
@@ -692,7 +697,7 @@ public sealed class VolumeRetirementReceiptTests
 
     // Official run 20261031-173834-a268 cancelled this child at 120s. The loaded
     // pre-close was about 440s (method 559.732s) and a second sample ended at
-    // 320.105s, so the close budget stays inside the 600s class timeout.
+    // 320.105s, so the close budget stays inside the 1120s method timeout.
     // One idle run printed C1609_CLOSE_ELAPSED_SECONDS=69.177 (n=1, provisional).
     // 150s stays above that sample and beside the loaded pre-close. The loaded
     // close duration is censored at 120s. Per-spawn pwsh 30s and bash 20s bounds
