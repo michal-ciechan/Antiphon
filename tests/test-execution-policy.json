@@ -876,6 +876,20 @@
         },
         {
           "suite": "session-runner",
+          "class": "C0824WorkspaceSlotProcessScanTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the workspace slot process scan reads /proc/*/cwd and /proc/*/fd of real children. The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C0824WorkspaceSlotNativeRehomeTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: a Unix 0555 directory makes the real git clean fail for the runner uid. The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
           "class": "Card1619LinuxStopIntentTests",
           "platform": "windows",
           "reason": "Linux-only by construction: runner stop routes launch /bin/sh and validate Linux /proc process identity and signals. The case remains required on Linux.",

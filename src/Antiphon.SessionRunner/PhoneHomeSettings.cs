@@ -44,6 +44,9 @@ public sealed class PhoneHomeSettings
         AllowedCloneSources, ProbeSecondaryRepositoryPushAccess);
     public string GrokHome { get; set; } = "/state/grok";
 
+    /// <summary>CARD-0824 S1: reusable workspace slots instead of per-task mirrors. Off by default.</summary>
+    public PhoneHomeWorkspaceSlotSettings WorkspaceSlots { get; set; } = new();
+
     /// <summary>
     /// CARD-0628 D-6: Claude Code's <c>CLAUDE_CONFIG_DIR</c> on the runner, the store the auth probe
     /// inspects. The same value as the server's <c>PhoneHomeRunner:ChildClaudeHome</c> and the

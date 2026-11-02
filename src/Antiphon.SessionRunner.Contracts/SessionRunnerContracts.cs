@@ -147,6 +147,9 @@ public static class RunnerCapabilityFeatures
     public const string WorkspaceCardBranchV1 = "workspaceCardBranchV1";
     public const string WorkspacePublishV1 = "workspacePublishV1";
     public const string WorkspaceParkV1 = "workspaceParkV1";
+
+    /// <summary>CARD-0824 S1: this runner leases reusable workspace slots (its flag is on).</summary>
+    public const string WorkspaceSlotV1 = "workspaceSlotV1";
     public const string WorkspaceRepositoryIdentityV1 = "workspaceRepositoryIdentityV1";
     public const string WorkspaceParkSourceModesV1 = "workspaceParkSourceModesV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";

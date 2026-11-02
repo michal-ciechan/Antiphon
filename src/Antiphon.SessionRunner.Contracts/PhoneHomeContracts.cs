@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Antiphon.SessionRunner.Contracts;
 
@@ -126,6 +127,15 @@ public enum PhoneHomeOperation
 
     /// <summary>CARD-1032. Guarded removal of one bound ordinary mirror. Distinct from <see cref="WorkspaceRemove"/> and has no Force.</summary>
     CompletedCardWorkspaceRemove = 41,
+
+    /// <summary>CARD-0824 S1. Release one leased workspace slot by (slot, generation, task).</summary>
+    WorkspaceSlotRelease = 42,
+
+    /// <summary>CARD-0824 S1. Operator or pre-rc cold reset of named slots or all; leased slots only pend.</summary>
+    WorkspaceSlotColdReset = 43,
+
+    /// <summary>CARD-0824 S1. Operator exit of one quarantined slot directory.</summary>
+    WorkspaceSlotQuarantineRelease = 44,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>
@@ -248,16 +258,26 @@ public sealed record PhoneHomeWorkspaceMirrorBinding(
     string? SourceFullRef = null,
     string? RequestedStateRoot = null);
 
+/// <summary>
+/// CARD-0824 S1: <paramref name="Slot"/> asks a <see cref="RunnerCapabilityFeatures.WorkspaceSlotV1"/>
+/// runner for a reusable workspace slot instead of a task-&lt;id&gt; mirror; <paramref name="Cold"/> asks
+/// that lease to wipe native build output too. Both are omitted from the wire when null, so a
+/// flag-off request is byte-identical to the legacy shape.
+/// </summary>
 public sealed record PhoneHomeWorkspaceMirrorRequest(
     string Branch,
     string Sha,
     string Name,
     string? Repository = null,
-    PhoneHomeWorkspaceMirrorBinding? Binding = null);
+    PhoneHomeWorkspaceMirrorBinding? Binding = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Slot = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Cold = null);
 
 public sealed record PhoneHomeWorkspaceMirrorResponse(
     string Path,
-    CompletedCardWorkspaceBinding? Binding = null);
+    CompletedCardWorkspaceBinding? Binding = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SlotId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Generation = null);
 
 /// <summary>
 /// CARD-1032. Fail-closed wire check for mirror create. A missing or null binding is the legacy
@@ -268,7 +288,7 @@ public static class PhoneHomeWorkspaceMirrorContract
 {
     private static readonly HashSet<string> RequestRoot = new(StringComparer.Ordinal)
     {
-        "branch", "sha", "name", "repository", "binding",
+        "branch", "sha", "name", "repository", "binding", "slot", "cold",
     };
 
     private static readonly HashSet<string> RequestBinding = new(StringComparer.Ordinal)
@@ -278,7 +298,7 @@ public static class PhoneHomeWorkspaceMirrorContract
 
     private static readonly HashSet<string> ResponseRoot = new(StringComparer.Ordinal)
     {
-        "path", "binding",
+        "path", "binding", "slotId", "generation",
     };
 
     private static readonly HashSet<string> ResponseBinding = new(StringComparer.Ordinal)
