@@ -437,7 +437,7 @@ public sealed class RepositoryMutationLeaseTests
 
         var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
         var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
-        var record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path))!;
+        var record = (await RepositoryChildJournalReader.ReadAsync(path))!;
         record.ProcessId.ShouldBe(child.Id);
         (record.Completed || record.StartTicks is not null)
             .ShouldBeTrue("the child is identified by its start identity or recorded as completed");
@@ -611,7 +611,7 @@ public sealed class RepositoryMutationLeaseTests
                 if (Directory.Exists(directory))
                 {
                     var path = Directory.EnumerateFiles(directory, "*.json").SingleOrDefault();
-                    if (path is not null) record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path));
+                    if (path is not null) record = await RepositoryChildJournalReader.ReadAsync(path);
                 }
                 if (record?.ProcessId is null) await Task.Delay(50, budget.Token);
             }

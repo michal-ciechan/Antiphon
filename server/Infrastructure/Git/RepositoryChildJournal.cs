@@ -157,8 +157,34 @@ internal sealed class RepositoryChildJournal
             stream.Flush(true);
         }
         if (BeforeReplaceForTests is { } beforeReplace) await beforeReplace(temporary);
-        _replaceRecord(temporary, _path);
+        // Windows denies replacing a file another handle holds open (a fence reader, the inspector,
+        // a scanner), even one that shares Delete. Retry for the cleanup allowance, then fail loudly
+        // with the prior record intact; the replace is atomic, so the fence is never lost.
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                _replaceRecord(temporary, _path);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (elapsed.Elapsed < ReplaceRetryAllowance)
+                {
+                    await Task.Delay(ReplaceRetryInterval, CancellationToken.None);
+                    continue;
+                }
+                try { File.Delete(temporary); }
+                catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+                Console.Error.WriteLine($"repository_child_journal_save_failed path={_path}");
+                throw new IOException("repository_child_journal_save_failed; the prior record still fences admission", ex);
+            }
+        }
     }
+
+    private static readonly TimeSpan ReplaceRetryAllowance = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan ReplaceRetryInterval = TimeSpan.FromMilliseconds(50);
 
     /// <summary>Reader-side purposes that do not fence while the recorded process is alive.</summary>
     internal static readonly IReadOnlySet<string> LiveNonFencingPurposes = new HashSet<string>(StringComparer.Ordinal)
