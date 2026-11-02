@@ -116,6 +116,13 @@ public static class SessionRunnerCatalogue
             directory.CodexCliEvidenceNow);
     }
 
+    /// <summary>
+    /// CARD-1663: why an ineligible runner is unavailable. The catalogue and the Hosts card
+    /// (HostStatsPollService) share it, so a retired or draining runner reads as such, not as stale.
+    /// </summary>
+    public static string IneligibleReason(bool stale, bool draining, bool retired) =>
+        retired ? "retired" : draining ? "draining" : stale ? "stale" : "unavailable";
+
     private static SessionRunnerCatalogueEntryDto Row(
         RunnerDescriptor? described,
         string id,
@@ -129,13 +136,9 @@ public static class SessionRunnerCatalogue
     {
         var available = described?.Available == true;
         var eligible = described?.DispatchEligible == true;
-        // CARD-1663: a retired or draining runner reads as such, not as stale.
-        string? reason = eligible && draining
-            ? "draining"
-            : eligible ? null
-            : retired ? "retired"
-            : draining ? "draining"
-            : described?.Stale == true ? "stale" : "unavailable";
+        string? reason = eligible
+            ? draining ? "draining" : null
+            : IneligibleReason(described?.Stale == true, draining, retired);
         return new SessionRunnerCatalogueEntryDto(
             id,
             name,

@@ -140,10 +140,14 @@ public sealed class HostStatsPollService : BackgroundService
             _logger.LogDebug(ex, "Host stats descriptor failed for {HostId}", id);
         }
         var desktop = id == RunnerPlatformWire.DesktopId;
+        var eligible = desktop || descriptor?.DispatchEligible == true;
+        // CARD-1663: an ineligible runner reads the directory state, so a retired runner is not stale.
+        var state = eligible ? null : _directory.DrainState(id);
         return new SessionRunnerCatalogueEntryDto(id, descriptor?.DisplayName ?? id,
             descriptor?.Platform, descriptor?.PlatformObservedAt,
-            desktop || descriptor?.Available == true, desktop || descriptor?.DispatchEligible == true,
-            descriptor?.Stale == true ? "stale" : "unavailable",
+            desktop || descriptor?.Available == true, eligible,
+            SessionRunnerCatalogue.IneligibleReason(descriptor?.Stale == true,
+                state is { Draining: true }, state?.RetiredAt is not null),
             desktop ? _desktopCapacity : descriptor?.Capacity, null,
             desktop ? "delegatedTasks" : "sessions", null, descriptor?.Stale == true,
             descriptor?.Capabilities?.Features ?? []);
