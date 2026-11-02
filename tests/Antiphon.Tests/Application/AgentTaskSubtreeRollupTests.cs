@@ -145,10 +145,13 @@ public class AgentTaskSubtreeRollupTests
     }
 
     [Test]
-    public void Rollup_matches_the_parent_chain_walk_when_an_id_is_duplicated()
+    [Timeout(30_000)]
+    public async Task Rollup_matches_the_parent_chain_walk_when_an_id_is_duplicated(
+        CancellationToken cancellationToken)
     {
         // The primary key makes this unreachable from a database read. The old scan kept
         // walking the first stored row when a later row reused its id (CARD-1622 A-1).
+        // With A2 stored first, C -> A2 -> C is a cycle, so this walk is bounded too (CARD-1631).
         var shared = Guid.NewGuid();
         var xId = Guid.NewGuid();
         var x = Node(xId, xId, null, 100m, "X");
@@ -156,14 +159,14 @@ public class AgentTaskSubtreeRollupTests
         var c = Node(Guid.NewGuid(), xId, shared, 4m, "C");
         var a2 = Node(shared, xId, c.Id, 2m, "A2");
 
-        AssertDuplicateFamily(new List<AgentTask> { x, a1, a2, c }, x, a1, c);
-        AssertDuplicateFamily(new List<AgentTask> { x, a2, a1, c }, x, a2, c);
+        await AssertDuplicateFamily(new List<AgentTask> { x, a1, a2, c }, cancellationToken, x, a1, c);
+        await AssertDuplicateFamily(new List<AgentTask> { x, a2, a1, c }, cancellationToken, x, a2, c);
     }
 
-    private static void AssertDuplicateFamily(
-        List<AgentTask> family, params AgentTask[] uniqueRows)
+    private static async Task AssertDuplicateFamily(
+        List<AgentTask> family, CancellationToken cancellationToken, params AgentTask[] uniqueRows)
     {
-        var rollup = AgentTaskCostWalk.Rollup(family);
+        var rollup = await Bounded(() => AgentTaskCostWalk.Rollup(family), cancellationToken);
         foreach (var task in uniqueRows)
         {
             var expected = Legacy(task, family);
