@@ -38,7 +38,14 @@ public sealed class RollingProductionMountTests
         }
         foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" }) {
             var good = Observation(f, project); Add(project + ":valid", true, good);
-            cases(f, good, (key, success, input) => Add(project + ":" + key, success, input));
+            var temp = project.EndsWith("-temp", StringComparison.Ordinal);
+            cases(f, good, (key, success, input) => {
+                // CARD-1609 D-9 (91f3e7966): the temp target topology is the shipped catalog chosen
+                // from the owned containers, never the source Compose. A Compose-only mutation of
+                // the temp target therefore proves nothing and is not a temp vector.
+                if (temp && TargetComposeOnly(good, input)) return;
+                Add(project + ":" + key, success, input);
+            });
         }
         File.WriteAllText(Path.Combine(f.Root, "mount-vectors.json"), vectors.ToJsonString());
         var command = """
@@ -56,7 +63,9 @@ public sealed class RollingProductionMountTests
                     override="$(printf '%s' "$input" | jq -r '.gitOverride // empty')"
                     [ -z "$override" ] || GIT_IDENTITY_PATH="$override"
                     metadataFault="$(printf '%s' "$input"|jq -r '.metadataFault // empty')"
-                    if [ -n "$metadataFault" ];then sudo(){ [ "$1" = -n ] && shift;[ "$1" != "$metadataFault" ] || return 2;command "$@"; };fi
+                    # A host without usable sudo: every privileged metadata probe fails.
+                    if [ "$metadataFault" = no-sudo ];then sudo(){ return 1; }
+                    elif [ -n "$metadataFault" ];then sudo(){ [ "$1" = -n ] && shift;[ "$1" != "$metadataFault" ] || return 2;command "$@"; };fi
                     compose_host() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
                     compose_temp() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
                     c1008_compose_source() { :; }
@@ -70,6 +79,9 @@ public sealed class RollingProductionMountTests
                     model_code=0
                     if [ "$generation" = previous ]; then
                         model="$(c1008_previous_model "$C1008_PREVIOUS_SHA")" || model_code=$?
+                    elif [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                        # Same derivation as the production retire-temp path.
+                        model="$(c1609_temp_topology_model "$owned")" || model_code=$?
                     else
                         model="$(c1008_compose_model)" || model_code=$?
                     fi
@@ -148,7 +160,7 @@ public sealed class RollingProductionMountTests
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Bind_sources_are_canonical_and_typed() => Prove("c994-bind-proof", (f, good, add) => {
-        foreach (var variant in new[] { "source", "target", "rw", "missing", "extra", "directory-for-file", "symlink", "ancestor", "file-for-directory", "readlink", "stat", "provider-missing" }) {
+        foreach (var variant in new[] { "source", "target", "rw", "missing", "extra", "directory-for-file", "symlink", "ancestor", "file-for-directory", "readlink", "stat", "no-sudo", "provider-missing" }) {
             var bad = good.DeepClone().AsObject(); var mounts = bad["owned"]![0]!["Mounts"]!.AsArray();
             var bind = mounts.Single(x => x!["Destination"]!.GetValue<string>() == "/run/antiphon/gitconfig")!;
             switch (variant) {
@@ -159,6 +171,7 @@ public sealed class RollingProductionMountTests
                 case "extra": mounts.Add(new JsonObject { ["Type"]="bind", ["Source"]=f.Root, ["Destination"]="/foreign", ["RW"]=true }); break;
                 case "directory-for-file": File.Delete(f.Root + "/gitconfig"); Directory.CreateDirectory(f.Root + "/gitconfig"); break;
                 case "readlink": case "stat": bad["metadataFault"]=variant;break;
+                case "no-sudo": bad["metadataFault"]=variant;bad["expectDiagnosis"]="RecycleContainerStateUnknown";break;
                 case "provider-missing": mounts.Remove(mounts.Single(x=>x!["Destination"]!.GetValue<string>()=="/state/codex"));break;
                 case "file-for-directory":
                     var file=f.Root+"/not-directory";File.WriteAllText(file,"inert");bad["codexOverride"]=file;
@@ -505,6 +518,14 @@ public sealed class RollingProductionMountTests
             {{calls}}
             write_result true '' 0
             """;
+    }
+
+    private static bool TargetComposeOnly(JsonObject good, JsonObject input)
+    {
+        if ((input["generation"]?.GetValue<string>() ?? "target") != "target") return false;
+        var a = good.DeepClone().AsObject(); var b = input.DeepClone().AsObject();
+        foreach (var key in new[] { "model", "expectDiagnosis" }) { a.Remove(key); b.Remove(key); }
+        return JsonNode.DeepEquals(a, b);
     }
 
     private static JsonArray OwnedFrom(C1008HostFixture f, string project, JsonObject model)
