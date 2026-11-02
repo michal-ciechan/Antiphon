@@ -1179,13 +1179,13 @@ public sealed class RemoteWorkspacePreparerTests
 
         public static async Task<Rig> StartAsync(
             Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1,
-            Action<IServiceCollection>? configure = null)
+            Action<IServiceCollection>? configure = null, RunnerCapabilitiesDto? capabilities = null)
         {
             var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure };
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock);
             rig.Host.Capacity = capacity;
-            rig.Peer = await rig.Host.ConnectPeerAsync();
+            rig.Peer = await rig.Host.ConnectPeerAsync(capabilities: capabilities);
             rig.Live = await rig.Host.WaitLiveAsync();
             if (recovered)
                 rig.Host.Directory.MarkRecovered(rig.Live);

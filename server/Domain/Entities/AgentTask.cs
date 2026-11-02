@@ -270,6 +270,21 @@ public class AgentTask
     /// </summary>
     public string? RemoteWorktreeResidue { get; set; }
 
+    /// <summary>
+    /// CARD-0824 S1. The runner workspace slot (<c>ws-NN</c>) and lease generation this task leased.
+    /// Kept as history after the release clears <see cref="RemoteWorktreePath"/>; ownership compares
+    /// the pair, never the reused path.
+    /// </summary>
+    public string? RemoteWorkspaceSlotId { get; set; }
+
+    public int? RemoteWorkspaceSlotGeneration { get; set; }
+
+    /// <summary>CARD-0824 S1. When the server reconciler's release of the slot succeeded. Null while owed.</summary>
+    public DateTime? RemoteWorkspaceSlotReleasedAt { get; set; }
+
+    /// <summary>CARD-0824 S1 §3.12 (<c>delegate.ps1 -ColdWorkspace</c>). The slot lease also wipes native build output.</summary>
+    public bool WorkspaceColdReset { get; set; }
+
     /// <summary>Branch a Worktree task merges into. Defaults to the parent's branch; null leaves it for a human.</summary>
     public string? MergeTargetRef { get; set; }
 

@@ -6,7 +6,9 @@ namespace Antiphon.Server.Application.Dtos;
 public sealed record RemoteWorkspaceMirrorResult(
     string Path,
     CompletedCardWorkspaceBinding? Binding,
-    MirrorBindingExpectation? Expectation);
+    MirrorBindingExpectation? Expectation,
+    string? SlotId = null,
+    int? SlotGeneration = null);
 
 /// <summary>Facts committed before the mirror request. A returned binding must match them.</summary>
 public sealed record MirrorBindingExpectation(

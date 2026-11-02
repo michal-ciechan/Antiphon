@@ -26,6 +26,19 @@ public static class WorkspaceSlotCodes
     public const string Retired = "workspace_slot_retired";
     public const string EvidenceTruncated = "evidence_truncated";
 
+    /// <summary>Q-1: a Claude <c>--continue</c> resumes the newest conversation in the cwd, another lessee's in a slot.</summary>
+    public const string ContinueInSharedWorkspace = "continue_in_shared_workspace";
+
+    /// <summary>True when the last path segment is a slot directory (<c>ws-NN</c> or <c>ws-NN-dK</c>).</summary>
+    public static bool IsSlotPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        var leaf = path.Replace('\\', '/').TrimEnd('/');
+        leaf = leaf[(leaf.LastIndexOf('/') + 1)..];
+        return System.Text.RegularExpressions.Regex.IsMatch(leaf, "^ws-[0-9]{2,}(-d[0-9]+)?$");
+    }
+
     /// <summary>Formats the refusal message the server parses: <c>workspace_slot_unavailable:&lt;bound&gt;</c>.</summary>
     public static string UnavailableDetail(string bound) => Unavailable + ":" + bound;
 

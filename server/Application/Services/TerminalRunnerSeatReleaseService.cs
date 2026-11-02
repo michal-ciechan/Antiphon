@@ -1213,7 +1213,11 @@ public sealed class TerminalRunnerSeatReleaseService(
         return changed;
     }
 
-    private async Task<bool> AmbiguousOwnershipAsync(AgentTask task, CancellationToken ct)
+    private Task<bool> AmbiguousOwnershipAsync(AgentTask task, CancellationToken ct) =>
+        AmbiguousOwnershipAsync(db, task, ct);
+
+    /// <summary>Another live task names this task's desktop or runner checkout.</summary>
+    internal static async Task<bool> AmbiguousOwnershipAsync(AppDbContext db, AgentTask task, CancellationToken ct)
     {
         var path = task.WorktreePath;
         var remote = task.RemoteWorktreePath;

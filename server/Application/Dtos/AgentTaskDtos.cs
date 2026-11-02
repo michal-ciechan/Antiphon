@@ -220,7 +220,9 @@ public sealed record CreateAgentTaskRequest(
     /// </summary>
     RequiredPlatform? RequiredPlatform = null,
     string? WorktreeBaseTask = null,
-    bool FreshWorktree = false);
+    bool FreshWorktree = false,
+    /// <summary>CARD-0824 S1 (<c>delegate.ps1 -ColdWorkspace</c>): the workspace slot lease also wipes native build output.</summary>
+    bool WorkspaceColdReset = false);
 
 /// <summary>
 /// CARD-0544 D-3. A committed <c>docs/**/*.md</c> selection table: repository-relative path, full

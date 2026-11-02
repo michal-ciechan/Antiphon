@@ -95,6 +95,11 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$FreshWorktree,
 
+    # CARD-0824 S1. On a runner with workspace slots, the slot lease also wipes native build output
+    # (bin/, obj/, node_modules/, client/dist/). The default lease keeps it.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$ColdWorkspace,
+
     # CARD-0544. Ordinary-verification round for Code/Review only. Omitted means Final, the full
     # affected sweep. Interim is an explicit repair round: the card's role policy must permit it,
     # and it needs -VerificationSubject (original landing owner), -VerificationBaselineOutcome (a
@@ -1085,6 +1090,7 @@ switch ($PSCmdlet.ParameterSetName) {
             # CARD-0644 D-5: the default fresh Worktree is what a start ref needs; say so on the wire.
             $body['workspace'] = 'Worktree'
         }
+        if ($ColdWorkspace) { $body['workspaceColdReset'] = $true }
         if ($PSBoundParameters.ContainsKey('BaseTask') -or $FreshWorktree) {
             if ($PSBoundParameters.ContainsKey('BaseTask') -and [string]::IsNullOrWhiteSpace($BaseTask)) {
                 Write-Error 'worktree_base_source_invalid: -BaseTask needs a task id or 8-character short id.'
