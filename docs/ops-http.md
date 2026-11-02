@@ -405,9 +405,12 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   unless the task is bound to that runner, slot and generation, its release is not yet recorded, the task is not
   Dispatched, Working or Blocked (`workspace_slot_release_task_live`) and the stuck record exists for the task's
   current attempt (`workspace_slot_release_attempt_mismatch` when it names another attempt: a reset runner may
-  have leased the same slot and generation again; CARD-1649 A-1). The optional `requester` (default
-  `operator`, at most 64 printable characters, never the token) is recorded in the audit event (A-2). Nothing is
-  sent to the runner; a held drain rebind moves on the next tick.
+  have leased the same slot and generation again; CARD-1649 A-1). The stamp is one conditional update with the
+  audit event (CARD-1656 A-1): a task that changes after the checks is refused `workspace_slot_release_task_live`
+  when it went Dispatched, Working or Blocked, else `workspace_slot_release_changed`. The optional `requester`
+  (default `operator`, at most 64 characters, none of them a control, format, line or paragraph separator
+  character, and never the token in any letter case; CARD-1656 A-3, A-4) is recorded in the audit event (A-2).
+  Nothing is sent to the runner; a held drain rebind moves on the next tick.
 - Runner phone-home operations (no HTTP route on the runner yet): `WorkspaceSlotRelease`
   (`{slotId, generation, taskId}`; `slot_generation_mismatch` and `slot_task_mismatch` refuse),
   `WorkspaceSlotColdReset` and `WorkspaceSlotQuarantineRelease`. The `GET /sessions/workspace-slots`
