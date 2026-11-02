@@ -44,7 +44,8 @@ internal sealed record KillPlan(IReadOnlyList<PlannedKill> Kills, string? BlockR
 /// The sealed list is signalled first. After those processes are reaped, one
 /// later read accepts a process that was not in that seal, whose parent was
 /// signalled, and whose start is at or after that parent's. A process
-/// reparented outside the signalled set is left alone.
+/// reparented outside the signalled set is left alone, and so are the children
+/// of a signalled pid whose row now shows a different start time.
 /// </summary>
 internal static class OwnedProcessTree
 {
@@ -265,7 +266,10 @@ internal static class OwnedProcessTree
                 snapshotted,
                 serverPid,
                 ownerPid,
-                accepted.Count);
+                accepted.Count,
+                out var strangers);
+            foreach (var pid in strangers)
+                log(KillFailed(pid, "parent_identity_mismatch"));
         }
 
         var followSignalled = followers.Count == 0
@@ -425,8 +429,8 @@ internal static class OwnedProcessTree
             if (retained[i].Pid != pid) continue;
             return retained[i].Process.WaitForExit(remainingMilliseconds);
         }
-        // No handle: the pid was already gone when the tick check ran.
-        return true;
+        // No handle: whether the pid exited cannot be told, so count it alive and keep the journal.
+        return false;
     }
 
     private static List<int> Signal(
@@ -492,22 +496,28 @@ internal static class OwnedProcessTree
     }
 
     /// <summary>One pass over processes that were not in the sealed snapshots.
-    /// The parent must be a pid this wave signalled, and the start must be at or after that parent's.</summary>
+    /// The parent must be a pid this wave signalled, and the start must be at or after that parent's.
+    /// A signalled pid whose row now has a different start time is a stranger: its children are
+    /// not walked and it is returned in <paramref name="strangers"/>.</summary>
     private static List<PlannedKill> PlanLateChildren(
         IReadOnlyList<ProcessTableRow> table,
         IReadOnlyDictionary<int, long> signalledTicks,
         HashSet<int> snapshotted,
         int serverPid,
         int ownerPid,
-        int alreadyAccepted)
+        int alreadyAccepted,
+        out List<int> strangers)
     {
+        strangers = [];
         var kills = new List<PlannedKill>();
         if (signalledTicks.Count == 0 || alreadyAccepted >= MaxDescendants) return kills;
 
+        var liveTicks = new Dictionary<int, long?>();
         var children = new Dictionary<int, List<ProcessTableRow>>();
         foreach (var row in table)
         {
             if (row.Pid <= 1 || row.Pid == row.ParentPid) continue;
+            liveTicks[row.Pid] = row.StartTicks;
             if (!children.TryGetValue(row.ParentPid, out var list))
                 children[row.ParentPid] = list = new List<ProcessTableRow>();
             list.Add(row);
@@ -524,6 +534,16 @@ internal static class OwnedProcessTree
         {
             if (!children.TryGetValue(parentPid, out var list)) continue;
             var parentTicks = signalledTicks[parentPid];
+            // The same guard as the root check in Plan: a different start time means the pid
+            // was reused. A missing or unreadable row is not a stranger: Windows orphans keep
+            // the dead pid as their parent, and the recorded ticks still identify the edge.
+            if (liveTicks.TryGetValue(parentPid, out var live)
+                && live is long liveParent
+                && liveParent != parentTicks)
+            {
+                strangers.Add(parentPid);
+                continue;
+            }
             foreach (var child in list)
             {
                 if (child.Pid == serverPid || child.Pid == ownerPid) continue;
