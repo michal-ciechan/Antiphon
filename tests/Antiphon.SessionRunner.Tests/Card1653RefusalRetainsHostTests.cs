@@ -14,7 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(15_000)]
+[Timeout(10_000)]
 public class Card1653RefusalRetainsHostTests
 {
     private const string MismatchToken = "pty_host_identity_mismatch";
