@@ -10,7 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-3 (linux-native). The real /proc scan defers a release, then quarantines.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotProcessScanTests
 {
     [Test]

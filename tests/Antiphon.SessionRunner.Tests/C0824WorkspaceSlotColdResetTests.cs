@@ -9,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-9. Cold resets only when asked or scheduled, and never on a leased slot.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotColdResetTests
 {
     private static readonly string[] Native = ["src/P/bin/Debug/a.dll", "src/P/obj/project.assets.json", "node_modules/x/i", "client/dist/i.js"];

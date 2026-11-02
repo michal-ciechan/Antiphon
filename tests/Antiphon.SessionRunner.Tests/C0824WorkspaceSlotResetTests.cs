@@ -9,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-1. Lease to the exact tree, the warm keep-list, and the Free slot shape.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(30_000)]
+[Timeout(10_000)]
 public sealed class C0824WorkspaceSlotResetTests
 {
     [Test]
