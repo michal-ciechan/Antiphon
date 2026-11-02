@@ -129,9 +129,13 @@ public static class SessionRunnerCatalogue
     {
         var available = described?.Available == true;
         var eligible = described?.DispatchEligible == true;
+        // CARD-1663: a retired or draining runner reads as such, not as stale.
         string? reason = eligible && draining
             ? "draining"
-            : eligible ? null : described?.Stale == true ? "stale" : "unavailable";
+            : eligible ? null
+            : retired ? "retired"
+            : draining ? "draining"
+            : described?.Stale == true ? "stale" : "unavailable";
         return new SessionRunnerCatalogueEntryDto(
             id,
             name,
