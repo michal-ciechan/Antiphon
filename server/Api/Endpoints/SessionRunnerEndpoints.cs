@@ -189,11 +189,11 @@ public static class SessionRunnerEndpoints
             var reason = body.Reason?.Trim() ?? "";
             if (reason.Length is < 1 or > RunnerStateService.MaxReasonLength)
                 throw new BadRequestException("Give a reason of 1 to 200 characters.");
-            // CARD-1649 A-2. The audit names who recorded the release: bounded, printable and never the operator token.
+            // CARD-1649 A-2. The audit names who recorded the release: bounded, printable and never the operator token
+            // (CARD-1656 A-3, A-4: no format or separator characters, and the token in no letter case).
             var requester = string.IsNullOrWhiteSpace(body.Requester) ? "operator" : body.Requester.Trim();
             var presented = http.Request.Headers[OperatorTokenFile.Header].ToString();
-            if (requester.Length > WorkspaceSlotReleaseService.MaxRequesterLength || requester.Any(char.IsControl)
-                || (presented.Length > 0 && requester.Contains(presented, StringComparison.Ordinal)))
+            if (!WorkspaceSlotReleaseService.IsAcceptableRequester(requester, presented))
                 throw new BadRequestException(
                     $"Give a requester of at most {WorkspaceSlotReleaseService.MaxRequesterLength} printable characters that is not a credential.");
             await WorkspaceSlotReleaseService.RecordOperatorReleaseAsync(

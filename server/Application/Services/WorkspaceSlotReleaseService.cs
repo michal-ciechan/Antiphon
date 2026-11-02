@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -34,6 +36,8 @@ public sealed class WorkspaceSlotReleaseService(
     internal const int MaxRequesterLength = 64;
     internal const string AttemptMismatchCode = "workspace_slot_release_attempt_mismatch";
     internal const string TaskLiveCode = "workspace_slot_release_task_live";
+    /// <summary>CARD-1656 A-1. The task changed between the checks and the conditional stamp.</summary>
+    internal const string ChangedCode = "workspace_slot_release_changed";
     /// <summary>CARD-1649 A-1. A task in one of these states holds its lease; its release is never recorded.</summary>
     private static readonly AgentTaskStatus[] HoldingLease = [AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
     private static readonly AgentTaskStatus[] Live =
@@ -154,12 +158,25 @@ public sealed class WorkspaceSlotReleaseService(
         $"/api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release";
 
     /// <summary>
+    /// CARD-1649 A-2. The requester the operator route records: at most <see cref="MaxRequesterLength"/> characters,
+    /// none of them a control, format, line separator or paragraph separator character (CARD-1656 A-3: the label is
+    /// written into the audit event and the log line), and never holding the presented operator token in any letter
+    /// case (A-4: the token is hex, so an upper-case copy is the same credential).
+    /// </summary>
+    internal static bool IsAcceptableRequester(string requester, string presentedToken) =>
+        requester.Length <= MaxRequesterLength
+        && !requester.EnumerateRunes().Any(rune => Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control
+            or UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator)
+        && (presentedToken.Length == 0 || !requester.Contains(presentedToken, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Review f4c293bc D-1. The operator's way out of <see cref="WorkspaceSlotCodes.ReleaseStuck"/>: stamps
     /// <see cref="AgentTask.RemoteWorkspaceSlotReleasedAt"/> for the task's current slot and generation on the runner it
     /// is bound to, only after the bounded <see cref="WorkspaceSlotCodes.UnknownSlot"/> attempts recorded the stuck
     /// state for the task's current attempt, and never while the task is Dispatched, Working or Blocked (CARD-1649 A-1:
     /// a reset runner may have leased the same slot and generation to a new attempt). Anything else is a refusal; nothing
-    /// is sent to a runner and no directory is touched. The audit event names the requester (A-2).
+    /// is sent to a runner and no directory is touched. The audit event names the requester (A-2). The stamp is one
+    /// conditional update in the audit event's transaction (CARD-1656 A-1), so a task that changes after the checks keeps its lease.
     /// </summary>
     internal static async Task RecordOperatorReleaseAsync(
         AppDbContext db, TimeProvider clock, string runnerId, string slotId, Guid taskId, int generation, string reason,
@@ -192,9 +209,29 @@ public sealed class WorkspaceSlotReleaseService(
             throw new ConflictException(
                 $"{SlotText(task)} is not {WorkspaceSlotCodes.ReleaseStuck}; release it on its runner.", "workspace_slot_release_not_stuck");
         }
+        // CARD-1656 A-1. The checks above read the task; the stamp lands only if the row still matches them, in one
+        // conditional update with the audit event in the same transaction. A task that went Dispatched, Working or
+        // Blocked (or changed attempt, binding or release) since is refused and keeps its lease.
         var now = clock.GetUtcNow().UtcDateTime;
-        task.RemoteWorkspaceSlotReleasedAt = now;
-        task.RemoteWorktreePath = null;
+        var attempt = task.Attempt;
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var stamped = await db.AgentTasks
+            .Where(t => t.Id == taskId && t.Attempt == attempt && t.RunnerId == runnerId && t.RemoteWorkspaceSlotId == slotId
+                && (t.RemoteWorkspaceSlotGeneration ?? 0) == generation && t.RemoteWorkspaceSlotReleasedAt == null
+                && !HoldingLease.Contains(t.Status))
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(t => t.RemoteWorkspaceSlotReleasedAt, now)
+                .SetProperty(t => t.RemoteWorktreePath, (string?)null), ct);
+        if (stamped != 1)
+        {
+            var current = await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId).Select(t => t.Status).SingleAsync(ct);
+            throw HoldingLease.Contains(current)
+                ? new ConflictException(
+                    $"Task {taskId} became {current} on runner '{runnerId}' while its release was recorded and holds {SlotText(task)}; "
+                    + "its release is never recorded.", TaskLiveCode)
+                : new ConflictException(
+                    $"Task {taskId} changed while the release of {SlotText(task)} was recorded; read it again.", ChangedCode);
+        }
         db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
@@ -204,6 +241,8 @@ public sealed class WorkspaceSlotReleaseService(
             At = now,
         });
         await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
     }
 
     internal async Task<bool> EligibleAsync(AgentTask task, CancellationToken ct)
