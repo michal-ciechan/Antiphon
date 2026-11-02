@@ -42,8 +42,8 @@ public sealed class C1656RecordReleaseHardeningTests
 
         foreach (var (requester, name) in new[]
                  {
-                     ("op\u0007x", "control"), ("op x", "line separator"), ("op x", "paragraph separator"),
-                     ("op‮x", "right-to-left override"), ("op​x", "zero width space"), ("op\U000E0041x", "astral tag"),
+                     ("op\u0007x", "control"), ("op\u2028x", "line separator"), ("op\u2029x", "paragraph separator"),
+                     ("op\u202Ex", "right-to-left override"), ("op\u200Bx", "zero width space"), ("op\U000E0041x", "astral tag"),
                  })
         {
             using var refused = await host.PostOperatorAsync(Route, Body(requester), token);
