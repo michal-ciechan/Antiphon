@@ -144,7 +144,7 @@ public class TranscriptAdoptionSafetyTests
         var childStart = DateTime.UtcNow;
         var tied = childStart.AddHours(-1);
         var stale = new List<string>();
-        for (var i = 0; i < 6; i++)
+        for (var i = 0; i < 12; i++)
         {
             var file = tree.NewTranscript();
             await tree.AppendAsync(file, UserLine($"stale-{i}", tree.Cwd, "a prior session", tied));
