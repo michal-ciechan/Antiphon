@@ -435,6 +435,8 @@ export interface AgentTaskDetailDto {
   } | null
   /** CARD-1610. Present while a Working session is held at its ceiling awaiting Continue/Extend. */
   ceilingHold?: CeilingHoldDto | null
+  /** CARD-1610 S4a. The declared and the dispatch-resolved ceiling. */
+  ceilingBudget?: CeilingBudgetDto | null
   /** CARD-1610. Newest 32 supervision notices for this task, any attempt. */
   supervisionNotices?: TaskSupervisionNoticeDto[]
 }
@@ -455,6 +457,26 @@ export interface CeilingHoldDto {
   phaseDeadlineAt: string | null
   capReached: boolean
   question: string
+}
+
+/** CARD-1610 S4a. Resolved fields stay null until dispatch; Retry clears them. */
+export interface CeilingBudgetDto {
+  requestedMinutes: number | null
+  requestedReason: string | null
+  resolvedMinutes: number | null
+  resolvedSource: string | null
+  nextCeilingMinutes: number | null
+  absoluteCapMinutes: number
+}
+
+export type CeilingAction = 'Continue' | 'Extend'
+
+/** CARD-1610 S4a. The exclusive typed body: never a message, origin or round. */
+export interface CeilingDecision {
+  id: string
+  ceilingAction: CeilingAction
+  episodeId: string
+  extendMinutes?: number
 }
 
 /** CARD-1610. One supervision notice row; reportLink is a transcript route, never report text. */
@@ -942,6 +964,13 @@ export function useReplyToAgentTask() {
         origin: origin ?? 'Web',
         ...(round != null ? { round } : {}),
       }),
+  )
+}
+
+/** CARD-1610 S4a: answer a ceiling hold. Not yet wired. */
+export function useCeilingDecision() {
+  return useTaskMutation(
+    (_decision: CeilingDecision): Promise<AgentTaskSummaryDto> => Promise.reject(new Error('not implemented')),
   )
 }
 

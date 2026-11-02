@@ -100,6 +100,8 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests),
         typeof(AgentTaskLandHalfResetWindowsTests),
         typeof(AgentTaskLandHoldVisibilityTests),
+        // CARD-1610 S4a: runs scripts/delegate.ps1 under pwsh per case.
+        typeof(TaskCeilingScriptTests),
     ];
 
     // CARD-1421 Appendix B: strict-roster classes whose only children are git, in fixture-owned repositories.
