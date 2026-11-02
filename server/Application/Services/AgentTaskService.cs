@@ -1875,16 +1875,21 @@ public sealed class AgentTaskService
 
         basePreview = _baseResolver is null ? null
             : await _baseResolver.ResolveAsync(task, ct);
-        // CARD-1640: a same-card source this repository cannot read is fetched from origin here, before
-        // any lock (dispatch never fetches); one still unreadable refuses rather than start from the target.
+        // CARD-1640: a same-card source this repository cannot read (no local branch, and no tracking
+        // tip proven current) is fetched from origin here, before any lock (dispatch never fetches).
+        // The fetched tips are trusted and recorded in the preview; one still unreadable refuses
+        // rather than start from the target.
         var fetchFailures = new List<string>();
         if (basePreview is { Reason: "source_unreadable", UnreadableBranches: { Count: > 0 } unreadable }
             && fetchUnreadable && _startRefs is not null && task.RepoPath is not null)
         {
+            var fetched = new HashSet<string>(StringComparer.Ordinal);
             foreach (var branch in unreadable)
                 if (await _startRefs.TryFetchSourceBranchAsync(task.RepoPath, branch, ct) is { } why)
                     fetchFailures.Add($"Fetching {branch}: {why}.");
-            basePreview = await _baseResolver!.ResolveAsync(task, ct);
+                else
+                    fetched.Add(branch);
+            basePreview = await _baseResolver!.ResolveAsync(task, null, ct, fetched);
         }
         if (basePreview?.Decision == CardWorktreeBaseDecision.Ambiguous)
             throw new ConflictException(
