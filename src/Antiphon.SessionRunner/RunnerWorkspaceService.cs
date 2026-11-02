@@ -106,6 +106,9 @@ public sealed partial class RunnerWorkspaceService
     public async Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
     {
+        // CARD-0824 S1: a slot lease never names a task-<id> directory, so it skips the per-path gate.
+        if (request.Slot == true)
+            return await MirrorSlotAsync(request, ct);
         // Keep the name guard before path construction for bound and legacy requests.
         if (!NamePattern.IsMatch(request.Name ?? ""))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
