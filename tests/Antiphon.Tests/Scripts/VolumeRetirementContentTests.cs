@@ -858,29 +858,31 @@ public sealed class VolumeRetirementContentTests
             .ShouldBeTrue("c1665: the temp content audit, which arms the inner EXIT trap, ran");
     }
 
-    // CARD-1665 (review 88cb4849 A-3). When temp containers were removed, the temp apply
-    // repeats the read-only content audit after removal and compares it with the first.
-    // C1364 pins the no-container case (one scan); this pins the removed-container case.
+    // CARD-1665 (review 88cb4849 A-3). The temp apply's post-removal content audit is
+    // conditional on removed containers, but a temp recycle never removes one: binding the
+    // generation refuses any present owned temp container (that cleanup is the separate
+    // exact-ID retire-temp-containers phase) before the lock, any stop or any audit.
+    // C1364 pins the reachable case (no container, one scan); this pins the other branch shut.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task Temp_post_removal_audit_runs_when_containers_were_removed()
+    public async Task Temp_recycle_refuses_a_present_owned_container_before_any_audit()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
         using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        fixture.ReloadDocker();
         fixture.Statuses["server2-temp"]!["runnerSessions"] = 0;
         fixture.Docker["containers"]!.AsArray().Add(
             fixture.Container('7', "antiphon-runner-temp", "session-runner", running: false));
-        await VolumeRetirementFixture.ReadyPreview(fixture);
         var traceBefore = fixture.Trace.Length;
         var run = await fixture.Run("retire-temp-runner");
-        run.Exit.ShouldBe(0, "c1665-a3: temp apply with an exited owned container completes; " + run.Output);
+        run.Exit.ShouldBe(2, "c1665-a3: a present owned temp container refuses; " + run.Output);
+        run.Output.ShouldContain("DIAGNOSIS=RecycleContainerStateUnknown");
         var observed = fixture.Trace.Skip(traceBefore).ToArray();
-        observed.Count(a => a[0] == "rm" && a.Last() == new string('7', 64))
-            .ShouldBe(1, "c1665-a3: the owned temp container was removed; " + run.Output);
-        var scans = observed.Where(a => a[0] == "run" && a.Any(x =>
-            x.StartsWith("io.antiphon.preview-audit=c100800000000000000000000000000000001:", StringComparison.Ordinal))).ToArray();
-        scans.Length.ShouldBe(2, "c1665-a3: the content audit ran before and again after container removal; " + run.Output);
-        scans.All(a => a.Contains("--rm") && a.Contains("--read-only")).ShouldBeTrue("c1665-a3: both scans are read-only");
-        fixture.Removed.Length.ShouldBe(4, "c1665-a3: the matching post-removal audit admits every volume; " + run.Output);
+        observed.Count(a => a[0] == "run").ShouldBe(0, "c1665-a3: no content audit before the refusal; " + run.Output);
+        observed.Count(a => a[0] is "stop" or "rm" or "create" or "start").ShouldBe(0, "c1665-a3: no container effect");
+        fixture.Removed.ShouldBeEmpty("c1665-a3: no volume removed");
+        File.Exists(Path.Combine(fixture.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
+            .ShouldBeFalse("c1665-a3: the refusal precedes the recycle journal");
     }
 }
