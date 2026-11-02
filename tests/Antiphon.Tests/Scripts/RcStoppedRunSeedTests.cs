@@ -31,6 +31,8 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(180_000)] public Task RealPackerFailedMethodFollows(CancellationToken token) => Run(nameof(RealPackerFailedMethodFollows), token);
     [Test, Timeout(180_000)] public Task RealShapeFailedMethodBand(CancellationToken token) => Run(nameof(RealShapeFailedMethodBand), token);
     [Test, Timeout(180_000)] public Task SummaryPrefixTamper(CancellationToken token) => Run(nameof(SummaryPrefixTamper), token);
+    [Test, Timeout(120_000)] public Task UnfinishedRunLaneResume(CancellationToken token) => Run(nameof(UnfinishedRunLaneResume), token);
+    [Test, Timeout(180_000)] public Task SkipRowsCountAsCompleted(CancellationToken token) => Run(nameof(SkipRowsCountAsCompleted), token);
     [Test, Timeout(120_000)] public Task WindowsAncestorSwapRefused(CancellationToken token) => Run(nameof(WindowsAncestorSwapRefused), token);
 
     // Provisional: one measured export of a 3,300 + 1,700 file layout (see the harness detail).
