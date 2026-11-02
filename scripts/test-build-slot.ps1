@@ -828,7 +828,79 @@ exit $code
     Assert-C487 -Cond (Test-C1048Lease -Result $r) -Name 'C1048 Pwsh releases lease' -Detail ($r.Calls -join ' | ')
 }
 
-$script:C589ExpectedRows = 39 + 16 + 50 + $(if ($IsLinux) { 3 } else { 0 }) + $(if ($IsWindows) { 23 } else { 0 })
+# CARD-1629 step 1: -StableOutput prints the one stable OutputPath for this worktree's direct
+# (non-checkpoint) builds. It takes no lease and runs nothing. Each worktree is an owned
+# `git init` under the case root; GIT_CEILING_DIRECTORIES stops discovery at that root.
+function New-C1629Worktree {
+    param($Fx, [string]$Leaf)
+    $path = Join-Path $Fx.Root $Leaf
+    New-Item -ItemType Directory -Path (Join-Path $path 'tests') -Force | Out-Null
+    & git -C $path init -q 2>&1 | Out-Null
+    return $path
+}
+
+function Invoke-C1629StableOutput {
+    param($Fx, [string]$WorkingDirectory, [string[]]$Extra = @())
+    $savedCeiling = $env:GIT_CEILING_DIRECTORIES
+    $env:GIT_CEILING_DIRECTORIES = $Fx.Root
+    try {
+        $r = Invoke-C589Wrapper -Fx $Fx -WorkingDirectory $WorkingDirectory -WrapperArgs (@('-StableOutput') + $Extra)
+    } finally {
+        $env:GIT_CEILING_DIRECTORIES = $savedCeiling
+    }
+    $printed = @($r.Lines | Where-Object { $_ -ne '' })
+    $name = $(if ($r.Exit -eq 0 -and $printed.Count -eq 1) { [string]$printed[0] } else { '' })
+    return [pscustomobject]@{ Exit = $r.Exit; Name = $name; Text = $r.Text; Calls = $r.Calls }
+}
+
+function Test-C1629SafeName {
+    param([string]$Name)
+    return ($Name -cmatch '\Abin-[a-z0-9]+(-[a-z0-9]+)*/\z' -and -not [IO.Path]::IsPathRooted($Name) -and
+        $Name.IndexOf('\') -lt 0 -and $Name.IndexOf(' ') -lt 0 -and $Name.IndexOf('..') -lt 0)
+}
+
+function Test-C1629_StableOutputName {
+    $fx = New-C589Case -Name 'c1629-name'
+    $taskA = New-C1629Worktree -Fx $fx -Leaf 'task-ab12cd34'
+    $taskB = New-C1629Worktree -Fx $fx -Leaf 'card-task-EF56AB78'
+    $plainA = New-C1629Worktree -Fx $fx -Leaf 'scratch-one'
+    $plainB = New-C1629Worktree -Fx $fx -Leaf 'scratch-two'
+    $a1 = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $taskA
+    $a2 = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $taskA
+    $aSub = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory (Join-Path $taskA 'tests')
+    $b = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $taskB
+    $p1 = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $plainA
+    $p2 = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $plainA
+    $q = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $plainB
+    $all = @($a1, $a2, $aSub, $b, $p1, $p2, $q)
+    $detail = (@($all | ForEach-Object { 'exit={0} name={1} text={2}' -f $_.Exit, $_.Name, $_.Text }) -join ' || ')
+    Assert-C487 -Cond (@($all | Where-Object { $_.Exit -ne 0 -or -not $_.Name }).Count -eq 0) -Name 'C1629 StableOutputName prints one name and exits zero' -Detail $detail
+    Assert-C487 -Cond ($a1.Name -ceq 'bin-ab12cd34/' -and $b.Name -ceq 'bin-ef56ab78/') -Name 'C1629 StableOutputName a task worktree is named by its task id' -Detail $detail
+    Assert-C487 -Cond ($a1.Name -and $a1.Name -ceq $a2.Name -and $a1.Name -ceq $aSub.Name -and $p1.Name -and $p1.Name -ceq $p2.Name) -Name 'C1629 StableOutputName the same worktree gets the same name every time' -Detail $detail
+    $distinct = @(@($a1.Name, $b.Name, $p1.Name, $q.Name) | Where-Object { $_ } | Sort-Object -Unique -CaseSensitive)
+    Assert-C487 -Cond ($distinct.Count -eq 4) -Name 'C1629 StableOutputName different worktrees get different names' -Detail $detail
+    Assert-C487 -Cond (@($all | Where-Object { -not (Test-C1629SafeName -Name $_.Name) }).Count -eq 0) -Name 'C1629 StableOutputName is one relative bin- segment with a forward slash' -Detail $detail
+    $posts = @($all | ForEach-Object { @($_.Calls) } | Where-Object { $_ -like 'SLOT POST *' -or $_ -like 'CMD *' })
+    Assert-C487 -Cond ($posts.Count -eq 0) -Name 'C1629 StableOutputName takes no lease and runs nothing' -Detail ($posts -join ' | ')
+}
+
+function Test-C1629_StableOutputSuffixAndRefusals {
+    $fx = New-C589Case -Name 'c1629-suffix'
+    $task = New-C1629Worktree -Fx $fx -Leaf 'task-ab12cd34'
+    $plain = Join-Path $fx.Root 'not-a-repo'
+    New-Item -ItemType Directory -Path $plain -Force | Out-Null
+    $release = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $task -Extra @('-OutputSuffix', 'release')
+    $bad = @(foreach ($suffix in @('../up', 'Release', 'a/b', 'a\b', '')) { Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $task -Extra @('-OutputSuffix', $suffix) })
+    $withCommand = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $task -Extra @('--', 'dotnet', 'build')
+    $outside = Invoke-C1629StableOutput -Fx $fx -WorkingDirectory $plain
+    $detail = (@(@($release, $withCommand, $outside) + $bad | ForEach-Object { 'exit={0} name={1} text={2}' -f $_.Exit, $_.Name, $_.Text }) -join ' || ')
+    Assert-C487 -Cond ($release.Exit -eq 0 -and $release.Name -ceq 'bin-ab12cd34-release/' -and (Test-C1629SafeName -Name $release.Name)) -Name 'C1629 StableOutputSuffix a configuration suffix gets its own stable name' -Detail $detail
+    Assert-C487 -Cond (@($bad | Where-Object { $_.Exit -ne 2 -or $_.Name }).Count -eq 0) -Name 'C1629 StableOutputSuffix an unsafe or empty suffix exits 2 and prints no name' -Detail $detail
+    Assert-C487 -Cond ($withCommand.Exit -eq 2 -and @($withCommand.Calls | Where-Object { $_ -like 'CMD *' -or $_ -like 'SLOT POST *' }).Count -eq 0) -Name 'C1629 StableOutputSuffix a command after -StableOutput exits 2 and runs nothing' -Detail $detail
+    Assert-C487 -Cond ($outside.Exit -eq 2 -and -not $outside.Name) -Name 'C1629 StableOutputSuffix outside a git worktree exits 2' -Detail $detail
+}
+
+$script:C589ExpectedRows = 39 + 16 + 50 + 10 + $(if ($IsLinux) { 3 } else { 0 }) + $(if ($IsWindows) { 23 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }
@@ -842,6 +914,7 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C800_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C845_')) { & $fn }
+    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C1629_')) { & $fn }
     if ($IsWindows) { foreach ($fn in (Get-C487CaseFunctions -Prefix 'C1048_')) { & $fn } }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'build-slot-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
