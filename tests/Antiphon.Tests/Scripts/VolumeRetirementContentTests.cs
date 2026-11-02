@@ -829,4 +829,32 @@ public sealed class VolumeRetirementContentTests
         }
         File.WriteAllText(Path.Combine(dir, operation + ".json"), copy.ToJsonString());
     }
+
+    // CARD-1665. C1008HostFixture runs a caller's setup once, at the script's top-level
+    // EXIT trap. The temp content audit arms and restores its own EXIT traps mid-run;
+    // re-running the setup there would wrap this renamed write_result around its own
+    // wrapper, so the final result would recurse instead of being written once.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Fixture_setup_runs_once_across_audit_traps()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        const string wrap = """
+            FUNCNEST=100
+            printf 'setup\n' >> "$C1008_FIXTURE_ROOT/c1665-setup"
+            c1665_body="$(declare -f write_result)"; eval "${c1665_body/write_result/c1665_original_write_result}"
+            write_result() { printf 'wrapped\n' >> "$C1008_FIXTURE_ROOT/c1665-wrapped"; c1665_original_write_result "$@"; }
+            """;
+        var preview = await fixture.Run("retire-temp-runner", wrap, dryRun: true);
+        var wrapped = Path.Combine(fixture.Root, "c1665-wrapped");
+        (File.Exists(wrapped) ? File.ReadAllLines(wrapped).Length : 0).ShouldBe(1,
+            "c1665: the renamed write_result wraps the product once and the result is written once; " + preview.Output);
+        File.ReadAllLines(Path.Combine(fixture.Root, "c1665-setup")).Length.ShouldBe(1,
+            "c1665: the setup ran once although the audit armed its own EXIT traps; " + preview.Output);
+        preview.Exit.ShouldBe(0, "c1665: the wrapped preview completes; " + preview.Output);
+        preview.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        File.Exists(Path.Combine(fixture.Root, "evidence", "retire-temp-runner", "preview-audit.out"))
+            .ShouldBeTrue("c1665: the temp content audit, which arms the inner EXIT trap, ran");
+    }
 }
