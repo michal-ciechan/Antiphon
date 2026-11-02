@@ -3796,6 +3796,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 CheckoutPath = RunnerWorkspaceService.TryResolveFinal(manifest.Cwd ?? ""),
                 _hostPid = manifest.HostPid, _childPid = manifest.ChildPid,
+                _hostStartTimeUtc = manifest.HostStartTimeUtc,
                 _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc,
                 _adopted = true, _status = "Starting", _pendingReason = pendingReason,
                 _acceptedStartedAt = manifest.AcceptedStartedAt,
