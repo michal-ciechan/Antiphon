@@ -1586,10 +1586,7 @@ public sealed class LandingGitTests
             get { lock (_lines) return _lines.ToArray(); }
         }
 
-        public static string Script() => "#!/bin/sh
-sleep 30
-exit 0
-";
+        public static string Script() => "#!/bin/sh\nsleep 30\nexit 0\n";
 
         protected override void WriteChildLog(string line)
         {
