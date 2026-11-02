@@ -27,6 +27,7 @@ namespace Antiphon.Tests.Application;
 /// (slot, generation), and the release reconciler needs every D-10 condition.
 /// </summary>
 [Category("Integration")]
+[Timeout(20_000)]
 public sealed class C0824WorkspaceSlotServerTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(15);
