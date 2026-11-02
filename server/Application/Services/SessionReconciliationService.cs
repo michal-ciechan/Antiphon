@@ -202,7 +202,8 @@ public sealed class SessionReconciliationService
         terminalQuery = ownerRunnerId is null
             ? terminalQuery.Where(s => s.RunnerId == null)
             : terminalQuery.Where(s => s.RunnerId == ownerRunnerId);
-        var terminal = await terminalQuery.ToListAsync(ct);
+        // No Exited snapshot means nothing can match: skip the round trip (CARD-1149/1150 budgets).
+        var terminal = exitedIds.Length == 0 ? [] : await terminalQuery.ToListAsync(ct);
         foreach (var row in terminal)
         {
             var snapshot = exitedById.GetValueOrDefault(row.Id);
