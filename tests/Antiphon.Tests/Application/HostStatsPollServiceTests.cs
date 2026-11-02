@@ -159,6 +159,46 @@ public sealed class HostStatsPollServiceTests
         }
     }
 
+    // CARD-1663 D-1: the Hosts card reads the directory state, so a retired or draining runner
+    // that is offline says so instead of stale; an offline runner with no state is unchanged.
+    private static async Task<HostStatsDto> OfflineRowAsync(RunnerState? state)
+    {
+        var (host, peer, _, cache, _, poll) = await SetupAsync();
+        await using (host)
+        {
+            await poll.TickOnceAsync();
+            await peer.DisposeAsync();
+            if (state is not null)
+                host.Directory.ApplyState(host.AllowedRunnerId, state);
+            await poll.TickOnceAsync();
+            return cache.Project().Single(r => r.HostId == host.AllowedRunnerId);
+        }
+    }
+
+    [Test]
+    public async Task C1663_a_retired_offline_runner_reads_retired_not_stale()
+    {
+        var row = await OfflineRowAsync(new RunnerState(true, Now, "rolling", null, true, Now, Now, "idle"));
+        row.State.ShouldBe("offline");
+        row.Reason.ShouldBe("retired");
+    }
+
+    [Test]
+    public async Task C1663_a_draining_offline_runner_reads_draining_not_stale()
+    {
+        var row = await OfflineRowAsync(new RunnerState(true, Now, "rolling", null, false, null, null, null));
+        row.State.ShouldBe("offline");
+        row.Reason.ShouldBe("draining");
+    }
+
+    [Test]
+    public async Task C1663_an_offline_runner_without_state_keeps_its_reason()
+    {
+        var row = await OfflineRowAsync(null);
+        row.State.ShouldBe("offline");
+        row.Reason.ShouldBe("stale");
+    }
+
     [Test]
     public async Task Publish_failure_does_not_fault_the_tick_and_the_next_tick_republishes()
     {
