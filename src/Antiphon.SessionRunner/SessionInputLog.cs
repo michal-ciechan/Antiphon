@@ -39,6 +39,11 @@ public sealed class SessionInputLog
     private readonly object _gate = new();
     private readonly StringBuilder _buffer = new();
     private readonly int _capacity;
+    // CARD-1624: the whole buffer normalized once per append, not once per prompt per poll.
+    private PromptSubmissionMatch.NormalizedRecord? _normalized;
+    private long _version;
+    private int _bufferNormalizations;
+    private long _matchQueries;
 
     public SessionInputLog(int capacityChars = DefaultCapacityChars) =>
         _capacity = Math.Max(MatchWindowChars, capacityChars);
@@ -47,6 +52,23 @@ public sealed class SessionInputLog
     {
         get { lock (_gate) return _buffer.Length == 0; }
     }
+
+    /// <summary>
+    /// Bumped by every append that changed the buffer. A C4 verdict computed against one version
+    /// stays valid until this moves (CARD-1624: candidates re-check only when our input changed).
+    /// </summary>
+    public long Version
+    {
+        get { lock (_gate) return _version; }
+    }
+
+    /// <summary>Diagnostics for tests: how often the buffer was normalized, and how often matched.</summary>
+    internal int BufferNormalizations
+    {
+        get { lock (_gate) return _bufferNormalizations; }
+    }
+
+    internal long MatchQueries => Interlocked.Read(ref _matchQueries);
 
     /// <summary>Records raw pty input (escape sequences and all); normalization happens here.</summary>
     public void Append(string input)
@@ -65,6 +87,8 @@ public sealed class SessionInputLog
             _buffer.Append(normalized);
             if (_buffer.Length > _capacity)
                 _buffer.Remove(0, _buffer.Length - _capacity);
+            _normalized = null;
+            _version++;
         }
     }
 
@@ -75,15 +99,26 @@ public sealed class SessionInputLog
     /// </summary>
     public bool MatchesRecordedInput(string? candidateText)
     {
+        Interlocked.Increment(ref _matchQueries);
         if (!PromptSubmissionMatch.TryBuildNeedle(candidateText, out _))
             return false;
 
         lock (_gate)
+        {
+            if (_buffer.Length == 0)
+                return false;
+            _normalized = null; // CARD-1624 RED: no cache yet
+            if (_normalized is null)
+            {
+                _normalized = new PromptSubmissionMatch.NormalizedRecord(_buffer.ToString());
+                _bufferNormalizations++;
+            }
+
             // Codex 0.158.0 can join a bracketed multi-line paste without a separator.
             // Use the same guarded head-identity comparison as delivery confirmation; C4
             // still requires a distinctive prompt, while C1-C3 protect rollout ownership.
-            return _buffer.Length > 0
-                && PromptSubmissionMatch.IsConfirmedBy(candidateText, _buffer.ToString());
+            return PromptSubmissionMatch.IsConfirmedByNormalized(candidateText, _normalized);
+        }
     }
 
     /// <summary>
