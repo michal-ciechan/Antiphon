@@ -98,7 +98,7 @@ internal sealed class LiveClaudeProfile : IDisposable
             {
                 var entry = Path.Combine(dir.FullName, name);
                 if (!File.Exists(entry) && !Directory.Exists(entry)) continue;
-                if (!owned) throw new LiveClaudeRefusal("unowned-instructions");
+                if (!owned) throw new LiveClaudeRefusal("unowned-instructions", entry);
                 if (File.Exists(entry)) queue.Enqueue(entry);
             }
             var dot = Path.Combine(dir.FullName, ".claude");
@@ -120,7 +120,7 @@ internal sealed class LiveClaudeProfile : IDisposable
         {
             path = Path.GetFullPath(path);
             if (observed.ContainsKey(path)) continue;
-            if (!Context.DeclaredFiles.TryGetValue(path, out var declared)) throw new LiveClaudeRefusal("unowned-instructions");
+            if (!Context.DeclaredFiles.TryGetValue(path, out var declared)) throw new LiveClaudeRefusal("unowned-instructions", path);
             LiveClaudeProfilePaths.Owned(path, Context.OwnedRoot);
             var hash = InputDigest(path);
             if (hash != declared) throw new LiveClaudeRefusal("instruction-drift");
