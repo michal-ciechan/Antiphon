@@ -266,6 +266,25 @@ public sealed class DelegateScriptLandCompatibilityTests
     }
 
     [Test]
+    [Arguments("")]
+    [Arguments("{}")]
+    public async Task C1657_SuccessWithoutRequestIdIsUncertain(string v2Body)
+    {
+        var id = Guid.NewGuid();
+        await using var stub = new LandApiStub(new LandApiStubOptions
+        {
+            VersionBody = LandApiStub.CompatibleVersion(VersionSha, ["land-v2"], null),
+            V2Status = 200,
+            V2Body = v2Body,
+        });
+        var result = await DelegateScriptRunner.RunAsync(stub.Url, "-Land", id.ToString(),
+            "-ExpectedSourceSha", ApprovalSha);
+        result.ExitCode.ShouldBe(1, result.Output);
+        result.Output.ShouldContain($"-Status {id}");
+        result.Output.ShouldNotContain("Queued land");
+    }
+
+    [Test]
     public async Task C495_RefusalRedactsCredentials()
     {
         var nonce = "c495-token-" + Guid.NewGuid().ToString("N");
