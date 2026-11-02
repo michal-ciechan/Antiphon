@@ -303,25 +303,6 @@ public sealed class C0824WorkspaceSlotCustodyTests
         body.Path.ShouldStartWith(scratch.Worktrees + "/ws-");
         PhoneHomeWorkspaceMirrorContract.ValidateResponse(reply.Payload!.Value.GetRawText()).IsValid.ShouldBeTrue();
     }
-}
-
-internal sealed class C0824StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
-{
-    public Guid RunnerStoreId { get; } = storeId;
-    public int OwnedSessionCount => 0;
-    public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false);
-    public string Health() => "Healthy";
-    public IReadOnlyList<RunnerSessionDto> List() => [];
-    public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
-    public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
-    public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
-    public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
-    public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
-    public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
-    public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
-    public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
-    public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
-    public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) => throw new NotSupportedException();
 
     [Test]
     public async Task C0824_RestartKeepsLeasedSlotForTheServersRelease(CancellationToken ct)
@@ -346,4 +327,23 @@ internal sealed class C0824StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
         (await Release(restarted, a, TaskA)).Outcome.ShouldBe("released");
         restarted.Ledger().Slot(a.SlotId)!.State.ShouldBe(WorkspaceSlotStates.Free);
     }
+}
+
+internal sealed class C0824StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
+{
+    public Guid RunnerStoreId { get; } = storeId;
+    public int OwnedSessionCount => 0;
+    public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false);
+    public string Health() => "Healthy";
+    public IReadOnlyList<RunnerSessionDto> List() => [];
+    public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+    public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
+    public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
+    public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+    public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
+    public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
+    public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
+    public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+    public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
+    public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) => throw new NotSupportedException();
 }
