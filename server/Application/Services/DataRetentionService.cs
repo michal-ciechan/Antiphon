@@ -55,27 +55,82 @@ public sealed class DataRetentionService
     /// references (the windows self-sequence: a session outlives its tasks, then becomes eligible
     /// next sweep). There is no FK either way between AgentTask and AgentSession, so this is not a
     /// constraint hazard — only an eligibility delay of one sweep.
+    /// CARD-1654: each pass is independent. A failing pass is logged by name and exception type
+    /// and recorded in <see cref="DataRetentionSweepResult.Passes"/>; the later passes still run.
     /// </summary>
     public async Task<DataRetentionSweepResult> RunOnceAsync(CancellationToken ct)
     {
-        await PruneCheckCompactionRecoveriesAsync(ct);
-        await RetainConfirmedPublicationIdentitiesAsync(ct);
-        await PruneChannelInboundPayloadsAsync(ct);
-        var sessions = await PruneSessionsAsync(ct);
-        var transcripts = await PruneTranscriptsAsync(ct);
-        var queued = await PruneQueuedMessagesAsync(ct);
-        await PruneResolvedModalEpisodesAsync(ct);
-        var tasks = await PruneTasksAsync(ct);
-        var usage = await PruneSubscriptionUsageSamplesAsync(ct);
-        var residueRows = await PruneWorktreeResidueHeldRowsAsync(ct);
-        var auditRecords = 0;
-        if (_auditSettings.RetentionDays > 0)
+        var passes = new List<DataRetentionPassOutcome>();
+        await RunPassAsync(passes, "CheckCompactionRecoveries", true,
+            () => PruneCheckCompactionRecoveriesAsync(ct), ct);
+        await RunPassAsync(passes, "ConfirmedPublicationIdentities", true, async () =>
         {
-            var archive = await _auditService.ArchiveFullContentAsync(_auditSettings.RetentionDays, ct);
-            auditRecords = archive.ArchivedCount;
+            await RetainConfirmedPublicationIdentitiesAsync(ct);
+            return 0;
+        }, ct);
+        await RunPassAsync(passes, "ChannelInboundPayloads", _settings.ChannelInboundPayloadGraceHours > 0,
+            () => PruneChannelInboundPayloadsAsync(ct), ct);
+        var sessions = await RunPassAsync(passes, "Sessions", _settings.SessionRetentionDays > 0,
+            () => PruneSessionsAsync(ct), ct);
+        var transcripts = await RunPassAsync(passes, "Transcripts", _settings.TranscriptRetentionDays > 0,
+            () => PruneTranscriptsAsync(ct), ct);
+        var queued = await RunPassAsync(passes, "QueuedMessages", _settings.QueuedMessageRetentionDays > 0,
+            () => PruneQueuedMessagesAsync(ct), ct);
+        await RunPassAsync(passes, "ResolvedModalEpisodes", _settings.QueuedMessageRetentionDays > 0,
+            () => PruneResolvedModalEpisodesAsync(ct), ct);
+        var taskTally = new TaskPruneTally();
+        await RunPassAsync(passes, "Tasks", _settings.TaskRetentionDays > 0,
+            () => PruneTaskBatchesAsync(taskTally, ct), ct);
+        var usage = await RunPassAsync(passes, "SubscriptionUsageSamples", _settings.SubscriptionUsageRetentionDays > 0,
+            () => PruneSubscriptionUsageSamplesAsync(ct), ct);
+        var residueRows = await RunPassAsync(passes, "WorktreeResidueHeldRows",
+            _settings.WorktreeResidueHeldRowRetentionDays > 0, () => PruneWorktreeResidueHeldRowsAsync(ct), ct);
+        var auditRecords = await RunPassAsync(passes, "AuditArchive", _auditSettings.RetentionDays > 0,
+            async () => (await _auditService.ArchiveFullContentAsync(_auditSettings.RetentionDays, ct)).ArchivedCount, ct);
+
+        // A failed Tasks pass still reports the batches it committed before the failure.
+        var taskPrune = _settings.TaskRetentionDays > 0 ? taskTally.Snapshot(_taskCursor.After) : null;
+        return new DataRetentionSweepResult(transcripts, queued, sessions, taskTally.Rows, auditRecords, usage, residueRows,
+            passes, taskPrune);
+    }
+
+    /// <summary>
+    /// CARD-1654. Runs one pass and contains its failure. Shutdown cancellation still propagates.
+    /// The log names the pass and the exception type chain only: an exception message can carry
+    /// row data (a constraint detail, a parameter value), so it is never logged here.
+    /// </summary>
+    private async Task<int> RunPassAsync(
+        List<DataRetentionPassOutcome> passes, string name, bool enabled, Func<Task<int>> pass, CancellationToken ct)
+    {
+        if (!enabled)
+        {
+            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Skipped));
+            return 0;
         }
 
-        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords, usage, residueRows);
+        try
+        {
+            var count = await pass();
+            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Completed));
+            return count;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // A failed SaveChanges must not leave tracked edits for a later pass to resubmit.
+            _db.ChangeTracker.Clear();
+            var types = ExceptionTypeChain(ex);
+            _logger.LogWarning("Data retention sweep pass {Pass} failed: {ExceptionType}", name, types);
+            passes.Add(new DataRetentionPassOutcome(name, DataRetentionPassStatus.Failed, types));
+            return 0;
+        }
+    }
+
+    private static string ExceptionTypeChain(Exception ex)
+    {
+        var names = new List<string>();
+        for (Exception? e = ex; e is not null && names.Count < 4; e = e.InnerException)
+            names.Add(e.GetType().FullName ?? e.GetType().Name);
+        return string.Join(" > ", names);
     }
 
     /// <summary>
@@ -413,16 +468,85 @@ public sealed class DataRetentionService
     /// <c>COALESCE(CompletedAt, CreatedAt)</c> is older than the cutoff. Never a partial tree:
     /// <c>ParentTaskId</c> is Restrict on purpose, so deletes go children-first (Depth
     /// descending) inside one transaction. <c>AgentTaskEvents</c> cascade.
+    /// CARD-1654: the scan is batched. See <see cref="PruneTaskBatchesAsync"/>.
     /// </summary>
-    public async Task<int> PruneTasksAsync(CancellationToken ct)
+    public async Task<int> PruneTasksAsync(CancellationToken ct) =>
+        await PruneTaskBatchesAsync(new TaskPruneTally(), ct);
+
+    /// <summary>
+    /// CARD-1654. The whole-table eligibility query outgrew the 30 s Npgsql default command
+    /// timeout on the desktop, and its failure aborted the sweep. Candidate roots are now taken
+    /// <see cref="RetentionSettings.TaskPruneBatchSize"/> at a time in RootTaskId order, and each
+    /// batch runs the unchanged eligibility rules restricted to its roots, then deletes the eligible
+    /// trees in its own transaction with the batch command timeout. A candidate needs one row older
+    /// than the cutoff, which every row of an eligible tree is, so no eligible tree is skipped and
+    /// no kept tree becomes eligible. At most <see cref="RetentionSettings.TaskPruneMaxBatchesPerSweep"/>
+    /// batches run per sweep; the shared cursor resumes there next sweep.
+    /// </summary>
+    private async Task<int> PruneTaskBatchesAsync(TaskPruneTally tally, CancellationToken ct)
     {
         if (_settings.TaskRetentionDays <= 0)
             return 0;
 
         var cutoff = UtcNow().AddDays(-_settings.TaskRetentionDays);
-        var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
+        var batchSize = _settings.TaskPruneBatchSize > 0 ? _settings.TaskPruneBatchSize : 100;
+        var maxBatches = _settings.TaskPruneMaxBatchesPerSweep > 0 ? _settings.TaskPruneMaxBatchesPerSweep : 50;
+        var batchTimeout = TimeSpan.FromSeconds(
+            _settings.TaskPruneBatchCommandTimeoutSeconds > 0 ? _settings.TaskPruneBatchCommandTimeoutSeconds : 60);
 
         var outboundTaskIds = await LoadOutboundTaskIdsAsync(ct);
+        var previousTimeout = _db.Database.GetCommandTimeout();
+        _db.Database.SetCommandTimeout(batchTimeout);
+        try
+        {
+            while (tally.Batches < maxBatches)
+            {
+                var candidates = _db.AgentTasks.Where(t => (t.CompletedAt ?? t.CreatedAt) < cutoff);
+                if (_taskCursor.After is Guid after)
+                    candidates = candidates.Where(t => t.RootTaskId.CompareTo(after) > 0);
+                var batch = await candidates.Select(t => t.RootTaskId).Distinct()
+                    .OrderBy(r => r).Take(batchSize).ToListAsync(ct);
+                if (batch.Count == 0)
+                {
+                    _taskCursor.After = null;
+                    tally.ScanComplete = true;
+                    break;
+                }
+
+                tally.Batches++;
+                tally.CandidateRoots += batch.Count;
+                var (trees, rows) = await PruneTaskBatchAsync(batch, cutoff, outboundTaskIds, ct);
+                tally.Trees += trees;
+                tally.Rows += rows;
+                if (batch.Count < batchSize)
+                {
+                    _taskCursor.After = null;
+                    tally.ScanComplete = true;
+                    break;
+                }
+
+                _taskCursor.After = batch[^1];
+            }
+        }
+        finally
+        {
+            _db.Database.SetCommandTimeout(previousTimeout);
+        }
+
+        if (tally.Rows > 0 || !tally.ScanComplete)
+        {
+            _logger.LogInformation(
+                "Pruned {Count} task row(s) in {Trees} tree(s) past retention over {Batches} batch(es); scan complete {ScanComplete}",
+                tally.Rows, tally.Trees, tally.Batches, tally.ScanComplete);
+        }
+
+        return tally.Rows;
+    }
+
+    private async Task<(int Trees, int Rows)> PruneTaskBatchAsync(
+        List<Guid> batch, DateTime cutoff, HashSet<Guid> outboundTaskIds, CancellationToken ct)
+    {
+        var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
         var supervision = TaskSupervisionNoticeService.Unresolved(_db);
 
         // A root is ineligible if ANY row in its tree is still live (Queued/Dispatched/Working/Blocked).
@@ -433,7 +557,8 @@ public sealed class DataRetentionService
             .Select(t => t.RootTaskId);
 
         var eligibleRootIds = await _db.AgentTasks
-            .Where(t => !liveRootIds.Contains(t.RootTaskId)
+            .Where(t => batch.Contains(t.RootTaskId)
+                && !liveRootIds.Contains(t.RootTaskId)
                 && !supervision.Any(n => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == n.TaskId))
                 && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId
                     && outboundTaskIds.Contains(member.Id))
@@ -464,7 +589,7 @@ public sealed class DataRetentionService
             .ToListAsync(ct);
 
         if (eligibleRootIds.Count == 0)
-            return 0;
+            return (0, 0);
 
         // Children-first so Restrict on ParentTaskId never fires. One transaction so a
         // mid-loop failure cannot leave a half-deleted tree.
@@ -503,15 +628,7 @@ public sealed class DataRetentionService
         }
 
         await tx.CommitAsync(ct);
-
-        if (removed > 0)
-        {
-            _logger.LogInformation(
-                "Pruned {Count} task row(s) in {Trees} tree(s) past retention",
-                removed, eligibleRootIds.Count);
-        }
-
-        return removed;
+        return (eligibleRootIds.Count, removed);
     }
 
     /// <summary>
@@ -632,6 +749,18 @@ public sealed class DataRetentionService
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private sealed class TaskPruneTally
+    {
+        public int Batches;
+        public int CandidateRoots;
+        public int Trees;
+        public int Rows;
+        public bool ScanComplete;
+
+        public DataRetentionTaskPruneProgress Snapshot(Guid? cursor) =>
+            new(Batches, CandidateRoots, Trees, Rows, ScanComplete, cursor);
+    }
 
     private async Task<HashSet<Guid>> LoadOutboundTaskIdsAsync(CancellationToken ct)
     {

@@ -618,6 +618,8 @@ try
     builder.Services.AddScoped<IAgentIncidentRecorder>(sp => sp.GetRequiredService<AgentSupervisorService>());
     builder.Services.AddScoped<AppHostWatchdogStateAttentionService>();
     builder.Services.AddScoped<ChannelIngressIncidentService>();
+    // CARD-1654: the task-prune scan cursor outlives one sweep scope.
+    builder.Services.AddSingleton<DataRetentionTaskCursor>();
     builder.Services.AddScoped<DataRetentionService>();
     builder.Services.AddScoped<SessionHealthService>();
     builder.Services.AddScoped<RemoteControlRecoveryService>();

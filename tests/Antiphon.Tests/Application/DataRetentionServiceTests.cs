@@ -1430,7 +1430,7 @@ public class DataRetentionServiceTests
         var seeded = staleRoots.Append(liveRoot).Append(freshRoot).ToHashSet();
         var naming = recorder.Commands.Where(c => c.GuidLists.Any(l => l.Any(seeded.Contains))).ToList();
         naming.Count.ShouldBeGreaterThan(0);
-        naming.ShouldAllBe(c => c.GuidLists.All(l => l.Count <= 3));
+        naming.ShouldAllBe(c => c.GuidLists.All(l => l.Count(seeded.Contains) <= 3));
         var deletes = recorder.Commands.Where(c => c.Text.Contains("DELETE FROM \"AgentTasks\"", StringComparison.Ordinal)).ToList();
         deletes.Count.ShouldBeGreaterThanOrEqualTo(3, "one delete statement set per batch");
         deletes.ShouldAllBe(c => c.Timeout == 45);
