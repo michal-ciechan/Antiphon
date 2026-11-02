@@ -1237,9 +1237,11 @@ public sealed partial class AgentTaskReplyService
         // and the report file keep their values below, and the record says the turn added nothing.
         var retainedTokenOnly = IsTokenOnlyAfterRetainedReport(task, verdict, body);
         // CARD-1486 S2 (D-3): an unmarked turn the classifier Blocked with the retained marked report
-        // (the only unmarked arm that returns Marked) keeps every retained field the same way.
+        // (an unmarked arm that returns Marked) keeps every retained field the same way.
         var retainedUnmarked = verdict.Length == 0 && status == AgentTaskStatus.Blocked
             && evidence == AgentTaskReportEvidence.Marked && RetainedReportStands(task);
+        // CARD-1503: the question-shaped unmarked turn is the other such arm, beside the ack after the ask.
+        var retainedQuestion = retainedUnmarked && LooksLikeAQuestion(body);
 
         // CARD-0657 D-5. Never publish Succeeded for an unconfirmed canonical checkout: Blocked
         // keeps the report, the session and the workspace, and is not a no-progress accusation.
@@ -1308,6 +1310,8 @@ public sealed partial class AgentTaskReplyService
         // CARD-1472: a token-only turn is recorded as adding nothing, never as a report of N characters.
         var reported = retainedTokenOnly
             ? RetainedReportStandsDetail(verdict, settledBody.Length)
+            : retainedQuestion
+            ? UnmarkedQuestionRetainedDetail(turn.Boundary?.Sequence, body, settledBody.Length)
             : retainedUnmarked
             ? UnmarkedAfterAskRetainedDetail(turn.Boundary?.Sequence, body.Length, settledBody.Length)
             : DescribeReported(
@@ -1324,6 +1328,8 @@ public sealed partial class AgentTaskReplyService
             ? failureReason
             : task.Status == AgentTaskStatus.Blocked && evidence == AgentTaskReportEvidence.QuestionHeuristic
                 ? BlockedQuestion.BlockedEventDetail(settledBody)
+                : retainedQuestion
+                ? BlockedQuestion.BlockedEventDetail(body)
                 : reported;
         // CARD-0544 D-9: retain this exact event object; a later merge-back may append another
         // Completed event, and the completion obligation is keyed to this settlement's event only.
@@ -4052,7 +4058,14 @@ public sealed partial class AgentTaskReplyService
         }
 
         if (LooksLikeAQuestion(body))
+        {
+            // CARD-1503: the question still Blocks, but on an attempt a Reply reopened it cannot
+            // replace the retained marked report. Block with the retained report (the CARD-1486 S2
+            // tuple); SettleAsync records the question on the Block and names it to the caller.
+            if (RetainedReportStands(task))
+                return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.Marked, task.Result!, null);
             return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.QuestionHeuristic, body, null);
+        }
 
         var sessionLive = task.AgentSessionId is Guid sid && await IsSessionLiveAsync(db, sid, ct);
         if (sessionLive)
@@ -4271,6 +4284,11 @@ public sealed partial class AgentTaskReplyService
         $"Turn {(boundarySequence is long sequence ? $"#{sequence}" : "with no boundary identity")} ended unmarked "
         + $"({unmarkedChars:N0} characters) after the one closing-line ask; the retained report (marked, "
         + $"{retainedChars:N0} characters) stands and was not replaced. Read that turn in the transcript.";
+
+    private static string UnmarkedQuestionRetainedDetail(long? boundarySequence, string question, int retainedChars) =>
+        $"Turn {(boundarySequence is long sequence ? $"#{sequence}" : "with no boundary identity")} ended unmarked "
+        + $"with a question ({question.Length:N0} characters) after the Reply; the retained report (marked, "
+        + $"{retainedChars:N0} characters) stands and was not replaced. {BlockedQuestion.BlockedEventDetail(question)}";
 
     /// <summary>
     /// CARD-0248 gates after the one closing-line ask, shared by the unmarked arm and the
