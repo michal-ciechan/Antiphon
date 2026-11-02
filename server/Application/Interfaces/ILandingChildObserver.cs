@@ -10,4 +10,10 @@ public interface ILandingChildObserver
 
     /// <summary>CARD-0589: a <c>BUILD SLOT ...</c> line about the verifier's host build slot.</summary>
     void Line(string line) { }
+
+    /// <summary>
+    /// CARD-1470/1467: the verifier is waiting on the runner's memory floor, or building with the
+    /// memory-floor fallback (<see cref="BuildSlotMemoryWait.Fallback"/>); null once it holds a slot.
+    /// </summary>
+    void MemoryWait(BuildSlotMemoryWait? wait) { }
 }

@@ -88,7 +88,9 @@ public sealed record LandingSourceRecheck(string? Sha, string? Fingerprint, stri
     public bool Accepted => Reason is null && Sha is not null && Fingerprint is { Length: 64 };
 }
 
-public sealed record LandingVerification(bool Passed, string Description);
+/// <summary>CARD-1470: <see cref="MemoryWait"/> is the verifier's memory-floor wait or fallback, recorded on the land.</summary>
+public sealed record LandingVerification(bool Passed, string Description,
+    Antiphon.Server.Application.Interfaces.BuildSlotMemoryWait? MemoryWait = null);
 
 /// <summary>CARD-0642 D-5. Only guarded cleanup reads <see cref="LandSourceSnapshot.IgnoredPaths"/>;
 /// the resolver and protocol ask for identity and the dirty check only.</summary>

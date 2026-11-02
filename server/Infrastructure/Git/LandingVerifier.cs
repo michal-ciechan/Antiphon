@@ -11,7 +11,8 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// and test run hold one host build slot; constructed bare (tests) it builds unbudgeted as before.
 /// </summary>
 public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBuildSlotGate? buildSlots = null,
-    LandVerificationArtifacts? artifacts = null, IOptions<LandingSettings>? settings = null) : ILandingVerifier
+    LandVerificationArtifacts? artifacts = null, IOptions<LandingSettings>? settings = null,
+    LandVerificationWaits? waits = null) : ILandingVerifier
 {
     internal AgentTaskLandService.LandProcessRunner? RunProcess { get; init; }
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)

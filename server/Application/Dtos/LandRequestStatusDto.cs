@@ -41,9 +41,11 @@ public sealed record LandRequestStatusDto(
     string? RecoveryRelationship = null,
     bool? RecoveryPatchesContained = null,
     string? RecoveryUncontainedPatches = null,
-    Guid? SupersedesRequestId = null)
+    Guid? SupersedesRequestId = null,
+    LandVerificationWaitDto? VerificationWait = null)
 {
-    public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications)
+    public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications,
+        LandVerificationWaitDto? verificationWait = null)
         => new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
             (now-r.RequestedAt).TotalSeconds, (now-r.LastProgressAt).TotalSeconds, r.Attempt,
             r.HoldReasonCode, r.HoldDetail, r.HoldingTaskId, r.HoldingTaskStatus, r.HeldSince, r.HoldEpisode,
@@ -56,7 +58,28 @@ public sealed record LandRequestStatusDto(
             r.SourceDiagnosticExceptionType, r.RecoveryMode, r.RecoveryOwnerStatus,
             r.RecoverySourceTaskId, r.RecoverySourceFullRef, r.RecoveryOwnerRemoteBeforeSha,
             r.RecoveryOwnerRemoteAfterSha, r.RecoveryRelationship,
-            r.RecoveryPatchesContained, r.RecoveryUncontainedPatches, r.SupersedesRequestId);
+            r.RecoveryPatchesContained, r.RecoveryUncontainedPatches, r.SupersedesRequestId, verificationWait);
+}
+
+/// <summary>CARD-1470/1467: why a running land verification is not progressing.</summary>
+public enum LandVerificationWaitKind
+{
+    /// <summary>The verifier is refused by the build-slot runner's memory floor.</summary>
+    WaitingForMemory,
+    /// <summary>The verifier is building unleased at the memory-floor fallback cpu count.</summary>
+    MemoryFloorFallback,
+}
+
+/// <summary>
+/// CARD-1470/1467: the live build-slot memory state of this land's verifier, so the status says
+/// "waiting for memory" instead of only "no progress". Process-local; a restart starts empty.
+/// </summary>
+public sealed record LandVerificationWaitDto(LandVerificationWaitKind Kind, long AvailableMb, long FloorMb,
+    double WaitedSeconds, int MaxCpuCount, DateTime ObservedAt)
+{
+    public string Describe() => Kind == LandVerificationWaitKind.WaitingForMemory
+        ? $"waiting for memory (available {AvailableMb} MB, floor {FloorMb} MB, waited {(int)(WaitedSeconds / 60)} min)"
+        : $"memory-floor fallback at -maxcpucount:{MaxCpuCount} (available {AvailableMb} MB, floor {FloorMb} MB, waited {(int)(WaitedSeconds / 60)} min)";
 }
 
 public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,

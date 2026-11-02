@@ -2,7 +2,9 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
@@ -291,6 +293,119 @@ public sealed class LandVerificationBuildSlotTests
         lines.ShouldNotContain(l => l.StartsWith("BUILD SLOT unleased", StringComparison.Ordinal));
     }
 
+    // CARD-1470: the fallback cpu count is bounded by the host's logical cpu count, and at least 1.
+    [Test]
+    [Arguments(0)]
+    [Arguments(int.MaxValue)]
+    public async Task C1470_the_fallback_cpu_count_is_clamped_to_the_host_and_at_least_one(int configured)
+    {
+        var f = new Fixture
+        {
+            Settings = new LandingSettings
+            {
+                BuildSlotWaitMinutes = 30,
+                BuildSlotUnreachableGraceSeconds = 0,
+                BuildSlotMemoryFloorFallbackMinutes = 1,
+                BuildSlotMemoryFloorFallbackMaxCpuCount = configured,
+            },
+        };
+        var polls = 0;
+        f.Client.BuildSlotAcquire = _ =>
+        {
+            Interlocked.Increment(ref polls);
+            return Floor();
+        };
+
+        var pending = f.VerifyAsync("/*/*/SomeTests/*");
+        await AdvanceOneMinuteAsync(f.Time, () => Volatile.Read(ref polls));
+        var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var expected = configured < 1 ? 1 : Environment.ProcessorCount;
+        result.Ok.ShouldBeTrue(result.Tail);
+        f.Commands.Single(c => c[0] == "build").ShouldContain("-maxcpucount:" + expected);
+        f.Observer.Lines.ShouldContain(l => l.StartsWith("BUILD SLOT unleased reason=memory_floor_fallback", StringComparison.Ordinal)
+            && l.EndsWith(" maxcpucount=" + expected, StringComparison.Ordinal));
+    }
+
+    // CARD-1470/1467: while the verifier waits on the memory floor the land status carries the typed
+    // "waiting for memory" state; once granted the wait is cleared from the status and carried on
+    // the verification result for the land record.
+    [Test]
+    public async Task C1470_a_memory_floor_wait_shows_on_the_land_status_and_is_carried_on_the_verification()
+    {
+        var f = new Fixture();
+        var polls = 0;
+        f.Client.BuildSlotAcquire = _ => Interlocked.Increment(ref polls) <= 3
+            ? Floor()
+            : new RunnerBuildSlotAnswer(new BuildSlotGrant(Lease, 3, 1, 2, DateTime.UtcNow.AddMinutes(90)));
+        var waits = new LandVerificationWaits(f.Time);
+        var request = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = Guid.NewGuid() };
+        var duringBuild = new List<LandVerificationWaitDto?>();
+        f.OnBuild = () => duringBuild.Add(waits.Find(request.Id));
+
+        var pending = f.Verifier(waits).VerifyAsync(Path.Combine(Path.GetTempPath(), "task-worktree"), "/*/*/SomeTests/*",
+            new LandingVerificationCorrelation(request.TaskId, Guid.NewGuid(), request.Id), CancellationToken.None);
+        await AdvanceOneMinuteAsync(f.Time, () => Volatile.Read(ref polls));
+
+        var status = LandRequestStatusDto.From(request, f.Time.GetUtcNow().UtcDateTime, [], waits.Find(request.Id));
+        var wait = status.VerificationWait.ShouldNotBeNull("a verifier refused by the memory floor is waiting for memory, not making no progress");
+        wait.Kind.ShouldBe(LandVerificationWaitKind.WaitingForMemory);
+        (wait.AvailableMb, wait.FloorMb, wait.WaitedSeconds).ShouldBe((4700L, 6144L, 60d));
+        wait.Describe().ShouldBe("waiting for memory (available 4700 MB, floor 6144 MB, waited 1 min)");
+
+        await AdvanceOneMinuteAsync(f.Time, () => Volatile.Read(ref polls));
+        await AdvanceOneMinuteAsync(f.Time, () => Volatile.Read(ref polls));
+        var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        result.Passed.ShouldBeTrue();
+        result.MemoryWait.ShouldBe(new BuildSlotMemoryWait(4700, 6144, TimeSpan.FromMinutes(3)));
+        result.MemoryWait!.Describe().ShouldBe("memory_floor_wait available=4700MB floor=6144MB waited=180s");
+        duringBuild.ShouldBe([null], "a granted slot is no longer a memory wait");
+        waits.Find(request.Id).ShouldBeNull();
+        f.Commands.Single(c => c[0] == "build").ShouldContain("-maxcpucount:3");
+    }
+
+    // CARD-1470: a memory-floor fallback build shows as the typed fallback state while it builds and
+    // is carried on the verification result with its cpu count.
+    [Test]
+    public async Task C1470_a_memory_floor_fallback_shows_on_the_land_status_and_is_carried_on_the_verification()
+    {
+        var f = new Fixture
+        {
+            Settings = new LandingSettings
+            {
+                BuildSlotWaitMinutes = 30,
+                BuildSlotUnreachableGraceSeconds = 0,
+                BuildSlotMemoryFloorFallbackMinutes = 5,
+                BuildSlotMemoryFloorFallbackMaxCpuCount = 1,
+            },
+        };
+        var polls = 0;
+        f.Client.BuildSlotAcquire = _ =>
+        {
+            Interlocked.Increment(ref polls);
+            return Floor();
+        };
+        var waits = new LandVerificationWaits(f.Time);
+        var requestId = Guid.NewGuid();
+        var duringBuild = new List<LandVerificationWaitDto?>();
+        f.OnBuild = () => duringBuild.Add(waits.Find(requestId));
+
+        var pending = f.Verifier(waits).VerifyAsync(Path.Combine(Path.GetTempPath(), "task-worktree"), "/*/*/SomeTests/*",
+            new LandingVerificationCorrelation(Guid.NewGuid(), Guid.NewGuid(), requestId), CancellationToken.None);
+        for (var minute = 1; minute <= 5; minute++)
+            await AdvanceOneMinuteAsync(f.Time, () => Volatile.Read(ref polls));
+        var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        result.Passed.ShouldBeTrue();
+        result.MemoryWait.ShouldBe(new BuildSlotMemoryWait(4700, 6144, TimeSpan.FromMinutes(5), Fallback: true, MaxCpuCount: 1));
+        result.MemoryWait!.Describe().ShouldBe("memory_floor_fallback maxcpucount=1 available=4700MB floor=6144MB waited=300s");
+        var building = duringBuild.ShouldHaveSingleItem().ShouldNotBeNull("the fallback build is shown on the land status while it runs");
+        building.Kind.ShouldBe(LandVerificationWaitKind.MemoryFloorFallback);
+        building.Describe().ShouldBe("memory-floor fallback at -maxcpucount:1 (available 4700 MB, floor 6144 MB, waited 5 min)");
+        waits.Find(requestId).ShouldBeNull("the verifier clears its state when it ends");
+    }
+
     private static RunnerBuildSlotAnswer Floor() =>
         new(null, MemoryFloor: new BuildSlotMemoryFloor(4700, 6144, 1, 60000));
 
@@ -322,7 +437,12 @@ public sealed class LandVerificationBuildSlotTests
         public FakeTimeProvider Time { get; } = new(DateTimeOffset.UtcNow);
         public LandingSettings Settings { get; init; } = new() { BuildSlotWaitMinutes = 30, BuildSlotUnreachableGraceSeconds = 0 };
 
+        public Action? OnBuild { get; set; }
+
         public Fixture() => Client.BuildSlotReleased = id => Timeline.Add("release " + id);
+
+        public LandingVerifier Verifier(LandVerificationWaits waits) =>
+            new(buildSlots: new SessionRunnerBuildSlotGate(Client, Time, Options.Create(Settings)), waits: waits) { RunProcess = RunAsync };
 
         public Task<LandVerification> VerifyAsync(string filter)
         {
@@ -335,6 +455,8 @@ public sealed class LandVerificationBuildSlotTests
         {
             Commands.Add(args);
             Timeline.Add(file + " " + string.Join(' ', args));
+            if (args[0] == "build")
+                OnBuild?.Invoke();
             if (args[0] == "build")
                 return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : "error CS0001"));
             var output = args[Array.IndexOf(args, "--results-directory") + 1];
