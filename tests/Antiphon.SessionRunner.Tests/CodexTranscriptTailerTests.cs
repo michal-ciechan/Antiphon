@@ -280,7 +280,7 @@ public class CodexTranscriptTailerTests
     public async Task Refusal_detail_breaks_equal_write_times_by_path()
     {
         using var tree = new CodexTree();
-        var stale = Enumerable.Range(0, 6).Select(_ => tree.Seed("codex-tui-turn.jsonl")).ToArray();
+        var stale = Enumerable.Range(0, 12).Select(_ => tree.Seed("codex-tui-turn.jsonl")).ToArray();
         var childStart = stale[0].FirstTimestamp.AddHours(1);
         foreach (var rollout in stale)
             File.SetLastWriteTimeUtc(rollout.Path, childStart.AddMinutes(-6));
