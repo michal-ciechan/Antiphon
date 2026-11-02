@@ -23,7 +23,7 @@ $script:CommandShim = Join-Path $here (Join-Path 'fixtures' 'c589-command-shim.p
 $script:Lease = 'c5890000-0000-4000-8000-000000000001'
 $script:SeamNames = @('ANTIPHON_BUILD_SLOTS_URL', 'C589_SLOT_SHIM', 'C589_SLOT_LOG', 'C589_SLOT_SCRIPT',
     'C589_SLOT_WAIT_SECONDS', 'C589_SLOT_GRACE_SECONDS', 'C589_SLOT_RETRY_MS', 'C589_COMMAND_SHIM', 'C589_COMMAND_EXIT',
-    'C589_COMMAND_SLEEP_SECONDS', 'C845_WRAPPER', 'C845_PUSH_LOCATION', 'C845_CALLER_LOG', 'C845_SCENARIO')
+    'C589_COMMAND_SLEEP_SECONDS', 'ANTIPHON_BUILD_SLOT_MAXCPUCOUNT', 'C845_WRAPPER', 'C845_PUSH_LOCATION', 'C845_CALLER_LOG', 'C845_SCENARIO')
 
 function New-C589Case {
     param([string]$Name)
@@ -44,6 +44,8 @@ function Set-C589Seams {
     $env:C589_SLOT_RETRY_MS = $RetryMs
     $env:C589_COMMAND_SHIM = $script:CommandShim
     $env:C589_COMMAND_EXIT = [string]$CommandExit
+    # CARD-1627: only the wrapper under test may export a grant to the command shim.
+    Remove-Item Env:ANTIPHON_BUILD_SLOT_MAXCPUCOUNT -ErrorAction SilentlyContinue
 }
 
 function Clear-C589Seams {
@@ -418,6 +420,32 @@ function Test-C589_WrapperRenews {
     finally { Remove-Item Env:C589_COMMAND_SLEEP_SECONDS -ErrorAction SilentlyContinue }
     Assert-C487 -Cond ($pidResult.Exit -eq 0 -and @($pidResult.Calls | Where-Object { $_ -like 'SLOT RENEW *' }).Count -eq 0) `
         -Name 'C589 WrapperRenews pid grant has no renewals' -Detail ($pidResult.Calls -join ' | ')
+}
+
+# CARD-1627: the wrapper can put -maxcpucount on a dotnet command line only. A wrapped loop
+# (`bash loop.sh`) or script gets the grant through ANTIPHON_BUILD_SLOT_MAXCPUCOUNT and a loud
+# warning line instead; the dotnet path keeps its argv and environment.
+function Test-C1627_WrapperCapUnenforcedWarns {
+    $warning = '^BUILD SLOT warning: maxcpucount=3 is not applied to bash: a dotnet build inside it runs at the default node count unless it passes -maxcpucount:\$ANTIPHON_BUILD_SLOT_MAXCPUCOUNT; lease each build separately, never one lease around a loop$'
+    $fx = New-C589Case -Name 'c1627-loop'
+    $r = Invoke-C589Wrapper -Fx $fx -WrapperArgs @('-Label', 'mutants', '--', 'bash', 'loop.sh')
+    Assert-C487 -Cond ($r.Exit -eq 0 -and (Get-C589Line -Result $r -Pattern $warning) -eq 1) `
+        -Name 'C1627 WrapperCapUnenforced a wrapped bash loop prints the BUILD SLOT warning' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ENV ANTIPHON_BUILD_SLOT_MAXCPUCOUNT') -ceq '3') `
+        -Name 'C1627 WrapperCapUnenforced a wrapped bash loop sees the grant in ANTIPHON_BUILD_SLOT_MAXCPUCOUNT' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,CMD,DELETE' -and (Get-C589Cmd -Result $r) -ceq 'CMD bash loop.sh') `
+        -Name 'C1627 WrapperCapUnenforced a wrapped bash loop runs unchanged under the lease' -Detail ($r.Calls -join ' | ')
+
+    $dn = New-C589Case -Name 'c1627-dotnet'
+    $d = Invoke-C589Wrapper -Fx $dn -WrapperArgs @('-Label', 'build', '--', 'dotnet', 'build', 'tests/X')
+    Assert-C487 -Cond ($d.Exit -eq 0 -and (Get-C589Cmd -Result $d) -ceq 'CMD dotnet build tests/X -maxcpucount 3' -and
+        (Get-C589Line -Result $d -Pattern '^BUILD SLOT warning') -eq 0 -and (Get-C589LoggedValue -Result $d -Prefix 'ENV ANTIPHON_BUILD_SLOT_MAXCPUCOUNT') -ceq '') `
+        -Name 'C1627 WrapperCapUnenforced dotnet build keeps its argv and environment and gets no warning' -Detail ('cmd={0} calls={1} {2}' -f (Get-C589Cmd -Result $d), ($d.Calls -join ' | '), $d.Text)
+
+    $ns = New-C589Case -Name 'c1627-noslot'
+    $n = Invoke-C589Wrapper -Fx $ns -WrapperArgs @('-Label', 'operator', '-NoSlot', '--', 'bash', 'loop.sh')
+    Assert-C487 -Cond ($n.Exit -eq 0 -and (Get-C589Line -Result $n -Pattern '^BUILD SLOT warning') -eq 0 -and (Get-C589LoggedValue -Result $n -Prefix 'ENV ANTIPHON_BUILD_SLOT_MAXCPUCOUNT') -ceq '') `
+        -Name 'C1627 WrapperCapUnenforced -NoSlot exports no grant and prints no warning' -Detail ('calls={0} {1}' -f ($n.Calls -join ' | '), $n.Text)
 }
 
 function New-C845Caller {
@@ -828,7 +856,7 @@ exit $code
     Assert-C487 -Cond (Test-C1048Lease -Result $r) -Name 'C1048 Pwsh releases lease' -Detail ($r.Calls -join ' | ')
 }
 
-$script:C589ExpectedRows = 39 + 16 + 50 + $(if ($IsLinux) { 3 } else { 0 }) + $(if ($IsWindows) { 23 } else { 0 })
+$script:C589ExpectedRows = 39 + 16 + 50 + 5 + $(if ($IsLinux) { 3 } else { 0 }) + $(if ($IsWindows) { 23 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }
@@ -842,6 +870,7 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C800_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C845_')) { & $fn }
+    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C1627_')) { & $fn }
     if ($IsWindows) { foreach ($fn in (Get-C487CaseFunctions -Prefix 'C1048_')) { & $fn } }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'build-slot-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }

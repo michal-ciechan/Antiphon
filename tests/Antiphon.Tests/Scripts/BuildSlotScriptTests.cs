@@ -102,6 +102,15 @@ public sealed class BuildSlotScriptTests
         "C800 WrapperLaunchesNativeExecutableLiterally passes wildcard argv unchanged",
         "C800 WrapperLaunchesNativeExecutableLiterally keeps the caller directory");
 
+    [Test]
+    public Task C1627_WrapperCapUnenforcedWarns() => ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C1627",
+        "C1627_WrapperCapUnenforcedWarns", 5,
+        "C1627 WrapperCapUnenforced a wrapped bash loop prints the BUILD SLOT warning",
+        "C1627 WrapperCapUnenforced a wrapped bash loop sees the grant in ANTIPHON_BUILD_SLOT_MAXCPUCOUNT",
+        "C1627 WrapperCapUnenforced a wrapped bash loop runs unchanged under the lease",
+        "C1627 WrapperCapUnenforced dotnet build keeps its argv and environment and gets no warning",
+        "C1627 WrapperCapUnenforced -NoSlot exports no grant and prints no warning");
+
     [NativeLinuxOnly("Linux SIGINT behavior only")]
     [Test]
     public Task C800_WrapperInterruptKillsChildAndReleasesLease()
