@@ -433,6 +433,43 @@ export interface AgentTaskDetailDto {
     failureSource: string | null
     noticeState: string | null
   } | null
+  /** CARD-1610. Present while a Working session is held at its ceiling awaiting Continue/Extend. */
+  ceilingHold?: CeilingHoldDto | null
+  /** CARD-1610. Newest 32 supervision notices for this task, any attempt. */
+  supervisionNotices?: TaskSupervisionNoticeDto[]
+}
+
+/** CARD-1610. A Working ceiling hold the operator answers with Continue or Extend. */
+export interface CeilingHoldDto {
+  episodeId: string
+  heldAt: string
+  attempt: number
+  sessionStartedAt: string
+  initialMinutes: number
+  initialSource: string
+  nextCeilingMinutes: number
+  lastTranscriptKind: string | null
+  lastTranscriptAgeSeconds: number | null
+  phaseKind: string | null
+  phaseLimitMinutes: number | null
+  phaseDeadlineAt: string | null
+  capReached: boolean
+  question: string
+}
+
+/** CARD-1610. One supervision notice row; reportLink is a transcript route, never report text. */
+export interface TaskSupervisionNoticeDto {
+  id: string
+  purpose: string
+  state: string
+  reasonCode: string | null
+  attempt: number
+  recipientSessionId: string | null
+  queueMessageId: string | null
+  toldAt: string | null
+  confirmingPromptSequence: number | null
+  reportDigest: string | null
+  reportLink: string | null
 }
 
 /** CARD-0544. Commissioned ordinary-verification round. */
