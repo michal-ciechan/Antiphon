@@ -23,3 +23,9 @@ public sealed record MirrorBindingExpectation(
 
 /// <summary>CARD-0824 S1. <c>POST /api/session-runners/{runnerId}/workspace-slots/cold-reset</c>.</summary>
 public sealed record WorkspaceSlotColdResetRouteRequest(IReadOnlyList<string>? Slots, bool All, string Reason, string? Requester = null);
+
+/// <summary>
+/// Review f4c293bc D-1. <c>POST /api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release</c>: an operator
+/// records the release of a <c>workspace_slot_release_stuck</c> slot for this task and lease generation.
+/// </summary>
+public sealed record WorkspaceSlotRecordReleaseRouteRequest(Guid TaskId, int Generation, string Reason);

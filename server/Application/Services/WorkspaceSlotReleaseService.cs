@@ -21,6 +21,8 @@ namespace Antiphon.Server.Application.Services;
 /// A runner that does not know the slot (<c>slot_unknown</c>) is asked at most <see cref="UnknownSlotAttempts"/>
 /// times per slot and generation; then the reconciler stops and records <see cref="WorkspaceSlotCodes.ReleaseStuck"/>
 /// for an operator (D-3, review 3a354688), never a silent forever-retry and never a guessed release stamp.
+/// The drain rebind shares the count, and the operator records the release through
+/// <see cref="RecordOperatorReleaseAsync"/> (review f4c293bc D-1).
 /// </summary>
 public sealed class WorkspaceSlotReleaseService(
     AppDbContext db, RemoteWorkspaceService remote, TimeProvider clock, ILogger<WorkspaceSlotReleaseService> logger)
@@ -43,10 +45,7 @@ public sealed class WorkspaceSlotReleaseService(
         {
             if (!await EligibleAsync(task, ct))
                 continue;
-            var slot = $"slot {task.RemoteWorkspaceSlotId} generation {task.RemoteWorkspaceSlotGeneration ?? 0}";
-            var unknownPrefix = WorkspaceSlotCodes.ReleaseUnknown + ": " + slot + " ";
-            var unknown = await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
-                && e.Type == AgentTaskEventType.Warning && e.Detail != null && e.Detail.StartsWith(unknownPrefix), ct);
+            var unknown = await UnknownAttemptsAsync(db, task, ct);
             if (unknown >= UnknownSlotAttempts)
                 continue;
             PhoneHomeWorkspaceSlotReleaseResponse response;
@@ -54,26 +53,9 @@ public sealed class WorkspaceSlotReleaseService(
             {
                 response = await remote.ReleaseSlotAsync(task, ct);
             }
-            catch (ConflictException ex) when (ex.Message.StartsWith(WorkspaceSlotCodes.UnknownSlot, StringComparison.Ordinal))
+            catch (ConflictException ex) when (IsUnknownSlot(ex))
             {
-                var at = clock.GetUtcNow().UtcDateTime;
-                db.AgentTaskEvents.Add(new AgentTaskEvent
-                {
-                    Id = Guid.NewGuid(),
-                    AgentTaskId = task.Id,
-                    Type = AgentTaskEventType.Warning,
-                    Detail = unknownPrefix + $"was refused as {WorkspaceSlotCodes.UnknownSlot} by runner '{task.RunnerId}' (attempt {unknown + 1} of {UnknownSlotAttempts}).",
-                    At = at,
-                });
-                if (unknown + 1 >= UnknownSlotAttempts)
-                    db.AgentTaskEvents.Add(new AgentTaskEvent
-                    {
-                        Id = Guid.NewGuid(),
-                        AgentTaskId = task.Id,
-                        Type = AgentTaskEventType.Warning,
-                        Detail = $"{WorkspaceSlotCodes.ReleaseStuck}: {slot} is unknown to runner '{task.RunnerId}' after {UnknownSlotAttempts} attempts; the reconciler stopped. Find the runner that holds the lease and release it there, or record the release by hand.",
-                        At = at,
-                    });
+                RecordUnknown(db, task, unknown, clock.GetUtcNow().UtcDateTime);
                 await db.SaveChangesAsync(ct);
                 logger.LogWarning("Workspace slot {Slot} generation {Generation} of task {Task} is unknown to runner {Runner} (attempt {Attempt})",
                     task.RemoteWorkspaceSlotId, task.RemoteWorkspaceSlotGeneration, task.Id, task.RunnerId, unknown + 1);
@@ -105,6 +87,99 @@ public sealed class WorkspaceSlotReleaseService(
         }
 
         return released;
+    }
+
+    private static string SlotText(AgentTask task) =>
+        $"slot {task.RemoteWorkspaceSlotId} generation {task.RemoteWorkspaceSlotGeneration ?? 0}";
+
+    private static string UnknownPrefix(AgentTask task) => WorkspaceSlotCodes.ReleaseUnknown + ": " + SlotText(task) + " ";
+
+    private static string StuckPrefix(AgentTask task) => WorkspaceSlotCodes.ReleaseStuck + ": " + SlotText(task) + " ";
+
+    /// <summary>A 409 whose runner detail is <see cref="WorkspaceSlotCodes.UnknownSlot"/>: the runner has no record of the slot.</summary>
+    internal static bool IsUnknownSlot(Exception ex) =>
+        ex is ConflictException && ex.Message.StartsWith(WorkspaceSlotCodes.UnknownSlot, StringComparison.Ordinal);
+
+    /// <summary>
+    /// How many times the task's runner has answered <see cref="WorkspaceSlotCodes.UnknownSlot"/> for this slot and
+    /// generation. The terminal reconciler and the drain rebind (review f4c293bc D-1) share the one count.
+    /// </summary>
+    internal static Task<int> UnknownAttemptsAsync(AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        var prefix = UnknownPrefix(task);
+        return db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Warning && e.Detail != null && e.Detail.StartsWith(prefix), ct);
+    }
+
+    /// <summary>
+    /// Adds the attempt record after a <see cref="WorkspaceSlotCodes.UnknownSlot"/> answer and, on the last attempt,
+    /// the <see cref="WorkspaceSlotCodes.ReleaseStuck"/> record. The caller saves. Returns true once the bound is reached.
+    /// </summary>
+    internal static bool RecordUnknown(AppDbContext db, AgentTask task, int prior, DateTime at)
+    {
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = UnknownPrefix(task) + $"was refused as {WorkspaceSlotCodes.UnknownSlot} by runner '{task.RunnerId}' (attempt {prior + 1} of {UnknownSlotAttempts}).",
+            At = at,
+        });
+        if (prior + 1 < UnknownSlotAttempts)
+            return false;
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = StuckPrefix(task) + $"is unknown to runner '{task.RunnerId}' after {UnknownSlotAttempts} attempts; nothing asks it again. "
+                + "Find the runner that holds the lease and release it there, or record the release with "
+                + $"POST {RecordReleaseRoute(task.RunnerId!, task.RemoteWorkspaceSlotId!)}.",
+            At = at,
+        });
+        return true;
+    }
+
+    internal static string RecordReleaseRoute(string runnerId, string slotId) =>
+        $"/api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release";
+
+    /// <summary>
+    /// Review f4c293bc D-1. The operator's way out of <see cref="WorkspaceSlotCodes.ReleaseStuck"/>: stamps
+    /// <see cref="AgentTask.RemoteWorkspaceSlotReleasedAt"/> for the task's current slot and generation on the runner it
+    /// is bound to, only after the bounded <see cref="WorkspaceSlotCodes.UnknownSlot"/> attempts recorded the stuck
+    /// state. Anything else is a refusal; nothing is sent to a runner and no directory is touched.
+    /// </summary>
+    internal static async Task RecordOperatorReleaseAsync(
+        AppDbContext db, TimeProvider clock, string runnerId, string slotId, Guid taskId, int generation, string reason,
+        CancellationToken ct)
+    {
+        var task = await db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException("AgentTask", taskId);
+        if (!string.Equals(task.RunnerId, runnerId, StringComparison.Ordinal)
+            || !string.Equals(task.RemoteWorkspaceSlotId, slotId, StringComparison.Ordinal)
+            || (task.RemoteWorkspaceSlotGeneration ?? 0) != generation)
+            throw new ConflictException(
+                $"Task {taskId} is not bound to workspace slot {slotId} generation {generation} on runner '{runnerId}'.",
+                "workspace_slot_release_mismatch");
+        if (task.RemoteWorkspaceSlotReleasedAt is not null)
+            throw new ConflictException($"The release of {SlotText(task)} is already recorded.", "workspace_slot_release_recorded_already");
+        var stuck = StuckPrefix(task);
+        if (!await db.AgentTaskEvents.AsNoTracking().AnyAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning && e.Detail != null && e.Detail.StartsWith(stuck), ct))
+            throw new ConflictException(
+                $"{SlotText(task)} is not {WorkspaceSlotCodes.ReleaseStuck}; release it on its runner.", "workspace_slot_release_not_stuck");
+        var now = clock.GetUtcNow().UtcDateTime;
+        task.RemoteWorkspaceSlotReleasedAt = now;
+        task.RemoteWorktreePath = null;
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = $"{WorkspaceSlotCodes.ReleaseRecorded}: {SlotText(task)} on runner '{runnerId}' recorded released by the operator: {reason}",
+            At = now,
+        });
+        await db.SaveChangesAsync(ct);
     }
 
     internal async Task<bool> EligibleAsync(AgentTask task, CancellationToken ct)

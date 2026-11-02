@@ -1,4 +1,5 @@
-﻿using Antiphon.Server.Domain.Enums;
+﻿using System.Text.Json.Serialization;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -221,7 +222,11 @@ public sealed record CreateAgentTaskRequest(
     RequiredPlatform? RequiredPlatform = null,
     string? WorktreeBaseTask = null,
     bool FreshWorktree = false,
-    /// <summary>CARD-0824 S1 (<c>delegate.ps1 -ColdWorkspace</c>): the workspace slot lease also wipes native build output.</summary>
+    /// <summary>
+    /// CARD-0824 S1 (<c>delegate.ps1 -ColdWorkspace</c>): the workspace slot lease also wipes native build output.
+    /// Omitted when false so a default request serializes, and its handoff digest hashes, as before the field.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     bool WorkspaceColdReset = false);
 
 /// <summary>

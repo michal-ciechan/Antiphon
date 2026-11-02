@@ -399,6 +399,11 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   `{ "all": true, ... }` forwards the list unchanged to the runner's `WorkspaceSlotColdReset`
   phone-home operation and returns its request id and per-slot outcome (`cold_reset`, `pending` for a
   leased slot, `duplicate`, `unknown`). Front door: `scripts/workspace-slots.ps1 cold-reset`.
+- `POST /api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release` (operator token) with
+  `{ "taskId": "...", "generation": 3, "reason": "..." }` stamps the task's slot release after the bounded
+  `slot_unknown` attempts recorded `workspace_slot_release_stuck` (review f4c293bc D-1). It refuses 409 unless
+  the task is bound to that runner, slot and generation, its release is not yet recorded and the stuck record
+  exists. Nothing is sent to the runner; a held drain rebind moves on the next tick.
 - Runner phone-home operations (no HTTP route on the runner yet): `WorkspaceSlotRelease`
   (`{slotId, generation, taskId}`; `slot_generation_mismatch` and `slot_task_mismatch` refuse),
   `WorkspaceSlotColdReset` and `WorkspaceSlotQuarantineRelease`. The `GET /sessions/workspace-slots`

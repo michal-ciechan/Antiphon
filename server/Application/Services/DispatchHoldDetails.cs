@@ -112,6 +112,13 @@ public static class DispatchHoldDetails
         $"Held: {Antiphon.SessionRunner.Contracts.WorkspaceSlotCodes.ReleasePending}: runner '{runnerId}' has not confirmed the release of workspace slot {slotId} generation {generation}; the drain redirect to '{redirectTo}' waits for it.";
 
     /// <summary>
+    /// Review f4c293bc D-1: the old runner answered <c>slot_unknown</c> the bounded number of times and is not asked
+    /// again. The drain redirect waits for an operator to release the lease where it is held or record the release.
+    /// </summary>
+    public static string WorkspaceSlotReleaseStuck(string runnerId, string slotId, int generation, string? redirectTo) =>
+        $"Held: {Antiphon.SessionRunner.Contracts.WorkspaceSlotCodes.ReleaseStuck}: runner '{runnerId}' does not know workspace slot {slotId} generation {generation}; the drain redirect to '{redirectTo}' waits for an operator to release the lease where it is held or record the release with POST {WorkspaceSlotReleaseService.RecordReleaseRoute(runnerId, slotId)}.";
+
+    /// <summary>
     /// CARD-0653: the runner's declared seats are full. Occupied and capacity stay out of the
     /// dedupe key's changing half only while the fraction is stable, which is the hold itself.
     /// </summary>
