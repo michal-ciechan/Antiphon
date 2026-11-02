@@ -1491,6 +1491,77 @@ public class DataRetentionServiceTests
         (await verify.AgentTasks.CountAsync(t => roots.Contains(t.Id))).ShouldBe(0);
     }
 
+    /// <summary>
+    /// CARD-1654 S-1. Several BlockedSucceeded transitions finish a task without stamping
+    /// <c>CompletedAt</c>, so a stale terminal tree can consist only of rows whose age is their
+    /// <c>CreatedAt</c>. Both the candidate scan and the eligibility rule read
+    /// <c>COALESCE(CompletedAt, CreatedAt)</c>: such a stale tree (one row, or a root and a child)
+    /// prunes, while a fresh tree and a tree with a fresh member, also unstamped, survive. Covered
+    /// through the direct pass and through the sweep with a task batch of one root.
+    /// </summary>
+    [Test]
+    [Arguments("PruneTasks")]
+    [Arguments("RunOnceBatchOfOne")]
+    public async Task C1654_StaleTreeWithNullCompletedAtPrunes(string path)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var singleRoot = Guid.NewGuid();
+        var pairRoot = Guid.NewGuid();
+        var freshRoot = Guid.NewGuid();
+        var mixedRoot = Guid.NewGuid();
+        await using (var seed = new AppDbContext(plain))
+        {
+            seed.AgentTasks.Add(UnstampedRoot(singleRoot, "c1654 null single", stale));
+            seed.AgentTasks.Add(UnstampedRoot(pairRoot, "c1654 null pair", stale));
+            seed.AgentTasks.Add(C1654Child(pairRoot, AgentTaskStatus.Succeeded, stale, null));
+            seed.AgentTasks.Add(UnstampedRoot(freshRoot, "c1654 null fresh", DaysAgo(1)));
+            seed.AgentTasks.Add(UnstampedRoot(mixedRoot, "c1654 null mixed", stale));
+            seed.AgentTasks.Add(C1654Child(mixedRoot, AgentTaskStatus.Succeeded, DaysAgo(1), null));
+            await seed.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(plain))
+        {
+            if (path == "PruneTasks")
+            {
+                (await CreateService(db).PruneTasksAsync(CancellationToken.None)).ShouldBe(3);
+            }
+            else
+            {
+                var result = await CreateService(db, new RetentionSettings
+                {
+                    TaskPruneBatchSize = 1, RowPruneBatchSize = 1,
+                }).RunOnceAsync(CancellationToken.None);
+                result.Tasks.ShouldBe(3);
+                result.TaskPrune.ShouldNotBeNull();
+                result.TaskPrune.Trees.ShouldBe(2);
+                result.TaskPrune.Rows.ShouldBe(3);
+                result.TaskPrune.CandidateRoots.ShouldBe(3, "the stale unstamped roots are candidates; the fresh one is not");
+                result.TaskPrune.Batches.ShouldBeGreaterThanOrEqualTo(3);
+                result.TaskPrune.ScanComplete.ShouldBeTrue();
+            }
+        }
+
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == singleRoot))
+            .ShouldBe(0, "a stale single-row tree with a null CompletedAt must prune");
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == pairRoot))
+            .ShouldBe(0, "a stale root and child with null CompletedAt must prune");
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == freshRoot))
+            .ShouldBe(1, "a fresh tree with a null CompletedAt is kept");
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == mixedRoot))
+            .ShouldBe(2, "a stale root with a fresh unstamped child is kept");
+    }
+
+    private static AgentTask UnstampedRoot(Guid id, string title, DateTime createdAt)
+    {
+        var task = TerminalTask(id, title, createdAt);
+        task.CompletedAt = null;
+        return task;
+    }
+
     private static AgentTask C1654Child(Guid root, AgentTaskStatus status, DateTime createdAt, DateTime? completedAt) => new()
     {
         Id = Guid.NewGuid(), RootTaskId = root, ParentTaskId = root, Depth = 1, Title = "c1654 child", Goal = "retention",
