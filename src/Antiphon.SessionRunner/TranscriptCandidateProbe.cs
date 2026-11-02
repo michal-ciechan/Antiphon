@@ -89,7 +89,7 @@ internal sealed class TranscriptCandidateProbe
     /// to that length is consumed, the file has nothing new and is not touched at all.</param>
     public bool Refresh(SessionInputLog? inputLog, int maxBytes = DeepScanBytes, (long Length, DateTime WriteUtc)? observed = null)
     {
-        if (false && observed is { } seen && seen.Length == _offset && _observedWriteUtc == seen.WriteUtc) // CARD-1624 RED
+        if (observed is { } seen && seen.Length == _offset && _observedWriteUtc == seen.WriteUtc)
         {
             RecheckContent(inputLog);
             return true;
@@ -143,7 +143,7 @@ internal sealed class TranscriptCandidateProbe
             return;
 
         var logVersion = inputLog.Version;
-        if (false && ReferenceEquals(inputLog, _checkedLog) // CARD-1624 RED
+        if (ReferenceEquals(inputLog, _checkedLog)
             && logVersion == _checkedLogVersion
             && _promptsVersion == _checkedPromptsVersion)
         {
