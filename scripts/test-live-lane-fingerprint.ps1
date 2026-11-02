@@ -152,8 +152,8 @@ switch ($Case) {
         $lanes=[ordered]@{'fixture-lane'=(New-LaneDeclaration);'fixture-lane-2'=(New-LaneDeclaration)}
         Write-Declaration $lanes; $d=Commit
         Check (Differs (Fp $d 'fixture-lane') (Fp $d 'fixture-lane-2')) 'domain'
-        $lane=New-LaneDeclaration; $lane.minimumRoots+=@('src/Missing/')
-        Write-Declaration ([ordered]@{'fixture-lane'=$lane}); $missing=Commit
+        $laneEntry=New-LaneDeclaration; $laneEntry.minimumRoots+=@('src/Missing/')
+        Write-Declaration ([ordered]@{'fixture-lane'=$laneEntry}); $missing=Commit
         Check (Unknown (Fp $missing) 'declared-root-empty:src/Missing/') 'missing-root'
         Write-Declaration ([ordered]@{'fixture-lane'=(New-LaneDeclaration)}); $restored=Commit
         $status=Invoke-Status $restored; $doc=$status.document
@@ -270,7 +270,7 @@ switch ($Case) {
         $status=Invoke-Status $s
         Check (($status.exit -eq 2) -and ($status.document.error -ceq 'manifest-missing')) 'missing-manifest' $status.stdout
         Reset-Fixture
-        $lane=New-LaneDeclaration; $lane.extra='x'; Write-Declaration ([ordered]@{'fixture-lane'=$lane}); $s1=Commit
+        $laneEntry=New-LaneDeclaration; $laneEntry.extra='x'; Write-Declaration ([ordered]@{'fixture-lane'=$laneEntry}); $s1=Commit
         Reset-Fixture
         Write-Declaration ([ordered]@{'fixture-lane'=(New-LaneDeclaration)}) 'antiphon-live-lane-inputs-v2'; $s2=Commit
         $status1=Invoke-Status $s1; $status2=Invoke-Status $s2
@@ -350,8 +350,8 @@ switch ($Case) {
         $paths=Paths $fs
         Check (($fs.status -ceq 'complete') -and ($paths -ccontains 'docs/a.md') -and ($paths -ccontains 'docs/b.md') -and $watch.Elapsed.TotalSeconds -lt 30) 'import-cycle' (@($fs.unknownReasons) -join ',')
         Reset-Fixture
-        $lane=New-LaneDeclaration; $lane.instructionPatterns=@('CLAUDE.md','CLAUDE.local.md','AGENTS.md','.claude/**')
-        Write-Declaration ([ordered]@{'fixture-lane'=$lane}); $s=Commit
+        $laneEntry=New-LaneDeclaration; $laneEntry.instructionPatterns=@('CLAUDE.md','CLAUDE.local.md','AGENTS.md','.claude/**')
+        Write-Declaration ([ordered]@{'fixture-lane'=$laneEntry}); $s=Commit
         Check (Unknown (Fp $s) 'instruction-outside-inputs:.mcp.json') 'undeclared-instruction'
     }
 }
