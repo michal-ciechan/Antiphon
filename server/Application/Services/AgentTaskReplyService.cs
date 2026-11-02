@@ -1335,6 +1335,9 @@ public sealed partial class AgentTaskReplyService
         // Completed event, and the completion obligation is keyed to this settlement's event only.
         var settlementEvent = NewEvent(task.Id, eventType, eventDetail, now);
         db.AgentTaskEvents.Add(settlementEvent);
+        // CARD-1503: the Block records the question; the record also says the retained report stands.
+        if (retainedQuestion)
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, reported, now));
         if (task.Status == AgentTaskStatus.Failed)
             await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, settlementEvent, now, ct);
         string? remoteBlockWarning = null;
