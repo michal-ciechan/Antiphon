@@ -148,9 +148,13 @@ public sealed class LandVerificationLeaseWindowTests
         operation.Cleanup.ShouldBe(LandCleanupStatus.Refused);
         operation.LastReason.ShouldBe("source_dirty");
         (await File.ReadAllTextAsync(owner)).ShouldEndWith("c1463 source\n");
+        // CARD-1482: the owner commit sits on the origin tip, so the owned rebase keeps it and the exact landed
+        // commit is world.OwnerSha (as in C448_V10, the target holds op.VerifiedSourceSha), not merely a moved tip.
+        operation.VerifiedSourceSha.ShouldBe(world.OwnerSha);
         var after = await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", "refs/heads/master");
         after.Ok.ShouldBeTrue(after.StdErr);
         after.StdOut.Trim().ShouldNotBe(originSha, "the land must publish despite the task worktree's dirt");
+        after.StdOut.Trim().ShouldBe(world.OwnerSha, "the remote must hold the exact reviewed commit");
     }
 
     [Test]
