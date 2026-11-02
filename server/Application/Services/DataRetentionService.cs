@@ -807,12 +807,25 @@ public sealed class DataRetentionTaskCursor
 
 public enum DataRetentionPassStatus { Completed, Failed, Skipped }
 
-/// <summary>CARD-1654. One sweep pass. <c>ExceptionType</c> names types only, never row data.</summary>
-public sealed record DataRetentionPassOutcome(string Pass, DataRetentionPassStatus Status, string? ExceptionType = null);
+/// <summary>
+/// CARD-1654. One sweep pass. <c>ExceptionType</c> names types only, never row data.
+/// CARD-1658: <c>Progress</c> is set for the batched row passes after Tasks.
+/// </summary>
+public sealed record DataRetentionPassOutcome(string Pass, DataRetentionPassStatus Status, string? ExceptionType = null,
+    DataRetentionBatchProgress? Progress = null);
+
+/// <summary>
+/// CARD-1658. Batched row-pass progress for one sweep. <c>Complete</c> is false when the per-sweep
+/// batch cap stopped the pass; <c>BatchMilliseconds</c> is each batch statement's wall time.
+/// </summary>
+public sealed record DataRetentionBatchProgress(int Batches, int Rows, bool Complete, IReadOnlyList<long> BatchMilliseconds);
 
 /// <summary>
 /// CARD-1654. Task-prune progress for one sweep. <c>ScanComplete</c> is false when the per-sweep
 /// batch cap stopped the scan; the next sweep resumes after <c>Cursor</c>.
+/// CARD-1658: <c>FailedAttempts</c> counts failed batch attempts, <c>SkippedRanges</c> the root ranges
+/// skipped after three consecutive failures, <c>BatchMilliseconds</c> each batch's wall time.
 /// </summary>
 public sealed record DataRetentionTaskPruneProgress(
-    int Batches, int CandidateRoots, int Trees, int Rows, bool ScanComplete, Guid? Cursor);
+    int Batches, int CandidateRoots, int Trees, int Rows, bool ScanComplete, Guid? Cursor,
+    int FailedAttempts = 0, int SkippedRanges = 0, IReadOnlyList<long>? BatchMilliseconds = null);
