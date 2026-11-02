@@ -13,7 +13,7 @@ This file amends the round-3 plan for **S4a only**. It does not edit the round-3
 cannot cause an add/add conflict there. For S4a it supersedes round-3 rows CP-13, CP-14, CP-18 and CP-20
 and the S4 half of V-13. It does **not** re-run CP-21..CP-105, the S2/S3 sweep that the Final Review
 already passed. S4b (deploy-server2.ps1 drain slices, docker-stack.md steps 4/8 and the six V-13
-drain cases) is out of scope. Under round-3 D-6 it waits for CARD-1615 Code and moves to its own follow-up card.
+drain cases) is out of scope. Under round-3 D-6 it waits for CARD-1615 Code and moves to the follow-up card **CARD-1646**.
 
 ## Problem
 
@@ -387,7 +387,7 @@ report commit. It is never silently lowered.
 3. **Review** (ordinary, Final round for S4a).
 4. **Mutation** (SourceLanding, post-land, method-scoped): one positive control per mutant column above.
 
-S4b is on its own follow-up card, gated by CARD-1615 Code under round-3 D-6.
+S4b is on its own follow-up card, **CARD-1646**, gated by CARD-1615 Code under round-3 D-6.
 
 ## Decisions for the human
 
