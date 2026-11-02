@@ -259,10 +259,16 @@ public sealed class C1364BoundLandWaitProofTests
         Console.WriteLine("C1364_VECTOR " + label + " passed");
     }
 
+    // C1008HostFixture injects its prelude, this observer included, at every
+    // "trap 'ec=$?;" site. The temp content audit (c1008_audit_readonly) sets
+    // and restores such traps mid-run, so the observation files reset once per run.
     private static string ObserveHost(string runner, int targetProof, bool inject) => $$"""
-        : > "$C1008_FIXTURE_ROOT/proofs.jsonl"
-        : > "$C1008_FIXTURE_ROOT/land-reads.jsonl"
-        : > "$C1008_FIXTURE_ROOT/sleeps"
+        if [ -z "${C1364_OBSERVER_ARMED:-}" ]; then
+            C1364_OBSERVER_ARMED=1
+            : > "$C1008_FIXTURE_ROOT/proofs.jsonl"
+            : > "$C1008_FIXTURE_ROOT/land-reads.jsonl"
+            : > "$C1008_FIXTURE_ROOT/sleeps"
+        fi
         c849_status_body() {
             if [ "$1" = '{{runner}}' ] && { [ "${FUNCNAME[1]}" = c1008_status_proof ] || [ "${FUNCNAME[1]}" = c994_status_proof ]; }; then
                 local n record
@@ -327,7 +333,15 @@ public sealed class C1364BoundLandWaitProofTests
     private static async Task SeedResume(C1008HostFixture fixture, string hostCase, string phase)
     {
         var recreating = phase is "recreating" or "verified";
-        var setup = recreating ? """
+        var temp = hostCase == "retire-temp-runner";
+        // A temp resume continues only an admitted apply: c1609_prepare_resume requires the
+        // Ready receipt consumed (Applying). The journal reaches removing before that consume,
+        // so the temp seed stops at the first durable target intent, after admission and
+        // before any volume effect.
+        var setup = temp && phase == "removing" ? """
+            c1609_load_retirement
+            c1609_target_intent() { exit 77; }
+            """ : recreating ? """
             build_server2_images() { :; }
             c849_prepare() { :; }
             c849_require_ready() { :; }
@@ -345,12 +359,20 @@ public sealed class C1364BoundLandWaitProofTests
             }
             """;
         // The seed is a fresh apply; a temp one passes admission only after a Ready preview.
-        if (hostCase == "retire-temp-runner") await VolumeRetirementFixture.ReadyPreview(fixture);
+        if (temp) await VolumeRetirementFixture.ReadyPreview(fixture);
         var seed = await fixture.Run(hostCase, setup);
         seed.Exit.ShouldBe(recreating ? 2 : 77, "valid resume seed: " + seed.Output);
         if (recreating) seed.Output.ShouldContain("HostComposeFailed");
         var journal = ReadJson(fixture, "server/recycle/" + Operation + ".json");
         journal["phase"]!.GetValue<string>().ShouldBe(recreating ? "recreating" : phase, "durable resume boundary");
+        if (temp)
+        {
+            var receipt = ReadJson(fixture, "server/retirement/" + Operation + "/receipt.json");
+            receipt["state"]!.GetValue<string>().ShouldBe("Applying", "temp resume seed is an admitted apply");
+            receipt["consumed"]!.GetValue<bool>().ShouldBeTrue("temp resume seed consumed its Ready preview");
+            (receipt["intents"]?.AsArray().Count ?? 0).ShouldBe(0, "temp resume seed stopped before any target intent");
+            fixture.Removed.ShouldBeEmpty("temp resume seed removed no volume");
+        }
         if (phase == "verified")
         {
             // Same valid post-recreation journal form used by the C1105 verified-resume vector.
