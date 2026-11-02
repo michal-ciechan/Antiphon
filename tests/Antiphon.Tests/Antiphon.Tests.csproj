@@ -195,10 +195,12 @@
   <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
     <PropertyGroup><_PtyHostNativeDir>$(TargetDir)ptyhost-native/</_PtyHostNativeDir></PropertyGroup>
     <!-- The outer Linux build restores with UseAppHost=false, which omits the net9
-         apphost pack. Restore this producer with the same property as its inner build. -->
+         apphost pack. Restore this producer with the same property as its inner build.
+         CARD-1664: the linux-x64 copy steps share its obj/project.assets.json, so keep that
+         restore target here too (restore only; the inner build stays portable). -->
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Restore"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;RuntimeIdentifiers=linux-x64" />
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Build"
              Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(_PtyHostNativeDir)" />
