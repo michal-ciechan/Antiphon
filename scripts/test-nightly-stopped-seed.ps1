@@ -200,7 +200,8 @@ try {
             foreach($row in $inputRecord.History.chunks){if($row.chunk -match '(group|split)-2$'){$row.lastRunAtUtc=$now.AddHours(-$hours[$row.suite]).ToString('o')}}
             $aged=Schedule $inputRecord
             $oldest=(@($aged.entries[0..4].suite) -join ',')
-            Check ($oldest -ceq 'session-runner,agents-pty,e2e,pty-host,antiphon' -and ($ids[0..4] -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red' -and ($ids[20..24] -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed' -and ($ids[5..8] -join ',') -ceq 'new-Never,new-New,new-Never,new-New' -and @($inputRecord.History.members).Count -eq 6 -and @($resolved.members).Count -eq 5 -and @($resolved.unresolved).Count -eq 1) ($ids -join ',')
+            # Each lane resumes at its torn chunk, then its tail (new-New), then wraps to new-Never.
+            Check ($oldest -ceq 'session-runner,agents-pty,e2e,pty-host,antiphon' -and ($ids[0..4] -join ',') -ceq 'new-Red,new-Red,new-Red,new-Red,new-Red' -and ($ids[20..24] -join ',') -ceq 'new-Passed,new-Passed,new-Passed,new-Passed,new-Passed' -and ($ids[5..9] -join ',') -ceq 'new-Torn,new-Torn,new-Torn,new-Torn,new-Torn' -and ($ids[10..13] -join ',') -ceq 'new-New,new-Never,new-New,new-Never' -and @($inputRecord.History.members).Count -eq 6 -and @($resolved.members).Count -eq 5 -and @($resolved.unresolved).Count -eq 1) ($ids -join ',')
         }
         'AcknowledgementRequired' {
             $missing=Ingress;$wrong=Ingress -Accept -Source 'rc-wrong';$accepted=Ingress -Accept
@@ -633,8 +634,16 @@ try {
                 return Read-NightlyStoppedRunSeed $path
             }
             function New-Suite($Groups){
-                $chunks=@(foreach($g in @($Groups)){[pscustomobject]@{id=[string]$g.id;classes=@($g.classes);nodes=@()}})
-                $nodes=@(foreach($g in @($Groups)){foreach($c in @($g.classes)){[pscustomobject]@{Uid=[string]$c;ClassName=[string]$c;Method='Run';Type=([string]$c).Split('.')[-1];Categories=@()}}})
+                # A group with 'methods' is a split chunk like the real packer's: its own disjoint node list.
+                $chunks=@(foreach($g in @($Groups)){
+                    $chunkNodes=@()
+                    if($g.PSObject.Properties.Name -contains 'methods'){$chunkNodes=@(foreach($m in @($g.methods)){[pscustomobject]@{Uid=([string]$g.classes[0]+'/'+$m);ClassName=[string]$g.classes[0];Method=[string]$m;Type=([string]$g.classes[0]).Split('.')[-1];Categories=@()}})}
+                    [pscustomobject]@{id=[string]$g.id;classes=@($g.classes);nodes=$chunkNodes}
+                })
+                $nodes=@(foreach($g in @($Groups)){
+                    if($g.PSObject.Properties.Name -contains 'methods'){foreach($m in @($g.methods)){[pscustomobject]@{Uid=([string]$g.classes[0]+'/'+$m);ClassName=[string]$g.classes[0];Method=[string]$m;Type=([string]$g.classes[0]).Split('.')[-1];Categories=@()}}}
+                    else{foreach($c in @($g.classes)){[pscustomobject]@{Uid=[string]$c;ClassName=[string]$c;Method='Run';Type=([string]$c).Split('.')[-1];Categories=@()}}}
+                })
                 return @([pscustomobject]@{id='antiphon';chunks=$chunks;nodes=$nodes;exclusions=@()})
             }
             function Order-Plan($Doc,$Groups){
@@ -676,8 +685,9 @@ try {
             $splitGroups=@(
                 [pscustomobject]@{id='passed-only';classes=@($alpha)},
                 [pscustomobject]@{id='mixed';classes=@($beta,$gamma)},
-                [pscustomobject]@{id='split-a';classes=@($beta)},
-                [pscustomobject]@{id='split-b';classes=@($beta)},
+                [pscustomobject]@{id='split-a';classes=@($beta);methods=@('M1')},
+                [pscustomobject]@{id='split-b';classes=@($beta);methods=@('M2','M3')},
+                [pscustomobject]@{id='split-c';classes=@($beta);methods=@('M4')},
                 [pscustomobject]@{id='unfinished';classes=@($delta)},
                 [pscustomobject]@{id='never';classes=@($never)}
             )
@@ -697,9 +707,10 @@ try {
             $splitIds=@($split.entries.chunk) -join ','
             $byId=@{}
             foreach($entry in @($split.entries)){$byId[$entry.chunk]=$entry}
-            # These chunks carry no node list, so the class is the whole chunk: mixed, split-a and split-b all lead.
-            # Unfinished with no failure stays priority 1. A class the seed never saw stays priority 1 with no timestamp, so it sorts before a timestamped unfinished chunk.
-            $ruleOk=($split.orderingReason -like 'operator-seed-order*' -and $splitIds -ceq 'mixed,split-a,split-b,never,unfinished,passed-only' -and $byId['mixed'].priorFailure -and $byId['split-a'].priorFailure -and $byId['split-b'].priorFailure -and -not $byId['unfinished'].priorFailure -and -not $byId['never'].priorFailure -and -not $byId['passed-only'].priorFailure -and @($split.entries|ForEach-Object {$_.chunk}) -cnotcontains 'old-zeta')
+            # mixed has no node list, so it holds the whole failed class and leads. split-a/b/c carry disjoint
+            # node lists like the real packer's split chunks: a and b hold failed M1/M2 and lead, c holds only M4
+            # and follows as a sibling. The torn (unfinished) chunk resumes the lane before the never-seen one.
+            $ruleOk=($split.orderingReason -like 'operator-seed-order*' -and $splitIds -ceq 'mixed,split-a,split-b,unfinished,never,split-c,passed-only' -and $byId['mixed'].priorFailure -and $byId['split-a'].priorFailure -and $byId['split-b'].priorFailure -and -not $byId['unfinished'].priorFailure -and -not $byId['never'].priorFailure -and -not $byId['passed-only'].priorFailure -and @($split.entries|ForEach-Object {$_.chunk}) -cnotcontains 'old-zeta')
             Check ($packOk -and $ruleOk) ('pack='+$schedule.orderingReason+'/'+($ids -join ',')+'; moved='+$moved+'; delta='+($newMethods-$oldMethods)+'; beta='+$betaOld+'->'+$betaNew+'; split='+$split.orderingReason+'/'+$splitIds)
         }
         'FailedMethodBands' {
@@ -768,7 +779,8 @@ try {
             )
             $doc=Write-BandSeed $rows $failed
             $splitIds=ConvertTo-BandIds (Invoke-BandOrder $doc $chunks)
-            $splitOk=($splitIds -ceq 's1,s4,whole,never,torn,s0,s2,s3,s5,ok')
+            # The torn chunk resumes the lane, so it runs before the never-seen chunk.
+            $splitOk=($splitIds -ceq 's1,s4,whole,torn,never,s0,s2,s3,s5,ok')
             $red='Synthetic.Method.Red'
             $missingChunks=@(
                 (New-BandChunk 'bare' $red @() $true),
@@ -917,7 +929,7 @@ try {
             $neverAt=[array]::IndexOf($ids,$neverId)
             $siblingAt=[array]::IndexOf($ids,$sibling)
             $moved=($oldId -cne $newId -and -not [string]::IsNullOrWhiteSpace($oldId) -and $methodChunks.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace($sibling))
-            $packOk=($moved -and $leadOk -and $neverAt -eq $methodChunks.Count -and $openAt -eq ($neverAt+1) -and $siblingAt -gt $openAt -and ($ids -join ',') -ceq ($againIds -join ',') -and $schedule.orderingReason -like 'operator-seed-order*')
+            $packOk=($moved -and $leadOk -and $openAt -eq $methodChunks.Count -and $neverAt -eq ($openAt+1) -and $siblingAt -gt $openAt -and ($ids -join ',') -ceq ($againIds -join ',') -and $schedule.orderingReason -like 'operator-seed-order*')
             Check $packOk ('old='+$oldId+'; new='+$newId+'; lead='+($lead -join ',')+'; openAt='+$openAt+'; sibling='+$sibling+'@'+$siblingAt+'; reason='+$schedule.orderingReason+'; ids='+($ids -join ','))
         }
         'RealShapeFailedMethodBand' {
@@ -1011,6 +1023,111 @@ try {
             $unique=@($ids|Select-Object -Unique).Count
             $shapeOk=($leadOk -and $openAt -eq 25 -and $siblingAt -gt $openAt -and $e2Sibling -gt $openAt -and $unique -eq 841 -and $ids.Count -eq 841 -and ($ids -join ',') -ceq ((@($again.entries.chunk) -join ',')) -and $schedule.orderingReason -like 'operator-seed-order*' -and @($resolved.unresolved).Count -eq 0)
             Check $shapeOk ('lead='+($lead -join ',')+'; openAt='+$openAt+'; rs0='+$siblingAt+'; e20='+$e2Sibling+'; unique='+$unique+'; unresolved='+@($resolved.unresolved).Count+'; reason='+$schedule.orderingReason)
+        }
+        'UnfinishedRunLaneResume' {
+            # A trimmed seed in the exporter's own shape for an UNFINISHED run (like a074ff9a: a few torn
+            # chunks, many never started), read through the real ingress with acknowledgement.
+            $stamp=$now.AddHours(-5).ToString('o')
+            $passStamp=$now.AddHours(-4).ToString('o')
+            $oldTorn=$now.AddHours(-3).ToString('o')
+            $newTorn=$now.AddHours(-2).ToString('o')
+            $seedRows=New-Object System.Collections.Generic.List[object]
+            $failed=New-Object System.Collections.Generic.List[object]
+            $laneSuites=New-Object System.Collections.Generic.List[object]
+            function Add-LaneRow([string]$Lane,[string]$Class,[string]$Kind,[string]$When){
+                if($Kind -ceq 'unseen'){return}
+                $row=[ordered]@{suite=$Lane;chunk=('old-'+$Class.Split('.')[-1]);classes=@($Class);membershipSource='plan';completed=($Kind -cin @('pass','fail'));started=($Kind -cne 'never');lastRunAtUtc=$(if($Kind -ceq 'never'){$null}else{$When})}
+                if($Kind -ceq 'torn'){$row['unfinishedReason']='trx-open'}
+                [void]$seedRows.Add($row)
+            }
+            # Lane plan: id, class, seed state, node methods (split chunks only), failed methods.
+            $plan=[ordered]@{
+                antiphon=@(
+                    @('a-p0','Antiphon.Tests.Resume.P0','pass',@(),@()),
+                    @('a-h','Antiphon.Tests.Resume.Hole','never',@(),@()),
+                    @('a-p1','Antiphon.Tests.Resume.P1','pass',@(),@()),
+                    @('a-f','Antiphon.Tests.Resume.Fail','fail',@(),@('Run')),
+                    @('a-i','Antiphon.Tests.Resume.Torn','torn',@(),@()),
+                    @('a-u0','Antiphon.Tests.Resume.U0','never',@(),@()),
+                    @('a-new','Antiphon.Tests.Resume.Added','unseen',@(),@()),
+                    @('a-u1','Antiphon.Tests.Resume.U1','never',@(),@()),
+                    @('a-s0','Antiphon.Tests.Resume.Split','fail',@('M0'),@('M0')),
+                    @('a-s1','Antiphon.Tests.Resume.Split','fail',@('M1'),@())
+                )
+                e2e=@(
+                    @('e-u0','Antiphon.E2E.Resume.U0','never',@(),@()),
+                    @('e-i','Antiphon.E2E.Resume.Torn','torn-old',@(),@()),
+                    @('e-u1','Antiphon.E2E.Resume.U1','never',@(),@()),
+                    @('e-i2','Antiphon.E2E.Resume.Torn2','torn-old',@(),@()),
+                    @('e-p0','Antiphon.E2E.Resume.P0','pass',@(),@())
+                )
+                'session-runner'=@(
+                    @('s-u0','Antiphon.Sr.Resume.U0','never',@(),@()),
+                    @('s-p0','Antiphon.Sr.Resume.P0','pass',@(),@()),
+                    @('s-p1','Antiphon.Sr.Resume.P1','pass',@(),@()),
+                    @('s-u1','Antiphon.Sr.Resume.U1','never',@(),@()),
+                    @('s-u2','Antiphon.Sr.Resume.U2','never',@(),@())
+                )
+            }
+            $seenClass=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach($lane in @($plan.Keys)){
+                $chunks=New-Object System.Collections.Generic.List[object]
+                $suiteNodes=New-Object System.Collections.Generic.List[object]
+                foreach($spec in @($plan[$lane])){
+                    $id=[string]$spec[0];$class=[string]$spec[1];$kind=[string]$spec[2]
+                    $nodes=@(foreach($m in @($spec[3])){[pscustomobject]@{Uid=($class+'/'+$m);ClassName=$class;Method=[string]$m;Type='T';Categories=@()}})
+                    foreach($n in $nodes){[void]$suiteNodes.Add($n)}
+                    if($nodes.Count -eq 0){[void]$suiteNodes.Add([pscustomobject]@{Uid=($class+'/Run');ClassName=$class;Method='Run';Type='T';Categories=@()})}
+                    [void]$chunks.Add([pscustomobject]@{id=$id;classes=@($class);nodes=$nodes})
+                    $seedKind=$(if($kind -clike 'torn*'){'torn'}else{$kind})
+                    $when=$(if($kind -ceq 'torn'){$newTorn}elseif($kind -ceq 'torn-old'){$oldTorn}elseif($kind -ceq 'pass'){$passStamp}else{$stamp})
+                    if($seenClass.Add($lane+'/'+$class)){Add-LaneRow $lane $class $seedKind $when}
+                    foreach($m in @($spec[4])){[void]$failed.Add([ordered]@{suite=$lane;chunk=('old-'+$class.Split('.')[-1]);className=$class;method=[string]$m;outcome='Failed'})}
+                }
+                [void]$laneSuites.Add([pscustomobject]@{id=$lane;chunks=@($chunks.ToArray());nodes=@($suiteNodes.ToArray());exclusions=@()})
+            }
+            $evidence=@([ordered]@{path='timing-unfinished/groups-planned-antiphon.json';sha256=('d'*64)})
+            $payload=[ordered]@{sourceObservedAtUtc=$newTorn;chunks=@($seedRows.ToArray());failedTests=@($failed.ToArray());evidence=$evidence}
+            $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='a074ff9a-shape';sourceCandidateId='rc-synthetic-unfinished';sourceSha=('c'*40);createdAtUtc=$now.AddHours(-1).ToString('o');payload=($payload|ConvertTo-Json -Depth 30 -Compress);contentHash=''}
+            $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+            $path=Join-Path $root 'unfinished-seed.json'
+            [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 35))
+            $received=Initialize-NightlyDispatchHistory -Path $path -CandidateSha ('b'*40) -AcceptCrossCandidateSeed -SeedSourceCandidateId 'rc-synthetic-unfinished'
+            if($null -eq $received.History){throw ('ingress '+$received.FallbackReason)}
+            $prepared=@($laneSuites.ToArray())
+            $resolved=Resolve-NightlyPriorFailures $received.History $prepared Full
+            $schedule=New-NightlyDispatchSchedule -PreparedSuites $prepared -PriorityMembers @($resolved.members) -PreviousRun $received.PreviousRun -CandidateSha ('b'*40) -NowUtc $now
+            $ids=(@($schedule.entries.chunk) -join ',')
+            # Contract: failed-method chunks; every lane's interrupted chunks (lane order, from the lane's
+            # first interrupted chunk); every lane's untouched chunks from there, wrapping to earlier holes;
+            # siblings of a placed failure; passed. A lane with no interrupted chunk resumes after its last pass.
+            $want='a-f,a-s0,a-i,e-i,e-i2,a-u0,a-new,a-u1,a-h,e-u1,e-u0,s-u1,s-u2,s-u0,a-s1,a-p0,a-p1,e-p0,s-p0,s-p1'
+            $laneText=(@($schedule.lanes|ForEach-Object {[string]$_.suite+':'+[string]$_.resumeChunk+':'+[string]$_.lastPassedChunk}) -join ',')
+            $again=(@((New-NightlyDispatchSchedule -PreparedSuites $prepared -PriorityMembers @($resolved.members) -PreviousRun $received.PreviousRun -CandidateSha ('b'*40) -NowUtc $now).entries.chunk) -join ',')
+            Check ($ids -ceq $want -and $again -ceq $ids -and $laneText -ceq 'antiphon:a-i:a-p1,e2e:e-i:e-p0,session-runner:s-u1:s-p1' -and $schedule.orderingReason -like 'operator-seed-order*' -and @($resolved.unresolved).Count -eq 0) ('ids='+$ids+'; lanes='+$laneText+'; reason='+$schedule.orderingReason)
+        }
+        'SkipRowsCountAsCompleted' {
+            # MTP writes an explicit [Skip] as outcome NotExecuted. A chunk whose only not-executed rows
+            # are explicit skips is completed; any other not-executed outcome, or skips under an aborted
+            # run summary, leaves the chunk unfinished.
+            $trx=Join-Path $run 'antiphon-all-group-1.trx'
+            $original=[IO.File]::ReadAllText($trx)
+            $skipDefinition='<UnitTest id="2"><TestMethod className="Synthetic.antiphon.Passed" name="Skipped" /></UnitTest></TestDefinitions>'
+            function Export-Variant([string]$Name,[string]$Outcome,[string]$Summary){
+                $text=$original.Replace('</TestDefinitions>',$skipDefinition).Replace('</Results>',('<UnitTestResult testId="2" outcome="'+$Outcome+'" /></Results>')).Replace('<ResultSummary outcome="Completed">',('<ResultSummary outcome="'+$Summary+'">'))
+                [IO.File]::WriteAllText($trx,$text)
+                $out=Join-Path $root ('skip-'+$Name+'.json')
+                [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $out -PassThru)
+                $doc=Read-NightlyStoppedRunSeed $out
+                return @($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-1'})[0]
+            }
+            try {
+                $skip=Export-Variant 'notexecuted' 'NotExecuted' 'Completed'
+                $named=Export-Variant 'skipped' 'Skipped' 'Completed'
+                $pending=Export-Variant 'pending' 'Pending' 'Completed'
+                $aborted=Export-Variant 'aborted' 'NotExecuted' 'Aborted'
+            } finally { [IO.File]::WriteAllText($trx,$original) }
+            Check ($skip.completed -eq $true -and $named.completed -eq $true -and $pending.completed -eq $false -and $aborted.completed -eq $false -and $skip.started -and $pending.started) ('notExecuted='+$skip.completed+'; skipped='+$named.completed+'; pending='+$pending.completed+'; abortedSummary='+$aborted.completed)
         }
         'SummaryPrefixTamper' {
             $runId='d47848cce896471db1cc8ca346707cad'
