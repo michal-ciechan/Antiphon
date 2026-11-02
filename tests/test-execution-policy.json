@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "86795eaffb57c6c780d01b9c6cd99d223db23514d227a026f4fdb2869fb5adcf",
+  "policyHash": "62f4825a4997d230e7e45c24238d681e9949811febccde76cf8059c766bc1491",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -922,6 +922,17 @@
           "platform": "windows",
           "reason": "Linux-only by construction: real Linux stop boundaries require /bin/sh, libc signals and /proc storage refusal. The case remains required on Linux.",
           "owner": "CARD-1619"
+        },
+        {
+          "suite": "session-runner",
+          "class": "SessionCpuWatchdogTests",
+          "methods": [
+            "Linux_real_busy_child_is_killed_with_CpuSpinKilled",
+            "Linux_real_quiet_child_is_left_alone"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: a real /bin/sh child sampled through /proc by SystemProcessCpuProbe proves the Linux runner watchdog. The case remains required on Linux.",
+          "owner": "CARD-1650"
         },
         {
           "suite": "antiphon",
