@@ -26,7 +26,8 @@ internal static class BlockedContextBuilder
         var kind = Classify(task, events);
         var round = CurrentRound(events);
         var blockedAt = LatestBlockAt(events) ?? task.CompletedAt ?? task.DispatchedAt ?? task.CreatedAt;
-        var (question, context) = QuestionAndContext(kind, task);
+        var retainedQuestion = BlockedNote.RetainedQuestion(task, LatestBlockDetail(events));
+        var (question, context) = QuestionAndContext(kind, task, retainedQuestion);
         if (confirmedPark && kind == BlockedKind.Question)
         {
             const string released =
@@ -59,7 +60,9 @@ internal static class BlockedContextBuilder
             ? null
             : task.StandingAuthority.Trim();
         var canContinue = kind == BlockedKind.Question && canAnswer && authority is not null;
-        var reason = kind == BlockedKind.Question ? BlockedNote.ReasonWord(task.ReportEvidence) : null;
+        var reason = kind != BlockedKind.Question ? null
+            : retainedQuestion is not null ? BlockedNote.ReasonQuestionAfterReply
+            : BlockedNote.ReasonWord(task.ReportEvidence);
 
         return new BlockedContextDto(
             kind, round, blockedAt, question, context, prior, progress,
@@ -92,10 +95,14 @@ internal static class BlockedContextBuilder
         return count == 0 ? 1 : count;
     }
 
-    public static string AttentionPrimary(AgentTask task)
+    /// <param name="latestBlockDetail">The detail of the task's latest Blocked event when that is its
+    /// latest Blocked/Conflicted event: a question asked after a Reply lives there, not in Result (CARD-1503).</param>
+    public static string AttentionPrimary(AgentTask task, string? latestBlockDetail = null)
     {
         if (!string.IsNullOrWhiteSpace(task.FailureReason))
             return task.FailureReason;
+        if (BlockedNote.RetainedQuestion(task, latestBlockDetail) is { } retainedQuestion)
+            return BlockedNote.ExtractAsks(retainedQuestion);
         if (task.ReportEvidence == AgentTaskReportEvidence.UnmarkedWaiting)
             return BlockedNote.ExtractAsks(task.Result);
         if (BlockedQuestion.TryExtract(task.Result, out var question, out _))
@@ -109,10 +116,20 @@ internal static class BlockedContextBuilder
             .Select(e => (DateTime?)e.At)
             .LastOrDefault();
 
-    private static (string Question, string? Context) QuestionAndContext(BlockedKind kind, AgentTask task)
+    /// <summary>The latest Blocked event's detail when no Conflicted event came after it.</summary>
+    private static string? LatestBlockDetail(IReadOnlyList<AgentTaskEventDto> events) =>
+        events.LastOrDefault(e => e.Type is AgentTaskEventType.Blocked or AgentTaskEventType.Conflicted) is
+            { Type: AgentTaskEventType.Blocked } latest ? latest.Detail : null;
+
+    private static (string Question, string? Context) QuestionAndContext(
+        BlockedKind kind, AgentTask task, string? retainedQuestion)
     {
         if (kind != BlockedKind.Question)
             return (task.FailureReason ?? task.Result ?? "The delegate is blocked.", null);
+
+        // CARD-1503: Result is the retained marked report; the question is the latest Block's.
+        if (retainedQuestion is not null)
+            return (BlockedNote.ExtractAsks(retainedQuestion), RetainedQuestionContext);
 
         if (task.ReportEvidence == AgentTaskReportEvidence.UnmarkedWaiting)
         {
@@ -133,6 +150,9 @@ internal static class BlockedContextBuilder
 
         return ("The delegate is blocked and gave no reason.", null);
     }
+
+    private const string RetainedQuestionContext =
+        "Asked after a Reply. The retained marked report stands unchanged; it is the task's result.";
 
     private static IReadOnlyList<BlockedRoundDto> PriorRounds(IReadOnlyList<AgentTaskEventDto> events)
     {
