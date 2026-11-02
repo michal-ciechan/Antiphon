@@ -669,13 +669,22 @@ The operator's words: "Make sure each future review is based only on the diff fr
 A round is one code Review of one subject: the card's change, or a combination of parallel slices reviewed as one land. Plan reviews and receipt-only corrections are not rounds.
 
 1. **Round 1 is the whole change**, the full ordinary Review the stage contract describes.
-2. **Round 2 reviews only the diff `<round-1 reviewed SHA>..<new tip>`**, reading whole the files that diff touches. It confirms that each round-1 defect is closed and reports blockers and regressions the diff introduced. It adds no new attack classes, and the whole change is not re-swept.
+2. **Round 2 reviews only the diff `<round-1 reviewed SHA>..<new tip>`**, reading in full the files that diff touches. It confirms that each round-1 defect is closed and reports blockers and regressions the diff introduced. It adds no new attack classes, and the whole change is not re-swept.
 3. **Round 3 has the same diff-only scope (`<round-2 reviewed SHA>..<new tip>`) and reports blockers only.** A blocker is data loss, a printed secret, a regression, a vacuous gate that lets a real defect through, or a server that cannot start.
-4. **After round 3 with a remaining blocker the orchestrator stops** and surfaces it to the operator: the open blockers and what is unreviewed since the last reviewed SHA. There is no round 4 and no automatic fix-and-review loop; the Review reports `next: decide`.
+4. **After round 3 with a remaining blocker the orchestrator stops** and surfaces it to the operator: the open blockers and what is unreviewed since the last reviewed SHA. There is no round 4 and no automatic fix-and-review loop; the round-3 brief tells the Review to report `next: decide` for a remaining blocker.
 
-Every round: lows and advisories become cards and do not hold the land, which proceeds on a Review with no blocker (D-2: advisory-only follow-ups force neither Code nor another Review). A defect a fix round introduced is reported as introduced by that round, naming its commit range, not as a miss of round 1. Verification in rounds 2 and 3 reruns only the rows the brief's verification profile names for the diff, under minimal testing (standing rule 8); `ordinaryScopeCompleted: Full` means that named selection ran. A combination of parallel branches is reviewed as the diff from each branch's reviewed tip to the merged tree.
+Every round: lows and advisories become cards and do not hold the land, which proceeds on a Review with no blocker (D-2: advisory-only follow-ups force neither Code nor another Review). A defect a fix round introduced is reported as introduced by that round, naming its commit range, not as a miss of round 1. The diff-only scope narrows what a Review reads and reports. It does not change the checkpoint rerun that a Final Review needs for `ordinaryScopeCompleted: Full`, and minimal testing (standing rule 8) still applies. A combination of parallel branches is reviewed as the diff from each branch's reviewed tip to the merged tree.
 
-The Review brief states the round number, the previous reviewed SHA, the exact range and the stringency (full, diff with defect closure, or blockers only); round 1 states the full candidate range. The `--- review evidence ---` block records `reviewRound:` and `reviewedRange:` beside `reviewedSourceSha:`. Standing rule 4 applies inside this limit, and `repeat-proof` (3 normal + 2 loaded repetitions) counts test executions, not Review rounds. The server does not count rounds yet; a guard that warns at round 4 is a separate slice of CARD-1635.
+The `stage-review` bundle keeps its 2,500-character cap, so the Review brief carries the round. It states the round number, the previous reviewed SHA, the exact range and the stringency; round 1 states the full candidate range. It also asks for two extra lines in the `--- review evidence ---` block, beside `reviewedSourceSha:`, which the evidence parser ignores. Brief lines for round 2:
+
+```
+round: 2 of 3; stringency: diff only; close each round-1 defect; blockers and diff regressions; no new attack classes
+previous reviewed SHA: <full SHA from the round-1 evidence>
+range: <previous reviewed SHA>..<full tip SHA>
+evidence: add reviewRound: 2 and reviewedRange: <range actually reviewed> to the review evidence block
+```
+
+Standing rule 4 applies inside this limit, and `repeat-proof` (3 normal + 2 loaded repetitions) counts test executions, not Review rounds. The server does not count rounds yet; a guard that warns at round 4 is a separate slice of CARD-1635.
 
 ### rc qualification run-group repair loop (CARD-1514)
 
