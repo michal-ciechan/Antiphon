@@ -1,14 +1,19 @@
+using System.Net;
+using System.Net.Http.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Antiphon.Tests.Application;
 
@@ -218,6 +223,102 @@ public sealed class TaskCeilingControlTests
         }
         (await h.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Working);
         h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    // Review e52b2bed D-3: the 240-minute operator bound at CeilingHoldFacts.Rearm, checked through the
+    // service with an authenticated operator, so only the bound decides.
+    [Test]
+    [Arguments(240)]
+    [Arguments(241)]
+    public async Task C1610_Operator_extend_is_bounded_at_240_minutes(int minutes)
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(ageMinutes: 725,
+            kind: TranscriptKinds.CompactBoundary, lastAgeMinutes: 40);
+        await h.SweepAsync();
+        var held = await h.TaskAsync();
+        held.CeilingHoldEpisodeId.ShouldNotBeNull();
+        if (minutes == 241)
+        {
+            var refused = await Should.ThrowAsync<ValidationException>(() => h.DecideAsync(CeilingAction.Extend, minutes,
+                true, true, "authorized extra inspection"));
+            refused.StatusCode.ShouldBe(422);
+            refused.Errors.ShouldContainKey("extendMinutes");
+            await AssertUndecidedAsync(h, held, "operator Extend 241");
+        }
+        else
+        {
+            await h.DecideAsync(CeilingAction.Extend, minutes, true, true, "authorized extra inspection");
+            var rearmed = await h.TaskAsync();
+            rearmed.NextCeilingMinutes.ShouldBe(725 + 240);
+            rearmed.CeilingOperatorExtended.ShouldBeTrue();
+        }
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    private sealed class CeilingHttpFactory(TaskCeilingHarness harness) : AntiphonWebAppFactory
+    {
+        protected override string ConnectionString => harness.ConnectionString;
+        // The harness owns the hold; no periodic sweep may move it while the endpoint is under test.
+        protected override void ApplyTestOverrides(IServiceCollection services) => services.RemoveAll<IHostedService>();
+    }
+
+    // Review e52b2bed D-3: the operator credential at the reply endpoint (AgentTaskEndpoints), the only
+    // place an operator Extend is authorized; the service trusts the authority it is handed.
+    [Test]
+    public async Task C1610_Http_operator_extend_requires_the_operator_token()
+    {
+        await using var h = await TaskCeilingHarness.CreateAsync(ageMinutes: 725,
+            kind: TranscriptKinds.CompactBoundary, lastAgeMinutes: 40);
+        await h.SweepAsync();
+        var held = await h.TaskAsync();
+        held.CeilingHoldEpisodeId.ShouldNotBeNull();
+        await using var factory = new CeilingHttpFactory(h);
+        var url = $"/api/agent-tasks/{h.TaskId:D}/reply";
+        object Body(int minutes) => new { ceilingAction = "Extend", episodeId = held.CeilingHoldEpisodeId,
+            extendMinutes = minutes, operatorExtend = true, ceilingReason = "authorized extra inspection" };
+        foreach (var (label, token) in new (string, string?)[] { ("no token", null), ("wrong token", "wrong-" + Guid.NewGuid().ToString("N")) })
+        {
+            using var client = factory.CreateClient();
+            if (token is not null) client.DefaultRequestHeaders.Add(OperatorTokenFile.Header, token);
+            using var response = await client.PostAsJsonAsync(url, Body(60));
+            var text = await response.Content.ReadAsStringAsync();
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden, $"{label}: {text}");
+            text.ShouldContain("operator_token_required", Case.Sensitive, label);
+            await AssertUndecidedAsync(h, held, label);
+        }
+        using var op = factory.CreateClient();
+        op.DefaultRequestHeaders.Add(OperatorTokenFile.Header, OperatorTokenFile.ReadOrCreate(factory.OperatorTokenPath));
+        using (var over = await op.PostAsJsonAsync(url, Body(241)))
+        {
+            over.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity, await over.Content.ReadAsStringAsync());
+            await AssertUndecidedAsync(h, held, "operator token, 241 minutes");
+        }
+        using (var accepted = await op.PostAsJsonAsync(url, Body(60)))
+            accepted.StatusCode.ShouldBe(HttpStatusCode.OK, await accepted.Content.ReadAsStringAsync());
+        var rearmed = await h.TaskAsync();
+        rearmed.CeilingAcknowledgedAt.ShouldNotBeNull();
+        rearmed.CeilingOperatorExtended.ShouldBeTrue();
+        rearmed.NextCeilingMinutes.ShouldNotBe(held.NextCeilingMinutes);
+        (await DecisionEventsAsync(h)).ShouldHaveSingleItem().ShouldContain("\"actor\":\"operator\"");
+        rearmed.Status.ShouldBe(AgentTaskStatus.Working);
+        h.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    private static async Task AssertUndecidedAsync(TaskCeilingHarness h, AgentTask held, string label)
+    {
+        var after = await h.TaskAsync();
+        (after.Status, after.CeilingHoldEpisodeId, after.NextCeilingMinutes, after.CeilingAcknowledgedAt,
+                after.CeilingOperatorExtended, after.ConcurrencyToken)
+            .ShouldBe((held.Status, held.CeilingHoldEpisodeId, held.NextCeilingMinutes, held.CeilingAcknowledgedAt,
+                held.CeilingOperatorExtended, held.ConcurrencyToken), label);
+        (await DecisionEventsAsync(h)).ShouldBeEmpty(label);
+    }
+
+    private static async Task<List<string>> DecisionEventsAsync(TaskCeilingHarness h)
+    {
+        await using var db = h.Context();
+        return await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.TaskId && e.Detail.StartsWith("ceiling-decision"))
+            .Select(e => e.Detail).ToListAsync();
     }
 
     [Test]
