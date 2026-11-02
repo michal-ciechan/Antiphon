@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
@@ -15,6 +16,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1663. The SessionRunnerStates-backed alarm exclusion: a retired or draining runner raises
 /// no RunnerUnavailable alarm and its open alarm resolves, while an active runner still alarms.
+/// CARD-1666: a draining runner offline past <c>Alarms:RunnerDrainMaxMinutes</c> alarms again.
 /// </summary>
 [Category("Integration")]
 public sealed class RunnerStateAlarmExclusionTests
@@ -31,7 +33,7 @@ public sealed class RunnerStateAlarmExclusionTests
         host.Directory.ApplyState("cleared", State(draining: false, retired: false));
         await using var db = Context(schema);
         var state = new RunnerAlarmState();
-        var exclusion = new RunnerStateAlarmExclusion(host.Directory);
+        var exclusion = Exclusion(host);
         var coordinator = Build(host, db, state, exclusion);
 
         exclusion.Excluded("fresh").ShouldBeNull();
@@ -70,17 +72,74 @@ public sealed class RunnerStateAlarmExclusionTests
         await using var db = Context(schema);
         var state = new RunnerAlarmState();
         var notifier = new RecordingNotifier();
-        var exclusion = new RunnerStateAlarmExclusion(host.Directory);
+        var exclusion = Exclusion(host);
         var coordinator = Build(host, db, state, exclusion, notifier);
 
         exclusion.Excluded("server2-temp").ShouldBe("retired");
         exclusion.Excluded("draining").ShouldBe("draining");
         await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
         await coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
-        await coordinator.EvaluateRunnersAsync(T0.AddDays(3), CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(29), CancellationToken.None);
 
         state.Current.Episodes.ShouldBeEmpty();
         notifier.Notes.ShouldBeEmpty();
+
+        // CARD-1666: a retired runner has no bound; a drain this old has overrun its bound.
+        await coordinator.EvaluateRunnersAsync(T0.AddDays(3), CancellationToken.None);
+        state.Current.Episodes.ShouldNotContain(episode => episode.RunnerId == "server2-temp");
+    }
+
+    [Test]
+    public async Task C1666_a_draining_runner_offline_past_the_bound_raises_with_a_drain_overran_note()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: Settings("stuck"));
+        host.Directory.ApplyState("stuck", State(draining: true, retired: false));
+        await using var db = Context(schema);
+        var caller = await SeedPinnedAsync(db, "stuck");
+        var state = new RunnerAlarmState();
+        var notifier = new RecordingNotifier();
+        var coordinator = Build(host, db, state, Exclusion(host), notifier);
+
+        // Within the 30 min default bound (inclusive) the offline draining runner stays silent.
+        await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(20), CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(30), CancellationToken.None);
+        state.Current.Episodes.ShouldBeEmpty();
+        notifier.Notes.ShouldBeEmpty();
+
+        // Past the bound the ordinary outage episode opens and raises after the usual grace.
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(31), CancellationToken.None);
+        state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldBeNull();
+        await coordinator.EvaluateRunnersAsync(T0.AddMinutes(31).AddSeconds(180), CancellationToken.None);
+        state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldBe(T0.AddMinutes(31).AddSeconds(180));
+        var note = notifier.Notes.ShouldHaveSingleItem();
+        note.SessionId.ShouldBe(caller);
+        note.Header.ShouldBe("[runner stuck unavailable]");
+        note.Body.ShouldContain("drain overran");
+        note.Body.ShouldContain("Alarms:RunnerDrainMaxMinutes");
+        note.Body.ShouldContain(T0.ToString("O"));
+    }
+
+    [Test]
+    public async Task C1666_a_draining_runner_with_no_drain_start_fails_safe_and_raises()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: Settings("unknown"));
+        host.Directory.ApplyState("unknown", new RunnerState(true, null, "rolling", null, false, null, null, null));
+        await using var db = Context(schema);
+        await SeedPinnedAsync(db, "unknown");
+        var state = new RunnerAlarmState();
+        var notifier = new RecordingNotifier();
+        var coordinator = Build(host, db, state, Exclusion(host), notifier);
+
+        await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+
+        state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldBe(T0.AddSeconds(180));
+        var note = notifier.Notes.ShouldHaveSingleItem();
+        note.Body.ShouldContain("drain overran");
+        note.Body.ShouldContain("drain start is unknown");
     }
 
     [Test]
@@ -90,7 +149,7 @@ public sealed class RunnerStateAlarmExclusionTests
         await using var host = await PhoneHomeTestHost.StartAsync(configured: Settings("server2-temp", "server2"));
         await using var db = Context(schema);
         var state = new RunnerAlarmState();
-        var coordinator = Build(host, db, state, new RunnerStateAlarmExclusion(host.Directory));
+        var coordinator = Build(host, db, state, Exclusion(host));
         await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
         await coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
         state.Current.Episodes.Count.ShouldBe(2);
@@ -107,6 +166,29 @@ public sealed class RunnerStateAlarmExclusionTests
         new(host.Directory, exclusion, state, new RepositoryChildJournalInspector(new LandingGit()), db,
             notifier ?? new RecordingNotifier(), new CompletionNoteFlushQueue(), Options.Create(new AlarmSettings()),
             new ListLogger<RunnerAlarmCoordinator>());
+
+    private static RunnerStateAlarmExclusion Exclusion(PhoneHomeTestHost host) => new(host.Directory);
+
+    private static async Task<Guid> SeedPinnedAsync(AppDbContext db, string runnerId)
+    {
+        var caller = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = caller, Status = SessionStatus.Running, RunnerId = runnerId, RunnerStoreId = Guid.NewGuid(),
+            RunnerCwd = "/work", Cwd = "/work", DefinitionName = "test", CreatedAt = now, StartedAt = now, LastSeenAt = now,
+        });
+        var id = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "pinned", Goal = "goal", Role = AgentTaskRole.Code,
+            Status = AgentTaskStatus.Working, RunnerId = runnerId, ParentSessionId = caller,
+            ReplyTo = AgentTaskReplyTo.Session, AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared, WorkingDirectory = Path.GetTempPath(), CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        return caller;
+    }
 
     private static AppDbContext Context(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
