@@ -9,6 +9,8 @@ public sealed class AlarmSettingsValidator : IValidateOptions<AlarmSettings>
         var failures = new List<string>();
         if (options.RunnerGraceSeconds <= 0)
             failures.Add("Alarms:RunnerGraceSeconds must be positive.");
+        if (options.RunnerDrainMaxMinutes <= 0)
+            failures.Add("Alarms:RunnerDrainMaxMinutes must be positive.");
         if (options.SweepMinutes <= 0)
             failures.Add("Alarms:SweepMinutes must be positive.");
         if (options.JournalStaleMinutes <= 0)

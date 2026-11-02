@@ -167,7 +167,8 @@ public sealed class RunnerStateAlarmExclusionTests
             notifier ?? new RecordingNotifier(), new CompletionNoteFlushQueue(), Options.Create(new AlarmSettings()),
             new ListLogger<RunnerAlarmCoordinator>());
 
-    private static RunnerStateAlarmExclusion Exclusion(PhoneHomeTestHost host) => new(host.Directory);
+    private static RunnerStateAlarmExclusion Exclusion(PhoneHomeTestHost host) =>
+        new(host.Directory, Options.Create(new AlarmSettings()));
 
     private static async Task<Guid> SeedPinnedAsync(AppDbContext db, string runnerId)
     {
