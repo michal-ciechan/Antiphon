@@ -1469,7 +1469,10 @@ public class SessionReconciliationServiceTests
     [Arguments("cancel")]
     [Arguments("superseded")]
     [Arguments("publish-after-commit")]
-    public async Task A_failed_or_superseded_transition_never_counts_and_a_post_commit_publish_failure_never_refunds(string shape)
+    public Task A_failed_or_superseded_transition_never_counts_and_a_post_commit_publish_failure_never_refunds(string shape) =>
+        TransitionFailureShapeAsync(shape, foreign: null);
+
+    private static async Task TransitionFailureShapeAsync(string shape, SessionRunnerSessionDto? foreign)
     {
         var marker = NewMarker();
         try
@@ -1477,27 +1480,13 @@ public class SessionReconciliationServiceTests
             var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
             var flapState = new SessionReAdoptionState();
-            var runner = RunnerRunning(sessionId, startedAt);
+            var runner = WithForeign(RunnerRunning(sessionId, startedAt), foreign);
             var eventBus = new MockEventBus();
             var alerts = new RecordingAlertService();
             using var cts = new CancellationTokenSource();
-            AppDbContext scan;
-            if (shape == "save")
-            {
-                var interceptor = new ThrowOnceSaveInterceptor();
-                var options = new DbContextOptionsBuilder<AppDbContext>();
-                options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
-                {
-                    npgsql.MigrationsAssembly("Antiphon.Server");
-                    npgsql.SetPostgresVersion(16, 0);
-                });
-                options.AddInterceptors(interceptor);
-                scan = new AppDbContext(options.Options);
-            }
-            else
-            {
-                scan = CreateContext();
-            }
+            var scan = shape == "save"
+                ? CreateContext(new ThrowOnceSaveInterceptor())
+                : CreateContext();
 
             await using (scan)
             {
@@ -1562,7 +1551,10 @@ public class SessionReconciliationServiceTests
     [Arguments("incident-throws")]
     [Arguments("alert-throws")]
     [Arguments("ambiguous-save")]
-    public async Task Cap_escalation_retries_only_unfinished_work_and_converges_to_one_incident(string shape)
+    public Task Cap_escalation_retries_only_unfinished_work_and_converges_to_one_incident(string shape) =>
+        CapEscalationShapeAsync(shape, foreign: null);
+
+    private static async Task CapEscalationShapeAsync(string shape, SessionRunnerSessionDto? foreign)
     {
         var marker = NewMarker();
         try
@@ -1570,7 +1562,7 @@ public class SessionReconciliationServiceTests
             var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
             var flapState = new SessionReAdoptionState();
-            var runner = RunnerRunning(sessionId, startedAt);
+            var runner = WithForeign(RunnerRunning(sessionId, startedAt), foreign);
             for (var round = 1; round <= 3; round++)
             {
                 await using var db = CreateContext();
@@ -1591,21 +1583,8 @@ public class SessionReconciliationServiceTests
                 "ambiguous-save" => new ThrowOnceSaveInterceptor(onSaving: false, onSaved: true),
                 _ => null,
             };
-            AppDbContext FirstScan()
-            {
-                if (interceptor is null)
-                    return CreateContext();
-                var options = new DbContextOptionsBuilder<AppDbContext>();
-                options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
-                {
-                    npgsql.MigrationsAssembly("Antiphon.Server");
-                    npgsql.SetPostgresVersion(16, 0);
-                });
-                options.AddInterceptors(interceptor);
-                return new AppDbContext(options.Options);
-            }
 
-            await using (var db = FirstScan())
+            await using (var db = interceptor is null ? CreateContext() : CreateContext(interceptor))
             {
                 var service = BuildService(db, runner, new MockEventBus(), alerts, flapState);
                 await service.ScanAsync(CancellationToken.None);
@@ -1636,6 +1615,100 @@ public class SessionReconciliationServiceTests
             (await after.AgentIncidents.CountAsync(i => i.SessionId == sessionId)).ShouldBe(reportedIncidents);
         }
         finally { await CleanupAsync(marker); }
+    }
+
+    /// <summary>
+    /// Group 79 on Windows: the suite shares its database with every class that ran before it in
+    /// the same chunk, so pass 1 can meet live rows this class never seeded. A foreign row inside
+    /// the Starting grace or one the runner reports Running changes nothing and must not save; a
+    /// foreign Running row the runner does not know is a real close and does save. Neither may
+    /// spend the one-shot fault these failure-boundary shapes aim at the re-adoption commit and
+    /// the cap persist. Each case owns a cloned database so the foreign row is the only one.
+    /// </summary>
+    [Test]
+    [Arguments("starting-in-grace")]
+    [Arguments("runner-running")]
+    [Arguments("runner-unknown")]
+    public async Task Injected_save_faults_reach_their_intended_save_beside_a_foreign_live_row(string foreign)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Store.Value = schema.ConnectionString;
+        var marker = NewMarker();
+        try
+        {
+            var dto = await SeedForeignLiveRowAsync(marker, foreign);
+            await TransitionFailureShapeAsync("save", dto);
+            await CapEscalationShapeAsync("ambiguous-save", dto);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    /// <summary>
+    /// The invariant behind group 79: a reconciliation pass that changed nothing runs no save, so
+    /// no SavingChanges or SavedChanges interceptor side effect, whatever live rows are present.
+    /// </summary>
+    [Test]
+    [Arguments("none")]
+    [Arguments("starting-in-grace")]
+    [Arguments("runner-running")]
+    public async Task A_reconciliation_pass_that_changes_nothing_runs_no_save(string foreign)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Store.Value = schema.ConnectionString;
+        var marker = NewMarker();
+        try
+        {
+            var dto = foreign == "none" ? null : await SeedForeignLiveRowAsync(marker, foreign);
+            var saves = new SaveCountingInterceptor();
+            await using (var db = CreateContext(saves))
+            {
+                var service = BuildService(db, WithForeign(new FakeRunnerClient(), dto), new MockEventBus());
+                (await service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+            }
+
+            saves.Saving.ShouldBe(0);
+            saves.Saved.ShouldBe(0);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    /// <summary>Seeds one live row that is not this test's subject; returns what the runner lists for it.</summary>
+    private static async Task<SessionRunnerSessionDto?> SeedForeignLiveRowAsync(string marker, string foreign)
+    {
+        var (_, sessionId, startedAt) = foreign switch
+        {
+            "starting-in-grace" => await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Starting, staleAgent: false),
+            "runner-running" or "runner-unknown" => await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: false),
+            _ => throw new ArgumentOutOfRangeException(nameof(foreign), foreign, null),
+        };
+        return foreign == "runner-running" ? RunnerRunning(sessionId, startedAt).Sessions[0] : null;
+    }
+
+    private static FakeRunnerClient WithForeign(FakeRunnerClient runner, SessionRunnerSessionDto? foreign)
+    {
+        if (foreign is not null)
+            runner.Sessions = [.. runner.Sessions, foreign];
+        return runner;
+    }
+
+    private sealed class SaveCountingInterceptor : SaveChangesInterceptor
+    {
+        public int Saving;
+        public int Saved;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Saving);
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Saved);
+            return base.SavedChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     [Test]
@@ -2087,7 +2160,16 @@ public class SessionReconciliationServiceTests
 
     // ---------- helpers ----------
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    /// <summary>A case that owns a cloned database sets this; every helper below then uses it.</summary>
+    private static readonly AsyncLocal<string?> Store = new();
+
+    private static AppDbContext CreateContext() =>
+        new(Store.Value is { } isolated
+            ? TestDbFixture.CreateDbContextOptions(isolated)
+            : TestDbFixture.CreateDbContextOptions());
+
+    private static AppDbContext CreateContext(IInterceptor interceptor) =>
+        new(TestDbFixture.CreateDbContextOptions(Store.Value ?? TestDbFixture.ConnectionString, interceptor));
 
     internal static SessionReconciliationService BuildService(
         AppDbContext db,
