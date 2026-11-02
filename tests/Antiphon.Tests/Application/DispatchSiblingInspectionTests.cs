@@ -155,6 +155,19 @@ public class DispatchSiblingInspectionTests
             selected.SourceTaskId.ShouldBe(source!.Id);
             trace.Commands.ShouldContain(c => c[0] == "cherry");
         }
+        else if (scenario is "absent local ref" or "prefix-neighbor ref")
+        {
+            // CARD-1640 (was: Target). An absent same-card branch is looked up once under
+            // refs/remotes/origin and, still absent, refuses the automatic target fallback.
+            selected.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown, scenario);
+            selected.Reason.ShouldBe("source_unreadable");
+            selected.Incomplete.ShouldBeFalse();
+            trace.Commands.Count(c => c[0] == "for-each-ref").ShouldBe(3);
+            trace.Commands.ShouldContain(c => c[0] == "for-each-ref"
+                && c.Contains("refs/remotes/origin/" + source!.WorktreeBranch));
+            trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
+            selected.GitCommands.ShouldBeLessThanOrEqualTo(5);
+        }
         else
         {
             selected.Decision.ShouldBe(CardWorktreeBaseDecision.Target, scenario);
