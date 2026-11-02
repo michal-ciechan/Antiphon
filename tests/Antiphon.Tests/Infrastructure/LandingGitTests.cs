@@ -981,7 +981,10 @@ public sealed class LandingGitTests
 
         using var repo = new ScratchGitRepo("c1076-stranger");
         await repo.CommitFileAsync("README.md", "seed\n");
-        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct);
+        // Host processes of other users (Postgres backends, Docker) started during the run are
+        // "cannot tell" and would keep the record; the unreadable rule has its own witnesses.
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct,
+            (marker, _) => marker.ReadEnviron = ReadableOrEmpty);
         try
         {
             var watch = Stopwatch.StartNew();
@@ -1085,7 +1088,7 @@ public sealed class LandingGitTests
         var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct,
             (marker, _) => marker.ReadEnviron = path => path == "/proc/1/environ"
                 ? throw new UnauthorizedAccessException("stand-in unreadable environ")
-                : File.ReadAllBytes(path));
+                : ReadableOrEmpty(path));
         await AssertReleasedWhileHolderLivesAsync(git, call, cancel, holder, children, "C1076_UNREADABLE_EARLIER");
     }
 
@@ -1134,6 +1137,14 @@ public sealed class LandingGitTests
                 marker.AssignedBeforeSpawn = true;
             });
         await AssertReleasedWhileHolderLivesAsync(git, call, cancel, holder, children, "C1076_EARLY_JOB");
+    }
+
+    /// <summary>An environ the test host cannot read reads as empty, so another user's process
+    /// that starts during the run does not decide a witness about a different holder.</summary>
+    private static byte[] ReadableOrEmpty(string path)
+    {
+        try { return File.ReadAllBytes(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
     }
 
     private static async Task AssertKeptUntilHolderExitsAsync(OutsideHolderGit git, Task<LandingGitResult> call,
