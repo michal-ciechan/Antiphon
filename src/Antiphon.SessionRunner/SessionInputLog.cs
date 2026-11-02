@@ -107,7 +107,6 @@ public sealed class SessionInputLog
         {
             if (_buffer.Length == 0)
                 return false;
-            _normalized = null; // CARD-1624 RED: no cache yet
             if (_normalized is null)
             {
                 _normalized = new PromptSubmissionMatch.NormalizedRecord(_buffer.ToString());

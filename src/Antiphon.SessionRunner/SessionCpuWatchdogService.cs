@@ -101,7 +101,7 @@ public sealed class SessionCpuWatchdogService : BackgroundService
             TranscriptWorkingState.WorkingVerdict verdict;
             try
             {
-                verdict = TranscriptWorkingState.Classify(_runtime.GetTranscript(session.SessionId).Entries); // CARD-1624 RED
+                verdict = _runtime.GetWorkingVerdict(session.SessionId);
             }
             catch (KeyNotFoundException)
             {
