@@ -3755,6 +3755,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return session;
         }
 
+        // CARD-1653 red-commit shim: the reason is not yet honoured.
+        public static RunnerSession CreatePendingConflict(PtyHostManifest manifest,
+            SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger, string pendingReason) =>
+            CreateWorkspaceConflict(manifest, settings, events, logger);
+
         public static RunnerSession CreateWorkspaceConflict(PtyHostManifest manifest,
             SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger)
         {
