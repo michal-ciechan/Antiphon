@@ -12,7 +12,8 @@ public sealed class LiveLaneFingerprintTests
 
     [Test]
     public Task StableCanonicalInputs() => Run(nameof(StableCanonicalInputs), TimeSpan.FromSeconds(120),
-        "deterministic", "sha-free", "path-free", "mode", "absent-vs-empty", "domain", "shadow-only", "missing-root", "real-head");
+        "deterministic", "sha-free", "path-free", "mode", "absent-vs-empty", "domain", "shadow-only", "missing-root", "real-head",
+        "real-declaration");
 
     [Test]
     public Task ReferenceClosureInvalidates() => Run(nameof(ReferenceClosureInvalidates), MethodBudget,

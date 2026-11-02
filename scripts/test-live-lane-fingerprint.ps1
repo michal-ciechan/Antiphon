@@ -126,7 +126,7 @@ function New-FingerprintFixture([string]$name='repository with spaces') {
     return $script:base
 }
 
-$expectedRows=@{C1545_StableCanonicalInputs=9;C1545_ReferenceClosureInvalidates=7;C1545_TestAndFixtureInvalidates=6
+$expectedRows=@{C1545_StableCanonicalInputs=10;C1545_ReferenceClosureInvalidates=7;C1545_TestAndFixtureInvalidates=6
     C1545_UnknownDependencyRefuses=11;C1545_RuntimeScriptsIncluded=6;C1545_RelevantNamespaceOutsideInputsRefuses=5
     C1545_LoadedInstructionsOutsideInputsRefuse=8}
 if (-not $expectedRows.ContainsKey($Case)) { throw "unknown case: $Case" }
@@ -180,7 +180,11 @@ switch ($Case) {
             }
             Check (($real1.digest -cmatch '^[0-9a-f]{64}$') -and ($real1.digest -ceq $real2.digest) -and -not $empty.Count -and
                 -not @($real1.unknownReasons | Where-Object { $_.StartsWith('declared-root-empty:',[StringComparison]::Ordinal) }).Count) 'real-head' ("empty=" + ($empty -join ','))
-        } catch { Check $false 'real-head' $_.Exception.Message }
+            # Review f5fcf533 follow-up (a): docker/ and the two sibling test trees are declared roots, so
+            # their namespaces and scripts are hashed; the two fixture strings stay unknown on purpose.
+            $sibling=@($real1.unknownReasons | Where-Object { $_ -cmatch '^(namespace-outside-inputs|undeclared-runtime):(docker/|tests/Antiphon\.SessionRunner\.Tests/|tests/Antiphon\.PtyHost\.Tests/)' })
+            Check (($real1.status -ceq 'unknown') -and -not $sibling.Count -and (Has $real1 'undeclared-runtime:file.ps1') -and (Has $real1 'undeclared-runtime:outside.ps1')) 'real-declaration' ("reasons=$(@($real1.unknownReasons).Count) sibling=$($sibling.Count)")
+        } catch { Check $false 'real-head' $_.Exception.Message; Check $false 'real-declaration' $_.Exception.Message }
     }
     'C1545_ReferenceClosureInvalidates' {
         . $script:Library
