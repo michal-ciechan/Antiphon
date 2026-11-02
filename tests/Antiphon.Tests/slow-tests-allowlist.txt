@@ -383,3 +383,6 @@ Antiphon.Tests.Application.CapacityObsoleteStandingTests
 
 # CARD-1609: shared owned Docker image, kernel namespace and durable real-volume retirement witnesses; provisional phase collection.
 Antiphon.Tests.Scripts.VolumeRetirementDockerTests
+
+# CARD-1610 S4a: spawns pwsh per case against a loopback stub (33 cases, about 4 min).
+Antiphon.Tests.Scripts.TaskCeilingScriptTests

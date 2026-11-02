@@ -8,7 +8,7 @@ namespace Antiphon.Server.Application.Dtos;
 /// caller's identity comes from the bearer token, never from the body, so a caller cannot claim to
 /// be someone else's parent.
 /// </summary>
-public sealed record CreateAgentTaskRequest(
+public sealed partial record CreateAgentTaskRequest(
     string Goal,
     string? Title = null,
     AgentTaskKind Kind = AgentTaskKind.Worker,
@@ -424,7 +424,7 @@ public sealed record FailedTaskSessionFactsDto(
     string? FailureSource,
     string? NoticeState);
 
-public sealed record AgentTaskDetailDto(
+public sealed partial record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,
     string Goal,
     /// <summary>The delegate's final message, UNTOUCHED — forwarding may excerpt, this never does.</summary>
@@ -619,7 +619,7 @@ public sealed record AgentTaskEventDto(
 /// a directory that can't be isolated) — the timeline records it too, but nobody reads a timeline
 /// before the collision happens.
 /// </summary>
-public sealed record AgentTaskCreatedDto(
+public sealed partial record AgentTaskCreatedDto(
     Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel, string? Warning = null,
     /// <summary>The resolved agent kind — the script echoes it so a Grok delegate is never a surprise.</summary>
     AgentKind AgentKind = Domain.Enums.AgentKind.ClaudeCode,
