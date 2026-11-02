@@ -61,7 +61,8 @@ public class Card1653FreshLaunchIdentityTests
                 "/bin/sh", ["-c", "read line"], new Dictionary<string, string> { ["C1653_CANARY"] = canary },
                 root, 80, 24, AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow)), CancellationToken.None));
 
-            await peer.PeerClosedAsync(TimeSpan.FromSeconds(5));
+            try { await peer.PeerClosedAsync(TimeSpan.FromSeconds(5)); }
+            catch (TimeoutException) { throw new TimeoutException($"the peer never saw the runner close its connection; StartAsync threw {ex}"); }
             peer.Frames.Select(f => f.Type).ShouldBeEmpty("nothing past hello, above all no Launch, reaches an unproven peer");
             peer.Frames.ShouldNotContain(f => f.Json.Contains(canary), "the launch environment never reaches an unproven peer");
 
@@ -94,7 +95,8 @@ public class Card1653FreshLaunchIdentityTests
     /// <summary>
     /// The launcher needs the host executable and its deps file. The executable is a shell
     /// intermediary that starts a copied sleep whose name contains <c>PtyHost</c> (so the runner's
-    /// teardown name check accepts it), records and prints its pid, and exits 0.
+    /// teardown name check accepts it), records and prints its pid, and exits 0. The shadow copy
+    /// keeps only the host's deps closure, so the deps file names the sleep copy as an asset.
     /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("linux")]
     private static string WriteFakeHostSource(string root)
@@ -102,16 +104,16 @@ public class Card1653FreshLaunchIdentityTests
         var source = Path.Combine(root, "fake-host-src");
         Directory.CreateDirectory(source);
         var sleep = File.Exists("/usr/bin/sleep") ? "/usr/bin/sleep" : "/bin/sleep";
-        var host = Path.Combine(source, "fakePtyHost");
+        var host = Path.Combine(source, "fakePtyHost.exe");
         File.Copy(sleep, host);
         var script = Path.Combine(source, PtyHostLauncher.HostExeName);
         File.WriteAllText(script,
             "#!/bin/sh\n"
-            + "\"$(dirname \"$0\")/fakePtyHost\" 60 </dev/null >/dev/null 2>&1 &\n"
+            + "\"$(dirname \"$0\")/fakePtyHost.exe\" 60 </dev/null >/dev/null 2>&1 &\n"
             + $"echo $! > '{Path.Combine(root, "fake-host.pid")}'\n"
             + "echo $!\n"
             + "exit 0\n");
-        File.WriteAllText(Path.Combine(source, "Antiphon.PtyHost.deps.json"), "{}");
+        File.WriteAllText(Path.Combine(source, "Antiphon.PtyHost.deps.json"), """{ "c1653": ["fakePtyHost.exe"] }""");
         const UnixFileMode executable = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
         File.SetUnixFileMode(script, executable);

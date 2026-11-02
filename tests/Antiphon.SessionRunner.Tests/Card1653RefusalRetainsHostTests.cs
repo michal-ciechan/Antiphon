@@ -28,15 +28,14 @@ public class Card1653RefusalRetainsHostTests
     {
         await using var world = await PtyHostStrangerWorld.StartAsync(recordHostInstance: true, rootPrefix: "c1653-adopt");
         var stranger = Guid.NewGuid();
-        Guid? claimed = shape switch
+        var (session, instance) = shape switch
         {
-            "other-session" => null,
-            "other-instance" => stranger,
-            "missing-instance" => null,
+            "other-session" => (stranger, (Guid?)world.HostInstance),
+            "other-instance" => (world.SessionId, (Guid?)stranger),
+            "missing-instance" => (world.SessionId, (Guid?)null),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
-        world.Answer(shape == "other-session" ? stranger : world.SessionId,
-            shape == "other-session" ? world.HostInstance : claimed);
+        world.Answer(session, instance);
         var id = world.SessionId;
 
         (await world.AdoptAsync()).ShouldBe(0, "a refused identity is not adopted");
@@ -49,7 +48,7 @@ public class Card1653RefusalRetainsHostTests
         dto.Status.ShouldBe("Starting");
         dto.Pending.ShouldBe(UnprovenReason);
         dto.HostPid.ShouldBe(world.StandIn.Id);
-        dto.ExitReason.ShouldBeNull();
+        dto.ExitReason.ShouldBe("Unknown", "a held row has not exited, so it carries no exit reason");
         world.ExitedEvents(id).ShouldBe(0, "the server must not see a false exit for a held row");
         world.Logger.Text.ShouldContain($"{MismatchToken}: adoption refused for session {id}");
         if (shape != "missing-instance")
