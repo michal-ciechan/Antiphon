@@ -631,12 +631,13 @@ public class AgentTaskWorktreeBaseResolverTests
         }
         else if (scenario == "remote_only")
         {
-            // CARD-1640 (was: Target plus a warning). The published branch is read from its local
-            // remote-tracking ref; an explicit -BaseTask keeps its local-branch refusal.
-            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
-            auto.SourceTaskId.ShouldBe(source.Id);
-            auto.SourceSha.ShouldBe(sha);
-            auto.CandidateWarnings.ShouldContain(w => w.Contains("origin/" + source.WorktreeBranch!, StringComparison.Ordinal));
+            // CARD-1640 D-1 (was: Target plus a warning, then Continue from the tracking ref). Nothing
+            // proves a tracking-only tip current here, so it is not used and the source is unreadable;
+            // an explicit -BaseTask keeps its local-branch refusal.
+            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
+            auto.Reason.ShouldBe("source_unreadable");
+            auto.CandidateWarnings.ShouldContain(w => w.Contains($"origin/{source.WorktreeBranch} @ {sha}", StringComparison.Ordinal)
+                && w.Contains("not proven current", StringComparison.Ordinal));
             explicitSelection.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
             explicitSelection.Reason.ShouldBe("requested_source_invalid");
         }
@@ -661,6 +662,86 @@ public class AgentTaskWorktreeBaseResolverTests
         fresh.Reason.ShouldBeNull();
         if (scenario == "remote_only")
             (await repo.GitReadAsync("rev-parse", "refs/remotes/origin/" + source.WorktreeBranch!)).Trim().ShouldBe(sha);
+    }
+
+    [Test]
+    [Arguments("stale_at_base")]
+    [Arguments("stale_pending_land")]
+    [Arguments("unproven_current")]
+    [Arguments("preview_other_sha")]
+    [Arguments("preview_proven")]
+    [Arguments("debt_proven")]
+    public async Task C1640_D1_a_tracking_only_tip_is_used_only_when_proven_current(string shape)
+    {
+        // A runner task's branch is pushed from here at dispatch at its base SHA
+        // (RemoteWorkspaceService.PushBranchAsync) and nothing here fetches it again, so
+        // refs/remotes/origin/<b> is usually stale at the base, which the target contains.
+        using var repo = new ScratchGitRepo("c1640-d1");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "A", "master");
+        var branch = source.WorktreeBranch!;
+        var sha = (await repo.GitReadAsync("rev-parse", branch)).Trim();
+        var baseSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var tracking = shape is "stale_at_base" or "stale_pending_land" ? baseSha : sha;
+        await repo.GitAsync("update-ref", "refs/remotes/origin/" + branch, tracking);
+        await repo.GitAsync("branch", "-D", branch);
+        if (shape == "stale_pending_land")
+        {
+            source.LandRequestedAt = DateTime.UtcNow;
+            var land = new AgentTaskLandRequest
+            {
+                Id = Guid.NewGuid(), TaskId = source.Id, RequestedAt = source.LandRequestedAt.Value,
+                LastEvaluatedAt = source.LandRequestedAt.Value, LastProgressAt = source.LandRequestedAt.Value,
+                State = LandRequestState.Queued, IsPending = true, ExpectedSourceSha = sha,
+            };
+            db.AgentTaskLandRequests.Add(land);
+            source.CurrentLandRequestId = land.Id;
+        }
+        if (shape == "debt_proven")
+            AgentTaskWorktreeBaseSyncDebtTests.AddDebt(db, source, baseSha, sha, AgentTaskSyncDebtState.Pending);
+        await db.SaveChangesAsync();
+        var request = NewRequest(repo, card.Id);
+        if (shape is "preview_proven" or "preview_other_sha")
+            // The create-time preview records the tips that create fetched from origin.
+            request.WorktreeBasePreviewJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                observedAt = DateTime.UtcNow,
+                decision = new
+                {
+                    Decision = (int)CardWorktreeBaseDecision.Continue, SourceTaskId = source.Id, SourceSha = sha,
+                    ProvenRemoteTips = new Dictionary<string, string> { [branch] = shape == "preview_proven" ? sha : baseSha },
+                },
+            });
+
+        var auto = await ResolveAsync(db, request);
+
+        auto.Decision.ShouldNotBe(CardWorktreeBaseDecision.Target, "a tracking-only tip must never clear the sibling silently");
+        if (shape is "preview_proven" or "debt_proven")
+        {
+            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            auto.SourceTaskId.ShouldBe(source.Id);
+            auto.SourceSha.ShouldBe(sha);
+            auto.CandidateWarnings.ShouldContain(w => w.Contains($"origin/{branch} @ {sha}", StringComparison.Ordinal));
+        }
+        else if (shape == "stale_pending_land")
+        {
+            // A stale contained SHA must not clear a pending land: it waits, as before CARD-1640.
+            auto.Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
+            auto.Reason.ShouldBe("pending_land_unknown");
+            auto.SourceTaskId.ShouldBe(source.Id);
+        }
+        else
+        {
+            auto.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
+            auto.Reason.ShouldBe("source_unreadable");
+            auto.SyncUnverified.ShouldBeTrue();
+            auto.CandidateWarnings[0].ShouldContain(branch);
+            auto.CandidateWarnings.ShouldContain(w => w.Contains($"origin/{branch} @ {tracking}", StringComparison.Ordinal)
+                && w.Contains("not proven current", StringComparison.Ordinal));
+        }
     }
 
     [Test]

@@ -436,6 +436,7 @@ public class AgentTaskWorktreeBaseCreateTests
 
     [Test]
     [Arguments("on_origin")]
+    [Arguments("stale_tracking")]
     [Arguments("nowhere")]
     public async Task C1640_create_fetches_an_unreadable_source_or_refuses_by_name(string shape)
     {
@@ -449,23 +450,36 @@ public class AgentTaskWorktreeBaseCreateTests
         await db.SaveChangesAsync();
         var branch = source.WorktreeBranch!;
         var sha = (await repo.GitReadAsync("rev-parse", branch)).Trim();
-        if (shape == "on_origin") await repo.GitAsync("push", "origin", branch);
-        // Neither a local branch nor a remote-tracking ref: only origin (or nothing) has the source.
+        var baseSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        if (shape != "nowhere") await repo.GitAsync("push", "origin", branch);
+        // Neither a local branch nor a current remote-tracking ref: only origin (or nothing) has the
+        // source. stale_tracking (CARD-1640 D-1) is the runner shape: the dispatch-time push left the
+        // tracking ref at the task's base and nothing here fetched it again.
         await repo.GitAsync("branch", "-D", branch);
-        await ScratchGitRepo.GitInAsync(repo.Path, "update-ref", "-d", "refs/remotes/origin/" + branch);
+        if (shape == "stale_tracking")
+            await repo.GitAsync("update-ref", "refs/remotes/origin/" + branch, baseSha);
+        else
+            await ScratchGitRepo.GitInAsync(repo.Path, "update-ref", "-d", "refs/remotes/origin/" + branch);
         var before = await db.AgentTasks.CountAsync();
         await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
             configure: services => services.AddSingleton<StartRefAvailability>());
         await using var scope = provider.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
         var caller = new AgentTaskService.Caller(null, null, repo.Path);
-        if (shape == "on_origin")
+        if (shape != "nowhere")
         {
             var created = await service.CreateAsync(Request(card.Id), caller, CancellationToken.None);
             created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
             created.WorktreeBase.SourceTaskId.ShouldBe(source.Id);
             created.WorktreeBase.SourceSha.ShouldBe(sha);
             (await repo.GitReadAsync("rev-parse", "refs/remotes/origin/" + branch)).Trim().ShouldBe(sha);
+            // Dispatch never fetches: it continues from the tip this create fetched and recorded.
+            db.ChangeTracker.Clear();
+            var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+            var atDispatch = await scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>()
+                .ResolveAsync(row, CancellationToken.None);
+            atDispatch.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            atDispatch.SourceSha.ShouldBe(sha);
             return;
         }
         var error = await Should.ThrowAsync<ConflictException>(() => service.CreateAsync(Request(card.Id),
