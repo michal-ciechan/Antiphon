@@ -1,4 +1,12 @@
 {
+  "ceilingBudget": {
+    "requestedMinutes": null,
+    "requestedReason": null,
+    "resolvedMinutes": null,
+    "resolvedSource": null,
+    "nextCeilingMinutes": null,
+    "absoluteCapMinutes": 720
+  },
   "summary": {
     "id": "aaaaaaaa-0000-0000-0000-000000000004",
     "rootTaskId": "aaaaaaaa-0000-0000-0000-000000000001",
