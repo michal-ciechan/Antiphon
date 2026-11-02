@@ -15,12 +15,14 @@ public class AgentTaskSubtreeRollupTests
 {
     // 30s matches the chain test. A missing cycle guard has to fail this test; the body is
     // milliseconds, and a budget near twice that sample would flake on a loaded host (CARD-1622).
+    // TUnit checks the token only at entry, so each walk runs on a pool thread and the test
+    // awaits it against the token: a hung walk fails by timeout instead of hanging the lane
+    // (CARD-1631).
     [Test]
     [Timeout(30_000)]
-    public void Rollup_matches_the_parent_chain_walk_for_depth_branches_missing_parents_and_cycles(
+    public async Task Rollup_matches_the_parent_chain_walk_for_depth_branches_missing_parents_and_cycles(
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         var rootId = Guid.NewGuid();
         var root = Node(rootId, rootId, null, 10m, "root");
         var a = Node(Guid.NewGuid(), rootId, rootId, 1m, "a");
@@ -46,10 +48,10 @@ public class AgentTaskSubtreeRollupTests
             root, a, a1, a1a, a2, b, b1, orphan, dangling, self, cycleA, cycleB, cycleC, side,
         };
 
-        var rollup = AgentTaskCostWalk.Rollup(family);
-        var costs = AgentTaskCostWalk.Calculate(family, family);
+        var rollup = await Bounded(() => AgentTaskCostWalk.Rollup(family), cancellationToken);
+        var costs = await Bounded(() => AgentTaskCostWalk.Calculate(family, family), cancellationToken);
 
-        rollup[root.Id].SubtreeCostUsd.ShouldBe(14.6m, "root keeps every present descendant and nothing else");
+        rollup[root.Id].SubtreeCostUsd.ShouldBe(14.6m,"root keeps every present descendant and nothing else");
         rollup[root.Id].ChildCount.ShouldBe(2);
         rollup[a.Id].SubtreeCostUsd.ShouldBe(2.5m);
         rollup[a.Id].ChildCount.ShouldBe(2);
@@ -94,18 +96,27 @@ public class AgentTaskSubtreeRollupTests
         AgentTaskService.IsDescendantOf(self, self.Id, family).ShouldBeTrue();
 
         var withoutMiddle = family.Where(task => task.Id != a1.Id).ToList();
-        var partial = AgentTaskCostWalk.Rollup(withoutMiddle);
+        var partial = await Bounded(() => AgentTaskCostWalk.Rollup(withoutMiddle), cancellationToken);
         partial[root.Id].SubtreeCostUsd.ShouldBe(Legacy(root, withoutMiddle).Cost);
         partial[root.Id].SubtreeCostUsd.ShouldBe(13.85m, "a1a stops at the missing middle node");
         partial[a.Id].SubtreeCostUsd.ShouldBe(1.75m);
         partial[a1a.Id].SubtreeCostUsd.ShouldBe(0.25m);
 
         var external = Node(missingParent, missingParent, null, 1m, "external");
-        AgentTaskCostWalk.Calculate([external], family)[external.Id].ShouldBe(5m);
+        (await Bounded(() => AgentTaskCostWalk.Calculate([external], family), cancellationToken))[external.Id]
+            .ShouldBe(5m);
 
         var drifted = Node(root.Id, rootId, null, 50m, "drifted-root");
-        AgentTaskCostWalk.Calculate([drifted], family)[root.Id].ShouldBe(54.6m);
+        (await Bounded(() => AgentTaskCostWalk.Calculate([drifted], family), cancellationToken))[root.Id]
+            .ShouldBe(54.6m);
     }
+
+    /// <summary>
+    /// Runs a walk off the test thread and waits for it against the test's timeout token. A walk
+    /// that never returns keeps spinning on its pool thread until the test host exits.
+    /// </summary>
+    private static Task<T> Bounded<T>(Func<T> walk, CancellationToken cancellationToken) =>
+        Task.Run(walk, CancellationToken.None).WaitAsync(cancellationToken);
 
     [Test]
     public void ToSummary_uses_the_caller_row_cost_when_the_family_copy_differs()
@@ -163,9 +174,8 @@ public class AgentTaskSubtreeRollupTests
 
     [Test]
     [Timeout(30_000)]
-    public void Rollup_of_a_two_thousand_task_chain_matches_the_closed_form(CancellationToken cancellationToken)
+    public async Task Rollup_of_a_two_thousand_task_chain_matches_the_closed_form(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         const int count = 2000;
         var rootId = Guid.NewGuid();
         var family = new List<AgentTask>(count);
@@ -177,7 +187,7 @@ public class AgentTaskSubtreeRollupTests
             parent = id;
         }
 
-        var rollup = AgentTaskCostWalk.Rollup(family);
+        var rollup = await Bounded(() => AgentTaskCostWalk.Rollup(family), cancellationToken);
 
         for (var i = 0; i < count; i++)
         {
@@ -189,18 +199,18 @@ public class AgentTaskSubtreeRollupTests
 
     [Test]
     [Timeout(30_000)]
-    public void Rollup_of_a_wide_fan_matches_the_closed_form_and_stays_near_linear(
+    public async Task Rollup_of_a_wide_fan_matches_the_closed_form_and_stays_near_linear(
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         // Warm the JIT, then compare two widths of the same shape. The review measured about
         // 7 ms for 2,000 direct children on a loaded host; an absolute 100 ms cap flakes on a
         // pause. Four times the nodes must stay under 12x the narrower run, plus a second.
         // The replaced per-row walk was about 1.9 s at 2,000 and about 170 s at 10,000.
-        RollupFan(256);
+        // Each sample is timed on its pool thread, so pool scheduling stays out of the ratio.
+        await Bounded(() => RollupFan(256), cancellationToken);
 
-        var narrow = TimeFan(2_000);
-        var wide = TimeFan(8_000);
+        var narrow = await Bounded(() => TimeFan(2_000), cancellationToken);
+        var wide = await Bounded(() => TimeFan(8_000), cancellationToken);
 
         narrow.Cost.ShouldBe(1m + (0.01m * 2_000));
         narrow.Children.ShouldBe(2_000);
@@ -212,7 +222,7 @@ public class AgentTaskSubtreeRollupTests
 
     private readonly record struct FanSample(decimal Cost, int Children, TimeSpan Elapsed);
 
-    private static void RollupFan(int children) => _ = AgentTaskCostWalk.Rollup(Fan(children));
+    private static int RollupFan(int children) => AgentTaskCostWalk.Rollup(Fan(children)).Count;
 
     private static FanSample TimeFan(int children)
     {
