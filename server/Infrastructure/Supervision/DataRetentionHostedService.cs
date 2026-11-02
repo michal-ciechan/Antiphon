@@ -57,9 +57,16 @@ public sealed class DataRetentionHostedService : BackgroundService
             var retention = scope.ServiceProvider.GetRequiredService<DataRetentionService>();
             var result = await retention.RunOnceAsync(stoppingToken);
             _logger.LogInformation(
-                "Retention sweep deleted {Sessions} session row(s), {Transcripts} transcript row(s), {QueuedMessages} queued message(s), {Tasks} task row(s), {AuditRecords} audit record(s), {UsageSamples} subscription-usage sample(s)",
+                "Retention sweep deleted {Sessions} session row(s), {Transcripts} transcript row(s), {QueuedMessages} queued message(s), {Tasks} task row(s), {AuditRecords} audit record(s), {UsageSamples} subscription-usage sample(s), {ResidueRows} worktree-residue row(s); task prune {TaskBatches} batch(es), scan complete {TaskScanComplete}",
                 result.Sessions, result.Transcripts, result.QueuedMessages, result.Tasks, result.AuditRecords,
-                result.SubscriptionUsageSamples);
+                result.SubscriptionUsageSamples, result.WorktreeResidueHeldRows,
+                result.TaskPrune?.Batches ?? 0, result.TaskPrune?.ScanComplete ?? true);
+            // CARD-1654: each failed pass already logged "Data retention sweep pass <name> failed".
+            var failed = (result.Passes ?? []).Where(p => p.Status == DataRetentionPassStatus.Failed)
+                .Select(p => p.Pass).ToList();
+            if (failed.Count > 0)
+                _logger.LogWarning("Data retention sweep completed with failed pass(es): {FailedPasses}",
+                    string.Join(", ", failed));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
