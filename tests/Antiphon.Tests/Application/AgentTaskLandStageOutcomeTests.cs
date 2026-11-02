@@ -59,6 +59,47 @@ public class AgentTaskLandStageOutcomeTests
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
+    // CARD-1470: a verifier that waited on the build-slot memory floor (here: fell back) records it on
+    // the land operation and its Verify row, not only in the server log.
+    [Test]
+    public async Task C1470_a_memory_floor_fallback_is_recorded_on_the_land_operation()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-so-c1470");
+        using var remote = new TemporaryDirectory("antiphon-land-so-c1470remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await SeedBuildableAsync(repo);
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var memory = new BuildSlotMemoryWait(4700, 6144, TimeSpan.FromMinutes(5), Fallback: true, MaxCpuCount: 2);
+        var (land, worktrees) = CreateLand(db, repo, new MemoryWaitVerifier(memory));
+        var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
+
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        await repo.CommitFileAsync("README.md", "base advanced\n");
+        await repo.GitAsync("push", "origin", "master");
+
+        await RequestHeadAsync(land, task);
+        (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
+
+        const string note = "memory_floor_fallback maxcpucount=2 available=4700MB floor=6144MB waited=300s";
+        var op = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        op.VerificationPassed.ShouldBeTrue();
+        op.VerificationCommand.ShouldNotBeNull().ShouldEndWith("; build-slot=" + note);
+        LandingEvidenceDto.From(op).VerificationBuildSlot.ShouldBe(note);
+        (await RowsAsync(db, task.Id)).Single(o => o.Stage == OrchestrationStage.Verify).Detail.ShouldContain("build-slot=" + note);
+    }
+
+    private sealed class MemoryWaitVerifier(BuildSlotMemoryWait memory) : ILandingVerifier
+    {
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct) =>
+            Task.FromResult(new LandingVerification(true, "build OK, tests 4/4", memory));
+    }
+
     [Test]
     public async Task land_conflict_writes_rebase_found()
     {

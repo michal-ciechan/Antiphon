@@ -13,7 +13,8 @@ public sealed record LandingEvidenceDto(Guid OperationId, LandPhase Phase, LandO
     Guid? RecoverySourceTaskId = null, string? RecoverySourceFullRef = null,
     string? RecoveryOwnerRemoteBeforeSha = null, string? RecoveryOwnerRemoteAfterSha = null,
     string? RecoveryRelationship = null, bool? RecoveryPatchesContained = null,
-    string? RecoveryUncontainedPatches = null)
+    string? RecoveryUncontainedPatches = null,
+    string? VerificationBuildSlot = null)
 {
     public static LandingEvidenceDto From(AgentTaskLanding op) => new(op.Id, op.Phase, op.Mode,
         new Services.AgentTaskLandingState().HasPublication(op) ? op.Publication
