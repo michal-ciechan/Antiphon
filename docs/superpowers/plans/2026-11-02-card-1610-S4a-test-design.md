@@ -557,11 +557,12 @@ limiter. Never co-schedule `Antiphon.Agents.Pty.Tests`.
 | CP-1 | S4a-red | `tests/Antiphon.Tests -> bin-c1610-s4a-red/` | script-integration-ceiling-red | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13a..V-13c | 33 executed; 31 intended red; guard green legacy-detail, omitted; no skipped | 33 | 4 |
 | CP-2 | S4a-red | CP-1 | server-integration-create-binding-red | `/*/*/TaskCeilingCreateBindingTests/C1610_*` | V-15..V-21 | 22 executed; 18 intended red; guard green V-17 default, V-18 default, V-19, V-20 brief-default; no skipped | 22 | 3 |
 | CP-3 | S4a-red | n/a | client-Vitest-red | `pwsh -NoProfile -File scripts/test-client.ps1 CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-s4a-client-red.json` | V-14a..V-14e | JSON numTotalTests=7 with the exact names; 5 intended red, V-14e x2 guard green; no setup error, pending or todo | n/a | 2 |
-| CP-4 | S4a | `tests/Antiphon.Tests -> bin-c1610-s4a/` | script-integration-ceiling | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13a..V-13c | 33 passed; no failed/skipped | 33 | 4 |
+| CP-4 | S4a | `tests/Antiphon.Tests -> bin-c1610-s4a/` | script-integration-ceiling | `/*/*/TaskCeilingScriptTests/C1610_*` | V-13a..V-13c, V-22 | 35 passed; no failed/skipped | 35 | 4 |
 | CP-5 | S4a | CP-4 | server-integration-create-binding | `/*/*/TaskCeilingCreateBindingTests/C1610_*` | V-15..V-21 | 22 passed; no failed/skipped | 22 | 3 |
 | CP-6 | S4a | CP-4 | server-unit-ceiling-policy | `/*/*/TaskCeilingPolicyTests/*` | R-5 | 12 passed; no failed/skipped | 12 | 1 |
-| CP-7 | S4a | CP-4 | server-integration-ceiling-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/*` | R-4 | 49 passed; no failed/skipped | 49 | 4 |
-| CP-8 | S4a | CP-4 | script-integration-delegate-contracts | `/*/*/(DelegateScriptKindTests*)\|(DelegateScriptStartRefTests*)\|(DelegateScriptTitleTests*)\|(DelegateScriptWorkspaceDefaultTests*)\|(DelegateScriptBindDiagnosisTests*)/*` | R-3 | 79 passed; no failed/skipped | 79 | 10 |
+| CP-7 | S4a | CP-4 | server-integration-ceiling-hold-control | `/*/*/(TaskCeilingHoldTests*)\|(TaskCeilingControlTests*)/*` | R-4, V-23, V-24 | 52 passed; no failed/skipped | 52 | 4 |
+| CP-8 | S4a | CP-4 | script-integration-delegate-contracts | `/*/*/(DelegateScriptKindTests*)\|(DelegateScriptStartRefTests*)\|(DelegateScriptTitleTests*)\|(DelegateScriptWorkspaceDefaultTests*)/*` | R-3 | 73 passed; no failed/skipped | 73 | 8 |
+| CP-18 | S4a | CP-4 | script-integration-bind-diagnosis | `/*/*/DelegateScriptBindDiagnosisTests/(a_422_is_reported*)\|(a_bind_400_counts*)\|(a_bind_400_with_head*)\|(a_bind_400_on_another*)\|(a_bind_400_with_version*)` | R-3 | 5 passed; no failed/skipped | 5 | 3 |
 | CP-9 | S4a | CP-4 | server-unit-guards | `/*/*/(DelegateScriptRunnerSwitchTests*)\|(TestLaneCategoryGuardTests*)\|(TestClassificationGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-9 | 26 passed; no failed/skipped | 26 | 1 |
 | CP-10 | S4a | CP-4 | script-integration-status-reply-compat | `/*/*/DelegateScriptLandCompatibilityTests/(C495_StatusDoesNotProbeVersion*)\|(C495_ReplyDoesNotProbeVersion*)` | R-2 | 2 passed; no failed/skipped | 2 | 2 |
 | CP-11 | S4a | CP-4 | server-integration-brief-corpus | `/*/*/DelegationDispatchRecoveryBoundaryTests/(C1150_Brief_envelope_corpus_matches_the_expected_matrix*)\|(C1150_Outer_envelope_and_receipt_floor_through_the_queue*)` | R-1 | 55 passed; no failed/skipped | 55 | 4 |
@@ -571,6 +572,7 @@ limiter. Never co-schedule `Antiphon.Agents.Pty.Tests`.
 | CP-15 | S4a | n/a | client-Vitest | `pwsh -NoProfile -File scripts/test-client.ps1 -TypecheckProject client/tsconfig.app.json -LintPath client/src/features/delegations/CeilingHoldCard.tsx CeilingHold.test.tsx -JsonResultPath ../.antiphon/c1610-s4a-client-green.json` | V-14a..V-14e plus app typecheck and card lint | typecheck and lint pass; fresh JSON numTotalTests=7, numPassedTests=7, failed/pending/todo=0; all names; exit 0 | n/a | 3 |
 | CP-16 | S4a | n/a | client-Vitest-detail-regression | `pwsh -NoProfile -File scripts/test-client.ps1 TaskDetailBody.test.tsx BlockedQuestionCard.test.tsx -JsonResultPath ../.antiphon/c1610-s4a-client-detail.json` | R-8 | fresh JSON numTotalTests=12, failed/pending/todo=0; exit 0 | n/a | 2 |
 | CP-17 | S4a | CP-4 | script-unit-ascii | `/*/*/CommitOnSettleScriptTests/Commit_on_settle_scripts_are_ascii_only` | R-12 | 1 passed; no failed/skipped | 1 | 1 |
+| CP-19 | S4a | `tests/Antiphon.E2E -> bin-c1610-s4a-e2e/` | e2e-contract-snapshots | `/*/*/ContractSnapshotTests/(Delegated_task_board*)\|(Home_tasks_rail*)\|(Pipeline_status*)\|(Backlog_quadrant*)` | R-13 | 4 passed; no failed/skipped | 4 | 4 |
 
 Each row has one isolated build and one exact filter. A reuse row (`Build = CP-n`) shares only its
 own After group's build. The union is the whole ordinary scope: 359 TUnit executions plus 26 Vitest
@@ -588,14 +590,56 @@ not 75. Rows overlap two at a time on Linux.
 |---|---|---:|---:|---|
 | P | CP-0 | 1 | 9 | yes |
 | R | CP-1, CP-2, CP-3 | 9 | 13 | yes |
-| G1 | `--rows CP-4,CP-5,CP-6,CP-7,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14,CP-17` | 40 | 28 | yes (forecast; see below) |
+| G1 | `--rows CP-4,CP-5,CP-6,CP-7,CP-8,CP-18,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14,CP-17` | 40 | 28 | yes (forecast; see below) |
 | G2 | `--rows CP-15,CP-16` | 5 | 5 | yes |
+| G3 | `--rows CP-19` | 4 | 6 | yes |
 
 If G1's measured throughput forecasts more than 30 minutes (for example, the build takes longer
 than 10 min under load), stop. Split G1 into G1a (CP-4, 5, 6, 7, 13, 14, 17) and G1b (CP-8, 9, 10,
 11, 12) as two runs at the same SHA, and report the phase timings. Do not widen any row timeout.
 
 Import validation (this task): `dotnet /work/worktrees/task-00abf1bf/tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-11-02-card-1610-S4a-test-design.md --out .antiphon/s4a-import/manifest.yaml`. Result: `imported 18 rows`, exit 0, no warning (tool dll sha256 prefix `6c81cdb4620c1e9b`, built in the CARD-0824 S1 worktree task-00abf1bf). Derived row timeouts: 15 min, and 30 min for CP-8 (estimate 10). No row timeout is widened.
+
+**Review round 1 repair (Code task 6c414224, review e52b2bed D-1..D-3).**
+
+- CP-8 is split: `DelegateScriptBindDiagnosisTests.a_bind_400_with_an_unknown_served_build_is_diagnosed`
+  is red at the S4a base 5376ac529 on Linux and is repaired separately (CARD-1655). CP-18 runs the
+  class's other five methods. The excluded method returns to CP-18 once CARD-1655 lands.
+- CP-19 (R-13) covers the E2E contract fixtures; S4a adds `ceilingBudget` to the task detail, and
+  `agent-task-detail.json` is re-captured with only that block added.
+  `Agent_files_review_threads_and_content_contracts` is excluded: its Windows-captured
+  `session-transcript.json` is red on Linux by construction (CARD-1648); it runs on Windows.
+  CP-19 runs alone (G3): an E2E `bin-*` keeps a Playwright `node` the cleanup refuses, which would
+  invalidate the receipt of Antiphon.Tests rows in the same run.
+- New ordinary cases:
+  - V-22 (CP-4): `C1610_Ceiling_reply(reason-without-operator)` and `(params-without-action)`.
+    Each exits 2 with its own `ceiling_invalid:` text and sends no request.
+  - V-23 (CP-7): `C1610_Operator_extend_is_bounded_at_240_minutes`. 240 re-arms to 965, and
+    241 is a 422 `extendMinutes` with no write.
+  - V-24 (CP-7): `C1610_Http_operator_extend_requires_the_operator_token`, over HTTP.
+    - No token and a wrong token each get 403 `operator_token_required`, with the hold, the bound
+      and the concurrency token unchanged and no decision event.
+    - The right token with 241 minutes gets 422 with no write.
+    - The right token with 60 minutes gets 200 and one decision event with `actor: operator`.
+- New guards and PCs, pending for Mutation:
+
+| Guard | Rule | Witness | PC |
+|---|---|---|---|
+| G-59 | CLI refuses `-CeilingReason` on a reply without `-OperatorExtend` | V-22 reason-without-operator | PC-59 |
+| G-60 | CLI refuses ceiling flags without `-CeilingAction` | V-22 params-without-action | PC-60 |
+| G-61 | the reply endpoint requires the operator credential for operator Extend | V-24 | PC-61 |
+| G-62 | operator Extend minutes stay in 1..240 on the server | V-23 (241), V-24 (241 step) | PC-62 |
+
+| PC | Mutation | Expected red |
+|---|---|---|
+| PC-59 | delete the `-CeilingReason on a reply` refusal in `delegate.ps1` | `C1610_Ceiling_reply(reason-without-operator)`: exit 0, not 2 |
+| PC-60 | delete the `need -CeilingAction` refusal | `C1610_Ceiling_reply(params-without-action)`: exit 1, not 2 |
+| PC-61 | comment out `OperatorCredential.Require` in the reply endpoint | `C1610_Http_operator_extend_requires_the_operator_token`: no token gets 200 |
+| PC-62 | operator bound `<= 240` → `<= 100000` in `CeilingHoldFacts.Rearm` | `C1610_Operator_extend_is_bounded_at_240_minutes(241)`: no ValidationException |
+
+  The Code task ran all four once, as a red check before handoff. Mutation still owns them.
+- Repair cost, measured on server2: CP-19 is a 1m42s build plus about 1.5 minutes of tests.
+  V-22 adds about 4 seconds, and V-23 plus V-24 add about 17 seconds.
 
 ### Cost
 
