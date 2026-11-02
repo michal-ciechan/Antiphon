@@ -130,6 +130,48 @@ public class TranscriptAdoptionSafetyTests
     }
 
     /// <summary>
+    /// CARD-1624 follow-up: ext4 stamps a burst of writes with one coarse kernel tick, so equal
+    /// write times are normal. The capped detail must not then fall back to directory enumeration
+    /// order (hashed on ext4): ties are broken by path, ordinal ascending.
+    /// </summary>
+    [Test]
+    public async Task Refusal_detail_breaks_equal_write_times_by_path()
+    {
+        using var tree = new TranscriptTree("1624-mtime-tie");
+        var childStart = DateTime.UtcNow;
+        var tied = childStart.AddHours(-1);
+        var stale = new List<string>();
+        for (var i = 0; i < 6; i++)
+        {
+            var file = tree.NewTranscript();
+            await tree.AppendAsync(file, UserLine($"stale-{i}", tree.Cwd, "a prior session", tied));
+            File.SetLastWriteTimeUtc(file, tied);
+            stale.Add(file);
+        }
+
+        var postStart = tree.NewTranscript();
+        await tree.AppendAsync(postStart, UserLine("post-start", tree.Cwd, "another session's prompt", childStart.AddSeconds(1)));
+
+        var input = new SessionInputLog();
+        input.Append("A prompt unique to this session, not present in any transcript");
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: childStart, refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
+            fault.ShouldNotBeNull();
+            var detail = fault!.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
+            var listed = detail.Split("; ").Select(part => part[..part.IndexOf(".jsonl", StringComparison.Ordinal)] + ".jsonl").ToArray();
+            listed.ShouldBe([postStart, .. stale.Order(StringComparer.Ordinal).Take(4)]);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// The timestamp filter alone is not enough, and this is why: an operator who starts a NEW
     /// conversation in the same cwd after the agent launched produces a file that passes cwd and
     /// epoch checks. Only content correlation separates it from the agent's own transcript.
