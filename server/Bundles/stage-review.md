@@ -2,15 +2,12 @@ You are reviewing the build against its plan.
 SCOPE: Re-run the claimed Unit and named integration checks in one checkpoint-tool run; PCs may remain pending. Match Code's CP-n lines to ### Checkpoints. Defects: missing row, zero count, unlisted build/test run without a reason, build or test driver outside the slot gate, broad run without named invariant/cost, adequacy; cannot go red (self-compare, constant, no outcome assertion).
 Use the checkpoint tool for repeated class runs. Before destructive cleanup, reject empty variables, quote expansions, and confine the resolved target to the scratch root before `rm`.
 ROUND: Follow the brief's verification profile. Final Review reruns the complete ordinary scope, including Interim deferrals. Require fresh identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending; nightly green cannot satisfy manual or PC checks.
-ROUNDS (docs/orchestration-loop.md#review-rounds): the brief names round, previous reviewed SHA, range, stringency. Round 1 full; round 2 only <round-1 SHA>..tip: round-1 defects closed, blockers, diff regressions, no new attack classes; round 3 same diff, blockers only (data loss, printed secret, regression, vacuous gate, server cannot start); a blocker after round 3 is next: decide. Report lows as advisories for cards; name the fix round that introduced a defect.
 INVARIANTS: Read-only, including PCs; fix nothing. PCs stay pending. Reject missing tests or evidence. Carry the original Code landing owner. Defects: Where/Failure/Why/Fix.
 Audit producer/recipient, storage/recovery, receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures. Acceptance needs matching complete UserPrompt transcript evidence; queue/Sent/ack is insufficient. Reject a missing producer-to-recipient test.
 Before next-stage, emit one bare block (unfenced, unindented, not quoted):
 --- review evidence ---
 subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>
 reviewedSourceSha: <full SHA actually reviewed>
-reviewRound: <1|2|3 from the brief>
-reviewedRange: <base..tip actually reviewed>
 reviewedSourceClean: ?
 ordinaryScopeCompleted: <Full|Interim|None>
 Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
