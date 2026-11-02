@@ -3552,6 +3552,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
             _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
+            // CARD-1636: the pipe name is not a peer identity. Custody adoption compares the
+            // binding below; every other host must name this session and, when its manifest
+            // recorded one, this host instance. The log names the session only, never the ids
+            // the peer claimed.
+            if (VerificationBinding is null && !HelloNamesManifestHost(_client.Hello, manifest))
+            {
+                _logger.LogWarning("pty_host_identity_mismatch: adoption refused for session {SessionId}", _sessionId);
+                throw new InvalidOperationException("pty_host_identity_mismatch");
+            }
             if (OperatingSystem.IsLinux())
             {
                 using var connectedHost = System.Diagnostics.Process.GetProcessById(_hostPid);
@@ -3628,6 +3637,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             return true;
         }
+
+        // A manifest written before hosts recorded their instance id is matched on the session
+        // alone, so a host that outlived the upgrade is not refused and killed on adoption.
+        private bool HelloNamesManifestHost(HelloAckMessage hello, PtyHostManifest manifest) =>
+            hello.SessionId == _sessionId && manifest.SessionId == _sessionId
+            && (manifest.HostInstanceId is not { } hostInstance || hello.HostInstanceId == hostInstance);
 
         /// <summary>Persists the transcript binding so the next runner re-tails it without guessing.</summary>
         internal void RecordTranscriptBinding(string transcriptPath, string how)
