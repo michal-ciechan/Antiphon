@@ -166,8 +166,27 @@ public partial class PermissionWaitTests
         var blocked = await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait);
         blocked!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ProviderInputWait);
         blocked.Limit.ShouldBe(absent.Limit);
+        // CARD-1610: a breached phase wins over a larger ceiling fraction (the sweep fails it rather
+        // than holding the ceiling), and the ceiling is still evaluated and breached beside it.
         settings.RolePolicy["Code"] = new() { TimeoutMinutes = 30 };
-        (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait))!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling);
+        var overdue = (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait))!;
+        overdue.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ProviderInputWait);
+        overdue.Breached.ShouldBeTrue();
+        overdue.CeilingDeadline!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling);
+        overdue.CeilingDeadline.Limit.ShouldBe(TimeSpan.FromMinutes(30));
+        overdue.CeilingDeadline.Breached.ShouldBeTrue("the ceiling bounds the provider wait too");
+        settings.LocalExecutionDeadlineMinutes = 120;
+        var ceiling = (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait))!;
+        ceiling.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling, "a provider wait inside its own budget never hides a breached ceiling");
+        ceiling.Breached.ShouldBeTrue();
+        ceiling.Limit.ShouldBe(TimeSpan.FromMinutes(30));
+        ceiling.PhaseDeadline!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ProviderInputWait);
+        ceiling.PhaseDeadline.Breached.ShouldBeFalse();
+        settings.RolePolicy["Code"] = new() { TimeoutMinutes = 90 };
+        var edge = (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait))!;
+        edge.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling);
+        edge.Breached.ShouldBeTrue("the ceiling is inclusive at its own limit");
+        settings.LocalExecutionDeadlineMinutes = 90;
         settings.RolePolicy["Code"] = new() { TimeoutMinutes = 240 };
         await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.ToolResult), ct);
         var model = await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait);
