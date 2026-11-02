@@ -1170,6 +1170,8 @@ internal sealed class HostJqFixture : IDisposable
 {
     internal const string Pin = "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5";
     internal const string Url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64";
+    // Every script the private deploy-server2.ps1 copy dot-sources (CARD-1659 guard: HostJqFixtureClosureTests).
+    internal static string[] CarriedScripts => ["scripts/c590-real.ps1", "scripts/c1008-host-proof.ps1", "scripts/lib/runner-operator-token.ps1"];
     internal static string[] ProvisionTools => ["curl", "sha256sum", "install", "mktemp", "flock", "ln", "stat", "readlink", "rm", "uname", "test"];
     internal string Root { get; } = Path.Combine(Path.GetTempPath(), "c1025-" + Guid.NewGuid().ToString("N"));
     internal string Tools => Root + "/tools";
@@ -1278,9 +1280,11 @@ internal sealed class HostJqFixture : IDisposable
         source = ReplaceOnce(source, "$hostJqDestination = '/usr/local/bin/jq'", "$hostJqDestination = '" + Destination + "'");
         if (shortDeadline) source = ReplaceOnce(source, "{ 30000 } else { 180000 }", "{ 100 } else { 100 }");
         File.WriteAllText(Root + "/scripts/deploy-server2.ps1", source);
-        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"), Root + "/scripts/c590-real.ps1");
-        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1"), Root + "/scripts/c1008-host-proof.ps1");
-        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/runner-operator-token.ps1"), Root + "/scripts/lib/runner-operator-token.ps1");
+        foreach (var script in CarriedScripts)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Root + "/" + script)!);
+            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, script), Root + "/" + script);
+        }
         File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/home/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/control/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
         (await Git("init", "-q")).Exit.ShouldBe(0);
         (await Git("config", "user.name", "fixture")).Exit.ShouldBe(0); (await Git("config", "user.email", "fixture@example.invalid")).Exit.ShouldBe(0);
