@@ -228,10 +228,6 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         Remote(task.RunnerId).ReleaseWorkspaceSlotAsync(new PhoneHomeWorkspaceSlotReleaseRequest(
             task.RemoteWorkspaceSlotId!, task.RemoteWorkspaceSlotGeneration ?? 0, task.Id), ct);
 
-    /// <summary>CARD-0824 S1 D-C. Forwards an operator or pre-rc cold-reset request unchanged.</summary>
-    public Task<PhoneHomeWorkspaceSlotColdResetResponse> ColdResetSlotsAsync(
-        string runnerId, PhoneHomeWorkspaceSlotColdResetRequest request, CancellationToken ct) =>
-        Remote(runnerId).ColdResetWorkspaceSlotsAsync(request, ct);
 
     /// <summary>
     /// The returned binding matches the committed preparation. This does not look at the desktop filesystem.

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Runtime.ExceptionServices;
 using Microsoft.AspNetCore.Mvc;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -164,8 +165,10 @@ public static class SessionRunnerEndpoints
             loggers.CreateLogger("WorkspaceSlotColdReset").LogInformation(
                 "Workspace slot cold reset {RequestId} on runner {RunnerId} by {Requester}: {Slots} ({Reason})",
                 request.RequestId, runnerId, requester, body.All ? "all" : string.Join(",", body.Slots!), request.Reason);
-            var remote = http.RequestServices.GetRequiredService<RemoteWorkspaceService>();
-            return Results.Ok(await remote.ColdResetSlotsAsync(runnerId, request, ct));
+            var directory = http.RequestServices.GetRequiredService<ISessionRunnerDirectory>();
+            if (directory.Resolve(runnerId) is not PhoneHomeRunnerClient runner)
+                return Results.Conflict(new { error = "workspace_slot_runner_not_phone_home", detail = "Workspace slots are a phone-home runner feature." });
+            return Results.Ok(await runner.ColdResetWorkspaceSlotsAsync(request, ct));
         }).WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/retire", async (
