@@ -105,10 +105,17 @@ public sealed class TimeoutTests : CheckpointTestBase
     [Test]
     public async Task total_deadline_kills_running_and_skips_queued()
     {
+        // CARD-1659. The deadline must expire while CP-1 runs, so it must outlast scheduler start-up.
+        // At 200 ms, loaded server2 (load 24, 24 cores) started CP-1 too late in 2 of 5 runs alone and
+        // 1 of 3 beside a 24-core burner (both rows "skipped"). CP-1 start latency is printed for the basis.
+        var totalTimeout = TimeSpan.FromMilliseconds(2000);
+        var clock = Stopwatch.StartNew();
+        var started = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         var driver = new FakeDriver();
         driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
         driver.When(CheckpointFixtures.IsRun, async (_, token) =>
         {
+            started.TrySetResult(clock.Elapsed);
             await Task.Delay(Timeout.Infinite, token);
             return new DriverResult(0, "", "");
         });
@@ -118,6 +125,7 @@ public sealed class TimeoutTests : CheckpointTestBase
         manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-2", "bin-a"));
         var workingDirectory = ProjectDirectories(manifest);
         var scheduler = new RunScheduler(driver, new FakePlatform());
+        clock.Restart();
         var result = await scheduler.RunAsync(new SchedulerRequest
         {
             Manifest = manifest,
@@ -128,8 +136,10 @@ public sealed class TimeoutTests : CheckpointTestBase
             Slots = new FixedSlotClient("unavailable"),
             Commit = new string('b', 40),
             Width = 1,
-            TotalTimeout = TimeSpan.FromMilliseconds(200),
-        }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            TotalTimeout = totalTimeout,
+        }, CancellationToken.None).WaitAsync(totalTimeout + TimeSpan.FromSeconds(8));
+        started.Task.IsCompleted.ShouldBeTrue("CP-1 must start before the " + totalTimeout.TotalMilliseconds + " ms deadline");
+        Console.WriteLine("C1659_CP1_START_MS " + (await started.Task).TotalMilliseconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
         result.ExitCode.ShouldBe(ExitCodes.Timeout);
         result.State.Reason.ShouldBe("execution-budget-exceeded");
         result.Rows.Select(row => row.State).OrderBy(state => state).ShouldBe(["execution-budget-exceeded", "skipped"]);
