@@ -118,23 +118,50 @@ internal sealed class RunnerTerminalSession
         ProviderDialogObservationService.RequireWritten(await _client.SendConditionalInputAsync(_sessionId, request, ct));
     }
 
+    /// <summary>
+    /// CARD-1668: a startup keystroke refused as <c>stale-observation</c> (output arrived between
+    /// the snapshot and the write) is re-observed and re-sent at most this many times in all.
+    /// </summary>
+    internal const int StartupStaleObservationAttempts = 3;
+
+    private static readonly TimeSpan StartupStaleObservationRetryDelay = TimeSpan.FromMilliseconds(50);
+
     internal async Task WriteStartupAsync(string input, CancellationToken ct)
     {
-        var snapshot = await GetSnapshotAsync(ct);
-        var screen = snapshot.RenderedScreen;
-        var kind = ClaudeBlockingPromptDetector.Detect(screen)?.Kind;
-        var intent = kind == ClaudeBlockingPromptKind.TrustFolder ? ClaudeDialogInputIntent.StartupTrust
-            : kind == ClaudeBlockingPromptKind.EffortChoice && ClaudeEffortPrompt.Parse(screen) is { } menu
-                ? menu.Select(_effortIntent) switch
-                {
-                    ClaudeEffortOption.Keep => ClaudeDialogInputIntent.StartupEffortKeep,
-                    ClaudeEffortOption.Switch => ClaudeDialogInputIntent.StartupEffortSwitch,
-                    _ => ClaudeDialogInputIntent.None
-                } : ClaudeDialogInputIntent.None;
-        if (_acceptedGeneration is not { } generation)
-            throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
-        var request = ProviderDialogObservationService.Request(snapshot.Dialog, _sessionId, generation, input, intent);
-        ProviderDialogObservationService.RequireWritten(await _client.SendConditionalInputAsync(_sessionId, request, ct));
+        ClaudeDialogInputIntent? firstIntent = null;
+        for (var attempt = 1; ; attempt++)
+        {
+            var snapshot = await GetSnapshotAsync(ct);
+            var screen = snapshot.RenderedScreen;
+            var kind = ClaudeBlockingPromptDetector.Detect(screen)?.Kind;
+            var intent = kind == ClaudeBlockingPromptKind.TrustFolder ? ClaudeDialogInputIntent.StartupTrust
+                : kind == ClaudeBlockingPromptKind.EffortChoice && ClaudeEffortPrompt.Parse(screen) is { } menu
+                    ? menu.Select(_effortIntent) switch
+                    {
+                        ClaudeEffortOption.Keep => ClaudeDialogInputIntent.StartupEffortKeep,
+                        ClaudeEffortOption.Switch => ClaudeDialogInputIntent.StartupEffortSwitch,
+                        _ => ClaudeDialogInputIntent.None
+                    } : ClaudeDialogInputIntent.None;
+            // The caller chose this input for the screen it saw. A re-observed screen that now
+            // calls for another intent (a trust dialog gone, an effort menu moved) is not the
+            // screen the input answers, so it keeps the refusal instead of re-sending.
+            firstIntent ??= intent;
+            if (intent != firstIntent)
+                throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.StaleObservation);
+            if (_acceptedGeneration is not { } generation)
+                throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
+            var request = ProviderDialogObservationService.Request(snapshot.Dialog, _sessionId, generation, input, intent);
+            var result = await _client.SendConditionalInputAsync(_sessionId, request, ct);
+            // StaleObservation guarantees ZERO backend bytes, so the same input may be re-sent
+            // against a fresh snapshot, within the caller's readiness deadline. Written/Unknown and
+            // every other result are terminal: never replay a keystroke that may have arrived.
+            if (result.Outcome != ConditionalInputOutcomes.StaleObservation || attempt >= StartupStaleObservationAttempts)
+            {
+                ProviderDialogObservationService.RequireWritten(result);
+                return;
+            }
+            await Task.Delay(StartupStaleObservationRetryDelay, ct);
+        }
     }
 
     internal async Task SendGuardedLineAsync(string line, CancellationToken ct)
