@@ -330,6 +330,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     internal static TimeSpan RequestTimeoutFor(PhoneHomeOperation operation) => operation switch
     {
         PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceRemove => TimeSpan.FromMinutes(5),
+        // CARD-0824 S1: a release or cold reset runs git under the runner's mutation lock.
+        PhoneHomeOperation.WorkspaceSlotRelease or PhoneHomeOperation.WorkspaceSlotColdReset
+            or PhoneHomeOperation.WorkspaceSlotQuarantineRelease => TimeSpan.FromMinutes(5),
         // The runner bounds the push child at 60 s; allow transport and the mutation queue room
         // to return its receipt inside settlement's 120 s budget.
         PhoneHomeOperation.WorkspacePublish => TimeSpan.FromSeconds(90),

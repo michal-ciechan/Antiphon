@@ -20,3 +20,6 @@ public sealed record MirrorBindingExpectation(
     string RepositoryIdentity,
     string SourceFullRef,
     string CreationBaselineSha);
+
+/// <summary>CARD-0824 S1. <c>POST /api/session-runners/{runnerId}/workspace-slots/cold-reset</c>.</summary>
+public sealed record WorkspaceSlotColdResetRouteRequest(IReadOnlyList<string>? Slots, bool All, string Reason, string? Requester = null);

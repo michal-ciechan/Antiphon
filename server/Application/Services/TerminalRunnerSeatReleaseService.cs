@@ -1222,11 +1222,25 @@ public sealed class TerminalRunnerSeatReleaseService(
         var path = task.WorktreePath;
         var remote = task.RemoteWorktreePath;
         if (string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(remote)) return false;
-        return await db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id != task.Id
+        var live = db.AgentTasks.AsNoTracking().Where(t => t.Id != task.Id
             && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
-                || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked)
-            && ((path != null && path != "" && (t.WorktreePath == path || t.RemoteWorktreePath == path))
-                || (remote != null && remote != "" && (t.WorktreePath == remote || t.RemoteWorktreePath == remote))), ct);
+                || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked));
+        if (task.RemoteWorkspaceSlotId is { } slot)
+        {
+            // CARD-0824 S1 §3.6: a reused slot path is not ownership. Only another live task holding
+            // the same (slot, generation), or a slot-less row on that path, is ambiguous.
+            var generation = task.RemoteWorkspaceSlotGeneration;
+            var runner = task.RunnerId;
+            return await live.AnyAsync(t =>
+                (path != null && path != "" && (t.WorktreePath == path || t.RemoteWorktreePath == path))
+                || (remote != null && remote != "" && t.WorktreePath == remote)
+                || (t.RunnerId == runner && t.RemoteWorkspaceSlotId == slot && t.RemoteWorkspaceSlotGeneration == generation)
+                || (remote != null && remote != "" && t.RemoteWorkspaceSlotId == null && t.RemoteWorktreePath == remote), ct);
+        }
+
+        return await live.AnyAsync(t =>
+            (path != null && path != "" && (t.WorktreePath == path || t.RemoteWorktreePath == path))
+            || (remote != null && remote != "" && (t.WorktreePath == remote || t.RemoteWorktreePath == remote)), ct);
     }
 
     /// <summary>

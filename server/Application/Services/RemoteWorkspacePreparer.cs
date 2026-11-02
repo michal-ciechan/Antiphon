@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -298,7 +299,7 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                         // Runner and attempt both have to match: a drain or a new attempt must not
                         // take this path, and a cancel of the same attempt still records it.
                         var recorded = await RemoteWorkspaceReadiness.RecordPathAsync(db, taskId, originatingAttempt,
-                            originatingRunner, mirrored.Path, CancellationToken.None);
+                            originatingRunner, mirrored.Path, CancellationToken.None, mirrored.SlotId, mirrored.SlotGeneration);
                         if (!recorded)
                         {
                             _logger.LogWarning(
@@ -330,12 +331,16 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
             var attempt = task.RemotePrepFailures + 1;
             var now = _clock.GetUtcNow().UtcDateTime;
             var notBefore = now + Backoff(attempt, _settings);
+            // CARD-0824 S1 D-6/H-2: a runner pool at its bound is a hold, never a fallback task-<id> mirror.
+            var slotHold = WorkspaceSlotCodes.TryParseUnavailable(failure, out var bound);
             db.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
                 AgentTaskId = taskId,
-                Type = AgentTaskEventType.Warning,
-                Detail = failure,
+                Type = slotHold ? AgentTaskEventType.Held : AgentTaskEventType.Warning,
+                Detail = slotHold
+                    ? $"{WorkspaceSlotCodes.Unavailable}: {bound}. Runner '{task.RunnerId}' has no workspace slot within its bound; the task stays Queued and is retried, never given a per-task mirror."
+                    : failure,
                 At = now,
             });
             await db.SaveChangesAsync(CancellationToken.None);

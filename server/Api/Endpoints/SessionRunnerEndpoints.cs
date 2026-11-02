@@ -14,6 +14,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -141,6 +142,30 @@ public static class SessionRunnerEndpoints
 
             await drains.ClearAsync(runnerId, body.Reason, updatedByTaskId, ct);
             return Results.Ok();
+        }).WithTags("SessionRunners");
+
+        // CARD-0824 S1 D-C. Operator or pre-rc cold reset of a runner's workspace slots. The slot list
+        // (or all) is forwarded unchanged; the runner runs it at once on a Free slot and only records
+        // it as pending on a leased one (it then runs inside that slot's release).
+        app.MapPost("/api/session-runners/{runnerId}/workspace-slots/cold-reset", async (
+            HttpContext http,
+            string runnerId,
+            WorkspaceSlotColdResetRouteRequest body,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            ILoggerFactory loggers,
+            CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "A workspace slot cold reset requires the operator token.");
+            if (string.IsNullOrWhiteSpace(body.Reason) || (!body.All && (body.Slots is null || body.Slots.Count == 0)))
+                return Results.BadRequest(new { error = "workspace_slot_cold_reset_invalid", detail = "Give a reason and either all or a slot list." });
+            var requester = string.IsNullOrWhiteSpace(body.Requester) ? "operator" : body.Requester.Trim();
+            var request = new PhoneHomeWorkspaceSlotColdResetRequest(
+                Guid.NewGuid(), body.All ? null : body.Slots, body.All, requester, body.Reason.Trim());
+            loggers.CreateLogger("WorkspaceSlotColdReset").LogInformation(
+                "Workspace slot cold reset {RequestId} on runner {RunnerId} by {Requester}: {Slots} ({Reason})",
+                request.RequestId, runnerId, requester, body.All ? "all" : string.Join(",", body.Slots!), request.Reason);
+            var remote = http.RequestServices.GetRequiredService<RemoteWorkspaceService>();
+            return Results.Ok(await remote.ColdResetSlotsAsync(runnerId, request, ct));
         }).WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/retire", async (
