@@ -434,6 +434,51 @@ public class AgentTaskWorktreeBaseCreateTests
         }
     }
 
+    [Test]
+    [Arguments("on_origin")]
+    [Arguments("nowhere")]
+    public async Task C1640_create_fetches_an_unreadable_source_or_refuses_by_name(string shape)
+    {
+        using var repo = new ScratchGitRepo("c1640-create");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await repo.AddBareOriginAsync();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = AgentTaskDispatchBaseGuardTests.CreateContext(schema);
+        var card = await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-1640");
+        var source = await AgentTaskDispatchBaseGuardTests.SeedKeptSiblingAsync(db, repo, card.Id, "A");
+        await db.SaveChangesAsync();
+        var branch = source.WorktreeBranch!;
+        var sha = (await repo.GitReadAsync("rev-parse", branch)).Trim();
+        if (shape == "on_origin") await repo.GitAsync("push", "origin", branch);
+        // Neither a local branch nor a remote-tracking ref: only origin (or nothing) has the source.
+        await repo.GitAsync("branch", "-D", branch);
+        await ScratchGitRepo.GitInAsync(repo.Path, "update-ref", "-d", "refs/remotes/origin/" + branch);
+        var before = await db.AgentTasks.CountAsync();
+        await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
+            configure: services => services.AddSingleton<StartRefAvailability>());
+        await using var scope = provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        var caller = new AgentTaskService.Caller(null, null, repo.Path);
+        if (shape == "on_origin")
+        {
+            var created = await service.CreateAsync(Request(card.Id), caller, CancellationToken.None);
+            created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            created.WorktreeBase.SourceTaskId.ShouldBe(source.Id);
+            created.WorktreeBase.SourceSha.ShouldBe(sha);
+            (await repo.GitReadAsync("rev-parse", "refs/remotes/origin/" + branch)).Trim().ShouldBe(sha);
+            return;
+        }
+        var error = await Should.ThrowAsync<ConflictException>(() => service.CreateAsync(Request(card.Id),
+            caller, CancellationToken.None));
+        error.Code.ShouldBe("worktree_base_unreadable");
+        error.Message.ShouldContain(branch);
+        error.Message.ShouldContain("-StartRef");
+        error.Message.ShouldContain("-FreshWorktree");
+        (await db.AgentTasks.CountAsync()).ShouldBe(before);
+        var fresh = await service.CreateAsync(Request(card.Id) with { FreshWorktree = true }, caller, CancellationToken.None);
+        fresh.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+    }
+
     private static CreateAgentTaskRequest Request(Guid? cardId) => new(
         "Build the card", Title: "Worktree continuation", Role: AgentTaskRole.Code,
         Workspace: WorkspaceMode.Worktree, Card: cardId?.ToString("D"));
