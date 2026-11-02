@@ -19,7 +19,6 @@ namespace Antiphon.Tests.Application;
 /// failure arm is in <see cref="AgentTaskDeadSessionReconciliationTests"/>.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel]
 public class TerminalTaskResidueTests
 {
