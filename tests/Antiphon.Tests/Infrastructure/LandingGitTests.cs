@@ -806,7 +806,7 @@ public sealed class LandingGitTests
             }
         }
 
-        var record = JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path!, ct));
+        var record = await RepositoryChildJournalReader.ReadAsync(path!, ct);
         record.ShouldNotBeNull();
         record.Purpose.ShouldBe(RepositoryChildPurposes.RemotePrepPush);
         record.TaskId.ShouldBe(taskId);
@@ -842,7 +842,7 @@ public sealed class LandingGitTests
                 if (Directory.Exists(children))
                     path = Directory.EnumerateFiles(children, "*.json").FirstOrDefault();
                 if (path is not null)
-                    record = JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path, ct));
+                    record = await RepositoryChildJournalReader.ReadAsync(path, ct);
                 if (record?.ProcessId is not null) break;
                 if (deleting.IsCompleted) await deleting;
                 await Task.Delay(50, poll.Token);
