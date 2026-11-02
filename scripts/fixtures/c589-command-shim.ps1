@@ -17,6 +17,7 @@ if ($env:C589_SLOT_SCRIPT -like 'deadline_*') {
 Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CWD ' + (Get-Location).ProviderPath) -Encoding ASCII
 Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('PID ' + $PID) -Encoding ASCII
 Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('ARGV ' + (ConvertTo-Json -InputObject @($argv) -Compress)) -Encoding ASCII
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('ENV ANTIPHON_BUILD_SLOT_MAXCPUCOUNT ' + $env:ANTIPHON_BUILD_SLOT_MAXCPUCOUNT) -Encoding ASCII
 Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + ((@($args)) -join ' ')) -Encoding ASCII
 if ($env:C589_COMMAND_SLEEP_SECONDS) { Start-Sleep -Seconds ([int]$env:C589_COMMAND_SLEEP_SECONDS) }
 $code = 0
