@@ -63,7 +63,9 @@ work itself.
   tests/...`) as `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>`. The gate
   waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver outside
   it is an unlisted run Review flags. Exit 4 is a slot timeout: report the row as not run or end
-  `blocked`, never to retry unleased or with `-NoSlot` (CARD-0589).
+  `blocked`, never to retry unleased or with `-NoSlot` (CARD-0589). ONE LEASE PER BUILD: a loop of
+  builds (a mutant loop) re-leases per build, never one lease around the loop; a wrapped non-dotnet
+  command gets no -maxcpucount, only a `BUILD SLOT warning` (CARD-1627).
 
 - VERIFY PRE-EXISTING RED BEFORE BLAMING YOURSELF: re-run the failure at the base commit. An
   inherited failure is a fact for your report; one you caused is yours to fix. Never quietly widen
