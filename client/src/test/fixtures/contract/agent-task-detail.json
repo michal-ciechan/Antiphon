@@ -164,5 +164,8 @@
   "worktreeBasePreviewJson": null,
   "internalDecisionQuestions": [],
   "parkSync": null,
-  "syncDebt": null
+  "syncDebt": null,
+  "failedSession": null,
+  "ceilingHold": null,
+  "supervisionNotices": []
 }
