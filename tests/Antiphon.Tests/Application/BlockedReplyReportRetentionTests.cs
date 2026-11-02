@@ -533,13 +533,13 @@ public sealed class BlockedReplyReportRetentionTests
         var after = world.Task;
         after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after) + " the question still Blocks");
         after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked, "the retained evidence class stands");
-        after.Result.ShouldBe(retained.Result, Case.Sensitive, "the retained report body stands, byte-equal");
+        after.Result.ShouldBe(retained.Result, "the retained report body stands, byte-equal");
         AssertRetained(after, retained);
         after.ReportNudgeMessageId.ShouldBeNull("a question is not asked for a closing line");
         var events = await world.EventsAsync();
         events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
         var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
-        blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, Case.Sensitive, "the Block records the question");
+        blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, "the Block records the question");
         await using var db = world.CreateContext();
         var notes = await db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId)
@@ -567,9 +567,9 @@ public sealed class BlockedReplyReportRetentionTests
         var after = world.Task;
         after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after));
         after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.QuestionHeuristic);
-        after.Result.ShouldBe(question, Case.Sensitive);
+        after.Result.ShouldBe(question);
         var blocked = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
-        blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question, Case.Sensitive);
+        blocked.Detail.ShouldBe(BlockedQuestion.AskedPrefix + question);
     }
 
     /// <summary>
