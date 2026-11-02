@@ -193,6 +193,18 @@ param(
     [ValidateRange(1, 1440)]
     [int]$ExpectAbout,
 
+    # CARD-1610 S4a. Declare this task's ceiling: 1..720 minutes plus -CeilingReason (1..1000
+    # characters, no control characters). At the ceiling the task is HELD Working for a typed
+    # Continue/Extend decision; nothing is killed. Omitted, the role default applies. A string, so
+    # a non-numeric or huge value is refused here as ceiling_invalid, not as a binding error.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$CeilingMinutes,
+
+    # Create: the reason for -CeilingMinutes. Reply: the reason an operator Extend requires.
+    [Parameter(ParameterSetName = 'Create')]
+    [Parameter(ParameterSetName = 'Reply')]
+    [string]$CeilingReason,
+
     # Bypass the subscription-quota launch gate (CARD-0136). Without this, a fresh
     # reading past the remaining-%-vs-time-to-reset threshold is refused with 409
     # subscription_quota_low. Two ways out: pick another -Kind / agent, or re-run
@@ -297,6 +309,24 @@ param(
     # for the next turn.
     [Parameter(ParameterSetName = 'Refine')]
     [switch]$Interrupt,
+
+    # CARD-1610 S4a. Answer a ceiling hold (-Status prints the episode): -Reply <taskId>
+    # -CeilingAction Continue|Extend -EpisodeId <id> [-ExtendMinutes 1..720]. The decision is
+    # recorded and the session continues; no message is typed into it. -OperatorExtend (with
+    # -ExtendMinutes 1..240 and -CeilingReason) passes the final 720-minute hold and needs the
+    # owner-only operator token file.
+    [Parameter(ParameterSetName = 'Reply')]
+    [ValidateSet('Continue', 'Extend')]
+    [string]$CeilingAction,
+
+    [Parameter(ParameterSetName = 'Reply')]
+    [string]$EpisodeId,
+
+    [Parameter(ParameterSetName = 'Reply')]
+    [string]$ExtendMinutes,
+
+    [Parameter(ParameterSetName = 'Reply')]
+    [switch]$OperatorExtend,
 
     # Look up a task you already created.
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
@@ -581,14 +611,21 @@ function Write-AntiphonBindFailureDiagnosis {
 }
 
 function Invoke-Antiphon {
-    param([string]$Method, [string]$Path, $Body)
+    param([string]$Method, [string]$Path, $Body, [hashtable]$ExtraHeaders, [switch]$PlainFailure)
     $uri = "$api$Path"
+    # CARD-1610 S4a: a per-request header (the operator token) goes on a copy, never on $headers.
+    $requestHeaders = $headers
+    if ($null -ne $ExtraHeaders) {
+        $requestHeaders = @{}
+        foreach ($key in $headers.Keys) { $requestHeaders[$key] = $headers[$key] }
+        foreach ($key in $ExtraHeaders.Keys) { $requestHeaders[$key] = $ExtraHeaders[$key] }
+    }
     try {
         if ($null -ne $Body) {
             $json = $Body | ConvertTo-Json -Depth 6 -Compress
-            return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -Body $json -ContentType 'application/json'
+            return Invoke-RestMethod -Method $Method -Uri $uri -Headers $requestHeaders -Body $json -ContentType 'application/json'
         }
-        return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers
+        return Invoke-RestMethod -Method $Method -Uri $uri -Headers $requestHeaders
     }
     catch {
         # Surface the server's own message - it explains WHY (worker cannot delegate, directory
@@ -609,6 +646,11 @@ function Invoke-Antiphon {
                 }
             }
             Write-AntiphonBindFailureDiagnosis -Field $field -Value $value -Detail $detail
+        }
+        if ($PlainFailure) {
+            # One unwrapped line, so the server's code and detail stay greppable.
+            [Console]::Error.WriteLine("Antiphon $Method $Path failed: $detail")
+            exit 1
         }
         Write-Error "Antiphon $Method $Path failed: $detail"
         exit 1
@@ -637,6 +679,53 @@ function Get-AntiphonCheckoutRoot {
         catch { }
     }
     return $Directory
+}
+
+# CARD-1610 S4a. A local ceiling refusal: one plain line and exit 2, before any request.
+function Exit-AntiphonCeilingInvalid {
+    param([string]$Detail)
+    [Console]::Error.WriteLine('ceiling_invalid: ' + $Detail)
+    exit 2
+}
+
+# Whole minutes in Minimum..Maximum. Parsed here, so 'ten' or a value past [long] is a
+# ceiling_invalid refusal rather than a PowerShell binding error.
+function Get-AntiphonCeilingMinutes {
+    param([string]$Name, [string]$Value, [long]$Minimum, [long]$Maximum)
+    $parsed = [long]0
+    if (-not [long]::TryParse($Value, [System.Globalization.NumberStyles]::Integer,
+            [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+        Exit-AntiphonCeilingInvalid ("{0} must be a whole number of minutes from {1} to {2}." -f $Name, $Minimum, $Maximum)
+    }
+    if ($parsed -lt $Minimum -or $parsed -gt $Maximum) {
+        Exit-AntiphonCeilingInvalid ("{0} must be from {1} to {2} minutes (got {3})." -f $Name, $Minimum, $Maximum, $parsed)
+    }
+    return $parsed
+}
+
+# The server's reason rule plus no control characters: the reason is copied into the brief.
+function Assert-AntiphonCeilingReason {
+    param([string]$Name, [string]$Reason)
+    if ([string]::IsNullOrWhiteSpace($Reason)) {
+        Exit-AntiphonCeilingInvalid ("{0} needs -CeilingReason (1..1000 characters)." -f $Name)
+    }
+    if ($Reason.Length -gt 1000) {
+        Exit-AntiphonCeilingInvalid ("-CeilingReason is {0} characters; the limit is 1000." -f $Reason.Length)
+    }
+    foreach ($ch in $Reason.ToCharArray()) {
+        if ([int]$ch -lt 32 -or [int]$ch -eq 127) {
+            Exit-AntiphonCeilingInvalid '-CeilingReason may not contain control characters or line breaks.'
+        }
+    }
+}
+
+# Status renders server facts only: a missing field prints nothing (CARD-1610 round-3 D-3).
+function Format-AntiphonInstant {
+    param($Value)
+    if ($Value -is [datetime]) {
+        return $Value.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return [string]$Value
 }
 
 switch ($PSCmdlet.ParameterSetName) {
@@ -692,6 +781,44 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Output ("platform: {0} on {1}; observed {2}" -f $s.requiredPlatform, $placed, $observed)
         }
         Write-Output "Delegate: $($s.status)"
+        # CARD-1610 S4a D-7: ceiling, hold and seat lines, each only from its server field.
+        $taskRef = if ($s.id) { $s.id } else { $Status }
+        if ($task.ceilingBudget) {
+            $b = $task.ceilingBudget
+            if ($null -ne $b.resolvedMinutes) {
+                Write-Output ("Ceiling: {0} min ({1}); next bound {2} min; cap {3}" -f $b.resolvedMinutes, $b.resolvedSource, $b.nextCeilingMinutes, $b.absoluteCapMinutes)
+            } elseif ($null -ne $b.requestedMinutes) {
+                Write-Output ("Ceiling: {0} min requested; resolved at dispatch" -f $b.requestedMinutes)
+            } else {
+                Write-Output 'Ceiling: role default; resolved at dispatch'
+            }
+            if ($b.requestedReason) { Write-Output "Ceiling reason: $($b.requestedReason)" }
+        }
+        if ($task.ceilingHold) {
+            $h = $task.ceilingHold
+            $lastKind = if ($h.lastTranscriptKind) { $h.lastTranscriptKind } else { 'unknown' }
+            $lastAge = if ($null -ne $h.lastTranscriptAgeSeconds) { '{0}s' -f [int]$h.lastTranscriptAgeSeconds } else { 'age unknown' }
+            Write-Output ("Ceiling hold: episode {0}; held {1}; bound {2} min; last transcript {3} {4}" -f `
+                $h.episodeId, (Format-AntiphonInstant $h.heldAt), $h.nextCeilingMinutes, $lastKind, $lastAge)
+            if ($h.phaseKind) {
+                Write-Output ("Phase: {0} {1}-minute limit, deadline {2}" -f $h.phaseKind, $h.phaseLimitMinutes, (Format-AntiphonInstant $h.phaseDeadlineAt))
+            } else {
+                Write-Output 'Phase: none - no phase deadline covers this tail; the ceiling is its only deadline'
+            }
+            if ($h.capReached -eq $true) {
+                Write-Output ('Final hold at 720 minutes: Continue and Extend refuse. Operator Extend (-OperatorExtend -ExtendMinutes 1..240 -CeilingReason "...") or POST /api/agent-tasks/{0}/cancel' -f $taskRef)
+            } else {
+                Write-Output ('Decide: delegate.ps1 -Reply {0} -CeilingAction Continue|Extend -EpisodeId {1} [-ExtendMinutes M]' -f $taskRef, $h.episodeId)
+            }
+        }
+        if ($task.failedSession) {
+            $f = $task.failedSession
+            $notice = if ($f.noticeState) { $f.noticeState } else { 'none' }
+            Write-Output ("Seat: {0}; activity {1}; session {2}; failure source {3}; notice {4}" -f $f.summary, $f.activity, $f.sessionId, $f.failureSource, $notice)
+            if ($f.summary -eq 'Failed, session still Running: seat held') {
+                Write-Output 'Retry stops this session and spends a new attempt; Cancel does not apply to a Failed task.'
+            }
+        }
         if ($task.reviewEvidence) {
             $e = $task.reviewEvidence
             Write-Output "Review evidence: $($e.id); subject $($e.subjectTaskId); reviewed $($e.reviewedSourceSha); clean $($e.reviewedSourceClean); ref $($e.reviewedSourceRef); outcome $($e.outcome)"
@@ -887,6 +1014,56 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'Reply' {
+        if ($PSBoundParameters.ContainsKey('CeilingAction')) {
+            # CARD-1610 S4a D-6: a typed ceiling decision. The body is exclusive - no origin,
+            # message or round - because the server refuses a typed action beside any of them.
+            if (-not [string]::IsNullOrWhiteSpace($Message)) {
+                Exit-AntiphonCeilingInvalid '-CeilingAction is exclusive with an answer message; pass one or the other.'
+            }
+            $episode = [guid]::Empty
+            if (-not [guid]::TryParse($EpisodeId, [ref]$episode) -or $episode -eq [guid]::Empty) {
+                Exit-AntiphonCeilingInvalid '-EpisodeId must be the hold episode id (a GUID) that -Status prints.'
+            }
+            $decision = @{ ceilingAction = $CeilingAction; episodeId = $episode.ToString('D') }
+            if ($CeilingAction -eq 'Continue') {
+                if ($PSBoundParameters.ContainsKey('ExtendMinutes')) {
+                    Exit-AntiphonCeilingInvalid '-CeilingAction Continue takes no -ExtendMinutes; use Extend.'
+                }
+                if ($OperatorExtend) { Exit-AntiphonCeilingInvalid '-OperatorExtend applies only to -CeilingAction Extend.' }
+            } else {
+                if (-not $PSBoundParameters.ContainsKey('ExtendMinutes')) {
+                    Exit-AntiphonCeilingInvalid '-CeilingAction Extend requires -ExtendMinutes.'
+                }
+                $extendMaximum = 720
+                if ($OperatorExtend) { $extendMaximum = 240 }
+                $decision['extendMinutes'] = [int](Get-AntiphonCeilingMinutes -Name '-ExtendMinutes' -Value $ExtendMinutes -Minimum 1 -Maximum $extendMaximum)
+            }
+            $operatorHeaders = $null
+            if ($OperatorExtend) {
+                Assert-AntiphonCeilingReason -Name '-OperatorExtend' -Reason $CeilingReason
+                $decision['operatorExtend'] = $true
+                $decision['ceilingReason'] = $CeilingReason
+                # Owner-only token, for this one request only; the value is never printed.
+                . (Join-Path (Join-Path $PSScriptRoot 'lib') 'runner-operator-token.ps1')
+                try { $operatorToken = Get-RunnerOperatorToken }
+                catch {
+                    [Console]::Error.WriteLine('operator_token_unavailable: ' + $_.Exception.Message)
+                    exit 2
+                }
+                $operatorHeaders = @{ 'X-Antiphon-Operator-Token' = $operatorToken }
+            } elseif ($PSBoundParameters.ContainsKey('CeilingReason')) {
+                Exit-AntiphonCeilingInvalid '-CeilingReason on a reply applies only to -OperatorExtend.'
+            }
+            Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Reply/reply" -Body $decision `
+                -ExtraHeaders $operatorHeaders -PlainFailure | Out-Null
+            Write-Output ("Decision recorded for task {0} (episode {1}): {2}. The session continues; -Status shows the next bound." -f `
+                $Reply, $decision['episodeId'], $CeilingAction)
+            return
+        }
+        if ($PSBoundParameters.ContainsKey('EpisodeId') -or $PSBoundParameters.ContainsKey('ExtendMinutes') `
+                -or $OperatorExtend -or $PSBoundParameters.ContainsKey('CeilingReason')) {
+            Exit-AntiphonCeilingInvalid '-EpisodeId, -ExtendMinutes, -OperatorExtend and -CeilingReason need -CeilingAction.'
+        }
         if ([string]::IsNullOrWhiteSpace($Message)) {
             Write-Error 'Pass the answer as the first argument: delegate.ps1 -Reply <taskId> "your answer"'
             exit 1
@@ -1021,6 +1198,16 @@ switch ($PSCmdlet.ParameterSetName) {
         if (@($Worktree, $Shared, $ReadOnly, [bool]$Workspace | Where-Object { $_ }).Count -gt 1) {
             Write-Error 'workspace_switch_conflict: -Worktree, -Shared, -ReadOnly and -Workspace are exclusive; pass at most one.'
             exit 2
+        }
+
+        # CARD-1610 S4a D-5: a declared ceiling is checked here, before any request, with the
+        # server's rule: 1..720 minutes and a 1..1000-character reason without control characters.
+        $ceilingValue = $null
+        if ($PSBoundParameters.ContainsKey('CeilingMinutes')) {
+            $ceilingValue = Get-AntiphonCeilingMinutes -Name '-CeilingMinutes' -Value $CeilingMinutes -Minimum 1 -Maximum 720
+            Assert-AntiphonCeilingReason -Name '-CeilingMinutes' -Reason $CeilingReason
+        } elseif ($PSBoundParameters.ContainsKey('CeilingReason')) {
+            Exit-AntiphonCeilingInvalid '-CeilingReason needs -CeilingMinutes; a reason alone is never stored.'
         }
 
         $body = @{
@@ -1175,6 +1362,10 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($Scope) { $body['scope'] = $Scope }
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
+        if ($null -ne $ceilingValue) {
+            $body['ceilingMinutes'] = $ceilingValue
+            $body['ceilingReason'] = $CeilingReason
+        }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
         if ($AllowUnauthenticatedProvider) { $body['allowUnauthenticatedProvider'] = $true }
         if ($IgnoreModelDisabled) { $body['ignoreModelDisabled'] = $true }
@@ -1263,6 +1454,14 @@ switch ($PSCmdlet.ParameterSetName) {
             }
             if ($created.titleDiagnosisQueued) {
                 Write-Output '  title: pending (antiphon-diagnose will set it from the goal; pass -Title to set it yourself)'
+            }
+            if ($null -ne $ceilingValue) {
+                # An older server ignores unknown members: say so rather than imply the ceiling holds.
+                if ($null -ne $created.requestedCeilingMinutes -and [long]$created.requestedCeilingMinutes -eq $ceilingValue) {
+                    Write-Output ("  ceiling: {0} min requested; held Working for a decision at it, never killed" -f $ceilingValue)
+                } else {
+                    Write-Output ("WARNING: ceiling_unconfirmed: the server did not echo requestedCeilingMinutes={0}; the role default applies; check GET /api/version" -f $ceilingValue)
+                }
             }
             if ($created.routing -and $created.routing.candidates) {
                 $all = @($created.routing.candidates)

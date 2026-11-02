@@ -967,10 +967,13 @@ export function useReplyToAgentTask() {
   )
 }
 
-/** CARD-1610 S4a: answer a ceiling hold. Not yet wired. */
+/**
+ * CARD-1610 S4a: answer a ceiling hold. Never `useReplyToAgentTask`: that adds message/origin, which the
+ * server refuses beside a typed action. The session continues; nothing is typed into it.
+ */
 export function useCeilingDecision() {
-  return useTaskMutation(
-    (_decision: CeilingDecision): Promise<AgentTaskSummaryDto> => Promise.reject(new Error('not implemented')),
+  return useTaskMutation(({ id, ...decision }: CeilingDecision) =>
+    apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/reply`, decision),
   )
 }
 

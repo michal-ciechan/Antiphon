@@ -413,6 +413,8 @@ public sealed class AgentTaskService
                 $"Expected duration must be between 1 and 1440 minutes (got {expectedMinutes}). "
                 + "It is a hint that schedules the first check-in, not a deadline.");
         }
+        // CARD-1610 S4a: a declared ceiling is refused here, before quota, routing, gate or insert.
+        CeilingHoldFacts.ValidateCreate(request.CeilingMinutes, request.CeilingReason);
 
         Agent? subscriptionOwner = null;
         Agent? pinnedStandingAgent = null;
@@ -1523,6 +1525,7 @@ public sealed class AgentTaskService
                 storedPolicy with { GrantedAt = now });
             task.InternalDecisionPolicyHash = InternalDecisionPolicy.Hash(task.InternalDecisionPolicyJson);
         }
+        CeilingHoldFacts.BindRequested(task, request.CeilingMinutes, request.CeilingReason);
 
         var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
@@ -1611,7 +1614,8 @@ public sealed class AgentTaskService
                         existing.Status, existing.ModelLevel, null, existing.AgentKind,
                         CardId: existing.CardId, CardIdentifier: binding.Identifier,
                         RequiredPlatform: existing.RequiredPlatform,
-                        RunnerId: RunnerRequestIntent.DisplayRunnerId(existing.RunnerId));
+                        RunnerId: RunnerRequestIntent.DisplayRunnerId(existing.RunnerId))
+                    { RequestedCeilingMinutes = existing.RequestedCeilingMinutes };
                 }
                 var predecessor = await _db.AgentTasks.AsNoTracking()
                     .SingleOrDefaultAsync(t => t.Id == handoff.PredecessorTaskId, ct);
@@ -1806,7 +1810,8 @@ public sealed class AgentTaskService
             RunnerId: RunnerRequestIntent.DisplayRunnerId(task.RunnerId),
             RequirementSource: task.RequirementSource,
             ObservedPlatform: task.ObservedPlatform,
-            WorktreeBase: basePreview);
+            WorktreeBase: basePreview)
+        { RequestedCeilingMinutes = task.RequestedCeilingMinutes };
     }
 
     // The general edit token also changes for title, description and ownership writes.
@@ -2934,7 +2939,8 @@ public sealed class AgentTaskService
                 .OrderByDescending(n => n.CreatedAt).ThenBy(n => n.Id).Take(32).ToListAsync(ct))
                 .Select(n => new TaskSupervisionNoticeDto(n.Id, n.Purpose.ToString(), n.State.ToString(), n.ReasonCode,
                     n.Attempt, n.RecipientSessionId, n.QueueMessageId, n.ToldAt, n.ConfirmingPromptSequence, n.ReportDigest,
-                    n.ReportFromSequence is { } from ? $"/api/sessions/{n.SessionId:D}/transcript?since={from - 1}" : null)).ToList());
+                    n.ReportFromSequence is { } from ? $"/api/sessions/{n.SessionId:D}/transcript?since={from - 1}" : null)).ToList())
+        { CeilingBudget = CeilingHoldFacts.Budget(task) };
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>
