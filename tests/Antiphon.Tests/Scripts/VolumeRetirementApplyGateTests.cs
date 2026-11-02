@@ -106,12 +106,29 @@ public sealed class VolumeRetirementApplyGateTests
         // A Windows checkout of this file embeds CR in the raw literal. The
         // production assertion normalises those bytes before comparing them
         // with the LF script.
-        var crlf = expected.Replace("\n", "\r\n", StringComparison.Ordinal);
+        var crlf = CrlfCopy(expected);
         crlf.Contains('\r').ShouldBeTrue("the Windows checkout embeds CR in this raw literal");
         recycle.Contains(crlf, StringComparison.Ordinal).ShouldBeFalse(
             "the CRLF copy is not present in the LF script until newlines are normalised");
         recycle.ShouldContain(SourceLines(crlf), Case.Sensitive,
             "apply-gate: a CRLF copy of the expected block matches the LF script");
+    }
+
+    [Test]
+    public void Crlf_copy_of_an_already_crlf_literal_matches_the_lf_copy()
+    {
+        // On a Windows checkout the raw literal is already CRLF. Its CRLF copy must
+        // be the same as an LF checkout's, not CR CR LF (one blank line per line).
+        const string lf = "    if [ \"${C1008_DRY_RUN:-0}\" != 1 ]; then\n        c1609_apply_gate\n    fi";
+        var windows = lf.Replace("\n", "\r\n", StringComparison.Ordinal);
+        CrlfCopy(windows).ShouldBe(CrlfCopy(lf), "a CRLF literal gives the same CRLF copy as an LF literal");
+        CrlfCopy(windows).ShouldNotContain("\r\r", Case.Sensitive);
+        SourceLines(CrlfCopy(windows)).ShouldBe(lf, "the CRLF copy normalises back to the LF block");
+        SourceLines("a\rb\r\nc\n").ShouldBe("a\nb\nc\n", "a lone CR and a CRLF each become one LF");
+        var recycle = Function(Read("scripts/c590-remote.sh"), "c1008_recycle");
+        recycle.ShouldContain(SourceLines(CrlfCopy(windows)), Case.Sensitive);
+        recycle.ShouldNotContain(SourceLines(CrlfCopy(windows.Replace("!= 1", "= 1", StringComparison.Ordinal))), Case.Sensitive,
+            "a different block still does not match after normalisation");
     }
 
     [Test]
@@ -516,6 +533,9 @@ public sealed class VolumeRetirementApplyGateTests
     // are not the LF bytes of an eol=lf script. Compare one newline form.
     private static string SourceLines(string text) =>
         text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
+    private static string CrlfCopy(string text) =>
+        text.Replace("\n", "\r\n", StringComparison.Ordinal);
 
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative));
