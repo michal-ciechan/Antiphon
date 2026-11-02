@@ -1484,8 +1484,11 @@ public class SessionReconciliationServiceTests
             var eventBus = new MockEventBus();
             var alerts = new RecordingAlertService();
             using var cts = new CancellationTokenSource();
+            // The fault is aimed at the re-adoption commit, the save that writes this row back to
+            // Running. A foreign leftover row pass 1 legitimately closes must not spend it.
             var scan = shape == "save"
-                ? CreateContext(new ThrowOnceSaveInterceptor())
+                ? CreateContext(new ThrowOnceSaveInterceptor(when: db => db.ChangeTracker.Entries<AgentSession>()
+                    .Any(e => e.State == EntityState.Modified && e.Entity.Id == sessionId)))
                 : CreateContext();
 
             await using (scan)
@@ -1580,7 +1583,12 @@ public class SessionReconciliationServiceTests
             SaveChangesInterceptor? interceptor = shape switch
             {
                 "incident-throws" => new ThrowOnceCapIncidentInterceptor(),
-                "ambiguous-save" => new ThrowOnceSaveInterceptor(onSaving: false, onSaved: true),
+                // Aimed at the cap-incident persist, as ThrowOnceCapIncidentInterceptor is.
+                "ambiguous-save" => new ThrowOnceSaveInterceptor(onSaving: false, onSaved: true,
+                    when: db => db.ChangeTracker.Entries<AgentIncident>().Any(e =>
+                        e.State == EntityState.Added
+                        && e.Entity.SessionId == sessionId
+                        && e.Entity.FailureReason == "ReAdoptCapReached")),
                 _ => null,
             };
 
