@@ -803,7 +803,7 @@ public class AgentTaskDeadSessionReconciliationTests
         await using var verify = CreateContext();
         (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == nudgeId))
             .Status.ShouldBe(QueuedMessageStatus.Canceled, "a failed task's closing-line ask is never typed");
-        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == waitId.ShouldNotBeNull()))
+        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == waitId))
             .Status.ShouldBe(QueuedMessageStatus.Canceled, "the parent hears the failure, not an idle wait");
         (await scenario.ParentNoteBodiesAsync())
             .ShouldContain(b => b.Contains("the pty-host exited (code 1)"), "the failure note still reaches the parent");
