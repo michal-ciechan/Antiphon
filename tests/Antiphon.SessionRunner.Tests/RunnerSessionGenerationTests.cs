@@ -175,6 +175,9 @@ public class RunnerSessionGenerationTests
     [Test]
     public async Task C502_V25_real_runner_exe_advertises_the_capability_echoes_and_refuses_a_mismatched_kill()
     {
+        // CARD-1652: LocalHttpRunner starts the Windows apphost Antiphon.SessionRunner.exe on the modern ConPTY backend.
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("Real runner exe harness (Antiphon.SessionRunner.exe, modern ConPTY) is Windows-only");
         var logRoot = TestSessionLogRoot.Create("c502-v25");
         var settings = new SessionRunnerSettings
         {
