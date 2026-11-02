@@ -186,7 +186,7 @@ guards new runtime fixtures. The linger clock starts at child exit; a live child
 expires from linger alone. R2's opt-in owner watch supplies the test-time bound, while
 production retains restart/re-adoption with the default `PtyHostExitWithOwner=false`.
 
-- **Building while daemons run**: the always-on session-runner (and dev server) lock their `bin/` outputs. To build/test without restarting them, use an alternate output path: `dotnet run --project tests/<X> --property:OutputPath=bin-ptyhost/` (gitignored by `bin-*/`). **End it with a forward slash, never a backslash.** `'--property:OutputPath=bin-x\'` loses its trailing backslash to Windows argv quoting, and the mangled value creates junk directories — `bin-x --treenode-filter`, `bin-check --nologo`, and worst of all `bin-profile ` *with a trailing space* (see the next bullet — that one breaks the whole repo's build). `OutputPath` applies to every project in the graph, so one run drops a `bin-<name>/` in ~12 directories. Keep an exact producer-owned output inventory; a directory name or age alone does not authorize deletion. `cleanup-build-junk.ps1` requires producer creation records (see below). Non-git process-spawning tests share a 1-wide `ProcessSpawnLimit` lane (CARD-0050 S5); git-only tests share a 2-4-wide `GitProcessSpawnLimit` lane (CARD-1421). A failure on either lane is a real defect unless it also fails at the base commit (stash and re-run).
+- **Building while daemons run**: the always-on session-runner (and dev server) lock their `bin/` outputs. To build/test without restarting them, use an alternate output path, the worktree's stable one that `scripts/build-slot.ps1 -StableOutput` prints (CARD-1629, see [Build slots](#build-slots-card-0589)): `dotnet run --project tests/<X> --property:OutputPath=bin-<taskid8>/` (gitignored by `bin-*/`). **End it with a forward slash, never a backslash.** `'--property:OutputPath=bin-x\'` loses its trailing backslash to Windows argv quoting, and the mangled value creates junk directories — `bin-x --treenode-filter`, `bin-check --nologo`, and worst of all `bin-profile ` *with a trailing space* (see the next bullet — that one breaks the whole repo's build). `OutputPath` applies to every project in the graph, so one run drops a `bin-<name>/` in ~12 directories. Keep an exact producer-owned output inventory; a directory name or age alone does not authorize deletion. `cleanup-build-junk.ps1` requires producer creation records (see below). Non-git process-spawning tests share a 1-wide `ProcessSpawnLimit` lane (CARD-0050 S5); git-only tests share a 2-4-wide `GitProcessSpawnLimit` lane (CARD-1421). A failure on either lane is a real defect unless it also fails at the base commit (stash and re-run).
 
 - **Restoring a mutation-test source backup with `Copy-Item` preserves its old modification time** (CARD-0412 D4). An incremental build can then reuse the mutated DLL even though the source diff is restored. Update the restored file's `LastWriteTime` or explicitly rebuild, and verify the test output contains the freshly built DLL before treating the restored-green run as evidence.
 
@@ -1138,7 +1138,7 @@ Settings `SessionRunner:BuildSlots` (`Enabled`, `MaxConcurrent`, `MaxCpuCount`, 
 **How a delegate takes one.** `scripts/run-checkpoint.ps1` takes a slot itself for every row, `-NoBuild` rows included (the test host and its Postgres are the memory), after input validation and the fresh results directory, builds with the grant's `-maxcpucount:N`, and releases after the run; its `CHECKPOINT` line ends `slot=<granted|unleased|unlimited|skipped> waited=<s>s`. Any other driver goes through the wrapper:
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label mutation-shard-1 -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-x/ --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label mutation-shard-1 -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-<taskid8>/ --nologo
 ```
 
 It adds the grant's `-maxcpucount:N` to `dotnet build|test|publish|pack|msbuild` unless the command already names `-m`/`-maxcpucount`, runs the command in the foreground and exits with its exit code. It never adds the switch to `dotnet run`: measured on SDK 10.0.401, `dotnet run -maxcpucount:2` hands `-maxcpucount:2` to the program as an argument. A wrapped `dotnet run` is leased and prints a `BUILD SLOT note:` line; build first and run with `--no-build` to cap its nodes. Under `pwsh -File` the wrapper reads its own raw command line after `--`, because the PowerShell binder splits `-m:2` into `-m` and `2`.
@@ -1150,6 +1150,35 @@ On Windows, a resolved `powershell.exe` child is the one environment exception (
 Keep one slot-owning layer: invoke `scripts/run-checkpoint.ps1` directly with `pwsh -NoProfile -File` because that driver takes its own lease. Do not put it behind `build-slot.ps1`; a child checkpoint would wait for a second lease while the wrapper holds the first. Use the wrapper for script targets that rely on it to acquire their lease, quoting each path or value containing spaces in the caller's shell.
 
 Never chain a second driver after the gated command with a shell operator: the lease ends when build-slot.ps1 returns, so `-- dotnet build ... && dotnet exec ...` runs the exec unleased and Review flags it.
+
+**Stable output for direct builds (CARD-1629).** A direct build is any build you run through the wrapper rather than as a checkpoint row. In a task's worktree, every direct build uses one stable output for the whole task. `pwsh -NoProfile -File scripts/build-slot.ps1 -StableOutput` prints its name: `bin-<taskid8>/` in a `task-<8hex>` or `card-task-<8hex>` worktree, and `bin-wt-<hash8>/` in any other worktree. It takes no lease and runs nothing. Pass the name exactly as printed in `--property:OutputPath=<name>` to every build and `--no-build` run in that worktree.
+
+The reason is measured. On server2, building `tests/Antiphon.Tests` with the same obj:
+
+| Build | Share of a cold build's CPU | Source |
+|---|---:|---|
+| Rebuild with no changes, same output | 4% | [2026-10-31 investigation](investigations/2026-10-31-incremental-builds-and-worktree-reuse.md) |
+| One-line test edit, same output | 59% | same investigation |
+| Same build with a new output name | 97% | same investigation |
+
+A new output name changes every project's reference paths, so almost everything recompiles. Switching back and forth between two names recompiles on every switch. CARD-1629's own run measured the same pattern: 216.6 s cold, 15.8 s unchanged, 117.4 s under a new name.
+
+The old rule asked for a new name for every build. Each hazard it guarded against is handled as follows:
+
+- **Trailing backslash** (CARD-0448): the printed name is a single relative segment that always ends in a forward slash. Pass it unchanged.
+- **Another configuration or property set**: a `Configuration`, `DefineConstants` or any other `-p:` that changes the outputs needs its own stable name. Get it with `-StableOutput -OutputSuffix <name>`, which prints `bin-<taskid8>-<name>/` (the suffix is lowercase letters, digits and hyphens). Two property sets never share one output.
+- **A commit or checkout**: MSBuild decides what to rebuild from input timestamps and its `CoreCompileInputs` cache, so it rebuilds whatever a commit or `git checkout` in the worktree changed. The exception is a restored file that keeps its old modification time. After restoring a mutation, set that file's `LastWriteTime` (CARD-0412 D4, the bullet under "Building while daemons run") or rebuild with `--no-incremental`.
+- **A crashed or killed build**: run the same build again; it redoes whatever is out of date. If that still misbehaves, delete that stable directory by its exact paths and build again.
+- **Concurrent builds**: run one build at a time per worktree. A build slot is a share of the host budget, not a lock on a worktree or a label, and every project's `obj/` is shared by all output names. A second build running at the same time in the same worktree therefore races whatever output name it uses. PC shards use their own worktrees, and each worktree gets its own stable name.
+- **Cleanup**: at the end of the task, delete each stable directory once by its exact path. There is about one per project, as before.
+
+The checkpoint tool and land verification stay cold:
+
+- **Checkpoint rows**: each row's `bin-<id>/` is a producer-owned output that is new for that run. The tool refuses to reuse an existing output (`SourceRunGuard`), so never name the stable directory in a checkpoint plan.
+- **Land verification** builds in its own verification worktree.
+- **Running both at once**: never run a direct build in a worktree while a checkpoint run is in flight there.
+
+CARD-1629 step 2 (reusing a checkpoint build at the same commit) is separate and is not part of this rule.
 
 The wait is visible in the transcript: `BUILD SLOT waiting label=<l> position=<n> occupied=<o>/<b> elapsed=<m>m` (or `reason=memory_floor available=<a>MB floor=<f>MB`) on each new reason and once a minute, then `BUILD SLOT granted lease=<id> waited=<s>s maxcpucount=<n>` and `BUILD SLOT released lease=<id> held=<s>s`. Two failure modes:
 
