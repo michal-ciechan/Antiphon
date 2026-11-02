@@ -27,6 +27,12 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     RunnerTranscriptDto Snapshot();
 
+    /// <summary>
+    /// <see cref="TranscriptWorkingState.Classify"/> over <see cref="Snapshot"/>'s entries. A tailer
+    /// that folds it per entry overrides this so callers polling it skip the snapshot copy (CARD-1624).
+    /// </summary>
+    TranscriptWorkingState.WorkingVerdict WorkingVerdict => TranscriptWorkingState.Classify(Snapshot().Entries);
+
     /// <summary>Fresh bounded read of the bound native file, without publishing or advancing ingestion.</summary>
     Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
         Task.FromResult(new TerminalTranscriptObservation(

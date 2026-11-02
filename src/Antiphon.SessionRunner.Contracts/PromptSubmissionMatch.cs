@@ -180,8 +180,26 @@ public static class PromptSubmissionMatch
         if (string.IsNullOrEmpty(recordText))
             return false;
 
-        var record = Normalize(recordText);
-        if (record.Contains(needle, StringComparison.Ordinal))
+        return ContainsNeedle(needle, new NormalizedRecord(recordText));
+    }
+
+    /// <summary>
+    /// <see cref="IsConfirmedBy(string?, string?)"/> against a record whose normalization was done
+    /// once by the caller (CARD-1624: the runner's input log is matched against every recent prompt
+    /// of every candidate, and re-normalizing the whole 64 KB log per prompt was the hot path).
+    /// Same rule, same arms; only where the record's normalization is computed differs.
+    /// </summary>
+    public static bool IsConfirmedByNormalized(string? body, NormalizedRecord record)
+    {
+        if (!TryBuildNeedle(body, out var needle))
+            return true;
+
+        return record.Spaced.Length > 0 && ContainsNeedle(needle, record);
+    }
+
+    private static bool ContainsNeedle(string needle, NormalizedRecord record)
+    {
+        if (record.Spaced.Contains(needle, StringComparison.Ordinal))
             return true;
 
         // Whitespace-free arm (see the doc comment). The stripped needle must still clear
@@ -189,8 +207,20 @@ public static class PromptSubmissionMatch
         // near-weak match while claiming text-match strength.
         var strippedNeedle = needle.Replace(" ", "", StringComparison.Ordinal);
         return strippedNeedle.Length >= MinMatchChars
-            && record.Replace(" ", "", StringComparison.Ordinal)
-                .Contains(strippedNeedle, StringComparison.Ordinal);
+            && record.Stripped.Contains(strippedNeedle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A record normalized once: <see cref="Spaced"/> is <see cref="Normalize"/>'s output and
+    /// <see cref="Stripped"/> the whitespace-free form the second arm compares, built on first use.
+    /// </summary>
+    public sealed class NormalizedRecord(string recordText)
+    {
+        private string? _stripped;
+
+        public string Spaced { get; } = Normalize(recordText);
+
+        public string Stripped => _stripped ??= Spaced.Replace(" ", "", StringComparison.Ordinal);
     }
 
     /// <summary>
