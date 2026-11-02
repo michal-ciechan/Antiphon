@@ -498,6 +498,8 @@ try
     builder.Services.AddSingleton<ILandExecutionLease, LandExecutionLease>();
     builder.Services.AddSingleton<LandVerificationArtifacts>();
     builder.Services.AddSingleton<ILandingVerifier, LandingVerifier>();
+    // CARD-1470/1467: the verifier's live memory-floor wait, read by the land status.
+    builder.Services.AddSingleton<LandVerificationWaits>();
     builder.Services.AddScoped<StageOutcomeService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
     // constructor parameter picks it up so a pinned standing agent launches from its own profile.

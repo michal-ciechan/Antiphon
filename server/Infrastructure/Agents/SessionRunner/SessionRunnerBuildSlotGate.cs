@@ -20,6 +20,9 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 /// <see cref="LandingSettings.BuildSlotMemoryFloorFallbackMaxCpuCount"/> with a
 /// <c>reason=memory_floor_fallback</c> line logged at Warning. The timeout check stays first, so a
 /// window at or above the wait never fires.
+/// CARD-1470: the fallback cpu count is clamped to [1, <see cref="Environment.ProcessorCount"/>], and
+/// every memory-floor refusal goes to the typed memory-wait callback and onto the hold
+/// (<see cref="BuildSlotHold.MemoryWait"/>) so the land records the wait, not only the server log.
 /// </summary>
 public sealed class SessionRunnerBuildSlotGate(
     ISessionRunnerClient runner,
@@ -30,14 +33,18 @@ public sealed class SessionRunnerBuildSlotGate(
     public const int UnleasedMaxCpuCount = 4;
     private static readonly TimeSpan UnreachableRetry = TimeSpan.FromSeconds(5);
 
-    public async Task<BuildSlotHold> AcquireAsync(string label, Action<string> report, CancellationToken ct)
+    public Task<BuildSlotHold> AcquireAsync(string label, Action<string> report, CancellationToken ct)
+        => AcquireAsync(label, report, null, ct);
+
+    public async Task<BuildSlotHold> AcquireAsync(string label, Action<string> report, Action<BuildSlotMemoryWait>? memoryWait, CancellationToken ct)
     {
         var options = settings.Value;
         var wait = TimeSpan.FromMinutes(Math.Max(0, options.BuildSlotWaitMinutes));
         var grace = TimeSpan.FromSeconds(Math.Max(0, options.BuildSlotUnreachableGraceSeconds));
         var fallback = TimeSpan.FromMinutes(Math.Max(0, options.BuildSlotMemoryFloorFallbackMinutes));
-        // A count of 0 would build with no -maxcpucount at all on a host already short of memory.
-        var fallbackCpuCount = Math.Max(1, options.BuildSlotMemoryFloorFallbackMaxCpuCount);
+        // A count of 0 would build with no -maxcpucount at all on a host already short of memory;
+        // CARD-1470: and no fallback build may ask for more cpus than the host has.
+        var fallbackCpuCount = ClampFallbackCpuCount(options.BuildSlotMemoryFloorFallbackMaxCpuCount);
         DateTime processStart;
         using (var self = Process.GetCurrentProcess())
             processStart = self.StartTime.ToUniversalTime();
@@ -50,22 +57,37 @@ public sealed class SessionRunnerBuildSlotGate(
         string? lastReason = null;
         var lastReported = TimeSpan.MinValue;
         var position = 0;
+        // CARD-1470: total time from each memory-floor refusal to the next answer, and the last one.
+        var memoryWaited = TimeSpan.Zero;
+        var previousElapsed = TimeSpan.Zero;
+        BuildSlotMemoryFloor? lastFloor = null;
+        var refusedByFloor = false;
+        BuildSlotMemoryWait? Memory(bool fallback = false) => lastFloor is { } f
+            ? new(f.AvailableMb, f.FloorMb, memoryWaited, fallback, fallback ? fallbackCpuCount : 0)
+            : null;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
             var answer = await runner.AcquireBuildSlotAsync(request, ct);
             var elapsed = time.GetElapsedTime(started);
+            // The previous answer's refusal: its time until this answer was spent waiting for memory.
+            if (refusedByFloor)
+                memoryWaited += elapsed - previousElapsed;
+            previousElapsed = elapsed;
+            refusedByFloor = answer?.Grant is null && answer?.MemoryFloor is not null;
+            if (refusedByFloor)
+                lastFloor = answer!.MemoryFloor;
             TimeSpan delay;
             if (answer?.Grant is { } grant)
             {
                 if (grant.Unlimited)
                 {
                     Report(report, $"BUILD SLOT unlimited maxcpucount={grant.MaxCpuCount}");
-                    return new BuildSlotHold(BuildSlotHoldOutcome.Unlimited, null, grant.MaxCpuCount, elapsed);
+                    return new BuildSlotHold(BuildSlotHoldOutcome.Unlimited, null, grant.MaxCpuCount, elapsed, MemoryWait: Memory());
                 }
                 Report(report, $"BUILD SLOT granted lease={grant.LeaseId} waited={(int)elapsed.TotalSeconds}s maxcpucount={grant.MaxCpuCount}");
                 return new BuildSlotHold(BuildSlotHoldOutcome.Granted, grant.LeaseId, grant.MaxCpuCount, elapsed,
-                    GrantedTimestamp: time.GetTimestamp());
+                    GrantedTimestamp: time.GetTimestamp(), MemoryWait: Memory());
             }
 
             // Only a reachable refusal is subject to the wait deadline. A failed request gets
@@ -73,7 +95,7 @@ public sealed class SessionRunnerBuildSlotGate(
             if ((answer?.Busy is not null || answer?.MemoryFloor is not null) && elapsed >= wait)
             {
                 Report(report, $"BUILD SLOT timeout after {(int)wait.TotalMinutes}m position={position}");
-                return new BuildSlotHold(BuildSlotHoldOutcome.Timeout, null, 0, elapsed, position);
+                return new BuildSlotHold(BuildSlotHoldOutcome.Timeout, null, 0, elapsed, position, MemoryWait: Memory());
             }
 
             if (answer?.Busy is { } busy)
@@ -92,11 +114,13 @@ public sealed class SessionRunnerBuildSlotGate(
             {
                 unreachableSince = null;
                 position = floor.QueuePosition;
+                Observe(memoryWait, Memory()!);
                 delay = RetryAfter(floor.RetryAfterMs);
                 if (fallback > TimeSpan.Zero && elapsed - floorSince >= fallback)
                 {
                     Warn(report, $"BUILD SLOT unleased reason=memory_floor_fallback available={floor.AvailableMb}MB floor={floor.FloorMb}MB waited={(int)elapsed.TotalSeconds}s maxcpucount={fallbackCpuCount}");
-                    return new BuildSlotHold(BuildSlotHoldOutcome.Unleased, null, fallbackCpuCount, elapsed, floor.QueuePosition);
+                    return new BuildSlotHold(BuildSlotHoldOutcome.Unleased, null, fallbackCpuCount, elapsed, floor.QueuePosition,
+                        MemoryWait: Memory(fallback: true));
                 }
                 if (lastReason != BuildSlotProblemTypes.MemoryFloor || elapsed - lastReported >= TimeSpan.FromMinutes(1))
                 {
@@ -112,7 +136,7 @@ public sealed class SessionRunnerBuildSlotGate(
                 if (elapsed - unreachableSince >= grace)
                 {
                     Report(report, $"BUILD SLOT unleased reason=runner_unreachable maxcpucount={UnleasedMaxCpuCount} last=no answer");
-                    return new BuildSlotHold(BuildSlotHoldOutcome.Unleased, null, UnleasedMaxCpuCount, elapsed);
+                    return new BuildSlotHold(BuildSlotHoldOutcome.Unleased, null, UnleasedMaxCpuCount, elapsed, MemoryWait: Memory());
                 }
             }
 
@@ -139,6 +163,15 @@ public sealed class SessionRunnerBuildSlotGate(
         Report(report, released
             ? $"BUILD SLOT released lease={leaseId} held={held}s"
             : $"BUILD SLOT release failed lease={leaseId} held={held}s; the runner reaps it when this process exits");
+    }
+
+    /// <summary>CARD-1470: the fallback <c>-maxcpucount</c> is at least 1 and at most the host's logical cpu count.</summary>
+    internal static int ClampFallbackCpuCount(int configured) =>
+        Math.Clamp(configured, 1, Math.Max(1, Environment.ProcessorCount));
+
+    private static void Observe(Action<BuildSlotMemoryWait>? memoryWait, BuildSlotMemoryWait wait)
+    {
+        try { memoryWait?.Invoke(wait); } catch (Exception) { /* Status only; never fails the build. */ }
     }
 
     private static TimeSpan RetryAfter(int retryAfterMs) =>

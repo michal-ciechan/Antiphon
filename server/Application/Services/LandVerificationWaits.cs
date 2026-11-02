@@ -14,13 +14,18 @@ public sealed class LandVerificationWaits(TimeProvider clock)
 {
     private readonly ConcurrentDictionary<Guid, LandVerificationWaitDto> _waits = new();
 
+    /// <summary>Records the verifier's memory state for <paramref name="requestId"/>; null clears it.</summary>
     public void Set(Guid requestId, BuildSlotMemoryWait? wait)
     {
+        if (wait is null)
+        {
+            _waits.TryRemove(requestId, out _);
+            return;
+        }
+        _waits[requestId] = new LandVerificationWaitDto(
+            wait.Fallback ? LandVerificationWaitKind.MemoryFloorFallback : LandVerificationWaitKind.WaitingForMemory,
+            wait.AvailableMb, wait.FloorMb, wait.Waited.TotalSeconds, wait.MaxCpuCount, clock.GetUtcNow().UtcDateTime);
     }
 
-    public void Clear(Guid requestId)
-    {
-    }
-
-    public LandVerificationWaitDto? Find(Guid requestId) => null;
+    public LandVerificationWaitDto? Find(Guid requestId) => _waits.TryGetValue(requestId, out var wait) ? wait : null;
 }

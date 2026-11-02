@@ -29,5 +29,6 @@ public sealed record LandingEvidenceDto(Guid OperationId, LandPhase Phase, LandO
         RecoveryOwnerRemoteAfterSha: op.RecoveryOwnerRemoteAfterSha,
         RecoveryRelationship: op.RecoveryRelationship,
         RecoveryPatchesContained: op.RecoveryPatchesContained,
-        RecoveryUncontainedPatches: op.RecoveryUncontainedPatches);
+        RecoveryUncontainedPatches: op.RecoveryUncontainedPatches,
+        VerificationBuildSlot: Services.AgentTaskLandingProtocol.BuildSlotNote(op.VerificationCommand));
 }
