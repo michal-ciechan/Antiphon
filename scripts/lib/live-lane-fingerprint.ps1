@@ -92,6 +92,21 @@ function Read-LiveLaneManifestProjects {
     return @(Get-TestSelectionSorted @($projects))
 }
 
+function Get-LiveLaneManifestRoster {
+    # The lane's expanded core uids at one commit (attestation rows and receipts bind to them).
+    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path)
+    if (-not $Tree.ContainsKey($Path)) { throw 'manifest-missing' }
+    try { $manifest=Get-TestSelectionBlob $RepositoryRoot $Sha $Path | ConvertFrom-Json -AsHashtable } catch { throw 'manifest-invalid' }
+    return ConvertTo-LiveLaneRoster $manifest
+}
+
+function Get-LiveLaneFingerprintDigest {
+    # Domain-separated by lane and schema version; components are the whole material.
+    param([string]$Lane, $Components)
+    $material="antiphon-live-lane-fingerprint`n"+(ConvertTo-TestSelectionCanonicalJson ([ordered]@{schemaVersion=1;laneId=$Lane;components=$Components}))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
+}
+
 function Get-LiveLaneImportSet {
     # The files MSBuild visits for the closure projects, mirroring the reader's literal walk:
     # ancestor Directory.Build.* and literal <Import> targets, missing targets included.
@@ -302,12 +317,12 @@ function Get-LiveLaneFingerprint {
     # S2a-2: an attested environment is one more component; unknown environment leaves the lane unknown.
     $environment=$null
     if ($Attestation) {
-        $environment=Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane
+        $roster=Get-LiveLaneManifestRoster $RepositoryRoot $Sha $tree $declaration['manifest']
+        $environment=Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane -Roster $roster
         if ($environment.status -ceq 'complete') { $components['environment']=$environment.digest }
         else { $unknown.Add('environment-unknown'); $components['environment']=Get-TestSelectionDigest @($environment.reasons) }
     }
-    $material="antiphon-live-lane-fingerprint`n"+(ConvertTo-TestSelectionCanonicalJson ([ordered]@{schemaVersion=1;laneId=$Lane;components=$components}))
-    $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
+    $digest=Get-LiveLaneFingerprintDigest $Lane $components
     $unknownReasons=@(Get-TestSelectionSorted @($unknown))
     $result=[ordered]@{format='antiphon-live-lane-fingerprint-v1';schemaVersion=1;laneId=$Lane
         status=$(if ($unknownReasons.Count) { 'unknown' } else { 'complete' })

@@ -17,13 +17,63 @@ $script:LiveLanePathSearchLeaf=[regex]::new('^cl(\.(exe|bat|cmd|ps1))?$','Ignore
 $script:LiveLaneReuseHorizon=[TimeSpan]::FromHours(24)
 $script:LiveLaneClockSkew=[TimeSpan]::FromSeconds(120)
 $script:LiveLaneProbeWindow=[TimeSpan]::FromSeconds(60)
+# Attestation, receipt and use documents are small; anything larger is refused unread.
+$script:LiveLaneDocumentCap=1048576
+
+function Read-LiveLaneJsonDocument {
+    # Reads one local JSON document without following a link: the file and its directory must
+    # not be reparse points, and it is refused above the size cap. Every fault is a fixed token.
+    param([string]$Path, [string]$Invalid)
+    try {
+        $full=[IO.Path]::GetFullPath($Path)
+        $attributes=[IO.File]::GetAttributes($full)
+        $parent=[IO.File]::GetAttributes([IO.Path]::GetDirectoryName($full))
+    } catch { throw $Invalid }
+    if ($attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -or $parent.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw 'attestation-link' }
+    if ($attributes.HasFlag([IO.FileAttributes]::Directory)) { throw $Invalid }
+    try {
+        $stream=[IO.File]::OpenRead($full)
+        try {
+            if ($stream.Length -gt $script:LiveLaneDocumentCap) { $tooLarge=$true }
+            else {
+                $buffer=[byte[]]::new($script:LiveLaneDocumentCap+1)
+                $count=0
+                while ($count -lt $buffer.Length) { $read=$stream.Read($buffer,$count,$buffer.Length-$count); if ($read -le 0) { break }; $count+=$read }
+                $tooLarge=$count -gt $script:LiveLaneDocumentCap
+            }
+        } finally { $stream.Dispose() }
+    } catch { throw $Invalid }
+    if ($tooLarge) { throw 'attestation-too-large' }
+    $bytes=[byte[]]::new($count); [Array]::Copy($buffer,$bytes,$count)
+    try { $document=[Text.UTF8Encoding]::new($false,$true).GetString($bytes) | ConvertFrom-Json -AsHashtable -Depth 64 } catch { throw $Invalid }
+    return [ordered]@{document=$document;sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()}
+}
+
+function ConvertTo-LiveLaneRoster {
+    # The lane roster from a manifest's core rows: namespace.class.method(arguments), exact and unique.
+    param($Manifest)
+    if ($Manifest -isnot [Collections.IDictionary] -or $Manifest['core'] -isnot [Collections.IList]) { throw 'manifest-invalid' }
+    $roster=[Collections.Generic.List[string]]::new()
+    foreach ($row in $Manifest['core']) {
+        if ($row -isnot [Collections.IDictionary]) { throw 'manifest-invalid' }
+        foreach ($field in 'namespace','class','method') { if ($row[$field] -isnot [string] -or $row[$field] -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'manifest-invalid' } }
+        $arguments=$row['arguments']
+        if ($null -eq $arguments) { $arguments=@() }
+        if ($arguments -isnot [Collections.IList] -or @($arguments | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[A-Za-z0-9_.-]+$' }).Count) { throw 'manifest-invalid' }
+        $uid="$($row['namespace']).$($row['class']).$($row['method'])"
+        if ($arguments.Count) { $uid+='('+(@($arguments) -join ',')+')' }
+        if ($roster.Contains($uid)) { throw 'manifest-invalid' }
+        $roster.Add($uid)
+    }
+    return @(Get-TestSelectionSorted @($roster))
+}
 
 function Assert-LiveLaneCredentialFree {
     # Any credential-named key anywhere refuses the document; the value is never read or echoed.
     param($Value)
     if ($Value -is [Collections.IDictionary]) {
         foreach ($key in $Value.Keys) {
-            if ($script:LiveLaneCredentialNames -ccontains $key) { throw 'credential-field-present' }
+            if ($script:LiveLaneCredentialNames -contains $key) { throw 'credential-field-present' }
             Assert-LiveLaneCredentialFree $Value[$key]
         }
     } elseif ($Value -is [Collections.IList]) { foreach ($item in $Value) { Assert-LiveLaneCredentialFree $item } }
@@ -67,8 +117,10 @@ function Get-LiveLaneSortedBy {
 }
 
 function Get-LiveLaneEnvironmentAttestation {
+    # -Roster is the lane's expanded core uids: rows must match it exactly, and a uid outside it
+    # is never echoed (its row is named by index). Without a roster the document is unknown.
     param([string]$Path, [string]$Lane, [string[]]$Roster)
-    try { $document=[IO.File]::ReadAllText($Path) | ConvertFrom-Json -AsHashtable -Depth 64 } catch { throw 'attestation-invalid' }
+    $document=(Read-LiveLaneJsonDocument $Path 'attestation-invalid').document
     Assert-LiveLaneCredentialFree $document
     Assert-LiveLaneObject $document $script:LiveLaneAttestationFields
     if ($document['format'] -cne $script:LiveLaneAttestationFormat -or $document['schemaVersion'] -isnot [long] -or $document['schemaVersion'] -ne 1) { throw 'attestation-invalid' }
@@ -79,10 +131,15 @@ function Get-LiveLaneEnvironmentAttestation {
     # kept out of the digest; bytes, version, chain shape and the installed target are hashed.
     if ($document['rows'] -isnot [Collections.IList] -or -not $document['rows'].Count) { throw 'attestation-invalid' }
     $uids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $rosterSet=[Collections.Generic.HashSet[string]]::new([string[]]@($Roster | Where-Object { $_ -is [string] -and $_ }),[StringComparer]::Ordinal)
+    if (-not $rosterSet.Count) { $reasons.Add('roster-unbound') }
+    $index=0
     $executables=foreach ($row in $document['rows']) {
         Assert-LiveLaneObject $row @('uid','attested','observed','pre','post') @('observed')
         if ($row['uid'] -isnot [string] -or -not $row['uid'] -or -not $uids.Add($row['uid'])) { throw 'attestation-invalid' }
-        $uid=$row['uid']
+        $uid=if ($rosterSet.Contains($row['uid'])) { $row['uid'] } else { "row-$index" }
+        if ($rosterSet.Count -and -not $rosterSet.Contains($row['uid'])) { $reasons.Add('roster-unexpected') }
+        $index++
         $attested=$row['attested']
         Assert-LiveLaneObject $attested @('route','path','sha256','version','chain')
         foreach ($field in 'route','path','version') { Assert-LiveLaneString $attested[$field] }
@@ -105,8 +162,9 @@ function Get-LiveLaneEnvironmentAttestation {
             if (-not $process -or $observed['path'] -cne $attested['path'] -or (Get-LiveLaneSha $observed['sha256']) -cne $image -or
                     ($observedChain -join ',') -cne ($chain -join ',') -or $observedChain.Count -ne $chain.Count) { $reasons.Add("executable-mismatch:$uid") }
         }
-        [ordered]@{uid=$uid;route=$attested['route'];sha256=$image;version=$attested['version'];chain=$chain}
+        [ordered]@{uid=$row['uid'];route=$attested['route'];sha256=$image;version=$attested['version'];chain=$chain}
     }
+    foreach ($expected in $rosterSet) { if (-not $uids.Contains($expected)) { $reasons.Add("roster-missing:$expected") } }
     Assert-LiveLaneObject $document['installedTarget'] @('sha256')
     $installed=Get-LiveLaneSha $document['installedTarget']['sha256']
     if ($null -eq $installed) { $reasons.Add('installed-target-unresolved') }
@@ -182,27 +240,44 @@ function Test-LiveLaneExternalFreshness {
     if (-not (@('AlwaysRerun','Bounded24h') -ccontains $Policy)) { throw 'policy-invalid' }
     $refuse={ param([string[]]$why) return [ordered]@{policy=$Policy;reuseEligible=$false;reasons=@(Get-TestSelectionSorted @($why | Select-Object -Unique));externalProof=$false} }
     if ($Policy -ceq 'AlwaysRerun') { return & $refuse @('policy-always-rerun') }
-    $now=[DateTimeOffset]$NowUtc; $executedAt=[DateTimeOffset]$ExecutedAtUtc
+    try { $now=[DateTimeOffset]$NowUtc; $executedAt=[DateTimeOffset]$ExecutedAtUtc } catch { throw 'time-invalid' }
+    if ($null -eq $NowUtc -or $null -eq $ExecutedAtUtc) { throw 'time-invalid' }
     $why=[Collections.Generic.List[string]]::new()
-    if ($null -eq $Executed -or $Executed['epoch'] -isnot [string] -or -not $Executed['epoch']) { $why.Add('external-epoch-unknown') }
+    # A binding is a non-empty string on both sides; missing equals nothing, not missing.
+    $bound={ param($map, [string]$key) return ($map -is [Collections.IDictionary]) -and ($map[$key] -is [string]) -and [bool]$map[$key] }
+    if (-not ((& $bound $Candidate 'nonce') -and (& $bound $Candidate 'host') -and (& $bound $Candidate 'account'))) { $why.Add('candidate-binding-missing') }
+    if (-not ((& $bound $Executed 'host') -and (& $bound $Executed 'account'))) { $why.Add('executed-binding-missing') }
+    if (-not (& $bound $Executed 'epoch')) { $why.Add('external-epoch-unknown') }
+    $candidateFact={ param([string]$key) if ($Candidate -is [Collections.IDictionary]) { $Candidate[$key] } }
+    $executedFact={ param([string]$key) if ($Executed -is [Collections.IDictionary]) { $Executed[$key] } }
     $age=$now-$executedAt
     if ($age -lt -$script:LiveLaneClockSkew) { $why.Add('clock-skew') }
     elseif ($age -ge $script:LiveLaneReuseHorizon) { $why.Add('reuse-expired') }
     foreach ($kind in 'auth','control') {
-        $matching=@($Probes | Where-Object { $_['kind'] -ceq $kind })
+        $matching=@($Probes | Where-Object { $_ -is [Collections.IDictionary] -and $_['kind'] -ceq $kind })
         if (-not $matching.Count) { $why.Add("probe-missing:$kind"); continue }
         foreach ($probe in $matching) {
-            if ($probe['nonce'] -cne $Candidate['nonce']) { $why.Add('probe-foreign') }
-            if ($probe['host'] -cne $Candidate['host'] -or $probe['host'] -cne $Executed['host']) { $why.Add('host-mismatch') }
-            if ($probe['account'] -cne $Candidate['account'] -or $probe['account'] -cne $Executed['account']) { $why.Add('account-mismatch') }
+            if (-not ((& $bound $probe 'nonce') -and (& $bound $probe 'host') -and (& $bound $probe 'account'))) { $why.Add("probe-binding-missing:$kind") }
+            if ($probe['nonce'] -cne (& $candidateFact 'nonce')) { $why.Add('probe-foreign') }
+            if ($probe['host'] -cne (& $candidateFact 'host') -or $probe['host'] -cne (& $executedFact 'host')) { $why.Add('host-mismatch') }
+            if ($probe['account'] -cne (& $candidateFact 'account') -or $probe['account'] -cne (& $executedFact 'account')) { $why.Add('account-mismatch') }
             if ($probe['result'] -cne 'Ok') { $why.Add("probe-failed:$kind") }
-            $probeAge=$now-[DateTimeOffset]$probe['atUtc']
+            # A malformed time is refused under a fixed token; its value is never echoed.
+            $probeAt=$null
+            if ($probe['atUtc'] -is [DateTimeOffset] -or $probe['atUtc'] -is [datetime]) { $probeAt=[DateTimeOffset]$probe['atUtc'] }
+            elseif ($probe['atUtc'] -is [string]) {
+                $parsed=[DateTimeOffset]::MinValue
+                if ([DateTimeOffset]::TryParse($probe['atUtc'],[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal,[ref]$parsed)) { $probeAt=$parsed }
+            }
+            if ($null -eq $probeAt) { $why.Add("probe-time-invalid:$kind"); continue }
+            $probeAge=$now-$probeAt
             if ($probeAge -gt $script:LiveLaneProbeWindow -or $probeAge -lt -$script:LiveLaneClockSkew) { $why.Add("probe-stale:$kind") }
         }
     }
     foreach ($revocation in @($Revocations)) {
-        if (($revocation['epoch'] -and $revocation['epoch'] -ceq $Executed['epoch']) -or
-            ($revocation['receiptId'] -and $revocation['receiptId'] -ceq $Executed['receiptId'])) { $why.Add('revoked') }
+        if ($revocation -isnot [Collections.IDictionary]) { $why.Add('revoked'); continue }
+        if (($revocation['epoch'] -and $revocation['epoch'] -ceq (& $executedFact 'epoch')) -or
+            ($revocation['receiptId'] -and $revocation['receiptId'] -ceq (& $executedFact 'receiptId'))) { $why.Add('revoked') }
     }
     if ($why.Count) { return & $refuse $why }
     return [ordered]@{policy=$Policy;reuseEligible=$true;reasons=@('d6-bounded-exception');externalProof=$false}
