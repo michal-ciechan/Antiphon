@@ -299,24 +299,36 @@ function Get-LiveLaneFingerprint {
         $entries=@(Get-TestSelectionSorted @($members[$name]) | ForEach-Object { $tree[$_] })
         $components[$name]=Get-TestSelectionDigest $entries
     }
+    # S2a-2: an attested environment is one more component; unknown environment leaves the lane unknown.
+    $environment=$null
+    if ($Attestation) {
+        $environment=Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane
+        if ($environment.status -ceq 'complete') { $components['environment']=$environment.digest }
+        else { $unknown.Add('environment-unknown'); $components['environment']=Get-TestSelectionDigest @($environment.reasons) }
+    }
     $material="antiphon-live-lane-fingerprint`n"+(ConvertTo-TestSelectionCanonicalJson ([ordered]@{schemaVersion=1;laneId=$Lane;components=$components}))
     $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
     $unknownReasons=@(Get-TestSelectionSorted @($unknown))
-    return [ordered]@{format='antiphon-live-lane-fingerprint-v1';schemaVersion=1;laneId=$Lane
+    $result=[ordered]@{format='antiphon-live-lane-fingerprint-v1';schemaVersion=1;laneId=$Lane
         status=$(if ($unknownReasons.Count) { 'unknown' } else { 'complete' })
         unknownReasons=$unknownReasons;observations=@(Get-TestSelectionSorted @($observations))
         digest=$digest;components=$components
         selectedProjects=@(Get-TestSelectionSorted $selected);closureProjects=$closureProjects
         inventory=@(Get-TestSelectionSorted @($inventory) | ForEach-Object { $tree[$_] })}
+    if ($environment) { $result['environment']=[ordered]@{status=$environment.status;reasons=$environment.reasons} }
+    return $result
 }
 
 function Get-LiveLaneStatus {
-    # S2a-1 has no receipt validator: every lane is DUE. The document is shadow-only.
-    param([string]$RepositoryRoot, [string]$Lane, [string]$CandidateSha)
-    $fingerprint=Get-LiveLaneFingerprint -RepositoryRoot $RepositoryRoot -Sha $CandidateSha -Lane $Lane
+    # No receipt validator yet (S2b): every lane is DUE. The document is shadow-only. An
+    # attestation is validated before any Git read, so a schema fault refuses on its own.
+    param([string]$RepositoryRoot, [string]$Lane, [string]$CandidateSha, [string]$Attestation)
+    if ($Attestation) { [void](Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane) }
+    $fingerprint=Get-LiveLaneFingerprint -RepositoryRoot $RepositoryRoot -Sha $CandidateSha -Lane $Lane -Attestation $Attestation
     return [ordered]@{format='antiphon-live-lane-status-v1';laneId=$Lane;candidateSha=$CandidateSha;state='DUE'
         reasons=@($(if ($fingerprint.status -ceq 'complete') { 'no-receipt-validator' } else { 'unknown-input' }))
         effectiveMode='Full';activation='shadow-only';gateCredit=$false;executionEvidence=$false
         fingerprint=[ordered]@{status=$fingerprint.status;digest=$fingerprint.digest;components=$fingerprint.components
-            unknownReasons=$fingerprint.unknownReasons;observations=$fingerprint.observations}}
+            unknownReasons=$fingerprint.unknownReasons;observations=$fingerprint.observations
+            environment=$fingerprint['environment']}}
 }
