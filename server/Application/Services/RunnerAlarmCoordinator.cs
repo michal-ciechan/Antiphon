@@ -71,7 +71,7 @@ public sealed class RunnerAlarmCoordinator(
         if (excluded is not null)
         {
             if (episode is { RaisedAt: not null })
-                await ResolveAsync(episode, now, pending, ct);
+                await ResolveAsync(episode, now, pending, ct, excluded);
             if (episode is not null)
                 logger.LogDebug("Runner {RunnerId} alarm closed because it is {Reason}", snapshot.RunnerId, excluded);
             episodes.Remove(snapshot.RunnerId);
@@ -235,12 +235,14 @@ public sealed class RunnerAlarmCoordinator(
     }
 
     private async Task ResolveAsync(RunnerOutageEpisode episode, DateTimeOffset now,
-        List<PendingRecoveryNote> pending, CancellationToken ct)
+        List<PendingRecoveryNote> pending, CancellationToken ct, string? excluded = null)
     {
         var minutes = (now - episode.DownSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
-        var header = $"[runner {episode.RunnerId} recovered]";
-        var body = header + "\n"
-            + $"Runner '{episode.DisplayName}' is dispatch-eligible again after {minutes} min down (since {episode.DownSince:O}). Queued work bound to it dispatches on the next tick.";
+        // CARD-1663: a runner closed because it is retired or draining has not recovered.
+        var header = $"[runner {episode.RunnerId} {excluded ?? "recovered"}]";
+        var body = header + "\n" + (excluded is null
+            ? $"Runner '{episode.DisplayName}' is dispatch-eligible again after {minutes} min down (since {episode.DownSince:O}). Queued work bound to it dispatches on the next tick."
+            : $"Runner '{episode.DisplayName}' is {excluded}, so it is no longer alarming after {minutes} min down (since {episode.DownSince:O}). It is not dispatch-eligible; this is not a recovery.");
         foreach (var session in episode.NotifiedSessionIds)
         {
             try
@@ -255,7 +257,10 @@ public sealed class RunnerAlarmCoordinator(
             }
         }
 
-        logger.LogInformation("Runner {RunnerId} recovered after {Minutes} min", episode.RunnerId, minutes);
+        if (excluded is null)
+            logger.LogInformation("Runner {RunnerId} recovered after {Minutes} min", episode.RunnerId, minutes);
+        else
+            logger.LogInformation("Runner {RunnerId} alarm closed after {Minutes} min: {Reason}", episode.RunnerId, minutes, excluded);
     }
 
     /// <summary>
