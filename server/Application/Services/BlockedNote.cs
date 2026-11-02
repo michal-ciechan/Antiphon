@@ -19,6 +19,7 @@ internal static class BlockedNote
     public const string ReasonQuestionLine = "question-line";
     public const string ReasonWaitingUnmarked = "waiting-unmarked";
     public const string ReasonWaitingNoProgress = "waiting-no-progress";
+    public const string ReasonQuestionAfterReply = "question-after-reply";
 
     public static string StandingAuthorityBlock(string authority) =>
         $"""
@@ -45,6 +46,18 @@ internal static class BlockedNote
     public static bool IsQuestionBlock(AgentTask task) =>
         task.Status == AgentTaskStatus.Blocked && string.IsNullOrWhiteSpace(task.FailureReason);
 
+    /// <summary>
+    /// CARD-1503: the question of a Block that kept the retained marked report (a question-shaped
+    /// unmarked turn after a Reply). The task row still holds the report, so the question is the
+    /// latest Block's <c>Delegate asked:</c> detail; null for every other Block.
+    /// </summary>
+    public static string? RetainedQuestion(AgentTask task, string? latestBlockDetail) =>
+        task.ReportEvidence == AgentTaskReportEvidence.Marked
+        && latestBlockDetail is not null
+        && latestBlockDetail.StartsWith(BlockedQuestion.AskedPrefix, StringComparison.Ordinal)
+            ? latestBlockDetail[BlockedQuestion.AskedPrefix.Length..]
+            : null;
+
     public static string? ReasonWord(AgentTaskReportEvidence evidence) => evidence switch
     {
         AgentTaskReportEvidence.Marked => ReasonMarkedBlocked,
@@ -53,13 +66,14 @@ internal static class BlockedNote
         _ => null,
     };
 
-    public static string ReasonLine(AgentTask task, DelegationSettings settings)
+    public static string ReasonLine(AgentTask task, DelegationSettings settings, string? reasonWord = null)
     {
-        var word = ReasonWord(task.ReportEvidence) ?? ReasonMarkedBlocked;
+        var word = reasonWord ?? ReasonWord(task.ReportEvidence) ?? ReasonMarkedBlocked;
         var gloss = word switch
         {
             ReasonMarkedBlocked => "ended with the blocked token",
             ReasonQuestionLine => "last lines looked like a question",
+            ReasonQuestionAfterReply => "ended unmarked with a question after the Reply; the retained marked report stands",
             ReasonWaitingUnmarked =>
                 $"ended a turn without the closing line; asked once; idle {Math.Max(1, settings.UnmarkedWaitingMinutes)}m",
             ReasonWaitingNoProgress =>
@@ -94,10 +108,12 @@ internal static class BlockedNote
         return before.Length == 0 ? null : before;
     }
 
-    public static string Format(AgentTask task, string report, DelegationSettings settings)
+    /// <param name="retainedQuestion">CARD-1503: the question of a Block that kept the retained report;
+    /// the <c>asks:</c> line and the reason come from it, never from the retained report.</param>
+    public static string Format(AgentTask task, string report, DelegationSettings settings, string? retainedQuestion = null)
     {
         var shortId = DelegationReportFormatter.Short(task.Id);
-        var asks = ExtractAsks(report);
+        var asks = ExtractAsks(retainedQuestion ?? report);
         var authority = string.IsNullOrWhiteSpace(task.StandingAuthority)
             ? null
             : Flatten(task.StandingAuthority.Trim());
@@ -118,7 +134,7 @@ internal static class BlockedNote
 
         return string.Join('\n',
         [
-            ReasonLine(task, settings),
+            ReasonLine(task, settings, retainedQuestion is null ? null : ReasonQuestionAfterReply),
             $"asks: {asks}",
             authorityLine,
             next.ReplaceLineEndings("\n"),

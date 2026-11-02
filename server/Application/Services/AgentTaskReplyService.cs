@@ -1336,8 +1336,14 @@ public sealed partial class AgentTaskReplyService
         var settlementEvent = NewEvent(task.Id, eventType, eventDetail, now);
         db.AgentTaskEvents.Add(settlementEvent);
         // CARD-1503: the Block records the question; the record also says the retained report stands.
+        // The caller note names the question and carries this settlement's own identity (review D-1/D-2).
+        RetainedQuestionBlock? questionBlock = null;
         if (retainedQuestion)
+        {
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, reported, now));
+            if (BlockedNote.RetainedQuestion(task, settlementEvent.Detail) is { } asked)
+                questionBlock = new RetainedQuestionBlock(settlementEvent.Id, asked);
+        }
         if (task.Status == AgentTaskStatus.Failed)
             await TaskSupervisionNoticeWriter.RecordFailureAsync(db, task, settlementEvent, now, ct);
         string? remoteBlockWarning = null;
@@ -1531,7 +1537,7 @@ public sealed partial class AgentTaskReplyService
         await TaskSuccessorFence.ApplyAsync(db, task, now, ct);
         var completion = owesCompletion
             ? await AddCompletionObligationAsync(services, db, task, settlementEvent, settledBody, now,
-                workspaceNote, callerWarning, drift, gitHeader, ct)
+                workspaceNote, callerWarning, drift, gitHeader, ct, questionBlock)
             : null;
 
         if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
@@ -1598,6 +1604,7 @@ public sealed partial class AgentTaskReplyService
             commitOutcome: commitNote?.Durable == true,
             completion: completion,
             reviewRepair: stageRecording?.Repair,
+            questionBlock: questionBlock,
             afterPersist: async token =>
             {
                 // CARD-1474: before the parent hears the report and before the turn-end flush.
@@ -2643,7 +2650,8 @@ public sealed partial class AgentTaskReplyService
         bool commitOutcome = false,
         Func<CancellationToken, Task>? afterPersist = null,
         AgentTaskLandNotification? completion = null,
-        ReviewSettlementRepair? reviewRepair = null)
+        ReviewSettlementRepair? reviewRepair = null,
+        RetainedQuestionBlock? questionBlock = null)
     {
         // Reuse the durable outbox (also used by dispatch warnings). Its immutable body and
         // source event commit with settlement and any spawned child, before queue insertion.
@@ -2662,7 +2670,8 @@ public sealed partial class AgentTaskReplyService
         Guid? completionNotificationId = null;
         if (durableCompletion)
         {
-            var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git);
+            var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git,
+                questionBlock: questionBlock);
             var source = db.ChangeTracker.Entries<AgentTaskEvent>()
                 .Where(e => e.State == EntityState.Added && e.Entity.AgentTaskId == task.Id)
                 .Select(e => e.Entity)
@@ -2752,7 +2761,7 @@ public sealed partial class AgentTaskReplyService
                     .ReconcileAsync(notificationId, ct);
             }
             else
-                await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git);
+                await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git, questionBlock);
             await PublishAsync(task, ct);
         }
         finally
@@ -2973,13 +2982,14 @@ public sealed partial class AgentTaskReplyService
     /// </summary>
     private async Task DeliverToParentAsync(
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
-        string? warning = null, string? drift = null, string? git = null)
+        string? warning = null, string? drift = null, string? git = null, RetainedQuestionBlock? questionBlock = null)
     {
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
-        var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git);
-        await EnqueueParentNoteAsync(task, report, parentSession, note, ct);
+        var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git,
+            questionBlock: questionBlock);
+        await EnqueueParentNoteAsync(task, report, parentSession, note, ct, questionBlock);
     }
 
     /// <summary>
@@ -2989,11 +2999,12 @@ public sealed partial class AgentTaskReplyService
     /// </summary>
     private async Task<DelegationReportFormatter.Note> BuildParentNoteAsync(
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
-        string? warning = null, string? drift = null, string? git = null, AppDbContext? settlementDb = null)
+        string? warning = null, string? drift = null, string? git = null, AppDbContext? settlementDb = null,
+        RetainedQuestionBlock? questionBlock = null)
     {
         if (BlockedNote.IsQuestionBlock(task))
         {
-            var bits = BlockedNote.Format(task, report, _settings);
+            var bits = BlockedNote.Format(task, report, _settings, questionBlock?.Question);
             warning = string.IsNullOrWhiteSpace(warning) ? bits : warning.Trim() + "\n\n" + bits;
         }
 
@@ -3042,7 +3053,7 @@ public sealed partial class AgentTaskReplyService
     }
 
     private async Task EnqueueParentNoteAsync(AgentTask task, string report, Guid parentSession,
-        DelegationReportFormatter.Note note, CancellationToken ct)
+        DelegationReportFormatter.Note note, CancellationToken ct, RetainedQuestionBlock? questionBlock = null)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, parentSession, "settlement.parent-note-enqueue");
         try
@@ -3061,7 +3072,7 @@ public sealed partial class AgentTaskReplyService
             await queue.EnqueueAsync(
                 parentSession, note.Body, MessageSendMode.WhenIdle, ct,
                 QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
-                task.Id, DelegationNoteDigest.Compute(report), note.Header,
+                task.Id, questionBlock?.NoteDigest(report) ?? DelegationNoteDigest.Compute(report), note.Header,
                 onCreated: id => queuedId = id, deliverIfIdle: false,
                 holdUntil: distill && mode == OutputDistillerMode.Apply ? deadlineAt.UtcDateTime : null);
             if (distill && queuedId is not null)
@@ -3106,9 +3117,10 @@ public sealed partial class AgentTaskReplyService
     /// </summary>
     private async Task<AgentTaskLandNotification> AddCompletionObligationAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, AgentTaskEvent settlementEvent, string report,
-        DateTime now, string? workspaceNote, string? warning, string? drift, string? git, CancellationToken ct)
+        DateTime now, string? workspaceNote, string? warning, string? drift, string? git, CancellationToken ct,
+        RetainedQuestionBlock? questionBlock = null)
     {
-        var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git, db);
+        var note = await BuildParentNoteAsync(task, report, ct, workspaceNote, warning, drift, git, db, questionBlock);
         var outcome = SettlementOutcome(db, task);
         var handoff = SettledHandoff(task, report);
         var admission = VerificationAdmission.TryRead(task.VerificationAdmissionJson);
@@ -4288,10 +4300,32 @@ public sealed partial class AgentTaskReplyService
         + $"({unmarkedChars:N0} characters) after the one closing-line ask; the retained report (marked, "
         + $"{retainedChars:N0} characters) stands and was not replaced. Read that turn in the transcript.";
 
-    private static string UnmarkedQuestionRetainedDetail(long? boundarySequence, string question, int retainedChars) =>
-        $"Turn {(boundarySequence is long sequence ? $"#{sequence}" : "with no boundary identity")} ended unmarked "
-        + $"with a question ({question.Length:N0} characters) after the Reply; the retained report (marked, "
-        + $"{retainedChars:N0} characters) stands and was not replaced. {BlockedQuestion.BlockedEventDetail(question)}";
+    /// <summary>
+    /// CARD-1503 (review A-1/A-3): counts the question, not the turn, and names it in the bounded
+    /// one-line <c>asks:</c> form, since this line also reaches the caller as a warning.
+    /// </summary>
+    private static string UnmarkedQuestionRetainedDetail(long? boundarySequence, string turnBody, int retainedChars)
+    {
+        BlockedQuestion.TryExtract(turnBody, out var question, out _);
+        return $"Turn {(boundarySequence is long sequence ? $"#{sequence}" : "with no boundary identity")} ended unmarked "
+            + $"with a question ({question.Length:N0} characters) after the Reply; the retained report (marked, "
+            + $"{retainedChars:N0} characters) stands and was not replaced. "
+            + BlockedQuestion.AskedPrefix + BlockedNote.ExtractAsks(turnBody);
+    }
+
+    /// <summary>
+    /// CARD-1503 (review D-1). A question asked after a Reply Blocks with the retained report, whose
+    /// note the caller already holds; a digest over that report alone is dropped as a duplicate
+    /// (CARD-0320). Its note identity is the report plus this settlement's Blocked event: a replay of
+    /// the same settlement is still one note, and the next genuine completion of the same report
+    /// keeps its plain digest. Keyed (durable) notes are already one per settlement event and keep
+    /// the plain digest the park and distillation identity checks read.
+    /// </summary>
+    private sealed record RetainedQuestionBlock(Guid SettlementEventId, string Question)
+    {
+        public string NoteDigest(string report) =>
+            DelegationNoteDigest.Compute($"{report}\n\n[retained-question-block {SettlementEventId:D}]");
+    }
 
     /// <summary>
     /// CARD-0248 gates after the one closing-line ask, shared by the unmarked arm and the

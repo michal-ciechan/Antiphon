@@ -386,14 +386,15 @@ public sealed partial class AttentionService
         var events = await _db.AgentTaskEvents.AsNoTracking()
             .Where(e => ids.Contains(e.AgentTaskId)
                 && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted))
-            .Select(e => new { e.AgentTaskId, e.At, e.Type })
+            .Select(e => new { e.AgentTaskId, e.At, e.Type, e.Detail })
             .ToListAsync(ct);
         var blockedAt = events
             .GroupBy(e => e.AgentTaskId)
             .ToDictionary(g => g.Key, g => g.Max(e => e.At));
-        var latestType = events
+        var latestBlock = events
             .GroupBy(e => e.AgentTaskId)
-            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.At).Last().Type);
+            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.At).Last());
+        var latestType = latestBlock.ToDictionary(p => p.Key, p => p.Value.Type);
         var mergeChildren = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.ParentTaskId != null && ids.Contains(t.ParentTaskId.Value)
                 && t.Role == AgentTaskRole.Merge
@@ -421,7 +422,10 @@ public sealed partial class AttentionService
             // writes the delegate's own words to Result and leaves FailureReason null. Preferring
             // the reason keeps a conflict readable. For a question, extract the trailing question
             // so a long report does not bury it past the 400-char evidence head (CARD-0033).
-            var primary = BlockedContextBuilder.AttentionPrimary(task);
+            // CARD-1503: a question asked after a Reply is the latest Block's detail, not Result.
+            var primary = BlockedContextBuilder.AttentionPrimary(task,
+                latestBlock.TryGetValue(task.Id, out var block) && block.Type == AgentTaskEventType.Blocked
+                    ? block.Detail : null);
             var inspectionReason = task.AgentSessionId is null && task.DispatchedAt is null
                 ? DispatchInspectionDiagnostics.InspectionReason(task.FailureReason) : null;
             var headline = kind switch
