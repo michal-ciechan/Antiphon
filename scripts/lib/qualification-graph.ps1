@@ -259,7 +259,10 @@ function Get-QualificationSchemaPointersFromMessage {
 function Get-QualificationGraphSchemaResult {
     param([string]$Json, [string]$SchemaPath)
     # The actual checked-in schema is the authority. Explicit dates supplement
-    # engines treating JSON Schema format as annotation.
+    # engines treating JSON Schema format as annotation. A refusal stays
+    # fail-closed without a location: pwsh 7.6 Test-Json writes no error record
+    # for a nested violation, so Location says 'location-unavailable' rather
+    # than leaving an empty path set that reads as a defect.
     $schemaErrors = @()
     $valid = Test-Json -Json $Json -SchemaFile $SchemaPath -ErrorAction SilentlyContinue -ErrorVariable schemaErrors
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -273,7 +276,9 @@ function Get-QualificationGraphSchemaResult {
         $datePath = [QualificationGraphJson]::InvalidDate([QualificationGraphJson]::Decode($Json))
         if (-not [string]::IsNullOrEmpty($datePath)) { $valid = $false; [void]$paths.Add($datePath) }
     }
-    return [pscustomobject]@{ Accepted = [bool]$valid; Paths = @($paths) }
+    $location = 'accepted'
+    if (-not $valid) { $location = if ($paths.Count -gt 0) { 'reported' } else { 'location-unavailable' } }
+    return [pscustomobject]@{ Accepted = [bool]$valid; Paths = @($paths); Location = $location }
 }
 
 function Test-QualificationGraphSchema {
@@ -332,6 +337,7 @@ function Read-QualificationGraph {
     if (-not $schemaResult.Accepted) {
         $refusal = New-QualificationRefusal 'schema' '' 'schema-invalid'
         $refusal | Add-Member -NotePropertyName SchemaPaths -NotePropertyValue $schemaResult.Paths
+        $refusal | Add-Member -NotePropertyName SchemaLocation -NotePropertyValue $schemaResult.Location
         return $refusal
     }
     if ([string]::IsNullOrWhiteSpace($CatalogJson)) {
