@@ -1046,13 +1046,154 @@ public sealed class LandingGitTests
         }
     }
 
+    // Review bd90f6b5 D-1: an environ the scan cannot read is "cannot tell", not "not ours". A
+    // process that started after the owned root and whose environ is unreadable (another uid, an
+    // undumpable or setuid descendant) may be a writer, so the record stays (reason=pipe_open).
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_UnreadableEnvironOfALaterProcessKeepsTheJournal(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux /proc environ scan.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-unreadable-later");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct,
+            (marker, g) => marker.ReadEnviron = path => g.Holder is { } h && path == $"/proc/{h.Id}/environ"
+                ? throw new UnauthorizedAccessException("stand-in unreadable environ")
+                : File.ReadAllBytes(path));
+        await AssertKeptUntilHolderExitsAsync(git, call, cancel, holder, children, "C1076_UNREADABLE_LATER", ct);
+    }
+
+    // The start-time rule that keeps the unowned release reachable: an unreadable process that
+    // started before the owned root cannot descend from it (pid 1 is unreadable to a normal uid).
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_UnreadableEnvironOfAnEarlierProcessDoesNotKeepTheJournal(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux /proc environ scan.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-unreadable-earlier");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct,
+            (marker, _) => marker.ReadEnviron = path => path == "/proc/1/environ"
+                ? throw new UnauthorizedAccessException("stand-in unreadable environ")
+                : File.ReadAllBytes(path));
+        await AssertReleasedWhileHolderLivesAsync(git, call, cancel, holder, children, "C1076_UNREADABLE_EARLIER");
+    }
+
+    // Review bd90f6b5 D-2: the job joined after Process.Start. A grandchild started in that window
+    // and then reparented is outside the job, so zero active members is "cannot tell" and the
+    // record stays. The stand-in job replaces the Windows job on this host.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_LateJobAssignmentWithNoMembersKeepsTheJournal(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux /proc stand-in pipe holder; the job is a stand-in.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-late-job");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct,
+            (marker, _) =>
+            {
+                marker.JobProbe = () => 0u;
+                marker.AssignedBeforeSpawn = false;
+            });
+        await AssertKeptUntilHolderExitsAsync(git, call, cancel, holder, children, "C1076_LATE_JOB", ct);
+    }
+
+    // The opposite witness: a job that held the child before it could spawn and now has no
+    // members proves no owned writer lives, so the stranger does not fence.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_JobAssignedBeforeSpawnWithNoMembersReleasesTheJournal(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux /proc stand-in pipe holder; the job is a stand-in.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-early-job");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct,
+            (marker, _) =>
+            {
+                marker.JobProbe = () => 0u;
+                marker.AssignedBeforeSpawn = true;
+            });
+        await AssertReleasedWhileHolderLivesAsync(git, call, cancel, holder, children, "C1076_EARLY_JOB");
+    }
+
+    private static async Task AssertKeptUntilHolderExitsAsync(OutsideHolderGit git, Task<LandingGitResult> call,
+        CancellationTokenSource cancel, int holder, string children, string label, CancellationToken ct)
+    {
+        try
+        {
+            cancel.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            Console.WriteLine($"{label} lines={string.Join(" | ", git.Lines)}");
+            HolderAlive(holder).ShouldBeTrue("the holder still holds the pipe, so EOF has not arrived");
+            JournalFiles(children).ShouldNotBeEmpty("ownership cannot be ruled out, so the fence stays");
+            git.Lines.ShouldNotContain(line => line.Contains("reason=pipe_open_unowned", StringComparison.Ordinal));
+            git.Lines.ShouldContain(line => line.StartsWith("repository_child_journal_handoff ", StringComparison.Ordinal)
+                && line.Contains("reason=pipe_open", StringComparison.Ordinal));
+            KillHolder(holder);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0 && cleared.Elapsed < TimeSpan.FromSeconds(5))
+                await Task.Delay(50, ct);
+            JournalFiles(children).ShouldBeEmpty("once the holder exits, the EOF continuation removes the journal");
+        }
+        finally
+        {
+            cancel.Cancel();
+            KillHolder(holder);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+            cancel.Dispose();
+        }
+    }
+
+    private static async Task AssertReleasedWhileHolderLivesAsync(OutsideHolderGit git, Task<LandingGitResult> call,
+        CancellationTokenSource cancel, int holder, string children, string label)
+    {
+        try
+        {
+            cancel.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            Console.WriteLine($"{label} lines={string.Join(" | ", git.Lines)}");
+            HolderAlive(holder).ShouldBeTrue("the stranger still holds the pipe, so EOF has not arrived");
+            JournalFiles(children).ShouldBeEmpty("no live process can be ours, so the stranger does not fence");
+            git.Lines.ShouldContain(line => line.StartsWith("repository_child_journal_release ", StringComparison.Ordinal)
+                && line.Contains("reason=pipe_open_unowned", StringComparison.Ordinal));
+        }
+        finally
+        {
+            cancel.Cancel();
+            KillHolder(holder);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+            cancel.Dispose();
+        }
+    }
+
     private static async Task<(OutsideHolderGit Git, Task<LandingGitResult> Call, CancellationTokenSource Cancel, int Holder, string Children)>
-        StartOutsideHolderAsync(ScratchGitRepo repo, bool owned, CancellationToken ct)
+        StartOutsideHolderAsync(ScratchGitRepo repo, bool owned, CancellationToken ct,
+            Action<OwnedChildMarker, OutsideHolderGit>? marker = null)
     {
         var pidFile = Path.Combine(repo.Path, "outside-holder.pid");
         var script = Path.Combine(repo.Path, "outside-root.sh");
         await File.WriteAllTextAsync(script, OutsideHolderGit.Script(), ct);
-        var git = new OutsideHolderGit(script, pidFile, owned);
+        var git = new OutsideHolderGit(script, pidFile, owned, marker);
         var common = await git.CommonDirectoryAsync(repo.Path, ct);
         var children = Path.Combine(common, "antiphon", "children");
         var cancel = new CancellationTokenSource();
@@ -1575,7 +1716,8 @@ public sealed class LandingGitTests
     /// process the test host starts outside that set. It opens the root's stdout and stderr through
     /// /proc, so it holds the pipe write ends without being a descendant. With
     /// <paramref name="owned"/> it also carries the root's ownership marker.</summary>
-    private sealed class OutsideHolderGit(string scriptPath, string holderPidFile, bool owned) : LandingGit
+    private sealed class OutsideHolderGit(string scriptPath, string holderPidFile, bool owned,
+        Action<OwnedChildMarker, OutsideHolderGit>? marker = null) : LandingGit
     {
         private readonly List<string> _lines = [];
 
@@ -1591,6 +1733,13 @@ public sealed class LandingGitTests
         protected override void WriteChildLog(string line)
         {
             lock (_lines) _lines.Add(line);
+        }
+
+        internal override OwnedChildMarker CreateOwnedMarker(Action<string> log)
+        {
+            var created = base.CreateOwnedMarker(log);
+            marker?.Invoke(created, this);
+            return created;
         }
 
         protected override Process? StartProcess(ProcessStartInfo start)
