@@ -609,6 +609,10 @@ function Invoke-Antiphon {
                 }
             }
             Write-AntiphonBindFailureDiagnosis -Field $field -Value $value -Detail $detail
+            # CARD-1655: one unwrapped line. Write-Error's ConciseView wraps at the console width
+            # (80 when redirected on Linux), splitting the server's binder text across lines.
+            [Console]::Error.WriteLine("Antiphon $Method $Path failed: $detail")
+            exit 1
         }
         Write-Error "Antiphon $Method $Path failed: $detail"
         exit 1
