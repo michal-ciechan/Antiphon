@@ -35,4 +35,22 @@ public sealed class RetentionSettings
 
     /// <summary>How often <c>DataRetentionHostedService</c> runs. <c>&lt;= 0</c> disables the hosted sweep.</summary>
     public int SweepHours { get; set; } = 6;
+
+    /// <summary>
+    /// CARD-1654. Candidate task-tree roots examined per prune batch, in RootTaskId order. Each
+    /// batch is its own eligibility query and delete transaction. Nonpositive uses 100.
+    /// </summary>
+    public int TaskPruneBatchSize { get; set; } = 100;
+
+    /// <summary>
+    /// CARD-1654. Command timeout for each task-prune batch statement. Sized for
+    /// <see cref="TaskPruneBatchSize"/> roots, not the whole table. Nonpositive uses 60.
+    /// </summary>
+    public int TaskPruneBatchCommandTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// CARD-1654. Batches one sweep may run before it stops. The scan cursor carries to the next
+    /// sweep, so a backlog is pruned across sweeps. Nonpositive uses 50.
+    /// </summary>
+    public int TaskPruneMaxBatchesPerSweep { get; set; } = 50;
 }

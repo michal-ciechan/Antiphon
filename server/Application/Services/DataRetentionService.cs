@@ -23,6 +23,7 @@ public sealed class DataRetentionService
     private readonly AuditService _auditService;
     private readonly SessionStateStore? _states;
     private readonly DeliveryVerificationSettings _verification;
+    private readonly DataRetentionTaskCursor _taskCursor;
 
     public DataRetentionService(
         AppDbContext db,
@@ -32,8 +33,10 @@ public sealed class DataRetentionService
         ILogger<DataRetentionService> logger,
         AuditService auditService,
         SessionStateStore? states = null,
-        IOptions<DeliveryVerificationSettings>? verification = null)
+        IOptions<DeliveryVerificationSettings>? verification = null,
+        DataRetentionTaskCursor? taskCursor = null)
     {
+        _taskCursor = taskCursor ?? new DataRetentionTaskCursor();
         _states = states;
         _db = db;
         _settings = settings.Value;
@@ -653,4 +656,34 @@ public sealed class DataRetentionService
 
 public sealed record DataRetentionSweepResult(
     int Transcripts, int QueuedMessages, int Sessions, int Tasks, int AuditRecords,
-    int SubscriptionUsageSamples = 0, int WorktreeResidueHeldRows = 0);
+    int SubscriptionUsageSamples = 0, int WorktreeResidueHeldRows = 0,
+    IReadOnlyList<DataRetentionPassOutcome>? Passes = null,
+    DataRetentionTaskPruneProgress? TaskPrune = null);
+
+/// <summary>
+/// CARD-1654. Where the task-prune scan stopped. A singleton, so a sweep that hits
+/// <see cref="RetentionSettings.TaskPruneMaxBatchesPerSweep"/> resumes there next sweep.
+/// </summary>
+public sealed class DataRetentionTaskCursor
+{
+    private readonly object _gate = new();
+    private Guid? _after;
+
+    public Guid? After
+    {
+        get { lock (_gate) return _after; }
+        set { lock (_gate) _after = value; }
+    }
+}
+
+public enum DataRetentionPassStatus { Completed, Failed, Skipped }
+
+/// <summary>CARD-1654. One sweep pass. <c>ExceptionType</c> names types only, never row data.</summary>
+public sealed record DataRetentionPassOutcome(string Pass, DataRetentionPassStatus Status, string? ExceptionType = null);
+
+/// <summary>
+/// CARD-1654. Task-prune progress for one sweep. <c>ScanComplete</c> is false when the per-sweep
+/// batch cap stopped the scan; the next sweep resumes after <c>Cursor</c>.
+/// </summary>
+public sealed record DataRetentionTaskPruneProgress(
+    int Batches, int CandidateRoots, int Trees, int Rows, bool ScanComplete, Guid? Cursor);
