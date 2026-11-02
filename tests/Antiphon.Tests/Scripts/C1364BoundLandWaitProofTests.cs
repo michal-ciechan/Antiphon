@@ -309,7 +309,7 @@ public sealed class C1364BoundLandWaitProofTests
                 printf '%s\n' "$C1008_HTTP_BODY" >> "$C1008_FIXTURE_ROOT/land-reads.jsonl"
             fi
         }
-        sleep() { printf '%s\n' "$*" >> "$C1008_FIXTURE_ROOT/sleeps"; }
+        sleep() { printf '%s %s\n' "${FUNCNAME[1]:-main}" "$*" >> "$C1008_FIXTURE_ROOT/sleeps"; }
         """;
 
     private static JsonNode ReadJson(C1008HostFixture fixture, string path) =>
@@ -334,7 +334,10 @@ public sealed class C1364BoundLandWaitProofTests
             read[0]!["id"]!.GetValue<string>().ShouldBe(LandId, label);
             read[0]!["runnerId"]!.GetValue<string>().ShouldBe(runner, label);
         }
-        File.ReadAllLines(Path.Combine(fixture.Root, "sleeps")).ShouldBe(new[] { "1" }, label + ": one bounded sleep");
+        // The temp content audit polls for its helper's cidfile (c1008_audit_readonly, 0.2 s).
+        // Every other sleep is attributed and must be the one bounded land-wait poll.
+        File.ReadAllLines(Path.Combine(fixture.Root, "sleeps")).Where(x => x != "c1008_audit_readonly 0.2")
+            .ShouldBe(new[] { "c1008_tasks_wait 1" }, label + ": one bounded sleep");
         run.Output.Split('\n').Select(x => x.TrimEnd('\r'))
             .Where(x => x.StartsWith("C1008_LAND_WAIT ", StringComparison.Ordinal))
             .ShouldBe(new[] { $"C1008_LAND_WAIT runner={runner} reason=RecycleLandInFlight {LandId} polls=0" }, label);
