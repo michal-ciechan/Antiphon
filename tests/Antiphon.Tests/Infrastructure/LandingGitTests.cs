@@ -966,6 +966,123 @@ public sealed class LandingGitTests
         }
     }
 
+    // Windows run a074ff9a group 111: every process of the killed set was reaped and no follower
+    // existed, yet the pipe never reached EOF and the record was handed off (reason=pipe_open).
+    // A pipe holder that is not provably ours must not keep the fence: the record goes at once.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_StrangerPipeHolderDoesNotKeepTheJournal(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux /proc stand-in for a pipe holder outside the owned tree. Native rows are C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-stranger");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: false, ct);
+        try
+        {
+            var watch = Stopwatch.StartNew();
+            cancel.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            watch.Stop();
+            Console.WriteLine($"C1076_STRANGER elapsed={watch.Elapsed} lines={string.Join(" | ", git.Lines)}");
+            watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15), "cancellation returns inside the kill grace");
+            HolderAlive(holder).ShouldBeTrue("the stranger still holds the pipe, so EOF has not arrived");
+            JournalFiles(children).ShouldBeEmpty(
+                "the killed set is dead and no live process carries the child's marker, so the stranger does not fence");
+            git.Lines.ShouldContain(line => line.StartsWith("repository_child_journal_release ", StringComparison.Ordinal)
+                && line.Contains("pipe_drained=False", StringComparison.Ordinal)
+                && line.Contains("reason=pipe_open_unowned", StringComparison.Ordinal));
+            git.Lines.ShouldNotContain(line => line.StartsWith("repository_child_journal_handoff ", StringComparison.Ordinal));
+        }
+        finally
+        {
+            cancel.Cancel();
+            KillHolder(holder);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+            cancel.Dispose();
+        }
+    }
+
+    // The opposite witness: the same outside holder carrying the child's marker is ours. The walk
+    // cannot see it, so the record stays (reason=owned_holder) until that holder closes the pipe.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_OwnedPipeHolderOutsideTheTreeKeepsTheJournal(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Linux /proc stand-in for an owned pipe holder outside the parent-pid walk.");
+            return;
+        }
+
+        using var repo = new ScratchGitRepo("c1076-owned-holder");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var (git, call, cancel, holder, children) = await StartOutsideHolderAsync(repo, owned: true, ct);
+        try
+        {
+            cancel.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(async () => await call);
+            Console.WriteLine($"C1076_OWNED_HOLDER lines={string.Join(" | ", git.Lines)}");
+            HolderAlive(holder).ShouldBeTrue("the owned holder still holds the pipe");
+            JournalFiles(children).ShouldNotBeEmpty("a live process carrying the child's marker keeps the fence");
+            git.Lines.ShouldContain(line => line.StartsWith("repository_child_journal_handoff ", StringComparison.Ordinal)
+                && line.Contains("reason=owned_holder", StringComparison.Ordinal));
+            KillHolder(holder);
+            var cleared = Stopwatch.StartNew();
+            while (JournalFiles(children).Length > 0 && cleared.Elapsed < TimeSpan.FromSeconds(5))
+                await Task.Delay(50, ct);
+            JournalFiles(children).ShouldBeEmpty("once the owned holder exits, the EOF continuation removes the journal");
+        }
+        finally
+        {
+            cancel.Cancel();
+            KillHolder(holder);
+            try { await call; } catch { /* observe a red cancellation so it is not unobserved */ }
+            cancel.Dispose();
+        }
+    }
+
+    private static async Task<(OutsideHolderGit Git, Task<LandingGitResult> Call, CancellationTokenSource Cancel, int Holder, string Children)>
+        StartOutsideHolderAsync(ScratchGitRepo repo, bool owned, CancellationToken ct)
+    {
+        var pidFile = Path.Combine(repo.Path, "outside-holder.pid");
+        var script = Path.Combine(repo.Path, "outside-root.sh");
+        await File.WriteAllTextAsync(script, OutsideHolderGit.Script(), ct);
+        var git = new OutsideHolderGit(script, pidFile, owned);
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        var cancel = new CancellationTokenSource();
+        var call = git.RunAsync(repo.Path, ["commit", "--allow-empty", "-m", "owned"], cancel.Token);
+        var watch = Stopwatch.StartNew();
+        var holder = 0;
+        while (watch.Elapsed < TimeSpan.FromSeconds(8) && !call.IsCompleted)
+        {
+            if (File.Exists(pidFile) && JournalFiles(children).Length > 0
+                && int.TryParse((await File.ReadAllTextAsync(pidFile, ct)).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out holder))
+                break;
+            await Task.Delay(50, ct);
+        }
+        holder.ShouldBeGreaterThan(1, "the outside holder opened the pipe before cancellation");
+        HolderAlive(holder).ShouldBeTrue();
+        git.Holder.ShouldNotBeNull().Id.ShouldBe(holder, "the outside holder is the host's own child, not a root descendant");
+        return (git, call, cancel, holder, children);
+    }
+
+    private static void KillHolder(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        { }
+    }
+
     [Test]
     public async Task C448_DescendantSetKeepsGrandchildrenWhoseParentDiesWithTheRoot()
     {
@@ -1379,6 +1496,7 @@ public sealed class LandingGitTests
                 StandardErrorEncoding = Encoding.UTF8,
             };
             standIn.ArgumentList.Add(scriptPath);
+            CarryOwnership(start, standIn);
             return Process.Start(standIn);
         }
     }
@@ -1438,7 +1556,59 @@ public sealed class LandingGitTests
             if (!IsUpdateRefStdin(start)) return base.StartProcess(start);
             var standIn = RedirectedShell(start);
             standIn.ArgumentList.Add(scriptPath);
+            CarryOwnership(start, standIn);
             return Process.Start(standIn);
+        }
+    }
+
+    /// <summary>The ownership marker LandingGit puts in a mutating child's environment. Real git
+    /// passes it to every descendant; a stand-in carries it the same way.</summary>
+    private const string OwnershipVariable = "ANTIPHON_REPOSITORY_CHILD";
+
+    private static void CarryOwnership(ProcessStartInfo from, ProcessStartInfo to)
+    {
+        if (from.Environment.TryGetValue(OwnershipVariable, out var value) && value is not null)
+            to.Environment[OwnershipVariable] = value;
+    }
+
+    /// <summary>A commit stand-in whose sleeping root and child are the whole killed set, plus a
+    /// process the test host starts outside that set. It opens the root's stdout and stderr through
+    /// /proc, so it holds the pipe write ends without being a descendant. With
+    /// <paramref name="owned"/> it also carries the root's ownership marker.</summary>
+    private sealed class OutsideHolderGit(string scriptPath, string holderPidFile, bool owned) : LandingGit
+    {
+        private readonly List<string> _lines = [];
+
+        public Process? Holder { get; private set; }
+
+        public IReadOnlyList<string> Lines
+        {
+            get { lock (_lines) return _lines.ToArray(); }
+        }
+
+        public static string Script() => "#!/bin/sh
+sleep 30
+exit 0
+";
+
+        protected override void WriteChildLog(string line)
+        {
+            lock (_lines) _lines.Add(line);
+        }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Count == 0 || start.ArgumentList[0] != "commit")
+                return base.StartProcess(start);
+            var root = DetachedPipeHolderGit.StartHolder(start, scriptPath)!;
+            var quoted = holderPidFile.Replace("'", "");
+            var holder = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true };
+            holder.ArgumentList.Add("-c");
+            holder.ArgumentList.Add($"trap '' HUP; exec >/proc/{root.Id}/fd/1 2>/proc/{root.Id}/fd/2; echo $$ > '{quoted}.tmp'; mv '{quoted}.tmp' '{quoted}'; exec sleep 30");
+            holder.Environment.Remove(OwnershipVariable);
+            if (owned) CarryOwnership(start, holder);
+            Holder = Process.Start(holder);
+            return root;
         }
     }
 
