@@ -132,6 +132,10 @@ internal sealed class LandApiStub : IAsyncDisposable
         {
             if (Options.V2AbortAfterRead)
             {
+                // The managed (Linux) listener flushes pending headers on Abort, so an unset length
+                // reads as a clean empty 200; a promised body that never arrives fails the transport
+                // on every platform (CARD-1657).
+                context.Response.ContentLength64 = 1;
                 context.Response.Abort();
                 return;
             }
