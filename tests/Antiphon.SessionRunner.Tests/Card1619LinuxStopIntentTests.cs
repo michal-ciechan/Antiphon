@@ -319,6 +319,90 @@ public class Card1619LinuxStopIntentTests
         }
     }
 
+    // CARD-1621 D-1: any failed check while recording a legacy identity changes nothing. The re-list
+    // or probe fault must not escape adoption: the session is Running, nothing is recorded, P8 refuses.
+    [Test]
+    [Arguments("null-result")]
+    [Arguments("malformed-result")]
+    [Arguments("api-error")]
+    [Arguments("probe-throws")]
+    public async Task Legacy_herdr_identity_fault_leaves_sidecar_unchanged_and_adoption_running(string fault)
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var root = Path.Combine(Path.GetTempPath(), "card1621-herdr-fault-" + Guid.NewGuid().ToString("N"));
+        var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false };
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await client.WorkspaceCreateAsync(root, "card1621-fault", cts.Token);
+        var pane = fake.Workspaces[0].Tabs[0].Panes[0];
+        using var dummy = HerdrTestProcess.StartDummy();
+        try
+        {
+            fake.SetPaneProcessInfo(pane.PaneId, shellPid: 1, (dummy.Id, HerdrTestProcess.ShellName));
+            var launched = DateTime.UtcNow;
+            var sessionId = Guid.NewGuid();
+            var legacy = new HerdrPaneSidecar { SessionId = sessionId, WorkspaceKey = "none", WorkspaceId = pane.WorkspaceId,
+                TabId = pane.TabId, PaneId = pane.PaneId, ChildPid = dummy.Id, ShellPid = 1, LaunchedAtUtc = launched,
+                Origin = HerdrPaneOrigins.Launched, Cwd = root, UpdatedAtUtc = launched };
+            var json = JsonSerializer.SerializeToNode(legacy, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+            json.Remove("childLinuxIdentity").ShouldBeTrue();
+            json.Remove("childStartedAtUtc").ShouldBeTrue();
+            var path = HerdrPaneSidecar.PathFor(root, sessionId);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, json.ToJsonString());
+            var original = File.ReadAllText(path);
+
+            // The bar's pane.process_info is call 1; the identity step's re-list is call 2.
+            var processInfoCalls = 0;
+            fake.TransformResult = (method, result) =>
+            {
+                if (method != "pane.process_info") return result;
+                var call = Interlocked.Increment(ref processInfoCalls);
+                if (call == 1 && fault == "api-error") fake.FailMethod("pane.process_info", "pane_not_found");
+                return call != 2 ? result : fault switch
+                {
+                    "null-result" => "null",
+                    "malformed-result" => "\"not-a-process-info\"",
+                    _ => result,
+                };
+            };
+            IProcessLivenessProbe probe = fault == "probe-throws"
+                ? new ThrowingProbe(dummy.Id) : new SystemProcessLivenessProbe();
+
+            await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
+                client, new SystemProcessLivenessProbe());
+            await runtime.AdoptOrphanedHostsAsync(probe, cts.Token);
+            runtime.Get(sessionId).Status.ShouldBe("Running", "a failed identity check never stops adoption");
+            if (fault != "probe-throws") processInfoCalls.ShouldBeGreaterThanOrEqualTo(2, "the fault reached the re-list call");
+            File.ReadAllText(path).ShouldBe(original, "a failed identity check leaves the sidecar unchanged");
+            HerdrPaneSidecar.TryLoad(path)!.ChildLinuxIdentity.ShouldBeNull();
+
+            // P8: a foreign foreground process makes the stop a pid kill, which the missing identity refuses.
+            fake.TransformResult = null;
+            fake.SetPaneProcessInfo(pane.PaneId, shellPid: 1, (dummy.Id, HerdrTestProcess.ShellName), (99999, "pwsh"));
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), cts.Token);
+            dummy.WaitForExit(500).ShouldBeFalse("an unrecorded identity never authorizes the pid kill");
+            fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close").ShouldBeFalse();
+        }
+        finally
+        {
+            if (!dummy.HasExited) dummy.Kill(true);
+            await dummy.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    private sealed class ThrowingProbe(int faultedPid) : IProcessLivenessProbe
+    {
+        private readonly SystemProcessLivenessProbe _inner = new();
+        public bool IsAlive(int pid, DateTime startedAt) =>
+            pid == faultedPid ? throw new InvalidOperationException("probe fault") : _inner.IsAlive(pid, startedAt);
+        public string? TryGetProcessName(int pid) => _inner.TryGetProcessName(pid);
+        public DateTime? TryGetStartTimeUtc(int pid) => _inner.TryGetStartTimeUtc(pid);
+    }
+
     private static async Task AssertHerdrP8KillRefusedAsync(Func<int, LinuxProcessIdentity?> recorded)
     {
         await using var fake = new FakeHerdrServer();
