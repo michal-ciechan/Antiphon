@@ -216,6 +216,13 @@ These directions override the cited standing rules in
    - Scoped live-lane decisions D-3/D-4/D-5/D-6/D-9/D-11: host/account, quota,
      enforcement, external freshness, and receipt signing, as defined by that plan.
 
+### Pre-run workspace slot cold reset (CARD-0824 S1)
+
+Before starting a whole rc qualification run, run
+`pwsh -NoProfile -File scripts/workspace-slots.ps1 cold-reset -AllRunners -Reason "rc qualification <rc branch> <sha12>"`
+and record the printed request ids with the run identity. It does not wait for leased slots (they
+cold-reset at their release) and is a no-op until a runner enables workspace slots.
+
 ## Handoff
 
 Keep run identity, remote rc/master SHAs, active fix families, full pushed SHAs,

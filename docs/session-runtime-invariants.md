@@ -279,6 +279,41 @@ spies for Working, Unknown and evidence-backed idle. This backstop does not crea
 a seat-release policy. T27 binds the explicit disabled-bound warning when either
 this setting or SessionRunner is disabled. S5 owns complete recipient receipts.
 
+## Runner workspace slots (CARD-0824 S1)
+
+Both halves ship off: the runner's `PhoneHome:WorkspaceSlots:Enabled` and the server's
+`Delegation:WorkspaceSlotsEnabled` default to false, and either one off keeps the per-task
+`task-<id>` mirror request and its handling byte for byte (`C0824_FlagOffMirrorRequestUnchanged`,
+`C0824_FlagOffRunnerKeepsTaskMirror`). The runner advertises `workspaceSlotV1` only with its flag on.
+With both on, a Worktree task's mirror request carries `slot: true` (and `cold`) and the runner leases a
+reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSlotPool`, ledger
+`<allowed>/workspace-slots/ledger.json`).
+
+- A lease always yields exactly the requested SHA on the task's own branch with a clean tracked and
+  untracked tree. Only native build output (`**/bin/`, `**/obj/`, `**/node_modules/`, `client/dist/`)
+  survives a warm reset; an untracked file planted inside a kept `bin/` survives too (Q-3, accepted).
+  The slot's previous state is never a base: the server resolves the SHA as before.
+- A release runs only when the task is terminal, its session holds no seat, no sync debt is Pending or
+  Held and no live task follows up on it (`WorkspaceSlotReleaseService`); a Blocked task keeps its slot
+  with no deadline while parking is off. The path is cleared only after the runner's reply; the slot id
+  and generation stay on the task.
+- A lingering process defers the release (1, 2, 4 min), then quarantines the directory. Unpushed commits
+  (branch tip and HEAD reflog), dirt, an identity-broken directory or a reset that cannot finish
+  quarantine the DIRECTORY in place: it is `git worktree lock`ed, never deleted or moved, and the slot
+  re-homes to `ws-NN-dK` under the same id and lease generation. Two failed replacements mark only that
+  slot Failed; more than three re-homes in 24 h retire it; more than four open quarantined directories
+  hold the pool (`workspace_slot_pool_degraded`).
+- A legacy removal never touches a slot: the runner refuses `slot_managed` for any `ws-*` path and the
+  server treats that as removed. Ownership ambiguity compares (runner, slot, generation), never the reused
+  path. A Claude `--continue` is refused in a slot cwd (`continue_in_shared_workspace`): it would resume
+  the previous lessee's conversation; `--resume <id>` is unaffected.
+- A cold reset (native output too) runs only on `delegate.ps1 -ColdWorkspace`, an operator or pre-rc
+  request (`scripts/workspace-slots.ps1 cold-reset`), or the weekly schedule (Sunday 02:00 UTC), and never
+  on a leased slot: there it is recorded as pending and runs inside that slot's release.
+- At the bound (`MaxOverflowSlots` above capacity plus headroom, or the disk budget) the lease refuses
+  `workspace_slot_unavailable:<bound>`; the task stays Queued with a Held event and never gets a per-task
+  mirror. Resets, re-homes and overflow creation take no build slot.
+
 ## Dormant terminal runner seat integration (CARD-0667 S4b)
 
 `TerminalRunnerSeatRelease:AutomaticEnabled` remains false. When explicitly enabled,

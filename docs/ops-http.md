@@ -392,6 +392,18 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
 `review_correction_principal_denied`, `review_correction_project_denied`,
 `review_correction_repository_denied`, `review_correction_card_denied`, `review_correction_board_denied`.
 
+### Runner workspace slots (CARD-0824 S1)
+
+- `POST /api/session-runners/{runnerId}/workspace-slots/cold-reset` (operator token) with
+  `{ "slots": ["ws-03", "ws-01"], "all": false, "reason": "...", "requester": "..." }` or
+  `{ "all": true, ... }` forwards the list unchanged to the runner's `WorkspaceSlotColdReset`
+  phone-home operation and returns its request id and per-slot outcome (`cold_reset`, `pending` for a
+  leased slot, `duplicate`, `unknown`). Front door: `scripts/workspace-slots.ps1 cold-reset`.
+- Runner phone-home operations (no HTTP route on the runner yet): `WorkspaceSlotRelease`
+  (`{slotId, generation, taskId}`; `slot_generation_mismatch` and `slot_task_mismatch` refuse),
+  `WorkspaceSlotColdReset` and `WorkspaceSlotQuarantineRelease`. The `GET /sessions/workspace-slots`
+  inventory and watchdog keys are S4.
+
 ## Shapes that bite
 
 - **PLURAL, OR 404.** `/api/boards`, `/api/agents`, `/api/cards`. There is no `/api/board`, and a

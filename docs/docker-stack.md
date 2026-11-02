@@ -682,6 +682,21 @@ service volume roster is not an array, differs in length from the expected block
 or carries configs. A newer generation with the same Compose files and the same expected roster does
 not take that refusal. Accepting temp remains the live rollback.
 
+### Runner workspace slots on the volume (CARD-0824 S1)
+
+With `PhoneHome:WorkspaceSlots:Enabled=true` (default false) a runner keeps reusable task directories
+`/work/worktrees/ws-NN` beside the legacy `task-<8hex>` mirrors. A re-homed slot lives at
+`ws-NN-dK`. The ledger is `/work/workspace-slots/ledger.json`; evidence retained before a wipe
+(`.antiphon/**/*.md`, `.antiphon/checkpoints/*/report.json`, 256 MiB per task, 7 days) is under
+`/work/retained/<task>/<generation>/`. A quarantined directory stays registered and
+`git worktree lock`ed with the reason `antiphon quarantine <slot> <class> <reason>`; its exact path is in
+the ledger's `quarantinedDirectories`. Never remove one by hand: the phone-home operation
+`WorkspaceSlotQuarantineRelease` (`Pushed`, `AcceptLoss` with the diff retained under
+`/work/retained/quarantine/<dirId>/`, or `Removed` after fixing a blocker) is the exit. A custody
+quarantine with unpublished work still refuses a CARD-1008 recycle; a filesystem quarantine whose content
+is published passes it. The slot ledger and quarantined directories must be read before a temp-runner
+drain (CARD-0831).
+
 ## Shared server2 runner caches (CARD-0849)
 
 The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,
