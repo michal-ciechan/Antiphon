@@ -97,6 +97,19 @@ public class StableBuildOutputDocumentationTests
         text.ShouldContain("one build at a time", Case.Insensitive, relative);
     }
 
+    // CARD-1627: a mutant loop held one lease for 14 to 38 minutes while 7 to 9 waiters queued.
+    [Test]
+    [Arguments("docs/testing-and-build.md")]
+    [Arguments("server/Bundles/delegate-basics.md")]
+    [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
+    [Arguments(".claude/skills/antiphon-orchestrator/SKILL.md")]
+    public void C1627_build_guidance_says_one_lease_per_build_never_around_a_loop(string relative)
+    {
+        var text = Collapse(Read(relative)).Replace("> ", "");
+        text.ShouldContain("per build", Case.Insensitive, relative);
+        text.ShouldContain("never one lease around", Case.Insensitive, relative);
+    }
+
     [Test]
     public void C1629_orchestrator_brief_sentence_uses_the_native_output()
     {
