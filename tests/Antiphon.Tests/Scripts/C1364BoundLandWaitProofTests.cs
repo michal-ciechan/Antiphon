@@ -278,16 +278,12 @@ public sealed class C1364BoundLandWaitProofTests
         Console.WriteLine("C1364_VECTOR " + label + " passed");
     }
 
-    // C1008HostFixture injects its prelude, this observer included, at every
-    // "trap 'ec=$?;" site. The temp content audit (c1008_audit_readonly) sets
-    // and restores such traps mid-run, so the observation files reset once per run.
+    // C1008HostFixture runs this observer once, before the script's top-level EXIT
+    // trap (CARD-1665), although the temp content audit arms its own traps mid-run.
     private static string ObserveHost(string runner, int targetProof, bool inject) => $$"""
-        if [ -z "${C1364_OBSERVER_ARMED:-}" ]; then
-            C1364_OBSERVER_ARMED=1
-            : > "$C1008_FIXTURE_ROOT/proofs.jsonl"
-            : > "$C1008_FIXTURE_ROOT/land-reads.jsonl"
-            : > "$C1008_FIXTURE_ROOT/sleeps"
-        fi
+        : > "$C1008_FIXTURE_ROOT/proofs.jsonl"
+        : > "$C1008_FIXTURE_ROOT/land-reads.jsonl"
+        : > "$C1008_FIXTURE_ROOT/sleeps"
         c849_status_body() {
             if [ "$1" = '{{runner}}' ] && { [ "${FUNCNAME[1]}" = c1008_status_proof ] || [ "${FUNCNAME[1]}" = c994_status_proof ]; }; then
                 local n record
