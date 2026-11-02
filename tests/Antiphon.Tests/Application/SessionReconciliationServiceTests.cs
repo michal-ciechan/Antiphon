@@ -1695,12 +1695,13 @@ public class SessionReconciliationServiceTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         Store.Value = schema.ConnectionString;
         var marker = NewMarker();
+        var stoppedMarker = NewMarker();
         try
         {
             var (_, legacyId, legacyStartedAt) = await SeedWorkingAgentWithSessionAsync(
                 marker, SessionStatus.Running, staleAgent: false);
             var (_, stoppedId, stoppedStartedAt) = await SeedWorkingAgentWithSessionAsync(
-                marker, SessionStatus.Stopped, staleAgent: false);
+                stoppedMarker, SessionStatus.Stopped, staleAgent: false);
             var runner = new FakeRunnerClient
             {
                 Sessions =
@@ -1728,7 +1729,11 @@ public class SessionReconciliationServiceTests
             (await verify.AgentSessions.SingleAsync(s => s.Id == stoppedId)).ExitSignal.ShouldBe(9);
             (await verify.AgentSessions.SingleAsync(s => s.Id == legacyId)).Status.ShouldBe(SessionStatus.Running);
         }
-        finally { await CleanupAsync(marker); }
+        finally
+        {
+            await CleanupAsync(marker);
+            await CleanupAsync(stoppedMarker);
+        }
     }
 
     /// <summary>
