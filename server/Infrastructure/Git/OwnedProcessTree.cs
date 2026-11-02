@@ -404,15 +404,9 @@ internal static class OwnedProcessTree
 
         bool WaitRetained(int pid)
         {
-            for (var i = retained.Count - 1; i >= 0; i--)
-            {
-                if (retained[i].Pid != pid) continue;
-                var remaining = ReapBoundMilliseconds - (int)reapClock.ElapsedMilliseconds;
-                if (remaining < 0) remaining = 0;
-                return retained[i].Process.WaitForExit(remaining);
-            }
-            // No handle: the pid was already gone when the tick check ran.
-            return true;
+            var remaining = ReapBoundMilliseconds - (int)reapClock.ElapsedMilliseconds;
+            if (remaining < 0) remaining = 0;
+            return WaitForRetainedHandle(retained, pid, remaining);
         }
 
         void BeginReap() => reapClock.Restart();
@@ -421,7 +415,19 @@ internal static class OwnedProcessTree
     /// <summary>The same walk production uses. A test supplies this as <see cref="Kill"/>'s table.</summary>
     internal static ProcessSnapshot CaptureSnapshot(int rootPid) => ReadSnapshot(rootPid);
 
-    private readonly record struct RetainedProcess(Process Process, bool Dispose, int Pid);
+    internal readonly record struct RetainedProcess(Process Process, bool Dispose, int Pid);
+
+    /// <summary>Wait on the handle kept for <paramref name="pid"/>. True means it exited.</summary>
+    internal static bool WaitForRetainedHandle(IReadOnlyList<RetainedProcess> retained, int pid, int remainingMilliseconds)
+    {
+        for (var i = retained.Count - 1; i >= 0; i--)
+        {
+            if (retained[i].Pid != pid) continue;
+            return retained[i].Process.WaitForExit(remainingMilliseconds);
+        }
+        // No handle: the pid was already gone when the tick check ran.
+        return true;
+    }
 
     private static List<int> Signal(
         IReadOnlyList<PlannedKill> entries,
