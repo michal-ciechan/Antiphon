@@ -617,6 +617,111 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         }
     }
 
+    // CARD-1570 S1 W-1: output kept because the run is red is evidence, not a cleanup refusal.
+    [Test]
+    public async Task red_run_kept_outputs_are_not_recorded_as_cleanup_refusals()
+    {
+        var (repo, output, run, driver, source) = RedRunFixture();
+
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(driver, _ => source));
+        var report = Read(run);
+        Console.WriteLine("C1570 W-1 receipt: " + ReportWriter.JsonText(report));
+        exit.ShouldBe(1, "red-row-run");
+        report.ExitCode.ShouldBe(1);
+        report.Verdict.ShouldBe("RED");
+        report.Rows.Single(row => row.Id == "CP-1").State.ShouldBe("green");
+        report.Rows.Single(row => row.Id == "CP-2").State.ShouldNotBe("green");
+        report.CleanupRefusals.ShouldBeEmpty();
+        report.CleanedOutputs.ShouldBeFalse();
+        Directory.Exists(output).ShouldBeTrue("kept-because-red");
+        File.ReadAllText(Path.Combine(run, "report.md")).ShouldNotContain("refused: still-present");
+        var evidence = Path.Combine(run, "report.json");
+        foreach (var selection in new string?[] { null, "CP-1" })
+        {
+            ReportValidator.Validate(report, Sha, selection is null ? null : [selection]).ShouldBe("report_failed");
+            var script = await ValidateFileWithScriptAsync(evidence, selection);
+            script.Exit.ShouldBe(2, script.Output);
+            script.Output.ShouldContain("reason=report_failed");
+        }
+    }
+
+    // CARD-1570 S1 W-1b: a red run still records output it did not keep on purpose.
+    [Test]
+    public async Task red_run_still_refuses_output_it_did_not_create()
+    {
+        var (repo, output, run, driver, source) = RedRunFixture();
+        var foreign = Path.Combine(repo, "other", "bin-c1570");
+        Directory.CreateDirectory(foreign);
+        File.WriteAllText(Path.Combine(foreign, "foreign.txt"), "not this run");
+
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(driver, _ => source));
+        var report = Read(run);
+        Console.WriteLine("C1570 W-1b receipt: " + ReportWriter.JsonText(report));
+        exit.ShouldBe(1, "red-row-run");
+        report.CleanupRefusals.ShouldBe(["still-present"]);
+        report.CleanedOutputs.ShouldBeFalse();
+        Directory.Exists(output).ShouldBeTrue("kept-because-red");
+        Directory.Exists(foreign).ShouldBeTrue();
+        var evidence = Path.Combine(run, "report.json");
+        foreach (var selection in new string?[] { null, "CP-1" })
+        {
+            ReportValidator.Validate(report, Sha, selection is null ? null : [selection]).ShouldBe("cleanup_refused");
+            var script = await ValidateFileWithScriptAsync(evidence, selection);
+            script.Exit.ShouldBe(2, script.Output);
+            script.Output.ShouldContain("reason=cleanup_refused");
+        }
+    }
+
+    private (string Repo, string Output, string Run, FakeDriver Driver, SourceObservation Source) RedRunFixture()
+    {
+        var source = Observe(Sha, 0);
+        var repo = TempDir();
+        CheckpointFixtureProcess.Git(repo, "init", "-b", "card1570");
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var output = Path.Combine(repo, "sample", "bin-c1570");
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1570", Project = "sample", OutputPath = "bin-c1570/" }],
+            Checkpoints =
+            [
+                new CheckpointSpec
+                {
+                    Id = "CP-1", After = ["all"], Build = "bin-c1570",
+                    Filter = "/*/*/GreenSurfaceTests/*", MinExecuted = 1,
+                    Expect = ["GreenSurfaceTests"], EstimatedMinutes = 1,
+                },
+                new CheckpointSpec
+                {
+                    Id = "CP-2", After = ["all"], Build = "bin-c1570",
+                    Filter = "/*/*/RedSurfaceTests/*", MinExecuted = 1,
+                    Expect = ["RedSurfaceTests"], EstimatedMinutes = 1,
+                },
+            ],
+        };
+        var run = CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            Commit = Sha, Branch = "fixture", KeepOutputs = false, CleanOnRed = false, Slots = "off",
+        }, repo, new CheckpointApp.Runtime { SourceCapture = _ => source });
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) =>
+        {
+            Directory.CreateDirectory(output);
+            File.WriteAllText(Path.Combine(output, "sample.dll"), "built");
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            var green = request.Arguments.Any(arg => arg.Contains("GreenSurfaceTests", StringComparison.Ordinal));
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), green
+                ? ("Antiphon.Tests.GreenSurfaceTests.case", "Passed")
+                : ("Antiphon.Tests.RedSurfaceTests.case", "Failed"));
+            return Task.FromResult(new DriverResult(green ? 0 : 2, "", ""));
+        });
+        return (repo, output, run, driver, source);
+    }
+
     private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
     {
         var evidence = Path.Combine(TempDir(), "report.json");
