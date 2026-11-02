@@ -507,6 +507,84 @@ public sealed partial class PhoneHomeRollingRunnerTests
     }
 
     [Test]
+    [Timeout(180_000)]
+    public async Task C1649_RecordReleaseStampsOnlyTheStuckAttemptOfATaskThatIsNotLive()
+    {
+        // CARD-1649 A-1 and A-2 (review f742a321). The stuck record names the task attempt whose release is stuck. A runner
+        // whose state was reset can hand the same task the same slot and generation again on a new attempt: the operator
+        // route then refuses with workspace_slot_release_attempt_mismatch and never stamps that live lease. A task that is
+        // Dispatched, Working or Blocked is refused with workspace_slot_release_task_live. The stuck attempt of a task that
+        // is not live is still recorded, and the audit event names the requester (bounded, never the operator token).
+        await using var world = await RollingWorld.StartAsync();
+        world.PeerA.Reply = frame => frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease
+            ? null
+            : new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: PhoneHomeProblemTypes.UnsupportedTarget, ErrorDetail: WorkspaceSlotCodes.UnknownSlot, StatusCode: 409);
+        var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "slot-stuck-attempt", task =>
+        {
+            task.RemoteWorktreePath = "/work/worktrees/ws-01";
+            task.RemoteWorkspaceSlotId = "ws-01";
+            task.RemoteWorkspaceSlotGeneration = 3;
+        });
+        (await PostDrainAsync(
+                world, RollingRunnerSettings.Server2, new DrainBody("slot drain", RollingRunnerSettings.Server2Temp), token: true))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        for (var tick = 0; tick < 4; tick++)
+            await world.TickAsync();
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(3);
+        (await world.EventTextAsync(id)).Count(text => text.StartsWith(
+            WorkspaceSlotCodes.ReleaseStuck + ": slot ws-01 generation 3 ", StringComparison.Ordinal)).ShouldBe(1);
+        var record = $"/api/session-runners/{RollingRunnerSettings.Server2}/workspace-slots/ws-01/record-release";
+        var token = OperatorTokenFile.ReadOrCreate(world.Host.OperatorTokenPath);
+        var body = new RecordReleaseBody(id, 3, "runner lost the slot", "operator-x");
+
+        async Task SetAsync(int attempt, AgentTaskStatus status)
+        {
+            await using var db = world.NewDb();
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == id);
+            row.Attempt = attempt;
+            row.Status = status;
+            await db.SaveChangesAsync();
+        }
+
+        async Task RefusedAsync(RecordReleaseBody request, HttpStatusCode status, string? code, string because)
+        {
+            using var response = await world.Host.PostOperatorAsync(record, request, token);
+            response.StatusCode.ShouldBe(status, because);
+            if (code is not null)
+                (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().ShouldBe(code, because);
+            (await world.ReadTaskAsync(id)).Task.RemoteWorkspaceSlotReleasedAt.ShouldBeNull(because);
+        }
+
+        // A reset runner leased the same slot and generation to the same task again on attempt 2.
+        await SetAsync(2, AgentTaskStatus.Queued);
+        await RefusedAsync(body, HttpStatusCode.Conflict, "workspace_slot_release_attempt_mismatch", "a new attempt is a live lease");
+        await SetAsync(2, AgentTaskStatus.Working);
+        await RefusedAsync(body, HttpStatusCode.Conflict, null, "a new attempt that runs is a live lease");
+        foreach (var live in new[] { AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked })
+        {
+            await SetAsync(1, live);
+            await RefusedAsync(body, HttpStatusCode.Conflict, "workspace_slot_release_task_live", $"a {live} task holds its lease");
+        }
+
+        await SetAsync(1, AgentTaskStatus.Queued);
+        using (var denied = await world.Host.PostOperatorAsync(record, body, token: null))
+            denied.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        await RefusedAsync(body with { Requester = new string('r', 65) }, HttpStatusCode.BadRequest, null, "the requester is bounded");
+        await RefusedAsync(body with { Requester = token }, HttpStatusCode.BadRequest, null, "the requester is never the operator token");
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(3, "no refusal asks the runner");
+
+        using (var recorded = await world.Host.PostOperatorAsync(record, body, token))
+            recorded.StatusCode.ShouldBe(HttpStatusCode.OK, "the stuck attempt of a task that is not live is recorded");
+        (await world.ReadTaskAsync(id)).Task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
+        var audit = (await world.EventTextAsync(id)).Where(text => text.StartsWith(
+            WorkspaceSlotCodes.ReleaseRecorded + ": slot ws-01 generation 3 ", StringComparison.Ordinal)).ShouldHaveSingleItem();
+        audit.ShouldContain("by the operator 'operator-x'");
+        audit.ShouldContain("runner lost the slot");
+        audit.ShouldNotContain(token);
+    }
+
+    [Test]
     [Timeout(120_000)]
     public async Task A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held()
     {
@@ -890,7 +968,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
 
     private sealed record ClearBody(string Reason);
 
-    private sealed record RecordReleaseBody(Guid TaskId, int Generation, string Reason);
+    private sealed record RecordReleaseBody(Guid TaskId, int Generation, string Reason, string? Requester = null);
 
     private sealed partial class RollingWorld
     {
