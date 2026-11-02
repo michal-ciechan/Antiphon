@@ -322,4 +322,28 @@ internal sealed class C0824StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
     public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) => throw new NotSupportedException();
+
+    [Test]
+    public async Task C0824_RestartKeepsLeasedSlotForTheServersRelease(CancellationToken ct)
+    {
+        // D-3 (review 3a354688) recovery action. A plain restart (RecoverAsync(null)) cannot tell a terminal task
+        // from a queued one, so it KEEPS the lease, untouched; the server's later release (reconciler or drain
+        // re-arm) settles it on this same runner after the restart.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Plant(a.Path, "src/P/bin/Debug/a.dll", "native");
+        var before = Tree(a.Path);
+
+        var restarted = scratch.Pool();
+        await restarted.StartAsync(ct);
+        var kept = restarted.Ledger().Slot(a.SlotId).ShouldNotBeNull();
+        kept.State.ShouldBe(WorkspaceSlotStates.Leased);
+        kept.TaskId.ShouldBe(TaskA);
+        kept.LeaseGeneration.ShouldBe(a.Generation);
+        Tree(a.Path).ShouldBe(before);
+
+        (await Release(restarted, a, TaskA)).Outcome.ShouldBe("released");
+        restarted.Ledger().Slot(a.SlotId)!.State.ShouldBe(WorkspaceSlotStates.Free);
+    }
 }

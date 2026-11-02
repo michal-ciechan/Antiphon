@@ -216,4 +216,66 @@ public sealed class C0824WorkspaceSlotRehomeTests
             File.ReadAllText(retained + "/untracked.txt").ShouldContain("untracked.txt");
         }
     }
+
+    [Test]
+    [Arguments("primary")]
+    [Arguments("sibling")]
+    [Arguments("symlink")]
+    public async Task C0824_ReleaseProvesOwnershipBeforeAnyDestructiveGit(string pointer, CancellationToken ct)
+    {
+        // D-1 (review 3a354688). A released slot whose .git names the PRIMARY .git or a SIBLING slot's registration,
+        // or whose directory is a link to a sibling, is quarantined before any checkout, clean, update-ref or file
+        // delete: the other repository's HEAD, reflog, refs and files are byte-identical afterwards.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.Extra(1), ct);
+        var victimTree = scratch.Clone;
+        var victimGitDir = scratch.Clone + "/.git";
+        WorkspaceSlotLease? b = null;
+        if (pointer != "primary")
+        {
+            b = await pool.LeaseAsync(scratch.Extra(2), ct);
+            victimTree = b.Path;
+            victimGitDir = GitDir(b.Path);
+        }
+
+        var slotTree = a.Path;
+        if (pointer == "symlink")
+        {
+            slotTree = scratch.Root + "/aside-ws-01";
+            Directory.Move(a.Path, slotTree);
+            Directory.CreateSymbolicLink(a.Path, b!.Path);
+        }
+        else
+        {
+            File.WriteAllText(a.Path + "/.git", "gitdir: " + victimGitDir + "\n");
+        }
+
+        var dotGit = File.ReadAllText(slotTree + "/.git");
+        var victim = Snapshot(scratch, victimGitDir, victimTree);
+        var slotBefore = Tree(slotTree);
+
+        (await Release(pool, a, ExtraTask(1))).Outcome.ShouldBe("quarantined");
+
+        Snapshot(scratch, victimGitDir, victimTree).ShouldBe(victim, "the " + pointer + " repository is untouched");
+        Tree(slotTree).ShouldBe(slotBefore, "the slot's own bytes are untouched");
+        File.ReadAllText(slotTree + "/.git").ShouldBe(dotGit);
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.Path.ShouldBe(a.Path);
+        entry.Class.ShouldBe("filesystem");
+        entry.Reason.ShouldBe("identity");
+        if (b is not null)
+            pool.Ledger().Slot(b.SlotId)!.State.ShouldBe(WorkspaceSlotStates.Leased, "the sibling's lease is untouched");
+    }
+
+    /// <summary>HEAD, the HEAD reflog, every ref of the shared repository and the working files of one git directory.</summary>
+    private static string Snapshot(C0824SlotScratch scratch, string gitDir, string tree)
+    {
+        static string Bytes(string path) => File.Exists(path) ? Convert.ToHexString(File.ReadAllBytes(path)) : "<absent>";
+        return string.Join("\n",
+            "HEAD " + Bytes(gitDir + "/HEAD"),
+            "reflog " + Bytes(gitDir + "/logs/HEAD"),
+            "refs " + Git(scratch.Clone, "for-each-ref", "--format=%(refname) %(objectname)"),
+            "files " + string.Join(";", Tree(tree).Select(item => item.Key + "=" + item.Value)));
+    }
 }

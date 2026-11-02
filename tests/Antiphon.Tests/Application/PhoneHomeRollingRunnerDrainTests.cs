@@ -385,6 +385,64 @@ public sealed partial class PhoneHomeRollingRunnerTests
     }
 
     [Test]
+    [Timeout(180_000)]
+    [Arguments("released")]
+    [Arguments("old-runner-refuses")]
+    public async Task C0824_DrainRebindReleasesTheOldSlotFirst(string mode)
+    {
+        // CARD-0824 D-3 (review 3a354688). A queued task still bound to a workspace slot on the draining runner A
+        // moves to B only after A confirms the slot released. A refusal keeps the task on A with the slot and a
+        // workspace_slot_release_pending hold; a later tick (a fresh dispatcher scope, as after a server restart)
+        // retries. B is never asked to release A's slot, and no lease is ever left on A for a task bound to B.
+        await using var world = await RollingWorld.StartAsync();
+        var refuse = mode == "old-runner-refuses";
+        world.PeerA.Reply = frame => frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease
+            ? null
+            : refuse
+                ? new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                    ErrorCode: PhoneHomeProblemTypes.UnsupportedTarget, ErrorDetail: WorkspaceSlotCodes.GenerationMismatch, StatusCode: 409)
+                : new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                    JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceSlotReleaseResponse("released", "ws-01", 3), PhoneHomeFraming.Json));
+        var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "slot-bound", task =>
+        {
+            task.RemoteWorktreePath = "/work/worktrees/ws-01";
+            task.RemoteWorkspaceSlotId = "ws-01";
+            task.RemoteWorkspaceSlotGeneration = 3;
+        });
+        (await PostDrainAsync(
+                world, RollingRunnerSettings.Server2, new DrainBody("slot drain", RollingRunnerSettings.Server2Temp), token: true))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await world.TickAsync();
+
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(1, "the old runner is asked first");
+        var sent = world.PeerA.Incoming.ToArray().First(frame => frame.Kind == PhoneHomeFrameKind.Request
+            && frame.Operation == PhoneHomeOperation.WorkspaceSlotRelease).Payload!.Value
+            .Deserialize<PhoneHomeWorkspaceSlotReleaseRequest>(PhoneHomeFraming.Json);
+        sent.ShouldBe(new PhoneHomeWorkspaceSlotReleaseRequest("ws-01", 3, id));
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBe(0, "a slot is never a legacy removal");
+        if (refuse)
+        {
+            var held = await world.ReadTaskAsync(id);
+            held.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2, "no rebind while the old lease is unconfirmed");
+            held.Task.RemoteWorkspaceSlotReleasedAt.ShouldBeNull();
+            held.Task.RemoteWorktreePath.ShouldBe("/work/worktrees/ws-01");
+            (await world.EventTextAsync(id)).ShouldContain(text => text.Contains(DispatchHoldDetails.WorkspaceSlotReleasePending(
+                RollingRunnerSettings.Server2, "ws-01", 3, RollingRunnerSettings.Server2Temp), StringComparison.Ordinal));
+            world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0);
+            refuse = false;
+            await world.TickAsync();
+            world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(2, "the pending release is retried");
+        }
+
+        var moved = await world.ReadTaskAsync(id);
+        moved.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
+        moved.Task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull("released on the old runner before the move");
+        moved.Task.RemoteWorkspaceSlotId.ShouldBe("ws-01", "slot history kept");
+        world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(0, "the new runner is never asked for the old slot");
+    }
+
+    [Test]
     [Timeout(120_000)]
     public async Task A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held()
     {

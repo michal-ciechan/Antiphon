@@ -252,6 +252,35 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    public async Task C0824_ReconcilerBoundsSlotUnknownRetries()
+    {
+        // D-3 (review 3a354688). A runner that answers slot_unknown (the slot is on another runner) is asked at most
+        // three times for that slot and generation; then the reconciler stops, records workspace_slot_release_stuck
+        // for an operator and never stamps a release it did not get.
+        await using var rig = await SlotRigAsync(services => services.AddScoped<WorkspaceSlotReleaseService>());
+        rig.Peer.Reply = frame => frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease
+            ? null
+            : new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: PhoneHomeProblemTypes.UnsupportedTarget, ErrorDetail: WorkspaceSlotCodes.UnknownSlot, StatusCode: 409);
+        var taskId = await rig.SeedAsync(task => Slot(task, AgentTaskStatus.Succeeded, "/work/worktrees/ws-02", "ws-02", 3));
+
+        for (var pass = 0; pass < 5; pass++)
+        {
+            using var scope = rig.Provider.CreateScope();
+            (await scope.ServiceProvider.GetRequiredService<WorkspaceSlotReleaseService>().ReconcileAsync(CancellationToken.None).WaitAsync(Bound))
+                .ShouldBe(0);
+        }
+
+        rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(WorkspaceSlotReleaseService.UnknownSlotAttempts, "bounded, not forever");
+        var task = await rig.ReadTaskAsync(taskId);
+        task.RemoteWorkspaceSlotReleasedAt.ShouldBeNull("never a guessed release");
+        task.RemoteWorktreePath.ShouldBe("/work/worktrees/ws-02");
+        var warnings = (await rig.EventsAsync(taskId, AgentTaskEventType.Warning)).Select(e => e.Detail ?? "").ToList();
+        warnings.Count(text => text.StartsWith(WorkspaceSlotCodes.ReleaseUnknown + ": slot ws-02 generation 3 ", StringComparison.Ordinal)).ShouldBe(3);
+        warnings.Count(text => text.StartsWith(WorkspaceSlotCodes.ReleaseStuck + ": slot ws-02 generation 3 ", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Test]
     public void C0824_ContinueResumeRefusedForSlotCwd()
     {
         // V-39 (Q-1 default). --continue resumes the newest conversation in the cwd: in a shared slot that is another task's.

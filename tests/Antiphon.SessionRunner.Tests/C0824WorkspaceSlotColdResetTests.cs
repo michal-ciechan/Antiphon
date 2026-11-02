@@ -198,4 +198,50 @@ public sealed class C0824WorkspaceSlotColdResetTests
         var b = await pool.LeaseAsync(scratch.RequestB(cold: true), ct);
         File.Exists(Path.Combine(b.Path, "src/Q/bin/Q.dll")).ShouldBeFalse();
     }
+
+    [Test]
+    [Arguments("untracked")]
+    [Arguments("ignored-evidence")]
+    [Arguments("reflog-only-commit")]
+    public async Task C0824_ColdResetQuarantinesWhatALeaseWould(string late, CancellationToken ct)
+    {
+        // D-2 (review 3a354688). The cold reset runs the lease's preflight (ownership, free invariant, unpushed
+        // reflog) BEFORE its clean: a Free slot a lease would quarantine is quarantined with every byte in place,
+        // keep-list native output included. Only keep-list output is what a cold reset removes (V-28b).
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        PlantNative(a.Path);
+        await Release(pool, a, TaskA);
+        string? lost = null;
+        switch (late)
+        {
+            case "untracked":
+                Plant(a.Path, "late.txt", "late writer");
+                break;
+            case "ignored-evidence":
+                Plant(a.Path, ".antiphon/late-report.md", "late evidence");
+                break;
+            default:
+                Plant(a.Path, "side.txt", "reflog only");
+                Git(a.Path, "add", "side.txt");
+                Git(a.Path, "commit", "-q", "-m", "late commit");
+                lost = Git(a.Path, "rev-parse", "HEAD").Trim();
+                Git(a.Path, "checkout", "-q", "--detach", scratch.Base);
+                break;
+        }
+
+        var before = Tree(a.Path);
+        var response = await pool.ColdResetAsync(new PhoneHomeWorkspaceSlotColdResetRequest(Guid.NewGuid(), ["ws-01"], false, "operator-x", "stale dlls"), ct);
+
+        response.Slots.ShouldHaveSingleItem().Outcome.ShouldBe("quarantined");
+        Tree(a.Path).ShouldBe(before, "nothing was cleaned");
+        NativePresent(a.Path);
+        if (lost is not null)
+            Git(a.Path, "reflog", "show", "--format=%H", "HEAD").ShouldContain(lost);
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.Path.ShouldBe(a.Path);
+        entry.Reason.ShouldBe(lost is null ? "dirty" : "unpushed");
+        pool.Ledger().Slot("ws-01")!.Path.ShouldBe(scratch.Slot("ws-01-d2"));
+    }
 }
