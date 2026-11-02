@@ -2265,8 +2265,22 @@ Use the current CARD-0448 cleanup contract below for operations.
 ## CARD-0448 landing evidence and conservative cleanup
 
 CARD-1380 S1: a land takes the OS-backed `land-execution.lock` under the canonical
-Git common directory before the repository mutation lease and holds both through
-verification, publication and cleanup. A busy execution lock records
+Git common directory before the repository mutation lease (`landing.lock`). It holds
+the execution lock from admission through verification, publication and cleanup. It
+does not hold the mutation lease through the verification build: when `PrepareAsync`
+returns a verification ticket, `RunLeasedAsync` opens the verification window
+(`OpenVerificationWindowAsync`), releases the mutation lease and its read scope
+(`LandRepositoryLeaseScope.ReleaseAsync`) and runs `VerifyPreparedAsync` holding only
+the execution lock. After the window closes it polls `ReacquireAsync` every 250 ms,
+calls `BeginReadScope`, holds `repository_or_source_writer` if a writer appeared, and
+only then lets `ResumeAsync` publish and clean up under both (the CARD-1379 window
+above). A documentation skip opens no window and keeps the mutation lease throughout.
+While the mutation lease is released, a second land on the repository still holds
+`land_execution_busy`, and other mutation-lease claims are admitted only as the window
+allows. A push to the target from outside the lease, such as a Merge-role fast-forward,
+can still move it: the pre-push observation in `ResumeAsync` then refuses
+`remote_changed_before_push`, and the target-race retry rebases and verifies again
+within `Delegation:LandTargetRaceRetries`. A busy execution lock records
 `land_execution_busy` without consuming an attempt. Unfinished child journals
 still fence the mutation lease after a restart; loss of the execution lock alone
 does not authorize reuse of the land worktree.
