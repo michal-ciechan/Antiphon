@@ -1,4 +1,6 @@
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
@@ -16,12 +18,61 @@ public sealed class ChangeAwareReleaseTests
     [Test]
     public Task C1313_ParameterHops() => Run("C1313_ParameterHops", 10, "hop-baseline-bound", "hop-executed-full", "attempt-identical-resume", "attempt-conflict-refused", "prior-attempt-kept", "hop-digest-refused", "hop-sha-refused", "pwsh-required-before-work", "full-without-pwsh", "attempt-survives-cleanup");
 
+    // CARD-1590: a direct run must not leave its nested fixture repositories behind,
+    // on the failure path (no -FilterHost: fixture-discovery-failed after New-Fx) or on success.
+    [Test]
+    public Task C1590_FailedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_ModeCredit", [], (result, root) =>
+    {
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldNotBe(0, output);
+        output.ShouldContain("fixture-discovery-failed", Case.Sensitive, output);
+        Directory.Exists(Path.Combine(root, "discovery")).ShouldBeTrue(output);
+        AssertNoFixtureRepository(root, output);
+    });
+
+    [Test]
+    public Task C1590_PassedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_BaselineAuthority", FilterHostArguments, (result, root) =>
+    {
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("C487 HARNESS EXIT CODE: 0", Case.Sensitive, output);
+        AssertNoFixtureRepository(root, output);
+    });
+
+    private static readonly string[] FilterHostArguments =
+        ["-FilterHost", Path.Combine(AppContext.BaseDirectory, "checkpoint-filter-host", "Antiphon.Checkpoints.FilterHost.dll")];
+
+    private static void AssertNoFixtureRepository(string root, string output)
+    {
+        Directory.GetDirectories(root, "space *").ShouldBeEmpty(output);
+        Directory.EnumerateFileSystemEntries(root, ".git", SearchOption.AllDirectories).ShouldBeEmpty(output);
+    }
+
+    // The caller-owned root is inspected after the harness exits and before ScriptHarness removes it.
+    private static Task RunOwnedRoot(string name, string[] arguments, Action<ScriptHarnessResult, string> validate)
+    {
+        string? root = null;
+        var options = ScriptHarnessOptions.Default with
+        {
+            AdditionalArguments = arguments,
+            OwnerFactory = request =>
+            {
+                root = request.ResultsDirectory;
+                return OperatingSystem.IsWindows() ? new WindowsScriptHarnessProcess(request) :
+                    OperatingSystem.IsLinux() ? new LinuxScriptHarnessProcess(request) :
+                    throw new PlatformNotSupportedException("ScriptHarness requires Windows or Linux process ownership.");
+            },
+        };
+        return ScriptHarnessProcess.RunAsync("test-change-aware-release.ps1", "C1313", name,
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-change-aware-release.ps1"), options,
+            CancellationToken.None, result => validate(result, root!));
+    }
+
     private static Task Run(string name, int rows, params string[] labels) =>
         ScriptHarness.RunHarnessCaseAsync("test-change-aware-release.ps1", "C1313", name, rows,
             labels.Select(label => "C1313 " + label).ToArray(),
             ScriptHarnessOptions.Default with
             {
-                AdditionalArguments = ["-FilterHost", Path.Combine(AppContext.BaseDirectory,
-                    "checkpoint-filter-host", "Antiphon.Checkpoints.FilterHost.dll")],
+                AdditionalArguments = FilterHostArguments,
             }, CancellationToken.None);
 }
