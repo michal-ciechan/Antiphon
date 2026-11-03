@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent } from '@testing-library/react'
 import { HttpResponse, http, delay } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectSetupCatalogDto, ProjectSetupRequest } from '../../api/projectSetup'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ProjectSetupModal } from './ProjectSetupModal'
 
@@ -72,7 +72,7 @@ function seed(post: (request: ProjectSetupRequest) => Response) {
 }
 
 async function reachReview() {
-  await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+  await pasteInto(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
   await userEvent.click(screen.getByRole('button', { name: 'Next' }))
   await userEvent.click(screen.getByRole('button', { name: 'Next' }))
   await userEvent.click(screen.getByLabelText('Skip — no agent yet'))
@@ -93,7 +93,7 @@ describe('ProjectSetupModal', () => {
       })
     })
     renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+    await pasteInto(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     await userEvent.click(screen.getByRole('textbox', { name: 'Default worker workspace' }))
     await userEvent.click(await screen.findByRole('option', { name: 'Shared' }))
@@ -214,7 +214,7 @@ describe('ProjectSetupModal', () => {
     )
 
     renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+    await pasteInto(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
 
@@ -252,7 +252,7 @@ describe('ProjectSetupModal', () => {
       delegation: { ...catalog.delegation, defaultLevel },
     })))
     renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+    await pasteInto(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     await userEvent.click(screen.getByLabelText('Skip — no agent yet'))
