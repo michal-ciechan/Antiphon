@@ -96,6 +96,20 @@ public sealed class PhoneHomeSettings
     public IReadOnlyList<string> RawExeAllowList { get; set; } = ["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"];
     public int HeartbeatSeconds { get; set; } = PhoneHomeProtocol.DefaultHeartbeatSeconds;
 
+    /// <summary>The bare agent names the server projects a runner-bound launch onto.</summary>
+    public static readonly IReadOnlyList<string> KnownExecutableNames = ["claude", "codex", "grok"];
+
+    /// <summary>
+    /// Where this host's own <c>claude</c>, <c>codex</c> and <c>grok</c> live, keyed by the bare name
+    /// the server projects (<c>PhoneHomeLaunchPolicy.ProjectExe</c>). Empty in the Linux image, whose
+    /// binaries are on PATH and whose Codex is pinned to <c>/usr/local/bin/codex</c>. A native
+    /// Windows runner names its installed executables here (for example <c>claude.exe</c> and the npm
+    /// <c>codex.cmd</c> shim, which <c>CodexWindowsLaunchPolicy</c> then rewrites to node + codex.js).
+    /// Admission and the sign-in probes still run on the bare name; only the process that starts
+    /// is resolved through this map.
+    /// </summary>
+    public Dictionary<string, string> Executables { get; set; } = new(StringComparer.Ordinal);
+
     /// <summary>CARD-0716 D-4: bound on the registration HTTP call. The client has no other use.</summary>
     public int RegistrationTimeoutSeconds { get; set; } = 8;
 
@@ -121,14 +135,15 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:SecretPath must not be empty.");
         if (string.IsNullOrWhiteSpace(StoreIdPath))
             throw new InvalidOperationException("PhoneHome:StoreIdPath must not be empty.");
-        if (string.IsNullOrWhiteSpace(AllowedCwd) || !AllowedCwd.StartsWith('/'))
-            throw new InvalidOperationException("PhoneHome:AllowedCwd must be a POSIX absolute path.");
-        if (string.IsNullOrWhiteSpace(RunnerRepository) || !RunnerRepository.StartsWith('/'))
-            throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path.");
-        if (RunnerRepositoriesRoot is { } root && !root.StartsWith('/'))
-            throw new InvalidOperationException("PhoneHome:RunnerRepositoriesRoot must be a POSIX absolute path.");
-        if (PushCredentialPolicyPath is { } policyPath && !policyPath.StartsWith('/'))
-            throw new InvalidOperationException("PhoneHome:PushCredentialPolicyPath must be a POSIX absolute path.");
+        // A Linux container uses POSIX paths; a native Windows runner uses drive-rooted ones.
+        if (!RunnerPathForm.IsAbsolute(AllowedCwd))
+            throw new InvalidOperationException("PhoneHome:AllowedCwd must be a POSIX absolute path or a drive-rooted Windows path.");
+        if (!RunnerPathForm.IsAbsolute(RunnerRepository))
+            throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path or a drive-rooted Windows path.");
+        if (RunnerRepositoriesRoot is { } root && !RunnerPathForm.IsAbsolute(root))
+            throw new InvalidOperationException("PhoneHome:RunnerRepositoriesRoot must be a POSIX absolute path or a drive-rooted Windows path.");
+        if (PushCredentialPolicyPath is { } policyPath && !RunnerPathForm.IsAbsolute(policyPath))
+            throw new InvalidOperationException("PhoneHome:PushCredentialPolicyPath must be a POSIX absolute path or a drive-rooted Windows path.");
         if (!RepositoryCloneSource.TryNormalize(RunnerCloneSource, out _))
             throw new InvalidOperationException("PhoneHome:RunnerCloneSource must name a repository.");
         if (AllowedCloneSources is null || AllowedCloneSources.Any(prefix =>
@@ -136,14 +151,23 @@ public sealed class PhoneHomeSettings
                 || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0
                 || uri.Query.Length > 0 || uri.Fragment.Length > 0 || !prefix.EndsWith('/')))
             throw new InvalidOperationException("PhoneHome:AllowedCloneSources entries must be absolute https prefixes ending in '/'.");
-        if (string.IsNullOrWhiteSpace(ClaudeHome) || !ClaudeHome.StartsWith('/'))
-            throw new InvalidOperationException("PhoneHome:ClaudeHome must be a POSIX absolute path.");
-        if (string.IsNullOrWhiteSpace(CodexHome) || !CodexHome.StartsWith('/'))
-            throw new InvalidOperationException("PhoneHome:CodexHome must be a POSIX absolute path.");
+        if (!RunnerPathForm.IsAbsolute(ClaudeHome))
+            throw new InvalidOperationException("PhoneHome:ClaudeHome must be a POSIX absolute path or a drive-rooted Windows path.");
+        if (!RunnerPathForm.IsAbsolute(CodexHome))
+            throw new InvalidOperationException("PhoneHome:CodexHome must be a POSIX absolute path or a drive-rooted Windows path.");
         if (Capacity < 1)
             throw new InvalidOperationException("PhoneHome:Capacity must be positive.");
-        if (RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
-            throw new InvalidOperationException("PhoneHome:RawExeAllowList entries must be POSIX absolute paths.");
+        if (RawExeAllowList.Any(exe => !RunnerPathForm.IsAbsolute(exe)))
+            throw new InvalidOperationException("PhoneHome:RawExeAllowList entries must be POSIX absolute paths or drive-rooted Windows paths.");
+        foreach (var (name, path) in Executables ?? [])
+        {
+            if (!KnownExecutableNames.Contains(name))
+                throw new InvalidOperationException(
+                    $"PhoneHome:Executables:{name} is not one of {string.Join(", ", KnownExecutableNames)}.");
+            if (!RunnerPathForm.IsAbsolute(path))
+                throw new InvalidOperationException(
+                    $"PhoneHome:Executables:{name} must be a POSIX absolute path or a drive-rooted Windows path.");
+        }
         if (HeartbeatSeconds <= 0)
             throw new InvalidOperationException("PhoneHome:HeartbeatSeconds must be positive.");
         if (RegistrationTimeoutSeconds < 1 || RegistrationTimeoutSeconds > 120)

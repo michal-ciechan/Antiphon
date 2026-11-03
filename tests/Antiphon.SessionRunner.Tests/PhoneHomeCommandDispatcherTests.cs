@@ -608,6 +608,101 @@ public class PhoneHomeCommandDispatcherTests
     // --- CARD-0660 D-7/D-9: Codex on the runner (V-3). ---
 
     [Test]
+    public async Task Windows_runner_launches_its_configured_executables_under_a_drive_rooted_workspace()
+    {
+        // A native Windows phone-home runner: the server still projects bare names, admission still
+        // keys on them, and only the process that starts is this host's configured executable. An
+        // unconfigured name keeps its bare form; codex is not pinned to the Linux image path.
+        var runtime = new RecordingRuntime();
+        var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
+        {
+            Enabled = true,
+            AllowedCwd = "C:/Antiphon/runner/work",
+            Capacity = 5,
+            CapacityStatePath = TestCapacityPath(),
+            Executables = new(StringComparer.Ordinal)
+            {
+                ["claude"] = @"C:\Users\me\.local\bin\claude.exe",
+                ["codex"] = @"C:\Users\me\AppData\Roaming\npm\codex.cmd",
+            },
+        });
+
+        var claude = await dispatcher.DispatchAsync(
+            Launch(Request("claude", "C:/Antiphon/runner/work")), CancellationToken.None);
+        claude.Kind.ShouldBe(PhoneHomeFrameKind.Result, claude.ErrorDetail);
+        var codex = await dispatcher.DispatchAsync(
+            Launch(Request("codex", "C:/Antiphon/runner/work/worktrees/task-1") with { TranscriptFormat = TranscriptFormats.Codex }),
+            CancellationToken.None);
+        codex.Kind.ShouldBe(PhoneHomeFrameKind.Result, codex.ErrorDetail);
+        var grok = await dispatcher.DispatchAsync(
+            Launch(Request("grok", "C:/Antiphon/runner/work")), CancellationToken.None);
+        grok.Kind.ShouldBe(PhoneHomeFrameKind.Result, grok.ErrorDetail);
+
+        runtime.Started.Select(started => started.Exe).ShouldBe(
+        [
+            @"C:\Users\me\.local\bin\claude.exe",
+            @"C:\Users\me\AppData\Roaming\npm\codex.cmd",
+            "grok",
+        ]);
+
+        // The server never names a host path: the configured path itself is not an admitted exe,
+        // and a sibling of the workspace root is not under it.
+        var hostPath = await dispatcher.DispatchAsync(
+            Launch(Request(@"C:\Users\me\.local\bin\claude.exe", "C:/Antiphon/runner/work")), CancellationToken.None);
+        hostPath.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        var sibling = await dispatcher.DispatchAsync(
+            Launch(Request("claude", "C:/Antiphon/runner/workspace")), CancellationToken.None);
+        sibling.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        runtime.Started.Count.ShouldBe(3);
+    }
+
+    [Test]
+    public void Windows_runner_settings_validate_and_malformed_paths_are_refused()
+    {
+        static PhoneHomeSettings Windows(Action<PhoneHomeSettings>? mutate = null)
+        {
+            var settings = new PhoneHomeSettings
+            {
+                Enabled = true,
+                RunnerId = "laptop",
+                ServerOrigin = "https://antiphon.desktop.codeperf.net",
+                SecretPath = @"C:\Antiphon\runner\secrets\phone-home",
+                StoreIdPath = @"C:\Antiphon\runner\state\runner-store-id",
+                AllowedCwd = "C:/Antiphon/runner/work",
+                RunnerRepository = "C:/Antiphon/runner/work/repos/antiphon",
+                ClaudeHome = @"C:\Users\me\.claude",
+                CodexHome = @"C:\Users\me\.codex",
+                GrokHome = @"C:\Users\me\.grok",
+                RawExeAllowList = [@"C:\Program Files\PowerShell\7\pwsh.exe"],
+                Executables = new(StringComparer.Ordinal) { ["claude"] = @"C:\Users\me\.local\bin\claude.exe" },
+            };
+            mutate?.Invoke(settings);
+            return settings;
+        }
+
+        Should.NotThrow(() => Windows().Validate());
+        // The Linux container shape is unchanged.
+        Should.NotThrow(() => new PhoneHomeSettings { Enabled = true, ServerOrigin = "https://x.example" }.Validate());
+
+        foreach (var (field, mutate) in new (string, Action<PhoneHomeSettings>)[]
+                 {
+                     ("AllowedCwd", s => s.AllowedCwd = "work"),
+                     ("AllowedCwd", s => s.AllowedCwd = "C:work"),
+                     ("AllowedCwd", s => s.AllowedCwd = @"\\server\share\work"),
+                     ("RunnerRepository", s => s.RunnerRepository = @"repos\antiphon"),
+                     ("ClaudeHome", s => s.ClaudeHome = "~/.claude"),
+                     ("CodexHome", s => s.CodexHome = ""),
+                     ("RawExeAllowList", s => s.RawExeAllowList = ["pwsh.exe"]),
+                     ("Executables:claude", s => s.Executables["claude"] = "claude.exe"),
+                     ("Executables:node", s => s.Executables["node"] = @"C:\node.exe"),
+                 })
+        {
+            var ex = Should.Throw<InvalidOperationException>(() => Windows(mutate).Validate(), field);
+            ex.Message.ShouldContain("PhoneHome:" + field, Case.Sensitive);
+        }
+    }
+
+    [Test]
     public async Task Codex_exe_is_only_the_bare_name_or_the_image_install_path()
     {
         // The Dockerfile links exactly /usr/local/bin/codex. The desktop's codex.cmd, another

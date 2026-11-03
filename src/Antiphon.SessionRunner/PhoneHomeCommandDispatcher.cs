@@ -669,10 +669,13 @@ public sealed class PhoneHomeCommandDispatcher
         var launch = request.Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)
             ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Launch body is required.", 400);
         RejectUnsupportedLaunch(launch);
-        launch = WithImageCodexPath(launch);
+        // A runner that names its own codex (native Windows) must not be pinned to the image path.
+        if (!_settings.Executables.ContainsKey("codex"))
+            launch = WithImageCodexPath(launch);
         await RejectSignedOutClaudeAsync(launch, ct);
         await RejectSignedOutGrokAsync(launch, ct);
         await RejectSignedOutCodexAsync(launch, ct);
+        launch = WithConfiguredExecutable(launch, _settings.Executables);
         // Capacity has to be rechecked inside the mutation lock. A check before StartAsync
         // lets two launches both pass while neither has recorded a session yet.
         return await MutateAsync(request, async () =>
@@ -866,6 +869,20 @@ public sealed class PhoneHomeCommandDispatcher
     /// </summary>
     internal static RunnerLaunchRequest WithImageCodexPath(RunnerLaunchRequest launch) =>
         string.Equals(launch.Exe, "codex", StringComparison.Ordinal) ? launch with { Exe = ImageCodexPath } : launch;
+
+    /// <summary>
+    /// A native Windows runner: an admitted bare <c>claude</c>, <c>codex</c> or <c>grok</c> starts the
+    /// executable this host configured under <see cref="PhoneHomeSettings.Executables"/>, so the
+    /// process never depends on a PATH lookup in the child's environment. Runs after admission and
+    /// the sign-in probes, which are keyed on the bare name. Anything else is unchanged.
+    /// </summary>
+    internal static RunnerLaunchRequest WithConfiguredExecutable(
+        RunnerLaunchRequest launch, IReadOnlyDictionary<string, string>? executables) =>
+        executables is not null && launch.Exe is { } exe
+            && PhoneHomeSettings.KnownExecutableNames.Contains(exe)
+            && executables.TryGetValue(exe, out var path) && !string.IsNullOrWhiteSpace(path)
+            ? launch with { Exe = path }
+            : launch;
 
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {

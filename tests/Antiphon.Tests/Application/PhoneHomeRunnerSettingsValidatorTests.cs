@@ -45,7 +45,7 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
     [Test]
     public void Runner_repository_and_capacity_bound_are_checked()
     {
-        PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.RunnerRepository = @"C:\src\Antiphon"))
+        PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.RunnerRepository = @"src\Antiphon"))
             .ShouldContain(m => m.Contains("RunnerRepository", StringComparison.Ordinal));
         PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.MaxCapacity = 0))
             .ShouldContain(m => m.Contains("MaxCapacity", StringComparison.Ordinal));
@@ -68,16 +68,21 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
     }
 
     [Test]
-    public void Child_codex_home_must_be_a_persistent_posix_path()
+    public void Child_codex_home_must_be_a_persistent_absolute_path()
     {
         // CARD-0660 D-3. The runner-state home the compose file and the runner's probe also name.
-        foreach (var valid in new[] { "/state/codex", "/state/codex/", "/var/lib/antiphon/codex" })
+        // A native Windows runner names its own drive-rooted home, in either slash spelling.
+        foreach (var valid in new[]
+                 {
+                     "/state/codex", "/state/codex/", "/var/lib/antiphon/codex", @"C:\Users\x\.codex", "C:/Users/x/.codex",
+                 })
             PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildCodexHome = valid)).ShouldBeEmpty(valid);
 
         foreach (var invalid in new[]
                  {
-                     "", "   ", "state/codex", @"C:\Users\x\.codex", "~/.codex", "/state/../tmp/codex",
+                     "", "   ", "state/codex", "~/.codex", "/state/../tmp/codex",
                      "/tmp", "/tmp/", "/tmp/codex", "/",
+                     @"C:\", "C:/", "C:codex", @"\\server\share\codex", @"C:\Users\..\codex",
                  })
         {
             PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildCodexHome = invalid))
@@ -90,10 +95,59 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
     }
 
     [Test]
-    public void Child_claude_home_must_be_posix_absolute()
+    public void Child_claude_home_must_be_absolute()
     {
         PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildClaudeHome = "state/claude"))
             .ShouldContain(m => m.Contains("ChildClaudeHome", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Native_windows_runner_entry_validates_with_drive_rooted_paths()
+    {
+        // A native Windows phone-home runner (a laptop) is a map entry beside server2 whose
+        // runner-side paths are drive-rooted. Both slash spellings validate; relative, UNC and
+        // drive-relative forms, and a bare drive as the Codex home, do not.
+        var settings = RollingRunnerSettings.Pair("s", "s");
+        settings.Runners["laptop"] = WindowsEntry(_ => { });
+        PhoneHomeRunnerSettingsRules.Validate(settings).ShouldBeEmpty();
+
+        foreach (var (field, mutate) in new (string, Action<PhoneHomeRunnerEntry>)[]
+                 {
+                     ("RunnerWorkspace", e => e.RunnerWorkspace = "C:work"),
+                     ("RunnerWorkspace", e => e.RunnerWorkspace = @"\\server\share\work"),
+                     ("RunnerRepository", e => e.RunnerRepository = @"repos\antiphon"),
+                     ("RawExeAllowList", e => e.RawExeAllowList = ["pwsh.exe"]),
+                     ("ChildClaudeHome", e => e.ChildClaudeHome = ".claude"),
+                     ("ChildCodexHome", e => e.ChildCodexHome = "D:/"),
+                 })
+        {
+            var broken = RollingRunnerSettings.Pair("s", "s");
+            broken.Runners["laptop"] = WindowsEntry(mutate);
+            PhoneHomeRunnerSettingsRules.Validate(broken)
+                .ShouldContain(m => m.Contains("Runners:laptop:" + field, StringComparison.Ordinal), field);
+        }
+    }
+
+    private static PhoneHomeRunnerEntry WindowsEntry(Action<PhoneHomeRunnerEntry> mutate)
+    {
+        var entry = new PhoneHomeRunnerEntry
+        {
+            Enabled = true,
+            DisplayName = "Laptop",
+            AllowDelegatedTasks = true,
+            HostWorkspaceRoot = @"C:\src\Antiphon",
+            RunnerWorkspace = "C:/Antiphon/runner/work",
+            RunnerRepository = @"C:\Antiphon\runner\work\repos\antiphon",
+            RawExeAllowList = [@"C:\Program Files\PowerShell\7\pwsh.exe"],
+            ChildGrokHome = @"C:\Users\me\.grok",
+            ChildClaudeHome = @"C:\Users\me\.claude",
+            ChildCodexHome = "C:/Users/me/.codex",
+            MaxCapacity = 2,
+            CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+            SharedSecret = "laptop-secret",
+        };
+        mutate(entry);
+        return entry;
     }
 
     // CARD-0727 V-3. D-2: server2-temp repeats server2's values, including the secret.

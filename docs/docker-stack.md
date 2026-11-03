@@ -1167,3 +1167,39 @@ The class accounting checked into `tests/linux-test-roster.json` is the executab
 
 Windows CP-1 through CP-5 passed on `3569ed7cd520e3a76bafc0643feb1da0b42c73ca`. Live cases run on server2 through `scripts/c590-remote.sh`, invoked by `scripts/verify-docker-stack.ps1` when `ANTIPHON_C590_STUB` is unset. Evidence for a run is `/work/test-evidence/<run-id>/<case>/`. Stub mode still answers `UnknownCase` for a case the local guards do not implement.
 PowerShell 7's `ConvertFrom-Json` returns an ISO-8601-looking manifest `tempRetiredAt` as `[datetime]`, so `Invoke-C590LiveCase` reformats it with `ToUniversalTime().ToString('o')` before validating; a case must never cast such a field directly to `[string]` (CARD-0780).
+
+## Native Windows phone-home runner
+
+A second Windows host (a laptop) can run the same session runner natively and phone home to the
+desktop server exactly as server2 does: it registers at `/api/session-runners/register` with the
+shared secret, then holds a WebSocket at `/api/session-runners/<id>/connect` through
+`https://antiphon.desktop.codeperf.net` (Caddy, then Vite's `/api` proxy). It opens no inbound
+port. Its sessions are native Windows processes with the host's own `claude`, `codex` and `grok`,
+so it adds Windows seats, not Linux ones.
+
+Runner-side paths may be drive-rooted on both sides of the protocol: `PhoneHome:*` on the runner
+and `PhoneHomeRunner:Runners:<id>:*` on the server accept a POSIX path or a drive-rooted Windows
+path (`C:/...` or `C:\...`). UNC, device and drive-relative forms are refused. Use the forward-slash
+spelling for `RunnerWorkspace` and `RunnerRepository`: it is the form the runner reports
+worktree paths in. `PhoneHome:Executables:<claude|codex|grok>` names the executable a projected
+bare agent name starts; admission and the sign-in probes still key on the bare name, and an
+unconfigured name keeps the Linux behaviour (Codex pinned to `/usr/local/bin/codex`).
+
+1. **Desktop (operator, main checkout).** Generate a secret, then add one map entry to the
+   `antiphon-server` user-secrets beside `server2` (PowerShell, not Git Bash):
+   `Enabled=true`, `DisplayName=Laptop`, `AllowDelegatedTasks=true`,
+   `HostWorkspaceRoot=C:\src\Antiphon`, `RunnerWorkspace=C:/Antiphon/runner/work`,
+   `RunnerRepository=C:/Antiphon/runner/work/repos/antiphon`, `MaxCapacity=2`, the laptop's
+   `ChildClaudeHome`/`ChildCodexHome`/`ChildGrokHome` and `RawExeAllowList:0` (the start script
+   prints all of them), `CallbackOrigin=https://antiphon.desktop.codeperf.net` and `SharedSecret`.
+   Restart with `scripts/restart-apphost.ps1`; `GET /api/session-runners` then lists the id.
+2. **Laptop.** Write the same secret to `C:\Antiphon\runner\secrets\phone-home` and run
+   `pwsh -NoProfile -File scripts/start-windows-phone-home-runner.ps1 -RunnerId laptop` from a normal
+   terminal (an agent shell's Job Object would kill the detached pty hosts). The runner clones its
+   own checkout into `RunnerRepository` on the first workspace mirror. `GET
+   /api/session-runners/laptop/status` reports `available` and `dispatchEligible` once connected.
+
+Like the desktop runner, a Windows phone-home runner advertises the `windows-job-v1` custody
+backend, and the server accepts its slash-normalized drive-rooted verification coordinates under
+its own roots. A remote SourceLanding Mutation on a Windows runner has not been exercised end to
+end yet; keep those on the desktop or server2 until it has.

@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -298,9 +299,13 @@ public sealed class PhoneHomeLaunchPolicy
         // A runner-bound Raw agent may name an image-owned executable, and only one: the allow
         // list is the image's own, not the desktop's, and a host path that happens to end in the
         // same file name is not the same program.
+        // A native Windows runner's allow list is drive-rooted; compare it slash-normalized and
+        // case-insensitively (its filesystem folds case) and project the runner's own spelling.
         var posix = specExe.Replace('\\', '/');
-        var match = entry.RawExeAllowList
-            .FirstOrDefault(allowed => string.Equals(allowed, posix, StringComparison.Ordinal));
+        var match = entry.RawExeAllowList.FirstOrDefault(allowed =>
+            RunnerPathForm.IsWindowsAbsolute(allowed)
+                ? string.Equals(allowed.Replace('\\', '/'), posix, StringComparison.OrdinalIgnoreCase)
+                : string.Equals(allowed, posix, StringComparison.Ordinal));
         if (match is not null)
             return match;
         throw new ConflictException(

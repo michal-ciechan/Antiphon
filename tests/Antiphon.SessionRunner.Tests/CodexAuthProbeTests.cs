@@ -286,7 +286,7 @@ public class CodexAuthProbeTests
     }
 
     [Test]
-    public void Enabled_settings_require_a_posix_codex_home()
+    public void Enabled_settings_require_an_absolute_codex_home()
     {
         static PhoneHomeSettings Enabled(string codexHome) => new()
         {
@@ -295,8 +295,10 @@ public class CodexAuthProbeTests
             CodexHome = codexHome,
         };
 
+        // POSIX for the Linux image; drive-rooted for a native Windows runner.
         Should.NotThrow(() => Enabled("/state/codex").Validate());
-        foreach (var home in new[] { "", " ", "state/codex", "C:\\Users\\me\\.codex", "~/.codex" })
+        Should.NotThrow(() => Enabled("C:\\Users\\me\\.codex").Validate());
+        foreach (var home in new[] { "", " ", "state/codex", "C:.codex", "\\\\server\\share\\.codex", "~/.codex" })
         {
             var ex = Should.Throw<InvalidOperationException>(() => Enabled(home).Validate(), home);
             ex.Message.ShouldContain("PhoneHome:CodexHome", customMessage: home);

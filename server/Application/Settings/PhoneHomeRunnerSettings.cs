@@ -263,23 +263,24 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:StandingAgentId must be set when enabled unless AllowDelegatedTasks is true.");
         if (string.IsNullOrWhiteSpace(options.HostWorkspaceRoot))
             failures.Add("PhoneHomeRunner:HostWorkspaceRoot must be set when enabled.");
-        if (string.IsNullOrWhiteSpace(options.RunnerWorkspace) || !options.RunnerWorkspace.StartsWith('/'))
-            failures.Add("PhoneHomeRunner:RunnerWorkspace must be a POSIX absolute path.");
-        if (string.IsNullOrWhiteSpace(options.RunnerRepository) || !options.RunnerRepository.StartsWith('/'))
-            failures.Add("PhoneHomeRunner:RunnerRepository must be a POSIX absolute path.");
+        if (!RunnerPathForm.IsAbsolute(options.RunnerWorkspace))
+            failures.Add("PhoneHomeRunner:RunnerWorkspace must be a POSIX absolute path or a drive-rooted Windows path.");
+        if (!RunnerPathForm.IsAbsolute(options.RunnerRepository))
+            failures.Add("PhoneHomeRunner:RunnerRepository must be a POSIX absolute path or a drive-rooted Windows path.");
         if (options.MaxCapacity <= 0)
             failures.Add("PhoneHomeRunner:MaxCapacity must be positive.");
-        if (options.RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
-            failures.Add("PhoneHomeRunner:RawExeAllowList entries must be POSIX absolute paths.");
-        if (string.IsNullOrWhiteSpace(options.ChildGrokHome) || !options.ChildGrokHome.StartsWith('/'))
-            failures.Add("PhoneHomeRunner:ChildGrokHome must be a POSIX absolute path.");
-        if (string.IsNullOrWhiteSpace(options.ChildClaudeHome) || !options.ChildClaudeHome.StartsWith('/'))
-            failures.Add("PhoneHomeRunner:ChildClaudeHome must be a POSIX absolute path.");
+        if (options.RawExeAllowList.Any(exe => !RunnerPathForm.IsAbsolute(exe)))
+            failures.Add("PhoneHomeRunner:RawExeAllowList entries must be POSIX absolute paths or drive-rooted Windows paths.");
+        if (!RunnerPathForm.IsAbsolute(options.ChildGrokHome))
+            failures.Add("PhoneHomeRunner:ChildGrokHome must be a POSIX absolute path or a drive-rooted Windows path.");
+        if (!RunnerPathForm.IsAbsolute(options.ChildClaudeHome))
+            failures.Add("PhoneHomeRunner:ChildClaudeHome must be a POSIX absolute path or a drive-rooted Windows path.");
         // CARD-0660 D-3: the persistent runner-state home, never a temporary one.
-        if (string.IsNullOrWhiteSpace(options.ChildCodexHome) || !options.ChildCodexHome.StartsWith('/')
-            || options.ChildCodexHome.Split('/').Contains(".."))
-            failures.Add("PhoneHomeRunner:ChildCodexHome must be a POSIX absolute path.");
-        else if (options.ChildCodexHome.TrimEnd('/') is "/tmp" or "" || options.ChildCodexHome.StartsWith("/tmp/", StringComparison.Ordinal))
+        if (!RunnerPathForm.IsAbsolute(options.ChildCodexHome)
+            || RunnerPathForm.HasParentSegment(options.ChildCodexHome))
+            failures.Add("PhoneHomeRunner:ChildCodexHome must be a POSIX absolute path or a drive-rooted Windows path.");
+        else if (options.ChildCodexHome.TrimEnd('/') is "/tmp" || RunnerPathForm.IsFilesystemRoot(options.ChildCodexHome)
+            || options.ChildCodexHome.StartsWith("/tmp/", StringComparison.Ordinal))
             failures.Add("PhoneHomeRunner:ChildCodexHome must be a persistent path, not /tmp or the filesystem root.");
         if (!Uri.TryCreate(options.CallbackOrigin, UriKind.Absolute, out var origin)
             || (origin.Scheme != Uri.UriSchemeHttp && origin.Scheme != Uri.UriSchemeHttps))
@@ -352,23 +353,24 @@ public static class PhoneHomeRunnerSettingsRules
                 failures.Add($"PhoneHomeRunner:Runners:{id}:StandingAgentId must be set unless AllowDelegatedTasks is true.");
             if (string.IsNullOrWhiteSpace(entry.HostWorkspaceRoot))
                 failures.Add($"PhoneHomeRunner:Runners:{id}:HostWorkspaceRoot must be set.");
-            if (string.IsNullOrWhiteSpace(entry.RunnerWorkspace) || !entry.RunnerWorkspace.StartsWith('/'))
-                failures.Add($"PhoneHomeRunner:Runners:{id}:RunnerWorkspace must be a POSIX absolute path.");
-            if (string.IsNullOrWhiteSpace(entry.RunnerRepository) || !entry.RunnerRepository.StartsWith('/'))
-                failures.Add($"PhoneHomeRunner:Runners:{id}:RunnerRepository must be a POSIX absolute path.");
+            if (!RunnerPathForm.IsAbsolute(entry.RunnerWorkspace))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:RunnerWorkspace must be a POSIX absolute path or a drive-rooted Windows path.");
+            if (!RunnerPathForm.IsAbsolute(entry.RunnerRepository))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:RunnerRepository must be a POSIX absolute path or a drive-rooted Windows path.");
             if (entry.MaxCapacity <= 0)
                 failures.Add($"PhoneHomeRunner:Runners:{id}:MaxCapacity must be positive.");
-            if (entry.RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
-                failures.Add($"PhoneHomeRunner:Runners:{id}:RawExeAllowList entries must be POSIX absolute paths.");
-            if (string.IsNullOrWhiteSpace(entry.ChildGrokHome) || !entry.ChildGrokHome.StartsWith('/'))
-                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildGrokHome must be a POSIX absolute path.");
-            if (string.IsNullOrWhiteSpace(entry.ChildClaudeHome) || !entry.ChildClaudeHome.StartsWith('/'))
-                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildClaudeHome must be a POSIX absolute path.");
-            if (string.IsNullOrWhiteSpace(entry.ChildCodexHome) || !entry.ChildCodexHome.StartsWith('/')
-                || entry.ChildCodexHome.Split('/').Contains("..")
+            if (entry.RawExeAllowList.Any(exe => !RunnerPathForm.IsAbsolute(exe)))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:RawExeAllowList entries must be POSIX absolute paths or drive-rooted Windows paths.");
+            if (!RunnerPathForm.IsAbsolute(entry.ChildGrokHome))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildGrokHome must be a POSIX absolute path or a drive-rooted Windows path.");
+            if (!RunnerPathForm.IsAbsolute(entry.ChildClaudeHome))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildClaudeHome must be a POSIX absolute path or a drive-rooted Windows path.");
+            if (!RunnerPathForm.IsAbsolute(entry.ChildCodexHome)
+                || RunnerPathForm.HasParentSegment(entry.ChildCodexHome)
                 || entry.ChildCodexHome.TrimEnd('/') is "/tmp"
+                || RunnerPathForm.IsFilesystemRoot(entry.ChildCodexHome)
                 || entry.ChildCodexHome.StartsWith("/tmp/", StringComparison.Ordinal))
-                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildCodexHome must be a persistent POSIX path.");
+                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildCodexHome must be a persistent POSIX or drive-rooted Windows path.");
             if (!Uri.TryCreate(entry.CallbackOrigin, UriKind.Absolute, out var origin)
                 || (origin.Scheme != Uri.UriSchemeHttp && origin.Scheme != Uri.UriSchemeHttps))
                 failures.Add($"PhoneHomeRunner:Runners:{id}:CallbackOrigin must be an absolute http(s) URI.");

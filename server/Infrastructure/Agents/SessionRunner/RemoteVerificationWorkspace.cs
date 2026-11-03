@@ -99,14 +99,19 @@ public sealed class RemoteVerificationWorkspace(
     private void RequireUnderWorkspace(string? path) =>
         RequirePrefix(path, runnerWorkspaceRoot.TrimEnd('/') + "/worktrees", allowExact: false);
 
-    private static void RequirePrefix(string? path, string root, bool allowExact)
+    internal static void RequirePrefix(string? path, string root, bool allowExact)
     {
+        // A native Windows runner reports slash-normalized drive-rooted paths (C:/...); its configured
+        // root may be spelled with backslashes, and its filesystem folds case.
         var normalized = (path ?? "").TrimEnd('/');
-        var canonicalRoot = root.TrimEnd('/');
+        var windows = RunnerPathForm.IsWindowsAbsolute(root);
+        var canonicalRoot = windows ? RunnerPathForm.Normalize(root) : root.TrimEnd('/');
+        var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (normalized.Length == 0 || normalized.Contains('\\', StringComparison.Ordinal)
-            || normalized[0] != '/' || normalized.Split('/').Any(s => s is "." or "..")
-            || !(normalized.StartsWith(canonicalRoot + "/", StringComparison.Ordinal)
-                 || allowExact && normalized == canonicalRoot))
+            || !(windows ? RunnerPathForm.IsWindowsAbsolute(normalized) : normalized[0] == '/')
+            || normalized.Split('/').Any(s => s is "." or "..")
+            || !(normalized.StartsWith(canonicalRoot + "/", comparison)
+                 || allowExact && string.Equals(normalized, canonicalRoot, comparison)))
             throw new ConflictException("verification_creation_outside_runner_repository");
     }
 }
