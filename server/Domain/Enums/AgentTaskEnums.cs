@@ -282,6 +282,14 @@ public enum AgentTaskEventType
     SourceAdopted = 39,
     /// <summary>CARD-0407. An audited in-turn internal decision check, never a task settlement.</summary>
     DecisionQuestion = 40,
+
+    /// <summary>
+    /// CARD-0824 S1c (T-D-5). One preparation's workspace slot decision, saved before its first mirror request and
+    /// reused by every resend: <c>workspace_slot_decision: slot|legacy preparation=&lt;id&gt; reason=&lt;reason&gt;</c>, or
+    /// <c>workspace_slot_decision: cleared preparation=&lt;id&gt; refusal=&lt;code&gt;</c> after a definitive runner refusal.
+    /// Appended; never renumber.
+    /// </summary>
+    WorkspaceSlotDecision = 41,
 }
 
 /// <summary>

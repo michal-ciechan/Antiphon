@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,12 +44,21 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     /// <summary>Test seam: answer a frame instead of the runner (null passes it on to the runner).</summary>
     public Func<PhoneHomeFrame, PhoneHomeFrame?>? Intercept { get; set; }
 
-    public static async Task<C0824SlotTransportWorld> StartAsync()
+    /// <summary>
+    /// The flag is on. CARD-0824 S1c S-5: <paramref name="tweak"/> adjusts the rig's settings after that, and
+    /// <paramref name="configure"/> registers after the world's own services (a role monitor, a gate).
+    /// </summary>
+    public static async Task<C0824SlotTransportWorld> StartAsync(
+        Action<DelegationSettings>? tweak = null, Action<IServiceCollection>? configure = null)
     {
         var world = new C0824SlotTransportWorld(Path.Combine(Path.GetTempPath(), "c0824-transport-" + Guid.NewGuid().ToString("N")));
         world.BuildRepository();
         var git = new ScratchLandingGit(world);
-        world.Rig = await Rig.StartAsync(settings => settings.WorkspaceSlotsEnabled = true,
+        world.Rig = await Rig.StartAsync(settings =>
+            {
+                settings.WorkspaceSlotsEnabled = true;
+                tweak?.Invoke(settings);
+            },
             capabilities: new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
                 Features: [RunnerCapabilityFeatures.WorkspaceSlotV1], VerificationCustodyBackend: null),
             configure: services =>
@@ -56,6 +66,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
                 services.RemoveAll<ILandingGit>();
                 services.AddSingleton<ILandingGit>(git);
                 services.AddScoped<WorkspaceSlotReleaseService>();
+                configure?.Invoke(services);
             });
         world.StartRunner();
         world.Rig.Peer.Reply = world.Answer;

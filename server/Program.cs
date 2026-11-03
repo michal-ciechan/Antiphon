@@ -180,10 +180,8 @@ try
     builder.Services.AddOptions<TrackerSettings>()
         .Bind(builder.Configuration.GetSection(TrackerSettings.SectionName))
         .ValidateOnStart();
-    builder.Services.AddSingleton<IValidateOptions<DelegationSettings>, DelegationSettingsValidator>();
-    builder.Services.AddOptions<DelegationSettings>()
-        .Bind(builder.Configuration.GetSection("Delegation"))
-        .ValidateOnStart();
+    // CARD-0824 S1c S-2: the Delegation binding and both validators (grammar and configuration shape).
+    builder.Services.AddDelegationSettings(builder.Configuration);
     // CARD-0544 D-7: Interim readiness gate. Ships Enabled=false; only S6 may turn it on.
     builder.Services.AddOptions<InterimVerificationSettings>()
         .Bind(builder.Configuration.GetSection(InterimVerificationSettings.SectionName));
@@ -346,6 +344,8 @@ try
     // CARD-0604 D-15/G-21: the remote mirror seam and the spill courier. Both singletons: the
     // courier holds a one-shot body per live session, and the workspace service is stateless.
     builder.Services.AddSingleton<RemoteSpillCourier>();
+    // CARD-0824 S1c: the role allow-list for slot leases, read from the options monitor at each decision.
+    builder.Services.AddSingleton<WorkspaceSlotRoleGate>();
     builder.Services.AddScoped<RemoteWorkspaceService>();
     // CARD-0657 D-1: the pre-attribution sync the completion evaluator prepares through.
     builder.Services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
