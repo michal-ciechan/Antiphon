@@ -199,7 +199,7 @@ $cases = @{
             Assert-C1680 (@($run.Trace | Where-Object { $_ -eq 'child-stop' }).Count -eq 1) 'W5 stops the launch child'
             Assert-C1680 (-not (Test-Path -LiteralPath $lock)) 'W5 vanished AppHost releases the restart lock'
         }
-        # A stale pid file from the previous AppHost is not this launch's AppHost.
+        # A pid file left by the previous AppHost is not this launch's AppHost, whatever its mtime.
         Invoke-C1680Case 'W5b' @{ pollMs = 250; growUntil = 6; dashAt = 2; appHostDeadAt = 1; healthAt = 6 } @('-TimeoutSec', '30', '-MaxWaitSec', '60') {
             param($run, $lock)
             Assert-C1680 ($run.Exit -eq 0) 'W5b stale pid file from an earlier launch is ignored' "exit=$($run.Exit)"
@@ -207,7 +207,9 @@ $cases = @{
             param($root)
             $old = Join-Path $root 'logs/apphost.pid'
             '515151' | Set-Content -LiteralPath $old -Encoding ASCII
-            (Get-Item -LiteralPath $old).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-30)
+            # Future-dated (clock skew, or written moments before launch): only a pid file
+            # rewritten after the launch belongs to this launch.
+            (Get-Item -LiteralPath $old).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(5)
         }
     }
     # Hard cap: health keeps answering 503 and the log keeps growing.
