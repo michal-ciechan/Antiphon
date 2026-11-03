@@ -1171,6 +1171,29 @@
       ],
       "full": false,
       "id": "P-TEST-e5f5dbdfca3e"
+    },
+    {
+      "paths": [
+        "tests/test-execution-policy.json",
+        "scripts/test-rc-platform.ps1",
+        "tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs",
+        "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs"
+      ],
+      "sets": [
+        "release-gate.platform"
+      ],
+      "full": false,
+      "id": "P-LINUX-ONLY-CENSUS"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/ReleaseGatePlatformTests.cs"
+      ],
+      "sets": [
+        "release-gate.platform"
+      ],
+      "full": false,
+      "id": "P-TEST-61fd6d5458f4"
     }
   ],
   "sets": [
@@ -3048,6 +3071,40 @@
         "browser": false,
         "docker": false
       }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Scripts/ReleaseGatePlatformTests.cs"
+      ],
+      "reason": "CARD-1686: the C1323 harness derives the Linux-only census from the rc policy rows and the [NativeLinuxOnly] markers; a policy, harness or narrowly routed marker-file change runs it.",
+      "owner": "CARD-1686",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Scripts.ReleaseGatePlatformTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/ReleaseGatePlatformTests.cs"
+        }
+      ],
+      "prerequisites": [],
+      "id": "release-gate.platform",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
     }
   ],
   "edges": [
@@ -3089,7 +3146,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "00387e84f79db4135cf29345883c459e717d60427a7cf0345b326734248f3776",
+  "catalogHash": "c62da85de8c20bbbde124e9449d318d6ea335b49827802bb6d25d312552ba2c2",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
