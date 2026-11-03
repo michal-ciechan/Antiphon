@@ -433,8 +433,9 @@ dashboard pinned at `http://localhost:17205`.
 After restart, check `/api/attention`: a phone-home runner still ineligible after
 `Alarms:RunnerGraceSeconds` raises `RunnerUnavailable` and queues caller notes.
 A retired runner never raises; an offline draining runner raises only once its drain is
-older than `Alarms:RunnerDrainMaxMinutes` (30 by default, at most 7 days) or has no
-recorded start, and the alarm loop wakes when a drain passes that bound.
+older than `Alarms:RunnerDrainMaxMinutes` (30 by default, at most 7 days) or has a
+missing or future start (both fail safe and alarm), and the alarm loop wakes once when a
+drain passes that bound, never again for an expiry at or before its last pass.
 Antiphon also inspects registered child journals at startup and every
 `Alarms:SweepMinutes` (15 by default); a stale record raises
 `RepositoryChildJournalStale` with the manual recovery command.
