@@ -36,6 +36,8 @@ public class RunnerRestartScriptCompatibilityTests
     [Test, Arguments("pwsh.exe", true), Arguments("powershell.exe", true), Arguments("pwsh.exe", false), Arguments("powershell.exe", false)]
     public async Task Hung_http_response_is_canceled_at_wait_deadline(string shell, bool hang)
     {
+        if (!hang && !OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: a 200 reaches Identity, and AntiphonRestartTcpOwner.Find reads the iphlpapi.dll TCP owner table, which exists only on Windows");
         using var f = new RestartFixture(); using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); var clients = new List<TcpClient>(); var requests = 0;
