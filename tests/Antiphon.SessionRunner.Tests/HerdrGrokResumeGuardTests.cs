@@ -29,6 +29,27 @@ public class HerdrGrokResumeGuardTests
     }
 
     [Test]
+    [Arguments("home")]
+    [Arguments("parent")]
+    public void A_file_at_or_above_grok_home_is_an_IO_failure_and_does_not_claim_missing_history(string level)
+    {
+        // CARD-1675: a file at GROK_HOME or its parent is unreadable storage; Missing would offer a
+        // fresh start in place of the resume target.
+        var root = EmptyHome();
+        try
+        {
+            var home = level == "home" ? Path.Combine(root, "home") : Path.Combine(root, "parent", "home");
+            File.WriteAllText(level == "home" ? home : Path.Combine(root, "parent"), "synthetic non-directory storage failure");
+            var id = Guid.NewGuid();
+            var request = GrokRequest(id, home, ["--resume", id.ToString("D")]);
+            var error = Should.Throw<IOException>(() => HerdrGrokResumeGuard.Require(id, request, HerdrAgentKinds.Grok, NullLogger.Instance));
+            error.Message.ShouldContain("unavailable");
+            error.Message.ShouldNotContain("missing");
+        }
+        finally { BestEffortDelete(root); }
+    }
+
+    [Test]
     public void Guid_resume_with_no_directory_throws_the_named_code()
     {
         var sessionId = Guid.NewGuid();
