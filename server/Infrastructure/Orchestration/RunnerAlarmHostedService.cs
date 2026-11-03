@@ -25,9 +25,9 @@ public sealed class RunnerAlarmHostedService(
         var failures = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
+            var now = clock.GetUtcNow();
             try
             {
-                var now = clock.GetUtcNow();
                 var signal = wake.Take();
                 var sweep = forceSweep || signal.Sweep || now >= nextSweep;
                 await using var scope = scopes.CreateAsyncScope();
@@ -54,15 +54,16 @@ public sealed class RunnerAlarmHostedService(
                     await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, failures)), clock, stoppingToken);
             }
 
-            await wake.WaitAsync(NextDue(nextSweep), clock, stoppingToken);
+            await wake.WaitAsync(NextDue(state.Current, nextSweep, now,
+                TimeSpan.FromSeconds(settings.Value.RunnerGraceSeconds)), clock, stoppingToken);
         }
     }
 
-    private DateTimeOffset NextDue(DateTimeOffset nextSweep)
+    internal static DateTimeOffset NextDue(RunnerAlarmSnapshot current, DateTimeOffset nextSweep,
+        DateTimeOffset lastPass, TimeSpan grace)
     {
-        var grace = TimeSpan.FromSeconds(settings.Value.RunnerGraceSeconds);
         var due = nextSweep;
-        foreach (var episode in state.Current.Episodes)
+        foreach (var episode in current.Episodes)
         {
             if (episode.RaisedAt is not null)
                 continue;
@@ -72,7 +73,7 @@ public sealed class RunnerAlarmHostedService(
         }
 
         // CARD-1671: a drain hides an outage only up to its bound (inclusive), so wake just past it.
-        foreach (var expires in state.Current.DrainExpiresAt.Values)
+        foreach (var expires in current.DrainExpiresAt.Values)
         {
             var overrunAt = expires + DrainWakeSlack;
             if (overrunAt < due)
