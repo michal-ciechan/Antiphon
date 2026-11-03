@@ -703,6 +703,14 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     }
 
     /// <summary>
+    /// CARD-1617 review D-1: whether the root has exited for the hangup decision. Inert stub.
+    /// </summary>
+    internal static bool RootExited(bool exitObserved, Func<string?>? readStat) => false;
+
+    /// <summary>CARD-1617 review D-1: the production stat reader over one path. Inert stub.</summary>
+    internal static Func<string?> ProcStatReader(string path) => () => null;
+
+    /// <summary>
     /// CARD-1617: whether the next explicit Linux release may issue the kill. Never after a
     /// success; after failed attempt k only once min(2^(k-1) s, 60 s) has passed since that
     /// attempt ended. Called under <see cref="_writeGate"/>.
