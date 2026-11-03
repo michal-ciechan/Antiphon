@@ -207,13 +207,14 @@ public class Card1653RefusalRetainsHostTests
         await using (row)
         {
             row.CompletePendingAsExited("ProcessVanished").ShouldBeTrue();
-            row.CompletePendingAsExited("ProcessVanished").ShouldBeFalse("an exited row is already complete");
-            row.ToDto().Status.ShouldBe("Exited");
+            var second = row.CompletePendingAsExited("ProcessVanished");
             var exited = 0;
             while (reader.TryRead(out var evt))
                 if (evt.EventName == SessionRunnerEventNames.SessionExited)
                     exited++;
             exited.ShouldBe(1, "a pending row publishes SessionExited exactly once");
+            second.ShouldBeFalse("an exited row is already complete");
+            row.ToDto().Status.ShouldBe("Exited");
         }
     }
 
