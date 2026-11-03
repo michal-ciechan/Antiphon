@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -19,12 +20,19 @@ public static partial class ReviewRoundGuard
     /// <summary>The SQL comment on the guard's card query, so a test can fault exactly that query.</summary>
     public const string QueryTag = "ReviewRoundGuard";
 
-    [GeneratedRegex(@"^\s*round:\s*(\d{1,4})\b", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
+    // ASCII digits only (.NET \d matches every Unicode Nd digit, which int.Parse rejects) and no
+    // newline between the label and its number: "round:" then "7" on the next line is not round 7.
+    [GeneratedRegex(@"^[ \t]*round:[ \t]*([0-9]{1,4})\b", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
     private static partial Regex DeclaredRoundLine();
 
-    /// <summary>The first <c>round: N</c> line in the brief, as the review-rounds brief lines write it.</summary>
+    /// <summary>
+    /// The first <c>round: N</c> line in the brief, as the review-rounds brief lines write it. A line that
+    /// does not parse declares nothing, so the count rule applies; the guard never throws on brief text.
+    /// </summary>
     public static int? DeclaredRound(string goal) =>
-        DeclaredRoundLine().Match(goal) is { Success: true } match ? int.Parse(match.Groups[1].Value) : null;
+        DeclaredRoundLine().Match(goal) is { Success: true } match
+            && int.TryParse(match.Groups[1].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out var round)
+            ? round : null;
 
     public static string? Evaluate(string? cardIdentifier, string goal, IReadOnlyList<string> completedReviewShortIds)
     {
