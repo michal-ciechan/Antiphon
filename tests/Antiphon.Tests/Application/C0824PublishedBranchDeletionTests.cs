@@ -100,6 +100,8 @@ public sealed class C0824PublishedBranchDeletionTests
     [Arguments("pending-land-request-other-task")]
     [Arguments("terminal-dependent-does-not-block")]
     [Arguments("owner-card-not-done")]
+    [Arguments("owner-reopened")]
+    [Arguments("pending-land-request-owner")]
     public async Task C0824_dependent_rows(string row, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -139,6 +141,20 @@ public sealed class C0824PublishedBranchDeletionTests
                     CreatedAt = Start, UpdatedAt = Start });
                 owner.CardId = cardId;
                 break;
+            case "owner-reopened":
+                // The owner task itself was reopened after its land: its branch is live work again.
+                owner.Status = AgentTaskStatus.Working; owner.CompletedAt = null;
+                dependent.Status = AgentTaskStatus.Succeeded;
+                break;
+            case "pending-land-request-owner":
+                // A-3: the owner's own new land of the same unchanged branch (for example to another target).
+                dependent.Status = AgentTaskStatus.Succeeded;
+                db.AgentTaskLandRequests.Add(new AgentTaskLandRequest
+                {
+                    Id = Guid.NewGuid(), TaskId = owner.Id, RequestedAt = Start, State = LandRequestState.Queued,
+                    IsPending = true, LastEvaluatedAt = Start, LastProgressAt = Start,
+                });
+                break;
         }
         db.AgentTasks.AddRange(owner, dependent);
         var op = PublishedLandingRow.Build(owner.Id, Branch, Start);
@@ -151,7 +167,10 @@ public sealed class C0824PublishedBranchDeletionTests
         else
         {
             found.ShouldNotBeNull(row);
-            found.TaskId.ShouldBe(row == "owner-card-not-done" ? owner.Id : dependent.Id, row);
+            var ownerRows = new[] { "owner-card-not-done", "owner-reopened", "pending-land-request-owner" };
+            found.TaskId.ShouldBe(ownerRows.Contains(row) ? owner.Id : dependent.Id, row);
+            if (row == "owner-reopened") found.Term.ShouldBe("owner_open", row);
+            if (row == "pending-land-request-owner") found.Term.ShouldBe("pending_land_request", row);
         }
     }
 
@@ -534,7 +553,167 @@ public sealed class C0824PublishedBranchDeletionTests
         row.BranchDeletionReason.ShouldBe("publication_not_contained");
     }
 
+    // ---- guards without a witness in round 1 (Review 370083f1 test gaps 2-4) and advisories A-1, A-2 ----
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C0824_kill_switch_mid_run_stops_before_next_row(CancellationToken ct)
+    {
+        await using var w = await SyntheticWorld.CreateAsync(2, ct);
+        // The operator switches the flag off while the first row's delete is in flight.
+        w.Git.OnDelete = () => w.Monitor.Value.DeleteSourceBranchAfterPublication = false;
+        var result = await w.RunAsync(ct);
+        result.Stopped.ShouldBe("kill_switch", "stopped-kill-switch");
+        w.Git.Deleted.Count.ShouldBe(1, "one-row-only");
+        var rows = await w.RowsAsync(ct);
+        rows[0].BranchDeletionState.ShouldBe(LandBranchDeletionState.Deleted);
+        rows[1].BranchDeletionState.ShouldBe(LandBranchDeletionState.None, "next-row-untouched");
+        w.Git.Touched.ShouldNotContain(rows[1].SourceFullRef, "next-row-no-git");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C0824_repository_busy_defers_without_git(CancellationToken ct)
+    {
+        await using var w = await SyntheticWorld.CreateAsync(1, ct, runnerIds: ["runner-a"]);
+        w.Lease = new BusyLease();
+        await w.RunAsync(ct);
+        var row = (await w.RowsAsync(ct))[0];
+        row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deferred, "busy-deferred");
+        row.BranchDeletionReason.ShouldBe("repository_busy", "busy-deferred");
+        w.Git.Touched.ShouldBeEmpty("busy-no-git");
+        w.Git.Deleted.ShouldBeEmpty("busy-no-git");
+        w.Runner.Calls.ShouldBe(0, "busy-no-runner-call");
+        row.RunnerRefsDeletedAt.ShouldBeNull();
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    [Arguments("short")]
+    [Arguments("full")]
+    [Arguments("tracking")]
+    [Arguments("remote-tracking")]
+    public async Task C0824_second_runner_on_branch_is_asked_and_its_refusal_defers(string spelling, CancellationToken ct)
+    {
+        await using var w = await SyntheticWorld.CreateAsync(1, ct, runnerIds: ["runner-a", "runner-b"]);
+        var op = (await w.RowsAsync(ct))[0];
+        var branch = op.SourceFullRef[11..];
+        // A follow-up task on another runner volume held the same branch; its label may be stored in any spelling.
+        await w.AddTaskAsync(spelling switch
+        {
+            "short" => branch,
+            "full" => "refs/heads/" + branch,
+            "tracking" => "origin/" + branch,
+            _ => "refs/remotes/origin/" + branch,
+        }, "runner-b", ct);
+        w.Runner.AnswerFor = runner => runner == "runner-b"
+            ? new(RunnerBranchRefsOutcome.Refused, "branch_checked_out") : null;
+        await w.RunAsync(ct);
+        w.Runner.Requests.Select(r => r.RunnerId).ShouldBe(["runner-a", "runner-b"], spelling + ": both-asked");
+        w.Git.Deleted.ShouldBeEmpty(spelling + ": origin-untouched");
+        var row = (await w.RowsAsync(ct))[0];
+        row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deferred, spelling);
+        row.BranchDeletionReason.ShouldBe("branch_checked_out", spelling);
+        row.RunnerRefsDeletedAt.ShouldBeNull(spelling);
+
+        // Once the second runner accepts, both are asked again and origin is deleted.
+        w.Runner.AnswerFor = null;
+        await w.RunAsync(ct);
+        w.Runner.Requests.Select(r => r.RunnerId).ShouldBe(["runner-a", "runner-b", "runner-a", "runner-b"], spelling);
+        w.Git.Deleted.Count.ShouldBe(1, spelling + ": deleted-after-accept");
+        (await w.RowsAsync(ct))[0].BranchDeletionState.ShouldBe(LandBranchDeletionState.Deleted, spelling);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C0824_dependent_opened_during_runner_step_defers_before_push(CancellationToken ct)
+    {
+        await using var w = await SyntheticWorld.CreateAsync(1, ct, runnerIds: ["runner-a"]);
+        var op = (await w.RowsAsync(ct))[0];
+        var dependentId = Guid.NewGuid();
+        // A-2: a task is queued on the branch while the runner step (up to six minutes) is in flight.
+        w.Runner.BeforeAnswer = async () =>
+        {
+            await using var db = w.Db();
+            var dependent = Task_(dependentId, "feat/card-task-" + dependentId.ToString("N")[..8], AgentTaskStatus.Queued);
+            dependent.WorktreeBaseBranch = op.SourceFullRef[11..];
+            db.AgentTasks.Add(dependent);
+            await db.SaveChangesAsync(ct);
+        };
+        await w.RunAsync(ct);
+        w.Runner.Calls.ShouldBe(1);
+        w.Git.Deleted.ShouldBeEmpty("recheck-before-push");
+        var row = (await w.RowsAsync(ct))[0];
+        row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deferred, "recheck-before-push");
+        row.BranchDeletionReason.ShouldBe("dependent_open", "recheck-before-push");
+        (row.BranchDeletionDetail ?? "").ShouldContain(dependentId.ToString(), Case.Sensitive, "recheck-before-push");
+    }
+
     // ---- helpers ----
+
+    /// <summary>
+    /// Synthetic published rows (no land) in an isolated schema, driven through the real service with the recording
+    /// git, lease and runner seams: the shape of V-47, for the guards whose effect is ordering, not git.
+    /// </summary>
+    private sealed class SyntheticWorld : IAsyncDisposable
+    {
+        public required IsolatedTestSchema Schema { get; init; }
+        public RecordingLandingGit Git { get; } = new();
+        public RecordingRunnerBranchRefs Runner { get; } = new();
+        public MutableMonitor Monitor { get; } = new(Enabled(Start.AddDays(-10)));
+        public IRepositoryMutationLease Lease { get; set; } = new FreeLease();
+
+        public static async Task<SyntheticWorld> CreateAsync(int rows, CancellationToken ct, IReadOnlyList<string>? runnerIds = null)
+        {
+            var w = new SyntheticWorld { Schema = await TestDbFixture.CreateIsolatedSchemaAsync() };
+            w.Monitor.Value.SourceBranchDeletionRunnerIds = [.. runnerIds ?? []];
+            await using var db = w.Db();
+            for (var i = 0; i < rows; i++)
+            {
+                var taskId = Guid.NewGuid();
+                var branch = "feat/card-task-" + taskId.ToString("N")[..8];
+                var task = Task_(taskId, branch, AgentTaskStatus.Succeeded);
+                task.RunnerId = runnerIds is { Count: > 0 } ? runnerIds[0] : null;
+                db.AgentTasks.Add(task);
+                db.AgentTaskLandings.Add(PublishedLandingRow.Build(taskId, branch, Start.AddDays(-5).AddMinutes(i)));
+            }
+            await db.SaveChangesAsync(ct);
+            return w;
+        }
+
+        public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
+
+        public async Task AddTaskAsync(string worktreeBranch, string runnerId, CancellationToken ct)
+        {
+            await using var db = Db();
+            var id = Guid.NewGuid();
+            var task = Task_(id, worktreeBranch, AgentTaskStatus.Succeeded);
+            task.RunnerId = runnerId;
+            db.AgentTasks.Add(task);
+            await db.SaveChangesAsync(ct);
+        }
+
+        public async Task<PublishedBranchDeletionRunResult> RunAsync(CancellationToken ct)
+        {
+            await using var db = Db();
+            return await new PublishedBranchDeletionService(db, Git, Lease, Runner, Monitor, new FakeTimeProvider(Start),
+                NullLogger<PublishedBranchDeletionService>.Instance).RunAsync(ct);
+        }
+
+        public async Task<List<AgentTaskLanding>> RowsAsync(CancellationToken ct)
+        {
+            await using var db = Db();
+            return await db.AgentTaskLandings.AsNoTracking().OrderBy(o => o.RemoteConfirmedAt).ToListAsync(ct);
+        }
+
+        public ValueTask DisposeAsync() => Schema.DisposeAsync();
+    }
+
+    private sealed class BusyLease : IRepositoryMutationLease
+    {
+        public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) => Task.FromResult<RepositoryLease?>(null);
+        public bool Owns(RepositoryLease lease, string repository) => false;
+    }
 
     internal static LandingSettings Enabled(DateTime? cutoff) => new()
     {
@@ -610,6 +789,10 @@ public sealed class C0824PublishedBranchDeletionTests
     {
         public bool Supports { get; set; } = true;
         public RunnerBranchRefsResult Answer { get; set; } = new(RunnerBranchRefsOutcome.Deleted, null, [], []);
+        /// <summary>A per-runner answer; null falls back to <see cref="Answer"/>.</summary>
+        public Func<string, RunnerBranchRefsResult?>? AnswerFor { get; set; }
+        /// <summary>Runs inside the runner step, before the answer (the window A-2 rechecks after).</summary>
+        public Func<Task>? BeforeAnswer { get; set; }
         public Exception? Throw { get; set; }
         public int Calls { get; private set; }
         public int? CommandIndexAtCall { get; private set; }
@@ -617,21 +800,23 @@ public sealed class C0824PublishedBranchDeletionTests
 
         public Task<bool> SupportsAsync(string runnerId, CancellationToken ct) => Task.FromResult(Supports);
 
-        public Task<RunnerBranchRefsResult> DeleteAsync(string runnerId, string branch, string expectedSha, CancellationToken ct)
+        public async Task<RunnerBranchRefsResult> DeleteAsync(string runnerId, string branch, string expectedSha, CancellationToken ct)
         {
             Calls++;
             CommandIndexAtCall ??= commandIndex?.Invoke();
             Requests.Add((runnerId, branch, expectedSha));
+            if (BeforeAnswer is { } before) await before();
             if (Throw is not null) throw Throw;
-            return Task.FromResult(Answer);
+            return AnswerFor?.Invoke(runnerId) ?? Answer;
         }
     }
 
     /// <summary>V-47's git: every recheck answers the expected SHA until the ref is deleted, and every target contains it.</summary>
-    private sealed class RecordingLandingGit : LandingGit
+    internal sealed class RecordingLandingGit : LandingGit
     {
         public HashSet<string> Deleted { get; } = [];
         public List<string> Touched { get; } = [];
+        public Action? OnDelete { get; set; }
 
         public override Task<LandingSourceRecheck> RecheckSourceRemoteAsync(string repository, string sourceFullRef,
             string expectedSha, string expectedFingerprint, CancellationToken ct)
@@ -651,6 +836,7 @@ public sealed class C0824PublishedBranchDeletionTests
         {
             Touched.Add(sourceFullRef);
             Deleted.Add(sourceFullRef);
+            OnDelete?.Invoke();
             return Task.FromResult(new LandingGitResult(0, "", ""));
         }
 

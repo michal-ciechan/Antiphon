@@ -143,6 +143,22 @@ public sealed class C0824RunnerBranchRefsTests
         s.Ref(Tracking).ShouldBe(s.Sha);
     }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task C0824_missing_repository_refuses_unavailable(CancellationToken ct)
+    {
+        // Review 370083f1 A-4: an absent primary (an unmounted volume) is unknown, never "every ref is absent".
+        using var s = Scratch.Create();
+        var missing = Path.Combine(s.Root, "unmounted", "repo");
+        var service = new RunnerWorkspaceService(missing, s.Work, s.Origin, psi => Process.Start(psi));
+        var result = await service.DeleteBranchRefsAsync(new(Branch, s.Sha), ct);
+        result.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Refused, "missing-repository-refused");
+        result.Code.ShouldBe(WorkspaceBranchRefsCodes.RepositoryUnavailable, "missing-repository-refused");
+        result.Succeeded.ShouldBeFalse();
+        result.Absent.ShouldBeEmpty("unknown is never absent");
+        Directory.Exists(missing).ShouldBeFalse("the op never creates the repository");
+    }
+
     /// <summary>Bare origin with the task branch, a runner clone with both refs at the branch tip.</summary>
     private sealed class Scratch : IDisposable
     {
