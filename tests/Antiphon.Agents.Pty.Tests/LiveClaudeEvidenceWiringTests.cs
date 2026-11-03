@@ -428,7 +428,16 @@ public class LiveClaudeEvidenceWiringTests
             ("R2D1-Discard", "", "_ = runner.SnapshotScreen();", false),
             ("R2D1-DiscardOut", "", keep + "Keep(runner.SnapshotScreen(), out _);", false),
             ("R2D1-OtherParameter", "private static void Other(string _) { }", "_ = runner.SnapshotScreen(); " + keep + "Keep(runner.SnapshotScreen(), out _);", false),
-            ("R2D1-OwnParameter", "", "void Hold(string _) { _ = runner.SnapshotScreen(); } Hold(\"x\");", false)
+            ("R2D1-OwnParameter", "", "void Hold(string _) { _ = runner.SnapshotScreen(); } Hold(\"x\");", false),
+            // CARD-1645 review r3 D-1: a _ declared elsewhere in the method does not shadow a member _.
+            ("R3D1-FieldLambda", "private static string _ = \"\";", "System.Func<string, int> other = _ => 0; _ = runner.SnapshotScreen();", true),
+            ("R3D1-FieldForeach", "private static string _ = \"\";", "foreach (var _ in new[] { 1 }) { } _ = runner.SnapshotScreen();", true),
+            ("R3D1-FieldLambdaOut", "private static string _ = \"\";", "System.Func<string, int> other = _ => 0; " + keep + "Keep(runner.SnapshotScreen(), out _);", true),
+            ("R3D1-OtherLambda", "", "System.Func<string, int> other = _ => 0; _ = runner.SnapshotScreen(); " + keep + "Keep(runner.SnapshotScreen(), out _);", false),
+            ("R3D1-OwnLambda", "private static string _ = \"\";", "System.Action<string> hold = _ => { _ = runner.SnapshotScreen(); }; hold(\"x\");", false),
+            // CARD-1645 review r3 A-1: a parameter X elsewhere in the method does not make a field X store local.
+            ("R3A1-FieldOtherParameter", "private static string s_held = \"\";", "void Other(string s_held) { } s_held = runner.SnapshotScreen();", true),
+            ("R3A1-OwnParameter", "private static string s_held = \"\";", "void Hold(string s_held) { s_held = runner.SnapshotScreen(); } Hold(\"x\");", false)
         };
         var missed = new List<string>();
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
