@@ -560,8 +560,14 @@ public sealed class C0824PublishedBranchDeletionTests
     public async Task C0824_kill_switch_mid_run_stops_before_next_row(CancellationToken ct)
     {
         await using var w = await SyntheticWorld.CreateAsync(2, ct);
-        // The operator switches the flag off while the first row's delete is in flight.
-        w.Git.OnDelete = () => w.Monitor.Value.DeleteSourceBranchAfterPublication = false;
+        // The operator switches the flag off while the first row's delete is in flight: a configuration reload hands
+        // the monitor a new settings instance, so a value captured at the start of the run would not see it.
+        w.Git.OnDelete = () =>
+        {
+            var off = Enabled(Start.AddDays(-10));
+            off.DeleteSourceBranchAfterPublication = false;
+            w.Monitor.Value = off;
+        };
         var result = await w.RunAsync(ct);
         result.Stopped.ShouldBe("kill_switch", "stopped-kill-switch");
         w.Git.Deleted.Count.ShouldBe(1, "one-row-only");
