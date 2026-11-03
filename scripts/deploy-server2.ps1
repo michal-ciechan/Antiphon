@@ -736,6 +736,11 @@ function Assert-RecycleTaskCensus {
     # Compare both closures twice; filtered excluded counts must reconcile independently.
     try {
     $previous = $null
+    # CARD-1693: for the temp runner the compared open closure keeps bound rows only, with no
+    # per-scope id lists, like the land closure (CARD-1353 D-2). Standing-runner work starting and
+    # finishing between the passes cannot end Unstable. Every row is still read, shape-checked and
+    # receipted, and a bound open row or bound land still refuses in either pass.
+    $boundOnlyOpen = ($RunnerId -ceq 'server2-temp')
     $pass0Settled = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $timer = [Diagnostics.Stopwatch]::StartNew()
     for ($pass = 0; $pass -lt 2; $pass++) {
@@ -878,9 +883,13 @@ function Assert-RecycleTaskCensus {
             $fact = $rows[$key] | ConvertFrom-Json
             # CARD-1353 D-2: the compared land closure keeps bound rows only (and no scopes entry), so an
             # off-runner land requested during the audits cannot end Unstable. $rows and the receipt stay complete.
-            if ($kind -eq 'open' -or [string]$fact.runnerId -eq $RunnerId) { $taskSnapshot[$key] = $fact }
+            if (($kind -eq 'open' -and -not $boundOnlyOpen) -or [string]$fact.runnerId -eq $RunnerId) { $taskSnapshot[$key] = $fact }
         }
-        foreach ($key in @($landEvidence.Keys | Sort-Object)) { $landSnapshot[$key] = $landEvidence[$key] | ConvertFrom-Json }
+        if ($boundOnlyOpen) { $scopeSnapshot = [ordered]@{} }
+        foreach ($key in @($landEvidence.Keys | Sort-Object)) {
+            if ($boundOnlyOpen -and -not $taskSnapshot.Contains($key)) { continue }
+            $landSnapshot[$key] = $landEvidence[$key] | ConvertFrom-Json
+        }
         $closures[$kind] = if ($kind -eq 'open') { [ordered]@{ scopes=$scopeSnapshot; tasks=$taskSnapshot } } else { [ordered]@{ tasks=$taskSnapshot } }
         if ($kind -eq 'open') {
             $closures[$kind]['land'] = $landSnapshot
