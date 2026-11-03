@@ -159,14 +159,14 @@ show a rebuild after the client change before checking the browser. Use
 | Exit | Meaning | Operator action |
 |---|---|---|
 | 0 | Dashboard URL discovered, API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
-| 1 | Build failed or health wait timed out (default 150 seconds) | Read logs; after timeout the child may still be launching. Do not immediately rerun. |
+| 1 | Build failed; the launcher exited nonzero or this launch's AppHost exited with nothing on 17202 (both end the wait at once); or the health wait ran out: no launch progress for `-TimeoutSec` (default 150 seconds) or the `-MaxWaitSec` hard cap (default 600 seconds) was reached. The output names the limit that ended the wait and the last progress signal with its age. | Read logs (earlier launches are kept as `logs/apphost.log.1` to `.10`); after a timeout the child may still be launching. Do not immediately rerun. |
 | 3 | Refused: worktree guard, SHA admission (`-ExpectedServerSha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock; nothing killed | Inspect ownership and both locks; update the canonical checkout if the expected SHA is wrong; wait for the existing launch. |
 | 4 | Aspire DCP dependency-check timeout | Inspect Docker and lock/log evidence before retrying; podman text does not establish a missing runtime. |
 | 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedServerSha <full-intended-head>`. |
 
 | Lock | Lifetime |
 |---|---|
-| `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it. Health timeout (exit 1) also removes this restart's stamp when backend health was not confirmed and the launcher exited nonzero; other health timeouts, exit 4, and exit 5 (unverified server build) retain it. |
+| `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it. Exit 1 also removes this restart's stamp when, before backend health was confirmed, the launcher exited nonzero or this launch's AppHost exited with nothing listening on 17202; a no-progress or hard-cap timeout, exit 4, and exit 5 (unverified server build) retain it. |
 | `logs/apphost.launch.lock` | Written by `dev-aspire.ps1` during launch and removed on script exit, including a successful dashboard start. |
 
 A present lock with a stamp younger than 15 minutes is active by default **even
@@ -174,6 +174,16 @@ if its holder PID is gone**: the child may still be launching (CARD-0310). The
 only early restart-lock exception is the [two-fire dead-launch proof](#dead-launch-recovery-and-outage-evidence-card-1527).
 Unknown age remains active; a known age of at least 15 minutes is ignored by the
 ordinary age check. This window starts at the stamp, not at the holder's exit.
+
+The health wait is a no-progress window, not a fixed budget (CARD-1680). Growth of
+`apphost.log` or the launcher's captured output, the dashboard URL file appearing,
+the server port 17202 opening, or a non-200 `/health` answer restarts the
+`-TimeoutSec` window, up to `-MaxWaitSec` from launch (never below `-TimeoutSec`).
+Once `/health` answers 200 no further progress is credited: the `/api/version` SHA
+check has the rest of the current window, then exits 5. `apphost.pid` names this
+launch's AppHost only after `dev-aspire.ps1` rewrites it; a pid file left from
+before the launch never counts. Each restart rotates `apphost.log` to
+`apphost.log.1` to `.10` instead of emptying it.
 
 The script's `If the holder is genuinely gone, delete ...` and `delete it to
 force a retry` hints describe a manual override, not a sufficient safety check.
