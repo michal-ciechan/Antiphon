@@ -36,7 +36,6 @@ internal static class LiveClaudeSinkAudit
         foreach (var root in list)
         {
             var aliases = Aliases(root);
-            var locals = Locals(root);
             var usings = UsingConsole(root);
             var forwardSkips = ForwardSkips(root);
             foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -106,14 +105,14 @@ internal static class LiveClaudeSinkAudit
             foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
             {
                 if (!Carries(assignment.Right, tainted)) continue;
-                if (!StaysLocal(assignment.Left, locals)) escape++;
+                if (!StaysLocal(assignment.Left)) escape++;
             }
             // A ref or out argument of a call that carries taint may be stored through: Fill(ref s_last, screen).
             foreach (var argument in root.DescendantNodes().OfType<ArgumentSyntax>())
             {
                 if (argument.RefKindKeyword.ValueText is not ("ref" or "out")) continue;
                 if (argument.Parent?.Parent is not InvocationExpressionSyntax call || !CallCarries(call, tainted)) continue;
-                if (!StaysLocal(argument.Expression, locals)) escape++;
+                if (!StaysLocal(argument.Expression)) escape++;
             }
             foreach (var created in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>())
             {
@@ -417,52 +416,37 @@ internal static class LiveClaudeSinkAudit
     private static bool IsField(VariableDeclaratorSyntax declarator) =>
         declarator.Parent?.Parent is BaseFieldDeclarationSyntax;
 
-    // Names a store may write without leaving the walk: locals, parameters, and pattern or loop variables.
-    private static HashSet<string> Locals(SyntaxNode root)
-    {
-        var locals = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var local in root.DescendantNodes().OfType<VariableDeclaratorSyntax>())
-            if (!IsField(local)) locals.Add(local.Identifier.ValueText);
-        foreach (var parameter in root.DescendantNodesAndSelf().OfType<ParameterSyntax>())
-            locals.Add(parameter.Identifier.ValueText);
-        foreach (var loop in root.DescendantNodes().OfType<ForEachStatementSyntax>())
-            locals.Add(loop.Identifier.ValueText);
-        foreach (var single in root.DescendantNodes().OfType<SingleVariableDesignationSyntax>())
-            locals.Add(single.Identifier.ValueText);
-        foreach (var caught in root.DescendantNodes().OfType<CatchDeclarationSyntax>())
-            locals.Add(caught.Identifier.ValueText);
-        return locals;
-    }
-
     // An element or member store stays local only through a local that created its object in
     // place; an alias of a shared object, a parameter or a catch variable is a non-local store.
-    private static bool StaysLocal(ExpressionSyntax left, HashSet<string> locals)
+    private static bool StaysLocal(ExpressionSyntax left)
     {
         left = Peel(left);
         if (left is DeclarationExpressionSyntax or TupleExpressionSyntax) return true;
-        // _ is a discard only when no declaration named _ can be in scope at the store.
+        // A name is local only when its innermost visible declaration is a parameter, local, pattern,
+        // loop or catch variable; a same-named declaration elsewhere never vouches for it. _ with no
+        // visible declaration is a discard only when no member named _ is in the file.
         if (left is IdentifierNameSyntax name)
-            return locals.Contains(name.Identifier.ValueText) || (name.Identifier.ValueText == "_" && !UnderscoreInScope(name));
+            return Declaration(name) is { } declared
+                ? !IsMember(declared)
+                : name.Identifier.ValueText == "_" && !UnderscoreMember(name);
         if (left is ElementAccessExpressionSyntax or MemberAccessExpressionSyntax)
             return RootName(left) is { } root && CreatedInPlace(root, bufferOnly: false);
         return false;
     }
 
-    // A declaration named _ anywhere in the file: a member (field, property, event, method, type,
-    // primary-constructor or record parameter) is always in scope; a parameter, local, pattern,
-    // loop, catch or range variable is in scope only inside the method or lambda that declares it.
-    private static bool UnderscoreInScope(IdentifierNameSyntax use)
+    private static bool IsMember(SyntaxNode declaration) => declaration switch
     {
-        foreach (var token in use.SyntaxTree.GetRoot().DescendantTokens())
-        {
-            if (token.ValueText != "_" || token.Parent is null or IdentifierNameSyntax or DiscardDesignationSyntax) continue;
-            if (!IsScopedDeclaration(token.Parent)) return true;
-            var owner = token.Parent.Ancestors().FirstOrDefault(node => node is AnonymousFunctionExpressionSyntax
-                or LocalFunctionStatementSyntax or BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);
-            if (owner is null || owner.Span.Contains(use.Span)) return true;
-        }
-        return false;
-    }
+        VariableDeclaratorSyntax declarator => IsField(declarator),
+        ParameterSyntax parameter => parameter.Parent?.Parent is TypeDeclarationSyntax,
+        _ => false
+    };
+
+    // A member named _ (field, property, event, method, type, primary-constructor or record
+    // parameter) or a declaration of unknown kind anywhere in the file.
+    private static bool UnderscoreMember(IdentifierNameSyntax use) =>
+        use.SyntaxTree.GetRoot().DescendantTokens().Any(token => token.ValueText == "_"
+            && token.Parent is not (null or IdentifierNameSyntax or DiscardDesignationSyntax)
+            && !IsScopedDeclaration(token.Parent));
 
     private static bool IsScopedDeclaration(SyntaxNode declaration) => declaration switch
     {
