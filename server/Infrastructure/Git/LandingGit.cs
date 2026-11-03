@@ -1514,6 +1514,21 @@ public class LandingGit : ILandingGit
                 $"{sha}:{sourceFullRef}"], started, ct);
     }
 
+    /// <summary>CARD-0824 S2 (B-2). Stub: refuses.</summary>
+    public virtual Task<LandingGitResult> DeleteSourceBranchAsync(string repository, string sourceFullRef,
+        string expectedRemoteSha, string expectedFingerprint, CancellationToken ct) =>
+        Task.FromResult(new LandingGitResult(1, "", "delete_unsupported"));
+
+    /// <summary>CARD-0824 S2. Stub: unsupported is never containment.</summary>
+    public virtual Task<LandingRemoteObservation> ConfirmTargetContainsAsync(string repository, string targetFullRef,
+        string sha, string expectedFingerprint, CancellationToken ct) =>
+        Task.FromResult(new LandingRemoteObservation(null, false, "containment_unsupported"));
+
+    /// <summary>CARD-0824 S2. Stub: refuses.</summary>
+    public virtual Task<LandingGitResult> DeleteTrackingRefAsync(string repository, string sourceFullRef,
+        string expectedSha, CancellationToken ct) =>
+        Task.FromResult(new LandingGitResult(1, "", "tracking_delete_unsupported"));
+
     internal async Task<string> CommitAsync(string repository, string revision, CancellationToken ct)
     {
         var sha = (await RequiredAsync(repository, ["rev-parse", "--verify", $"{revision}^{{commit}}"], ct)).Trim();
