@@ -220,6 +220,70 @@ public sealed class C0824WorkspaceSlotRehomeTests
     }
 
     [Test]
+    [Arguments("pushed")]
+    [Arguments("Bogus")]
+    [Arguments("")]
+    public async Task C0824_QuarantineReleaseUnknownDispositionRefused(string disposition, CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor X31. Quarantine never deletes without a known disposition: a wrongly cased or
+        // unknown one is refused before any git runs, and the entry, its lock and the directory's bytes all stay.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Plant(a.Path, "dirty.txt", "only copy");
+        (await Release(pool, a, TaskA)).Outcome.ShouldBe("quarantined");
+        var dirId = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem().DirId;
+        var before = Tree(a.Path);
+        int mark;
+        lock (scratch.Argv)
+            mark = scratch.Argv.Count;
+
+        var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(() =>
+            pool.ReleaseQuarantineAsync(new PhoneHomeWorkspaceSlotQuarantineReleaseRequest(dirId, disposition, "operator typo"), ct));
+        refusal.Message.ShouldBe("Disposition must be Pushed, AcceptLoss or Removed.");
+        lock (scratch.Argv)
+            scratch.Argv.Skip(mark).ShouldBeEmpty("no git ran for a refused disposition");
+        Directory.Exists(a.Path).ShouldBeTrue();
+        Tree(a.Path).ShouldBe(before);
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.IsOpen.ShouldBeTrue();
+        entry.Disposition.ShouldBeNull();
+        var list = Git(scratch.Clone, "worktree", "list", "--porcelain");
+        list.ShouldContain("worktree " + a.Path + "\n");
+        list.ShouldContain("locked antiphon quarantine ws-01 custody dirty", Case.Sensitive, "the quarantine lock stays");
+    }
+
+    [Test]
+    public async Task C0824_UnpushedCheckFailureQuarantinesNotResets(CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor X11. The unpushed check fails closed: when `rev-list ... --not --remotes=origin`
+        // fails, the release cannot prove the lease's commits are on origin, so it quarantines instead of resetting
+        // away the task branch ref and the HEAD reflog that hold an unpushed commit.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Plant(a.Path, "unpushed.txt", "only copy");
+        Git(a.Path, "add", "unpushed.txt");
+        Git(a.Path, "commit", "-q", "-m", "unpushed");
+        var head = Git(a.Path, "rev-parse", "HEAD").Trim();
+        var before = Tree(a.Path);
+        var fault = GitFault.In(a.Path, "rev-list", "fatal: unable to read refs/remotes/origin");
+        scratch.Faults.Add(fault);
+
+        (await Release(pool, a, TaskA)).Outcome.ShouldBe("quarantined");
+        fault.Hits.ShouldBe(1);
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.Path.ShouldBe(a.Path);
+        entry.Class.ShouldBe("custody");
+        entry.Reason.ShouldBe("unpushed");
+        entry.Error.ShouldStartWith("unpushed check failed: ");
+        Tree(a.Path).ShouldBe(before);
+        Git(a.Path, "rev-parse", "HEAD").Trim().ShouldBe(head);
+        Git(a.Path, "rev-parse", "refs/heads/" + BranchA).Trim().ShouldBe(head, "the task branch ref is kept");
+        Git(a.Path, "reflog", "show", "--format=%H", "HEAD").ShouldContain(head, Case.Sensitive, "the HEAD reflog is kept");
+    }
+
+    [Test]
     [Arguments("primary")]
     [Arguments("sibling")]
     [Arguments("symlink")]

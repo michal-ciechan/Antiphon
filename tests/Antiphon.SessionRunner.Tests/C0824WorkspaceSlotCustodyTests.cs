@@ -143,6 +143,74 @@ public sealed class C0824WorkspaceSlotCustodyTests
     }
 
     [Test]
+    public async Task C0824_LeaseQuarantinesFreeSlotWithHolder(CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor X17. A process entered a Free slot after its release: the lease-time free
+        // check sees the holder, quarantines that directory and re-homes, and the lease gets another directory.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        (await Release(pool, a, TaskA)).Outcome.ShouldBe("released");
+        scratch.Processes.Holders = path => path == a.Path ? [new WorkspaceSlotHolder(4242, "/usr/bin/dotnet", "cwd")] : [];
+        var before = Tree(a.Path);
+
+        var b = await pool.LeaseAsync(scratch.RequestB(), ct);
+        b.Path.ShouldNotBe(a.Path, "the held directory is never handed to a second task");
+        Directory.Exists(a.Path).ShouldBeTrue();
+        Tree(a.Path).ShouldBe(before, "the held directory is untouched");
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.Path.ShouldBe(a.Path);
+        entry.Class.ShouldBe("custody");
+        entry.Reason.ShouldBe("lingering");
+        entry.Error.ShouldContain("pid=4242");
+        pool.Ledger().Slot(b.SlotId)!.TaskId.ShouldBe(TaskB);
+    }
+
+    [Test]
+    public async Task C0824_ReleaseOfLeasingSlotRefused(CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor X06. Only a Leased slot is settled: a release whose generation and task match
+        // a slot still in Leasing (the lease is preparing its tree) is refused and leaves the slot to the lease.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        (await Release(pool, a, TaskA)).Outcome.ShouldBe("released");
+        PhoneHomeAdmissionException? refusal = null;
+        string? settled = null, stateAtCut = null, stateAfterRelease = null;
+        var cuts = 0;
+        pool.PhaseCut = phase =>
+        {
+            if (phase != "leasing" || Interlocked.Exchange(ref cuts, 1) == 1)
+                return;
+            var leasing = pool.Ledger().Slot(a.SlotId)!;
+            stateAtCut = leasing.State;
+            try
+            {
+                settled = pool.ReleaseAsync(new PhoneHomeWorkspaceSlotReleaseRequest(leasing.Id, leasing.LeaseGeneration, TaskB),
+                    CancellationToken.None).GetAwaiter().GetResult().Outcome;
+            }
+            catch (PhoneHomeAdmissionException ex)
+            {
+                refusal = ex;
+            }
+
+            stateAfterRelease = pool.Ledger().Slot(a.SlotId)!.State;
+        };
+
+        var b = await pool.LeaseAsync(scratch.RequestB(), ct);
+        stateAtCut.ShouldBe(WorkspaceSlotStates.Leasing);
+        settled.ShouldBeNull("the release must not settle a Leasing slot");
+        refusal.ShouldNotBeNull().Message.ShouldBe("Slot " + a.SlotId + " is " + WorkspaceSlotStates.Leasing + ", not leased.");
+        stateAfterRelease.ShouldBe(WorkspaceSlotStates.Leasing);
+        b.SlotId.ShouldBe(a.SlotId);
+        var slot = pool.Ledger().Slot(a.SlotId)!;
+        slot.State.ShouldBe(WorkspaceSlotStates.Leased);
+        slot.TaskId.ShouldBe(TaskB);
+        slot.ReleaseRequested.ShouldBeFalse();
+        Git(b.Path, "rev-parse", "HEAD").Trim().ShouldBe(scratch.ShaB);
+    }
+
+    [Test]
     public async Task C0824_ConcurrentLeasesNeverShareSlot(CancellationToken ct)
     {
         // V-7a. The first lease is held right after its pick; a second lease must pick another slot.
@@ -305,6 +373,67 @@ public sealed class C0824WorkspaceSlotCustodyTests
     }
 
     [Test]
+    public async Task C0824_LeaseWaitsForTheDispatcherMutationLock(CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor PC-74 (G-74). A slot lease is a workspace mutation: while an Input holds the
+        // dispatcher's mutation lock, a WorkspaceMirror frame does not enter the pool (no Leasing slot is written) and
+        // its reply arrives only after the lock is released.
+        using var scratch = Create();
+        var service = scratch.Service();
+        var pool = scratch.Pool(service: service);
+        var storeId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var runtime = new C0824StoreRuntime(storeId)
+        {
+            InputGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        var dispatcher = SlotDispatcher(scratch, service, runtime, storeId);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pool.PhaseCut = phase => { if (phase == "enter") entered.TrySetResult(); };
+        var input = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Input,
+            JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid(), input = "x" }, PhoneHomeFraming.Json)), ct);
+        await runtime.InputStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+
+        var request = new PhoneHomeWorkspaceMirrorRequest(BranchA, scratch.ShaA, "task-aaaaaaaa",
+            Binding: new PhoneHomeWorkspaceMirrorBinding(TaskA, 1, Guid.NewGuid(), "runner-a", storeId.ToString("D")),
+            Slot: true, Cold: false);
+        var mirror = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+            JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json)), ct);
+        // Unlocked, the pool is entered within milliseconds (empty ledger); 2 s is the observation window.
+        await Task.WhenAny(entered.Task, mirror, Task.Delay(TimeSpan.FromSeconds(2), ct));
+        entered.Task.IsCompleted.ShouldBeFalse("the lease entered the pool while the mutation lock was held");
+        mirror.IsCompleted.ShouldBeFalse("the lease replied while the mutation lock was held");
+        pool.Ledger().Slots.ShouldBeEmpty("no slot is Leasing before the lock is released");
+        input.IsCompleted.ShouldBeFalse();
+
+        runtime.InputGate.SetResult();
+        (await input.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var reply = await mirror.WaitAsync(TimeSpan.FromSeconds(8), ct);
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+        reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)!.SlotId.ShouldBe("ws-01");
+        pool.Ledger().Slot("ws-01")!.State.ShouldBe(WorkspaceSlotStates.Leased);
+    }
+
+    private static PhoneHomeCommandDispatcher SlotDispatcher(C0824SlotScratch scratch, RunnerWorkspaceService service,
+        IPhoneHomeRuntimeSurface runtime, Guid storeId)
+    {
+        var storePath = scratch.Root + "/store-id";
+        File.WriteAllText(storePath, storeId.ToString("D"));
+        var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
+        {
+            Enabled = true,
+            RunnerId = "runner-a",
+            AllowedCwd = scratch.Work,
+            RunnerRepository = scratch.Clone.Replace('\\', '/'),
+            Capacity = 2,
+            CapacityStatePath = scratch.Root.Replace('\\', '/') + "/capacity",
+            StoreIdPath = storePath,
+            WorkspaceSlots = Settings(),
+        });
+        dispatcher.UseWorkspace(service);
+        return dispatcher;
+    }
+
+    [Test]
     public async Task C0824_RestartKeepsLeasedSlotForTheServersRelease(CancellationToken ct)
     {
         // D-3 (review 3a354688) recovery action. A plain restart (RecoverAsync(null)) cannot tell a terminal task
@@ -341,7 +470,17 @@ internal sealed class C0824StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
     public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
     public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
-    public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
+    public TaskCompletionSource? InputGate { get; init; }
+    public TaskCompletionSource InputStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+    {
+        if (InputGate is not { } gate)
+            throw new NotSupportedException();
+        InputStarted.TrySetResult();
+        await gate.Task.WaitAsync(ct);
+    }
+
     public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();

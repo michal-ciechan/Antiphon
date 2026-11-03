@@ -174,6 +174,60 @@ public sealed class C0824WorkspaceSlotOverflowTests
     }
 
     [Test]
+    [Arguments("untracked")]
+    [Arguments("unpushed-head")]
+    [Arguments("reflog-only")]
+    public async Task C0824_IdleOverflowWithLateWorkQuarantinedNotRemoved(string shape, CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor X37. A Free overflow slot that gained work after its release (V-6b late
+        // writer) is past IdleRetireHours: the retirement preflight quarantines it in place. `worktree remove --force`
+        // would delete an untracked file and a detached commit alike, so no removal may run.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var leases = await scratch.LeaseExtras(pool, 5);
+        (await Release(pool, leases[4], ExtraTask(5))).Outcome.ShouldBe("released");
+        var path = scratch.Slot("ws-05");
+        var parked = Git(path, "rev-parse", "HEAD").Trim();
+        string? late = null;
+        if (shape == "untracked")
+            Plant(path, "x.txt", "late writer");
+        else
+        {
+            Plant(path, "late.txt", "only copy");
+            Git(path, "add", "late.txt");
+            Git(path, "commit", "-q", "-m", "late commit");
+            late = Git(path, "rev-parse", "HEAD").Trim();
+            if (shape == "reflog-only")
+                Git(path, "checkout", "-q", "--detach", parked);
+        }
+
+        var head = Git(path, "rev-parse", "HEAD").Trim();
+        var before = Tree(path);
+        scratch.Clock.Advance(TimeSpan.FromHours(72) + TimeSpan.FromSeconds(1));
+        int mark;
+        lock (scratch.Argv)
+            mark = scratch.Argv.Count;
+        await pool.MaintainAsync(ct);
+
+        List<string[]> removes;
+        lock (scratch.Argv)
+            removes = scratch.Argv.Skip(mark).Where(argv => argv.Length > 2 && argv[1] == "worktree" && argv[2] == "remove").ToList();
+        removes.ShouldBeEmpty("no worktree remove ran on the idle slot");
+        Directory.Exists(path).ShouldBeTrue("the idle slot directory stays");
+        Tree(path).ShouldBe(before, "the late work is untouched");
+        Git(path, "rev-parse", "HEAD").Trim().ShouldBe(head);
+        if (late is not null)
+            Git(path, "reflog", "show", "--format=%H", "HEAD").ShouldContain(late, Case.Sensitive, "the late commit stays in the slot reflog");
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.IsOpen.ShouldBeTrue();
+        entry.Path.ShouldBe(path);
+        entry.SlotId.ShouldBe("ws-05");
+        entry.Class.ShouldBe("custody");
+        entry.Reason.ShouldBe(shape switch { "untracked" => "dirty", "unpushed-head" => "unpublished_head", _ => "unpushed" });
+        pool.Ledger().Slot("ws-05")!.State.ShouldBe(WorkspaceSlotStates.Retired);
+    }
+
+    [Test]
     public async Task C0824_SlotNumberNeverReusedWhileDirectoryExists(CancellationToken ct)
     {
         // V-50. After retiring ws-05 and ws-06 while ws-05's quarantined directory remains, the next overflow is ws-07.
