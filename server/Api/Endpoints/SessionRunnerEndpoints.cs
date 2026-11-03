@@ -195,7 +195,7 @@ public static class SessionRunnerEndpoints
             var presented = http.Request.Headers[OperatorTokenFile.Header].ToString();
             if (!WorkspaceSlotReleaseService.IsAcceptableRequester(requester, presented))
                 throw new BadRequestException(
-                    $"Give a requester of at most {WorkspaceSlotReleaseService.MaxRequesterLength} printable characters that is not a credential.");
+                    $"Give a requester of at most {WorkspaceSlotReleaseService.MaxRequesterLength} UTF-16 code units of printable characters that is not a credential.");
             await WorkspaceSlotReleaseService.RecordOperatorReleaseAsync(
                 http.RequestServices.GetRequiredService<AppDbContext>(), http.RequestServices.GetRequiredService<TimeProvider>(),
                 runnerId, slotId, body.TaskId, body.Generation, reason, requester, ct);

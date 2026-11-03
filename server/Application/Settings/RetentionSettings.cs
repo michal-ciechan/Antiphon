@@ -57,7 +57,9 @@ public sealed class RetentionSettings
     /// <summary>
     /// CARD-1662. Failed task-prune batch attempts one sweep may spend. When a root range ends with
     /// the sweep at or past this many failed attempts, the Tasks pass stops for this sweep, reports
-    /// Failed and the later passes run; the scan resumes after that range next sweep. Nonpositive uses 6.
+    /// Failed and the later passes run; the scan resumes after that range next sweep. The budget is read
+    /// only when a range ends and a range gets its three attempts, so one sweep can spend up to this
+    /// value plus two failed attempts (CARD-1670: 1 allows 3, 6 allows 8). Nonpositive uses 6.
     /// </summary>
     public int TaskPruneMaxFailedAttemptsPerSweep { get; set; } = 6;
 
