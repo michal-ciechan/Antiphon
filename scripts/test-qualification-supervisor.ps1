@@ -55,8 +55,10 @@ function Get-ExitedIdentity {
 }
 # The supervisor identity carries the launch's bound run id (c1667run unless BoundRunId says otherwise).
 function New-ObservedRun([string]$Name, $RunOwner, $Supervisor, $HeartbeatUtc, $State, [string]$LockRunId = 'c1667run',
-    [string]$CommissionExit, [string]$BoundRunId = 'c1667run') {
+    [string]$CommissionExit, [string]$BoundRunId = 'c1667run', [string]$LaunchStartedAt, $OwnCopy) {
     $task = New-OwnedDirectory ($Name + '-task')
+    if ($LaunchStartedAt) { Write-OwnedJson (Join-Path $task 'launch-child.json') ([ordered]@{ pid = 1; processStartedAt = $LaunchStartedAt; runId = $BoundRunId }) }
+    if ($null -ne $OwnCopy) { Write-OwnedJson (Join-Path $task 'own-last-run.json') $OwnCopy }
     $stateRoot = New-OwnedDirectory ($Name + '-state')
     if ($null -ne $RunOwner) { Write-OwnedJson (Join-Path $stateRoot 'run.lock') ([ordered]@{ pid = $RunOwner.pid; processStartedAt = $RunOwner.processStartedAt; runId = $LockRunId }) }
     if ($null -ne $State) { Write-OwnedJson (Join-Path $stateRoot 'last-run.json') $State }
@@ -189,6 +191,76 @@ try {
     $o = Invoke-Observe $run
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'unknown' -and $o.Json.reason -ceq 'run-id-unbound') `
         'observe refuses to classify without a bound launch run id' $o.Text
+
+    # D-1 (Review 9f29e134): last-run.json holds only the latest run. Once the next run writes it,
+    # our run is credited from the TaskRoot copy supervise-rc kept, or is unknown/state-superseded;
+    # never launch-failed or not-started, which would invite relaunching a finished qualification.
+    $launchedAt = $now.AddHours(-9).ToString('o')
+    $nextRun = [ordered]@{ runId = 'c1667next'; phase = 'tests'; startedAt = $now.AddMinutes(-10).ToString('o') }
+    $run = New-ObservedRun 'superseded' $self $gone $stale $nextRun -LockRunId 'c1667next' -CommissionExit '0' -LaunchStartedAt $launchedAt
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'unknown' -and $o.Json.reason -ceq 'state-superseded' -and
+        $o.Json.stateRunId -ceq 'c1667next' -and $null -eq $o.Json.exitCode -and $null -eq $o.Json.completedAt) `
+        'observe reports a completed run superseded by a later run without a copy as unknown, not launch-failed' $o.Text
+
+    $midRun = [ordered]@{ runId = 'c1667run'; phase = 'tests'; startedAt = $launchedAt }
+    $run = New-ObservedRun 'lostsuperseded' $self $gone $stale $nextRun -LockRunId 'c1667next' -LaunchStartedAt $launchedAt
+    $o = Invoke-Observe $run
+    $run2 = New-ObservedRun 'lostsupercopy' $null $gone $stale $nextRun -LaunchStartedAt $launchedAt -OwnCopy $midRun
+    $o2 = Invoke-Observe $run2
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'unknown' -and $o.Json.reason -ceq 'state-superseded' -and
+        $o2.Code -eq 2 -and $o2.Json.classification -ceq 'unknown' -and $o2.Json.reason -ceq 'state-superseded' -and $o2.Json.stateCopy -ceq 'ours') `
+        'observe reports a lost supervisor whose run was superseded as unknown, not not-started' ($o.Text + ' | ' + $o2.Text)
+
+    $ownDone = [ordered]@{ runId = 'c1667run'; phase = 'final'; startedAt = $launchedAt; completedAt = $now.AddMinutes(-30).ToString('o'); exitCode = 1; testsPassed = $false }
+    $run = New-ObservedRun 'copydone' $self $gone $stale $nextRun -LockRunId 'c1667next' -CommissionExit '0' -LaunchStartedAt $launchedAt -OwnCopy $ownDone
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 0 -and $o.Json.classification -ceq 'completed' -and $o.Json.reason -ceq 'state-copy-completedAt' -and
+        $o.Json.exitCode -eq 1 -and $o.Json.testsPassed -eq $false -and $o.Json.stateRunId -ceq 'c1667next') `
+        'observe credits completed from the TaskRoot copy of our last-run.json after it is superseded' $o.Text
+
+    # A previous run that started before the launch child is not a supersession: still launch-failed.
+    $earlierRun = [ordered]@{ runId = 'c1667prev'; phase = 'final'; startedAt = $now.AddHours(-12).ToString('o'); completedAt = $now.AddHours(-10).ToString('o'); exitCode = 0 }
+    $run = New-ObservedRun 'refusedlaunched' $null $gone $stale $earlierRun -CommissionExit '2' -LaunchStartedAt $launchedAt
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'launch-failed' -and $o.Json.reason -ceq 'commission-exit-2') `
+        'observe keeps launch-failed when last-run.json names a run that started before the launch child' $o.Text
+
+    # supervise-rc keeps the copy: while polling (and does not overwrite it with the next run), and
+    # once more at child exit (a poll that never ran).
+    $keepState = New-OwnedDirectory 'keep-state'
+    $keepLogs = New-OwnedDirectory 'keep-logs'
+    $keepPoll = New-OwnedDirectory 'keep-poll-task'
+    $keepExit = New-OwnedDirectory 'keep-exit-task'
+    $keepStatePath = Join-Path $keepState 'last-run.json'
+    $owned.Add($keepStatePath)
+    $doneJson = '{"runId":"c1667keep","phase":"final","startedAt":"' + $launchedAt + '","completedAt":"' + $now.AddMinutes(-1).ToString('o') + '","exitCode":0,"testsPassed":true}'
+    $nextJson = '{"runId":"c1667after","phase":"Started","startedAt":"' + $now.ToString('o') + '"}'
+    $pollFake = Join-Path $keepPoll 'fake-launch.ps1'
+    [IO.File]::WriteAllText($pollFake, "[IO.File]::WriteAllText('$keepStatePath', '$doneJson')`r`nStart-Sleep -Seconds 4`r`n[IO.File]::WriteAllText('$keepStatePath', '$nextJson')`r`nexit 0`r`n")
+    $exitFake = Join-Path $keepExit 'fake-launch.ps1'
+    [IO.File]::WriteAllText($exitFake, "[IO.File]::WriteAllText('$keepStatePath', '$doneJson')`r`nexit 0`r`n")
+    foreach ($dir in @($keepPoll, $keepExit)) {
+        foreach ($name in @('fake-launch.ps1', 'supervisor-identity.json', 'supervisor-identity.json.tmp', 'supervisor.log', 'supervisor-heartbeat.json',
+            'supervisor-heartbeat.json.tmp', 'commission-console.log', 'commission-stderr.log', 'commission-exit.txt', 'commission-exit.txt.tmp',
+            'launch-child.json', 'launch-child.json.tmp', 'hang-suspected.txt', 'own-last-run.json', 'own-last-run.json.tmp')) { $owned.Add((Join-Path $dir $name)) }
+    }
+    $superviseScript = Join-Path $qualification 'supervise-rc.ps1'
+    $pollText = @(& $pwshPath -NoProfile -NonInteractive -File $superviseScript -TaskRoot $keepPoll -LaunchScript $pollFake -LogRoot $keepLogs `
+        -StateRoot $keepState -RunId 'c1667keep' -PollSeconds 1 2>&1) -join "`n"
+    $pollObserved = Invoke-Observe ([pscustomobject]@{ Task = $keepPoll; State = $keepState })
+    $exitText = @(& $pwshPath -NoProfile -NonInteractive -File $superviseScript -TaskRoot $keepExit -LaunchScript $exitFake -LogRoot $keepLogs `
+        -StateRoot $keepState -RunId 'c1667keep' -PollSeconds 300 2>&1) -join "`n"
+    [IO.File]::WriteAllText($keepStatePath, $nextJson)
+    $exitObserved = Invoke-Observe ([pscustomobject]@{ Task = $keepExit; State = $keepState })
+    $pollCopy = $null
+    try { $pollCopy = Get-Content -LiteralPath (Join-Path $keepPoll 'own-last-run.json') -Raw | ConvertFrom-Json } catch { }
+    Assert-C1667 ($pollCopy -and $pollCopy.runId -ceq 'c1667keep' -and $null -ne $pollCopy.completedAt -and
+        $pollObserved.Json.classification -ceq 'completed' -and $pollObserved.Json.stateRunId -ceq 'c1667after' -and $pollObserved.Json.testsPassed -eq $true) `
+        'supervise-rc copies last-run.json for its run id while polling and keeps it after the next run writes' ($pollText + ' | ' + $pollObserved.Text)
+    Assert-C1667 ($exitObserved.Code -eq 0 -and $exitObserved.Json.classification -ceq 'completed' -and $exitObserved.Json.reason -ceq 'state-copy-completedAt' -and $exitObserved.Json.stateCopy -ceq 'ours' -and
+        (Test-Path -LiteralPath (Join-Path $keepExit 'own-last-run.json'))) `
+        'supervise-rc copies last-run.json for its run id at child exit' ($exitText + ' | ' + $exitObserved.Text)
 
     # start-supervisor binds a fresh run id: one the state root already names is refused.
     $reuseTask = New-OwnedDirectory 'reuse-task'
@@ -341,7 +413,7 @@ try {
     # Exact owned paths only; never recursive removal.
     foreach ($path in $owned) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
     foreach ($dir in $ownedDirs) {
-        foreach ($leaf in @('run.lock', 'last-run.json', 'supervisor-identity.json', 'supervisor-heartbeat.json')) {
+        foreach ($leaf in @('run.lock', 'last-run.json', 'supervisor-identity.json', 'supervisor-heartbeat.json', 'launch-child.json', 'own-last-run.json')) {
             $p = Join-Path $dir $leaf
             if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
         }
