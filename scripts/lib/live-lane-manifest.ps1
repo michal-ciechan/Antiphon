@@ -2463,6 +2463,16 @@ function Get-LiveLaneCensusSeedMaterial {
     return $entry
 }
 
+function Get-LiveLaneTargetDiagnostics {
+    param([string]$RepoRoot, [string]$Pre, [string]$Seed, [string]$Head, [string]$TargetRef)
+    return @()
+}
+
+function Get-LiveLaneCensusScopeLine {
+    param($Context, [string]$TargetSha)
+    return ''
+}
+
 function Invoke-LiveLaneCensus {
     param($Context, [hashtable]$Mutant = $null)
     $diagnostics = New-Object System.Collections.Generic.List[string]

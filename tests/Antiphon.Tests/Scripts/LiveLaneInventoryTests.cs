@@ -29,6 +29,20 @@ public sealed class LiveLaneInventoryTests
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
+    [Test]
+    public async Task CensusAdditiveIdentity()
+    {
+        var result = await LiveLaneProcess.RunAsync("CensusAdditiveIdentity", "Antiphon.Tests").ConfigureAwait(false);
+        result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
+    }
+
+    [Test]
+    public async Task CensusTargetScope()
+    {
+        var result = await LiveLaneProcess.RunAsync("CensusTargetScope", "Antiphon.Tests").ConfigureAwait(false);
+        result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
+    }
+
     internal static class LiveLaneProcess
     {
         // Hard wall for the roster child. Loaded-host n=3 totals 122603, 159105, 127989 ms
