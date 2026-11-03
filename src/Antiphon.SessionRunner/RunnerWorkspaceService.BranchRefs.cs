@@ -23,8 +23,9 @@ public sealed partial class RunnerWorkspaceService
             || !DelegateBranchName.TryParse(request.Branch, out var parsed))
             return Refused(WorkspaceBranchRefsCodes.ProtectedBranch, [], []);
         string[] names = ["refs/heads/" + parsed.Branch, "refs/remotes/origin/" + parsed.Branch];
+        // Review 370083f1 A-4: a missing primary (an unmounted volume) is unknown, never "every ref is absent".
         if (!Directory.Exists(_repository))
-            return new(WorkspaceBranchRefsCodes.Deleted, null, [], names, "repository absent");
+            return Refused(WorkspaceBranchRefsCodes.RepositoryUnavailable, [], [], "repository absent");
         var gitDir = await GitAsync(_repository, ct, "rev-parse", "--git-dir");
         if (gitDir.ExitCode != 0)
             return Refused(WorkspaceBranchRefsCodes.RepositoryUnavailable, [], []);
