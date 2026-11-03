@@ -24,14 +24,23 @@ function Get-RcQualificationPathStamp {
     return ('{0}:{1}:{2}' -f $identity, $item.Length, $item.LastWriteTimeUtc.Ticks)
 }
 
+# CARD-1667 A-1 (Review 230d1f5d): nightly-run writes last-run.json with File.Replace, which
+# Windows refuses while another handle lacks FILE_SHARE_DELETE, and a failed state write exits
+# nightly-run 1. Every reader of a shared record opens through here: Read for us, ReadWrite and
+# Delete for the writer.
+function Open-RcQualificationSharedRead {
+    param([string]$Path)
+    return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]([int][IO.FileShare]::ReadWrite -bor [int][IO.FileShare]::Delete))
+}
+
 function Read-RcQualificationRecord {
     param([string]$Path, [scriptblock]$AfterRead)
     $result = [ordered]@{ path = $Path; status = 'unreadable'; reason = 'read-error'; record = $null }
     $stream = $null
     try {
         $before = Get-RcQualificationPathStamp $Path
-        # The writer holds Write/Read; our share must permit its write access.
-        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        # The writer holds Write/Read and replaces the file; our share must permit both.
+        $stream = Open-RcQualificationSharedRead $Path
         if ($stream.Length -gt 1048576) { $result.reason = 'too-large'; return [pscustomobject]$result }
         $buffer = New-Object byte[] 1048577
         $count = 0

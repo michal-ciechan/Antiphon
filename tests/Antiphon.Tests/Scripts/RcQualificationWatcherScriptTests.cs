@@ -23,10 +23,11 @@ public sealed class RcQualificationWatcherScriptTests
     // CARD-1667: the supervisor outlives its starter console/session and observe classifies a
     // lost supervisor with a live nightly-run as supervisor-lost-run-alive, not a failure, and
     // credits that only to the launch's own run id (Review b26811ff D-1), from the TaskRoot copy
-    // once the shared last-run.json is superseded, else unknown/state-superseded (Review 9f29e134 D-1).
+    // once the shared last-run.json is superseded, else unknown/state-superseded (Review 9f29e134 D-1);
+    // last-run.json readers allow FileShare.Delete for nightly-run's File.Replace (Review 230d1f5d A-1).
     [Test]
     public Task Supervisor_detaches_and_observe_classifies_lost_supervisor() => ScriptHarness.RunHarnessCaseAsync(
-        "test-qualification-supervisor.ps1", "C1667", "Smoke", 35,
+        "test-qualification-supervisor.ps1", "C1667", "Smoke", 38,
         "C1667 observe classifies a gone supervisor with live nightly-run as supervisor-lost-run-alive",
         "C1667 observe treats a stale heartbeat as supervisor lost while the run is alive",
         "C1667 observe treats last-run completedAt as the end signal without commission-exit",
@@ -41,6 +42,9 @@ public sealed class RcQualificationWatcherScriptTests
         "C1667 observe credits completed from the TaskRoot copy of our last-run.json after it is superseded",
         "C1667 supervise-rc copies last-run.json for its run id while polling and keeps it after the next run writes",
         "C1667 supervise-rc copies last-run.json for its run id at child exit",
+        "C1667 observe credits neither completion nor supersession to a TaskRoot copy naming another run id",
+        "C1667 start-supervisor refuses a run id the TaskRoot copy own-last-run.json already records",
+        "C1667 last-run.json readers open with FileShare.Delete so the nightly-run File.Replace is never blocked",
         "C1667 launch-rc refuses a launch whose -RunId is missing or differs from the bound run id",
         "C1667 supervisor log lines are on disk at return and the file is not held open",
         "C1667 supervisor runs in its own session or console, not the wrapper's",
