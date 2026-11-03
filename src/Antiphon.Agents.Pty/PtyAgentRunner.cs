@@ -41,6 +41,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private IOException? _custodyReadFailure;
     private IPtyCustodyContainment? _containment;
     private PtyTerminationObservation? _linuxTermination;
+    private TimeProvider _custodyClock = TimeProvider.System;
     internal IPtyCustodyNative? CustodyNative { get; init; }
     internal Action? ReadProcessedForTest { get; set; }
     internal Func<IPtySession, Task>? BeforeExitSubscriptionForTest { get; init; }
@@ -62,6 +63,17 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         if (_conn is not null)
             throw new InvalidOperationException("Containment is fixed once the runner has started.");
         CustodyContainment = containment;
+    }
+
+    /// <summary>
+    /// CARD-1617 test seam: the monotonic clock that paces repeated Linux custody kills.
+    /// Production leaves <see cref="TimeProvider.System"/>.
+    /// </summary>
+    public void UseCustodyClockForTests(TimeProvider clock)
+    {
+        if (_conn is not null)
+            throw new InvalidOperationException("The custody clock is fixed once the runner has started.");
+        _custodyClock = clock;
     }
 
     public PtyTerminationObservation? CustodyTermination =>
