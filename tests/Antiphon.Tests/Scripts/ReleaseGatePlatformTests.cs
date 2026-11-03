@@ -40,10 +40,10 @@ public sealed class ReleaseGatePlatformTests
             "C1323 decision-gaps-stay-incomplete", "C1323 linux-still-requires-the-rows");
 
     // CARD-1686: fixture trees prove the derived census fails for a marker without a row, a row without a marker
-    // and a marker spelling it does not parse.
+    // and any use of the name outside a canonical marker line, a comment line or an exempt file.
     [Test]
     public Task C1686_LinuxOnlyCensus() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 15,
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 25,
             "C1323 c1686-consistent-census-passes", "C1323 c1686-class-marker-without-row-fails",
             "C1323 c1686-method-marker-without-row-fails", "C1323 c1686-row-without-marker-fails",
             "C1323 c1686-row-attribution-fails", "C1323 c1686-marker-outside-suite-fails",
@@ -51,6 +51,11 @@ public sealed class ReleaseGatePlatformTests
             "C1323 c1686-noncanonical-stacked-class-fails", "C1323 c1686-noncanonical-suffix-fails",
             "C1323 c1686-noncanonical-qualified-fails", "C1323 c1686-noncanonical-global-fails",
             "C1323 c1686-noncanonical-leading-space-fails", "C1323 c1686-noncanonical-paren-space-fails",
+            "C1323 c1686-fail-closed-verbatim-interpolated-glob", "C1323 c1686-fail-closed-split-line",
+            "C1323 c1686-fail-closed-split-line-comment", "C1323 c1686-fail-closed-using-alias",
+            "C1323 c1686-fail-closed-string-literal", "C1323 c1686-fail-closed-trailing-comment",
+            "C1323 c1686-fail-closed-second-use-on-marker-line", "C1323 c1686-fail-closed-block-comment-interior",
+            "C1323 c1686-fail-closed-inactive-if", "C1323 c1686-fail-closed-reflection-outside-exempt-file",
             "C1323 c1686-comments-are-not-markers");
 
     // S-A census contract: compiled S/T/O identities, minus the Windows confinement sibling, stay required.

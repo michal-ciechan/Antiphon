@@ -812,8 +812,31 @@ function Test-C1686_LinuxOnlyCensus {
         Assert-C1323 (Same-C1323Set $r.Problems @("marker-noncanonical:${path}:$line")) "c1686-noncanonical-$name-fails" ($r.Problems -join '; ')
     }
 
+    # The census is line-based: it never lexes C# strings or comments. Every use of the token outside a canonical
+    # marker line, a line that starts as a comment and an exempt file fails closed, even where C# would ignore it.
+    $z = 'tests/Antiphon.Tests/ZetaTests.cs'
+    $failClosed = [ordered]@{
+        'verbatim-interpolated-glob' = @($z, "namespace Fixture;`n`npublic sealed class ZTests`n{`n    static string P(string r) => @`$`"{r}\`" + `"**/*.cs`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n    const string H = `"a/**/b`";`n}`n", @('marker-without-row:antiphon|ZTests|M'))
+        'split-line' = @($z, "namespace Fixture;`n`n[NativeLinuxOnly`n    (`"x`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3"))
+        'split-line-comment' = @($z, "namespace Fixture;`n`n[NativeLinuxOnly // why`n(`"x`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3"))
+        'using-alias' = @($z, "using Lin = Antiphon.TestSupport.NativeLinuxOnlyAttribute;`n`nnamespace Fixture;`n`n[Lin(`"x`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:1"))
+        'string-literal' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string Name = `"NativeLinuxOnly`";`n}`n", @("marker-noncanonical:${z}:5"))
+        'trailing-comment' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    [Test] // [NativeLinuxOnlyAttribute(`"trailing comment`")]`n    public void Runs() { }`n}`n", @("marker-noncanonical:${z}:5"))
+        'second-use-on-marker-line' = @($z, "namespace Fixture;`n`n[NativeLinuxOnly(`"x`")] [Category(`"Unit`"), NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3", 'marker-without-row:antiphon|ZetaTests|'))
+        'block-comment-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n}`n", @('marker-without-row:antiphon|ZetaTests|Old', "marker-noncanonical:${z}:8"))
+        'inactive-if' = @($z, "namespace Fixture;`n`n#if false`n[NativeLinuxOnly(`"inactive`")]`npublic sealed class ZetaTests { }`n#endif`n", @('marker-without-row:antiphon|ZetaTests|'))
+        'reflection-outside-exempt-file' = @('tests/Shared/OtherWitness.cs', "internal static class OtherWitness`n{`n    internal static object Pin() => new Antiphon.TestSupport.NativeLinuxOnlyAttribute(`"pin`");`n    internal static Type Kind => typeof(NativeLinuxOnlyAttribute);`n}`n", @('marker-noncanonical:tests/Shared/OtherWitness.cs:3', 'marker-noncanonical:tests/Shared/OtherWitness.cs:4'))
+    }
+    foreach ($name in $failClosed.Keys) {
+        $path, $text, $expected = $failClosed[$name]
+        $extra = [ordered]@{} + $files
+        $extra[$path] = $text
+        $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root "fail-closed-$name" $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+        Assert-C1323 (Same-C1323Set $r.Problems $expected) "c1686-fail-closed-$name" ($r.Problems -join '; ')
+    }
+
     $extra = [ordered]@{} + $files
-    $extra['tests/Antiphon.Tests/PortableTests.cs'] = "public sealed class PortableTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n    // [ NativeLinuxOnly(`"line comment`")]`n    [Test] // [NativeLinuxOnlyAttribute(`"trailing comment`")]`n    public void Runs() { }`n}`n"
+    $extra['tests/Antiphon.Tests/PortableTests.cs'] = "public sealed class PortableTests`n{`n    /*`n     * [NativeLinuxOnly(`"block comment`")]`n    /* [Test, NativeLinuxOnly(`"block comment`")] */`n    // [ NativeLinuxOnly(`"line comment`")]`n    /// <see cref=`"NativeLinuxOnlyAttribute`"/> is not a marker.`n    [Test]`n    public void Runs() { }`n}`n"
     $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'comments' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
     Assert-C1323 ($r.Ok -and (Same-C1323Set $r.MarkerKeys $good.MarkerKeys)) 'c1686-comments-are-not-markers' (($r.Problems + $r.MarkerKeys) -join '; ')
 }
