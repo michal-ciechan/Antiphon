@@ -482,6 +482,7 @@ describe('AgentsPage', () => {
     })
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.5 s x 1.5 full-suite factor.
   it('deletes an agent via the settings modal', async () => {
     const deleteSpy = vi.fn()
     server.use(
@@ -502,7 +503,7 @@ describe('AgentsPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Delete agent' }))
 
     await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('agent-1'))
-  })
+  }, 17_000)
 
   it('loads selected agent detail and shows queue card title', async () => {
     const backendAgent: AgentSummaryDto = {
@@ -593,6 +594,7 @@ describe('AgentsPage', () => {
     expect(await screen.findByText(/Keyboard selected card/)).toBeInTheDocument()
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.4 s x 1.5 full-suite factor.
   it('creates an agent from the modal', async () => {
     const createSpy = vi.fn()
     server.use(
@@ -633,7 +635,7 @@ describe('AgentsPage', () => {
       systemPromptAppend: null,
       preset: 'orchestrator',
     })
-  })
+  }, 17_000)
 
   it('creates a supervised agent when the always-on and remote-control switches are on', async () => {
     const createSpy = vi.fn()

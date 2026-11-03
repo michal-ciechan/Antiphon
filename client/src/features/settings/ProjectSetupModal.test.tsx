@@ -137,6 +137,7 @@ describe('ProjectSetupModal', () => {
     expect(screen.getByText('Git remote read from the checkout.')).toBeInTheDocument()
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.0 s x 1.5 full-suite factor.
   it('renders a 409 conflict from setup', async () => {
     seed(() => HttpResponse.json({ detail: 'Directory already belongs to another project.' }, { status: 409 }))
 
@@ -145,7 +146,7 @@ describe('ProjectSetupModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
 
     expect(await screen.findByText('Directory already belongs to another project.')).toBeInTheDocument()
-  })
+  }, 18_000)
 
   it('returns a directory validation error to the Directory step', async () => {
     seed(() => HttpResponse.json({ errors: { directory: ['Directory does not exist.'] } }, { status: 422 }))
@@ -418,6 +419,7 @@ describe('C1274 repair setup read boundaries', () => {
     })))
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.3 s x 1.5 full-suite factor.
   it.each(repairStates)('C1274 repair selected models %s show unknown and block agent create', async (state) => {
     const submitted = seedRepair()
     const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
@@ -441,7 +443,7 @@ describe('C1274 repair setup read boundaries', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
     expect(submitted).not.toHaveBeenCalled()
-  })
+  }, 16_000)
 
   it('C1282 switches runner profile after a models read fails', async () => {
     const submitted = seedRepair()

@@ -44,6 +44,7 @@ const emptyReadiness: ProjectReadinessDto = {
 }
 
 describe('ProjectConfig default launch environment', () => {
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.7 s x 1.5 full-suite factor.
   it('renders stored env and submits the parsed dict on save', async () => {
     let submitted: UpdateProjectRequest | null = null
     server.use(
@@ -81,7 +82,7 @@ describe('ProjectConfig default launch environment', () => {
       color: 'yellow',
       message: expect.stringContaining('Line 3 was ignored because it is not KEY=value.'),
     }))
-  })
+  }, 18_000)
 })
 
 it('submits configured visibility only when the operator changes the repository select', async () => {

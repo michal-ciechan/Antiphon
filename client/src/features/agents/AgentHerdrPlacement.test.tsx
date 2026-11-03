@@ -145,6 +145,7 @@ describe('AgentHerdrPlacement', () => {
     expect(submitted!.herdrTabLabel).toBe('Orch')
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.8 s x 1.5 full-suite factor.
   it('settings modal pre-fills from detail and sends only changed fields', async () => {
     let submitted: UpdateAgentRequest | null = null
     server.use(
@@ -166,7 +167,7 @@ describe('AgentHerdrPlacement', () => {
     await settleQueries(queryClient)
     expect(submitted!.herdrTabLabel).toBe('Orch2')
     expect(submitted!.herdrWorkspaceLabel).toBeUndefined()
-  })
+  }, 18_000)
 
   it('clearing a field sends an empty string not undefined', async () => {
     let submitted: UpdateAgentRequest | null = null

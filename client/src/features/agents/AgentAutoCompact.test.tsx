@@ -78,6 +78,7 @@ describe('AgentSettingsModal auto-compact overrides', () => {
     expect(submitted!.autoCompactContextPercent).toBeNull()
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.0 s x 1.5 full-suite factor.
   it('submits chosen overrides with the update', async () => {
     let submitted: UpdateAgentRequest | null = null
     server.use(
@@ -109,5 +110,5 @@ describe('AgentSettingsModal auto-compact overrides', () => {
     expect(submitted!.autoCompactEnabled).toBe(false)
     expect(submitted!.autoCompactIdleMinutes).toBe(60)
     expect(submitted!.autoCompactContextPercent).toBe(80)
-  })
+  }, 19_000)
 })

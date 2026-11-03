@@ -27,6 +27,7 @@ type SavedBody = {
 }
 
 describe('RunnerDefaultsSection', () => {
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.3 s x 1.5 full-suite factor.
   it('saves a cleared kind override with the current revision and keeps a stale draft', async () => {
     const captured: { body: SavedBody | null } = { body: null }
     server.use(
@@ -56,7 +57,7 @@ describe('RunnerDefaultsSection', () => {
     expect(captured.body?.globalRunnerId).toBe('server2')
     expect(await screen.findByTestId('runner-defaults-conflict')).toHaveTextContent('draft')
     expect(screen.getByTestId('runner-defaults-reason')).toHaveValue('clear codex')
-  })
+  }, 16_000)
 
   it('saves the global runner with the current revision', async () => {
     const captured: { body: SavedBody | null } = { body: null }

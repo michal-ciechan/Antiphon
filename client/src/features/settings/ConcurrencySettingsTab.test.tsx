@@ -218,6 +218,7 @@ afterEach(() => {
   window.history.pushState({}, '', '/')
 })
 
+// Provisional budget (CARD-1690): 2x the loaded p95 6.0 s x 1.5 full-suite factor.
 it('C506 V15 project-deeplink', async () => {
   const calls = serveScopes()
   window.history.pushState({}, '', `/settings?tab=concurrency&project=${P}`)
@@ -232,7 +233,7 @@ it('C506 V15 project-deeplink', async () => {
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
   expect(calls.projectGets).toEqual([P])
   expect(calls.globalGets).toBe(0)
-})
+}, 19_000)
 
 it('C506 V15 scope-selector', async () => {
   const calls = serveScopes()
@@ -334,6 +335,7 @@ it('C506 S3F1 active-tab-click', async () => {
   expect(calls.globalGets).toBe(0)
 })
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.6 s x 1.5 full-suite factor.
 it('C506 S3F1 away-and-back', async () => {
   const calls = serveScopes()
   serveProjectsTab()
@@ -367,7 +369,7 @@ it('C506 S3F1 away-and-back', async () => {
   expect(search().has('project')).toBe(false)
   expect(search().get('keep')).toBe('value')
   expect(calls.puts).toHaveLength(0)
-})
+}, 17_000)
 
 it('C506 S3F1 unknown-tab', async () => {
   const calls = serveScopes()

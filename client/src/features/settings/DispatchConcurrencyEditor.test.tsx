@@ -406,6 +406,7 @@ it('C506 V08 unknown-source', async () => {
 
 // ---- V-9 sparse Save: only the operator's override, integer gate, pending gate, offline retry ----
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.5 s x 1.5 full-suite factor.
 it('C506 V09 sparse-project', async () => {
   const state = serve(P, P0)
   state.put = accept(state, P0)
@@ -428,8 +429,9 @@ it('C506 V09 sparse-project', async () => {
   })
   expect(state.puts[0].raw).toContain('"maxParallel":1')
   await waitFor(() => expect(successes().map((options) => options.message)).toStrictEqual(['Saved revision 1']))
-})
+}, 17_000)
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.3 s x 1.5 full-suite factor.
 it('C506 V09 sparse-global', async () => {
   const state = serve(null, G_EMPTY)
   state.put = accept(state, G_EMPTY)
@@ -450,8 +452,9 @@ it('C506 V09 sparse-global', async () => {
     reason: 'global code',
     provenance: 'Human',
   })
-})
+}, 16_000)
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.2 s x 1.5 full-suite factor.
 it('C506 V09 trim-reason', async () => {
   const state = serve(P, P0)
   state.put = accept(state, P0)
@@ -465,8 +468,9 @@ it('C506 V09 trim-reason', async () => {
 
   await waitFor(() => expect(state.puts).toHaveLength(1))
   expect(state.puts[0].body.reason).toBe('padded reason')
-})
+}, 16_000)
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.3 s x 1.5 full-suite factor.
 it('C506 V09 invalid-disabled', async () => {
   const state = serve(P, P0)
   state.put = accept(state, P0)
@@ -488,7 +492,7 @@ it('C506 V09 invalid-disabled', async () => {
 
   await setValue('Code max parallel', '2')
   expect(saveButton()).toBeEnabled()
-})
+}, 17_000)
 
 it('C506 V09 double-submit', async () => {
   const { gate, release } = hold()
@@ -576,19 +580,21 @@ it('C506 V10 overall-queued', async () => {
   expect(screen.queryByRole('checkbox', { name: 'Overall max parallel no limit' })).toBeNull()
 })
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.6 s x 1.5 full-suite factor.
 it('C506 V10 review-parallel', async () => {
   await noLimitThenRevert('Review', 'max parallel', { roles: { Code: { maxParallel: 1 }, Review: { maxParallel: null } } })
   expect(screen.getByTestId('dispatch-concurrency-inherited-Review-maxParallel')).toHaveTextContent('2')
   expect(screen.getByTestId('dispatch-concurrency-inherited-Review-maxParallel')).toHaveTextContent('Built-in default')
-})
+}, 17_000)
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.9 s x 1.5 full-suite factor.
 it('C506 V10 review-queued', async () => {
   const state = await noLimitThenRevert('Review', 'max queued', { roles: { Code: { maxParallel: 1 }, Review: { maxQueued: null } } })
   expect(Object.hasOwn(state.puts[1].body.overrides as object, 'roles')).toBe(true)
   expect(Object.hasOwn((state.puts[1].body.overrides as { roles: object }).roles, 'Review')).toBe(false)
   expect(screen.getByTestId('dispatch-concurrency-inherited-Review-maxQueued')).toHaveTextContent('5')
   expect(screen.getByTestId('dispatch-concurrency-inherited-Review-maxQueued')).toHaveTextContent('Global override')
-})
+}, 18_000)
 
 // ---- V-11 Clear all overrides: confirm first, exact {} body, disabled when nothing to clear ----
 
@@ -708,6 +714,7 @@ it('C506 V12 conflict-project', async () => {
   })
 })
 
+// Provisional budget (CARD-1690): 2x the loaded p95 5.2 s x 1.5 full-suite factor.
 it('C506 V12 conflict-global', async () => {
   const g8 = global(8, G7_OVERRIDES, g7Effective(8, 0))
   const state = serve(null, G7, (put, index) => {
@@ -736,8 +743,9 @@ it('C506 V12 conflict-global', async () => {
   await waitFor(() => expect(state.puts).toHaveLength(2))
   expect(state.puts[1].body.expectedRevision).toBe(8)
   expect(state.puts[1].body.expectedGlobalRevision).toBe(8)
-})
+}, 16_000)
 
+// Provisional budget (CARD-1690): 2x the loaded p95 6.3 s x 1.5 full-suite factor.
 it('C506 V12 refresh-fails', async () => {
   const state = serve(P, P0, (put, index) => {
     if (index === 0) {
@@ -771,7 +779,7 @@ it('C506 V12 refresh-fails', async () => {
   await userEvent.click(saveButton())
   await waitFor(() => expect(state.puts).toHaveLength(2))
   expect(state.puts[1].body.expectedRevision).toBe(5)
-})
+}, 19_000)
 
 it('C506 V12 live-dirty', async () => {
   const hub = fakeHub()
