@@ -285,8 +285,11 @@ R-2 junction and custody qualification stays pending/required.
 rows and that those obligation gaps still leave coverage incomplete. Since CARD-1686
 it keeps no list of its own: it derives the census from the prefixed policy rows and
 the `[NativeLinuxOnly]` markers under each suite's project directory, and fails on a
-marker without a row or a row without a marker (`-Case C1686_LinuxOnlyCensus` proves
-both on fixtures). The selection set `release-gate.platform` runs
+marker without a row or a row without a marker. It parses only the canonical
+`[NativeLinuxOnly(...)]` line form; any other non-comment `NativeLinuxOnly(` or
+`NativeLinuxOnlyAttribute(` use, such as a stacked, qualified or spaced marker, fails
+closed as `marker-noncanonical` (`-Case C1686_LinuxOnlyCensus` proves all three on
+fixtures). The selection set `release-gate.platform` runs
 `ReleaseGatePlatformTests` when the policy, this harness or a narrowly routed marker
 file changes; any other marker file has no rule and selects Full. The compiled
 marker witness is `NativeLinuxPolicyWitnessTests` in each of the four suites.
