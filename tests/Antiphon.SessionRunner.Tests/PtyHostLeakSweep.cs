@@ -184,3 +184,46 @@ public class PtyHostLeakSweepTests
         PtyHostLeakSweep.IsOwnedHost(@"C:\logs\antiphon\session-runner\pty-hosts\bin\stamp\Antiphon.PtyHost.exe", DateTime.UtcNow.AddHours(-1), false, [root]).ShouldBeFalse();
     }
 }
+
+/// <summary>
+/// CARD-1682: a host the runtime never adopted has no session to kill, so the teardown must kill it
+/// at once. A 15 s poll there outlasted the 10 s timeout of the real-host adoption witnesses: their
+/// failure showed as a timeout instead of the assertion, and the host was left running.
+/// </summary>
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+[Timeout(30_000)]
+public class TestSessionTeardownTests
+{
+    [Test]
+    public async Task A_never_adopted_host_is_killed_at_once_so_the_assertion_shows()
+    {
+        var root = TestSessionLogRoot.Create("adoption-tests");
+        var runtime = new SessionRunnerRuntime(
+            Microsoft.Extensions.Options.Options.Create(new SessionRunnerSettings { SessionLogPath = root }),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionRunnerRuntime>.Instance);
+        using var host = Process.Start(OperatingSystem.IsWindows()
+            ? new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "PING.EXE"), ["-n", "60", "127.0.0.1"])
+            : new ProcessStartInfo("/bin/sleep", ["60"]))!;
+        try
+        {
+            var clock = Stopwatch.StartNew();
+            var failure = await Should.ThrowAsync<ShouldAssertException>(async () =>
+            {
+                try { 0.ShouldBe(1, "the adoption assertion"); }
+                finally { await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, Guid.NewGuid(), host.Id); }
+            });
+            clock.Stop();
+
+            failure.Message.ShouldContain("the adoption assertion");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+                "a never-adopted host is killed at once, well inside the 10 s timeout of the adoption witnesses");
+            host.HasExited.ShouldBeTrue("the teardown leaves no host running");
+        }
+        finally
+        {
+            try { host.Kill(entireProcessTree: true); } catch { /* Already gone. */ }
+            await runtime.DisposeAsync();
+        }
+    }
+}
