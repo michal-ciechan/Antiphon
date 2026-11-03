@@ -81,8 +81,7 @@ public sealed class RunnerWorktreeRetentionSettingsValidator : IValidateOptions<
             failures.Add("RunnerWorktreeRetention:Cron must be a five-field expression.");
         if (options.Runners.Any(string.IsNullOrWhiteSpace))
             failures.Add("RunnerWorktreeRetention:Runners must not contain an empty id.");
-        _ = failures; // CARD-1677 red shim: no bound is enforced yet
-        return ValidateOptionsResult.Success;
+        return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 
     private static bool IsPosixAbsolute(string? path) =>

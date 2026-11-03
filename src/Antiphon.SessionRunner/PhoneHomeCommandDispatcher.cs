@@ -979,9 +979,15 @@ public sealed class PhoneHomeCommandDispatcher
         RequireRetentionCapability();
         var body = request.Payload?.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)
             ?? throw new ArgumentException("Workspace retain body is required.");
-        // CARD-1677 red shim: phase A outside the lock, phase B always and inside it.
-        var step = await _runtime.RetainWorkspaceCheckAndMoveAsync(body, ct);
-        return await MutateAsync(request, async () => Result(request, await _runtime.RetainWorkspaceCompleteAsync(step, ct)));
+        WorkspaceRetainStep? step = null;
+        var locked = await MutateAsync(request, async () =>
+        {
+            step = await _runtime.RetainWorkspaceCheckAndMoveAsync(body, ct);
+            return Result(request, step.Final ?? new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept));
+        });
+        if (step is not { Moved: true })
+            return locked;
+        return Result(request, await _runtime.RetainWorkspaceCompleteAsync(step, ct));
     }
 
     private async Task<PhoneHomeFrame> RetentionInventoryAsync(PhoneHomeFrame request, CancellationToken ct)

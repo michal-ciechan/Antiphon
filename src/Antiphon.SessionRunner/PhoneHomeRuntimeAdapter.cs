@@ -35,7 +35,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
 
     /// <summary>CARD-1677 D-11: retention is advertised only by a Linux runner (the desktop never retains).</summary>
     internal static IReadOnlyList<string> RetentionFeatures(bool isLinux) =>
-        []; // CARD-1677 red shim
+        isLinux ? [RunnerCapabilityFeatures.WorkspaceRetentionV1] : [];
 
     public Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct) =>
         Retention().CheckAndMoveAsync(request, ct);
