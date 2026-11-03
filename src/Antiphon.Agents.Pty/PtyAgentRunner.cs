@@ -42,6 +42,9 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private IPtyCustodyContainment? _containment;
     private PtyTerminationObservation? _linuxTermination;
     private TimeProvider _custodyClock = TimeProvider.System;
+    private bool _terminationSucceeded;
+    private int _terminationFailures;
+    private long _lastTerminationEnd;
     internal IPtyCustodyNative? CustodyNative { get; init; }
     internal Action? ReadProcessedForTest { get; set; }
     internal Func<IPtySession, Task>? BeforeExitSubscriptionForTest { get; init; }
@@ -581,7 +584,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// Irreversibly close this producer's input gate before observing OS accounting. A timeout
     /// or failed read throws and cannot be interpreted as an empty container.
     /// Windows queries the job and does not kill. Explicit Linux release terminates through
-    /// the root-owned helper, then re-reads the retained tree. Ordinary Linux observation uses
+    /// the root-owned helper at most once after a success and otherwise on a capped backoff
+    /// (CARD-1617), then re-reads the retained tree on every call. Ordinary Linux observation uses
     /// <see cref="ObserveLinuxAccountingAsync"/> and does not terminate.
     /// </summary>
     public async Task<PtyCustodyObservation> SealAndObserveCustodyAsync(CancellationToken ct = default)
@@ -603,19 +607,37 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
                 // CARD-0604 D-17. The seal is what terminates on Linux: the cgroup is emptied by
                 // the root-owned helper and the tree's own procs file is then re-read. A tree
                 // that is still populated is Draining, never a fabricated zero.
-                if (StopSignal is { } stop)
+                // CARD-1617: every explicit read re-reads accounting below, but the kill itself is
+                // bounded. A success is never repeated; failed attempt k waits min(2^(k-1) s, 60 s).
+                if (TerminationDue())
                 {
-                    // The helper's result is issued-operation evidence only. Accounting below
-                    // still decides custody, and a helper timeout targets the helper separately.
-                    containment.StopSignal = stop;
-                    PtyTerminationObservation? termination = null;
-                    stop(_conn?.Pid ?? 0, 9, "CustodyRelease", () => {
-                        termination = containment.Terminate();
-                        return termination.Succeeded;
-                    });
-                    _linuxTermination = termination ?? new(false, 0);
+                    PtyTerminationObservation? attempt = null;
+                    try
+                    {
+                        if (StopSignal is { } stop)
+                        {
+                            // The helper's result is issued-operation evidence only. Accounting
+                            // below still decides custody, and a helper timeout targets the
+                            // helper separately.
+                            containment.StopSignal = stop;
+                            PtyTerminationObservation? termination = null;
+                            stop(_conn?.Pid ?? 0, 9, "CustodyRelease", () => {
+                                termination = containment.Terminate();
+                                return termination.Succeeded;
+                            });
+                            _linuxTermination = termination ?? new(false, 0);
+                        }
+                        else _linuxTermination = containment.Terminate();
+                        attempt = _linuxTermination;
+                    }
+                    finally
+                    {
+                        // A recorder that never sent, or a kill that threw, is a failed attempt.
+                        if (attempt is { Succeeded: true }) _terminationSucceeded = true;
+                        else _terminationFailures++;
+                        _lastTerminationEnd = _custodyClock.GetTimestamp();
+                    }
                 }
-                else _linuxTermination = containment.Terminate();
                 var population = containment.ReadActive();
                 if (population.Count != 0) return new(population.Count, false);
                 _custodyDrainTask ??= DrainCustodyOutputAsync(null);
@@ -632,6 +654,20 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             return new(modern.QueryActiveProcesses(), true);
         }
         finally { _writeGate.Release(); }
+    }
+
+    /// <summary>
+    /// CARD-1617: whether the next explicit Linux release may issue the kill. Never after a
+    /// success; after failed attempt k only once min(2^(k-1) s, 60 s) has passed since that
+    /// attempt ended. Called under <see cref="_writeGate"/>.
+    /// </summary>
+    private bool TerminationDue()
+    {
+        if (_terminationSucceeded) return false;
+        if (_terminationFailures == 0) return true;
+        var k = _terminationFailures;
+        var backoff = TimeSpan.FromSeconds(k >= 7 ? 60 : 1 << (k - 1));
+        return _custodyClock.GetElapsedTime(_lastTerminationEnd) >= backoff;
     }
 
     /// <summary>

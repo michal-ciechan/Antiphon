@@ -1132,7 +1132,9 @@ isolates each item and reports errors after processing the remaining batch.
   the exact binding, namespace, container, and host pid plus start identity. Missing or
   unreadable accounting is never zero. Prolonged Draining and unresolved Unknown are warnings
   only. Linux custody stays unadvertised until native qualification. A successful kill is not a
-  receipt and is not a source-clean verdict.
+  receipt and is not a source-clean verdict. The host issues the kill helper at most once
+  after a success, and after failures on a 1 s doubling backoff capped at 60 s; every explicit
+  read still re-reads accounting (CARD-1617).
 
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch
