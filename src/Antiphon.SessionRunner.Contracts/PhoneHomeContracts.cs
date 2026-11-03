@@ -136,6 +136,15 @@ public enum PhoneHomeOperation
 
     /// <summary>CARD-0824 S1. Operator exit of one quarantined slot directory.</summary>
     WorkspaceSlotQuarantineRelease = 44,
+
+    /// <summary>CARD-1677 S1. Read-only listing of the runner worktree root and its retiring root.</summary>
+    WorkspaceRetentionInventory = 45,
+
+    /// <summary>
+    /// CARD-1677 S1. One finished task mirror, rechecked on the runner and removed without force
+    /// (Execute) or only reported (DryRun). The server decides "finished"; the runner decides "safe".
+    /// </summary>
+    WorkspaceRetain = 46,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>

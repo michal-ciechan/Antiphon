@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "73a7447cea2b789495d2e891cfeac7be61381d2ed1021cf98a96107dd2ecc962",
+  "policyHash": "d4c817ca8b8084de5fcdd42048057857452c2dd4863fd8091b647baf8158e2a7",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -894,6 +894,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the workspace slot process scan reads /proc/*/cwd and /proc/*/fd of real children. The case remains required on Linux.",
           "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1677RetentionNativeProcessTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the retention holder scan reads /proc/*/cwd and /proc/*/fd of real children and an unreadable proc root. The case remains required on Linux.",
+          "owner": "CARD-1677"
         },
         {
           "suite": "session-runner",

@@ -231,6 +231,11 @@ try
     builder.Services.AddOptions<AttentionSettings>()
         .Bind(builder.Configuration.GetSection(AttentionSettings.SectionName))
         .ValidateOnStart();
+    // CARD-1677 S1: runner worktree retention ships off (Enabled=false, Runners=[], Execute=false).
+    builder.Services.AddSingleton<IValidateOptions<RunnerWorktreeRetentionSettings>, RunnerWorktreeRetentionSettingsValidator>();
+    builder.Services.AddOptions<RunnerWorktreeRetentionSettings>()
+        .Bind(builder.Configuration.GetSection(RunnerWorktreeRetentionSettings.SectionName))
+        .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
     builder.Services.AddOptions<WorktreeResidueSettings>()
         .Bind(builder.Configuration.GetSection("WorktreeResidue"))
@@ -614,6 +619,8 @@ try
     builder.Services.AddScoped<WorktreeResidueSweepService>();
     builder.Services.AddScoped<AbandonedLandingReconciler>();
     builder.Services.AddScoped<WorktreeResidueJob>();
+    builder.Services.AddScoped<RunnerWorktreeRetentionService>();
+    builder.Services.AddScoped<RunnerWorktreeRetentionJob>();
     builder.Services.AddScoped<RunnerSlotReconcileJob>();
     builder.Services.AddScoped<RunnerRetireJob>();
     builder.Services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
@@ -1153,6 +1160,11 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
             if (residue.Enabled)
                 HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
+            var retention = scope.ServiceProvider.GetRequiredService<IOptions<RunnerWorktreeRetentionSettings>>().Value;
+            if (retention.Enabled)
+                HangfireConfiguration.AddOrUpdateRunnerWorktreeRetentionJob(recurringJobManager, retention);
+            else
+                recurringJobManager.RemoveIfExists(retention.RecurringJobId);
             if (ExpectationWatchdogJob.ShouldRun(hangfire,
                 scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value))
                 HangfireConfiguration.AddOrUpdateExpectationWatchdogJob(recurringJobManager);

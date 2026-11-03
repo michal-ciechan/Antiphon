@@ -150,6 +150,9 @@ public static class RunnerCapabilityFeatures
 
     /// <summary>CARD-0824 S1: this runner leases reusable workspace slots (its flag is on).</summary>
     public const string WorkspaceSlotV1 = "workspaceSlotV1";
+
+    /// <summary>CARD-1677 S1: this (Linux) runner answers WorkspaceRetentionInventory and WorkspaceRetain.</summary>
+    public const string WorkspaceRetentionV1 = "workspaceRetentionV1";
     public const string WorkspaceRepositoryIdentityV1 = "workspaceRepositoryIdentityV1";
     public const string WorkspaceParkSourceModesV1 = "workspaceParkSourceModesV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";

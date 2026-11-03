@@ -140,6 +140,21 @@ public static class AgentTaskEndpoints
             return Results.Ok(await sweep.PreviewAsync(request.ProjectId, request.BoardId, ct));
         });
 
+        // CARD-1677 S1. One DryRun tick for one allow-listed runner (RunnerWorktreeRetention:Enabled and
+        // Runners must already name it). It never executes, whatever Execute says; rows land in a residue run.
+        tasks.MapPost("/worktree-residue/runner-retention/{runnerId}/preview", async (
+            string runnerId,
+            HttpContext http,
+            AgentTaskService service,
+            RunnerWorktreeRetentionService retention,
+            CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            if (caller.Task is not null)
+                throw new ForbiddenException("A child task token cannot preview runner retention.", "caller_scope");
+            return Results.Ok(await retention.RunTickAsync(ct, previewRunner: runnerId));
+        });
+
         tasks.MapGet("/worktree-residue/runs/{runId:guid}", async (
             Guid runId,
             int? page,

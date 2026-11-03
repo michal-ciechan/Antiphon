@@ -472,6 +472,21 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<PhoneHomeWorkspaceSlotColdResetResponse>(frame) ?? throw Missing("workspace-slot-cold-reset");
     }
 
+    /// <summary>CARD-1677 S1. Read-only listing of the runner's worktree and retiring roots.</summary>
+    public async Task<PhoneHomeWorkspaceRetentionInventoryResponse> GetWorkspaceRetentionInventoryAsync(CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceRetentionInventory, new { }, ct);
+        return Read<PhoneHomeWorkspaceRetentionInventoryResponse>(frame) ?? throw Missing("workspace-retention-inventory");
+    }
+
+    /// <summary>CARD-1677 S1. One candidate mirror; the runner rechecks it and removes it only in Execute, never forced.</summary>
+    public async Task<PhoneHomeWorkspaceRetainResponse> RetainWorkspaceAsync(
+        PhoneHomeWorkspaceRetainRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceRetain, request, ct);
+        return Read<PhoneHomeWorkspaceRetainResponse>(frame) ?? throw Missing("workspace-retain");
+    }
+
     public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveWorkspaceAsync(
         PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct)
     {
