@@ -234,6 +234,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (OperatingSystem.IsLinux()) _launcher.StopIntents = StopIntents;
         _transcriptClaims.ClaimDisplaced += OnTranscriptClaimDisplaced;
         _absence = CreateAbsenceEvidence(phoneHomeSettings?.Value is { Enabled: true } ph ? ph.LaunchGenerationsPath : null);
+        if (OperatingSystem.IsWindows() && _settings.PtyHostSocketDirMode == PtyHostSocketDirMode.Owned)
+            _logger.LogInformation("PtyHostSocketDirMode Owned is ignored on Windows; pty-host pipes keep antiphon-pty-<id>");
     }
 
     // CARD-1153: the evidence service, or null when its store could not be initialized (the feature
@@ -729,16 +731,28 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
             else
             {
+                // CARD-1653 S2: the pipe name is chosen once. An owned directory that is not safe fails
+                // the launch here, before any host is spawned; there is no /tmp fallback.
+                var pipeName = PtyHostRendezvous.PipeNameFor(_settings, request, OperatingSystem.IsWindows());
+                if (pipeName != PtyHostProtocol.PipeNameFor(request.SessionId))
+                {
+                    try { PtyHostSocketDirectory.EnsureSafe(_settings.ResolvedPtyHostSocketDir, PtyHostPeerPolicy.FileProbe); }
+                    catch (PtyHostSocketDirUnsafeException unsafeDir)
+                    {
+                        _logger.LogWarning("{Code}: launch refused for session {SessionId}", unsafeDir.Code, request.SessionId);
+                        throw;
+                    }
+                }
                 if (request.InstalledGrokRulesReceipt is { } receipt)
                     new PtyHostManifest
                     {
                         SessionId = request.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
-                        PipeName = PtyHostProtocol.PipeNameFor(request.SessionId), HostPid = 0,
+                        PipeName = pipeName, HostPid = 0,
                         HostStartTimeUtc = DateTime.MinValue, CreatedAtUtc = DateTime.UtcNow,
                         AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, request.SessionId));
                 await CreationEffectAsync(request.SessionId, "start");
-                await session.StartAsync(request, _launcher, BackendDecision.Requested, ct);
+                await session.StartAsync(request, _launcher, BackendDecision.Requested, pipeName, ct);
             }
 
             return session.ToDto();
@@ -2020,6 +2034,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         using var pty = _startup.Begin("pty-manifests");
+        if (_settings.PtyHostSocketDirMode == PtyHostSocketDirMode.Owned && OperatingSystem.IsLinux())
+        {
+            // CARD-1653 S2 (D-S2-4): adoption proves each path by its socket file and peer, so a
+            // directory fault is reported here and never gates adoption.
+            try { PtyHostSocketDirectory.EnsureSafe(_settings.ResolvedPtyHostSocketDir, PtyHostPeerPolicy.FileProbe); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("{Code}: adoption sweep socket directory check",
+                    (ex as PtyHostSocketDirUnsafeException)?.Code ?? PtyHostSocketDirUnsafeException.UnsafeCode);
+            }
+        }
         var manifestDir = _settings.PtyHostManifestDir;
         if (!Directory.Exists(manifestDir))
         {
@@ -2127,6 +2152,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     await session.DisposeAsync();
                     _sessions.TryAdd(manifest.SessionId, RunnerSession.CreatePendingConflict(
                         manifest, _settings, _events, _logger, PtyHostIdentityRefusedException.UnprovenPendingReason));
+                    hostAttempt.Complete(0, "refused");
+                    continue;
+                }
+                catch (PtyHostPeerRefusedException) when (manifest.VerificationBinding is null)
+                {
+                    // CARD-1653 S2: the kernel says another process is behind the pipe, which proves
+                    // nothing about the manifest's pid. Nothing was written to the peer. Keep the host
+                    // and its manifest as a held pending row the vanish sweep releases on evidence.
+                    await session.DisposeAsync();
+                    _sessions.TryAdd(manifest.SessionId, RunnerSession.CreatePendingConflict(
+                        manifest, _settings, _events, _logger, PtyHostPeerPolicy.UnprovenPendingReason));
                     hostAttempt.Complete(0, "refused");
                     continue;
                 }
@@ -3430,7 +3466,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         public async Task StartAsync(RunnerLaunchRequest request, PtyHostLauncher launcher,
-            string backendRequest, CancellationToken ct)
+            string backendRequest, string pipeName, CancellationToken ct)
         {
             Directory.CreateDirectory(_settings.SessionLogPath);
             Directory.CreateDirectory(_settings.PtyHostLogDir);
@@ -3443,6 +3479,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _sessionId,
                     _settings.PtyHostManifestDir,
                     hostLogFile: Path.Combine(_settings.PtyHostLogDir, $"{_sessionId:N}.log"),
+                    pipeName: pipeName,
                     launchTimeout: TimeSpan.FromSeconds(_settings.PtyHostLaunchTimeoutSec),
                     lingerTtl: TimeSpan.FromHours(_settings.PtyHostLingerHours),
                     ringCapChars: Math.Max(1, _settings.ReplayBufferMaxChars),
@@ -3458,11 +3495,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
                     _hostStartTimeUtc = host.StartTime.ToUniversalTime();
-                PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(null);
-                _client = await PtyHostClient.ConnectAsync(
-                    PtyHostProtocol.PipeNameFor(_sessionId),
-                    TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
-                    ct);
+                // CARD-1653 S2: the peer must be the host this launch spawned (proven by spawn), so a
+                // refusal tears that host down below and Launch never reaches the peer.
+                var policy = PeerPolicy(_hostPid, _hostStartTimeUtc, _processLiveness);
+                PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(policy);
+                try
+                {
+                    _client = await PtyHostClient.ConnectAsync(
+                        pipeName,
+                        TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
+                        ct, policy);
+                }
+                catch (PtyHostPeerRefusedException)
+                {
+                    _logger.LogWarning("pty_host_peer_mismatch: launch refused for session {SessionId}", _sessionId);
+                    throw;
+                }
                 // CARD-1653 (G2): Launch carries the session's environment and its secrets, so it
                 // goes only to a peer whose hello names this session, carries a host instance and
                 // is still waiting for launch. Custody checks its own binding below. A refusal tears
@@ -3586,8 +3634,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Cols > 0 ? manifest.Cols : 120,
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
-            PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(null);
-            _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
+            // CARD-1653 S2: a host launched before Owned keeps its /tmp path and gets the same checks.
+            if (_settings.PtyHostSocketDirMode == PtyHostSocketDirMode.Owned && OperatingSystem.IsLinux()
+                && !string.Equals(Path.GetDirectoryName(manifest.PipeName),
+                    Path.TrimEndingDirectorySeparator(_settings.ResolvedPtyHostSocketDir), StringComparison.Ordinal))
+                _logger.LogInformation("pty_host_legacy_socket_path: session {SessionId}", _sessionId);
+            var policy = PeerPolicy(manifest.HostPid, manifest.HostStartTimeUtc, probe);
+            PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(policy);
+            try
+            {
+                _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct, policy);
+            }
+            catch (PtyHostPeerRefusedException)
+            {
+                _logger.LogWarning("pty_host_peer_mismatch: adoption refused for session {SessionId}", _sessionId);
+                throw;
+            }
             // CARD-1636: the pipe name is not a peer identity. Custody adoption compares the
             // binding below; every other host must name this session and, when its manifest
             // recorded one, this host instance. The log names the session only, never the ids
@@ -3789,7 +3851,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// A live pty host this runner observed but did not adopt: a workspace ownership conflict
         /// or (CARD-1653) a peer that did not prove the manifest's identity. Listed as Starting +
         /// Adopted with the reason in Pending, no client, the host left running and its manifest
-        /// retained. Only the identity reason is released by the vanish sweep.
+        /// retained. Only the identity and peer reasons are released by the vanish sweep.
         /// </summary>
         public static RunnerSession CreatePendingConflict(PtyHostManifest manifest,
             SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger, string pendingReason)
@@ -4547,7 +4609,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         /// <summary>
-        /// CARD-1653 D-5: a row held because its peer did not prove the manifest's identity is
+        /// CARD-1653 D-5 (and S2's peer refusal): a row held because its peer did not prove the manifest's identity is
         /// released only by evidence. Once the manifest's host pid is dead at its recorded start,
         /// the row exits as ProcessVanished, SessionExited is published once and the retained
         /// manifest is deleted. Workspace and Herdr pending rows are not touched.
@@ -4559,7 +4621,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             string? manifestPath;
             lock (_gate)
             {
-                if (_pendingReason != PtyHostIdentityRefusedException.UnprovenPendingReason)
+                if (_pendingReason is not (PtyHostIdentityRefusedException.UnprovenPendingReason
+                    or PtyHostPeerPolicy.UnprovenPendingReason))
                     return false;
                 hostPid = _hostPid;
                 hostStart = _retainedHostStartTimeUtc;
@@ -4574,6 +4637,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 TryDeleteFile(manifestPath);
             return true;
         }
+
+        /// <summary>CARD-1653 S2: null under Off; otherwise the peer must be <paramref name="expectedPid"/> at its start.</summary>
+        private PtyHostConnectPolicy? PeerPolicy(int expectedPid, DateTime? expectedStart, IProcessLivenessProbe probe) =>
+            PtyHostPeerPolicy.Create(_settings.PtyHostPeerCheck, OperatingSystem.IsWindows(), OperatingSystem.IsLinux(),
+                expectedPid, expectedStart, probe, PtyHostPeerPolicy.FileProbe,
+                PtyHostPeerPolicy.PeerReaderOverride.Value ?? PtyHostPeerCredentials.Read,
+                _ => _logger.LogWarning("pty_host_peer_mismatch (observe): session {SessionId}", _sessionId));
 
         private static bool HelloIsFreshHostForThisSession(HelloAckMessage hello, Guid sessionId) =>
             hello.SessionId == sessionId && hello.HostInstanceId is not null
