@@ -90,6 +90,13 @@ public sealed class PhoneHomeSettings
     public string CapacityStatePath { get; set; } = "/state/runner-capacity";
 
     /// <summary>
+    /// CARD-1677 D-2. Retention keeps a tree this runner mirrored or launched a session in within the last
+    /// this many minutes (a task re-dispatched after the server's reread). A live session of its own keeps
+    /// the tree whatever its age.
+    /// </summary>
+    public int RetentionRecentUseMinutes { get; set; } = 10;
+
+    /// <summary>
     /// Image-owned executables a projected Raw launch may name, alongside "grok". Anything else,
     /// including a host path that happens to end in the same file name, is refused.
     /// </summary>

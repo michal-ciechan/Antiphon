@@ -484,6 +484,61 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    [Arguments(WorkspaceRetainModes.DryRun)]
+    [Arguments(WorkspaceRetainModes.Execute)]
+    public async Task Residue_retry_keeps_a_residue_a_live_process_holds(string mode, CancellationToken ct)
+    {
+        // CARD-1677 D-3 (c) (review c238f9ca, S-5). The holder scan comes first on the residue retry too: a
+        // live process with its cwd in the moved tree keeps it, and `git worktree remove` (which does not
+        // look at processes) never runs.
+        using var s = Create();
+        var m = s.Mirror();
+        var residue = s.Retiring + "/task-a1677001.0badf00d";
+        Directory.CreateDirectory(s.Retiring);
+        Git(s.Repository, "worktree", "move", m.Path, residue);
+        s.Holders.Next = _ => new HolderScan(true, [new WorkspaceSlotHolder(4242, "sleep", "cwd")]);
+        var before = Tree(residue);
+        s.Argv.Clear();
+
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceRetentionCodes.LiveProcess);
+        response.RetiringResidue.ShouldBeTrue();
+        response.Holders.ShouldNotBeNull().ShouldBe([new WorkspaceRetainHolder(4242, "sleep", "cwd")]);
+        s.Holders.Calls.ShouldBe(1, "the residue itself was scanned");
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+        s.MutatingVerbs().ShouldBeEmpty();
+        Tree(residue).ShouldBe(before);
+        s.Registered(residue).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments(WorkspaceRetainModes.DryRun)]
+    [Arguments(WorkspaceRetainModes.Execute)]
+    public async Task Tree_not_registered_at_its_path_is_kept(string mode, CancellationToken ct)
+    {
+        // CARD-1677 D-3 (b) (review c238f9ca, step 3). A runner-repository worktree moved into the leaf with a
+        // plain mv: its .git still names the runner repository, but `git worktree list` lists the old path, so
+        // it is not a registered worktree at the request path. Kept in DryRun too (git's own move refusal
+        // would only mask the check in Execute).
+        using var s = Create();
+        var registered = s.Mirror(path: s.Worktrees + "/elsewhere-a1677001");
+        var path = s.Worktrees + "/task-a1677001";
+        Directory.Move(registered.Path, path);
+        var m = registered with { Path = path };
+        var before = Tree(path);
+
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceRetentionCodes.NotRunnerRepository, response.Detail);
+        Directory.Exists(path).ShouldBeTrue();
+        Tree(path).ShouldBe(before);
+        s.Registered(registered.Path).ShouldBeTrue("the registration still names the old path");
+        s.RetiringEntries().ShouldBeEmpty();
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task Cross_device_retiring_root_moves_nothing(CancellationToken ct)
     {
         // V-15 (G-29).

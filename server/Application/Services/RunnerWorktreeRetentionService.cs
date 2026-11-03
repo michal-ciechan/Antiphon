@@ -53,7 +53,9 @@ public sealed class RunnerWorktreeRetentionService
         _logger = logger;
     }
 
-    public sealed record TickResult(string RunnerId, int Sent, Guid? RunId);
+    // RED SHIM (CARD-1677 review c238f9ca round 1): the repair's result fields, not yet filled.
+    public sealed record TickResult(string RunnerId, int Sent, Guid? RunId, int Examined = 0, int Eligible = 0,
+        int BackedOff = 0, string? Stopped = null);
 
     /// <summary>One tick over every allow-listed runner. <paramref name="previewRunner"/> forces DryRun for one runner (the preview route).</summary>
     public async Task<IReadOnlyList<TickResult>> RunTickAsync(CancellationToken ct, string? previewRunner = null)

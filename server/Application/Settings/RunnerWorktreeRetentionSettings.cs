@@ -35,6 +35,11 @@ public sealed class RunnerWorktreeRetentionSettings
 
     public int RequestTimeoutSeconds { get; set; } = 300;
 
+    // RED SHIM (CARD-1677 review c238f9ca round 1): the repair's settings, not yet read or validated.
+    public int MaxTickMinutes { get; set; } = 20;
+    public int KeptRecheckMinutes { get; set; } = 60;
+    public int KeptRecheckMaxHours { get; set; } = 24;
+
     /// <summary>The runner's worktree root as the task rows name it; a candidate path is its direct child.</summary>
     public string WorktreeRoot { get; set; } = "/work/worktrees";
 

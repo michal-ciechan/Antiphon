@@ -407,11 +407,14 @@ Count: 23 + 3 + 1 + 1 + 3 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 2 = **44 executions*
 
 **Class `C1677RetentionSettingsTests`** (no DB; S1).
 
-- **V-36** `Shipped_defaults_are_off_and_dry_run`: from `new RunnerWorktreeRetentionSettings()` **and**
-  `server/appsettings.json` read from the repository root (`TestPaths.RepoRoot`, not the cwd): `Enabled`
-  false, `Execute` false, `Runners` empty, `MinTerminalHours` 12, `TempSweep.Enabled` false,
+- **V-36** `Shipped_defaults_are_on_for_server2_with_execute` (renamed from `Shipped_defaults_are_off_and_dry_run`:
+  operator decision 2026-11-03, "Enable this on by default", plan D-15): from `new RunnerWorktreeRetentionSettings()`
+  **and** `server/appsettings.json` read from the repository root (`TestPaths.RepoRoot`, not the cwd): `Enabled`
+  true, `Execute` true, `Runners` empty in the type and exactly `["server2"]` in the JSON and when bound,
+  `MaxTickMinutes` 20, `KeptRecheckMinutes` 60, `KeptRecheckMaxHours` 24, `MinTerminalHours` 12, `TempSweep.Enabled` false,
   `TempSweep.Execute` false, `TempSweep.Families["claude-scratch"]` false.
-- **V-36b** `Validator_bounds(string field, string value, bool valid)`, 8 cases: `MinTerminalHours` 0 ✗ / 1 ✓;
+- **V-36b** `Validator_bounds(string field, string value, bool valid)`, 12 cases (`MaxTickMinutes` 0 ✗ / 20 ✓ and
+  `KeptRecheckMinutes` 0 ✗ / 1 ✓ added in round 1): `MinTerminalHours` 0 ✗ / 1 ✓;
   `MaxRemovalsPerTick` 0 ✗ / 1 ✓ / 100 ✓ / 101 ✗; `RetiringRoot` `work/r` ✗ / `/work/worktrees-retiring` ✓.
 - **V-38** `Job_is_not_concurrent`: `RunnerWorktreeRetentionJob.RunAsync` carries `DisableConcurrentExecution`.
 
@@ -638,9 +641,9 @@ and the unit witness that isolates each.
 | G-75 | I-14 a lost reply records `unknown` and keeps the path | PC-75 |
 | G-76 | §3.4 inventory names are never sent | PC-76 |
 | G-77 | I-12 the desktop worktree manager is never called | PC-77 |
-| G-78 | I-10 shipped `Enabled=false` | PC-78 |
-| G-79 | I-10 shipped `Execute=false` | PC-79 |
-| G-80 | I-10 shipped `Runners=[]` | PC-80 |
+| G-78 | D-15 shipped `Enabled=true` (was I-10 `false`) | PC-78 |
+| G-79 | D-15 shipped `Execute=true` (was I-10 `false`) | PC-79 |
+| G-80 | D-15 shipped `Runners=["server2"]` in JSON, `[]` in the type (was I-10 `[]`) | PC-80 |
 | G-81 | §5 validator `MinTerminalHours >= 1` | PC-81 |
 | G-82 | §5 validator `MaxRemovalsPerTick <= 100` | PC-82 |
 | G-83 | §5 validator refuses a relative `RetiringRoot` | PC-83 |
@@ -780,9 +783,9 @@ SV `…ServerTests`, ST `…SettingsTests`, TS `C1677TempSweepTests`, TF `…Fam
 | PC-75 | `Svc`: a transport loss recorded as `removed` | same `("lost")` | |
 | PC-76 | `Svc`: send `WorkspaceRetain` for an owner-hint match | SV/`Unmatched_inventory_names_are_reported_not_sent` at no request | |
 | PC-77 | `Svc`: on `removed` also call `IWorktreeManager.RemoveAsync` | SV/`Outcome_recording("removed")` at 0 manager calls | |
-| PC-78 | `Set`+`json`: `Enabled = true` | ST/`Shipped_defaults_are_off_and_dry_run` | |
-| PC-79 | `Set`+`json`: `Execute = true` | same | |
-| PC-80 | `json`: `Runners = ["server2"]` | same | |
+| PC-78 | `Set`+`json`: `Enabled = false` (D-15 flip) | ST/`Shipped_defaults_are_on_for_server2_with_execute` | |
+| PC-79 | `Set`+`json`: `Execute = false` (D-15 flip) | same | |
+| PC-80 | `json`: `Runners = []` (D-15 flip) | same | |
 | PC-81 | `Set`: `MinTerminalHours >= 0` | ST/`Validator_bounds("MinTerminalHours","0",false)` | |
 | PC-82 | `Set`: upper bound 1000 | same `("MaxRemovalsPerTick","101",false)` | |
 | PC-83 | `Set`: no rooted check | same `("RetiringRoot","work/r",false)` | |
@@ -831,6 +834,45 @@ Not listed as guards: G-4 (grammar, M-1); `--untracked-files=normal` (equivalent
 `--ignore-submodules=none` (a submodule tree is refused by `worktree move` itself, and the fixture has no
 submodule; Review checks the argv pin in V-2); the other-uid holder count (D-7, recorded, not a refusal);
 `ShouldWriteRow` dedupe (not a safety fact).
+
+### Review c238f9ca round-1 repairs (D-1, D-2, D-3, A-2, A-3, D-15)
+
+Witnesses added by the Code repair task 5fefd110 (on top of the S1 tip `d08bf72b6`). The new guards and PCs are
+pending for method-scoped SourceLanding Mutation, like every other PC here.
+
+| V | Class / method | Guard |
+|---|---|---|
+| V-70 | EN `Residue_retry_keeps_a_residue_a_live_process_holds` (DryRun, Execute) | G-134 (review D-3 c) |
+| V-71 | EN `Tree_not_registered_at_its_path_is_kept` (DryRun, Execute) | G-133 (review D-3 b) |
+| V-72 | DI `Recent_use_by_this_runner_keeps_the_tree` (mirror-then-retain, live-session; window-elapsed is the control) | G-129..G-132 (review D-2) |
+| V-73 | (V-72's control case) | none |
+| V-74 | SV `Kept_trees_do_not_starve_newer_removable_ones` (30 kept older than 5 removable, bound 25, two ticks) | G-121 (review D-1) |
+| V-75 | SV `Dry_run_census_covers_the_whole_population` | G-122 |
+| V-76 | SV `Kept_tree_backs_off_until_its_reason_changes` | G-121, G-123 |
+| V-77 | SV `Changed_task_facts_resend_a_backed_off_tree_at_once` | G-124 |
+| V-78 | SV `Preview_is_dry_run_even_when_execute_is_on` | G-125 (review D-3 a) |
+| V-79 | SV `Tick_stops_starting_requests_past_its_budget` | G-126 (review A-2) |
+| V-80 | SV `Switching_off_stops_a_running_tick` (enabled, execute) | G-127, G-128 (review A-3) |
+
+| PC | Mutant (one condition) | Witness |
+|---|---|---|
+| PC-121 | `Svc` `RecordSend`: never set `NotBefore` (the backoff removed) | SV/`Kept_trees_do_not_starve_newer_removable_ones`, `Kept_tree_backs_off_until_its_reason_changes` |
+| PC-122 | `Svc` selection: order by `CompletedAt` only (no never-sent first) | SV/`Dry_run_census_covers_the_whole_population` |
+| PC-123 | `Svc` `RecordSend`: a changed reason backs off like a repeat | SV/`Kept_tree_backs_off_until_its_reason_changes` |
+| PC-124 | `Svc` `Fingerprint`: a constant | SV/`Changed_task_facts_resend_a_backed_off_tree_at_once` |
+| PC-125 | `Svc` `RunTickAsync`: `execute = settings.Execute` (preview not forced) | SV/`Preview_is_dry_run_even_when_execute_is_on` |
+| PC-126 | `Svc` `StopReason`: no `MaxTickMinutes` term | SV/`Tick_stops_starting_requests_past_its_budget` |
+| PC-127 | `Svc` `StopReason`: no `Enabled` re-read | SV/`Switching_off_stops_a_running_tick(enabled)` |
+| PC-128 | `Svc` `StopReason`: no `Execute` re-read | SV/`Switching_off_stops_a_running_tick(execute)` |
+| PC-129 | `Act` `Covers`: ignore the recent stamps | DI/`Recent_use_by_this_runner_keeps_the_tree(mirror-then-retain)` |
+| PC-130 | `Act` `Covers`: ignore live sessions | DI/`Recent_use_by_this_runner_keeps_the_tree(live-session)` |
+| PC-131 | `Disp` Mirror: no `RecordMirror` | DI/`Recent_use_by_this_runner_keeps_the_tree(mirror-then-retain)` |
+| PC-132 | `Disp` Launch: no `RecordLaunch` | DI/`Recent_use_by_this_runner_keeps_the_tree(live-session)` |
+| PC-133 | `Ret` step 3: drop `if (block is null)` (continue as registered) | EN/`Tree_not_registered_at_its_path_is_kept` |
+| PC-134 | `Ret` `ResidueOrAbsentAsync`: drop the holder refusal | EN/`Residue_retry_keeps_a_residue_a_live_process_holds` |
+| PC-135 | `Set`: `Runners = ["server2"]` in the type | ST/`Shipped_defaults_are_on_for_server2_with_execute` |
+
+guards (round 1) = 15 new (G-121..G-135), mapped 15, missing 0.
 
 ### Out of scope
 
@@ -897,12 +939,12 @@ executed floor (`-MinExecuted`).
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s1r/ | c1677-runner-engine | /*/*/(C1677RetentionEngineTests*)\|(C1677RetentionInventoryTests*)\|(C1677RetentionDispatchTests*)/* | V-1..V-19, V-24..V-29, V-14d | 3 classes, 0 failed/skipped | 46 | 5 | true |
+| CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s1r/ | c1677-runner-engine | /*/*/(C1677RetentionEngineTests*)\|(C1677RetentionInventoryTests*)\|(C1677RetentionDispatchTests*)/* | V-1..V-19, V-24..V-29, V-14d, V-70..V-73 | 3 classes, 0 failed/skipped | 53 | 5 | true |
 | CP-2 | S1 | CP-1 | c1677-runner-native-process | /*/*/C1677RetentionNativeProcessTests/* | V-20..V-23 | class, 0 failed/skipped | 4 | 1 | true |
 | CP-3 | S1 | CP-1 | c1677-runner-workspace-regression | /*/*/RunnerWorkspaceServiceTests/* | R-1 | existing class, 0 failed/skipped | 35 | 1 | true |
 | CP-4 | S1 | CP-1 | c1677-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-12 | S1 | CP-1 | c1677-slot-probe-regression | /*/*/C0824WorkspaceSlotProcessScanTests/* | R-6 | existing class, 0 failed/skipped | 3 | 1 | true |
-| CP-5 | S1 | tests/Antiphon.Tests -> bin-c1677-s1s/ | c1677-server-retention | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)/* | V-30..V-39c | 2 classes, 0 failed/skipped | 54 | 7 | true |
+| CP-5 | S1 | tests/Antiphon.Tests -> bin-c1677-s1s/ | c1677-server-retention | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)/* | V-30..V-39c, V-74..V-80 | 2 classes, 0 failed/skipped | 66 | 7 | true |
 | CP-6 | S1 | CP-5 | c1677-phonehome-ops-regression | /*/*/PhoneHomeConnectionTests/Supported_operations_preserve_contracts | R-3 | method, 0 failed/skipped | 1 | 1 | true |
 | CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s2r/ | c1677-runner-temp | /*/*/(C1677TempSweepTests*)\|(C1677TempFamilyRegistryTests*)/* | V-40..V-48c | 2 classes, 0 failed/skipped | 27 | 4 | true |
 | CP-8 | S2 | CP-7 | c1677-runner-temp-native | /*/*/C1677TempSweepNativeTests/* | V-49, V-49b, V-50 | class, 0 failed/skipped | 3 | 1 | true |
@@ -913,7 +955,8 @@ executed floor (`-MinExecuted`).
 
 How Min is counted (executions):
 
-- CP-1: EN 38 + IN 3 + DI 5 = 46. CP-2: 4. CP-5: SV 44 + ST 10 = 54. CP-7: TS 24 + TF 3 = 27. CP-8: 3.
+- CP-1: EN 38 + IN 3 + DI 5 = 46, plus the round-1 repairs EN 4 + DI 3 = **53**. CP-2: 4. CP-5: SV 44 + ST 10 = 54,
+  plus the round-1 repairs SV 8 + ST 4 = **66**. CP-7: TS 24 + TF 3 = 27. CP-8: 3.
   CP-9: 3. CP-10: DA 11 + `AttentionKindWireTests` 4 (measured) = 15.
 - CP-3 35, CP-4/CP-13 3, CP-6 1, CP-12 3: measured at this tip. `Min` is a floor; a later method added to
   an existing class keeps it valid.
