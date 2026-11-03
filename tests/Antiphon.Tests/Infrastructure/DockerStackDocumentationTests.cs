@@ -194,21 +194,23 @@ public sealed class DockerStackDocumentationTests
     [Test]
     public void Temp_retirement_trusted_origins_registry_is_documented()
     {
+        // Read() folds whitespace; the table row and the script need their lines.
+        var gateRow = DockerStackDocuments.Read("docs/docker-stack.md").Split('\n')
+            .Single(line => line.StartsWith("| 9. Retire temp |", StringComparison.Ordinal));
         var text = Read("docs/docker-stack.md");
-        var gateRow = text.Split('\n').Single(line => line.StartsWith("| 9. Retire temp |", StringComparison.Ordinal));
         gateRow.ShouldContain("/home/mc/antiphon-server2/retirement-origins.json", Case.Sensitive, "c1689-docs: gate 9 prerequisite");
         gateRow.ShouldContain("(#temp-retirement-trusted-origins-card-1689)", Case.Sensitive, "c1689-docs: gate 9 links the section");
         const string heading = "#### Temp retirement trusted origins (CARD-1689)";
         var start = text.IndexOf(heading, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0, "c1689-docs: section");
-        var end = text.IndexOf("\n#### ", start + heading.Length, StringComparison.Ordinal);
+        var end = text.IndexOf(" #### ", start + heading.Length, StringComparison.Ordinal);
         var section = end < 0 ? text[start..] : text[start..end];
         section.ShouldContain("jq -ncS --arg p '<project-id>' '{schema:1,projects:{($p):{origins:[\"https://github.com/michal-ciechan/Antiphon.git\"]}}}' > /home/mc/antiphon-server2/retirement-origins.json",
             Case.Sensitive, "c1689-docs: the one-time operator command");
         foreach (var pin in new[] { "umask 077", "-Phase check-census", "RECYCLE_PROJECT id=<guid>", "with and without the `.git` suffix",
                      "No agent creates or edits this file.", "`remote-output.txt`" })
             section.ShouldContain(pin, Case.Sensitive, "c1689-docs: " + pin);
-        var script = Read("scripts/c1008-retirement.sh");
+        var script = DockerStackDocuments.Read("scripts/c1008-retirement.sh").Replace("\r\n", "\n");
         var reasons = System.Text.RegularExpressions.Regex.Matches(section, @"reason=([a-z-]+)")
             .Select(match => match.Groups[1].Value).Distinct().ToArray();
         reasons.ShouldBe(new[] { "registry-missing", "inventory", "registry-invalid", "registry-project", "unapproved-origin", "proof-exchange" },
