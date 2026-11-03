@@ -39,14 +39,19 @@ public sealed class ReleaseGatePlatformTests
             "C1323 decision-classes-are-not-class-excluded", "C1323 linux-only-rows-leave-census-complete",
             "C1323 decision-gaps-stay-incomplete", "C1323 linux-still-requires-the-rows");
 
-    // CARD-1686: fixture trees prove the derived census fails for a marker without a row and a row without a marker.
+    // CARD-1686: fixture trees prove the derived census fails for a marker without a row, a row without a marker
+    // and a marker spelling it does not parse.
     [Test]
     public Task C1686_LinuxOnlyCensus() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 7,
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 15,
             "C1323 c1686-consistent-census-passes", "C1323 c1686-class-marker-without-row-fails",
             "C1323 c1686-method-marker-without-row-fails", "C1323 c1686-row-without-marker-fails",
             "C1323 c1686-row-attribution-fails", "C1323 c1686-marker-outside-suite-fails",
-            "C1323 c1686-routes-name-the-census-set");
+            "C1323 c1686-routes-name-the-census-set", "C1323 c1686-noncanonical-stacked-method-fails",
+            "C1323 c1686-noncanonical-stacked-class-fails", "C1323 c1686-noncanonical-suffix-fails",
+            "C1323 c1686-noncanonical-qualified-fails", "C1323 c1686-noncanonical-global-fails",
+            "C1323 c1686-noncanonical-leading-space-fails", "C1323 c1686-noncanonical-paren-space-fails",
+            "C1323 c1686-comments-are-not-markers");
 
     // S-A census contract: compiled S/T/O identities, minus the Windows confinement sibling, stay required.
     [Test]

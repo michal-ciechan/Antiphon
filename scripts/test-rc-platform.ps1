@@ -715,7 +715,7 @@ function Test-C1686_LinuxOnlyCensus {
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $prefix = 'Linux-only by construction: fixture.'
     $alpha = "namespace Fixture;`n`n[NativeLinuxOnly(`"needs a FIFO (see [man 7 fifo])`")]`n[Category(`"Unit`")]`npublic sealed class AlphaTests`n{`n    [Test]`n    public void Runs() { }`n}`n"
-    $beta = "namespace Fixture;`n`npublic sealed partial class BetaTests`n{`n    private sealed class Rig`n    {`n    }`n`n    [NativeLinuxOnly(`"procfs`")]`n    [Test]`n    [Arguments(`"a`", Categories = [`"c-a`"])]`n    public async Task First(string mode) { }`n`n    // comment`n    [Test, NativeLinuxOnly(`"not a marker line`")]`n    public void Portable() { }`n`n    [NativeLinuxOnly(`"setsid`")] [Test] public Task Second() => Task.CompletedTask;`n}`n"
+    $beta = "namespace Fixture;`n`npublic sealed partial class BetaTests`n{`n    private sealed class Rig`n    {`n    }`n`n    [NativeLinuxOnly(`"procfs, see https://man7.org/linux/man-pages/man5/proc.5.html`")]`n    [Test]`n    [Arguments(`"a`", Categories = [`"c-a`"])]`n    public async Task First(string mode) { }`n`n    // [Test, NativeLinuxOnly(`"a comment is not a marker`")]`n    [Test]`n    public void Portable() { }`n`n    [NativeLinuxOnly(`"setsid`")] [Test] public Task Second() => Task.CompletedTask;`n}`n"
     $probe = "[NativeLinuxOnly(`"probe fixture`")]`npublic sealed class DirectClassProbe { }`n"
     $files = [ordered]@{
         'tests/Antiphon.Tests/Scripts/AlphaTests.cs' = $alpha
@@ -723,6 +723,7 @@ function Test-C1686_LinuxOnlyCensus {
         'tests/Antiphon.NativeLinuxPolicy.Probe/ProbeTests.cs' = $probe
         'tests/Antiphon.Tests/bin/Debug/Copied.cs' = "[NativeLinuxOnly(`"build output`")]`npublic sealed class CopiedTests { }`n"
         'tests/Antiphon.Tests/PortableTests.cs' = "public sealed class PortableTests { }`n"
+        'tests/Shared/NativeLinuxOnlyAttribute.cs' = "public sealed class NativeLinuxOnlyAttribute : SkipAttribute`n{`n    public NativeLinuxOnlyAttribute(string reason) : base(reason) { }`n    internal static object Pin() => new Antiphon.TestSupport.NativeLinuxOnlyAttribute(`"pin`");`n}`n"
     }
     function New-C1686Policy($Rows) {
         $policy = Copy-C1323Object $shipped.Object
@@ -774,6 +775,29 @@ function Test-C1686_LinuxOnlyCensus {
     $unrouted.rules += [pscustomobject]@{ id = 'R-AUTHORITY'; pattern = '^tests/test-(execution|selection)-policy\.json$'; sets = @(); full = $true }
     $policyRoute = Get-C1323LinuxOnlyCensus -Root $root -Policy (New-C1686Policy $rows) -Catalog $unrouted
     Assert-C1323 ((Same-C1323Set $narrowed.Problems @('marker-file-unrouted:tests/Antiphon.Tests/Scripts/AlphaTests.cs')) -and $routed.Ok -and (Same-C1323Set $policyRoute.Problems @('marker-file-unrouted:tests/test-execution-policy.json'))) 'c1686-routes-name-the-census-set' ((@($narrowed.Problems) + @($routed.Problems) + @($policyRoute.Problems)) -join '; ')
+
+    # A marker spelling the census does not parse fails closed; it is never skipped or accepted silently.
+    $spellings = [ordered]@{
+        'stacked-method' = @('tests/Antiphon.SessionRunner.Tests/BetaTests.cs', $beta.Replace("    [Test]`n    public void Portable()", "    [Test, NativeLinuxOnly(`"stacked`")]`n    public void Portable()"), 15)
+        'stacked-class' = @('tests/Antiphon.Tests/ZetaTests.cs', "namespace Fixture;`n`n[Category(`"Unit`"), NativeLinuxOnly(`"stacked`")]`npublic sealed class ZetaTests { }`n", 3)
+        'suffix' = @('tests/Antiphon.Tests/ZetaTests.cs', "namespace Fixture;`n`n[NativeLinuxOnlyAttribute(`"suffix`")]`npublic sealed class ZetaTests { }`n", 3)
+        'qualified' = @('tests/Antiphon.Tests/ZetaTests.cs', "namespace Fixture;`n`n[Antiphon.TestSupport.NativeLinuxOnly(`"qualified`")]`npublic sealed class ZetaTests { }`n", 3)
+        'global' = @('tests/Antiphon.Tests/ZetaTests.cs', "namespace Fixture;`n`n[global::Antiphon.TestSupport.NativeLinuxOnly(`"global`")]`npublic sealed class ZetaTests { }`n", 3)
+        'leading-space' = @('tests/Antiphon.Tests/ZetaTests.cs', "namespace Fixture;`n`n[ NativeLinuxOnly(`"spaced`")]`npublic sealed class ZetaTests { }`n", 3)
+        'paren-space' = @('tests/Antiphon.Tests/ZetaTests.cs', "namespace Fixture;`n`n[NativeLinuxOnly (`"spaced`")]`npublic sealed class ZetaTests { }`n", 3)
+    }
+    foreach ($name in $spellings.Keys) {
+        $path, $text, $line = $spellings[$name]
+        $extra = [ordered]@{} + $files
+        $extra[$path] = $text
+        $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root "noncanonical-$name" $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+        Assert-C1323 (Same-C1323Set $r.Problems @("marker-noncanonical:${path}:$line")) "c1686-noncanonical-$name-fails" ($r.Problems -join '; ')
+    }
+
+    $extra = [ordered]@{} + $files
+    $extra['tests/Antiphon.Tests/PortableTests.cs'] = "public sealed class PortableTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n    // [ NativeLinuxOnly(`"line comment`")]`n    [Test] // [NativeLinuxOnlyAttribute(`"trailing comment`")]`n    public void Runs() { }`n}`n"
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'comments' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+    Assert-C1323 ($r.Ok -and (Same-C1323Set $r.MarkerKeys $good.MarkerKeys)) 'c1686-comments-are-not-markers' (($r.Problems + $r.MarkerKeys) -join '; ')
 }
 
 function Test-C1199_WindowsRequiredRoster {
