@@ -78,7 +78,7 @@ public sealed class ProcWorkspaceSlotProcessProbe : IWorkspaceSlotProcessProbe, 
     public IReadOnlyList<WorkspaceSlotHolder> Holders(string path) => Probe(path).Holders;
 
     /// <summary>CARD-1677 D-7: the same scan, but an unreadable table or a non-Linux host is incomplete.</summary>
-    public HolderScan Scan(string path) => new(true, Probe(path).Holders); // CARD-1677 red shim: fail-open
+    public HolderScan Scan(string path) => Probe(path);
 
     private HolderScan Probe(string path)
     {
