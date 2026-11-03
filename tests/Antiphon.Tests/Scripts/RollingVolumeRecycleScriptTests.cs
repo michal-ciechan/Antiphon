@@ -3387,13 +3387,7 @@ internal sealed class C1008HostFixture : IDisposable
             if [ "${C1609_FIXTURE_APPLY_GATE:-on}" = off ]; then unset ANTIPHON_VOLUME_RETIREMENT_APPLY
             elif [ -z "${ANTIPHON_VOLUME_RETIREMENT_APPLY:-}" ]; then export ANTIPHON_VOLUME_RETIREMENT_APPLY="enabled-${C1008_OPERATION}"; fi
             """;
-        // CARD-1665. The setup runs once, before the top-level EXIT trap the script arms at its
-        // main entry. Functions (the temp content audit among them) arm their own indented EXIT
-        // traps mid-run; setup inserted there would re-run and re-wrap renamed functions.
-        var entry = Regex.Matches(source, @"^trap 'ec=\$\?;", RegexOptions.Multiline);
-        if (entry.Count != 1)
-            throw new InvalidOperationException("C1008HostFixture: expected one top-level trap 'ec=$?; line, found " + entry.Count);
-        source = source.Insert(entry[0].Index, injection + "\n");
+        source = InsertSetupAtEntry(source, injection);
         var script = Path.Combine(Root, "remote.sh");
         File.WriteAllText(script, source);
         var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -3413,6 +3407,21 @@ internal sealed class C1008HostFixture : IDisposable
         try { await proc.WaitForExitAsync(deadline.Token); }
         catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
         return (proc.ExitCode, await stdout + await stderr);
+    }
+
+    /// <summary>
+    /// CARD-1665. The setup runs once, before the top-level EXIT trap the script arms at its
+    /// main entry. Functions (the temp content audit among them) arm their own indented EXIT
+    /// traps mid-run; setup inserted there would re-run and re-wrap renamed functions. Exactly
+    /// one column-0 trap is required (CARD-1673): none, or a second, fails loudly with the count
+    /// instead of putting the setup inside a function or beside the wrong trap.
+    /// </summary>
+    internal static string InsertSetupAtEntry(string source, string injection)
+    {
+        var entry = Regex.Matches(source, @"^trap 'ec=\$\?;", RegexOptions.Multiline);
+        if (entry.Count != 1)
+            throw new InvalidOperationException("C1008HostFixture: expected one top-level trap 'ec=$?; line, found " + entry.Count);
+        return source.Insert(entry[0].Index, injection + "\n");
     }
 
     public void Dispose()

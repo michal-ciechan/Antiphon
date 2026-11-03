@@ -560,7 +560,10 @@ public sealed partial class PhoneHomeRollingRunnerTests
         await SetAsync(2, AgentTaskStatus.Queued);
         await RefusedAsync(body, HttpStatusCode.Conflict, "workspace_slot_release_attempt_mismatch", "a new attempt is a live lease");
         await SetAsync(2, AgentTaskStatus.Working);
-        await RefusedAsync(body, HttpStatusCode.Conflict, null, "a new attempt that runs is a live lease");
+        // CARD-1673 (M49-L): the live-status pre-check answers before the attempt check, so a running new attempt is
+        // task_live, never attempt_mismatch.
+        await RefusedAsync(
+            body, HttpStatusCode.Conflict, "workspace_slot_release_task_live", "a new attempt that runs is a live lease");
         foreach (var live in new[] { AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked })
         {
             await SetAsync(1, live);

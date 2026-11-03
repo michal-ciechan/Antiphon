@@ -133,6 +133,76 @@ public sealed class C1656RecordReleaseHardeningTests
     }
 
     [Test]
+    [Arguments("generation")]
+    [Arguments("runner")]
+    [Arguments("slot")]
+    public async Task C1673_ReleaseOnATaskReboundWhileItIsRecordedIsRefusedChanged(string rebound)
+    {
+        // CARD-1673 (M56-WB). A task rebound after the checks (a new generation, runner or slot) without going live or
+        // changing attempt fails the conditional update's binding terms and is refused workspace_slot_release_changed:
+        // the new binding's lease is not stamped and no audit event is written.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var raced = await SeedStuckAsync(schema.ConnectionString);
+        var change = new AfterStuckRecordIsRead(schema.ConnectionString, raced, (other, id, ct) => rebound switch
+        {
+            "generation" => other.AgentTasks.Where(t => t.Id == id)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RemoteWorkspaceSlotGeneration, Generation + 1), ct),
+            "runner" => other.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(s => s.SetProperty(t => t.RunnerId, "runner-b"), ct),
+            _ => other.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(s => s.SetProperty(t => t.RemoteWorkspaceSlotId, "ws-02"), ct),
+        });
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString, change)))
+        {
+            var refused = await Should.ThrowAsync<ConflictException>(() => WorkspaceSlotReleaseService.RecordOperatorReleaseAsync(
+                db, TimeProvider.System, Runner, Slot, raced, Generation, "raced", "operator", CancellationToken.None));
+            refused.Code.ShouldBe(WorkspaceSlotReleaseService.ChangedCode);
+        }
+
+        change.Fired.ShouldBe(1);
+        var (task, events) = await ReadAsync(schema.ConnectionString, raced);
+        task.Status.ShouldBe(AgentTaskStatus.Failed);
+        task.Attempt.ShouldBe(1);
+        task.RemoteWorkspaceSlotReleasedAt.ShouldBeNull($"a task whose {rebound} changed is not stamped");
+        task.RemoteWorktreePath.ShouldNotBeNull();
+        events.ShouldHaveSingleItem("only the seeded stuck record; no audit event")
+            .ShouldStartWith(WorkspaceSlotCodes.ReleaseStuck);
+    }
+
+    [Test]
+    public async Task C1673_ReleaseRecordedConcurrentlyIsRefusedChangedAndNotRestamped()
+    {
+        // CARD-1673 (M56-WR). A racing record stamps the release (and writes its own audit event) after this call's
+        // checks: the conditional update's release-null term refuses this call workspace_slot_release_changed, the
+        // racer's stamp stands and only the racer's audit event exists.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var raced = await SeedStuckAsync(schema.ConnectionString);
+        var racerStamp = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        var change = new AfterStuckRecordIsRead(schema.ConnectionString, raced, async (other, id, ct) =>
+        {
+            await other.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.RemoteWorkspaceSlotReleasedAt, racerStamp)
+                .SetProperty(t => t.RemoteWorktreePath, (string?)null), ct);
+            other.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = id, Type = AgentTaskEventType.Warning, At = racerStamp,
+                Detail = $"{WorkspaceSlotCodes.ReleaseRecorded}: racer",
+            });
+            await other.SaveChangesAsync(ct);
+        });
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString, change)))
+        {
+            var refused = await Should.ThrowAsync<ConflictException>(() => WorkspaceSlotReleaseService.RecordOperatorReleaseAsync(
+                db, TimeProvider.System, Runner, Slot, raced, Generation, "raced", "operator", CancellationToken.None));
+            refused.Code.ShouldBe(WorkspaceSlotReleaseService.ChangedCode);
+        }
+
+        change.Fired.ShouldBe(1);
+        var (task, events) = await ReadAsync(schema.ConnectionString, raced);
+        task.RemoteWorkspaceSlotReleasedAt.ShouldBe(racerStamp, "the racer's stamp is not overwritten");
+        events.Where(text => text.StartsWith(WorkspaceSlotCodes.ReleaseRecorded, StringComparison.Ordinal))
+            .ShouldHaveSingleItem("only the racer's audit event").ShouldEndWith(": racer");
+    }
+
+    [Test]
     public async Task C1670_ReleaseOnATaskDeletedWhileItIsRecordedIsRefusedChanged()
     {
         // CARD-1670 (b). A task deleted after the checks fails the conditional update and is gone when the refusal

@@ -1944,6 +1944,51 @@ public class DataRetentionServiceTests
     }
 
     /// <summary>
+    /// CARD-1673 (M62-A1c). Ranges that fail twice and then succeed skip nothing, yet three of them spend the
+    /// default budget of 6: the pass stops for the sweep and reports Failed with the last failure, the same as a
+    /// budget spent on skipped ranges (it never reports Completed with the budget spent).
+    /// </summary>
+    [Test]
+    public async Task C1673_BudgetSpentByRangesThatRecoverStillReportsFailed()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 10).Select(_ => Guid.NewGuid()).OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1673-row-data", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var fault = new C1673FailTwiceThenSucceed();
+        var settings = new RetentionSettings { TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 10 };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(fault).Options))
+        {
+            var audit = new AuditSettings();
+            result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        fault.Thrown.ShouldBe(6, "three ranges fail twice each before their third attempt succeeds");
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.Batches.ShouldBe(3);
+        result.TaskPrune.FailedAttempts.ShouldBe(6);
+        result.TaskPrune.SkippedRanges.ShouldBe(0, "every range recovered on its third attempt");
+        result.TaskPrune.FailureBudgetSpent.ShouldBeTrue();
+        result.TaskPrune.ScanComplete.ShouldBeFalse();
+        result.TaskPrune.Cursor.ShouldBe(roots[5]);
+        var tasks = (result.Passes ?? []).Single(p => p.Pass == "Tasks");
+        tasks.Status.ShouldBe(DataRetentionPassStatus.Failed, "a spent budget reports Failed even when no range was skipped");
+        tasks.ExceptionType.ShouldBe("System.InvalidOperationException > Npgsql.NpgsqlException > System.TimeoutException");
+        await using var verify = new AppDbContext(plain);
+        (await verify.AgentTasks.CountAsync(t => roots.Contains(t.Id))).ShouldBe(4, "the three recovered ranges were pruned");
+    }
+
+    /// <summary>
     /// CARD-1662 A-2. The audit archive cutoff is fixed for the whole sweep: a record dated 100 ms
     /// after it, inserted between two batches and aged past a recomputed cutoff by the time the
     /// second batch runs, keeps its FullContent, and both batch statements carry the same cutoff.
@@ -3259,6 +3304,26 @@ public class DataRetentionServiceTests
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
             if (IsEligibility(command.CommandText))
+            {
+                Thrown++;
+                throw new Npgsql.NpgsqlException("Exception while reading from stream",
+                    new TimeoutException("Timeout during reading attempt"));
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>CARD-1673. Fails the first two eligibility queries of every three; the third succeeds.</summary>
+    private sealed class C1673FailTwiceThenSucceed : DbCommandInterceptor
+    {
+        private int _eligibility;
+
+        public int Thrown { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (C1654PruneTimeout.IsEligibility(command.CommandText) && ++_eligibility % 3 != 0)
             {
                 Thrown++;
                 throw new Npgsql.NpgsqlException("Exception while reading from stream",
