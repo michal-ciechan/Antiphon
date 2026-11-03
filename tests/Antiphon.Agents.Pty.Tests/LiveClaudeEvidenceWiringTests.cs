@@ -369,7 +369,17 @@ public class LiveClaudeEvidenceWiringTests
             ("D3-SetEnv", "Environment.SetEnvironmentVariable(\"X\", runner.SnapshotScreen());", "raw-any"),
             ("D3-Field", "s_last = runner.SnapshotScreen();", "raw-any"),
             ("D3-Member", "this.Last = runner.SnapshotScreen();", "raw-any"),
-            ("D3-LocalHelper", "var s = runner.SnapshotScreen(); OtherFile.Log(s);", "raw-any")
+            ("D3-LocalHelper", "var s = runner.SnapshotScreen(); OtherFile.Log(s);", "raw-any"),
+            // CARD-1645 review D-2: a lambda parameter over tainted text carries the taint.
+            ("R1D2-ForEachThrow", "runner.SnapshotScreen().Split('\\n').ToList().ForEach(l => throw new InvalidOperationException(l));", "raw-any"),
+            ("R1D2-ForEachLog", "var lines = runner.SnapshotScreen().Split('\\n').ToList(); lines.ForEach(l => OtherFile.Log(l));", "raw-any"),
+            ("R1D2-SelectLog", "runner.SnapshotScreen().Split('\\n').Select(l => { OtherFile.Log(l); return 0; }).Sum();", "raw-any"),
+            ("R1D2-SiblingArg", "Array.Exists(runner.SnapshotScreen().Split('\\n'), l => { OtherFile.Log(l); return true; });", "raw-any"),
+            ("R1D2-Predicate", "runner.SnapshotScreen().Split('\\n').Any(l => { OtherFile.Log(l); return false; });", "raw-any"),
+            // CARD-1645 review D-3: a store through an alias of a shared object is not local.
+            ("R1D3-AliasBag", "var bag = TestContext.Current!.ObjectBag; bag[\"s\"] = runner.SnapshotScreen();", "raw-any"),
+            ("R1D3-CatchData", "try { OtherFile.Log(\"x\"); } catch (Exception ex) { ex.Data[\"s\"] = runner.SnapshotScreen(); throw; }", "raw-any"),
+            ("R1D3-ParamAlias", "void Keep(Dictionary<string, string> d, string s) { d[\"k\"] = s; } Keep(s_map, runner.SnapshotScreen());", "raw-any")
         };
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
         {

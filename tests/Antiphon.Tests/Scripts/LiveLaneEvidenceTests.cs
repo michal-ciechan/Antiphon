@@ -451,7 +451,13 @@ public class LiveLaneEvidenceTests
             ("SM-C1", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Out.WriteLine(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
             ("SM-C2", "LiveClaudeEvidence.Success(\"c680-submit\"", "throw new SkipTestException(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-submit\"", true),
             ("SM-C1b", "LiveClaudeEvidence.Success(\"c680-native\"", "Console.Error.WriteLine(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
-            ("NC3", "LiveClaudeEvidence.Success(\"c680-native\"", "throw new InvalidOperationException(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true)
+            ("NC3", "LiveClaudeEvidence.Success(\"c680-native\"", "throw new InvalidOperationException(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
+            // CARD-1645 review D-1: Write/Append are walked helper names in the diagnostics file;
+            // a receiver that is not bound to a walked type must not borrow them.
+            ("R1D1-OutputWriter", "LiveClaudeEvidence.Success(\"c680-native\"", "var output = TestContext.Current!.OutputWriter; output.Write(\"{0}\", snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
+            ("R1D1-CreateText", "LiveClaudeEvidence.Success(\"c680-native\"", "using var t = File.CreateText(\"a.txt\"); t.Write(\"{0}\", snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
+            ("R1D1-SbField", "LiveClaudeEvidence.Success(\"c680-native\"", "s_log.Append(snapshot.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true),
+            ("R1D1-Arity", "LiveClaudeEvidence.Success(\"c680-native\"", "debug.Composer(after.RenderedScreen); LiveClaudeEvidence.Success(\"c680-native\"", true)
         };
         foreach (var cycle in cycles)
         {
@@ -463,6 +469,16 @@ public class LiveLaneEvidenceTests
             if (count < 1) throw new InvalidOperationException("C1545 " + cycle.Pc + " did not reach expected assertion");
             Console.WriteLine("C1545 " + cycle.Pc + " assertion-red; restored-green " + cycle.To);
         }
+        // CARD-1645 review D-1/A-3: a walked helper called through a bound receiver returns its taint.
+        const string helperFrom = "private static string CaseFor(string name)";
+        const string callFrom = "LiveClaudeEvidence.Success(\"c680-native\"";
+        if (diagnostics.Split(helperFrom).Length != 2 || watchdog.Split(callFrom).Length != 2)
+            throw new InvalidOperationException("C1545 R1D1-Return anchor");
+        var returned = RawSinks(
+            diagnostics.Replace(helperFrom, "internal string Peek(SessionRunnerSnapshotDto snapshot) => snapshot.RenderedScreen;\n\n    " + helperFrom, StringComparison.Ordinal),
+            watchdog.Replace(callFrom, "OtherFile.Log(debug.Peek(after)); " + callFrom, StringComparison.Ordinal));
+        if (returned < 1) throw new InvalidOperationException("C1545 R1D1-Return did not reach expected assertion");
+        Console.WriteLine("C1545 R1D1-Return assertion-red; restored-green debug.Peek");
     }
 
     private static int RawSinks(string diagnostics, string watchdog)
