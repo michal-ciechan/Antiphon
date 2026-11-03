@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Nodes;
 using Antiphon.TestSupport;
 using Antiphon.Tests.Application;
@@ -1107,6 +1108,145 @@ public sealed class VolumeRetirementContentTests
             none.Output.ShouldContain("PREPARE_EXIT=0", Case.Sensitive);
             none.Output.ShouldNotContain("DIAGNOSIS=");
             File.Exists(ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/c590-result.json").ShouldBeTrue(none.Output);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // CARD-1689 Mutation X-3a/X-3b: a canonical, private registry that names this
+    // project and lists the origin is still refused when its shape is wrong.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_registry_with_a_wrong_shape_is_invalid_before_the_exchange()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            var registry = Path.Combine(root, "server", "retirement-origins.json");
+            var trusted = ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/trusted-origins.json";
+            var write = "umask 077; jq -ncS --arg p " + VolumeRetirementFixture.Quote(ExchangeProject) + " --arg o " +
+                VolumeRetirementFixture.Quote(ExchangeOrigin) + " ";
+            var control = await PrepareExchange(root, 0, ExchangeRequest + "\n",
+                write + "'{schema:1,projects:{($p):{origins:[$o]}}}' > \"$registry\"", stdin: "/dev/null");
+            control.Output.ShouldContain("C1609_PROOF_REQUEST ", Case.Sensitive, "control: the well-shaped registry reaches the exchange");
+            var vectors = new (string Name, string Program)[]
+            {
+                ("schema-2", "{schema:2,projects:{($p):{origins:[$o]}}}"),
+                ("extra-key", "{schema:1,extra:1,projects:{($p):{origins:[$o]}}}"),
+                ("duplicate-origin", "{schema:1,projects:{($p):{origins:[$o,$o]}}}"),
+                ("non-guid-project", "{schema:1,projects:{($p):{origins:[$o]},\"NOT-A-GUID\":{origins:[$o]}}}"),
+                ("extra-entry-key", "{schema:1,projects:{($p):{origins:[$o],note:1}}}"),
+                ("empty-origin", "{schema:1,projects:{($p):{origins:[$o,\"\"]}}}"),
+                ("non-string-origin", "{schema:1,projects:{($p):{origins:[$o,1]}}}"),
+            };
+            foreach (var vector in vectors)
+            {
+                var run = await PrepareExchange(root, 0, ExchangeRequest + "\n", write + "'" + vector.Program + "' > \"$registry\"",
+                    stdin: "/dev/null", fresh: true);
+                run.Exit.ShouldBe(2, vector.Name + "; " + run.Output);
+                Diagnosis(run.Output).ShouldBe("RecycleGitAuditUnknown reason=registry-invalid detail=" + registry, vector.Name + "; " + run.Output);
+                run.Output.ShouldNotContain("C1609_PROOF_REQUEST", Case.Sensitive, vector.Name + ": the registry refuses before the exchange");
+                File.Exists(trusted).ShouldBeFalse(vector.Name + ": nothing is exported from an invalid registry");
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // CARD-1689 Mutation X-7: the desktop approves origins from trusted-origins.json,
+    // so the export carries this project's registered origins and no other project's.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_exports_only_this_projects_registered_origins()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            const string second = "https://fixture.invalid/card-1689/second.git";
+            const string other = "https://fixture.invalid/card-1689/other-project.git";
+            var registry = "umask 077; jq -ncS --arg p " + VolumeRetirementFixture.Quote(ExchangeProject) + " --arg o " +
+                VolumeRetirementFixture.Quote(ExchangeOrigin) + " --arg s " + VolumeRetirementFixture.Quote(second) + " --arg x " +
+                VolumeRetirementFixture.Quote(other) +
+                " '{schema:1,projects:{($p):{origins:[$o,$s]},\"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2\":{origins:[$x]}}}' > \"$registry\"";
+            var run = await PrepareExchange(root, 0, ExchangeRequest + "\n", registry, stdin: "/dev/null");
+            Diagnosis(run.Output).ShouldBe("RecycleGitAuditUnknown reason=proof-exchange stage=response", run.Output);
+            var exported = await File.ReadAllBytesAsync(ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/trusted-origins.json");
+            var expected = "{\"origins\":[\"" + ExchangeOrigin + "\",\"" + second + "\"],\"projectId\":\"" + ExchangeProject + "\",\"schema\":1}\n";
+            Encoding.UTF8.GetString(exported).ShouldBe(expected);
+            exported.SequenceEqual(Encoding.UTF8.GetBytes(expected)).ShouldBeTrue("trusted-origins.json bytes");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // CARD-1689 Mutation X-8: git error text ahead of the audit line never reaches the
+    // console diagnosis; only the first `audit check=` line does.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_inventory_diagnosis_skips_git_error_lines()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            var refused = await PrepareExchange(root, 2,
+                "fatal: unable to access 'https://user@fixture.invalid/card-1689/private.git/': Could not resolve host\n" +
+                "audit check=ls-remote status=128 repo=repos/private\n" +
+                "audit check=git-dir-shape status=0 repo=repos/other\n", registry: "", stdin: "/dev/null");
+            refused.Exit.ShouldBe(2, refused.Output);
+            var diagnosis = Diagnosis(refused.Output);
+            diagnosis.ShouldBe("RecycleGitAuditUnknown audit check=ls-remote status=128 repo=repos/private reason=inventory detail=" +
+                ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + ".out", refused.Output);
+            diagnosis.ShouldNotContain("://");
+            diagnosis.ShouldNotContain("@");
+            diagnosis.ShouldNotContain("fatal:");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // CARD-1689 Mutation X-6: a request line that does not have the exact private-origin
+    // shape is never approved. jq's all() treats an unmatched capture as vacuously true.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_malformed_private_origin_lines_are_never_approved()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            const string spaced = "https://fixture.invalid/card-1689/private copy.git";
+            var requests = ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/private-origins.txt";
+            var registry = "umask 077; jq -ncS --arg p " + VolumeRetirementFixture.Quote(ExchangeProject) + " --arg o " +
+                VolumeRetirementFixture.Quote(ExchangeOrigin) + " --arg s " + VolumeRetirementFixture.Quote(spaced) +
+                " '{schema:1,projects:{($p):{origins:[$o,$s]}}}' > \"$registry\"";
+            var suffix = " originHash=" + new string('1', 64) + " proofName=" + new string('2', 64);
+            var vectors = new (string Name, string Line)[]
+            {
+                ("repeated-suffix", ExchangeRequest + suffix),
+                ("spaced-origin", "C1008_PRIVATE_ORIGIN repo=repos/private origin=" + spaced + suffix),
+                ("upper-hash", "C1008_PRIVATE_ORIGIN repo=repos/private origin=" + ExchangeOrigin +
+                    " originHash=" + new string('A', 64) + " proofName=" + new string('2', 64)),
+            };
+            var fresh = false;
+            foreach (var vector in vectors)
+            {
+                var run = await PrepareExchange(root, 0, vector.Line + "\n", registry, stdin: "/dev/null", fresh: fresh);
+                fresh = true;
+                run.Exit.ShouldBe(2, vector.Name + "; " + run.Output);
+                Diagnosis(run.Output).ShouldBe("RecycleGitAuditUnknown reason=unapproved-origin detail=" + requests, vector.Name + "; " + run.Output);
+                run.Output.ShouldNotContain("C1609_PROOF_REQUEST", Case.Sensitive, vector.Name + ": no exchange for an unmatched request line");
+            }
         }
         finally
         {
