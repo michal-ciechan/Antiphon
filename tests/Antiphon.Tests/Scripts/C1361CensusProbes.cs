@@ -660,11 +660,13 @@ internal static class C1361CensusProbes
         if (host)
         {
             var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
-            var expressions = Regex.Matches(source, @"'(?<body>if \$kind==""open"" then \{scopes:\.,tasks:\$rows,land:\$land\} else .*?)'");
+            // CARD-1693: the server2-temp open branch sits in front of the standing open/land branches.
+            var expressions = Regex.Matches(source,
+                @"(?s)'(?<body>if \$kind==""open"" and \$runner==""server2-temp"" then.*?elif \$kind==""open"" then \{scopes:\.,tasks:\$rows,land:\$land\}\s+else .*? end)'");
             expressions.Count.ShouldBe(1, "real land projection");
             body = "jq -n --arg kind land --arg runner server2 --argjson land '{}' --slurpfile input '" + scratch.Root +
                 "/rows.json' '$input[0] as $rows | {} | " + expressions[0].Groups["body"].Value +
-                "' > '" + scratch.Root + "/projection.json'\n";
+                "' > '" + scratch.Root + "/projection.json' || exit 1\n" + TempOpenProjection(scratch.Root, expressions[0].Groups["body"].Value);
         }
         else
         {
@@ -685,7 +687,38 @@ internal static class C1361CensusProbes
         var actual = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "projection.json")))!["tasks"]!.AsObject();
         actual.Count.ShouldBe(1, "bound-only land projection");
         JsonNode.DeepEquals(actual[Id], bound).ShouldBeTrue("all bound land facts retained");
+        if (host)
+        {
+            var temp = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "temp-open.json")))!.AsObject();
+            var expected = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "temp-expected.json")))!;
+            JsonNode.DeepEquals(temp, expected).ShouldBeTrue("server2-temp open closure keeps bound rows and their lands only: " + temp.ToJsonString());
+            Console.WriteLine("LAND_PROJECTION server2-temp open bound-only PASS");
+        }
         Console.WriteLine("LAND_PROJECTION bound-only PASS");
+    }
+
+    // CARD-1693: the temp runner's compared open closure keeps rows bound to server2-temp and their lands
+    // only, with no scopes entry; a standing-runner row and its land drop out.
+    private static string TempOpenProjection(string root, string expression)
+    {
+        var bound = Row("Running"); bound["runnerId"] = "server2-temp";
+        var standing = Row("Dispatched"); standing["id"] = Event; standing["runnerId"] = "server2";
+        var land = new JsonObject
+        {
+            [Id] = new JsonObject { ["state"] = "Pending", ["terminalEventId"] = null },
+            [Event] = new JsonObject { ["state"] = "Pending", ["terminalEventId"] = null },
+        };
+        File.WriteAllText(Path.Combine(root, "temp-rows.json"), new JsonObject { [Id] = bound, [Event] = standing }.ToJsonString());
+        File.WriteAllText(Path.Combine(root, "temp-land.json"), land.ToJsonString());
+        File.WriteAllText(Path.Combine(root, "temp-expected.json"), new JsonObject
+        {
+            ["scopes"] = new JsonObject(),
+            ["tasks"] = new JsonObject { [Id] = bound.DeepClone() },
+            ["land"] = new JsonObject { [Id] = land[Id]!.DeepClone() },
+        }.ToJsonString());
+        return "jq -n --arg kind open --arg runner server2-temp --slurpfile input '" + root + "/temp-rows.json' --slurpfile lands '" + root +
+            "/temp-land.json' '$input[0] as $rows | $lands[0] as $land | {\"project-a\":2} | " + expression +
+            "' > '" + root + "/temp-open.json' || exit 1\n";
     }
 
     private static async Task TotalBoundary(bool host)
