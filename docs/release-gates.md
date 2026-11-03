@@ -282,7 +282,13 @@ S-F-cost requires S3 admission on its target base and complete successful native
 Windows S/T/O class-cost samples before Windows Full credit.
 R-2 junction and custody qualification stays pending/required.
 `test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusionPolicy` checks the shipped
-rows and that those obligation gaps still leave coverage incomplete. The compiled
+rows and that those obligation gaps still leave coverage incomplete. Since CARD-1686
+it keeps no list of its own: it derives the census from the prefixed policy rows and
+the `[NativeLinuxOnly]` markers under each suite's project directory, and fails on a
+marker without a row or a row without a marker (`-Case C1686_LinuxOnlyCensus` proves
+both on fixtures). The selection set `release-gate.platform` runs
+`ReleaseGatePlatformTests` when the policy, this harness or a narrowly routed marker
+file changes; any other marker file has no rule and selects Full. The compiled
 marker witness is `NativeLinuxPolicyWitnessTests` in each of the four suites.
 The retired `-Case LinuxOnlyWindowsExclusions` refuses and names that witness.
 
