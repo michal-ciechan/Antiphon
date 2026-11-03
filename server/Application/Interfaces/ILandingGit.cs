@@ -102,6 +102,30 @@ public interface ILandingGit
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         => Task.FromResult(new LandingGitResult(1, "", "source_push_unsupported"));
     Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0824 S2 (B-2). Deletes <paramref name="sourceFullRef"/> on origin with
+    /// <c>--force-with-lease=&lt;ref&gt;:&lt;expectedRemoteSha&gt;</c> after the endpoint fingerprint check. Fail-closed default:
+    /// an implementor that cannot delete under a lease refuses.
+    /// </summary>
+    Task<LandingGitResult> DeleteSourceBranchAsync(string repository, string sourceFullRef, string expectedRemoteSha,
+        string expectedFingerprint, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "delete_unsupported"));
+
+    /// <summary>
+    /// CARD-0824 S2. A fresh read (never a cached observation) of whether origin's <paramref name="targetFullRef"/>
+    /// contains <paramref name="sha"/>. Fail-closed default: unsupported is never containment.
+    /// </summary>
+    Task<LandingRemoteObservation> ConfirmTargetContainsAsync(string repository, string targetFullRef, string sha,
+        string expectedFingerprint, CancellationToken ct)
+        => Task.FromResult(new LandingRemoteObservation(null, false, "containment_unsupported"));
+
+    /// <summary>
+    /// CARD-0824 S2 (B-3 step 7). Deletes the local <c>refs/remotes/origin/&lt;b&gt;</c> with its old value when it is at,
+    /// or behind, <paramref name="expectedSha"/>; absent is success. Never touches <c>refs/heads/&lt;b&gt;</c>.
+    /// </summary>
+    Task<LandingGitResult> DeleteTrackingRefAsync(string repository, string sourceFullRef, string expectedSha, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "tracking_delete_unsupported"));
 }
 
 /// <summary>CARD-0642 D-4/D-7: one land's read-cache lifetime and its git profile.</summary>

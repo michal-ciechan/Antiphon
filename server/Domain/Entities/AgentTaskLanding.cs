@@ -97,4 +97,12 @@ public sealed class AgentTaskLanding
     public DateTime? CanonicalAdvancedAt { get; set; }
     /// <summary>Why the canonical checkout was not advanced after publication; a residue, never a refusal.</summary>
     public string? CanonicalAdvanceReason { get; set; }
+
+    // CARD-0824 S2: origin branch deletion after confirmed publication. Additive; None on every historical row.
+    public LandBranchDeletionState BranchDeletionState { get; set; }
+    public DateTime? BranchDeletionAt { get; set; }
+    public string? BranchDeletionReason { get; set; }
+    public string? BranchDeletionDetail { get; set; }
+    /// <summary>When every runner that held the branch confirmed its local refs absent (before the origin delete).</summary>
+    public DateTime? RunnerRefsDeletedAt { get; set; }
 }

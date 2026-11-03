@@ -2258,6 +2258,8 @@ public class AppDbContext : DbContext
             entity.Property(l => l.LocalTargetBeforeSha).HasMaxLength(64);
             entity.Property(l => l.LandWorktreePath).HasMaxLength(1024);
             entity.Property(l => l.CanonicalAdvanceReason).HasMaxLength(400);
+            entity.Property(l => l.BranchDeletionReason).HasMaxLength(80);
+            entity.Property(l => l.BranchDeletionDetail).HasMaxLength(400);
         });
 
         modelBuilder.Entity<VerificationExecution>(entity =>

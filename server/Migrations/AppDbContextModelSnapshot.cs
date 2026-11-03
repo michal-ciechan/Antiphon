@@ -2257,6 +2257,20 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("ApprovedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("BranchDeletionAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("BranchDeletionDetail")
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<string>("BranchDeletionReason")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<int>("BranchDeletionState")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("BranchRemoved")
                         .HasColumnType("boolean");
 
@@ -2445,6 +2459,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("ReviewedSourceSha")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("RunnerRefsDeletedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("SchemaVersion")
                         .HasColumnType("integer");
