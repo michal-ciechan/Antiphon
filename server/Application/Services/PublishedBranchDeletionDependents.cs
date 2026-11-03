@@ -17,11 +17,19 @@ public static class PublishedBranchDeletionDependents
     private static readonly AgentTaskStatus[] Open =
         [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
 
+    /// <summary>
+    /// Every spelling a task row may store for the landed branch: short, full or as its tracking name. The dependent
+    /// terms and the runner lookup (Review 370083f1 A-1) both match on this one list.
+    /// </summary>
+    public static string[] BranchNames(string sourceFullRef)
+    {
+        var branch = sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) ? sourceFullRef[11..] : sourceFullRef;
+        return [branch, "refs/heads/" + branch, "origin/" + branch, "refs/remotes/origin/" + branch];
+    }
+
     public static async Task<BranchDependent?> FindAsync(AppDbContext db, AgentTaskLanding op, CancellationToken ct)
     {
-        var branch = op.SourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) ? op.SourceFullRef[11..] : op.SourceFullRef;
-        // A branch label may be stored short, full or as its tracking name.
-        string[] names = [branch, "refs/heads/" + branch, "origin/" + branch, "refs/remotes/origin/" + branch];
+        var names = BranchNames(op.SourceFullRef);
         var owner = op.TaskId;
         var open = db.AgentTasks.AsNoTracking().Where(t => Open.Contains(t.Status));
 
@@ -40,10 +48,13 @@ public static class PublishedBranchDeletionDependents
         hit = await open.Where(t => t.Id != owner && t.WorktreeBranch != null && names.Contains(t.WorktreeBranch))
             .Select(t => (Guid?)t.Id).FirstOrDefaultAsync(ct);
         if (hit is { } sameBranch) return new(sameBranch, "same_branch_open");
+        // Review 370083f1 A-3: the owner's own pending requests count too (a new land of the same unchanged branch,
+        // for example to another target, still needs its source). A completed land's request is no longer pending, so
+        // this holds only while some land of the branch is unfinished; it fails closed, never deletes early.
         hit = await db.AgentTaskLandRequests.AsNoTracking()
-            .Where(r => r.IsPending && r.TaskId != owner)
+            .Where(r => r.IsPending)
             .Join(db.AgentTasks.AsNoTracking(), r => r.TaskId, t => t.Id, (r, t) => t)
-            .Where(t => t.WorktreeBranch != null && names.Contains(t.WorktreeBranch))
+            .Where(t => t.Id == owner || t.WorktreeBranch != null && names.Contains(t.WorktreeBranch))
             .Select(t => (Guid?)t.Id).FirstOrDefaultAsync(ct);
         if (hit is { } pendingLand) return new(pendingLand, "pending_land_request");
         // The brief's card rule: a branch bound to a card that is not Done is kept until the card is Done.
