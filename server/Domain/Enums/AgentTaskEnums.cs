@@ -290,6 +290,9 @@ public enum AgentTaskEventType
     /// Appended; never renumber.
     /// </summary>
     WorkspaceSlotDecision = 41,
+
+    /// <summary>CARD-0824 S2. One origin branch deletion state or reason change on a landing row. 42: master's S1c holds 41.</summary>
+    LandingBranchDeletion = 42,
 }
 
 /// <summary>

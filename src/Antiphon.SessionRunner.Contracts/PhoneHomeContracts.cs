@@ -151,6 +151,13 @@ public enum PhoneHomeOperation
     /// Execute). Not a workspace mutation: it never touches the worktree root and runs outside the mutation lock.
     /// </summary>
     TempSweep = 47,
+
+    /// <summary>
+    /// CARD-0824 S2. Delete this runner's local <c>refs/heads/&lt;b&gt;</c> and <c>refs/remotes/origin/&lt;b&gt;</c> for one
+    /// delegate branch at (or behind) the landed source SHA, under the mutation lock, before the server deletes the
+    /// origin branch. A checked-out, unpublished or unknown ref refuses; an absent ref is success.
+    /// </summary>
+    WorkspaceBranchRefsDelete = 48,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>
