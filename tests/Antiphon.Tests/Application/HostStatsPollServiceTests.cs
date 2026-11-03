@@ -199,6 +199,28 @@ public sealed class HostStatsPollServiceTests
         row.Reason.ShouldBe("stale");
     }
 
+    // CARD-1672 (M1663-6): only an ineligible runner reads the directory state. An eligible runner
+    // that is draining and whose stats read fails keeps the reason it had before CARD-1663.
+    [Test]
+    public async Task C1672_an_eligible_draining_runner_whose_stats_fail_keeps_its_old_reason()
+    {
+        var (host, peer, _, cache, _, poll) = await SetupAsync();
+        await using (host)
+        await using (peer)
+        {
+            host.Directory.ApplyState(host.AllowedRunnerId,
+                new RunnerState(true, Now, "rolling", null, false, null, null, null));
+            peer.Reply = frame => frame.Operation == PhoneHomeOperation.HostStats
+                ? Reply(frame, HostStatsCacheTests.Sample() with { At = null }) : null;
+            (await host.Directory.DescribeAsync(host.AllowedRunnerId, CancellationToken.None))!
+                .DispatchEligible.ShouldBeTrue();
+            await poll.TickOnceAsync();
+            var row = cache.Project().Single(r => r.HostId == host.AllowedRunnerId);
+            row.State.ShouldBe("offline");
+            row.Reason.ShouldBe("unavailable");
+        }
+    }
+
     [Test]
     public async Task Publish_failure_does_not_fault_the_tick_and_the_next_tick_republishes()
     {

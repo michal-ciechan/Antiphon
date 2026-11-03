@@ -190,6 +190,33 @@ public class Card1653RefusalRetainsHostTests
             identity.MarkVanishedIfDead(probe).ShouldBeTrue("the fixture's dead host does release an identity row");
     }
 
+    /// <summary>
+    /// CARD-1672 (PC-D2): a pending row completes as exited once. A second death verdict (the Herdr
+    /// R2-R5/R7 callers do not clear the pending reason first) returns false and publishes nothing.
+    /// </summary>
+    [Test]
+    public async Task Completing_a_pending_row_twice_publishes_SessionExited_once()
+    {
+        var root = TestSessionLogRoot.Create("c1653-adopt");
+        var settings = new SessionRunnerSettings { SessionLogPath = root };
+        var events = new SessionRunnerEventHub();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var reader = events.Subscribe(cts.Token);
+        var row = CreatePendingRow(settings, events, new PtyHostStrangerWorld.RecordingLogger(),
+            UnprovenReason, out _);
+        await using (row)
+        {
+            row.CompletePendingAsExited("ProcessVanished").ShouldBeTrue();
+            row.CompletePendingAsExited("ProcessVanished").ShouldBeFalse("an exited row is already complete");
+            row.ToDto().Status.ShouldBe("Exited");
+            var exited = 0;
+            while (reader.TryRead(out var evt))
+                if (evt.EventName == SessionRunnerEventNames.SessionExited)
+                    exited++;
+            exited.ShouldBe(1, "a pending row publishes SessionExited exactly once");
+        }
+    }
+
     [Test]
     public async Task Non_identity_adoption_failure_keeps_the_exit_path()
     {
