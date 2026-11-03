@@ -54,7 +54,7 @@ public sealed class C1677TempFamilyRegistryTests
     {
         // V-48b (G-109).
         var family = RunnerTempSweep.RegisteredFamilies.Single(f => f.Id == "pty-test-root");
-        var match = Regex.Match(family.Pattern, @"^\^antiphon-\((?<alt>[^()]+)\)-\[0-9a-f\]\{32\}\$$");
+        var match = Regex.Match(family.Pattern, @"^\^antiphon-\((?<alt>[^()]+)\)-\[0-9a-f\]\{32\}\\z\z");
         match.Success.ShouldBeTrue(family.Pattern);
         var alternation = match.Groups["alt"].Value.Split('|').ToHashSet(StringComparer.Ordinal);
         alternation.SetEquals(TestSessionLogRoot.KnownPrefixes).ShouldBeTrue(
@@ -66,16 +66,22 @@ public sealed class C1677TempFamilyRegistryTests
     [Test]
     public async Task Family_regexes_are_anchored_and_exact()
     {
-        // V-48c (G-110).
+        // V-48c (G-110). Review 12ba9a25 D-1: `$` also matches before a final \n in .NET, so every pattern ends
+        // in \z (end of string only) and no line break around a sample matches.
         foreach (var family in RunnerTempSweep.RegisteredFamilies)
         {
             family.Pattern.ShouldStartWith("^", Case.Sensitive, family.Id);
-            family.Pattern.ShouldEndWith("$", Case.Sensitive, family.Id);
+            family.Pattern.ShouldEndWith(@"\z", Case.Sensitive, family.Id);
+            family.Pattern.ShouldNotContain("$", Case.Sensitive, family.Id);
             foreach (var loose in new[] { ".*", ".+", @"\S", @"\w", ".?" })
                 family.Pattern.ShouldNotContain(loose, Case.Sensitive, family.Id);
             family.Regex.IsMatch(family.Sample).ShouldBeTrue(family.Id + " sample " + family.Sample);
-            family.Regex.IsMatch(family.Sample + "x").ShouldBeFalse(family.Id);
-            family.Regex.IsMatch("x" + family.Sample).ShouldBeFalse(family.Id);
+            foreach (var variant in new[]
+                     {
+                         family.Sample + "x", "x" + family.Sample, family.Sample + "\n", family.Sample + "\r",
+                         family.Sample + "\r\n", "\n" + family.Sample,
+                     })
+                family.Regex.IsMatch(variant).ShouldBeFalse(family.Id + " " + variant.Replace("\r", "\\r").Replace("\n", "\\n"));
         }
         await Task.CompletedTask;
     }

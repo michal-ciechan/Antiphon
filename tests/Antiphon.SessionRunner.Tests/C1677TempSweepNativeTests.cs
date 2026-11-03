@@ -11,7 +11,8 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>
 /// CARD-1677 S2 CP-8 (linux-native). A real symlinked temp entry is refused and its target kept, an inner
 /// symlink is unlinked without following it, and a real child whose cwd is in an old family entry keeps it
-/// through the real fail-closed /proc scan (V-49, V-49b, V-50).
+/// through the real fail-closed /proc scan (V-49, V-49b, V-50). Review 12ba9a25 D-1: a family name carrying a line
+/// break or any control character is unregistered and kept.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -84,5 +85,69 @@ public sealed class C1677TempSweepNativeTests
             try { child.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             child.WaitForExit(10_000);
         }
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: real /tmp entries whose names carry a line break")]
+    public async Task Family_name_with_a_line_break_is_unregistered_and_kept(CancellationToken ct)
+    {
+        // Review 12ba9a25 D-1. Every registered sample with a trailing \n, \r or \r\n, or a leading \n, as an old,
+        // owned, unheld entry (claude-scratch switched on, its mirror absent): none is a candidate, every one is
+        // reported unregistered with its line break escaped, and every byte stays. An exact name beside them goes.
+        using var s = new Scratch();
+        var variants = new List<string>();
+        foreach (var family in RunnerTempSweep.RegisteredFamilies)
+            foreach (var name in new[] { family.Sample + "\n", family.Sample + "\r", family.Sample + "\r\n", "\n" + family.Sample })
+            {
+                s.Entry(name, TimeSpan.FromHours(49));
+                variants.Add(name);
+            }
+        s.Age(s.Tmp + "/" + RunnerTempSweep.ClaudeContainer, TimeSpan.FromHours(49));
+        s.Age(s.Tmp + "/\n" + RunnerTempSweep.ClaudeContainer, TimeSpan.FromHours(49));
+        var control = "c1514-" + Hex32();
+        var controlPath = s.Entry(control, TimeSpan.FromHours(49));
+        var flags = new Dictionary<string, bool> { [RunnerTempSweep.ClaudeScratch] = true };
+
+        var response = await s.Sweep().SweepAsync(Request(families: flags), ct);
+
+        Single(response, control).Verdict.ShouldBe(TempSweepCodes.Removed, "control: the sweep is live");
+        Directory.Exists(controlPath).ShouldBeFalse();
+        response.Candidates.ShouldNotContain(c => c.Name.Any(char.IsControl));
+        response.Removed.ShouldBe(1);
+        foreach (var name in variants)
+        {
+            var label = name.Replace("\r", "\\r").Replace("\n", "\\n");
+            Directory.Exists(s.Tmp + "/" + name).ShouldBeTrue(label);
+            Directory.EnumerateFiles(s.Tmp + "/" + name).Count().ShouldBe(3, label);
+        }
+        response.Unregistered.Sum(u => u.Count).ShouldBe(variants.Count);
+        response.Unregistered.ShouldAllBe(u => !u.Prefix.Any(char.IsControl));
+        response.Unregistered.ShouldContain(u => u.Prefix == @"c1514-<hex>\x0a");
+        response.Unregistered.ShouldContain(u => u.Prefix == RunnerTempSweep.ClaudeContainer + @"/-work-worktrees-task-<hex>\x0a");
+        s.Probed.ShouldBeEmpty("no mirror is probed for a name that is not a registered family");
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: real /tmp entries whose names carry control characters")]
+    public async Task Control_character_name_is_refused_before_any_family_match(CancellationToken ct)
+    {
+        // Review 12ba9a25 D-1 (defence in depth). A family that would match anything, line breaks included, still never
+        // sees a name carrying a control character: it is unregistered and kept. A plain name beside them goes.
+        using var s = new Scratch();
+        string[] names = ["ctl-a\nb", "ctl-tab\t", "ctl-\u0001", "ctl-\u007f", "ctl-end\n"];
+        foreach (var name in names)
+            s.Entry(name, TimeSpan.FromHours(500));
+        var controlPath = s.Entry("ctl-plain", TimeSpan.FromHours(500));
+        var broad = new TempFamily("broad", @"^[\s\S]+\z", null, null, "x");
+
+        var response = await s.Sweep(families: [broad]).SweepAsync(Request(), ct);
+
+        Single(response, "ctl-plain").Verdict.ShouldBe(TempSweepCodes.Removed, "control: the broad family is live");
+        Directory.Exists(controlPath).ShouldBeFalse();
+        response.Candidates.ShouldHaveSingleItem();
+        foreach (var name in names)
+            Directory.EnumerateFiles(s.Tmp + "/" + name).Count().ShouldBe(3, name.Replace("\n", "\\n"));
+        response.Unregistered.Sum(u => u.Count).ShouldBe(names.Length);
+        response.Unregistered.ShouldAllBe(u => !u.Prefix.Any(char.IsControl));
     }
 }
