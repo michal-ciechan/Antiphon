@@ -1,0 +1,74 @@
+#requires -Version 5.1
+<#
+.SYNOPSIS
+CARD-1667: start supervise-rc.ps1 detached from this process's console or session, then return.
+.DESCRIPTION
+Windows: the supervisor gets its own hidden console (Start-Process without -NoNewWindow), so a
+teardown of the starter's console cannot kill it. Unix: setsid gives it a new session. Its
+stdout/stderr go straight to its own files (supervisor-stdout.log, supervisor-stderr.log); this
+starter holds no pipe or buffer for it, and its log is TaskRoot\supervisor.log, flushed per line.
+Waits for supervisor-identity.json, writes start-supervisor.json and exits 0 (1 on failure).
+Refuses when TaskRoot already has a supervisor identity. To leave a caller's Job Object too,
+start this script itself through Win32_Process Create (docs: antiphon-rc-qualification skill).
+ASCII-only, Windows PowerShell 5.1 safe.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$TaskRoot,
+    [Parameter(Mandatory = $true)][string]$LaunchScript,
+    [Parameter(Mandatory = $true)][string]$LogRoot,
+    [Parameter(Mandatory = $true)][string]$StateRoot,
+    [ValidateRange(1, 300)][int]$PollSeconds = 30,
+    [ValidateRange(1, 120)][int]$ProgressMinutes = 10,
+    [ValidateRange(1, 600)][double]$HangMinutes = 20,
+    [ValidateRange(5, 600)][int]$IdentityTimeoutSeconds = 60,
+    [string]$PowerShellPath
+)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../lib/qualification-supervisor.ps1')
+$supervisor = Join-Path $PSScriptRoot 'supervise-rc.ps1'
+$identityPath = Join-Path $TaskRoot 'supervisor-identity.json'
+$platform = Get-QualificationHostPlatform
+if ([string]::IsNullOrWhiteSpace($PowerShellPath)) { $PowerShellPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
+if (-not [IO.Directory]::Exists($TaskRoot)) { Write-Output "start-supervisor: TaskRoot does not exist: $TaskRoot"; exit 1 }
+if (-not [IO.File]::Exists($LaunchScript)) { Write-Output "start-supervisor: LaunchScript does not exist: $LaunchScript"; exit 1 }
+if ([IO.File]::Exists($identityPath)) { Write-Output "start-supervisor: refused, a supervisor identity already exists: $identityPath"; exit 1 }
+
+$detach = 'setsid'
+if ($platform -ceq 'Windows') { $detach = 'new-console' }
+$arguments = @('-NoProfile', '-NonInteractive', '-File', $supervisor, '-TaskRoot', $TaskRoot, '-LaunchScript', $LaunchScript,
+    '-LogRoot', $LogRoot, '-StateRoot', $StateRoot, '-PollSeconds', [string]$PollSeconds, '-ProgressMinutes', [string]$ProgressMinutes,
+    '-HangMinutes', $HangMinutes.ToString([Globalization.CultureInfo]::InvariantCulture), '-Detach', $detach, '-PowerShellPath', $PowerShellPath)
+$start = New-QualificationDetachedStartParameters -FilePath $PowerShellPath -ArgumentList $arguments -Platform $platform `
+    -StandardOutput (Join-Path $TaskRoot 'supervisor-stdout.log') -StandardError (Join-Path $TaskRoot 'supervisor-stderr.log')
+$started = Start-Process @start
+$deadline = [datetime]::UtcNow.AddSeconds($IdentityTimeoutSeconds)
+$identity = $null
+while ([datetime]::UtcNow -lt $deadline) {
+    $read = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath($identityPath))
+    if ($read.status -ceq 'ok') { $identity = $read.record; break }
+    if ($started.HasExited -and $started.ExitCode -ne 0) { break }
+    Start-Sleep -Milliseconds 200
+}
+$self = [Diagnostics.Process]::GetCurrentProcess()
+$record = [ordered]@{
+    starterPid = $self.Id
+    starterStartedAt = $self.StartTime.ToUniversalTime().ToString('o')
+    startedPid = $started.Id
+    platform = $platform
+    detach = $detach
+    supervisorPid = $null
+    supervisorStartedAt = $null
+    observation = 'identity-timeout'
+}
+if ($identity) {
+    $record.supervisorPid = $identity.pid
+    $record.supervisorStartedAt = [string]$identity.processStartedAt
+    if ($identity.processStartedAt -is [datetime]) { $record.supervisorStartedAt = $identity.processStartedAt.ToUniversalTime().ToString('o') }
+    $record.observation = (Get-QualificationProcessObservation $identity).status
+}
+$json = $record | ConvertTo-Json -Compress
+Write-QualificationSupervisorRecord -Path (Join-Path $TaskRoot 'start-supervisor.json') -Text $json
+Write-Output $json
+if ($record.observation -ceq 'alive' -or ($identity -and [IO.File]::Exists((Join-Path $TaskRoot 'commission-exit.txt')))) { exit 0 }
+exit 1
