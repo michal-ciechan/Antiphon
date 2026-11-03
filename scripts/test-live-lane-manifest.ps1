@@ -368,6 +368,130 @@ function New-LiveLaneDecoyFirstSubmitNodes {
     return @($decoy, $live)
 }
 
+# CARD-1645 item 2. Every declared additive identity must appear in the after set, and an
+# after-only UID is declared only on project, namespace, class and method together.
+function New-LiveLaneCensusNode {
+    param([string]$Project, [string]$Namespace, [string]$Type, [string]$Method)
+    return [ordered]@{
+        project = $Project
+        uid = ($Namespace + '.' + $Type + '.' + $Method + '.' + $Project)
+        namespace = $Namespace
+        type = $Type
+        method = $Method
+        arguments = @()
+        categories = @('Unit')
+    }
+}
+
+function Write-LiveLaneCensusNodes {
+    param([string]$Path, $Nodes)
+    $json = [ordered]@{ nodes = @($Nodes) } | ConvertTo-Json -Depth 6
+    [System.IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding $false))
+}
+
+function Invoke-LiveLaneAdditiveIdentityWitness {
+    param([string]$RepoRoot)
+    $problems = New-Object System.Collections.Generic.List[string]
+    $dir = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('additive' + [guid]::NewGuid().ToString('N'))
+    try {
+        $old = New-LiveLaneCensusNode 'Antiphon.Tests' 'Antiphon.Tests.Scripts' 'C1645OldTests' 'Kept'
+        $declared = [pscustomobject]@{ project = 'Antiphon.Tests'; namespace = 'Antiphon.Tests.Scripts'; class = 'C1645NewTests'; method = 'Added'; arguments = @() }
+        $shapes = [ordered]@{
+            present = @($old, (New-LiveLaneCensusNode 'Antiphon.Tests' 'Antiphon.Tests.Scripts' 'C1645NewTests' 'Added'))
+            removed = @($old)
+            otherNamespace = @($old, (New-LiveLaneCensusNode 'Antiphon.Tests' 'Antiphon.Tests.Elsewhere' 'C1645NewTests' 'Added'))
+            otherProject = @($old, (New-LiveLaneCensusNode 'Antiphon.Agents.Pty.Tests' 'Antiphon.Tests.Scripts' 'C1645NewTests' 'Added'))
+        }
+        $beforePath = Join-Path $dir 'before.json'
+        Write-LiveLaneCensusNodes -Path $beforePath -Nodes @($old)
+        $additive = ConvertTo-LiveLaneIdentityJson @($declared)
+        $contract = ConvertTo-LiveLaneIdentityJson (Get-LiveLaneContract)
+        Initialize-LiveLaneCensusEngine
+        $seen = @{}
+        foreach ($name in @($shapes.Keys)) {
+            $path = Join-Path $dir ($name + '.json')
+            Write-LiveLaneCensusNodes -Path $path -Nodes $shapes[$name]
+            $text = [string][LiveLaneCensusEngine]::Compare($beforePath, $path, '', '[]', '[]', $additive, $contract, '')
+            $seen[$name] = @(($text -split "`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        }
+        if ($seen.present -contains 'declared-additive-missing' -or $seen.present -contains 'undeclared-new-uid') {
+            $problems.Add('C1645 D-2/present declared addition diagnosed: ' + ($seen.present -join ','))
+        }
+        if ($seen.removed -notcontains 'declared-additive-missing') {
+            $problems.Add('C1645 D-2/removed declared addition not diagnosed: ' + ($seen.removed -join ','))
+        }
+        foreach ($name in @('otherNamespace', 'otherProject')) {
+            if ($seen[$name] -notcontains 'undeclared-new-uid') { $problems.Add('C1645 D-2/' + $name + ' class+method match counted as declared: ' + ($seen[$name] -join ',')) }
+            if ($seen[$name] -notcontains 'declared-additive-missing') { $problems.Add('C1645 D-2/' + $name + ' declared identity counted present: ' + ($seen[$name] -join ',')) }
+        }
+    } finally {
+        Remove-LiveLaneOwnedScratch -Entry @{ Path = $dir; Kind = 'dir'; Sha = '' }
+    }
+    return @($problems)
+}
+
+# CARD-1645 items 1 and 4. The pre-S1 base must be on the fetched landing target, and a
+# candidate that already carries target commits beyond the seed is a later tree.
+function Invoke-LiveLaneScratchGit {
+    param([string]$Root, [string[]]$GitArgs)
+    $out = & git -C $Root -c user.name=c1645 -c user.email=c1645@example.invalid -c commit.gpgsign=false @GitArgs 2>&1
+    if ($LASTEXITCODE -ne 0) { throw ('scratch-git ' + ($GitArgs -join ' ') + ': ' + ($out | Out-String)) }
+    return (($out | Out-String).Trim())
+}
+
+function New-LiveLaneScratchCommit {
+    param([string]$Root, [string]$File, [string]$Message)
+    [System.IO.File]::WriteAllText((Join-Path $Root $File), $Message + "`n")
+    Invoke-LiveLaneScratchGit $Root @('add', '--', $File) | Out-Null
+    Invoke-LiveLaneScratchGit $Root @('commit', '-q', '-m', $Message) | Out-Null
+    return (Invoke-LiveLaneScratchGit $Root @('rev-parse', 'HEAD'))
+}
+
+function Invoke-LiveLaneTargetScopeWitness {
+    param([string]$RepoRoot)
+    $problems = New-Object System.Collections.Generic.List[string]
+    $dir = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('target' + [guid]::NewGuid().ToString('N'))
+    try {
+        Invoke-LiveLaneScratchGit $dir @('init', '-q', '--template=', '-b', 'master') | Out-Null
+        New-LiveLaneScratchCommit $dir 'a.txt' 'base' | Out-Null
+        $pre = New-LiveLaneScratchCommit $dir 'a.txt' 'pre'
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', '-b', 'subject') | Out-Null
+        $seed = New-LiveLaneScratchCommit $dir 'b.txt' 'seed'
+        $head = New-LiveLaneScratchCommit $dir 'c.txt' 'subject'
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', '-b', 'offtarget', $pre) | Out-Null
+        $offPre = New-LiveLaneScratchCommit $dir 'd.txt' 'caller-chosen pre'
+        $offSeed = New-LiveLaneScratchCommit $dir 'e.txt' 'caller-chosen seed'
+        $offHead = New-LiveLaneScratchCommit $dir 'f.txt' 'caller-chosen head'
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', 'master') | Out-Null
+        $later = New-LiveLaneScratchCommit $dir 'g.txt' 'later master'
+        Invoke-LiveLaneScratchGit $dir @('update-ref', 'refs/remotes/origin/master', $later) | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', 'subject') | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('merge', '-q', '--no-edit', '--no-ff', 'master') | Out-Null
+        $merged = Invoke-LiveLaneScratchGit $dir @('rev-parse', 'HEAD')
+        $target = 'refs/remotes/origin/master'
+        $cases = [ordered]@{
+            honest = @{ Pre = $pre; Seed = $seed; Head = $head; Target = $target; Want = @(); Forbid = @('pre-not-on-target', 'later-tree', 'target-unresolved') }
+            offTarget = @{ Pre = $offPre; Seed = $offSeed; Head = $offHead; Target = $target; Want = @('pre-not-on-target'); Forbid = @() }
+            laterTree = @{ Pre = $pre; Seed = $seed; Head = $merged; Target = $target; Want = @('later-tree'); Forbid = @('pre-not-on-target') }
+            noTarget = @{ Pre = $pre; Seed = $seed; Head = $head; Target = 'refs/remotes/origin/c1645-absent'; Want = @('target-unresolved'); Forbid = @() }
+        }
+        foreach ($name in @($cases.Keys)) {
+            $c = $cases[$name]
+            $got = @(Get-LiveLaneTargetDiagnostics -RepoRoot $dir -Pre $c.Pre -Seed $c.Seed -Head $c.Head -TargetRef $c.Target)
+            foreach ($want in @($c.Want)) { if ($got -notcontains $want) { $problems.Add('C1645 ' + $name + ' missing ' + $want + ': ' + ($got -join ',')) } }
+            foreach ($bad in @($c.Forbid)) { if ($got -contains $bad) { $problems.Add('C1645 ' + $name + ' unexpected ' + $bad + ': ' + ($got -join ',')) } }
+        }
+        $context = [pscustomobject]@{ censusBaseSha = $seed; preS1BaseSha = $pre; sourceSha = $head; fixtureBlob = ('ab' * 20); landingTarget = $target }
+        $line = [string](Get-LiveLaneCensusScopeLine -Context $context -TargetSha $later)
+        foreach ($needle in @('scope=commission', 'not-run-on-later-trees', ('seed=' + $seed), ('pre=' + $pre), ('head=' + $head), ('fixtureBlob=' + ('ab' * 20)), 'fixture=unauthenticated', ('target=' + $target + '@' + $later))) {
+            if ($line.IndexOf($needle, [StringComparison]::Ordinal) -lt 0) { $problems.Add('C1645 D-1/D-4 scope line lacks ' + $needle + ': ' + $line) }
+        }
+    } finally {
+        Remove-LiveLaneOwnedScratch -Entry @{ Path = $dir; Kind = 'dir'; Sha = '' }
+    }
+    return @($problems)
+}
+
 switch ($Case) {
     'ExactCoreRoster' { Invoke-LiveLaneRosterCase -ProjectName 'Antiphon.Tests' }
     'ExactPtyCoreRoster' { Invoke-LiveLaneRosterCase -ProjectName 'Antiphon.Agents.Pty.Tests' }
@@ -391,6 +515,16 @@ switch ($Case) {
     'EveryLiveGateHasDisposition' {
         $manifest = Read-LiveLaneManifestObject -RepoRoot $RepoRoot
         $failures = @(Invoke-LiveLaneGateMatrix -RepoRoot $RepoRoot -Manifest $manifest)
+        Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
+        exit 0
+    }
+    'CensusAdditiveIdentity' {
+        $failures = @(Invoke-LiveLaneAdditiveIdentityWitness -RepoRoot $RepoRoot)
+        Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
+        exit 0
+    }
+    'CensusTargetScope' {
+        $failures = @(Invoke-LiveLaneTargetScopeWitness -RepoRoot $RepoRoot)
         Write-LiveLaneCaseResult -DiscoveryOk $true -ErrorText '' -Failures $failures -LaunchCount 0
         exit 0
     }
