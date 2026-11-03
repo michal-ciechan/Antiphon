@@ -150,6 +150,10 @@ public sealed class C1677RetentionServerTests
     [Arguments("not-direct-child")]
     [Arguments("other-runner")]
     [Arguments("branch-null")]
+    [Arguments("leaf-newline")]
+    [Arguments("leaf-carriage-return")]
+    [Arguments("leaf-line-separator")]
+    [Arguments("leaf-trailing-space")]
     public async Task Each_ineligible_task_alone_is_recorded_and_never_sent(string mode)
     {
         // V-30 (G-42..G-64, I-1, I-5, I-11). One fact differs from the eligible shape; the control is still sent.
@@ -189,6 +193,11 @@ public sealed class C1677RetentionServerTests
                 case "not-direct-child": task.RemoteWorktreePath = "/work/worktrees/x/task-" + task.Id.ToString("N")[..8]; break;
                 case "other-runner": task.RunnerId = "server2-temp"; break;
                 case "branch-null": task.WorktreeBranch = null; break;
+                // CARD-1677 S1 hardening (review d0b57b9c A-3): `$` matches before a final newline.
+                case "leaf-newline": task.RemoteWorktreePath = World.PathOf(task.Id) + "\n"; break;
+                case "leaf-carriage-return": task.RemoteWorktreePath = World.PathOf(task.Id) + "\r"; break;
+                case "leaf-line-separator": task.RemoteWorktreePath = World.PathOf(task.Id) + "\u2028"; break;
+                case "leaf-trailing-space": task.RemoteWorktreePath = World.PathOf(task.Id) + " "; break;
             }
             if (sessionId is not null)
                 task.AgentSessionId = sessionId;
@@ -233,6 +242,7 @@ public sealed class C1677RetentionServerTests
             "path-shared" => "path_shared",
             "session-created" or "session-starting" or "session-running" or "session-stopping" => "live_session",
             "report-unpreserved" => "report_unpreserved",
+            "leaf-newline" or "leaf-carriage-return" or "leaf-line-separator" => "name_control_character",
             _ => "outside_scope",
         });
     }
@@ -711,6 +721,29 @@ public sealed class C1677RetentionServerTests
         unknown.TaskId.ShouldBe(owner);
         unknown.Branch.ShouldBe("owner_hint:task-cffa0c4b:Succeeded");
         rows.Where(r => r.ReasonCode == "identity_ambiguous").ShouldHaveSingleItem().Path.ShouldBe("/work/worktrees/task-eeeeeeee");
+    }
+
+    [Test]
+    public async Task Control_character_inventory_names_are_reported_not_sent()
+    {
+        // CARD-1677 S1 hardening (review d0b57b9c A-3). An inventory name that is a known task leaf plus a
+        // control character is not that task and no owner prefix: it is held as such and never sent.
+        // Control: the eligible task itself is still sent, and its own exact leaf is not reported.
+        await using var w = await World.StartAsync();
+        var control = await w.EligibleAsync();
+        var leaf = "task-" + control.ToString("N")[..8];
+        w.Inventory.Add(new WorkspaceRetentionEntry("worktrees", leaf, true, false, true, false, null));
+        foreach (var suffix in new[] { "\n", "\r", "\t", "\u2028", "\u2029" })
+            w.Inventory.Add(new WorkspaceRetentionEntry("worktrees", leaf + suffix, true, false, true, false, null));
+
+        await w.TickAsync();
+
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(control);
+        var rows = (await w.RowsAsync()).Where(r => r.Lane == RunnerWorktreeRetentionService.LaneInventory).ToList();
+        rows.Count.ShouldBe(5, "the exact leaf is known; each suffixed name is reported once");
+        rows.ShouldAllBe(r => r.ReasonCode == "name_control_character" && r.TaskId == null && r.Branch == null);
+        rows.Select(r => r.Path).Order(StringComparer.Ordinal).ShouldBe(
+            new[] { "\n", "\r", "\t", "\u2028", "\u2029" }.Select(x => "/work/worktrees/" + leaf + x).Order(StringComparer.Ordinal));
     }
 
     [Test]

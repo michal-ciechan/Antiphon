@@ -690,4 +690,31 @@ public sealed class C1677RetentionEngineTests
         s.MutatingVerbs().ShouldBeEmpty();
         s.Registered(stale).ShouldBeTrue();
     }
+
+    [Test]
+    [Arguments(".antiphon/inbox/brief.md", "\n")]
+    [Arguments(".antiphon/inbox/brief.md", "\r")]
+    [Arguments(".antiphon/inbox/brief.md", " ")]
+    [Arguments(".antiphon/inbox/brief.md", " ")]
+    [Arguments(".antiphon/task-1234-brief.md", "\n")]
+    [Arguments("bin/cache.dat", "\n")]
+    [Arguments("src/obj/cache.dat", "\t")]
+    public async Task Ignored_content_with_an_end_suffix_is_never_disposable(string path, string suffix)
+    {
+        // CARD-1677 S1 hardening (review d0b57b9c A-3). The completed-card classifier's `^(?:...)$` matched
+        // `.antiphon/inbox/brief.md` plus a final newline as a disposable inbox brief, so a protected-by-default
+        // file went with the tree. A suffixed name is no disposable pattern's match: it stays protected.
+        // Control: the bare name, under both the default and an explicit policy, is still disposable.
+        var classifiers = new[]
+        {
+            new RunnerWorkspaceIgnoredContent(),
+            new RunnerWorkspaceIgnoredContent(["**/bin/**", "**/obj/**", ".antiphon/inbox/*.md", ".antiphon/task-*-brief.md"]),
+        };
+        foreach (var classifier in classifiers)
+        {
+            classifier.Classify(path).ShouldBe(RunnerIgnoredContentKind.Disposable, "control: " + path);
+            classifier.Classify(path + suffix).ShouldBe(RunnerIgnoredContentKind.Protected, path + " + U+" + ((int)suffix[0]).ToString("X4"));
+        }
+        await Task.CompletedTask;
+    }
 }
