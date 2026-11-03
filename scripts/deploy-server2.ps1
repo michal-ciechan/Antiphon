@@ -272,14 +272,22 @@ function Enter-RolloutAdmissionLock {
 }
 
 function Invoke-RunnerRequest {
-    param([string]$Method, [string]$RunnerId, [string]$Suffix = '', $Body = $null)
+    param([string]$Method, [string]$RunnerId, [string]$Suffix = '', $Body = $null, [switch]$HoldLift)
     $lock = $null
     try {
         if ($Method -eq 'POST') { $lock = Enter-RolloutAdmissionLock }
         if ($Method -eq 'POST' -and $RunnerId -ceq 'server2-temp' -and $Suffix -ceq '/drain/clear') {
-            # The earlier preflight is advisory. Reobserve while this exact POST
-            # owns FD8, before the retirement epoch can be cleared.
-            Assert-TempRetirementClearable
+            if ($HoldLift) {
+                # Lifting this run's deployment hold: the container it just deployed owns
+                # the temp volumes. Reobserve under FD8 that it is not retired and is this build.
+                $s = Invoke-RunnerRequestCore -Method GET -RunnerId $RunnerId -Suffix '/status'
+                if ($null -eq $s -or $s.retiredAt) { throw 'TempRunnerRetiredDuringHold' }
+                if ([string]$s.buildVersion -cne $Sha) { throw 'TempHoldLiftBuildMismatch' }
+            } else {
+                # The earlier preflight is advisory. Reobserve while this exact POST
+                # owns FD8, before the retirement epoch can be cleared.
+                Assert-TempRetirementClearable
+            }
         }
         return Invoke-RunnerRequestCore -Method $Method -RunnerId $RunnerId -Suffix $Suffix -Body $Body
     } finally {
@@ -1333,7 +1341,7 @@ function Invoke-Phase {
             if ($null -eq $s -or $s.retiredAt) { throw 'TempRunnerRetiredDuringHold' }
             if ($s.draining) {
                 if ([string]$s.redirectTo -ne 'server2' -or $s.retireWhenIdle) { throw 'TempRunnerDrainConflict' }
-                [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0849 cache verification passed' })
+                [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0849 cache verification passed' } -HoldLift)
             }
             [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes 5 -Diagnosis 'TempRunnerNotAcceptingNewWork' -Ready {
                 param($s) $s.acceptingNewWork -eq $true -and [string]$s.buildVersion -eq $Sha
