@@ -216,7 +216,9 @@ function inputControl(terminal: Terminal) {
 }
 
 describe.sequential('CARD-0148 mouse policy', () => {
+  let sheetsBefore = 0
   beforeEach(() => {
+    sheetsBefore = document.styleSheets.length
     installGeometry()
     vi.mocked(sendSessionInput).mockClear()
     vi.mocked(resizeSession).mockClear()
@@ -241,6 +243,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
     hosts.splice(0).forEach(host => host.remove())
     restoreProperties.splice(0).reverse().forEach(restore => restore())
     vi.restoreAllMocks()
+    expect(document.styleSheets.length, 'disposed terminals release their style sheets').toBe(sheetsBefore)
   })
 
   it('panel rejects hover from backlog', async () => {
