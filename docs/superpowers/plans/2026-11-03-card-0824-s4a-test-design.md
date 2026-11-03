@@ -874,8 +874,8 @@ qualification. `Min` is the TUnit executed floor (`-MinExecuted`).
 - `TaskWorktreeRetirementTests` and `WorktreeResidueSweepTests` each match exactly one class, with no
   partial files and no longer names sharing the prefix.
 
-**Import verdict.** See the "Import verdict (measured)" paragraph below the Cost section; it records the
-`import --plan` result for this doc and for the native checkpoint doc.
+**Import verdict.** Measured: both docs import clean (CP-23 Min 109, CP-24 Min 55, CP-25 Min 6). Details,
+including one timeout advisory, are under "Import verdict (measured)" at the end of this doc.
 
 ### Cost
 
@@ -923,5 +923,23 @@ Labels: estimated unless marked measured. Slot wait is reported separately.
 
 ## Import verdict (measured)
 
-Pending: filled in by this task after `import --plan` ran (see the commit that adds this paragraph's
-result).
+Measured on server2, 2026-11-03, base `97e77f9f1` plus this doc (commit `5df5e05bd`). Each call held one
+build-slot lease: waited 0 s, held 15 s and 4 s.
+
+- `dotnet run --project tools/Antiphon.Checkpoints -- import --plan
+  docs/superpowers/plans/2026-11-03-card-0824-s4a-test-design.md --out .antiphon/c0824-s4a-td-manifest.yaml`
+  - Exit 0, `imported 2 rows`.
+  - One build, `bin-c0824-s4a` (`outputPath: bin-c0824-s4a/`).
+  - CP-23: `minExecuted: 109`, `timeoutMinutes: 60`, `serial: true`.
+  - CP-24: `minExecuted: 55`, `timeoutMinutes: 24`, `serial: true`.
+  - The escaped `\|` filters parse to the `(A*)|(B*)` grammar.
+  - One importer advisory: `WARNING CP-23: derived row timeout (60 minutes) exceeds the 45 minute advisory
+    threshold; consider splitting the row (timeout is not capped)`. It is kept: CP-23 is one build plus two
+    classes at about 20 min. If the first run measures more than 30 min, Code splits LS and LP into CP-23a and
+    CP-23b on the same build.
+- `... import --plan docs/superpowers/plans/2026-11-03-card-0824-s4a-native-checkpoints.md --out
+  .antiphon/c0824-s4a-native-manifest.yaml` (`--no-build`)
+  - Exit 0, `imported 1 rows`, no advisory.
+  - One build, `bin-c0824-s4aw/`.
+  - CP-25: `minExecuted: 6`, `timeoutMinutes: 45`.
+- No other importer warnings; the remaining output is compiler warnings from the tool's own build.
