@@ -18,8 +18,19 @@ Invoke-Expression ($complete.Extent.Text.Replace('exit 0', 'return').Replace('ex
 $root = "C:\Users\fixture's home\AppData\Local\Temp\c487-owned"
 $outside = 'D:\outside-results\keep.txt'
 $nodes = @{}; $children = @{}; $enumerated = [Collections.Generic.List[string]]::new()
+function Get-FixtureListing([string]$path) {
+    if ($path -in @($outside, $directoryLink, $fileLink, $rootLink)) { throw 'external link was followed' }
+    if (($nodes[$path].Attributes -band [IO.FileAttributes]::Directory) -eq 0) { throw ('file was listed as a directory: ' + $path) }
+    $enumerated.Add($path)
+    foreach ($name in $children[$path]) { $nodes[$name] }
+}
 function Add-Node($path, $attributes, [bool]$readOnly = $false) {
     $nodes[$path] = [pscustomobject]@{ FullName = $path; Attributes = $attributes; IsReadOnly = $readOnly }
+    # The cleanup lists a directory through DirectoryInfo.GetFileSystemInfos() (CARD-1687); every
+    # node carries it so a listing of a link, the outside file or an owned file is caught, not missing.
+    $nodes[$path] | Add-Member -MemberType ScriptMethod -Name GetFileSystemInfos -Value {
+        [object[]]@(Get-FixtureListing $this.FullName)
+    }
     $parent = $path.Substring(0, $path.LastIndexOf('\'))
     $children[$parent] = @($children[$parent]) + @($path) | Where-Object { $null -ne $_ }
 }
@@ -45,9 +56,7 @@ function Get-Item {
 }
 function Get-ChildItem {
     [CmdletBinding()] param([string]$LiteralPath, [switch]$Force)
-    if ($LiteralPath -in @($outside, $directoryLink, $fileLink, $rootLink)) { throw 'external link was followed' }
-    $enumerated.Add($LiteralPath)
-    foreach ($name in $children[$LiteralPath]) { $nodes[$name] }
+    Get-FixtureListing $LiteralPath
 }
 $script:C487Passed = 1; $script:C487Rows = 1; $script:C487Failed = 0
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows 1
