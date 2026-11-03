@@ -183,7 +183,7 @@ Advisory, not part of the fix: the generic tick catch labels every post-commit t
   config 0.3 s, host-build 0.2 s, connect 0.2 s, db-create 0.3 s, **db-migrate 9.2 s**
   (5 migrations), seed 0.7 s, setup total 11.9 s, host-start 5.2 s. That is about 18 s
   in-process. The remaining ~70 s after the build is DCP, client and container start.
-- **The "last 10 restarts" evidence does not exist on disk.** `restart-apphost.ps1:276`
+- **The "last 10 restarts" evidence does not exist on disk.** `restart-apphost.ps1:270`
   truncates `logs/apphost.log` on every restart (`'' | Set-Content $logFile`), so it only ever
   holds the latest launch's `build` LIVE_TIMING line. The script's own `health-wait`
   LIVE_TIMING goes to the caller's stdout, which is not persisted. dev-aspire's
