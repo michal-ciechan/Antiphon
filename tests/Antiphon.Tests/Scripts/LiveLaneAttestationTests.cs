@@ -12,8 +12,9 @@ public sealed class LiveLaneAttestationTests
 {
     private static readonly TimeSpan MethodBudget = TimeSpan.FromSeconds(60);
 
+    // Measured budget: LiveLaneFingerprintTests.Budget names the measurement and the factor.
     [Test]
-    public Task CliVersionOrBytesInvalidates() => Run(nameof(CliVersionOrBytesInvalidates),
+    public Task CliVersionOrBytesInvalidates() => Run(nameof(CliVersionOrBytesInvalidates), LiveLaneFingerprintTests.Budget(12.3),
         "same-version-new-bytes", "version", "installed-target", "pre-post-drift", "equal");
 
     [Test]
@@ -40,7 +41,9 @@ public sealed class LiveLaneAttestationTests
         "probe-failed", "horizon-fixed", "host-account", "incident-revoked", "binding-missing", "probe-time-token",
         "executed-host-account");
 
-    private static async Task Run(string method, params string[] cases)
+    private static Task Run(string method, params string[] cases) => Run(method, MethodBudget, cases);
+
+    private static async Task Run(string method, TimeSpan budget, params string[] cases)
     {
         var directory = LiveClaudeProfileFixture.CleanTempSubdirectory("c1545-attestation-");
         try
@@ -48,7 +51,7 @@ public sealed class LiveLaneAttestationTests
             LiveLaneAttestationExport.WriteAll(directory);
             await ScriptHarness.RunHarnessCaseAsync("test-live-lane-attestation.ps1", "C1545", "C1545_" + method, cases.Length,
                 cases.Select(name => $"C1545 {method}/{name}").ToArray(),
-                new ScriptHarnessOptions(MethodBudget, TimeSpan.FromSeconds(10), PostExitDrainBudget: TimeSpan.FromSeconds(10),
+                new ScriptHarnessOptions(budget, TimeSpan.FromSeconds(10), PostExitDrainBudget: TimeSpan.FromSeconds(10),
                     AdditionalArguments: ["-AttestationDirectory", directory]),
                 CancellationToken.None);
         }
