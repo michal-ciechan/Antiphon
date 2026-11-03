@@ -1463,10 +1463,10 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     /// <summary>
-    /// V-16 / G-49, G-50, CARD-1612: the configured default is deleted after the pre-lease
-    /// observation, so the claim cuts from HEAD and owes exactly one <c>base-observation-stale</c>
-    /// warning, note and parent delivery beside the unresolved-default one, with zero, one and two
-    /// divergent siblings warned exactly once each. The two-sibling row is the PC-49 killer: a
+    /// V-16 / G-49, G-50, CARD-1612: the configured default is deleted after the claim has
+    /// revalidated its observation, so the cut falls back to HEAD and owes exactly one
+    /// <c>base-observation-stale</c> warning, note and parent delivery beside the unresolved-default
+    /// one, with zero, one and two divergent siblings warned exactly once each. The two-sibling row is the PC-49 killer: a
     /// second mismatch pair is visible as a second Warning, note and queued delivery.
     /// </summary>
     [Test]
@@ -1491,15 +1491,28 @@ public partial class AgentTaskDispatchBaseGuardTests
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
         await db.SaveChangesAsync(ct);
 
+        // Deleting trunk under the lease, before the claim, makes the frozen sibling observation
+        // stale and the claim refuses (CARD-1428). Delete it after the claim's revalidation instead:
+        // the cut lists the repository's worktrees just before it probes the configured default.
+        var leased = false;
+        var vanished = 0;
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "trunk",
-            onLeaseAcquired: async () =>
-            {
-                (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
-            });
+            onLeaseAcquired: () => { leased = true; return Task.CompletedTask; },
+            worktreeFactory: sp => new VanishAfterClaimWorktrees(
+                new WorktreeManager(sp.GetRequiredService<IOptions<GitSettings>>(), TimeProvider.System,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance,
+                    leases: sp.GetRequiredService<IRepositoryMutationLease>(),
+                    landingGit: sp.GetRequiredService<ILandingGit>()),
+                async () =>
+                {
+                    if (!leased || Interlocked.Exchange(ref vanished, 1) != 0) return;
+                    (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
+                }));
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
+        vanished.ShouldBe(1, "trunk is deleted between the claim's revalidation and the cut");
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
@@ -1855,6 +1868,30 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         public bool Owns(RepositoryLease lease, string commonDirectory) =>
             inner.Owns(lease, commonDirectory);
+    }
+
+    /// <summary>
+    /// CARD-1612: runs <paramref name="afterList"/> after each worktree listing. The cut lists
+    /// worktrees after the claim's frozen-ref revalidation and before it probes the default.
+    /// </summary>
+    private sealed class VanishAfterClaimWorktrees(IWorktreeManager inner, Func<Task> afterList) : IWorktreeManager
+    {
+        public async Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct)
+        {
+            var listed = await inner.ListAsync(repoPath, ct);
+            await afterList();
+            return listed;
+        }
+
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct) =>
+            inner.CreateAsync(repoPath, cardId, baseRef, ct);
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, RepositoryLease lease, CancellationToken ct) =>
+            inner.CreateAsync(repoPath, cardId, baseRef, lease, ct);
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, RepositoryLease lease, string? branch, CancellationToken ct) =>
+            inner.CreateAsync(repoPath, cardId, baseRef, lease, branch, ct);
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) => inner.RemoveAsync(repoPath, worktreePath, ct);
+        public Task TouchAsync(string worktreePath, CancellationToken ct) => inner.TouchAsync(worktreePath, ct);
+        public Task<int> PruneStaleAsync(CancellationToken ct) => inner.PruneStaleAsync(ct);
     }
 
     internal static async Task SeedPendingSiblingLandAsync(AppDbContext db, ScratchGitRepo repo, AgentTask sibling)
