@@ -67,6 +67,61 @@ public sealed class ReviewRoundsPolicyTests
         ReviewRoundGuard.DeclaredRound("  Round:\t4;").ShouldBe(4);
     }
 
+    /// <summary>
+    /// CARD-1676. The round shapes briefs really write have no colon: the guard reads <c>round N</c> as well
+    /// as <c>round: N</c>, case-insensitive, at the start of a line or after <c>REVIEW </c>.
+    /// </summary>
+    [Test]
+    [Arguments("REVIEW ROUND 2 OF 3 (diff-only; previous reviewed SHA abc)", 2)]
+    [Arguments("Review round 2 (diff-only): CARD-1647 round guard fix", 2)]
+    [Arguments("Round 2 of 3", 2)]
+    [Arguments("round: 3", 3)]
+    [Arguments("CLEANUP RULE: exact paths only.\nREVIEW ROUND 3 OF 3 (blockers only)", 3)]
+    [Arguments("CLEANUP RULE: exact paths only.\r\n  round 2 of 3; stringency: diff only", 2)]
+    [Arguments("CODE REVIEW ROUND 3 OF 3 (blockers only)", 3)]
+    public void C1676_each_real_brief_round_shape_declares_its_round(string goal, int round)
+    {
+        ReviewRoundGuard.DeclaredRound(goal).ShouldBe(round);
+        ReviewRoundGuard.Evaluate("CARD-0001", goal, ["aaaaaaaa", "bbbbbbbb", "cccccccc"])
+            .ShouldBeNull("a declared round inside the limit is not flagged, whatever the count");
+    }
+
+    /// <summary>CARD-1676. A colon-less fourth round warns with no completed Reviews to count.</summary>
+    [Test]
+    [Arguments("ROUND 4 OF 3 (blockers only)", 4)]
+    [Arguments("Review round 5 (diff-only)", 5)]
+    public void C1676_a_colon_less_fourth_round_warns(string goal, int round)
+    {
+        var flagged = ReviewRoundGuard.Evaluate("CARD-0001", goal, []);
+        flagged.ShouldNotBeNull();
+        flagged.ShouldContain(ReviewRoundGuard.Code);
+        flagged.ShouldContain($"declares round {round}");
+    }
+
+    /// <summary>
+    /// CARD-1676. The colon-less shape keeps the CARD-1647 invariants: non-ASCII digits declare nothing,
+    /// a number on the next line is not read, and prose that only mentions rounds declares nothing.
+    /// </summary>
+    [Test]
+    [Arguments("REVIEW ROUND ４ OF 3")]
+    [Arguments("Round ٤ of 3")]
+    [Arguments("Round\n7 of 3")]
+    [Arguments("REVIEW ROUND\n7 OF 3")]
+    [Arguments("Review round\r\n7")]
+    [Arguments("Review the change in 4 rounds")]
+    [Arguments("Rounds 4 of the suite ran green")]
+    [Arguments("Review 5 files around 6 call sites")]
+    public void C1676_a_colon_less_round_keeps_the_ascii_and_same_line_rules(string goal)
+    {
+        int? declared = -1;
+        Should.NotThrow(() => declared = ReviewRoundGuard.DeclaredRound(goal));
+        declared.ShouldBeNull();
+        string? counted = null;
+        Should.NotThrow(() => counted = ReviewRoundGuard.Evaluate("CARD-0001", goal, ["aaaaaaaa", "bbbbbbbb", "cccccccc"]));
+        counted.ShouldNotBeNull();
+        counted.ShouldContain("CARD-0001 already has 3 completed Review tasks", Case.Sensitive, "an undeclared round falls back to the count");
+    }
+
     // ---- item 2: the stage-review evidence block carries the round ------------------------------
 
     [Test]

@@ -213,6 +213,38 @@ public class AgentTaskCardBindingTests
     }
 
     /// <summary>
+    /// CARD-1676. The colon-less round a real brief writes is read at creation: <c>REVIEW ROUND 4 OF 3</c>
+    /// on a card with no completed Reviews warns, and a malformed colon-less round (fullwidth digit, its
+    /// number on the next line) still creates the Review without a round warning.
+    /// </summary>
+    [Test]
+    public async Task C1676_a_colon_less_fourth_round_is_flagged_at_creation_and_a_malformed_one_still_creates()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
+        var (_, board) = await SeedProjectBoardAsync(db);
+        var card = await SeedCardAsync(db, board.Id, "CARD-0168");
+        var service = CreateService(db, workspace);
+        var review = Request(workspace.Path) with
+        {
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Review, Workspace = WorkspaceMode.Shared, Card = card.Id.ToString(),
+        };
+
+        var flagged = await service.CreateAsync(review with { Goal = "REVIEW ROUND 4 OF 3 (blockers only)\nrange: a..b" },
+            Manual(workspace.Path), CancellationToken.None);
+        flagged.Warning.ShouldNotBeNull();
+        flagged.Warning!.ShouldContain(ReviewRoundGuard.Code);
+        flagged.Warning.ShouldContain("declares round 4");
+        (await EventsFor(db, flagged.Id)).ShouldContain(e => e.Type == AgentTaskEventType.Warning && e.Detail.Contains(ReviewRoundGuard.Code));
+
+        var malformed = await service.CreateAsync(review with { Goal = "REVIEW ROUND ４ OF 3\nRound\n9 of 3" },
+            Manual(workspace.Path), CancellationToken.None);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == malformed.Id)).Role.ShouldBe(AgentTaskRole.Review);
+        (malformed.Warning ?? "").ShouldNotContain(ReviewRoundGuard.Code);
+    }
+
+    /// <summary>
     /// CARD-1647 D-1. A fault inside the round guard (here its card query throws) never fails the
     /// Review create: the Review is created and the caller is told the round was not checked.
     /// </summary>
