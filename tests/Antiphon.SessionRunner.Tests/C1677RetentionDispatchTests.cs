@@ -89,12 +89,14 @@ public sealed class C1677RetentionDispatchTests
     [Test]
     [Arguments("mirror-then-retain")]
     [Arguments("live-session")]
+    [Arguments("live-session-subdirectory")]
     [Arguments("window-elapsed")]
     public async Task Recent_use_by_this_runner_keeps_the_tree(string shape, CancellationToken ct)
     {
         // CARD-1677 D-2 (review c238f9ca). A task re-dispatched after the server's reread: the runner's own
         // Mirror (a reuse at the same sha) or Launch in the tree keeps it, over a real engine and real git.
-        // window-elapsed is the control: the same mirror older than the window is removed.
+        // window-elapsed is the control: the same mirror older than the window is removed. CARD-1684 R30: a session
+        // launched in a subdirectory of the tree keeps it too (the holder scan here is the fake, empty one).
         using var s = C1677RetentionScratch.Create();
         var m = s.Mirror();
         var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-11-03T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
@@ -107,10 +109,13 @@ public sealed class C1677RetentionDispatchTests
         };
         var dispatcher = new PhoneHomeCommandDispatcher(runtime, settings, time: clock);
         dispatcher.UseWorkspace(s.Service());
-        if (shape == "live-session")
+        var liveSession = shape.StartsWith("live-session", StringComparison.Ordinal);
+        if (liveSession)
         {
+            var cwd = shape == "live-session" ? m.Path : m.Path + "/sub";
+            Directory.CreateDirectory(cwd);
             var launch = await dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
-                JsonSerializer.SerializeToElement(new RunnerLaunchRequest(Guid.NewGuid(), "/bin/sh", [], new Dictionary<string, string>(), m.Path, 80, 24),
+                JsonSerializer.SerializeToElement(new RunnerLaunchRequest(Guid.NewGuid(), "/bin/sh", [], new Dictionary<string, string>(), cwd, 80, 24),
                     PhoneHomeFraming.Json)), ct);
             launch.Kind.ShouldBe(PhoneHomeFrameKind.Result, launch.ErrorDetail);
             clock.Advance(TimeSpan.FromHours(1));
@@ -137,7 +142,7 @@ public sealed class C1677RetentionDispatchTests
         }
 
         response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
-        response.Reason.ShouldBe(shape == "live-session" ? WorkspaceRetentionCodes.WorkspaceInUse : WorkspaceRetentionCodes.RecentlyMirrored);
+        response.Reason.ShouldBe(liveSession ? WorkspaceRetentionCodes.WorkspaceInUse : WorkspaceRetentionCodes.RecentlyMirrored);
         Directory.Exists(m.Path).ShouldBeTrue("the tree stays at its path");
         C1677RetentionScratch.Tree(m.Path).ShouldBe(before);
         s.Registered(m.Path).ShouldBeTrue();

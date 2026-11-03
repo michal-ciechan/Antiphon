@@ -513,6 +513,104 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    public async Task Dry_run_on_a_clean_unheld_residue_removes_nothing(CancellationToken ct)
+    {
+        // CARD-1684 R25 (guard (d), S-5). The leaf is gone and its retiring residue is clean and no process holds
+        // it: a DryRun answers would_remove for the residue, hands the dispatcher no moved step, and never runs
+        // phase B's `git worktree remove`. The residue and its registration stay.
+        using var s = Create();
+        var m = s.Mirror();
+        var residue = s.Retiring + "/task-a1677001.0badf00d";
+        Directory.CreateDirectory(s.Retiring);
+        Git(s.Repository, "worktree", "move", m.Path, residue);
+        var before = Tree(residue);
+        s.Argv.Clear();
+        var engine = s.Engine();
+
+        var step = await engine.CheckAndMoveAsync(Request(m, WorkspaceRetainModes.DryRun), ct);
+        step.Moved.ShouldBeFalse("a DryRun never hands phase B a path");
+        var response = await engine.RetainAsync(Request(m, WorkspaceRetainModes.DryRun), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.WouldRemove, response.Detail);
+        response.RetiringResidue.ShouldBeTrue();
+        response.MovedPath.ShouldBe(residue);
+        s.Holders.Calls.ShouldBe(2, "the residue itself was scanned on each pass");
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+        s.MutatingVerbs().ShouldBeEmpty();
+        Directory.Exists(residue).ShouldBeTrue();
+        Tree(residue).ShouldBe(before);
+        s.Registered(residue).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("with-own-residue")]
+    [Arguments("no-own-residue")]
+    public async Task Residue_retry_never_takes_a_foreign_residue_that_sorts_first(string shape, CancellationToken ct)
+    {
+        // CARD-1684 R33 (PC-35). Another task's clean, unheld residue task-01677003.* sorts before this task's
+        // task-a1677001.*, so "the first residue by ordinal" would pick it. Only this leaf's own residue is
+        // retried; with none, the answer is already_absent. The foreign residue is never removed.
+        using var s = Create();
+        var foreign = s.Mirror("01677003");
+        Directory.CreateDirectory(s.Retiring);
+        var foreignResidue = s.Retiring + "/task-01677003.0badf00d";
+        Git(s.Repository, "worktree", "move", foreign.Path, foreignResidue);
+        string? own = null;
+        PhoneHomeWorkspaceRetainRequest request;
+        if (shape == "with-own-residue")
+        {
+            var m = s.Mirror();
+            own = s.Retiring + "/task-a1677001.0badf00d";
+            Git(s.Repository, "worktree", "move", m.Path, own);
+            request = Request(m);
+        }
+        else
+            request = new PhoneHomeWorkspaceRetainRequest(TaskOf("a1677001"), s.Worktrees + "/task-a1677001",
+                "feat/card-task-a1677001", Execute, Guid.NewGuid());
+        string.CompareOrdinal(Path.GetFileName(foreignResidue), "task-a1677001.0badf00d")
+            .ShouldBeLessThan(0, "the foreign residue sorts first (the fixture's precondition)");
+        var foreignBefore = Tree(foreignResidue);
+        s.Argv.Clear();
+
+        var response = await s.Engine().RetainAsync(request, ct);
+        if (own is null)
+        {
+            response.Verdict.ShouldBe(WorkspaceRetentionCodes.AlreadyAbsent, response.Detail);
+            response.RetiringResidue.ShouldBeFalse();
+            s.MutatingVerbs().ShouldBeEmpty();
+        }
+        else
+        {
+            response.Verdict.ShouldBe(WorkspaceRetentionCodes.Removed, response.Detail);
+            response.RetiringResidue.ShouldBeTrue();
+            response.MovedPath.ShouldBe(own);
+            s.Calls("worktree", "remove").ShouldHaveSingleItem().Args.ShouldBe(["worktree", "remove", own]);
+            Directory.Exists(own).ShouldBeFalse();
+        }
+        Directory.Exists(foreignResidue).ShouldBeTrue("another task's residue is untouched");
+        Tree(foreignResidue).ShouldBe(foreignBefore);
+        s.Registered(foreignResidue).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("execute")]
+    [Arguments("dryrun")]
+    [Arguments("Bogus")]
+    [Arguments("")]
+    public async Task Unrecognised_mode_is_kept_before_any_git(string mode, CancellationToken ct)
+    {
+        // CARD-1684 R26 (guard (d)). Only the two exact constants are modes; anything else (a case variant, an
+        // unknown word, empty) is refused before any git, so it can never execute.
+        using var s = Create();
+        var m = s.Mirror();
+        var before = Tree(m.Path);
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+        s.Kept(response, WorkspaceRetentionCodes.OutsideScope, m, before);
+        response.Detail.ShouldBe("mode must be DryRun or Execute");
+        s.Argv.ShouldBeEmpty("the mode is refused before any git runs");
+        s.Holders.Calls.ShouldBe(0);
+    }
+
+    [Test]
     [Arguments(WorkspaceRetainModes.DryRun)]
     [Arguments(WorkspaceRetainModes.Execute)]
     public async Task Tree_not_registered_at_its_path_is_kept(string mode, CancellationToken ct)

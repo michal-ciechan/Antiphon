@@ -473,6 +473,58 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    public async Task Kept_tree_backoff_doubles_per_repeat_of_the_same_reason()
+    {
+        // CARD-1684 S18 (guard (h)). A first keep backs off 60 min; a second keep of the same reason backs off
+        // 120 min: a tick 61 min after it is still backed off, one 121 min after it is sent.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync();
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, WorkspaceRetentionCodes.Dirty));
+
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(1);
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(60));
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(2, "the first backoff (60 min) has passed");
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(61));
+        (await w.TickAsync()).ShouldHaveSingleItem().BackedOff.ShouldBe(1);
+        w.Requests().Count.ShouldBe(2, "the second keep of the same reason backs off 120 min, not 60");
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(60));
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(3, "121 min after the second keep its backoff has passed");
+    }
+
+    [Test]
+    public async Task Kept_tree_backoff_is_capped_at_kept_recheck_max_hours()
+    {
+        // CARD-1684 S19 (guard (h)). Six keeps of the same reason: 60, 120, 240, 480 and 960 min, then
+        // 60 x 2^5 = 1920 min capped at KeptRecheckMaxHours (24 h). The seventh request goes 24 h after the sixth.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, WorkspaceRetentionCodes.Dirty));
+
+        await w.TickAsync();
+        foreach (var minutes in new[] { 60, 120, 240, 480, 960 })
+        {
+            await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(minutes));
+            await w.TickAsync();
+        }
+        w.Requests().Count.ShouldBe(6, "each uncapped backoff passed exactly");
+        await using (var db = w.Rig.NewDb())
+        {
+            var cursor = await db.WorktreeResidueCandidateCursors.AsNoTracking()
+                .SingleAsync(c => c.CandidateKey == RunnerWorktreeRetentionService.SendCursorKey(id));
+            cursor.NotBefore.ShouldBe(w.Rig.Now.AddHours(w.Settings.KeptRecheckMaxHours), TimeSpan.FromSeconds(1));
+        }
+        await w.Rig.AdvanceAsync(TimeSpan.FromHours(24) - TimeSpan.FromMinutes(1));
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(6, "still within the capped backoff");
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(1));
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(7, "the capped backoff (24 h) has passed");
+    }
+
+    [Test]
     public async Task Changed_task_facts_resend_a_backed_off_tree_at_once()
     {
         // Review c238f9ca D-1. The backoff belongs to the facts it was answered for: a task that ran again and
@@ -506,6 +558,27 @@ public sealed class C1677RetentionServerTests
         var run = await db.WorktreeResidueRuns.AsNoTracking().SingleAsync(r => r.Id == result.RunId);
         run.Execute.ShouldBeFalse();
         run.Preview.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Preview_of_an_unlisted_runner_contacts_nothing()
+    {
+        // CARD-1684 S09 (guard (e)). The preview route honours the Runners allow-list: a preview for a capable,
+        // phone-home runner that is not listed returns no result, sends no frame and writes no run.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        w.Settings.Runners.Clear();
+        w.Settings.Runners.Add("other-runner");
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.WouldRemove));
+
+        (await w.PreviewAsync()).ShouldBeEmpty();
+        await Task.Delay(200);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(0);
+        (await w.RowsAsync()).ShouldBeEmpty();
+        await using var db = w.Rig.NewDb();
+        (await db.WorktreeResidueRuns.AsNoTracking().CountAsync()).ShouldBe(0);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
     }
 
     [Test]
