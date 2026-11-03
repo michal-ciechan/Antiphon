@@ -16,6 +16,8 @@ public static partial class ReviewRoundGuard
 {
     public const string Code = "review_round_limit";
     public const int MaxRounds = 3;
+    /// <summary>The SQL comment on the guard's card query, so a test can fault exactly that query.</summary>
+    public const string QueryTag = "ReviewRoundGuard";
 
     [GeneratedRegex(@"^\s*round:\s*(\d{1,4})\b", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
     private static partial Regex DeclaredRoundLine();
@@ -42,7 +44,7 @@ public static partial class ReviewRoundGuard
     {
         if (cardId is not Guid card)
             return null;
-        var completed = await db.AgentTasks.AsNoTracking()
+        var completed = await db.AgentTasks.AsNoTracking().TagWith(QueryTag)
             .Where(t => t.CardId == card && t.Role == AgentTaskRole.Review && t.Status == AgentTaskStatus.Succeeded)
             .OrderBy(t => t.CreatedAt)
             .Select(t => t.Id)
