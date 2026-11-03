@@ -26,8 +26,8 @@ public sealed class RunnerAlarmHostedServiceTests
 {
     /// <summary>
     /// CARD-1683: the start pass before the first timer. A cold test process on loaded server2 took over
-    /// 5 s, the old bound (CARD-1678, sweep 974b0c17). Measured on server2 (load ~40) over four class runs:
-    /// 6.1-8.5 s cold (p95 ~8.4 s), ~0.1 s warm; about 2x the cold p95.
+    /// 5 s, the old bound (CARD-1678, sweep 974b0c17). Measured on server2 (load average 12-16) over four
+    /// class runs: 6.1-8.5 s cold (p95 ~8.4 s), ~0.1 s warm; about 2x the cold p95. The CARD-1678 waits keep 30 s.
     /// </summary>
     private static readonly TimeSpan FirstPassWait = TimeSpan.FromSeconds(17);
 
@@ -318,7 +318,8 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await FirstPassAsync(clock);
+        // A cold first pass took over 5 s on loaded server2 (CARD-1678); only the timer it arms is asserted.
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var passes = source.Calls;
         passes.ShouldBe(1, "the start pass runs once before the loop waits");
         clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
@@ -356,7 +357,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 120 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await FirstPassAsync(clock);
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(30));
         state.Current.DrainExpiresAt.Count.ShouldBe(2);
         clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
             "the timer is due one second past the earliest drain expiry");
