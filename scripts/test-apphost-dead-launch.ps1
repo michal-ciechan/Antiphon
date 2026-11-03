@@ -15,6 +15,9 @@ try {
     foreach ($name in @('apphost-common.ps1','watchdog-apphost.ps1','restart-apphost.ps1')) {
         Copy-Item (Join-Path $PSScriptRoot $name) (Join-Path $scripts $name)
     }
+    # restart-apphost.ps1 dot-sources lib/live-startup-timing.ps1 since fdaf40558.
+    New-Item -ItemType Directory (Join-Path $scripts 'lib') | Out-Null
+    Copy-Item (Join-Path $PSScriptRoot 'lib/live-startup-timing.ps1') (Join-Path $scripts 'lib/live-startup-timing.ps1')
     '# inert fixture' | Set-Content (Join-Path $scripts 'check-daemon-build.ps1')
     @'
 function Get-AppHostWorktreeClassification { param($SourceRoot); [pscustomobject]@{ Verified=$true; IsMainWorktree=$true } }
