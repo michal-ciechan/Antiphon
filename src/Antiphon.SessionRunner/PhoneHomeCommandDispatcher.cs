@@ -33,6 +33,10 @@ public interface IPhoneHomeRuntimeSurface
     /// <summary>CARD-1677 S1. Read-only inventory of the worktree and retiring roots; runs outside the lock.</summary>
     Task<PhoneHomeWorkspaceRetentionInventoryResponse> WorkspaceRetentionInventoryAsync(CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+
+    /// <summary>CARD-1677 S2. One bounded temp sweep of the registered families; runs outside the lock. Default refuses.</summary>
+    Task<PhoneHomeTempSweepResponse> TempSweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
     /// <summary>CARD-1153: default unsupported, so an adapter without the evidence service never certifies.</summary>
     Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
         Task.FromResult(RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(PhoneHomeProblemTypes.UnsupportedOperation, 501, "absence evidence unsupported"));
@@ -587,6 +591,7 @@ public sealed class PhoneHomeCommandDispatcher
                     AbsenceFrame(request, await _runtime.CertifyAbsenceAsync(ReadAbsenceRequest(request), ct))),
                 PhoneHomeOperation.WorkspaceRetentionInventory => await RetentionInventoryAsync(request, ct),
                 PhoneHomeOperation.WorkspaceRetain => await RetainAsync(request, ct),
+                PhoneHomeOperation.TempSweep => await TempSweepAsync(request, ct),
                 PhoneHomeOperation.SetCapacity => await MutateAsync(request, () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeSetCapacityRequest>(PhoneHomeFraming.Json)
@@ -1005,6 +1010,20 @@ public sealed class PhoneHomeCommandDispatcher
     {
         RequireRetentionCapability();
         return Result(request, await _runtime.WorkspaceRetentionInventoryAsync(ct));
+    }
+
+    /// <summary>
+    /// CARD-1677 S2. Not a workspace mutation (it never touches the worktree root), so it never takes the mutation
+    /// lock: a long sweep cannot stall a session's Input. Only a surface that advertises tempSweepV1 reaches it.
+    /// </summary>
+    private async Task<PhoneHomeFrame> TempSweepAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        if (_runtime.Capabilities().Features?.Contains(RunnerCapabilityFeatures.TempSweepV1, StringComparer.Ordinal) != true)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+                "Temp sweep is not supported on this runner.", 501);
+        var body = request.Payload?.Deserialize<PhoneHomeTempSweepRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Temp sweep body is required.");
+        return Result(request, await _runtime.TempSweepAsync(body, ct));
     }
 
     // A surface that does not advertise retention never reaches its (refusing) members or any engine.

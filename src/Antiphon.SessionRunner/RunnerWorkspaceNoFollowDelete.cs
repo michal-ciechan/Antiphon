@@ -79,7 +79,8 @@ internal static class RunnerWorkspaceNoFollowDelete
         return store;
     }
 
-    internal static async Task<Entry[]> InventoryAsync(string root, string? expectedIdentity, CancellationToken ct)
+    internal static async Task<Entry[]> InventoryAsync(string root, string? expectedIdentity, CancellationToken ct,
+        bool allowLinks = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -99,7 +100,7 @@ internal static class RunnerWorkspaceNoFollowDelete
                 using var handle = OpenLinuxPath(root);
                 var info = LinuxMetadata(handle.DangerousGetHandle().ToInt32());
                 if (expectedIdentity is not null && info.Identity != expectedIdentity) Changed(root);
-                await WalkLinuxAsync(handle.DangerousGetHandle().ToInt32(), "", entries, budget, deadline.Token);
+                await WalkLinuxAsync(handle.DangerousGetHandle().ToInt32(), "", entries, budget, deadline.Token, allowLinks);
             }
             return entries.OrderBy(e => e.Path, StringComparer.Ordinal).ToArray();
         }
@@ -108,7 +109,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     }
 
     private static async Task WalkLinuxAsync(int parent, string relative, List<Entry> entries,
-        InventoryBudget budget, CancellationToken ct)
+        InventoryBudget budget, CancellationToken ct, bool allowLinks = false)
     {
         if (relative.Count(c => c == Path.DirectorySeparatorChar) >= 128) throw new Refusal("unproven_content", relative);
         foreach (var child in ListChildren("/proc/self/fd/" + parent, ct))
@@ -118,13 +119,20 @@ internal static class RunnerWorkspaceNoFollowDelete
             // AT_SYMLINK_NOFOLLOW is lstat-equivalent and never opens a FIFO,
             // socket, device or symlink. Record its type as unproven and refuse.
             var listed = LinuxMetadata(parent, name);
+            // CARD-1677 S2 (opt-in): a symlink is recorded as itself and never opened, so the delete unlinks the link only.
+            if (allowLinks && !listed.Directory && !listed.Regular && LinuxIsLink(parent, name))
+            {
+                budget.Add(listed, rel);
+                entries.Add(new(rel, false, null, listed.Identity, listed.Size));
+                continue;
+            }
             RequireSupported(listed, rel); budget.Add(listed, rel);
             using var handle = OpenLinuxEntry(parent, name);
             var opened = LinuxMetadata(handle.DangerousGetHandle().ToInt32());
             if (listed != opened) Changed(rel);
             var hash = opened.Directory ? null : await HashAsync(handle, opened, rel, ct);
             entries.Add(new(rel, opened.Directory, hash, opened.Identity, opened.Size));
-            if (opened.Directory) await WalkLinuxAsync(handle.DangerousGetHandle().ToInt32(), rel, entries, budget, ct);
+            if (opened.Directory) await WalkLinuxAsync(handle.DangerousGetHandle().ToInt32(), rel, entries, budget, ct, allowLinks);
         }
     }
 
@@ -145,10 +153,11 @@ internal static class RunnerWorkspaceNoFollowDelete
         }
     }
 
-    internal static async Task ValidateRemainingAsync(string root, IReadOnlyList<Entry> expected, CancellationToken ct)
+    internal static async Task ValidateRemainingAsync(string root, IReadOnlyList<Entry> expected, CancellationToken ct,
+        bool allowLinks = false)
     {
         var allowed = expected.ToDictionary(e => e.Path, StringComparer.Ordinal);
-        foreach (var entry in await InventoryAsync(root, null, ct))
+        foreach (var entry in await InventoryAsync(root, null, ct, allowLinks))
             if (!allowed.TryGetValue(entry.Path, out var original) || original != entry) Changed(entry.Path);
     }
 
@@ -180,10 +189,10 @@ internal static class RunnerWorkspaceNoFollowDelete
     }
 
     internal static async Task DeleteOwnedAsync(string root, string identity, IReadOnlyList<Entry> entries,
-        Action<string>? beforeEntry, Action<string>? afterValidation, CancellationToken ct)
+        Action<string>? beforeEntry, Action<string>? afterValidation, CancellationToken ct, bool allowLinks = false)
     {
         if (Identity(root) != identity) Changed(root);
-        await ValidateRemainingAsync(root, entries, ct);
+        await ValidateRemainingAsync(root, entries, ct, allowLinks);
         var allowed = entries.ToDictionary(e => e.Path, StringComparer.Ordinal);
         if (OperatingSystem.IsWindows())
         {
@@ -212,6 +221,8 @@ internal static class RunnerWorkspaceNoFollowDelete
         {
             if (relative.Length != 0 && LinuxIsLink(parent, name))
             {
+                // CARD-1677 S2: a link the inventory recorded must still be that very link.
+                if (allowed[relative] is { Directory: false, Hash: null } recorded && recorded.Identity != listed.Identity) Changed(relative);
                 if (unlinkat(parent, name, 0) != 0) throw Failure("unlink", name);
                 return;
             }

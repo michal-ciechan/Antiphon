@@ -24,14 +24,26 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     private readonly SessionRunnerRuntime _runtime;
     private readonly RunnerBuildDto _build;
     private readonly RunnerWorkspaceRetention? _retention;
+    private readonly RunnerTempSweep? _tempSweep;
 
     public PhoneHomeRuntimeAdapter(SessionRunnerRuntime runtime, RunnerBuildDto build,
-        RunnerWorkspaceRetention? retention = null)
+        RunnerWorkspaceRetention? retention = null, RunnerTempSweep? tempSweep = null)
     {
         _runtime = runtime;
         _build = build;
         _retention = retention;
+        _tempSweep = tempSweep;
     }
+
+    /// <summary>CARD-1677 S2: the temp sweep, like retention, is advertised only by a Linux runner.</summary>
+    internal static IReadOnlyList<string> TempSweepFeatures(bool isLinux) =>
+        isLinux ? [RunnerCapabilityFeatures.TempSweepV1] : [];
+
+    public Task<PhoneHomeTempSweepResponse> TempSweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct) =>
+        _tempSweep is not null && OperatingSystem.IsLinux()
+            ? Task.Run(() => _tempSweep.SweepAsync(request, ct), ct)
+            : throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+                "Temp sweep is not supported on this runner.", 501);
 
     /// <summary>CARD-1677 D-11: retention is advertised only by a Linux runner (the desktop never retains).</summary>
     internal static IReadOnlyList<string> RetentionFeatures(bool isLinux) =>
@@ -82,6 +94,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
         if (_retention is not null)
             features = [.. features, .. RetentionFeatures(OperatingSystem.IsLinux())];
+        if (_tempSweep is not null)
+            features = [.. features, .. TempSweepFeatures(OperatingSystem.IsLinux())];
         // CARD-1153 D-3: advertised only while the evidence service is ready (adoption done, no latch).
         if (_runtime.AbsenceEvidenceReady)
             features = [.. features, RunnerAbsenceEvidence.Feature];
