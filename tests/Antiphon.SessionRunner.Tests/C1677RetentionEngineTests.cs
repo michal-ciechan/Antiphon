@@ -592,6 +592,70 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    [Arguments(WorkspaceRetainModes.Execute)]
+    [Arguments(WorkspaceRetainModes.DryRun)]
+    public async Task Residue_retry_keeps_a_legitimate_residue_beside_a_stray_entry(string mode, CancellationToken ct)
+    {
+        // CARD-1677 S1 hardening mutation XR (task cde14651). This leaf's real, clean, registered, unheld residue
+        // task-a1677001.0badf00d sits beside a stray task-a1677001.0badf00d-stray that sorts after it. The stray is
+        // a doubt about this leaf's residues, so the residue is kept and reported: taking the first exact name
+        // before the rest of the folder is read would remove it.
+        using var s = Create();
+        var m = s.Mirror();
+        var residue = s.Retiring + "/task-a1677001.0badf00d";
+        var stray = residue + "-stray";
+        Directory.CreateDirectory(s.Retiring);
+        Git(s.Repository, "worktree", "move", m.Path, residue);
+        Directory.CreateDirectory(stray);
+        string.CompareOrdinal(Path.GetFileName(residue), Path.GetFileName(stray))
+            .ShouldBeLessThan(0, "the stray sorts after the residue (the fixture's precondition)");
+        var before = Tree(residue);
+        s.Argv.Clear();
+
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceRetentionCodes.WorkspaceRetiringOrUnknown, response.Detail);
+        response.RetiringResidue.ShouldBeTrue();
+        Directory.Exists(residue).ShouldBeTrue("the residue stays");
+        Tree(residue).ShouldBe(before);
+        s.Registered(residue).ShouldBeTrue("the residue registration stays");
+        Directory.Exists(stray).ShouldBeTrue("the stray stays");
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+        s.MutatingVerbs().ShouldBeEmpty("no git mutation ran");
+        s.Holders.Calls.ShouldBe(0, "a doubted residue is never scanned as a candidate");
+    }
+
+    [Test]
+    [Arguments(WorkspaceRetainModes.Execute)]
+    [Arguments(WorkspaceRetainModes.DryRun)]
+    public async Task Residue_retry_keeps_an_upper_case_hex_residue(string mode, CancellationToken ct)
+    {
+        // CARD-1677 S1 hardening mutation PC-C (task cde14651). A real, clean, registered, unheld worktree named
+        // task-a1677001.0BADF00D holds no control character, so only the not-<leaf>.<8 hex> doubt refuses it:
+        // without that doubt it falls through as this leaf's residue and is removed.
+        using var s = Create();
+        var m = s.Mirror();
+        var residue = s.Retiring + "/task-a1677001.0BADF00D";
+        Directory.CreateDirectory(s.Retiring);
+        Git(s.Repository, "worktree", "move", m.Path, residue);
+        var before = Tree(residue);
+        s.Argv.Clear();
+
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceRetentionCodes.WorkspaceRetiringOrUnknown, response.Detail);
+        response.RetiringResidue.ShouldBeTrue();
+        Directory.Exists(residue).ShouldBeTrue("the residue stays");
+        Tree(residue).ShouldBe(before);
+        s.Registered(residue).ShouldBeTrue("the residue registration stays");
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+        s.MutatingVerbs().ShouldBeEmpty("no git mutation ran");
+        s.Holders.Calls.ShouldBe(0, "a doubted residue is never scanned as a candidate");
+    }
+
+    [Test]
     [Arguments("execute")]
     [Arguments("dryrun")]
     [Arguments("Bogus")]
@@ -699,6 +763,7 @@ public sealed class C1677RetentionEngineTests
     [Arguments(".antiphon/task-1234-brief.md", "\n")]
     [Arguments("bin/cache.dat", "\n")]
     [Arguments("src/obj/cache.dat", "\t")]
+    [Arguments("obj/project.assets.json", "\t")]
     public async Task Ignored_content_with_an_end_suffix_is_never_disposable(string path, string suffix)
     {
         // CARD-1677 S1 hardening (review d0b57b9c A-3). The completed-card classifier's `^(?:...)$` matched
@@ -714,6 +779,29 @@ public sealed class C1677RetentionEngineTests
         {
             classifier.Classify(path).ShouldBe(RunnerIgnoredContentKind.Disposable, "control: " + path);
             classifier.Classify(path + suffix).ShouldBe(RunnerIgnoredContentKind.Protected, path + " + U+" + ((int)suffix[0]).ToString("X4"));
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    [Arguments(".antiphon/inbox/br", "ief.md", "\n")]
+    [Arguments(".antiphon/inbox/br", "ief.md", "\u2028")]
+    [Arguments("bin/ca", "che.dat", "\t")]
+    public async Task Ignored_content_with_an_embedded_control_character_is_never_disposable(string head, string tail, string control)
+    {
+        // CARD-1677 S1 hardening mutation XC (task cde14651). The control character sits inside the name, not at
+        // its end: `*` (`[^/]*`) matches a newline or U+2028 and `**` (`.*`) a TAB, so a check of the last
+        // character alone would make each disposable. Control: the name without it is still disposable.
+        var classifiers = new[]
+        {
+            new RunnerWorkspaceIgnoredContent(),
+            new RunnerWorkspaceIgnoredContent(["**/bin/**", "**/obj/**", ".antiphon/inbox/*.md", ".antiphon/task-*-brief.md"]),
+        };
+        foreach (var classifier in classifiers)
+        {
+            classifier.Classify(head + tail).ShouldBe(RunnerIgnoredContentKind.Disposable, "control: " + head + tail);
+            classifier.Classify(head + control + tail).ShouldBe(RunnerIgnoredContentKind.Protected,
+                head + " + U+" + ((int)control[0]).ToString("X4") + " + " + tail);
         }
         await Task.CompletedTask;
     }
