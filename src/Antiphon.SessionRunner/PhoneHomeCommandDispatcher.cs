@@ -476,6 +476,16 @@ public sealed class PhoneHomeCommandDispatcher
                         ?? throw new ArgumentException("Workspace remove body is required.");
                     return Result(request, await Workspace().RemoveAsync(body, ct));
                 }),
+                // CARD-0824 S2: under the same lock as Mirror, so a mirror being created cannot race the ref delete.
+                PhoneHomeOperation.WorkspaceBranchRefsDelete => await MutateAsync(request, async () =>
+                {
+                    if (_runtime.Capabilities().Features?.Contains(RunnerCapabilityFeatures.WorkspaceBranchRefsV1, StringComparer.Ordinal) != true)
+                        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+                            "Workspace branch ref deletion is not supported on this runner.", 501);
+                    var body = request.Payload?.Deserialize<PhoneHomeWorkspaceBranchRefsDeleteRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Workspace branch refs delete body is required.");
+                    return Result(request, await Workspace().DeleteBranchRefsAsync(body, ct));
+                }),
                 PhoneHomeOperation.WorkspacePublish => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspacePublishRequest>(PhoneHomeFraming.Json)

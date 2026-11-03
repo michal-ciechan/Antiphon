@@ -340,6 +340,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         // Workspace mutation can occupy the runner's command lock for five minutes.
         // Keep the waiter until that lock can release and the persisted value is confirmed.
         PhoneHomeOperation.SetCapacity => TimeSpan.FromMinutes(6),
+        // CARD-0824 S2: a few git reads and two update-refs, queued behind the same command lock.
+        PhoneHomeOperation.WorkspaceBranchRefsDelete => TimeSpan.FromMinutes(6),
         // CARD-1677: phase A waits for the runner's command lock, phase B removes a multi-GiB tree.
         PhoneHomeOperation.WorkspaceRetain => TimeSpan.FromMinutes(6),
         // CARD-1677 S2: the runner starts no removal past its 10-minute budget; allow the one in flight to finish.

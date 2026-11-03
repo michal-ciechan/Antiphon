@@ -17,7 +17,8 @@ namespace Antiphon.Tests.TestHelpers;
 internal sealed class LandingSafetyHarness : IAsyncDisposable
 {
     public LandingGitFixture Fixture { get; }
-    public LandingSafetyHarness(string? root = null, Guid? taskId = null) => Fixture = new(root, taskId);
+    public LandingSafetyHarness(string? root = null, Guid? taskId = null, string? sourceBranch = null) =>
+        Fixture = new(root, taskId, sourceBranch);
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
     public TimeProvider Clock { get; set; } = TimeProvider.System;
