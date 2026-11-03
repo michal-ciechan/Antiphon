@@ -7,6 +7,8 @@ Records its own identity, starts the launch script (launch-rc.ps1) with its own 
 (Windows) and its own output files, then writes a heartbeat every PollSeconds, a PROGRESS line
 every ProgressMinutes, an observation-only HANG_SUSPECTED flag, and finally EXIT <code> and
 commission-exit.txt. Every log line is flushed to TaskRoot\supervisor.log as it is written.
+RunId is recorded in supervisor-identity.json and launch-child.json and handed to the launch as
+ANTIPHON_QUALIFICATION_RUN_ID; launch-rc.ps1 refuses a launch record with another -RunId.
 The supervisor never stops, signals, or restarts a process and never clears a lock. Its death
 does not end the run: observe.ps1 reads last-run.json completedAt as the end signal.
 ASCII-only, Windows PowerShell 5.1 safe.
@@ -17,6 +19,7 @@ param(
     [Parameter(Mandatory = $true)][string]$LaunchScript,
     [Parameter(Mandatory = $true)][string]$LogRoot,
     [Parameter(Mandatory = $true)][string]$StateRoot,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')][string]$RunId,
     [ValidateRange(1, 300)][int]$PollSeconds = 30,
     [ValidateRange(1, 120)][int]$ProgressMinutes = 10,
     [ValidateRange(1, 600)][double]$HangMinutes = 20,
@@ -35,6 +38,7 @@ $self = [Diagnostics.Process]::GetCurrentProcess()
 $identity = [ordered]@{
     pid = $self.Id
     processStartedAt = $self.StartTime.ToUniversalTime().ToString('o')
+    runId = $RunId
     script = $PSCommandPath
     launchScript = $LaunchScript
     platform = $platform
@@ -43,18 +47,20 @@ $identity = [ordered]@{
     consoleProcessIds = @(Get-QualificationConsoleProcessIds)
 }
 Write-QualificationSupervisorRecord -Path (Join-Path $TaskRoot 'supervisor-identity.json') -Text ($identity | ConvertTo-Json -Compress)
-Write-QualificationSupervisorLine -Path $log -Text ("START supervisor pid={0} platform={1} detach={2} session={3} console=[{4}]" -f $self.Id, $platform, $Detach, $identity.sessionId, (@($identity.consoleProcessIds) -join ','))
+Write-QualificationSupervisorLine -Path $log -Text ("START supervisor pid={0} run={1} platform={2} detach={3} session={4} console=[{5}]" -f $self.Id, $RunId, $platform, $Detach, $identity.sessionId, (@($identity.consoleProcessIds) -join ','))
 
 $exitCode = $null
 try {
     $start = New-QualificationDetachedStartParameters -FilePath $PowerShellPath -Platform $platform -SameSession `
         -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $LaunchScript) `
         -StandardOutput (Join-Path $TaskRoot 'commission-console.log') -StandardError (Join-Path $TaskRoot 'commission-stderr.log')
+    # The launch child inherits this; launch-rc.ps1 refuses a record whose -RunId differs.
+    $env:ANTIPHON_QUALIFICATION_RUN_ID = $RunId
     $child = Start-Process @start
     # Touch the handle now so ExitCode stays readable after the child exits.
     $null = $child.Handle
     $childStart = $child.StartTime.ToUniversalTime().ToString('o')
-    Write-QualificationSupervisorRecord -Path (Join-Path $TaskRoot 'launch-child.json') -Text (([ordered]@{ pid = $child.Id; processStartedAt = $childStart }) | ConvertTo-Json -Compress)
+    Write-QualificationSupervisorRecord -Path (Join-Path $TaskRoot 'launch-child.json') -Text (([ordered]@{ pid = $child.Id; processStartedAt = $childStart; runId = $RunId }) | ConvertTo-Json -Compress)
     Write-QualificationSupervisorLine -Path $log -Text ("LAUNCHED pid={0} started={1} script={2}" -f $child.Id, $childStart, $LaunchScript)
 
     $previous = $null

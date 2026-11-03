@@ -8,7 +8,10 @@ teardown of the starter's console cannot kill it. Unix: setsid gives it a new se
 stdout/stderr go straight to its own files (supervisor-stdout.log, supervisor-stderr.log); this
 starter holds no pipe or buffer for it, and its log is TaskRoot\supervisor.log, flushed per line.
 Waits for supervisor-identity.json, writes start-supervisor.json and exits 0 (1 on failure).
-Refuses when TaskRoot already has a supervisor identity. To leave a caller's Job Object too,
+RunId must be the -RunId in the launch record's nightlyArguments: the supervisor records it and
+passes it to launch-rc.ps1 (ANTIPHON_QUALIFICATION_RUN_ID), and observe.ps1 credits only that run.
+Refuses when TaskRoot already has a supervisor identity, or when StateRoot's last-run.json or
+run.lock already names RunId (a reused run id could credit an earlier run). To leave a caller's Job Object too,
 start this script itself through Win32_Process Create (docs: antiphon-rc-qualification skill).
 ASCII-only, Windows PowerShell 5.1 safe.
 #>
@@ -18,6 +21,7 @@ param(
     [Parameter(Mandatory = $true)][string]$LaunchScript,
     [Parameter(Mandatory = $true)][string]$LogRoot,
     [Parameter(Mandatory = $true)][string]$StateRoot,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')][string]$RunId,
     [ValidateRange(1, 300)][int]$PollSeconds = 30,
     [ValidateRange(1, 120)][int]$ProgressMinutes = 10,
     [ValidateRange(1, 600)][double]$HangMinutes = 20,
@@ -33,11 +37,17 @@ if ([string]::IsNullOrWhiteSpace($PowerShellPath)) { $PowerShellPath = [Diagnost
 if (-not [IO.Directory]::Exists($TaskRoot)) { Write-Output "start-supervisor: TaskRoot does not exist: $TaskRoot"; exit 1 }
 if (-not [IO.File]::Exists($LaunchScript)) { Write-Output "start-supervisor: LaunchScript does not exist: $LaunchScript"; exit 1 }
 if ([IO.File]::Exists($identityPath)) { Write-Output "start-supervisor: refused, a supervisor identity already exists: $identityPath"; exit 1 }
+foreach ($leaf in @('last-run.json', 'run.lock')) {
+    $seen = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath([IO.Path]::Combine($StateRoot, $leaf)))
+    if ($seen.status -ceq 'ok' -and [string]::Equals([string]$seen.record.runId, $RunId, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Output "start-supervisor: refused, $($seen.path) already names run id $RunId; bind a fresh -RunId"; exit 1
+    }
+}
 
 $detach = 'setsid'
 if ($platform -ceq 'Windows') { $detach = 'new-console' }
 $arguments = @('-NoProfile', '-NonInteractive', '-File', $supervisor, '-TaskRoot', $TaskRoot, '-LaunchScript', $LaunchScript,
-    '-LogRoot', $LogRoot, '-StateRoot', $StateRoot, '-PollSeconds', [string]$PollSeconds, '-ProgressMinutes', [string]$ProgressMinutes,
+    '-LogRoot', $LogRoot, '-StateRoot', $StateRoot, '-RunId', $RunId, '-PollSeconds', [string]$PollSeconds, '-ProgressMinutes', [string]$ProgressMinutes,
     '-HangMinutes', $HangMinutes.ToString([Globalization.CultureInfo]::InvariantCulture), '-Detach', $detach, '-PowerShellPath', $PowerShellPath)
 $start = New-QualificationDetachedStartParameters -FilePath $PowerShellPath -ArgumentList $arguments -Platform $platform `
     -StandardOutput (Join-Path $TaskRoot 'supervisor-stdout.log') -StandardError (Join-Path $TaskRoot 'supervisor-stderr.log')
@@ -55,6 +65,7 @@ $record = [ordered]@{
     starterPid = $self.Id
     starterStartedAt = $self.StartTime.ToUniversalTime().ToString('o')
     startedPid = $started.Id
+    runId = $RunId
     platform = $platform
     detach = $detach
     supervisorPid = $null

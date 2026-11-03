@@ -223,27 +223,46 @@ owned task directory with its launch record, never with a private copy. Run 7f8e
 supervisor (2026-11-02) because the supervisor shared its wrapper's console and wrote its log
 through a `1>` wrapper buffer; the run itself survived.
 
-- `launch-rc.ps1` reads `launch-record.json` (`checkoutRoot`, `expectedSha`,
-  `nightlyArguments`), refuses a HEAD mismatch and runs `build-slot.ps1 -- nightly-run.ps1`.
+- Every launch has its own fresh run id: `-RunId <id>` in the launch record's
+  `nightlyArguments` and the same value as `start-supervisor.ps1 -RunId`. The state root
+  (default `C:\Antiphon\nightly`) is shared by every nightly and rc run, so `last-run.json`
+  usually holds the previous run's `completedAt`; only the run id tells them apart.
+- `launch-rc.ps1` needs PowerShell 7: the starter passes its own host to the supervisor and the
+  launch, so start the starter with `pwsh`, not `powershell.exe` (5.1 fails safely, launching
+  nothing). It reads `launch-record.json` (`checkoutRoot`, `expectedSha`,
+  `nightlyArguments`), refuses (exit 2) a record without `-RunId` or with a run id other than the
+  supervisor's (`ANTIPHON_QUALIFICATION_RUN_ID`), refuses (exit 3) while `run.lock` names a live
+  owner, refuses a HEAD mismatch, and runs `build-slot.ps1 -- nightly-run.ps1`. The `run.lock`
+  check is point-in-time: a run that starts while the launch waits for a build slot (up to 45
+  min) makes nightly-run refuse it (exit 3), and one that ends in that wait lets it start after.
 - `start-supervisor.ps1 -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
-  <candidate>\logs -StateRoot <state-dir>` starts `supervise-rc.ps1` with its **own hidden
-  console** (setsid on Unix) and output in its own files, waits for `supervisor-identity.json`
-  and returns. Start the starter through `Win32_Process` Create to leave the caller's Job Object.
-  It refuses a task directory that already has a supervisor identity.
+  <candidate>\logs -StateRoot <state-dir> -RunId <id>` starts `supervise-rc.ps1` with its **own
+  hidden console** (setsid on Unix) and output in its own files, waits for
+  `supervisor-identity.json` and returns. Start the starter through `Win32_Process` Create to
+  leave the caller's Job Object. It refuses a task directory that already has a supervisor
+  identity and a run id that `last-run.json` or `run.lock` already names.
 - `supervise-rc.ps1` writes `supervisor.log` one flushed line at a time (START, LAUNCHED,
   PROGRESS, HANG_SUSPECTED, EXIT), `supervisor-heartbeat.json`, `launch-child.json` and finally
-  `commission-exit.txt`. It only observes; it never stops anything.
-- `observe.ps1 -TaskRoot <task-dir> -StateRoot <state-dir>` is read-only. `last-run.json`
-  `completedAt` is the end signal, not `commission-exit.txt`. A gone supervisor or stale
-  heartbeat while nightly-run still owns `run.lock` is `supervisor-lost-run-alive` (exit 0): an
-  observation gap, not a run failure, and no reason to stop or restart the run. Exit 3
-  `run-lost` (nightly-run gone without `completedAt`) needs investigation; exit 2 is unknown.
+  `commission-exit.txt`, and records the run id in the identity and launch-child records. It only
+  observes; it never stops anything.
+- `observe.ps1 -TaskRoot <task-dir> -StateRoot <state-dir>` is read-only and credits only the
+  run id in `supervisor-identity.json`. `last-run.json` `completedAt` for that run id is the end
+  signal, not `commission-exit.txt`. A gone supervisor or stale heartbeat while that run still
+  owns `run.lock` (run id in both `run.lock` and `last-run.json`) is `supervisor-lost-run-alive`
+  (exit 0): an observation gap, not a run failure, and no reason to stop or restart the run.
+  Exit 3 `run-lost` (its `run.lock` owner gone without `completedAt`) needs investigation.
+  Exit 2 is `not-started` (run id not in `run.lock` or `last-run.json` yet, e.g. the build-slot
+  wait), `launch-failed` (`commission-exit.txt` written and the run id never seen; `runLock` and
+  `lockRunId` show another run's lock), or `unknown`. A nightly-run that exits through its error
+  path releases `run.lock` without writing `completedAt`: observe reports `unknown`
+  (`run-lock-missing`, exit 2), not `run-lost`; read `last-run.json` `phase` and `exitCode`.
 - Offline witness: `scripts/test-qualification-supervisor.ps1` (C1667). The Windows console
   detach is recorded in `supervisor-identity.json` (`consoleProcessIds` must not contain the
   starter pid); its native witness is still owed.
-- To name the killer of a future unexplained death, an operator (elevated, human-only) can
-  enable `auditpol /set /subcategory:"Process Termination" /success:enable` on the desktop and
-  read Security 4689 events; agents never change audit policy.
+- For a future unexplained death, an operator (elevated, human-only) can enable
+  `auditpol /set /subcategory:"Process Termination" /success:enable` on the desktop; Security
+  event 4689 then records which process exited, when, and its exit status. It does not say who
+  terminated it. Agents never change audit policy, and this is not a recommendation to do so.
 
 ### Pre-run workspace slot cold reset (CARD-0824 S1)
 
