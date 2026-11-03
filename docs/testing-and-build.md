@@ -713,7 +713,7 @@ Legacy unsealed copies retain their current-process ledger behavior.
 
 - **Walked helpers.** A helper is resolved by its declaring type and argument count. A bare or `this.` call reaches the caller's own type or an enclosing local function. `receiver.Name(...)` reaches a helper only when the receiver's innermost visible declaration (local, field or parameter, or `var x = new T(...)`) is a type declared in the walked roots. A same-named method elsewhere never launders `output.Write(...)` or `s_log.Append(...)`.
 - **Lambdas and queries.** A lambda that is handed tainted text through the receiver or a sibling argument gets tainted parameters. The one reviewed exception is the `write` callback of `ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync`, which only ever receives `ClaudeTrustDialogKeys` constants. Query range variables (`from`, `join`, `let`, `into`) over tainted text are tainted too. A method group passed as the delegate of a listed delegate-taking call (`ForEach`, `Select`, `Where`, `Any`, `Exists` and similar) counts unless it resolves to a walked helper.
-- **Stores.** An element or member store stays local only through a local that created its object in place, and buffer-mutator exemptions follow the same rule. An alias (`var bag = TestContext.Current!.ObjectBag`), a parameter or a catch variable (`ex.Data[...]`) counts. So does a `ref` or `out` argument that is not a local or a discard, when the call carries taint.
+- **Stores.** An element or member store stays local only through a local that created its object in place, and buffer-mutator exemptions follow the same rule. An alias (`var bag = TestContext.Current!.ObjectBag`), a parameter or a catch variable (`ex.Data[...]`) counts. So does a `ref` or `out` argument that is not a local or a discard, when the call carries taint. `_` is a discard only when no declaration named `_` in the file can be in scope: any member named `_` (field, property, primary-constructor parameter) turns `_ = screen` and `out _` into a counted store, while a parameter or local named `_` is local only inside the method or lambda that declares it.
 
 Known residuals, each counting 0 today:
 - Bool-predicate leaves (`Contains`, `StartsWith`, `Any`, `Exists` and the rest) are matched by name on any receiver, so a sink method that happens to share one of those names is exempt (`s_sink.Contains(screen)`).
@@ -721,6 +721,7 @@ Known residuals, each counting 0 today:
 - A member store on an object created in place is local, so a property setter with a side effect is not seen (`var h = new Holder(); h.Text = screen;`).
 - A method group handed tainted text by a call outside the listed delegate-taking leaves (for example `Aggregate(seed, OtherFile.Log)` on a tainted receiver) is not counted.
 - Text that leaves through a `ToString()` override, an operator, an implicit conversion or an event is not modelled. Neither is a `ref` argument of a constructor.
+- A field or property named `_` declared in another file (the other half of a partial class, or a base class) is not seen, so `_ = screen` there is still read as a discard.
 
 Fail-closed approximations, which over-count rather than launder:
 - Taint is tracked by simple name across every walked root.
