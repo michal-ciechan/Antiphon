@@ -231,7 +231,8 @@ try
     builder.Services.AddOptions<AttentionSettings>()
         .Bind(builder.Configuration.GetSection(AttentionSettings.SectionName))
         .ValidateOnStart();
-    // CARD-1677 S1: runner worktree retention ships off (Enabled=false, Runners=[], Execute=false).
+    // CARD-1677 S1: runner worktree retention ships on for server2 (appsettings: Enabled=true, Execute=true,
+    // Runners=["server2"]; operator decision 2026-11-03). Kill switch Enabled=false; dry run Execute=false.
     builder.Services.AddSingleton<IValidateOptions<RunnerWorktreeRetentionSettings>, RunnerWorktreeRetentionSettingsValidator>();
     builder.Services.AddOptions<RunnerWorktreeRetentionSettings>()
         .Bind(builder.Configuration.GetSection(RunnerWorktreeRetentionSettings.SectionName))

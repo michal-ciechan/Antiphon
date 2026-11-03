@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -19,6 +21,14 @@ namespace Antiphon.Server.Application.Services;
 /// candidate, strictly one at a time, re-reading the row right before each send. It never decides that a
 /// tree is safe to delete: the runner refuses on any doubt. Every evaluation is a run candidate row
 /// (<c>Scope = runner-retention:&lt;runner&gt;</c>; lanes RunnerMirror and RunnerInventory; no migration, D-8).
+///
+/// Review c238f9ca D-1: the runner's answer is remembered per task (a <c>runner-retention-sent:&lt;id&gt;</c>
+/// cursor). A tree the runner kept is not sent again until its backoff (<c>KeptRecheckMinutes</c> doubling per
+/// repeat of the same reason, at most <c>KeptRecheckMaxHours</c>) has passed, unless its task's server facts
+/// changed or the runner's reason changed; never-sent tasks go first (oldest first), then the least recently
+/// sent. So kept trees cannot starve newer removable ones, and successive dry-run ticks census the whole
+/// population. A tick stops starting requests past <c>MaxTickMinutes</c>, or when Enabled (or Execute) is
+/// switched off while it runs.
 /// </summary>
 public sealed class RunnerWorktreeRetentionService
 {
@@ -53,7 +63,14 @@ public sealed class RunnerWorktreeRetentionService
         _logger = logger;
     }
 
-    // RED SHIM (CARD-1677 review c238f9ca round 1): the repair's result fields, not yet filled.
+    public const string SendCursorPrefix = "runner-retention-sent:";
+
+    /// <summary>
+    /// One runner's tick. <paramref name="Examined"/> counts the tasks classified (the whole mirror population of
+    /// the runner), <paramref name="Eligible"/> those the server found finished, <paramref name="BackedOff"/> the
+    /// eligible ones skipped because the runner kept them recently, <paramref name="Stopped"/> why the tick stopped
+    /// sending early (null when it did not).
+    /// </summary>
     public sealed record TickResult(string RunnerId, int Sent, Guid? RunId, int Examined = 0, int Eligible = 0,
         int BackedOff = 0, string? Stopped = null);
 
@@ -66,18 +83,20 @@ public sealed class RunnerWorktreeRetentionService
         if (settings.Execute && settings.Runners.Count == 0)
             _logger.LogWarning("RunnerWorktreeRetention:Execute is true but Runners is empty; no runner is contacted");
         var results = new List<TickResult>();
+        var tickStarted = Now();
         foreach (var runnerId in settings.Runners.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal))
         {
             if (previewRunner is not null && runnerId != previewRunner)
                 continue;
             var execute = settings.Execute && previewRunner is null;
-            results.Add(await RunRunnerAsync(runnerId, settings, execute, writeAll: previewRunner is not null, ct));
+            results.Add(await RunRunnerAsync(runnerId, settings, execute, writeAll: previewRunner is not null, tickStarted, ct));
         }
 
         return results;
     }
 
-    private async Task<TickResult> RunRunnerAsync(string runnerId, RunnerWorktreeRetentionSettings settings, bool execute, bool writeAll, CancellationToken ct)
+    private async Task<TickResult> RunRunnerAsync(string runnerId, RunnerWorktreeRetentionSettings settings, bool execute, bool writeAll,
+        DateTime tickStarted, CancellationToken ct)
     {
         var now = Now();
         var run = new WorktreeResidueRun
@@ -122,11 +141,39 @@ public sealed class RunnerWorktreeRetentionService
                 HeldRow(run, cursors, task, reason, runnerId, writeAll, now);
         }
 
+        // D-1: order and back off by the runner's last answer for each task.
+        var sendCursors = await LoadCursorsAsync(eligible.Select(t => SendCursorKey(t.Id)).ToList(), ct);
+        var ordered = new List<AgentTask>();
+        var retries = new List<(AgentTask Task, DateTime LastSent)>();
+        var backedOff = 0;
+        foreach (var task in eligible)
+        {
+            var last = sendCursors.TryGetValue(SendCursorKey(task.Id), out var cursor) ? SendState.Parse(cursor, Fingerprint(task)) : null;
+            if (last is null)
+                ordered.Add(task);
+            else if (cursor!.NotBefore is { } notBefore && notBefore > now)
+            {
+                backedOff++;
+                HeldRow(run, cursors, task, "kept_recheck_pending", runnerId, writeAll, now);
+            }
+            else
+                retries.Add((task, cursor.LastEvaluatedAt));
+        }
+        ordered.AddRange(retries.OrderBy(r => r.LastSent).Select(r => r.Task));
+
         var sent = 0;
-        foreach (var candidate in eligible.Take(settings.MaxRemovalsPerTick))
+        string? stopped = null;
+        foreach (var candidate in ordered.Take(settings.MaxRemovalsPerTick))
         {
             if (sent > 0 && settings.PauseBetweenSeconds > 0)
                 await Task.Delay(TimeSpan.FromSeconds(settings.PauseBetweenSeconds), _clock, ct);
+            stopped = StopReason(execute, tickStarted);
+            if (stopped is not null)
+            {
+                Row(run, LaneMirror, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
+                _logger.LogWarning("Runner worktree retention {RunnerId} stopped sending after {Sent} request(s): {Reason}", runnerId, sent, stopped);
+                break;
+            }
             // I-8: re-read the row right before the send; any changed server fact skips it.
             var fresh = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == candidate.Id, ct);
             var recheck = fresh is null ? "task_absent" : await ClassifyAsync(fresh, runnerId, settings, ct);
@@ -152,14 +199,28 @@ public sealed class RunnerWorktreeRetentionService
                 failure = ex.Message;
             }
 
-            await RecordAsync(run, fresh, request, response, failure, runnerId, ct);
+            await RecordAsync(run, fresh, request, response, failure, runnerId, sendCursors, ct);
         }
 
         if (inventory is not null)
             await RecordInventoryAsync(run, inventory, population, runnerId, ct);
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
-        return new TickResult(runnerId, sent, run.Id);
+        _logger.LogInformation(
+            "Runner worktree retention {RunnerId} examined {Examined} eligible {Eligible} backedOff {BackedOff} sent {Sent}{Stopped}",
+            runnerId, population.Count, eligible.Count, backedOff, sent, stopped is null ? "" : " stopped=" + stopped);
+        return new TickResult(runnerId, sent, run.Id, population.Count, eligible.Count, backedOff, stopped);
+    }
+
+    /// <summary>Review A-2/A-3: re-read before every request, so the kill switch and the tick budget act between requests.</summary>
+    private string? StopReason(bool execute, DateTime tickStarted)
+    {
+        var current = _settings.CurrentValue;
+        if (!current.Enabled)
+            return "tick_stopped_disabled";
+        if (execute && !current.Execute)
+            return "tick_stopped_execute_off";
+        return Now() - tickStarted >= TimeSpan.FromMinutes(current.MaxTickMinutes) ? "tick_budget_exhausted" : null;
     }
 
     /// <summary>D-11: only a live phone-home runner that advertises workspaceRetentionV1; never the local runner.</summary>
@@ -230,7 +291,8 @@ public sealed class RunnerWorktreeRetentionService
     }
 
     private async Task RecordAsync(WorktreeResidueRun run, AgentTask task, PhoneHomeWorkspaceRetainRequest request,
-        PhoneHomeWorkspaceRetainResponse? response, string? failure, string runnerId, CancellationToken ct)
+        PhoneHomeWorkspaceRetainResponse? response, string? failure, string runnerId,
+        Dictionary<string, WorktreeResidueCandidateCursor> sendCursors, CancellationToken ct)
     {
         var now = Now();
         var verdict = response?.Verdict;
@@ -284,6 +346,8 @@ public sealed class RunnerWorktreeRetentionService
             }
         }
 
+        if (!cleared)
+            RecordSend(sendCursors, task, outcome, reason, now);
         var row = Row(run, LaneMirror, outcome, reason, task.Id, request.Path, task.WorktreeBranch, runnerId);
         row.DirectoryRemoved = cleared ? true : null;
         row.RegistrationRemoved = cleared ? true : null;
@@ -396,6 +460,82 @@ public sealed class RunnerWorktreeRetentionService
     }
 
     internal static string CursorKey(Guid taskId) => "runner-retention:" + taskId.ToString("N");
+
+    internal static string SendCursorKey(Guid taskId) => SendCursorPrefix + taskId.ToString("N");
+
+    /// <summary>
+    /// D-1. The runner's answer for a task that keeps its path. A keep backs the task off for
+    /// <c>KeptRecheckMinutes x 2^(repeats - 1)</c>, at most <c>KeptRecheckMaxHours</c>. A reason that differs from the
+    /// previous keep is re-sent at once (the next tick), but two changes in a row back off, so a flapping
+    /// reason cannot hold a slot every tick. A dry-run <c>would_remove</c> and an unknown outcome never back off;
+    /// they only move the task behind the never-sent ones.
+    /// </summary>
+    private void RecordSend(Dictionary<string, WorktreeResidueCandidateCursor> cursors, AgentTask task,
+        WorktreeResidueCandidateOutcome outcome, string reason, DateTime now)
+    {
+        var key = SendCursorKey(task.Id);
+        if (!cursors.TryGetValue(key, out var cursor))
+        {
+            cursor = new WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key, LastEvaluatedAt = now };
+            _db.WorktreeResidueCandidateCursors.Add(cursor);
+            cursors[key] = cursor;
+        }
+
+        var fingerprint = Fingerprint(task);
+        var previous = SendState.Parse(cursor, fingerprint);
+        var bounded = reason.Length <= 80 ? reason : reason[..80];
+        SendState next;
+        DateTime? notBefore = null;
+        if (outcome is WorktreeResidueCandidateOutcome.Held or WorktreeResidueCandidateOutcome.Refused)
+        {
+            var kept = previous is { Kind: SendState.Kept or SendState.KeptChanged };
+            if (kept && previous!.Reason != bounded && previous.Kind == SendState.Kept)
+                next = new SendState(SendState.KeptChanged, previous.Repeats, bounded);
+            else
+            {
+                var repeats = kept ? Math.Min(previous!.Repeats + 1, 20) : 1;
+                next = new SendState(SendState.Kept, repeats, bounded);
+                var settings = _settings.CurrentValue;
+                var minutes = Math.Min(settings.KeptRecheckMinutes * Math.Pow(2, repeats - 1), settings.KeptRecheckMaxHours * 60.0);
+                notBefore = now.AddMinutes(minutes);
+            }
+        }
+        else
+            next = new SendState(outcome == WorktreeResidueCandidateOutcome.Preview ? SendState.Dry : SendState.Unknown, 0, bounded);
+
+        cursor.LastOutcomeKey = next.Format(fingerprint);
+        cursor.LastEvaluatedAt = now;
+        cursor.NotBefore = notBefore;
+    }
+
+    /// <summary>The task's server facts a runner answer was given for; a change voids the answer.</summary>
+    private static string Fingerprint(AgentTask task)
+    {
+        var facts = string.Join("\n", task.Status, task.CompletedAt?.ToString("O") ?? "-", task.RemoteWorktreePath ?? "-", task.WorktreeBranch ?? "-");
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)))[..16].ToLowerInvariant();
+    }
+
+    /// <summary><c>send|&lt;kind&gt;|&lt;repeats&gt;|&lt;fingerprint&gt;|&lt;reason&gt;</c> in the cursor's LastOutcomeKey.</summary>
+    private sealed record SendState(string Kind, int Repeats, string Reason)
+    {
+        public const string Kept = "kept";
+        public const string KeptChanged = "kept-changed";
+        public const string Dry = "dry";
+        public const string Unknown = "unknown";
+
+        public string Format(string fingerprint) =>
+            string.Join('|', "send", Kind, Repeats.ToString(System.Globalization.CultureInfo.InvariantCulture), fingerprint, Reason);
+
+        /// <summary>Null when there is no answer for these facts (never sent, unreadable, or the task changed since).</summary>
+        public static SendState? Parse(WorktreeResidueCandidateCursor? cursor, string fingerprint)
+        {
+            var parts = cursor?.LastOutcomeKey?.Split('|', 5);
+            if (parts is not { Length: 5 } || parts[0] != "send" || parts[3] != fingerprint
+                || !int.TryParse(parts[2], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var repeats))
+                return null;
+            return new SendState(parts[1], repeats, parts[4]);
+        }
+    }
 
     private DateTime Now() => _clock.GetUtcNow().UtcDateTime;
 }

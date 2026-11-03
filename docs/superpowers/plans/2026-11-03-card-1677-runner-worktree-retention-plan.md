@@ -248,7 +248,7 @@ Each invariant has a red-first witness (section 6) and a mutant (section 7).
 | I-7 | `git worktree remove` is never forced. No `rm`, `prune`, `fetch` or branch deletion |
 | I-8 | One candidate per request and one request at a time, each rechecked immediately before (server row re-read, runner steps 1-7 re-run under the lock) |
 | I-9 | Bounded: at most `MaxRemovalsPerTick` Execute requests per runner per tick, with `PauseBetweenSeconds` between them |
-| I-10 | Dry-run is the default mode (`Execute=false`), and the job is off by default (`Enabled=false`, `Runners=[]`) |
+| I-10 | Superseded by the operator decision of 2026-11-03 ("Enable this on by default", D-15): the job ships ON with `Execute=true` for `Runners=["server2"]` (appsettings only). `Enabled=false` is the kill switch (re-read before every request) and `Execute=false` or the always-DryRun preview route is the dry run |
 | I-11 | Never touches Docker volumes, `/state`, `/work/repos`, `/work/cache`, `/work/evidence`, slots (`ws-*`) or names outside `^task-[0-9a-f]{8}$` |
 | I-12 | The desktop and the local runner are never contacted, and the desktop worktree is untouched |
 | I-13 | The `/tmp` sweep removes only registered families, older than `MinAgeHours` by newest file write, owned by the runner uid, with no holder, not denied and not symlinked |
@@ -277,16 +277,15 @@ as a startup warning).
 **Enabling (documented in `docs/docker-stack.md`, new subsection "Runner worktree retention
 (CARD-1677)", and in `docs/ops-http.md`):**
 
-1. Set `Enabled=true` and `Runners=["server2"]`, leaving `Execute=false`. Restart the server.
-2. `POST /api/runners/server2/worktree-retention/preview` (operator token) or wait one tick. Read the
-   run with `GET /api/agent-tasks/worktree-residue/runs/{runId}?page=n`, following every page.
-3. Check the measurements in section 8. Then set `Execute=true` with `MaxRemovalsPerTick=1` for one
-   tick, confirm one `removed` row and the disk delta, and raise it to 25.
-4. The temp sweep follows the same three steps under `TempSweep:*`. `claude-scratch` stays off until
-   its dry-run list has been read.
+The original three enabling steps (dry run first, then `Execute=true` with `MaxRemovalsPerTick=1`) are
+superseded by the operator decision of 2026-11-03 (D-15): the job ships enabled with `Execute=true` for
+`Runners=["server2"]`, age 12 h. The census is the preview route (`POST /api/agent-tasks/worktree-residue/runner-retention/server2/preview`,
+always DryRun) or any tick's run page (`GET /api/agent-tasks/worktree-residue/runs/{runId}?page=n`,
+following every page). The temp sweep still follows the dry run first steps under `TempSweep:*`, and
+`claude-scratch` stays off until its dry-run list has been read.
 
-Rollback: set `Execute=false`. A tree left in the retiring root is reported and retried, and is
-never moved back.
+Rollback: `Enabled=false` (the kill switch; it also stops a running tick), or `Execute=false` for a dry run.
+A tree left in the retiring root is reported and retried, and is never moved back.
 
 ## 6. Slices
 
@@ -375,8 +374,8 @@ client, `FakeTimeProvider`):
   owner hint. A two-task match is `identity_ambiguous`.
 
 `tests/Antiphon.Tests/Application/C1677RetentionSettingsTests.cs`:
-- V-36 the validator bounds from section 5, and the shipped `appsettings.json` has `Enabled=false`,
-  `Execute=false`, `Runners=[]`.
+- V-36 the validator bounds from section 5, and the shipped `appsettings.json` has `Enabled=true`,
+  `Execute=true`, `Runners=["server2"]` (D-15; originally off and dry-run), while the type keeps `Runners=[]`.
 
 **Regression rows.** `RunnerWorkspaceServiceTests` (`RemoveAsync` and the mirror path unchanged),
 `PhoneHomeConnectionTests.Supported_operations_preserve_contracts` (every-operation enumeration), and
@@ -550,13 +549,23 @@ the `Min` floors from the counted cases (`[Arguments]` cases included).
   orphaned) and maps exactly to a mirror name, but it is created by the CLI harness, not by repo
   scripts, which the card's literal rule names. It is in the dry-run report from day one; deletion
   needs `Families:claude-scratch=true`.
-- **D-13 Alarm default on, report only.** It deletes nothing, so it ships enabled for `server2`.
+- **D-13 Alarm default on, report only.** It deletes nothing, so it ships enabled for `server2`. Since D-15 the
+  retention job it reports alongside is on too; the alarm keeps reading `RunnerWorktreeRetention:Enabled`/`Execute`.
 - **D-14 Branch on origin is required.** An old task whose branch is gone from origin, but whose HEAD
   is in `master`, is kept as `branch_absent_on_origin` and counted. Accepting "contained in target"
   is a later relaxation, and only after the first dry run shows how many trees it would affect.
   CARD-0824 S2 (origin branch deletion) must therefore be enabled on a volume only after this
   engine has drained it, which is already S2's own rule.
 
+- **D-15 On by default (operator decision 2026-11-03, "Enable this on by default"; review c238f9ca).**
+  Shipped `Enabled=true`, `Execute=true`, `Runners=["server2"]` (appsettings only: the C# list stays empty
+  because binding appends to an initializer), `MinTerminalHours=12`. It is safe on by default only together
+  with the review's D-1 fix: a tree the runner keeps is backed off (`KeptRecheckMinutes` 60, doubling per
+  repeat of the same reason, at most `KeptRecheckMaxHours` 24; a changed reason or changed task facts re-send
+  at once), never-sent trees go first, and a dry run censuses the whole population tick by tick. A tick
+  starts no request past `MaxTickMinutes` (20) and stops when `Enabled` or `Execute` is switched off. The
+  runner keeps a tree it mirrored or launched a session in within `PhoneHome:RetentionRecentUseMinutes` (10)
+  and any tree a live session of its own runs in (review D-2).
 ## 8. Measure on the real server2 mirror before `Execute=true`
 
 1. A dry-run census: rows per verdict and reason, compared against a fresh manual run of the

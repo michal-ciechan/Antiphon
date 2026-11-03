@@ -79,8 +79,9 @@ builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
 {
     var runtime = sp.GetRequiredService<SessionRunnerRuntime>();
     // CARD-1677 S1: the retention engine exists only on a Linux phone-home runner, over this runner's own
-    // worktree root (PhoneHome:AllowedCwd/worktrees). It acts only on a server request, and the server job
-    // ships disabled (RunnerWorktreeRetention:Enabled=false, Runners=[], Execute=false).
+    // worktree root (PhoneHome:AllowedCwd/worktrees). It acts only on a server request; the server job ships
+    // on for server2 (RunnerWorktreeRetention:Enabled=true, Execute=true, Runners=["server2"]), and every
+    // request is rechecked here.
     var phoneHome = sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value;
     RunnerWorkspaceRetention? retention = null;
     if (phoneHome.Enabled && OperatingSystem.IsLinux())
