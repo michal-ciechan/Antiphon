@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "d1766eff426d854d7d05197024823c707071a0e5d49886dbea40e66b41ede669",
+  "policyHash": "b6a04b4d0a3e7f6410915c0c54779d92d1169d0e47078ab54dd387bab8f9513e",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1637,7 +1637,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "00387e84f79db4135cf29345883c459e717d60427a7cf0345b326734248f3776",
+    "hash": "c62da85de8c20bbbde124e9449d318d6ea335b49827802bb6d25d312552ba2c2",
     "path": "tests/test-selection-policy.json"
   }
 }
