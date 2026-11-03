@@ -127,7 +127,7 @@ Keep dispatching through every gate under [Continuous dispatch](#continuous-disp
 | 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. It accepts the running container's own generation and requires the new one after recreate. Default redeploy-old keeps main `work`, `runner-tmp` and `dind-data`. It prints `C1008_RECYCLE skipped=redeploy-old reason=not-requested`, does not stop the runner for a recycle, and needs no token. `-RecycleVolumes` is the explicit volume recycle. A recycle without `enabled-<operation-id>` in `ANTIPHON_VOLUME_RETIREMENT_APPLY` refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. `-DryRun` only previews. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
 | 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired/offline, then prove temp container absence. The phase observes exit and removes only proven owned exited runner/state-init IDs without volumes. Retirement and exit share one deadline from `WaitIdleMinutes`; `TempContainerExitTimeout` removes nothing live. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
-| 9. Retire temp | Apply is off by default. First, preview only: `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp -DryRun` immediately after successful gate 8, including already-absent cleanup. The preview reports `would delete:` and its operation id (`C1609_RETIREMENT state=Ready operation=<operation-id>`), and removes nothing. The Ready preview expires after 900 s, so the second rollout needs a fresh `-DryRun` and then an apply within 15 minutes. A following apply without the matching token refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. The second rollout sets `$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'` and runs `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp -RetirementProof <operation-id>`. Unset, `1`, `true`, `enabled`, or another operation's token does not enable deletion. Reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. A preview that is not followed by the enabled apply leaves the temp volumes; the next `deploy-temp` refuses `TempVolumesRetained` while any of them exists. |
+| 9. Retire temp | Apply is off by default. Prerequisite: the operator-written host trust registry `/home/mc/antiphon-server2/retirement-origins.json` ([Temp retirement trusted origins](#temp-retirement-trusted-origins-card-1689)); without it every preview of a non-empty temp work volume refuses `RecycleGitAuditUnknown reason=registry-missing`. First, preview only: `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp -DryRun` immediately after successful gate 8, including already-absent cleanup. The preview reports `would delete:` and its operation id (`C1609_RETIREMENT state=Ready operation=<operation-id>`), and removes nothing. The Ready preview expires after 900 s, so the second rollout needs a fresh `-DryRun` and then an apply within 15 minutes. A following apply without the matching token refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. The second rollout sets `$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'` and runs `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp -RetirementProof <operation-id>`. Unset, `1`, `true`, `enabled`, or another operation's token does not enable deletion. Reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. A preview that is not followed by the enabled apply leaves the temp volumes; the next `deploy-temp` refuses `TempVolumesRetained` while any of them exists. |
 
 The apply shell and the proof directory are the same ssh account, `mc` (`ssh mc@server2 bash -s`). The coordinator creates `/home/mc/antiphon-c590/c1008-proof-<operation>-<started>-<nonce>` mode 755 as that account, copies the proof files with scp, and `chmod 644`. Custody accepts a proof file only when it is a regular file, has one link, is not group- or world-writable, and is owned by the applying uid. It accepts a directory, the proof directory and each ancestor, only when that directory is owned by the applying uid or by root. A group- or world-writable directory is refused, except a sticky root-owned ancestor strictly above `SERVER2_ROOT`. A symlink is refused. A uid that is neither the applying uid nor root is refused. A root-owned file is refused unless the applier itself is root, which production is not: production apply is `mc`, not root and not container uid 1654. An app-owned directory is accepted only when the applying uid is that same owner. Running the apply as root does not make an app-owned proof directory acceptable.
 
@@ -532,6 +532,68 @@ The token does not expire. Resume rechecks source, options, project, Compose, re
 audit and original/recreated generations. It never deletes a replacement
 generation. Same-SHA retries refuse an unfinished journal until explicitly resumed.
 Recovery never commits, publishes, resets or salvages suspicious work.
+
+#### Temp retirement trusted origins (CARD-1689)
+
+Gate 9 has a one-time host prerequisite that no script installs: the trust registry
+`/home/mc/antiphon-server2/retirement-origins.json`. Every repository in the temp `work`
+volume names its origin as a private origin, so every non-empty temp retirement reads the
+registry before it asks the desktop for proof. Without it, every `retire-temp -DryRun` refuses
+`RecycleGitAuditUnknown reason=registry-missing`. Whether an origin is trusted is the
+operator's decision. No agent creates or edits this file.
+
+`c1609_export_trusted_origins` in `scripts/c1008-retirement.sh` accepts only this shape:
+
+- The file is a regular file owned by `mc`, with one hard link, no group or world write
+  bit, not a symlink and at most 1 MiB, and no parent in its path is a symlink. Every parent
+  directory is owned by `mc` or root and is not group- or world-writable. The one exception
+  is a root-owned sticky directory above `/home/mc/antiphon-server2`.
+- Its bytes are exactly what `jq -cS` prints. That means canonical key order, compact
+  output and no duplicate keys. A trailing newline is allowed.
+- The top-level keys are exactly `projects` and `schema`, and `schema` is `1`.
+- `projects` is an object keyed by lowercase project id (36 characters of `0-9a-f-`).
+- Each project value has exactly one key, `origins`. Its value is an array of unique,
+  non-empty strings.
+- `projects` must have an entry for the retirement's project id (`C1008_PROJECT_ID`).
+- Every `C1008_PRIVATE_ORIGIN origin=` that the inventory prints must be in that list as
+  the exact same string. Origins with and without the `.git` suffix are different strings.
+  A temp volume holding fixture checkouts of `https://github.com/michal-ciechan/Antiphon`
+  needs that form listed as well.
+
+To find the project id, run the read-only census. Use the `RECYCLE_PROJECT id=<guid>` line
+it prints. If you pass `-ProjectId` to the rollout, use that id instead.
+
+```powershell
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census
+```
+
+Then, on server2 as `mc`, write the registry once. List each origin only after reviewing it:
+
+```bash
+umask 077
+jq -ncS --arg p '<project-id>' '{schema:1,projects:{($p):{origins:["https://github.com/michal-ciechan/Antiphon.git"]}}}' > /home/mc/antiphon-server2/retirement-origins.json
+ls -l /home/mc/antiphon-server2/retirement-origins.json
+```
+
+To add an origin later, rewrite the whole file with the same `jq -ncS` command and the
+complete list. A hand edit that changes the canonical bytes refuses `registry-invalid`.
+`>` keeps the mode of an existing file, so check `ls -l` for `-rw-------`.
+
+A refusal from the inventory exchange names its cause and the host file that holds the
+detail. The coordinator console shows only the `DIAGNOSIS=` line.
+
+| Diagnosis | Cause and next step |
+|---|---|
+| `RecycleGitAuditUnknown audit check=<check> status=<n> repo=<repo> reason=inventory detail=<file>` | The inventory helper refused a repository on a structural check. Read `<file>` (`retirement/<operation-id>/inventory-<phase-nonce>.out`) for every refusal line. |
+| `RecycleGitAuditUnknown reason=registry-missing detail=<registry>` | The registry is absent. Write it as above. |
+| `RecycleGitAuditUnknown reason=registry-invalid detail=<registry>` | The registry failed custody, canonical bytes or shape. Check `ls -l` and rewrite it with `jq -ncS`. |
+| `RecycleGitAuditUnknown reason=registry-project detail=<registry>` | The registry has no entry for this retirement's project id. Compare it with the `RECYCLE_PROJECT id=` line. |
+| `RecycleGitAuditUnknown reason=unapproved-origin detail=<private-origins.txt>` | An inventory origin is not listed. `sed -n 's/^C1008_PRIVATE_ORIGIN .* origin=\([^ ]*\) .*/\1/p' <private-origins.txt> \| sort -u` lists the exact strings. Review each one before adding it. |
+| `RecycleGitAuditUnknown reason=proof-exchange stage=<stage>` | The registry passed and the desktop proof exchange failed. `request` means the host's proof-set check failed before it sent the request. `response` means no reply came within 600 s, or the desktop coordinator stopped. `binding` means the reply did not match the request or the inventory digest. `freshness` means the proof failed custody or age checks. `digest` means the proof set digest differed. `record` means the host could not persist the exchange. On the desktop, read `remote-output.txt` (`transport-exit`, `failure-line`), `coordinator-exchanges.jsonl` and the `exchange-*` directories under `.antiphon/rolling-server2/<run-id>/`. |
+
+`RecycleUnpublishedWork` and `RecycleWorktreeDirty` from the inventory keep their bare form.
+A bare `RecycleGitAuditUnknown` from this step means the host could not create or record
+the exchange files.
 
 #### Manual main cleanup while running
 
