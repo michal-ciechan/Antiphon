@@ -233,6 +233,21 @@ try {
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'launch-failed' -and $o.Json.reason -ceq 'commission-exit-2') `
         'observe keeps launch-failed when last-run.json names a run that started before the launch child' $o.Text
 
+    # A-2 (Review 230d1f5d): a copy left in the TaskRoot by an earlier launch names another run id.
+    # It is neither credited (completion, state or result fields) nor counted as a supersession.
+    $foreignDone = [ordered]@{ runId = 'c1667prev'; phase = 'final'; startedAt = $now.AddHours(-12).ToString('o'); completedAt = $now.AddHours(-10).ToString('o'); exitCode = 0; testsPassed = $true }
+    $run = New-ObservedRun 'foreigncopy' $null $gone $stale $earlierRun -CommissionExit '2' -LaunchStartedAt $launchedAt -OwnCopy $foreignDone
+    $o = Invoke-Observe $run
+    $run2 = New-ObservedRun 'foreigncopywait' $null $self $fresh $null -LaunchStartedAt $launchedAt -OwnCopy $foreignDone
+    $o2 = Invoke-Observe $run2
+    $run3 = New-ObservedRun 'foreigncopylock' $self $self $fresh $null -LaunchStartedAt $launchedAt -OwnCopy $foreignDone
+    $o3 = Invoke-Observe $run3
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'launch-failed' -and $o.Json.reason -ceq 'commission-exit-2' -and $o.Json.stateCopy -ceq 'foreign' -and
+        $null -eq $o.Json.completedAt -and $null -eq $o.Json.exitCode -and
+        $o2.Code -eq 2 -and $o2.Json.classification -ceq 'not-started' -and $o2.Json.reason -ceq 'run-id-not-seen' -and $o2.Json.stateCopy -ceq 'foreign' -and
+        $o3.Code -eq 2 -and $o3.Json.classification -ceq 'not-started' -and $o3.Json.reason -ceq 'state-not-written' -and $o3.Json.stateCopy -ceq 'foreign' -and $null -eq $o3.Json.phase) `
+        'observe credits neither completion nor supersession to a TaskRoot copy naming another run id' ($o.Text + ' | ' + $o2.Text + ' | ' + $o3.Text)
+
     # supervise-rc keeps the copy: while polling (and does not overwrite it with the next run), and
     # once more at child exit (a poll that never ran).
     $keepState = New-OwnedDirectory 'keep-state'
@@ -278,6 +293,72 @@ try {
     $reuseCode = $LASTEXITCODE
     Assert-C1667 ($reuseCode -eq 1 -and $reuseText -match 'already names run id c1667prev' -and -not (Test-Path -LiteralPath (Join-Path $reuseTask 'supervisor-identity.json'))) `
         'start-supervisor refuses a run id the state root already records' "code=$reuseCode $reuseText"
+
+    # A-2: a run id the TaskRoot copy (own-last-run.json) already names is refused too.
+    $copyTask = New-OwnedDirectory 'reusecopy-task'
+    $copyState = New-OwnedDirectory 'reusecopy-state'
+    $copyFake = Join-Path $copyTask 'fake-launch.ps1'
+    [IO.File]::WriteAllText($copyFake, "exit 0`r`n")
+    foreach ($name in @('fake-launch.ps1', 'supervisor-identity.json', 'supervisor-identity.json.tmp', 'supervisor.log', 'supervisor-heartbeat.json',
+        'supervisor-heartbeat.json.tmp', 'commission-console.log', 'commission-stderr.log', 'commission-exit.txt', 'commission-exit.txt.tmp',
+        'launch-child.json', 'launch-child.json.tmp', 'hang-suspected.txt', 'own-last-run.json.tmp', 'start-supervisor.json', 'start-supervisor.json.tmp',
+        'supervisor-stdout.log', 'supervisor-stderr.log')) { $owned.Add((Join-Path $copyTask $name)) }
+    Write-OwnedJson (Join-Path $copyTask 'own-last-run.json') ([ordered]@{ runId = 'c1667copy'; phase = 'final'; completedAt = $stale })
+    $copyText = @(& $pwshPath -NoProfile -NonInteractive -File $startScript -TaskRoot $copyTask -LaunchScript $copyFake -LogRoot $copyTask `
+        -StateRoot $copyState -RunId 'c1667copy' -IdentityTimeoutSeconds 20 2>&1) -join "`n"
+    $copyCode = $LASTEXITCODE
+    Assert-C1667 ($copyCode -eq 1 -and $copyText -match 'already names run id c1667copy' -and -not (Test-Path -LiteralPath (Join-Path $copyTask 'supervisor-identity.json'))) `
+        'start-supervisor refuses a run id the TaskRoot copy own-last-run.json already records' "code=$copyCode $copyText"
+
+    # A-1 (Review 230d1f5d): nightly-run writes last-run.json with File.Replace, which Windows refuses
+    # while a reader's handle lacks FileShare.Delete; a failed state write exits nightly-run 1.
+    # Portable part: every read open in the supervisor set carries FileShare.Delete, and both
+    # last-run.json readers go through Open-RcQualificationSharedRead. Windows only: a File.Replace
+    # of the record succeeds while each reader holds it open (Linux does not enforce share modes).
+    $shareProblems = New-Object System.Collections.Generic.List[string]
+    $readOpens = 0
+    $shareFiles = @((Join-Path $PSScriptRoot 'lib/rc-qualification-status.ps1'), (Join-Path $PSScriptRoot 'lib/qualification-supervisor.ps1'),
+        $observeScript, $startScript, (Join-Path $qualification 'supervise-rc.ps1'), $launchScript)
+    $readers = @{}
+    foreach ($path in $shareFiles) {
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        $opens = @($ast.FindAll({ param($node)
+            ($node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Member.Extent.Text -match '^(Open|new)$' -and
+                $node.Expression.Extent.Text -match 'File(Stream)?\]$') -or
+            ($node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ieq 'New-Object' -and $node.Extent.Text -match 'FileStream') }, $true))
+        foreach ($open in $opens) {
+            if ($open.Extent.Text -notmatch 'FileAccess\]::Read\b') { continue }
+            $readOpens++
+            if ($open.Extent.Text -notmatch 'FileShare\]::Delete') { $shareProblems.Add(('{0}:{1} {2}' -f (Split-Path -Leaf $path), $open.Extent.StartLineNumber, $open.Extent.Text)) }
+        }
+        foreach ($fn in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
+            $calls = @($fn.Body.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Open-RcQualificationSharedRead' }, $true))
+            $readers[$fn.Name] = $calls.Count
+        }
+    }
+    foreach ($name in @('Read-RcQualificationRecord', 'Save-QualificationOwnRunState')) {
+        if (-not $readers.ContainsKey($name) -or $readers[$name] -lt 1) { $shareProblems.Add("$name does not open through Open-RcQualificationSharedRead") }
+    }
+    if (-not $readers.ContainsKey('Open-RcQualificationSharedRead') -or $readOpens -lt 1) { $shareProblems.Add("no shared read opener (read opens=$readOpens)") }
+    if ($isWindowsHost) {
+        $shareDir = New-OwnedDirectory 'share'
+        $sharePath = Join-Path $shareDir 'last-run.json'
+        $shareTemp = Join-Path $shareDir 'last-run.json.next'
+        $owned.Add($shareTemp)
+        Write-OwnedJson $sharePath ([ordered]@{ runId = 'c1667share' })
+        $script:shareReplace = 'not-run'
+        $replaceUnder = { param($p) try { [IO.File]::WriteAllText($shareTemp, '{"runId":"c1667next"}'); [IO.File]::Replace($shareTemp, $p, $null); $script:shareReplace = 'replaced' } catch { $script:shareReplace = $_.Exception.Message } }
+        [void](Read-RcQualificationRecord -Path $sharePath -AfterRead $replaceUnder)
+        if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Read-RcQualificationRecord blocked File.Replace: $($script:shareReplace)") }
+        $script:shareReplace = 'not-run'
+        try {
+            $held = Open-RcQualificationSharedRead $sharePath
+            try { & $replaceUnder $sharePath } finally { $held.Dispose() }
+        } catch { $script:shareReplace = $_.Exception.Message }
+        if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Open-RcQualificationSharedRead blocked File.Replace: $($script:shareReplace)") }
+    } else { Write-Host 'NOTE C1667 FileShare.Delete File.Replace witness is Windows-only; the source pin ran' }
+    Assert-C1667 ($shareProblems.Count -eq 0) 'last-run.json readers open with FileShare.Delete so the nightly-run File.Replace is never blocked' ($shareProblems -join '; ')
 
     # launch-rc refuses before git or build-slot when its run id is not the supervisor's bound id.
     $sha = '0123456789abcdef0123456789abcdef01234567'
