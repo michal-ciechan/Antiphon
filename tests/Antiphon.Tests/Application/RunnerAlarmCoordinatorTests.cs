@@ -229,6 +229,39 @@ public sealed class RunnerAlarmCoordinatorTests
     }
 
     [Test]
+    public async Task C1671_a_retired_runner_that_reconnects_is_told_it_is_retired_not_ineligible()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var caller = Guid.NewGuid();
+        await AddSessionAsync(db, caller, "r5", SessionStatus.Running);
+        await AddTaskAsync(db, "r5", AgentTaskStatus.Working, caller, AgentTaskReplyTo.Session, AgentTaskRole.Code);
+        await db.SaveChangesAsync();
+        var source = Down("r5", "socket_closed");
+        var state = new RunnerAlarmState();
+        var notes = new RecordingNotifier();
+        var exclusion = new FakeExclusion();
+        var coordinator = Build(db, source, state, notes, exclusion);
+        await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldNotBeNull();
+
+        // CARD-1671 (d): a reachable retired runner is up; it is retired, not "not dispatch-eligible".
+        source.Rows[0] = source.Rows[0] with { Eligible = true, DisconnectReason = null };
+        exclusion.Reasons["r5"] = "retired";
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(240), CancellationToken.None);
+
+        state.Current.Episodes.ShouldBeEmpty();
+        var closed = notes.Notes.Where(note => note.Header != "[runner r5 unavailable]").ShouldHaveSingleItem();
+        closed.SessionId.ShouldBe(caller);
+        closed.Header.ShouldBe("[runner r5 retired]");
+        closed.Body.ShouldContain("reachable but retired");
+        closed.Body.ShouldContain("takes no new work");
+        closed.Body.ShouldNotContain("not dispatch-eligible");
+        closed.Body.ShouldContain("this is not a recovery");
+    }
+
+    [Test]
     public async Task startup_opens_an_episode_per_enabled_remote_runner_and_a_normal_reconnect_closes_it()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

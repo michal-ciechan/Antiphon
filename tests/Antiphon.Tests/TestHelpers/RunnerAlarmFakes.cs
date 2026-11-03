@@ -36,8 +36,15 @@ internal sealed class FakeExclusion : IRunnerAlarmExclusion
 
     public Dictionary<string, string> Overran { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>CARD-1671: a drain that overruns once now passes this instant.</summary>
+    public Dictionary<string, DateTimeOffset> Expires { get; } = new(StringComparer.Ordinal);
+
     public string? DrainOverran(string runnerId, DateTimeOffset now) =>
-        Overran.TryGetValue(runnerId, out var note) ? note : null;
+        Overran.TryGetValue(runnerId, out var note) ? note
+        : Expires.TryGetValue(runnerId, out var expires) && now > expires ? "the drain overran." : null;
+
+    public DateTimeOffset? DrainExpiresAt(string runnerId) =>
+        Expires.TryGetValue(runnerId, out var expires) ? expires : null;
 }
 
 internal sealed class RecordingNotifier : IRunnerAlarmNotifier

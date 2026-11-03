@@ -143,6 +143,30 @@ public sealed class RunnerStateAlarmExclusionTests
     }
 
     [Test]
+    public void C1671_a_drain_start_in_the_future_fails_safe_and_counts_as_overrun()
+    {
+        // CARD-1671 (b): a drain start after now (clock skew, bad row) cannot be aged, so it alarms.
+        var future = new RunnerState(true, T0.AddMinutes(5), "rolling", null, false, null, null, null);
+        var note = RunnerStateAlarmExclusion.Overran(future, T0, 30).ShouldNotBeNull();
+        note.ShouldContain("drain overran");
+        note.ShouldContain("drain start is unknown");
+        RunnerStateAlarmExclusion.Overran(future, T0.AddMinutes(5), 30).ShouldBeNull("a start equal to now is a fresh drain");
+        RunnerStateAlarmExclusion.Overran(State(draining: true, retired: false), T0.AddMinutes(30), 30).ShouldBeNull();
+    }
+
+    [Test]
+    public void C1671_a_drain_expires_at_its_start_plus_the_bound_and_a_retirement_never_expires()
+    {
+        // CARD-1671 (c): the instant the alarm loop must wake for; retired or unstarted drains have none.
+        RunnerStateAlarmExclusion.ExpiresAt(State(draining: true, retired: false), 30).ShouldBe(T0.AddMinutes(30));
+        RunnerStateAlarmExclusion.ExpiresAt(State(draining: true, retired: false), 45).ShouldBe(T0.AddMinutes(45));
+        RunnerStateAlarmExclusion.ExpiresAt(State(draining: true, retired: true), 30).ShouldBeNull();
+        RunnerStateAlarmExclusion.ExpiresAt(State(draining: false, retired: false), 30).ShouldBeNull();
+        RunnerStateAlarmExclusion.ExpiresAt(new RunnerState(true, null, "rolling", null, false, null, null, null), 30).ShouldBeNull();
+        RunnerStateAlarmExclusion.ExpiresAt(null, 30).ShouldBeNull();
+    }
+
+    [Test]
     public async Task C1663_an_open_alarm_resolves_when_the_runner_retires()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

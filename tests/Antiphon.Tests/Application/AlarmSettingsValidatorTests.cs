@@ -26,6 +26,16 @@ public sealed class AlarmSettingsValidatorTests
         AssertNamed(new AlarmSettings { RunnerDrainMaxMinutes = 0 }, "Alarms:RunnerDrainMaxMinutes");
     }
 
+    [Test]
+    public void C1671_the_drain_bound_is_at_most_seven_days()
+    {
+        // CARD-1671 (a): a huge drain bound would switch the CARD-1666 drain alarm off.
+        new AlarmSettingsValidator().Validate(null, new AlarmSettings { RunnerDrainMaxMinutes = 7 * 24 * 60 })
+            .Succeeded.ShouldBeTrue();
+        AssertNamed(new AlarmSettings { RunnerDrainMaxMinutes = 7 * 24 * 60 + 1 }, "Alarms:RunnerDrainMaxMinutes");
+        AssertNamed(new AlarmSettings { RunnerDrainMaxMinutes = int.MaxValue }, "Alarms:RunnerDrainMaxMinutes");
+    }
+
     private static void AssertNamed(AlarmSettings settings, string key)
     {
         var result = new AlarmSettingsValidator().Validate(null, settings);
