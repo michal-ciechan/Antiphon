@@ -41,6 +41,32 @@ public sealed class ReviewRoundsPolicyTests
             .ShouldBeNull("two completed Reviews leave room for round 3");
     }
 
+    /// <summary>
+    /// CARD-1647 D-1. A round written with a non-ASCII decimal digit (fullwidth U+FF14, Arabic-Indic
+    /// U+0664) is not a declared round: the guard never throws and falls back to the count rule.
+    /// </summary>
+    [Test]
+    [Arguments("round: ４ of 3; stringency: blockers only")]
+    [Arguments("round: ٤ of 3; stringency: blockers only")]
+    public void C1647_a_non_ascii_round_digit_never_throws_and_falls_back_to_the_count(string goal)
+    {
+        string? none = "unset", counted = null;
+        Should.NotThrow(() => none = ReviewRoundGuard.Evaluate("CARD-0001", goal, []));
+        none.ShouldBeNull("no declared round and no completed Reviews");
+        Should.NotThrow(() => counted = ReviewRoundGuard.Evaluate("CARD-0001", goal, ["aaaaaaaa", "bbbbbbbb", "cccccccc"]));
+        counted.ShouldNotBeNull();
+        counted.ShouldContain("CARD-0001 already has 3 completed Review tasks");
+    }
+
+    /// <summary>CARD-1647 D-1 (review A-1). <c>round:</c> never reads its number from the next line.</summary>
+    [Test]
+    public void C1647_a_round_label_never_reads_the_next_lines_number()
+    {
+        ReviewRoundGuard.DeclaredRound("round:\n7 of 3").ShouldBeNull();
+        ReviewRoundGuard.Evaluate("CARD-0001", "round:\n7 of 3", []).ShouldBeNull("the 7 is on the next line, not a round 7");
+        ReviewRoundGuard.DeclaredRound("  Round:\t4;").ShouldBe(4);
+    }
+
     // ---- item 2: the stage-review evidence block carries the round ------------------------------
 
     [Test]

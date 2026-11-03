@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -7,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -174,6 +176,70 @@ public class AgentTaskCardBindingTests
 
         var control = await service.CreateAsync(review with { Card = fresh.Id.ToString() }, Manual(workspace.Path), CancellationToken.None);
         (control.Warning ?? "").ShouldNotContain(ReviewRoundGuard.Code);
+    }
+
+    /// <summary>
+    /// CARD-1647 D-1. The round guard warns and never blocks: a brief whose round line carries a
+    /// non-ASCII digit (fullwidth U+FF14) still creates the Review, and the count rule still applies.
+    /// </summary>
+    [Test]
+    public async Task C1647_a_non_ascii_round_digit_still_creates_the_review()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
+        var (_, board) = await SeedProjectBoardAsync(db);
+        var card = await SeedCardAsync(db, board.Id, "CARD-0166");
+        for (var round = 1; round <= 3; round++)
+        {
+            var row = await SeedTaskAsync(db, workspace.Path, card.Id);
+            row.Role = AgentTaskRole.Review;
+            row.Status = AgentTaskStatus.Succeeded;
+            row.CompletedAt = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync();
+
+        var created = await CreateService(db, workspace).CreateAsync(
+            Request(workspace.Path) with
+            {
+                Goal = "round: ４ of 3; stringency: blockers only", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Review, Workspace = WorkspaceMode.Shared, Card = card.Id.ToString(),
+            },
+            Manual(workspace.Path), CancellationToken.None);
+
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id)).Role.ShouldBe(AgentTaskRole.Review);
+        created.Warning.ShouldNotBeNull();
+        created.Warning!.ShouldContain("CARD-0166 already has 3 completed Review tasks");
+    }
+
+    /// <summary>
+    /// CARD-1647 D-1. A fault inside the round guard (here its card query throws) never fails the
+    /// Review create: the Review is created and the caller is told the round was not checked.
+    /// </summary>
+    [Test]
+    public async Task C1647_a_round_guard_fault_still_creates_the_review()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var fault = new ReviewRoundQueryFault();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString, fault));
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
+        var (_, board) = await SeedProjectBoardAsync(db);
+        var card = await SeedCardAsync(db, board.Id, "CARD-0167");
+
+        var created = await CreateService(db, workspace).CreateAsync(
+            Request(workspace.Path) with
+            {
+                Goal = "Review the change.", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Review, Workspace = WorkspaceMode.Shared, Card = card.Id.ToString(),
+            },
+            Manual(workspace.Path), CancellationToken.None);
+
+        fault.Thrown.ShouldBeGreaterThan(0, "the guard's query ran and faulted");
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id)).Role.ShouldBe(AgentTaskRole.Review);
+        created.Warning.ShouldNotBeNull();
+        created.Warning!.ShouldContain(ReviewRoundGuard.Code);
+        created.Warning.ShouldContain(nameof(InvalidOperationException));
+        created.Warning.ShouldNotContain("Review the change.");
     }
 
     [Test]
@@ -610,5 +676,35 @@ public class AgentTaskCardBindingTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
+    }
+
+    /// <summary>Throws a non-cancellation fault from the round guard's tagged card query only.</summary>
+    private sealed class ReviewRoundQueryFault : DbCommandInterceptor
+    {
+        private int _thrown;
+        public int Thrown => Volatile.Read(ref _thrown);
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Throw(command);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Throw(command);
+            return ValueTask.FromResult(result);
+        }
+
+        private void Throw(DbCommand command)
+        {
+            if (!command.CommandText.Contains(ReviewRoundGuard.QueryTag, StringComparison.Ordinal))
+                return;
+            Interlocked.Increment(ref _thrown);
+            throw new InvalidOperationException("injected round guard query fault");
+        }
     }
 }
