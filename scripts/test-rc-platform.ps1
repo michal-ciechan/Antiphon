@@ -508,81 +508,120 @@ function Test-LinuxSessionRunnerAdmission {
     Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
 }
 
+function Get-C1323LinuxOnlyCensus {
+    # CARD-1686: the policy rows are the only list. Each prefixed row needs a [NativeLinuxOnly] marker under
+    # its suite's project directory, and each marker needs a row. A marker file that a selection rule names
+    # must route to the census set; an unnamed file already falls back to a full selection.
+    param([string]$Root, $Policy, $Catalog, [string]$CensusSet = 'release-gate.platform',
+        [string[]]$FixtureProjects = @('tests/Antiphon.NativeLinuxPolicy.Probe/'),
+        [string[]]$RoutedPaths = @('tests/test-execution-policy.json', 'scripts/test-rc-platform.ps1'))
+    $prefix = 'Linux-only by construction:'
+    $problems = [Collections.Generic.List[string]]::new()
+    $suiteDirs = [ordered]@{}
+    foreach ($suite in $Policy.suites.PSObject.Properties) {
+        $project = [string]$suite.Value.project
+        if ($project) { $suiteDirs[$suite.Name] = ($project.Substring(0, $project.LastIndexOf('/') + 1)) }
+    }
+    $rowKeys = @()
+    foreach ($row in @($Policy.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })) {
+        $methods = @($row.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ } | Sort-Object -CaseSensitive -Unique)
+        $key = ([string]$row.suite) + '|' + ([string]$row.class) + '|' + ($methods -join ',')
+        $rowKeys += $key
+        if ([string]$row.platform -cne 'windows') { $problems.Add("row-platform:$key") }
+        if ([string]$row.owner -cnotmatch '^CARD-[0-9]{4}$') { $problems.Add("row-owner:$key") }
+        if (-not $suiteDirs.Contains([string]$row.suite)) { $problems.Add("row-suite:$key") }
+    }
+    $files = @()
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $pending.Push((Join-Path $Root 'tests'))
+    while ($pending.Count) {
+        $dir = $pending.Pop()
+        foreach ($child in [IO.Directory]::EnumerateDirectories($dir)) {
+            if (@('bin', 'obj', 'node_modules', '.git') -cnotcontains [IO.Path]::GetFileName($child)) { $pending.Push($child) }
+        }
+        foreach ($file in [IO.Directory]::EnumerateFiles($dir, '*.cs')) { $files += $file }
+    }
+    $classMarkers = [ordered]@{}
+    $methodMarkers = [ordered]@{}
+    $markerFiles = @()
+    $rootPrefix = [IO.Path]::GetFullPath($Root).TrimEnd('/', '\').Length + 1
+    foreach ($file in ($files | Sort-Object -CaseSensitive)) {
+        $text = [IO.File]::ReadAllText($file)
+        if (-not $text.Contains('[NativeLinuxOnly(')) { continue }
+        $lines = $text.Replace("`r`n", "`n").Split("`n")
+        $hits = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*\[NativeLinuxOnly\(') { $i } })
+        if ($hits.Count -eq 0) { continue }
+        $rel = [IO.Path]::GetFullPath($file).Substring($rootPrefix).Replace('\', '/')
+        if (@($FixtureProjects | Where-Object { $rel.StartsWith($_, [StringComparison]::Ordinal) }).Count) { continue }
+        $suite = @($suiteDirs.Keys | Where-Object { $rel.StartsWith($suiteDirs[$_], [StringComparison]::Ordinal) })
+        if ($suite.Count -ne 1) { $problems.Add("marker-outside-suite:$rel"); continue }
+        $markerFiles += $rel
+        foreach ($i in $hits) {
+            $indent = ([regex]::Match($lines[$i], '^\s*')).Length
+            $rest = [regex]::Replace($lines[$i], '^\s*\[NativeLinuxOnly\((?:"(?:[^"\\]|\\.)*"|[^)"])*\)\]', '')
+            $j = $i
+            $decl = $rest
+            while ($true) {
+                $decl = [regex]::Replace($decl, '^\s*(?:\[(?:[^\[\]]|\[[^\[\]]*\])*\]\s*)*', '')
+                if ($decl -and -not $decl.StartsWith('//')) { break }
+                $j++
+                if ($j -ge $lines.Count) { $decl = ''; break }
+                $decl = $lines[$j]
+            }
+            $class = [regex]::Match($decl, '^(?:(?:public|internal|private|protected|sealed|static|abstract|partial|file)\s+)*(?:class|record|struct)\s+(\w+)')
+            $method = [regex]::Match($decl, '^(?:(?:public|internal|private|protected|static|async|override|virtual|new)\s+)+[\w<>\[\],.? ]+?\s(\w+)\s*(?:<[^>]*>)?\s*\(')
+            if ($class.Success) {
+                $classMarkers[$suite[0] + '|' + $class.Groups[1].Value] = $true
+            } elseif ($method.Success) {
+                $owner = $null
+                for ($k = $i - 1; $k -ge 0; $k--) {
+                    $c = [regex]::Match($lines[$k], '^(\s*)(?:(?:public|internal|private|protected|sealed|static|abstract|partial|file)\s+)*(?:class|record|struct)\s+(\w+)')
+                    if ($c.Success -and $c.Groups[1].Length -lt $indent) { $owner = $c.Groups[2].Value; break }
+                }
+                if (-not $owner) { $problems.Add("marker-unparsed:${rel}:$($i + 1)"); continue }
+                $id = $suite[0] + '|' + $owner
+                if (-not $methodMarkers.Contains($id)) { $methodMarkers[$id] = [Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal) }
+                [void]$methodMarkers[$id].Add($method.Groups[1].Value)
+            } else {
+                $problems.Add("marker-unparsed:${rel}:$($i + 1)")
+            }
+        }
+    }
+    # A class row is satisfied by a class marker or by method markers: the compiled witness then proves every
+    # case of the class is marked. A method row must name exactly the marked methods of a class with no class marker.
+    $markerKeys = @($classMarkers.Keys | ForEach-Object { $_ + '|' })
+    foreach ($id in $methodMarkers.Keys) { if (-not $classMarkers.Contains($id)) { $markerKeys += ($id + '|' + (@($methodMarkers[$id]) -join ',')) } }
+    foreach ($key in ($markerKeys | Sort-Object -CaseSensitive)) {
+        $classKey = $key.Substring(0, $key.LastIndexOf('|') + 1)
+        if ($rowKeys -cnotcontains $key -and $rowKeys -cnotcontains $classKey) { $problems.Add("marker-without-row:$key") }
+    }
+    foreach ($key in ($rowKeys | Sort-Object -CaseSensitive)) {
+        $id = $key.Substring(0, $key.LastIndexOf('|'))
+        $found = if ($key.EndsWith('|')) { $classMarkers.Contains($id) -or $methodMarkers.Contains($id) } else { $markerKeys -ccontains $key }
+        if (-not $found) { $problems.Add("row-without-marker:$key") }
+    }
+    if ($null -ne $Catalog) {
+        foreach ($path in @($RoutedPaths + $markerFiles)) {
+            $sets = @(); $full = $false; $named = $false
+            foreach ($rule in @($Catalog.rules)) {
+                $match = @($rule.paths | Where-Object { $_ -ceq $path }).Count -gt 0
+                if (-not $match -and $rule.pattern) { $match = [regex]::IsMatch($path, [string]$rule.pattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant) }
+                if ($match) { $named = $true; $sets += @($rule.sets); if ($rule.full) { $full = $true } }
+            }
+            foreach ($edge in @($Catalog.edges)) { if ([string]$edge.path -ceq $path) { $named = $true; $sets += @($edge.sets) } }
+            $explicit = $sets -ccontains $CensusSet
+            $ok = if ($RoutedPaths -ccontains $path) { $explicit } else { $explicit -or $full -or -not $named }
+            if (-not $ok) { $problems.Add("marker-file-unrouted:$path") }
+        }
+    }
+    return [pscustomobject]@{ Ok = ($problems.Count -eq 0); Problems = @($problems); RowKeys = @($rowKeys); MarkerKeys = @($markerKeys); MarkerFiles = @($markerFiles) }
+}
+
 function Test-LinuxOnlyWindowsExclusionPolicy {
     # Windows rc exclusions for skips that are Linux-only by construction. Gap classes stay required.
-    # CARD-1613: compiled NativeLinuxPolicyWitnessTests owns the marker proof. This case checks shipped rows only.
+    # CARD-1613: compiled NativeLinuxPolicyWitnessTests owns the reflection proof in each suite.
+    # CARD-1686: the census is derived from the shipped rows and the source markers; there is no second list.
     $prefix = 'Linux-only by construction:'
-    $inventory = @(
-        @{ s='antiphon'; c='PhoneHomeMirrorJoinTests'; o='CARD-1032'; m=@() }
-        @{ s='antiphon'; c='UnixDelegateLaunchArgvTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='CheckpointBoundedReaderTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='CheckpointSourceGitBoundsTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='CheckpointVerifierBoundsTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='CheckpointFixtureProcessTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='DetachedLauncherTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='SafeDeleteProcessBoundaryTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='GrokSha256PinTests'; o='CARD-1210'; m=@() }
-        @{ s='antiphon'; c='GithubCredentialHelperTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='GitMinimumVersionGuardTests'; o='CARD-1260'; m=@() }
-        @{ s='antiphon'; c='RetiredTempContainerHostTests'; o='CARD-1050'; m=@() }
-        @{ s='antiphon'; c='HostJqPrerequisiteScriptTests'; o='CARD-1210'; m=@() }
-        @{ s='antiphon'; c='ScriptHarnessLinuxOwnershipTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='RefreshGithubTokenRemoteCommandTests'; o='CARD-1245'; m=@() }
-        @{ s='antiphon'; c='NightlyProbeSupervisorTests'; o='CARD-1375'; m=@() }
-        @{ s='antiphon'; c='VolumeRetirementContentTests'; o='CARD-1609'; m=@() }
-        @{ s='antiphon'; c='VolumeRetirementReceiptTests'; o='CARD-1609'; m=@() }
-        @{ s='antiphon'; c='VolumeRetirementDockerTests'; o='CARD-1609'; m=@() }
-        @{ s='antiphon'; c='RetiredTempContainerDockerTests'; o='CARD-1050'; m=@() }
-        @{ s='antiphon'; c='RollingVolumeRecycleDockerTests'; o='CARD-1050'; m=@() }
-        @{ s='antiphon'; c='RollingVolumeRecycleCensusChurnTests'; o='CARD-1050'; m=@() }
-        @{ s='antiphon'; c='RollingProductionMountTests'; o='CARD-1050'; m=@() }
-        @{ s='antiphon'; c='CheckpointRecoveryLinuxTests'; o='CARD-0590'; m=@() }
-        @{ s='antiphon'; c='CheckpointFixtureRoutingTests'; o='CARD-1233'; m=@() }
-        @{ s='antiphon'; c='CheckpointInheritedFileTests'; o='CARD-0590'; m=@() }
-        @{ s='pty-host'; c='LinuxCgroupCustodyTests'; o='CARD-0590'; m=@() }
-        @{ s='agents-pty'; c='UnixPtyArgvTests'; o='CARD-0590'; m=@() }
-        @{ s='session-runner'; c='LinuxRunnerCustodyLifecycleTests'; o='CARD-1614'; m=@() }
-        @{ s='session-runner'; c='CustodyNamespaceBootstrapTests'; o='CARD-1614'; m=@() }
-        @{ s='antiphon'; c='Card1619ExitConsumerTests'; o='CARD-1619'; m=@() }
-        @{ s='antiphon'; c='Card1619ExitPersistenceTests'; o='CARD-1619'; m=@() }
-        @{ s='antiphon'; c='Card1619StopAttributionTests'; o='CARD-1619'; m=@() }
-        @{ s='session-runner'; c='Card1619LinuxCustodyStopIntentTests'; o='CARD-1619'; m=@() }
-        @{ s='session-runner'; c='Card1619LinuxStopIntentTests'; o='CARD-1619'; m=@() }
-        @{ s='session-runner'; c='Card1619RunnerExitTests'; o='CARD-1619'; m=@() }
-        @{ s='agents-pty'; c='Card1619UnixExitTests'; o='CARD-1619'; m=@() }
-        @{ s='pty-host'; c='Card1619LinuxHostExitTests'; o='CARD-1619'; m=@() }
-        @{ s='pty-host'; c='Card1619StopIntentTests'; o='CARD-1619'; m=@() }
-        @{ s='session-runner'; c='Card1653FreshLaunchIdentityTests'; o='CARD-1653'; m=@() }
-        @{ s='session-runner'; c='Card1653SocketDirTests'; o='CARD-1653'; m=@() }
-        @{ s='session-runner'; c='C0824WorkspaceSlotProcessScanTests'; o='CARD-0824'; m=@() }
-        @{ s='session-runner'; c='C0824WorkspaceSlotNativeRehomeTests'; o='CARD-0824'; m=@() }
-        @{ s='session-runner'; c='C0824WorkspaceSlotRehomeTests'; o='CARD-0824'; m=@() }
-        @{ s='session-runner'; c='C0824WorkspaceSlotOverflowTests'; o='CARD-0824'; m=@() }
-        @{ s='session-runner'; c='C0824WorkspaceSlotResetTests'; o='CARD-0824'; m=@() }
-        @{ s='session-runner'; c='C1677RetentionNativeProcessTests'; o='CARD-1677'; m=@() }
-        @{ s='antiphon'; c='PhoneHomeCompletedCardTransportTests'; o='CARD-1032'; m=@('C1032_TransportQueueRecipientReplay') }
-        @{ s='antiphon'; c='LandGraphEvaluationTests'; o='CARD-1483'; m=@('C1483_S1_UnreadableLinkComponentDenies') }
-        @{ s='antiphon'; c='CheckpointConfinementLedgerTests'; o='CARD-0590'; m=@('unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted') }
-        @{ s='antiphon'; c='CheckpointReceiptSafetyTests'; o='CARD-0590'; m=@('linux_fifo_receipts_refuse_within_four_seconds') }
-        @{ s='antiphon'; c='OutputCleanupTests'; o='CARD-0590'; m=@('external_build_payload_is_adopted_at_seal_and_removed_on_green','file_added_after_seal_is_refused_and_kept','file_modified_after_seal_is_refused_and_kept','symlink_in_a_build_output_is_refused_before_and_after_seal','tracked_file_in_an_adopted_build_output_is_refused_and_kept','adopted_build_output_over_the_entry_cap_is_unsafe_tree','hard_linked_build_file_is_not_adopted_and_outside_bytes_stay','independent_writer_after_build_exit_is_not_adopted_and_cleanup_keeps_it','seal_without_driver_observed_build_exit_adopts_nothing','hanging_git_is_refused_and_killed_within_the_bound') }
-        @{ s='antiphon'; c='AnchoredPathDeleteWitnessTests'; o='CARD-0590'; m=@('linux_colon_in_a_file_name_stays_deletable','hard_link_sibling_survives_anchored_delete','ancestor_symlink_to_a_different_inode_is_refused') }
-        @{ s='antiphon'; c='PlanCoverageHandleTests'; o='CARD-0590'; m=@('hardlinked_selected_file_is_refused','in_repo_fifo_project_is_refused_within_15_seconds') }
-        @{ s='antiphon'; c='CodexRootExecContractTests'; o='CARD-1210'; m=@('Entrypoint_heal_chowns_the_tmp_directory_once','Entrypoint_heal_never_names_a_path_outside_tmp') }
-        @{ s='antiphon'; c='FileUseCaptureTests'; o='CARD-1539'; m=@('C1539_linux_holder','C1539_absent_inputs','C1539_budget_and_caps','C1539_redaction_before_sinks','C1539_persistence_fail_safe','C1539_generation_and_ownership') }
-        @{ s='antiphon'; c='JqRunnerImageContractTests'; o='CARD-1210'; m=@('Version_row_accepts_only_exact_successful_pin_without_stderr','C1054_Jq_row_rejects_home_shadow','C1054_Jq_row_accepts_canonical_file_and_alias','C1054_Jq_row_rejects_canonical_leaf_symlink','C1054_Jq_row_records_found_and_resolved_paths') }
-        @{ s='antiphon'; c='RollingVolumeRecycleScriptTests'; o='CARD-1050'; m=@('C1008_Option_manifest_is_strict','C1008_Documentation_and_transport_pins_match','C1008_Refusal_receipts_do_not_leak_secrets','C1008_Retired_absent_null_is_accepted','C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt','C1594_Cross_sha_cleanup_image_binds_the_retired_temp','C1594_Older_retirement_receipt_is_ignored','C1594_Disagreeing_cross_sha_images_refuse','C1594_Antiphon_evidence_gitdir','C1008_Preview_helper_removal_is_owned') }
-        @{ s='antiphon'; c='RetiredTempContainerScriptTests'; o='CARD-1050'; m=@('C994_Host_strict_volume_admission_remains_independent','C994_Host_resume_never_runs_container_cleanup','C994_Host_bridge_transport_preserves_literal_context') }
-        @{ s='antiphon'; c='BuildSlotScriptTests'; o='CARD-0590'; m=@('C800_WrapperInterruptKillsChildAndReleasesLease') }
-        @{ s='antiphon'; c='C1364BoundLandWaitProofTests'; o='CARD-1050'; m=@('C1364_Host_recycle_admission_reports_waited','C1364_Host_recycle_post_removal_reports_waited','C1364_Host_cleanup_reports_waited') }
-        @{ s='antiphon'; c='RemoteScriptContractTests'; o='CARD-1050'; m=@('C1374_Host_census_recovers_transient_reads','C1087_Host_census_filters_and_names_cause','C1008_Recycle_exact_default_volumes','C1008_Recycle_refuses_references_and_unknown_census','C1008_Recycle_audits_work_as_1654','C1008_Recycle_refuses_unpublished_and_dirty_work','C1008_Recycle_refuses_uninspectable_git','C1008_Recycle_reaps_dirty_scratch','C1008_Recycle_audits_promisor_checkout','C1105_Git_audit_volume_scale','C1105_Jq_argv_limit','C1008_Recycle_preserves_tmp_copyup','C1105_Verify_tmp_accepts_an_absent_pty_host','C1008_Recycle_resume_requires_matching_receipt','C1008_Recycle_receipt_records_disk_and_partial_failure','C1008_Retire_temp_rechecks_absence_and_retirement','C1008_Retire_temp_reclaims_below_cache_disk_gate','C1008_Recycle_dry_run_never_mutates','C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes','C1105_Redeploy_accepts_previous_generation_and_requires_new_bind','C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout','C1105_V218_dry_run_reaches_the_generation_line','C1105_Relative_dry_run_refuses_before_removal','C1105_Generation_identity_refuses_mismatch','C1105_Main_state_init_without_session_runner_refuses','C1105_Compose_cmp_refuses_before_removal','C1105_Resume_identity_refusals','C1105_Resume_state_init_image_follows_the_journal','C1105_Resume_foreign_leftover_is_not_an_image_mismatch','C1105_Resume_digest_pins_previous_sha12','C1105_Resume_post_removal_census_tracks_open_work','C849_Deploy_prepares_and_verifies_before_acceptance','C1105_Git_audit_recovery_tips','C1105_Git_audit_seed_content','C1105_Git_audit_index_content','C1105_Git_audit_object_completeness','C1105_Git_audit_overall_timeout','C1105_Git_audit_resume_preserves_proof','C1105_Git_audit_hidden_locations','C1335_Mirror_owner_stamp_in_linked_admin') }
-        @{ s='antiphon'; c='CheckpointStampSafetyTests'; o='CARD-0590'; m=@('tracked_stamp_shapes_are_bounded_and_leave_results_in_place') }
-        @{ s='antiphon'; c='CheckpointTempRootSweepTests'; o='CARD-0590'; m=@('fifo_or_socket_root_is_reclaimed') }
-        @{ s='antiphon'; c='PlanCoverageCommandTests'; o='CARD-0590'; m=@('outside_project_fifo_is_refused_without_opening') }
-        @{ s='session-runner'; c='CompletedCardWorkspaceRemovalTests'; o='CARD-1032'; m=@('C1032_InspectionR3Mode','C1032_RemovalLinuxIgnoredFifoRefuses') }
-        @{ s='session-runner'; c='HostStatsProbeLiveTests'; o='CARD-0590'; m=@('Linux_probe_reads_live_proc') }
-        @{ s='session-runner'; c='SessionCpuWatchdogTests'; o='CARD-1650'; m=@('Linux_real_busy_child_is_killed_with_CpuSpinKilled','Linux_real_quiet_child_is_left_alone') }
-        @{ s='session-runner'; c='Card1653RefusalRetainsHostTests'; o='CARD-1653'; m=@('Released_identity_row_relaunch_never_kills_a_recycled_host_pid') }
-    )
     $decisionClasses = @('ClaudeDialogWatchdogCanaryTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointOutputConfinementTests','RunnerWorkspaceBindingTests')
     $decisionMethods = @(
         'OutputCleanupTests/parent_symlink_does_not_delete_a_tracked_stamp'
@@ -590,32 +629,18 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
         'PlanCoverageCommandTests/existing_outside_project_is_refused_by_root_boundary'
         'RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused'
     )
-    $documentClasses = @(
-        'ClaudeDialogWatchdogCanaryTests','LandGraphEvaluationTests','PhoneHomeCompletedCardTransportTests','PhoneHomeMirrorJoinTests','UnixDelegateLaunchArgvTests','CheckpointConfinementLedgerTests','CheckpointReceiptSafetyTests','CheckpointBoundedReaderTests','OutputCleanupTests','AnchoredPathDeleteWitnessTests','CheckpointOwnedOutputTests','CheckpointScriptReaderDeadlineTests','CheckpointSourceGitBoundsTests','CheckpointVerifierBoundsTests','PlanCoverageHandleTests','CheckpointFixtureProcessTests','DetachedLauncherTests','SafeDeleteProcessBoundaryTests','CodexRootExecContractTests','FileUseCaptureTests','GrokSha256PinTests','JqRunnerImageContractTests','GithubCredentialHelperTests','GitMinimumVersionGuardTests','RollingVolumeRecycleScriptTests','RetiredTempContainerScriptTests','RetiredTempContainerHostTests','BuildSlotScriptTests','HostJqPrerequisiteScriptTests','ScriptHarnessLinuxOwnershipTests','C1364BoundLandWaitProofTests','RollingProductionMountTests','RefreshGithubTokenRemoteCommandTests','NightlyProbeSupervisorTests','RetiredTempContainerDockerTests','RollingVolumeRecycleDockerTests','RollingVolumeRecycleCensusChurnTests','RemoteScriptContractTests','CompletedCardWorkspaceRemovalTests','RunnerWorkspaceBindingTests','HostStatsProbeLiveTests','LinuxCgroupCustodyTests','UnixPtyArgvTests','LinuxRunnerCustodyLifecycleTests','CustodyNamespaceBootstrapTests','CheckpointShapeConflictTests','CheckpointTrackedBaselineTests','CheckpointRecoveryLinuxTests','CheckpointStampSafetyTests','CheckpointOutputConfinementTests','CheckpointFixtureRoutingTests','CheckpointInheritedFileTests','CheckpointTempRootSweepTests','PlanCoverageCommandTests','Card1619ExitConsumerTests','Card1619ExitPersistenceTests','Card1619StopAttributionTests','Card1619LinuxCustodyStopIntentTests','Card1619LinuxStopIntentTests','Card1619RunnerExitTests','Card1619UnixExitTests','Card1619LinuxHostExitTests','Card1619StopIntentTests','VolumeRetirementContentTests','VolumeRetirementReceiptTests','VolumeRetirementDockerTests','Card1653FreshLaunchIdentityTests','Card1653SocketDirTests','C0824WorkspaceSlotProcessScanTests','C0824WorkspaceSlotNativeRehomeTests','C0824WorkspaceSlotRehomeTests','C0824WorkspaceSlotOverflowTests','C0824WorkspaceSlotResetTests','C1677RetentionNativeProcessTests','SessionCpuWatchdogTests','Card1653RefusalRetainsHostTests'
-    )
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $shipped.Object.selectionCatalog.hash
     $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
-    $expectedKeys = @()
-    foreach ($row in $inventory) {
-        $methods = @($row.m)
-        $expectedKeys += ($row.s + '|' + $row.c + '|' + ((@($methods) | Sort-Object) -join ','))
-    }
-    $actualKeys = @()
-    $rowProblems = @()
-    foreach ($row in $shippedRows) {
-        $methods = @($row.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-        $key = ([string]$row.suite) + '|' + ([string]$row.class) + '|' + ((@($methods) | Sort-Object) -join ',')
-        $actualKeys += $key
-        if ([string]$row.platform -cne 'windows') { $rowProblems += "$key platform" }
-        $want = @($inventory | Where-Object { $_.s -ceq [string]$row.suite -and $_.c -ceq [string]$row.class })
-        if ($want.Count -ne 1 -or [string]$want[0].o -cne [string]$row.owner) { $rowProblems += "$key owner" }
-    }
-    $rowsMatch = (Same-C1323Set $actualKeys $expectedKeys) -and $rowProblems.Count -eq 0
-    Assert-C1323 $rowsMatch 'every-new-row-has-linux-gate' (($rowProblems + @('actual=' + $actualKeys.Count + ' expected=' + $expectedKeys.Count)) -join '; ')
-    $excludedClasses = @($shippedRows | ForEach-Object { [string]$_.class })
-    $missingDoc = @($documentClasses | Where-Object { $excludedClasses -cnotcontains $_ -and $decisionClasses -cnotcontains $_ })
-    $extraDoc = @($excludedClasses | Where-Object { $documentClasses -cnotcontains $_ })
-    Assert-C1323 ($missingDoc.Count -eq 0 -and $extraDoc.Count -eq 0) 'document-classes-are-excluded-or-decided' (('missing=' + ($missingDoc -join ',')) + ' extra=' + ($extraDoc -join ','))
+    $inventory = @($shippedRows | ForEach-Object {
+        @{ s = [string]$_.suite; c = [string]$_.class; o = [string]$_.owner; m = @($_.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) }
+    })
+    $census = Get-C1323LinuxOnlyCensus -Root $repoRoot -Policy $shipped.Object -Catalog $catalog
+    $rowProblems = @($census.Problems | Where-Object { $_ -like 'row-platform:*' -or $_ -like 'row-owner:*' -or $_ -like 'row-suite:*' })
+    Assert-C1323 ($inventory.Count -gt 0 -and $rowProblems.Count -eq 0) 'every-new-row-has-linux-gate' (($rowProblems + @('rows=' + $inventory.Count)) -join '; ')
+    $markerProblems = @($census.Problems | Where-Object { $rowProblems -cnotcontains $_ })
+    $decisionMarked = @($decisionClasses | Where-Object { $name = $_; @($census.MarkerKeys | Where-Object { $_.Split('|')[1] -ceq $name }).Count -gt 0 })
+    Assert-C1323 ($markerProblems.Count -eq 0 -and $decisionMarked.Count -eq 0 -and $census.MarkerKeys.Count -gt 0) 'markers-and-rows-agree' (($markerProblems + @('decision-marked=' + ($decisionMarked -join ','), 'markers=' + $census.MarkerKeys.Count)) -join '; ')
     $decisionHits = @()
     foreach ($name in $decisionClasses) {
         $hit = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.class -ceq $name })
@@ -677,6 +702,78 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
     Assert-C1323 ($gapLaunched.Count -eq $gapNodes.Count -and -not $incomplete.coverageComplete -and $gapsNamed -and -not $inventoryNamed -and $incompleteReason -like '*unexecuted-outcome*') 'decision-gaps-stay-incomplete' $incompleteReason
     $linuxLaunched = @($linuxOnly | Where-Object { -not (Test-ExcludedNode $_ 'linux') })
     Assert-C1323 ($linuxLaunched.Count -eq $linuxOnly.Count -and $linuxOnly.Count -gt 0) 'linux-still-requires-the-rows' ("linux=" + $linuxLaunched.Count + ' inventory=' + $linuxOnly.Count)
+}
+
+function New-C1686Root($Name, $Files) {
+    $root = Join-Path $ResultsDirectory "c1686-$Name"
+    foreach ($path in $Files.Keys) { Write-C1323File $root $path $Files[$path] }
+    return $root
+}
+
+function Test-C1686_LinuxOnlyCensus {
+    # Fixture trees and policies: the census must fail for a marker without a row and a row without a marker.
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $prefix = 'Linux-only by construction: fixture.'
+    $alpha = "namespace Fixture;`n`n[NativeLinuxOnly(`"needs a FIFO (see [man 7 fifo])`")]`n[Category(`"Unit`")]`npublic sealed class AlphaTests`n{`n    [Test]`n    public void Runs() { }`n}`n"
+    $beta = "namespace Fixture;`n`npublic sealed partial class BetaTests`n{`n    private sealed class Rig`n    {`n    }`n`n    [NativeLinuxOnly(`"procfs`")]`n    [Test]`n    [Arguments(`"a`", Categories = [`"c-a`"])]`n    public async Task First(string mode) { }`n`n    // comment`n    [Test, NativeLinuxOnly(`"not a marker line`")]`n    public void Portable() { }`n`n    [NativeLinuxOnly(`"setsid`")] [Test] public Task Second() => Task.CompletedTask;`n}`n"
+    $probe = "[NativeLinuxOnly(`"probe fixture`")]`npublic sealed class DirectClassProbe { }`n"
+    $files = [ordered]@{
+        'tests/Antiphon.Tests/Scripts/AlphaTests.cs' = $alpha
+        'tests/Antiphon.SessionRunner.Tests/BetaTests.cs' = $beta
+        'tests/Antiphon.NativeLinuxPolicy.Probe/ProbeTests.cs' = $probe
+        'tests/Antiphon.Tests/bin/Debug/Copied.cs' = "[NativeLinuxOnly(`"build output`")]`npublic sealed class CopiedTests { }`n"
+        'tests/Antiphon.Tests/PortableTests.cs' = "public sealed class PortableTests { }`n"
+    }
+    function New-C1686Policy($Rows) {
+        $policy = Copy-C1323Object $shipped.Object
+        $policy.profiles.rc.exclusions = @(@{ suite = 'antiphon'; class = 'LegacyTests'; reason = 'legacy row'; owner = 'CARD-1313' }) + @($Rows)
+        return (Copy-C1323Object $policy)
+    }
+    $rows = @(
+        @{ suite = 'antiphon'; class = 'AlphaTests'; platform = 'windows'; reason = $prefix; owner = 'CARD-1686' }
+        @{ suite = 'session-runner'; class = 'BetaTests'; methods = @('Second', 'First'); platform = 'windows'; reason = $prefix; owner = 'CARD-1686' }
+    )
+    $catalog = @{ rules = @(@{ id = 'R-CENSUS'; paths = @('tests/test-execution-policy.json', 'scripts/test-rc-platform.ps1'); sets = @('release-gate.platform'); full = $false }); edges = @() }
+    $good = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'good' $files) -Policy (New-C1686Policy $rows) -Catalog $catalog
+    Assert-C1323 ($good.Ok -and (Same-C1323Set $good.MarkerKeys @('antiphon|AlphaTests|', 'session-runner|BetaTests|First,Second')) -and (Same-C1323Set $good.MarkerFiles @('tests/Antiphon.SessionRunner.Tests/BetaTests.cs', 'tests/Antiphon.Tests/Scripts/AlphaTests.cs'))) 'c1686-consistent-census-passes' (($good.Problems + $good.MarkerKeys) -join '; ')
+
+    $extra = [ordered]@{} + $files
+    $extra['tests/Antiphon.Tests/Checkpoints/GammaTests.cs'] = "public sealed class Holder`n{`n}`n`n[NativeLinuxOnly(`"statx`")]`ninternal sealed class GammaTests { }`n"
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'class-marker' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+    Assert-C1323 (Same-C1323Set $r.Problems @('marker-without-row:antiphon|GammaTests|')) 'c1686-class-marker-without-row-fails' ($r.Problems -join '; ')
+
+    $extra = [ordered]@{} + $files
+    $extra['tests/Antiphon.SessionRunner.Tests/BetaTests.cs'] = $beta.Replace("    public void Portable() { }", "    public void Portable() { }`n`n    [NativeLinuxOnly(`"unshare`")]`n    [Test]`n    public static async Task<int> Third() => 0;")
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'method-marker' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+    Assert-C1323 (Same-C1323Set $r.Problems @('marker-without-row:session-runner|BetaTests|First,Second,Third', 'row-without-marker:session-runner|BetaTests|First,Second')) 'c1686-method-marker-without-row-fails' ($r.Problems -join '; ')
+
+    $more = @($rows) + @(@{ suite = 'pty-host'; class = 'DeltaTests'; platform = 'windows'; reason = $prefix; owner = 'CARD-1686' }, @{ suite = 'antiphon'; class = 'PortableTests'; methods = @('Runs'); platform = 'windows'; reason = $prefix; owner = 'CARD-1686' })
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'row' $files) -Policy (New-C1686Policy $more) -Catalog $catalog
+    Assert-C1323 (Same-C1323Set $r.Problems @('row-without-marker:pty-host|DeltaTests|', 'row-without-marker:antiphon|PortableTests|Runs')) 'c1686-row-without-marker-fails' ($r.Problems -join '; ')
+
+    $bad = @(
+        @{ suite = 'antiphon'; class = 'AlphaTests'; platform = 'linux'; reason = $prefix; owner = '' }
+        @{ suite = 'session-runner'; class = 'BetaTests'; methods = @('First', 'Second'); platform = 'windows'; reason = $prefix; owner = 'CARD-1686' }
+    )
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'attribution' $files) -Policy (New-C1686Policy $bad) -Catalog $catalog
+    Assert-C1323 (Same-C1323Set $r.Problems @('row-platform:antiphon|AlphaTests|', 'row-owner:antiphon|AlphaTests|')) 'c1686-row-attribution-fails' ($r.Problems -join '; ')
+
+    $extra = [ordered]@{} + $files
+    $extra['tests/New.Fixture/EpsilonTests.cs'] = "[NativeLinuxOnly(`"fifo`")]`npublic sealed class EpsilonTests { }`n"
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'outside' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+    Assert-C1323 (Same-C1323Set $r.Problems @('marker-outside-suite:tests/New.Fixture/EpsilonTests.cs')) 'c1686-marker-outside-suite-fails' ($r.Problems -join '; ')
+
+    $root = New-C1686Root 'route' $files
+    $narrow = Copy-C1323Object $catalog
+    $narrow.rules += [pscustomobject]@{ id = 'R-ALPHA'; paths = @('tests/Antiphon.Tests/Scripts/AlphaTests.cs'); sets = @('main.remainder'); full = $false }
+    $narrowed = Get-C1323LinuxOnlyCensus -Root $root -Policy (New-C1686Policy $rows) -Catalog $narrow
+    $narrow.rules[1].sets += 'release-gate.platform'
+    $routed = Get-C1323LinuxOnlyCensus -Root $root -Policy (New-C1686Policy $rows) -Catalog $narrow
+    $unrouted = Copy-C1323Object $catalog
+    $unrouted.rules[0].paths = @('scripts/test-rc-platform.ps1')
+    $unrouted.rules += [pscustomobject]@{ id = 'R-AUTHORITY'; pattern = '^tests/test-(execution|selection)-policy\.json$'; sets = @(); full = $true }
+    $policyRoute = Get-C1323LinuxOnlyCensus -Root $root -Policy (New-C1686Policy $rows) -Catalog $unrouted
+    Assert-C1323 ((Same-C1323Set $narrowed.Problems @('marker-file-unrouted:tests/Antiphon.Tests/Scripts/AlphaTests.cs')) -and $routed.Ok -and (Same-C1323Set $policyRoute.Problems @('marker-file-unrouted:tests/test-execution-policy.json'))) 'c1686-routes-name-the-census-set' ((@($narrowed.Problems) + @($routed.Problems) + @($policyRoute.Problems)) -join '; ')
 }
 
 function Test-C1199_WindowsRequiredRoster {
@@ -803,6 +900,7 @@ try {
         'LinuxSessionRunnerAdmission' { Test-LinuxSessionRunnerAdmission }
         'LinuxOnlyWindowsExclusions' { throw 'LinuxOnlyWindowsExclusions was retired by CARD-1613. Use -Case LinuxOnlyWindowsExclusionPolicy for the shipped rows. The compiled witness is NativeLinuxPolicyWitnessTests.' }
         'LinuxOnlyWindowsExclusionPolicy' { Test-LinuxOnlyWindowsExclusionPolicy }
+        'C1686_LinuxOnlyCensus' { Test-C1686_LinuxOnlyCensus }
         'C1199_WindowsRequiredRoster' { Test-C1199_WindowsRequiredRoster }
         default { throw "unknown case: $Case" }
     }
