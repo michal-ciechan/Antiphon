@@ -122,7 +122,7 @@ function Invoke-HostJq {
                     $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'server2-host-jq.sh')).Replace("`r`n", "`n")
                     $inputTask = $proc.StandardInput.WriteAsync($helper)
                     if (-not $inputTask.Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
-                    $inputTask.GetAwaiter().GetResult()
+                    [void]$inputTask.GetAwaiter().GetResult()
                 }
                 $proc.StandardInput.Close()
                 if (-not $proc.WaitForExit([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
@@ -1184,7 +1184,7 @@ function Get-TempRetirementCensusRaw {
         if (-not $env:C727_TEST_VERIFY_STUB) {
             $write = $proc.StandardInput.WriteAsync($remote)
             if (-not $write.Wait(30000)) { throw 'deadline' }
-            $write.GetAwaiter().GetResult(); $proc.StandardInput.Close()
+            [void]$write.GetAwaiter().GetResult(); $proc.StandardInput.Close()
         }
         $remaining = [Math]::Max(1,30000-[int]$watch.ElapsedMilliseconds)
         if (-not $proc.WaitForExit($remaining)) { throw 'deadline' }
