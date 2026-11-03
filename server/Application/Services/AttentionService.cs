@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -159,6 +160,10 @@ public sealed partial class AttentionService
     private readonly SeatOccupancyState? _seats;
     private readonly AttentionSettings _attention;
     private readonly TaskProviderWaitReader? _providerWait;
+    // CARD-1677 S3: optional so every harness that predates the disk alarm constructs this unchanged.
+    private readonly HostStatsCache? _hostStats;
+    private readonly WorkspaceDiskAlarmSettings _workspaceDiskAlarm;
+    private readonly IConfiguration? _configuration;
 
     public AttentionService(
         AppDbContext db,
@@ -177,8 +182,14 @@ public sealed partial class AttentionService
         ISessionRunnerDirectory? runnerDirectory = null,
         RunnerAlarmState? alarms = null,
         SeatOccupancyState? seats = null,
-        IOptions<AttentionSettings>? attention = null, TaskProviderWaitReader? providerWait = null)
+        IOptions<AttentionSettings>? attention = null, TaskProviderWaitReader? providerWait = null,
+        HostStatsCache? hostStats = null,
+        IOptions<WorkspaceDiskAlarmSettings>? workspaceDiskAlarm = null,
+        IConfiguration? configuration = null)
     {
+        _hostStats = hostStats;
+        _workspaceDiskAlarm = workspaceDiskAlarm?.Value ?? new WorkspaceDiskAlarmSettings();
+        _configuration = configuration;
         _providerWait = providerWait;
         _db = db;
         _runnerClient = runnerClient;
@@ -284,6 +295,7 @@ public sealed partial class AttentionService
         var alarmSnapshot = _alarms?.Current;
         items.AddRange(BuildRunnerUnavailableItems(alarmSnapshot));
         items.AddRange(BuildJournalStaleItems(alarmSnapshot));
+        items.AddRange(BuildWorkspaceDiskLowItems(_timeProvider.GetUtcNow()));
         if (_attention.SeatWatchEnabled)
         {
             var occupancy = _seats?.Current;

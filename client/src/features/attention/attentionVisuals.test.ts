@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TbClockPause, TbHourglassHigh, TbUserOff } from 'react-icons/tb'
+import { TbAlertTriangle, TbClockPause, TbHourglassHigh, TbUserOff } from 'react-icons/tb'
 import type { AttentionItemDto, AttentionKind } from '../../api/attention'
 import {
   ATTENTION_GROUPS,
@@ -85,6 +85,7 @@ const ALL_KINDS: AttentionKind[] = [
   'PooledSessionWorkingPastTtl',
   'FailedTaskSessionHeld',
   'CeilingHold',
+  'WorkspaceDiskLow',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -177,6 +178,18 @@ describe('attentionVisuals', () => {
     expect(ATTENTION_VISUALS.SessionUnowned.hint).toBe(
       'A live session has no agent pointer, card or open task. Inspect its evidence.',
     )
+  })
+
+  it('C1677 draws WorkspaceDiskLow as a report-only warning in the review bucket', () => {
+    const visual = ATTENTION_VISUALS.WorkspaceDiskLow
+    expect(visual, 'workspace-disk-visual').toBeDefined()
+    expect(visual.label, 'workspace-disk-label').toBe('Worktree disk low')
+    expect(visual.color, 'workspace-disk-color').toBe('warning')
+    expect(visual.icon, 'workspace-disk-icon').toBe(TbAlertTriangle)
+    expect(visual.hint.toLowerCase(), 'workspace-disk-report-only').toContain('report only')
+    const row = item({ kind: 'WorkspaceDiskLow', severity: 'Warning', conditionKey: 'workspace-disk-low:server2' })
+    expect(homeBucketOf(row), 'workspace-disk-bucket').toBe('review')
+    expect(keyOf(row), 'workspace-disk-key').toBe('workspace-disk-low:server2')
   })
 
   it('maps every kind to a label, a colour, an icon and a hint', () => {

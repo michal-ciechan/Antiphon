@@ -64,4 +64,7 @@ public sealed partial class AttentionService
         }
         return items;
     }
+
+    /// <summary>CARD-1677 S3 red shim: no item yet.</summary>
+    private List<AttentionItemDto> BuildWorkspaceDiskLowItems(DateTimeOffset now) => [];
 }

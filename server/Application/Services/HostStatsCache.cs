@@ -6,6 +6,9 @@ namespace Antiphon.Server.Application.Services;
 
 public enum HostStatsFailureKind { Transient, Offline, Unsupported }
 
+/// <summary>CARD-1677 S3: one runner's latest host sample and the server time it was first observed.</summary>
+public sealed record HostStatsSample(RunnerHostStatsDto Snapshot, DateTimeOffset ObservedAt);
+
 public sealed class HostStatsCache(HostStatsSettings settings, TimeProvider time)
 {
     private sealed record Entry(RunnerHostStatsDto? Snapshot, DateTimeOffset? ObservedAt, HostStatsFailureKind? Failure);
@@ -41,6 +44,22 @@ public sealed class HostStatsCache(HostStatsSettings settings, TimeProvider time
             if (previous?.Failure != kind)
                 _changed = true;
             _entries[hostId] = new Entry(previous?.Snapshot, previous?.ObservedAt, kind);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1677 S3: the latest recorded sample for one runner and when the server first observed it,
+    /// or null when none was recorded. A failure after a sample keeps that sample and its time, so a
+    /// reader judges freshness from <see cref="HostStatsSample.ObservedAt"/>, never from a failure.
+    /// </summary>
+    public HostStatsSample? Latest(string hostId)
+    {
+        lock (_gate)
+        {
+            return _entries.TryGetValue(hostId, out var entry)
+                && entry.Snapshot is { } snapshot && entry.ObservedAt is { } observedAt
+                ? new HostStatsSample(snapshot, observedAt)
+                : null;
         }
     }
 

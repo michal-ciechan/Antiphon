@@ -78,4 +78,15 @@ public class AttentionKindWireTests
         }
     }
 
+    [Test]
+    public void Workspace_disk_low_keeps_appended_value_65_and_json_name()
+    {
+        // CARD-1677 S3 (R-4).
+        ((int)AttentionKind.WorkspaceDiskLow).ShouldBe(65, "workspace-disk-low-wire-value");
+        Enum.GetValues<AttentionKind>().Count(kind => (int)kind == 65).ShouldBe(1, "workspace-disk-low-distinct");
+        var json = JsonSerializer.Serialize(AttentionKind.WorkspaceDiskLow, ServerJson);
+        json.ShouldBe("\"WorkspaceDiskLow\"", "workspace-disk-low-json-name");
+        JsonSerializer.Deserialize<AttentionKind>(json, ServerJson)
+            .ShouldBe(AttentionKind.WorkspaceDiskLow, "workspace-disk-low-round-trip");
+    }
 }

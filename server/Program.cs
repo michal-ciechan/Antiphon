@@ -221,6 +221,11 @@ try
     builder.Services.AddOptions<AlarmSettings>()
         .Bind(builder.Configuration.GetSection("Alarms"))
         .ValidateOnStart();
+    // CARD-1677 S3: the WorkspaceDiskLow attention row. Report only.
+    builder.Services.AddSingleton<IValidateOptions<WorkspaceDiskAlarmSettings>, WorkspaceDiskAlarmSettingsValidator>();
+    builder.Services.AddOptions<WorkspaceDiskAlarmSettings>()
+        .Bind(builder.Configuration.GetSection(WorkspaceDiskAlarmSettings.SectionName))
+        .ValidateOnStart();
     // CARD-1079: idle-seat attention thresholds. Detection only.
     builder.Services.AddSingleton<IValidateOptions<AttentionSettings>, AttentionSettingsValidator>();
     builder.Services.AddOptions<AttentionSettings>()

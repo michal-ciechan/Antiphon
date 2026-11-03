@@ -405,6 +405,14 @@ public enum AttentionKind
     /// </summary>
     FailedTaskSessionHeld = 63,
     CeilingHold = 64,
+
+    /// <summary>
+    /// CARD-1677 S3: an allow-listed Linux runner's worktree volume (<c>WorkspaceDiskAlarm:Runners</c>,
+    /// <c>server2 -&gt; /work</c>) is at or above <c>WorkspaceDiskAlarm:UsedPercent</c> (85) used in a
+    /// fresh host-stats sample. Warning. Report only: nothing is deleted. Key
+    /// <c>workspace-disk-low:{runnerId}</c>.
+    /// </summary>
+    WorkspaceDiskLow = 65,
 }
 
 /// <summary>
