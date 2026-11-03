@@ -28,13 +28,11 @@ internal static class LiveClaudeSinkAudit
         var process = 0;
         var escape = 0;
         var list = roots.ToList();
-        var callees = Callees(list);
-        var tainted = Tainted(list, callees);
+        var tainted = Tainted(list, Callees(list));
         foreach (var root in list)
         {
             var aliases = Aliases(root);
             var locals = Locals(root);
-            var buffers = Buffers(root);
             var usings = UsingConsole(root);
             var forwardSkips = ForwardSkips(root);
             foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -99,7 +97,7 @@ internal static class LiveClaudeSinkAudit
                     skip++;
                     continue;
                 }
-                if (Escapes(call, tainted, callees, buffers)) escape++;
+                if (Escapes(call, tainted)) escape++;
             }
             foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
             {
@@ -143,40 +141,167 @@ internal static class LiveClaudeSinkAudit
         return new Counts(recognized, console, assertion, skip, actual, file, process, escape);
     }
 
-    // Methods and local functions the walk reads, by simple name, with their parameter names.
-    private static Dictionary<string, List<string[]>> Callees(List<SyntaxNode> roots)
+    // A method or local function the walk reads. A method belongs to its declaring type; a local
+    // function is visible inside the node that declares it. Key names its "()" return taint.
+    private sealed record Callee(string Key, string? Type, SyntaxNode? Scope, string[] Parameters, int Required, bool Params)
     {
-        var callees = new Dictionary<string, List<string[]>>(StringComparer.Ordinal);
-        void Take(string name, ParameterListSyntax parameters)
+        internal bool Takes(int count) => count >= Required && (count <= Parameters.Length || Params);
+    }
+
+    private sealed record CalleeTable(Dictionary<string, List<Callee>> ByName, HashSet<string> Types);
+
+    // The taint names of one walk, with the callee table that resolves helper calls.
+    private sealed class Taint(CalleeTable callees)
+    {
+        private readonly HashSet<string> _names = new(StringComparer.Ordinal);
+        internal CalleeTable Callees => callees;
+        internal int Count => _names.Count;
+        internal bool Contains(string name) => _names.Contains(name);
+        internal void Add(string name) => _names.Add(name);
+    }
+
+    private static CalleeTable Callees(List<SyntaxNode> roots)
+    {
+        var byName = new Dictionary<string, List<Callee>>(StringComparer.Ordinal);
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        void Take(string name, Callee callee)
         {
-            if (!callees.TryGetValue(name, out var list))
+            if (!byName.TryGetValue(name, out var list))
             {
-                list = new List<string[]>();
-                callees[name] = list;
+                list = new List<Callee>();
+                byName[name] = list;
             }
-            list.Add(parameters.Parameters.Select(parameter => parameter.Identifier.ValueText).ToArray());
+            list.Add(callee);
         }
         foreach (var root in roots)
         {
+            foreach (var type in root.DescendantNodesAndSelf().OfType<BaseTypeDeclarationSyntax>())
+                types.Add(type.Identifier.ValueText);
             foreach (var method in root.DescendantNodesAndSelf().OfType<MethodDeclarationSyntax>())
-                Take(method.Identifier.ValueText, method.ParameterList);
+                Take(method.Identifier.ValueText, Describe(MethodKey(method), EnclosingType(method), null, method.ParameterList));
             foreach (var local in root.DescendantNodesAndSelf().OfType<LocalFunctionStatementSyntax>())
-                Take(local.Identifier.ValueText, local.ParameterList);
+                Take(local.Identifier.ValueText, Describe(LocalKey(local), null, local.Parent, local.ParameterList));
         }
-        return callees;
+        return new CalleeTable(byName, types);
     }
 
-    private static bool IsCallee(InvocationExpressionSyntax call, Dictionary<string, List<string[]>> callees) =>
-        call.Expression switch
+    private static Callee Describe(string key, string? type, SyntaxNode? scope, ParameterListSyntax list)
+    {
+        var parameters = list.Parameters;
+        var hasParams = parameters.Count > 0 && parameters[^1].Modifiers.Any(modifier => modifier.ValueText == "params");
+        var required = parameters.Count(parameter => parameter.Default is null && !parameter.Modifiers.Any(modifier => modifier.ValueText == "params"));
+        return new Callee(key, type, scope, parameters.Select(parameter => parameter.Identifier.ValueText).ToArray(), required, hasParams);
+    }
+
+    private static string MethodKey(MethodDeclarationSyntax method) => EnclosingType(method) + "." + method.Identifier.ValueText;
+
+    private static string LocalKey(LocalFunctionStatementSyntax local) => "local:" + local.Identifier.ValueText + "@" + local.SpanStart;
+
+    private static string? EnclosingType(SyntaxNode node) =>
+        node.Ancestors().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault()?.Identifier.ValueText;
+
+    // The walked helpers a call can reach. A bare or this. call reaches the caller's own type or
+    // an enclosing local function. receiver.Name(...) reaches a helper only when the receiver is
+    // declared as a walked type; a same-named method elsewhere never launders the call.
+    private static IEnumerable<Callee> Resolve(InvocationExpressionSyntax call, CalleeTable callees)
+    {
+        var count = call.ArgumentList.Arguments.Count;
+        var (name, type, bare) = call.Expression switch
         {
-            IdentifierNameSyntax identifier => callees.ContainsKey(identifier.Identifier.ValueText),
-            MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } member => callees.ContainsKey(member.Name.Identifier.ValueText),
-            // An instance helper of a walked file (debug.Draft). A Type.Name call is never a callee.
+            IdentifierNameSyntax identifier => (identifier.Identifier.ValueText, EnclosingType(call), true),
+            MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } member =>
+                (member.Name.Identifier.ValueText, EnclosingType(call), false),
             MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax receiver } member =>
-                receiver.Identifier.ValueText is [var first, ..] && char.IsLower(first)
-                && callees.ContainsKey(member.Name.Identifier.ValueText),
+                (member.Name.Identifier.ValueText, BoundType(receiver, callees.Types), false),
+            _ => (null, null, false)
+        };
+        if (name is null || !callees.ByName.TryGetValue(name, out var candidates)) return [];
+        return candidates.Where(callee => callee.Takes(count)
+            && (callee.Type is not null ? type is not null && callee.Type == type
+                : bare && callee.Scope is not null && call.Ancestors().Contains(callee.Scope)));
+    }
+
+    private static bool IsCallee(InvocationExpressionSyntax call, CalleeTable callees) => Resolve(call, callees).Any();
+
+    // The walked type a receiver identifier is declared as, from its innermost visible declaration.
+    private static string? BoundType(IdentifierNameSyntax receiver, HashSet<string> types)
+    {
+        if (Declaration(receiver) is not { } declaration) return null;
+        var type = declaration switch
+        {
+            VariableDeclaratorSyntax declarator => DeclaredType(declarator),
+            ParameterSyntax parameter => parameter.Type?.ToString(),
+            _ => null
+        };
+        return type is not null && types.Contains(TypeName(type)) ? TypeName(type) : null;
+    }
+
+    private static string? DeclaredType(VariableDeclaratorSyntax declarator)
+    {
+        var declared = (declarator.Parent as VariableDeclarationSyntax)?.Type.ToString();
+        if (declared is not null and not "var") return declared;
+        return declarator.Initializer is { } initializer && Peel(initializer.Value) is ObjectCreationExpressionSyntax created
+            ? created.Type.ToString()
+            : null;
+    }
+
+    private static string TypeName(string type)
+    {
+        type = type.TrimEnd('?');
+        var angle = type.IndexOf('<');
+        return Leaf(angle < 0 ? type : type[..angle]);
+    }
+
+    // The innermost declaration of an identifier whose scope contains it: a local, field,
+    // parameter, loop, catch or pattern variable. Null when none is visible in the syntax tree.
+    private static SyntaxNode? Declaration(IdentifierNameSyntax identifier)
+    {
+        var name = identifier.Identifier.ValueText;
+        var enclosing = new HashSet<SyntaxNode>(identifier.Ancestors());
+        SyntaxNode? best = null;
+        var depth = -1;
+        foreach (var node in identifier.SyntaxTree.GetRoot().DescendantNodes())
+        {
+            var scope = node switch
+            {
+                VariableDeclaratorSyntax declarator when declarator.Identifier.ValueText == name =>
+                    declarator.Parent?.Parent is LocalDeclarationStatementSyntax or BaseFieldDeclarationSyntax
+                        ? declarator.Parent.Parent.Parent
+                        : declarator.Parent?.Parent,
+                ParameterSyntax parameter when parameter.Identifier.ValueText == name =>
+                    parameter.Parent is ParameterListSyntax list ? list.Parent : parameter.Parent,
+                ForEachStatementSyntax loop when loop.Identifier.ValueText == name => loop,
+                CatchDeclarationSyntax caught when caught.Identifier.ValueText == name => caught.Parent,
+                SingleVariableDesignationSyntax single when single.Identifier.ValueText == name =>
+                    single.Ancestors().FirstOrDefault(ancestor => ancestor is BlockSyntax or SwitchSectionSyntax
+                        or AnonymousFunctionExpressionSyntax or ArrowExpressionClauseSyntax),
+                _ => null
+            };
+            if (scope is null || !enclosing.Contains(scope)) continue;
+            var level = scope.Ancestors().Count();
+            if (level <= depth) continue;
+            depth = level;
+            best = node;
+        }
+        return best;
+    }
+
+    // A local whose declaration creates a fresh object or buffer in place; with bufferOnly, an
+    // allow-listed in-memory collection or builder.
+    private static bool CreatedInPlace(IdentifierNameSyntax identifier, bool bufferOnly)
+    {
+        if (Declaration(identifier) is not VariableDeclaratorSyntax { Parent.Parent: LocalDeclarationStatementSyntax } local)
+            return false;
+        var value = local.Initializer?.Value is { } initializer ? Peel(initializer) : null;
+        var declared = (local.Parent as VariableDeclarationSyntax)?.Type.ToString() ?? "";
+        return value switch
+        {
+            ObjectCreationExpressionSyntax created => !bufferOnly || IsBufferType(created.Type.ToString()),
+            ImplicitObjectCreationExpressionSyntax or CollectionExpressionSyntax => !bufferOnly || IsBufferType(declared),
+            ArrayCreationExpressionSyntax or ImplicitArrayCreationExpressionSyntax => !bufferOnly,
             _ => false
         };
+    }
 
     // Product screen readers whose result carries no screen text; the walk does not descend into them.
     private static bool IsSanitizing(InvocationExpressionSyntax call) =>
@@ -195,20 +320,20 @@ internal static class LiveClaudeSinkAudit
             // Reviewed verifier: literal-only refusals over bridge observations.
             or "LiveClaudeStartupEvidence.RequireSlash";
 
-    private static bool Escapes(InvocationExpressionSyntax call, HashSet<string> tainted, Dictionary<string, List<string[]>> callees, HashSet<string> buffers)
+    private static bool Escapes(InvocationExpressionSyntax call, Taint tainted)
     {
         if (!call.ArgumentList.Arguments.Any(arg => ArgumentCarries(arg, tainted))) return false;
         var leaf = SimpleName(call);
         if (IsPredicate(leaf) || IsSanitizing(call) || IsReviewedCall(call)) return false;
-        if (IsCallee(call, callees)) return false;
+        if (IsCallee(call, tainted.Callees)) return false;
         return !(call.Expression is MemberAccessExpressionSyntax member
             && member.Expression is IdentifierNameSyntax receiver
-            && buffers.Contains(receiver.Identifier.ValueText)
-            && IsBufferMutator(leaf));
+            && IsBufferMutator(leaf)
+            && CreatedInPlace(receiver, bufferOnly: true));
     }
 
     // A lambda argument escapes only when it returns tainted text; its body is walked in place.
-    private static bool ArgumentCarries(ArgumentSyntax argument, HashSet<string> tainted)
+    private static bool ArgumentCarries(ArgumentSyntax argument, Taint tainted)
     {
         var expression = Peel(argument.Expression);
         if (expression is AnonymousFunctionExpressionSyntax function)
@@ -220,7 +345,7 @@ internal static class LiveClaudeSinkAudit
         return Carries(expression, tainted);
     }
 
-    private static bool ReturnCarries(ExpressionSyntax expression, HashSet<string> tainted) =>
+    private static bool ReturnCarries(ExpressionSyntax expression, Taint tainted) =>
         !PredicateShaped(expression) && Carries(expression, tainted);
 
     private static bool PredicateShaped(ExpressionSyntax expression)
@@ -293,17 +418,21 @@ internal static class LiveClaudeSinkAudit
         return locals;
     }
 
+    // An element or member store stays local only through a local that created its object in
+    // place; an alias of a shared object, a parameter or a catch variable is a non-local store.
     private static bool StaysLocal(ExpressionSyntax left, HashSet<string> locals)
     {
         left = Peel(left);
         if (left is DeclarationExpressionSyntax or TupleExpressionSyntax) return true;
         if (left is IdentifierNameSyntax name) return locals.Contains(name.Identifier.ValueText);
         if (left is ElementAccessExpressionSyntax or MemberAccessExpressionSyntax)
-            return RootIdentifier(left) is { } root && locals.Contains(root);
+            return RootName(left) is { } root && CreatedInPlace(root, bufferOnly: false);
         return false;
     }
 
-    private static string? RootIdentifier(ExpressionSyntax expression)
+    private static string? RootIdentifier(ExpressionSyntax expression) => RootName(expression)?.Identifier.ValueText;
+
+    private static IdentifierNameSyntax? RootName(ExpressionSyntax expression)
     {
         while (true)
         {
@@ -311,7 +440,7 @@ internal static class LiveClaudeSinkAudit
             switch (expression)
             {
                 case IdentifierNameSyntax identifier:
-                    return identifier.Identifier.ValueText;
+                    return identifier;
                 case MemberAccessExpressionSyntax member:
                     expression = member.Expression;
                     break;
@@ -329,20 +458,20 @@ internal static class LiveClaudeSinkAudit
 
     // One name set for every walked root. A callee whose return carries taint is entered as
     // "()Name" so its call sites carry it; a tainted argument taints the callee parameter.
-    private static HashSet<string> Tainted(List<SyntaxNode> roots, Dictionary<string, List<string[]>> callees)
+    private static Taint Tainted(List<SyntaxNode> roots, CalleeTable callees)
     {
-        var tainted = new HashSet<string>(StringComparer.Ordinal);
+        var tainted = new Taint(callees);
         for (var pass = 0; pass < 16; pass++)
         {
             var before = tainted.Count;
             foreach (var root in roots)
-                TaintPass(root, tainted, callees);
+                TaintPass(root, tainted);
             if (tainted.Count == before) break;
         }
         return tainted;
     }
 
-    private static void TaintPass(SyntaxNode root, HashSet<string> tainted, Dictionary<string, List<string[]>> callees)
+    private static void TaintPass(SyntaxNode root, Taint tainted)
     {
         var buffers = Buffers(root);
         foreach (var local in root.DescendantNodes().OfType<VariableDeclaratorSyntax>())
@@ -363,6 +492,7 @@ internal static class LiveClaudeSinkAudit
         foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             var carried = call.ArgumentList.Arguments.Select(arg => ArgumentCarries(arg, tainted)).ToArray();
+            TaintLambdaParameters(call, carried, tainted);
             if (!carried.Any(item => item)) continue;
             if (call.Expression is MemberAccessExpressionSyntax member
                 && member.Expression is IdentifierNameSyntax receiver
@@ -375,9 +505,9 @@ internal static class LiveClaudeSinkAudit
                 foreach (var name in Designations(argument.Expression)) tainted.Add(name);
                 if (Peel(argument.Expression) is IdentifierNameSyntax target) tainted.Add(target.Identifier.ValueText);
             }
-            if (!IsCallee(call, callees)) continue;
-            foreach (var parameters in callees[SimpleName(call)])
+            foreach (var callee in Resolve(call, tainted.Callees))
             {
+                var parameters = callee.Parameters;
                 for (var index = 0; index < carried.Length; index++)
                 {
                     if (!carried[index]) continue;
@@ -391,16 +521,56 @@ internal static class LiveClaudeSinkAudit
         foreach (var method in root.DescendantNodesAndSelf().OfType<MethodDeclarationSyntax>())
         {
             if (ReturnsTaint(method.ExpressionBody?.Expression, method.Body, tainted))
-                tainted.Add("()" + method.Identifier.ValueText);
+                tainted.Add("()" + MethodKey(method));
         }
         foreach (var local in root.DescendantNodes().OfType<LocalFunctionStatementSyntax>())
         {
             if (ReturnsTaint(local.ExpressionBody?.Expression, local.Body, tainted))
-                tainted.Add("()" + local.Identifier.ValueText);
+                tainted.Add("()" + LocalKey(local));
         }
     }
 
-    private static bool ReturnsTaint(ExpressionSyntax? expression, BlockSyntax? body, HashSet<string> tainted)
+    // A lambda handed tainted text, through the receiver or another argument, receives it in
+    // its parameters (lines.ForEach(l => ...), Array.Exists(lines, l => ...)).
+    private static void TaintLambdaParameters(InvocationExpressionSyntax call, bool[] carried, Taint tainted)
+    {
+        var receiver = Receiver(call);
+        var receiverCarries = receiver is not null && Carries(receiver, tainted);
+        var arguments = call.ArgumentList.Arguments;
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            if (Peel(arguments[index].Expression) is not AnonymousFunctionExpressionSyntax function) continue;
+            if (IsKeystrokeCallback(call, index)) continue;
+            var other = false;
+            for (var sibling = 0; sibling < carried.Length; sibling++)
+                other |= sibling != index && carried[sibling];
+            if (!receiverCarries && !other) continue;
+            var parameters = function switch
+            {
+                SimpleLambdaExpressionSyntax simple => [simple.Parameter],
+                ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.ToArray(),
+                AnonymousMethodExpressionSyntax anonymous => anonymous.ParameterList?.Parameters.ToArray() ?? [],
+                _ => Array.Empty<ParameterSyntax>()
+            };
+            foreach (var parameter in parameters) tainted.Add(parameter.Identifier.ValueText);
+        }
+    }
+
+    // Reviewed callbacks that a call hands only constants, never the tainted text beside them.
+    private static bool IsKeystrokeCallback(InvocationExpressionSyntax call, int index) =>
+        // The write callback receives only ClaudeTrustDialogKeys constants (Enter, the legacy digit,
+        // the highlight candidates); the screen goes to the snapshot callback alone.
+        index == 1 && call.Expression.ToString() == "ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync";
+
+    private static ExpressionSyntax? Receiver(InvocationExpressionSyntax call)
+    {
+        if (call.Expression is MemberAccessExpressionSyntax member) return member.Expression;
+        if (call.Expression is not MemberBindingExpressionSyntax) return null;
+        return call.Ancestors().OfType<ConditionalAccessExpressionSyntax>()
+            .FirstOrDefault(access => access.WhenNotNull.Span.Contains(call.Span))?.Expression;
+    }
+
+    private static bool ReturnsTaint(ExpressionSyntax? expression, BlockSyntax? body, Taint tainted)
     {
         if (expression is not null) return ReturnCarries(expression, tainted);
         if (body is null) return false;
@@ -452,7 +622,7 @@ internal static class LiveClaudeSinkAudit
         return new UsingConsoleSet(staticConsole, aliases);
     }
 
-    private static void TaintDeconstruction(AssignmentExpressionSyntax assignment, HashSet<string> tainted)
+    private static void TaintDeconstruction(AssignmentExpressionSyntax assignment, Taint tainted)
     {
         var names = Designations(assignment.Left).ToArray();
         if (names.Length == 0 || assignment.Right is not TupleExpressionSyntax tuple) return;
@@ -532,7 +702,7 @@ internal static class LiveClaudeSinkAudit
         }
     }
 
-    private static bool ThrownCarries(ExpressionSyntax? expression, HashSet<string> tainted)
+    private static bool ThrownCarries(ExpressionSyntax? expression, Taint tainted)
     {
         if (expression is null) return false;
         expression = Peel(expression);
@@ -540,7 +710,7 @@ internal static class LiveClaudeSinkAudit
         return Carries(expression, tainted);
     }
 
-    private static bool ArgumentCarries(InvocationExpressionSyntax call, int index, HashSet<string> tainted) =>
+    private static bool ArgumentCarries(InvocationExpressionSyntax call, int index, Taint tainted) =>
         call.ArgumentList.Arguments.Count > index && Carries(call.ArgumentList.Arguments[index].Expression, tainted);
 
     private static bool LaterArgument(InvocationExpressionSyntax call, Func<ExpressionSyntax, bool> raw)
@@ -552,7 +722,7 @@ internal static class LiveClaudeSinkAudit
         return false;
     }
 
-    private static bool MessageCarries(ExpressionSyntax expression, HashSet<string> tainted) =>
+    private static bool MessageCarries(ExpressionSyntax expression, Taint tainted) =>
         !SafeEmit(expression) && (Carries(expression, tainted) || Constructed(expression));
 
     private static bool SafeEmit(ExpressionSyntax expression)
@@ -579,22 +749,21 @@ internal static class LiveClaudeSinkAudit
         return call.ArgumentList.Arguments.Any(arg => Peel(arg.Expression) is not LiteralExpressionSyntax);
     }
 
-    private static bool Carries(SyntaxNode node, HashSet<string> tainted) =>
+    private static bool Carries(SyntaxNode node, Taint tainted) =>
         node.DescendantNodesAndSelf(inner => inner is not InvocationExpressionSyntax call || !IsSanitizing(call))
             .Any(inner => IsDirect(inner, tainted));
 
-    private static bool DirectScreen(ExpressionSyntax expression, HashSet<string> tainted) =>
+    private static bool DirectScreen(ExpressionSyntax expression, Taint tainted) =>
         IsDirect(Peel(expression), tainted);
 
-    private static bool IsDirect(SyntaxNode node, HashSet<string> tainted) =>
+    private static bool IsDirect(SyntaxNode node, Taint tainted) =>
         node is InvocationExpressionSyntax call && (IsScreenCall(call) || IsFolderPath(call) || ReturnsTainted(call, tainted))
         || node is MemberAccessExpressionSyntax member && member.Name.Identifier.ValueText is "RenderedScreen" or "UserProfile"
         || node is IdentifierNameSyntax identifier && (tainted.Contains(identifier.Identifier.ValueText)
             || identifier.Identifier.ValueText == "UserProfile");
 
-    private static bool ReturnsTainted(InvocationExpressionSyntax call, HashSet<string> tainted) =>
-        call.Expression is IdentifierNameSyntax or MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax }
-        && tainted.Contains("()" + SimpleName(call));
+    private static bool ReturnsTainted(InvocationExpressionSyntax call, Taint tainted) =>
+        Resolve(call, tainted.Callees).Any(callee => tainted.Contains("()" + callee.Key));
 
     private static bool IsScreenCall(InvocationExpressionSyntax call) =>
         call.Expression.ToString().EndsWith("SnapshotScreen", StringComparison.Ordinal) || IsSecretEnv(call);
@@ -732,7 +901,7 @@ internal static class LiveClaudeSinkAudit
             or "Replace" or "Remove" or "Insert" or "PadLeft" or "PadRight"
             or "Normalize" or "ToCharArray" or "ToArray";
 
-    private static bool ShouldSubject(ExpressionSyntax expression, HashSet<string> tainted)
+    private static bool ShouldSubject(ExpressionSyntax expression, Taint tainted)
     {
         expression = Peel(expression);
         if (DirectScreen(expression, tainted)) return true;
