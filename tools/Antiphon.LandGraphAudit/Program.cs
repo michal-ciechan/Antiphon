@@ -8,7 +8,17 @@ namespace Antiphon.LandGraphAudit;
 /// CARD-1483 S1: asks real MSBuild which files the land build reads. Evaluates every project of
 /// the solution the land builds (plan D-2) with no restore and refuses any evaluated item, of any
 /// item type, whose FullPath is a skippable docs file (D-3). Exit 0 approved, 1 refused, 2 the
-/// evaluation failed (D-8). The tool writes nothing: its whole verdict is stdout and the exit code.
+/// evaluation failed (D-8). The tool writes nothing into the repository: its whole verdict is stdout
+/// and the exit code.
+/// The differential (CanaryRepository, EvaluationSnapshot.Difference) evaluates the solution a second
+/// time in a disposable sibling byte copy. The copy set is the tracked files, the untracked files Git
+/// does not ignore and every docs/**/*.md (rewritten to the canary text), never the root README.md and
+/// never a git-ignored file, so the second pass sees a clean checkout. Its properties, imports and item
+/// rows must equal the repository pass. The only tolerated row is an item the repository pass has and
+/// the copy lacks entirely whose FullPath is an existing in-repository file, reached through no link,
+/// outside the copy set: an ignored file a local run left in a default glob (E2E TestOutput/). An item
+/// gated on an ignored file still refuses, because the copy evaluates the clean state. Rows hold names,
+/// never bytes, and the expression policy admits no filesystem function, so content is out of scope.
 /// </summary>
 public static class Program
 {

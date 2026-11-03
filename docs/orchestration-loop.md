@@ -2507,6 +2507,27 @@ waits for the tool's printed `ceiling`, which adds only `EvaluationBudget.Startu
 stay informational and do not refuse. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.
 
+The differential canary evaluates every project twice: pass 1 in the real checkout, pass 2
+in a sibling byte copy. The copy set is the tracked files, the untracked files Git does not
+ignore (`git ls-files --cached --others --exclude-standard`) and every `docs/**/*.md`
+rewritten to a fixed canary text, plus one added `docs/c1483-canary/canary.md`; the root
+`README.md` is left out. No git-ignored file is copied, so pass 2 sees what a clean land
+checkout has. Pass 2 must evaluate without a refusal, and its properties, imports and item
+rows (item type and FullPath, with the two repository roots normalised) must equal pass 1.
+One row is tolerated: an item row pass 1 has and pass 2 lacks entirely, whose FullPath is an
+existing file inside the repository, reached through no file or directory link, outside the
+copy set and absent from the copy. That is a git-ignored file a local run left in a default
+glob, such as `tests/Antiphon.E2E/TestOutput/` under the default `None` glob (rc `7f8e9fd1`
+C1385). Everything else still refuses: a property or import difference, a changed
+multiplicity, a row only pass 2 has, a missing row for a copied (tracked or untracked) file,
+for a link or for a path outside the repository, and any item gated on an ignored file
+(`!Exists('bin-x/App.dll')` around a docs `Content` item), because pass 2 evaluates the
+clean state and its docs check or the comparison sees the dependency. Content is out of
+scope: rows carry names, never bytes, and `EvaluationExpressionPolicy` admits no filesystem
+property function, so evaluation cannot read an item's bytes. An empty placeholder in pass 2
+for each ignored item file was tried first and removed: it restored the file's existence and
+approved a docs item gated on its absence (Review `436ebdc6` D-1).
+
 A skip records `Stage=Verify`, `Outcome=Skipped`, `Detail=non-code`, with
 `VerificationPassed=false`. The landing's `VerificationCommand` records
 `Skipped(non-code)`, target/candidate SHAs and the audited graph fingerprint;
