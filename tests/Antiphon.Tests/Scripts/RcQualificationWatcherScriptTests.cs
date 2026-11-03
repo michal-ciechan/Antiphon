@@ -25,7 +25,7 @@ public sealed class RcQualificationWatcherScriptTests
     // credits that only to the launch's own run id (Review b26811ff D-1).
     [Test]
     public Task Supervisor_detaches_and_observe_classifies_lost_supervisor() => ScriptHarness.RunHarnessCaseAsync(
-        "test-qualification-supervisor.ps1", "C1667", "Smoke", 27,
+        "test-qualification-supervisor.ps1", "C1667", "Smoke", 28,
         "C1667 observe classifies a gone supervisor with live nightly-run as supervisor-lost-run-alive",
         "C1667 observe treats a stale heartbeat as supervisor lost while the run is alive",
         "C1667 observe treats last-run completedAt as the end signal without commission-exit",
@@ -33,6 +33,7 @@ public sealed class RcQualificationWatcherScriptTests
         "C1667 observe probes the run owner before reading last-run.json",
         "C1667 observe does not credit a previous run completedAt to a refused launch (commission-exit 2)",
         "C1667 observe does not report supervisor-lost-run-alive for another run holding run.lock",
+        "C1667 observe needs the run.lock run id as well as the last-run.json run id before crediting supervisor-lost-run-alive",
         "C1667 observe reports not-started while the launch waits for a build slot (no Started yet)",
         "C1667 launch-rc refuses a launch whose -RunId is missing or differs from the bound run id",
         "C1667 supervisor log lines are on disk at return and the file is not held open",

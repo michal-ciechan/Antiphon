@@ -169,6 +169,11 @@ try {
         $o.Json.lockRunId -ceq 'c1667other' -and $o.Json.runOwner -ceq 'alive') `
         'observe does not report supervisor-lost-run-alive for another run holding run.lock' $o.Text
 
+    $run = New-ObservedRun 'replacedlock' $self $gone $stale $running -LockRunId 'c1667other'
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'unknown' -and $o.Json.reason -ceq 'run-lock-foreign' -and $o.Json.stateRunId -ceq 'c1667run') `
+        'observe needs the run.lock run id as well as the last-run.json run id before crediting supervisor-lost-run-alive' $o.Text
+
     $run = New-ObservedRun 'slotwait' $null $self $fresh $previousRun
     $o = Invoke-Observe $run
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'not-started' -and $o.Json.reason -ceq 'run-id-not-seen' -and
@@ -208,7 +213,7 @@ try {
     $l = Invoke-Launch 'livelock' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-RunId', 'c1667run', '-StateRoot', $lockState) }) 'c1667run'
     $gonelock = New-OwnedDirectory 'stalelock-state'
     Write-OwnedJson (Join-Path $gonelock 'run.lock') ([ordered]@{ pid = $gone.pid; processStartedAt = $gone.processStartedAt; runId = 'c1667other' })
-    $g = Invoke-Launch 'stalelock' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-RunId:c1667run', '-StateRoot:' + $gonelock) }) 'c1667run'
+    $g = Invoke-Launch 'stalelock' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-RunId:c1667run', ('-StateRoot:' + $gonelock)) }) 'c1667run'
     Assert-C1667 ($l.Code -eq 3 -and $l.Text -match 'held by live pid' -and $l.Text -match 'c1667other' -and $g.Code -eq 2 -and $g.Text -match 'checkout HEAD') `
         'launch-rc refuses a live run.lock and leaves a dead owner to nightly-run' ($l.Text + ' | ' + $g.Text)
 

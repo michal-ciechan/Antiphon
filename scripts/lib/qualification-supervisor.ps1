@@ -140,15 +140,37 @@ function Get-QualificationProcessObservation {
 
 # Classification. completedAt in last-run.json is the end signal; commission-exit.txt and the
 # heartbeat belong to the supervisor, which can die while nightly-run keeps going.
+# The state root is shared by every nightly and rc run, so last-run.json and run.lock may belong
+# to a previous or another run (Review b26811ff D-1): completed needs the bound run id in
+# last-run.json, and running / supervisor-lost-run-alive need it in both last-run.json and
+# run.lock. A launch whose run id appears in neither is not-started, or launch-failed once the
+# supervisor has recorded commission-exit.txt.
 function Get-QualificationSupervisionClassification {
-    param([string]$StateStatus, $State, [string]$RunOwner, [string]$Supervisor, [string]$Heartbeat,
-        $HeartbeatUtc, [datetime]$NowUtc, [double]$StaleMinutes = 5)
+    param([string]$ExpectedRunId, [string]$StateStatus, $State, [string]$LockStatus, [string]$LockRunId,
+        [string]$RunOwner, [string]$Supervisor, [string]$Heartbeat, $HeartbeatUtc, [datetime]$NowUtc,
+        [string]$CommissionExit, [double]$StaleMinutes = 5)
+    if ([string]::IsNullOrWhiteSpace($ExpectedRunId)) { return [pscustomobject]@{ classification = 'unknown'; reason = 'run-id-unbound' } }
+    $stateOurs = ($StateStatus -ceq 'ok') -and $State -and ([string]$State.runId -ceq $ExpectedRunId)
+    $lockOurs = ($LockStatus -ceq 'ok') -and ($LockRunId -ceq $ExpectedRunId)
     $completedAt = $null
-    if ($StateStatus -ceq 'ok' -and $State -and $State.PSObject.Properties['completedAt']) { $completedAt = ConvertTo-RcQualificationTime $State.completedAt }
+    if ($stateOurs -and $State.PSObject.Properties['completedAt']) { $completedAt = ConvertTo-RcQualificationTime $State.completedAt }
     if ($null -ne $completedAt) { return [pscustomobject]@{ classification = 'completed'; reason = 'state-completedAt' } }
     if ($StateStatus -cnotin @('ok', 'missing')) { return [pscustomobject]@{ classification = 'unknown'; reason = 'state-' + $StateStatus } }
+    if ($LockStatus -cnotin @('ok', 'missing')) { return [pscustomobject]@{ classification = 'unknown'; reason = 'lock-' + $LockStatus } }
+    if (-not $stateOurs -and -not $lockOurs) {
+        if (-not [string]::IsNullOrEmpty($CommissionExit)) { return [pscustomobject]@{ classification = 'launch-failed'; reason = 'commission-exit-' + $CommissionExit } }
+        return [pscustomobject]@{ classification = 'not-started'; reason = 'run-id-not-seen' }
+    }
+    # Our run started. Only our own run.lock record says whether its nightly-run is still alive; a
+    # released (error path) or foreign lock without completedAt is unknown, not run-lost.
+    if (-not $lockOurs) {
+        $lockReason = 'run-lock-missing'
+        if ($LockStatus -ceq 'ok') { $lockReason = 'run-lock-foreign' }
+        return [pscustomobject]@{ classification = 'unknown'; reason = $lockReason }
+    }
     if ($RunOwner -cin @('absent', 'reused')) { return [pscustomobject]@{ classification = 'run-lost'; reason = 'run-owner-' + $RunOwner } }
     if ($RunOwner -cne 'alive') { return [pscustomobject]@{ classification = 'unknown'; reason = 'run-owner-' + $RunOwner } }
+    if (-not $stateOurs) { return [pscustomobject]@{ classification = 'not-started'; reason = 'state-not-written' } }
     if ($Supervisor -cne 'alive') { return [pscustomobject]@{ classification = 'supervisor-lost-run-alive'; reason = 'supervisor-' + $Supervisor } }
     if ($Heartbeat -cne 'ok' -or $null -eq $HeartbeatUtc) { return [pscustomobject]@{ classification = 'supervisor-lost-run-alive'; reason = 'heartbeat-' + $Heartbeat } }
     if (($NowUtc - $HeartbeatUtc).TotalMinutes -ge $StaleMinutes) { return [pscustomobject]@{ classification = 'supervisor-lost-run-alive'; reason = 'heartbeat-stale' } }
@@ -174,6 +196,18 @@ function Get-QualificationSupervision {
     $identity = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath([IO.Path]::Combine($TaskRoot, 'supervisor-identity.json')))
     $supervisor = & $observe $identity.record
     if ($identity.status -ceq 'missing') { $supervisor = [pscustomobject]@{ status = 'missing'; reason = 'no-identity' } }
+    # The launch's run id, recorded by supervise-rc.ps1 from start-supervisor.ps1 -RunId.
+    $expectedRunId = $null
+    if ($identity.status -ceq 'ok' -and $identity.record.runId -is [string]) { $expectedRunId = $identity.record.runId }
+    $lockRunId = $null
+    if ($lock.status -ceq 'ok' -and $null -ne $lock.record.runId) { $lockRunId = [string]$lock.record.runId }
+    $stateRunId = $null
+    if ($state.status -ceq 'ok' -and $null -ne $state.record.runId) { $stateRunId = [string]$state.record.runId }
+    $runLock = $lock.status
+    if ($lock.status -ceq 'ok') {
+        $runLock = 'foreign'
+        if (-not [string]::IsNullOrWhiteSpace($expectedRunId) -and $lockRunId -ceq $expectedRunId) { $runLock = 'ours' }
+    }
     $beat = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath([IO.Path]::Combine($TaskRoot, 'supervisor-heartbeat.json')))
     $beatUtc = $null
     $hang = $null
@@ -187,15 +221,20 @@ function Get-QualificationSupervision {
     $commissionExit = $null
     if ([IO.File]::Exists($exitPath)) { try { $commissionExit = ([IO.File]::ReadAllText($exitPath)).Trim() } catch { $commissionExit = 'unreadable' } }
     $now = [datetime]::UtcNow
-    $verdict = Get-QualificationSupervisionClassification -StateStatus $state.status -State $state.record -RunOwner $runOwner.status `
-        -Supervisor $supervisor.status -Heartbeat $beat.status -HeartbeatUtc $beatUtc -NowUtc $now -StaleMinutes $StaleMinutes
-    $fields = Select-RcQualificationFields $state.record @('runId', 'phase', 'completedAt', 'exitCode', 'testsPassed', 'coverageComplete')
+    $verdict = Get-QualificationSupervisionClassification -ExpectedRunId $expectedRunId -StateStatus $state.status -State $state.record `
+        -LockStatus $lock.status -LockRunId $lockRunId -RunOwner $runOwner.status -Supervisor $supervisor.status -Heartbeat $beat.status `
+        -HeartbeatUtc $beatUtc -NowUtc $now -CommissionExit $commissionExit -StaleMinutes $StaleMinutes
+    # Result fields come only from our own run's state, never from a previous run's last-run.json.
+    $ownState = $null
+    if (-not [string]::IsNullOrWhiteSpace($expectedRunId) -and $stateRunId -ceq $expectedRunId) { $ownState = $state.record }
+    $fields = Select-RcQualificationFields $ownState @('phase', 'completedAt', 'exitCode', 'testsPassed', 'coverageComplete')
     $age = $null
     if ($null -ne $beatUtc) { $age = [Math]::Round(($now - $beatUtc).TotalMinutes, 1) }
     return [pscustomobject][ordered]@{
         observedAtUtc = $now.ToString('o'); classification = $verdict.classification; reason = $verdict.reason
         runOwner = $runOwner.status; supervisor = $supervisor.status; heartbeat = $beat.status; heartbeatAgeMinutes = $age
-        hangSuspected = $hang; state = $state.status; runId = $fields.runId; phase = $fields.phase; completedAt = $fields.completedAt
+        hangSuspected = $hang; state = $state.status; runId = $expectedRunId; stateRunId = $stateRunId; runLock = $runLock; lockRunId = $lockRunId
+        phase = $fields.phase; completedAt = $fields.completedAt
         exitCode = $fields.exitCode; testsPassed = $fields.testsPassed; coverageComplete = $fields.coverageComplete
         commissionExit = $commissionExit
     }
