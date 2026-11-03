@@ -218,6 +218,11 @@ export type AttentionKind =
    */
   | 'FailedTaskSessionHeld'
   | 'CeilingHold'
+  /**
+   * CARD-1677 S3: an allow-listed Linux runner's worktree volume is at or above the configured
+   * used percentage (85) in a fresh host-stats sample. Warning. Report only: nothing is deleted.
+   */
+  | 'WorkspaceDiskLow'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =
