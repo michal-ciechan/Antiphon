@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { server } from './mocks/server';
+import { releaseDetachedStyleSheets } from './detachedStyleSheets';
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -42,6 +43,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 // Reset handlers after each test to avoid test pollution
 afterEach(() => {
   cleanup();
+  releaseDetachedStyleSheets();
   server.resetHandlers();
 });
 
