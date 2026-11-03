@@ -57,6 +57,9 @@ function Install-C495Scripts {
     Copy-Item -LiteralPath (Join-Path $here 'restart-apphost.ps1') -Destination (Join-Path $scripts 'restart-apphost.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $here 'apphost-common.ps1') -Destination (Join-Path $scripts 'apphost-common.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $here 'deploy-local.ps1') -Destination (Join-Path $scripts 'deploy-local.ps1') -Force
+    # restart-apphost.ps1 dot-sources lib/live-startup-timing.ps1 since fdaf40558.
+    New-Item -ItemType Directory -Path (Join-Path $scripts 'lib') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $here 'lib/live-startup-timing.ps1') -Destination (Join-Path $scripts 'lib/live-startup-timing.ps1') -Force
     @(
         '# inert CARD-0495'
         'Write-Host "check-daemon-build inert"'
