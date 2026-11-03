@@ -40,8 +40,51 @@ public sealed class ChangeAwareReleaseTests
         AssertNoFixtureRepository(root, output);
     });
 
+    // CARD-1691 C8: a case that fails before New-Fx reaches the cleanup with no fixture root;
+    // the caller's results directory and its contents must survive and the original error stays.
+    [Test]
+    public Task C1590_UnknownCaseKeepsResultsDirectory() => RunOwnedRoot("Bogus", [], ScriptHarnessOptions.Default.ExecutionBudget, (result, root) =>
+    {
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldNotBe(0, output);
+        output.ShouldContain("Test-Bogus", Case.Sensitive, output);
+        Directory.Exists(root).ShouldBeTrue(output);
+        File.ReadAllText(Path.Combine(root, SentinelName)).ShouldBe(SentinelName, output);
+    }, WriteSentinel);
+
+    // CARD-1691 C4/C12: the first of two fixture roots is gone before the finally runs. The
+    // passed run still exits 0, the failed run still reports its own error, and both remove the
+    // second root.
+    [Test]
+    public Task C1590_PassedRunToleratesGoneFixtureRoot() => RunOwnedRoot("C1590_GoneRootPassed", [], ScriptHarnessOptions.Default.ExecutionBudget, (result, root) =>
+    {
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("C487 HARNESS EXIT CODE: 0", Case.Sensitive, output);
+        output.ShouldContain("PASS C1313 gone-root-fixture", Case.Sensitive, output);
+        AssertNoFixtureRepository(root, output);
+    });
+
+    [Test]
+    public Task C1590_FailedRunToleratesGoneFixtureRoot() => RunOwnedRoot("C1590_GoneRootFailed", [], ScriptHarnessOptions.Default.ExecutionBudget, (result, root) =>
+    {
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldNotBe(0, output);
+        output.ShouldContain("c1590-original-failure", Case.Sensitive, output);
+        AssertNoFixtureRepository(root, output);
+    });
+
     private static readonly string[] FilterHostArguments =
         ["-FilterHost", Path.Combine(AppContext.BaseDirectory, "checkpoint-filter-host", "Antiphon.Checkpoints.FilterHost.dll")];
+
+    private const string SentinelName = "c1590-caller-sentinel.txt";
+
+    // The caller owns the results directory before the harness starts, so a pre-existing file must survive.
+    private static void WriteSentinel(string root)
+    {
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, SentinelName), SentinelName);
+    }
 
     private static void AssertNoFixtureRepository(string root, string output)
     {
@@ -50,7 +93,8 @@ public sealed class ChangeAwareReleaseTests
     }
 
     // The caller-owned root is inspected after the harness exits and before ScriptHarness removes it.
-    private static Task RunOwnedRoot(string name, string[] arguments, TimeSpan budget, Action<ScriptHarnessResult, string> validate)
+    private static Task RunOwnedRoot(string name, string[] arguments, TimeSpan budget, Action<ScriptHarnessResult, string> validate,
+        Action<string>? prepare = null)
     {
         string? root = null;
         var options = ScriptHarnessOptions.Default with
@@ -60,6 +104,7 @@ public sealed class ChangeAwareReleaseTests
             OwnerFactory = request =>
             {
                 root = request.ResultsDirectory;
+                prepare?.Invoke(root);
                 return OperatingSystem.IsWindows() ? new WindowsScriptHarnessProcess(request) :
                     OperatingSystem.IsLinux() ? new LinuxScriptHarnessProcess(request) :
                     throw new PlatformNotSupportedException("ScriptHarness requires Windows or Linux process ownership.");

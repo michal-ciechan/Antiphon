@@ -369,6 +369,23 @@ function Test-C1313_ParameterHops {
     Assert-Fx ((Get-NightlyFileSha256 $bound.SelectionAttemptPath) -ceq $original -and -not(Test-Path "$($fx.Clone)/bin-fixture")) 'attempt-survives-cleanup'
 }
 
+# CARD-1691 C4/C12: two fixture roots, the first already removed by the case itself, so
+# the cleanup must tolerate a gone root, still remove the later one and keep the outcome.
+function New-C1590GoneFirstRoot {
+    $gone = New-Fx; $kept = New-Fx
+    Get-ChildItem -LiteralPath $gone.Root -Recurse -Force -File | Where-Object {$_.IsReadOnly} | ForEach-Object {$_.IsReadOnly=$false}
+    Remove-Item -LiteralPath $gone.Root -Recurse -Force
+    return @{Gone=$gone.Root;Kept=$kept.Root}
+}
+function Test-C1590_GoneRootPassed {
+    $roots = New-C1590GoneFirstRoot
+    Assert-Fx ((-not (Test-Path -LiteralPath $roots.Gone)) -and (Test-Path -LiteralPath (Join-Path $roots.Kept 'seed/.git')) -and $script:FixtureRoots.Count -eq 2) 'gone-root-fixture'
+}
+function Test-C1590_GoneRootFailed {
+    [void](New-C1590GoneFirstRoot)
+    throw 'c1590-original-failure'
+}
+
 try { & "Test-$Case" }
 finally {
     # Retain actual native TRX/diagnostics independently of disposable fixture cleanup.

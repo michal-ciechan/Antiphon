@@ -1170,6 +1170,24 @@ function Test-FFPreviousRunChain {
     Assert-FF $ingressOk 'chainIngress'
 }
 
+# CARD-1691 F1: names that merely contain .git (.gitignore, .github/, foo.git.txt) are
+# ordinary fixture files the archive must keep; only a whole .git path segment is the
+# Git admin directory of a real nested checkout, which it must still skip.
+$script:FFArchiveSegmentFiles = @('.gitignore', '.github/workflow.yml', 'foo.git.txt', 'checkout/.gitignore', 'checkout/tracked.txt')
+function Test-FFArchiveSegments {
+    $checkout = Join-Path $root 'checkout'
+    [void][IO.Directory]::CreateDirectory($checkout)
+    & git -C $checkout init -q -b fixture | Out-Null
+    $initExit = $LASTEXITCODE
+    foreach ($relative in $script:FFArchiveSegmentFiles) {
+        $path = Join-Path $root $relative
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+        [IO.File]::WriteAllText($path, $relative)
+    }
+    $written = @($script:FFArchiveSegmentFiles | Where-Object { [IO.File]::Exists((Join-Path $root $_)) }).Count
+    Assert-FF ($initExit -eq 0 -and [IO.File]::Exists((Join-Path $checkout '.git/HEAD')) -and $written -eq $script:FFArchiveSegmentFiles.Count) 'fixture' ('git init exit=' + $initExit + ' written=' + $written)
+}
+
 function Test-FFPreviousOrder {
     $entries=@(foreach($sid in @('A','B')){foreach($id in 1..5){[pscustomobject]@{suite=$sid;chunk=[string]$id}}})
     $previous=[pscustomobject]@{schemaVersion=1;liveness='closed';sha=('a'*40);completedAt='2026-10-31T01:00:00Z';suites=@([pscustomobject]@{id='A';chunk='1';result='pass';exitCode=0},[pscustomobject]@{id='A';chunk='3';result='pass';exitCode=0},[pscustomobject]@{id='B';chunk='2';result='FAIL';exitCode=1})}
@@ -1379,6 +1397,7 @@ switch -Exact ($Case) {
     'WindowsShapedHistory' { Test-WindowsShapedHistory; $expected=1 }
     'RefusesIncompleteEvidence' { Test-RefusesIncompleteEvidence; $expected=48 }
     'OrdinaryFailedChunk' { Test-OrdinaryFailedChunk; $expected=4 }
+    'C1590_ArchiveSegments' { Test-FFArchiveSegments; $expected=1 }
     default { throw ('unknown case: '+$Case) }
 }
 $gitWatch=[Diagnostics.Stopwatch]::StartNew()
