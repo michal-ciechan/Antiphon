@@ -206,6 +206,7 @@ describe('Phone audience selection', () => {
     )
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.9 s x 1.5 full-suite factor.
   it.each(['Phone', 'Brief'] as const)('channel preamble buttons preserve %s', async (style) => {
     let submitted: UpdateAgentRequest | null = null
     server.use(
@@ -225,5 +226,5 @@ describe('Phone audience selection', () => {
     }
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(submitted?.replyStyle).toBe(style))
-  })
+  }, 18_000)
 })

@@ -119,6 +119,7 @@ describe('AgentCreateModal presets', () => {
     })
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.2 s x 1.5 full-suite factor.
   it('Worker chip submits the worker preset and empty bundles', async () => {
     let submitted: CreateAgentRequest | null = null
     seedCreate((request) => { submitted = request })
@@ -140,8 +141,9 @@ describe('AgentCreateModal presets', () => {
       bundleKeys: [],
       remoteControlEnabled: false,
     })
-  })
+  }, 19_000)
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.1 s x 1.5 full-suite factor.
   it('creates an explicitly Phone agent', async () => {
     let submitted: CreateAgentRequest | null = null
     seedCreate(request => { submitted = request })
@@ -153,5 +155,5 @@ describe('AgentCreateModal presets', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     await settleQueries(queryClient)
     expect(submitted).toMatchObject({ replyStyle: 'Phone' })
-  })
+  }, 19_000)
 })

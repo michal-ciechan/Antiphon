@@ -62,6 +62,7 @@ describe('CardEditModal', () => {
   // 409 case's notification queues behind the limit and never renders (CARD-1690).
   afterEach(() => notifications.clean())
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.1 s x 1.5 full-suite factor.
   it('failed note read never clears saved notes on unrelated edit', async () => {
     const patch = vi.fn()
     server.use(http.get('/api/cards/card-1/private-notes', () => HttpResponse.json({ detail: 'unavailable' }, { status: 500 })),
@@ -74,7 +75,7 @@ describe('CardEditModal', () => {
     await userEvent.click(saveButton())
     await waitFor(() => expect(patch).toHaveBeenCalled())
     expect(patch.mock.calls[0][0]).not.toHaveProperty('privateNotes')
-  })
+  }, 19_000)
 
   it('explicit notes edit preserves whitespace and empty text clears', async () => {
     const patch = vi.fn()

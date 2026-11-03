@@ -101,6 +101,7 @@ describe('AgentSettingsModal bundle attachments', () => {
     expect(screen.getByText('Working the Antiphon board.')).toBeInTheDocument()
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.1 s x 1.5 full-suite factor.
   it('shows the bundles already attached to this agent', async () => {
     server.use(...handlers([agent], { ...detail, attachedBundleKeys: ['board-api'] }))
 
@@ -120,8 +121,9 @@ describe('AgentSettingsModal bundle attachments', () => {
       'aria-selected',
       'false',
     )
-  })
+  }, 16_000)
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.3 s x 1.5 full-suite factor.
   it('submits the attachment with the rest of the settings', async () => {
     // One save, not two: attachments ride the same PATCH as the style and the preamble, so a modal
     // that half-succeeded could never leave the agent in a state nobody chose.
@@ -143,7 +145,7 @@ describe('AgentSettingsModal bundle attachments', () => {
 
     await waitFor(() => expect(submitted).not.toBeNull())
     expect(submitted!.bundleKeys).toEqual(['board-api'])
-  })
+  }, 16_000)
 
   it('sends an empty list rather than nothing when every bundle is removed', async () => {
     // null on the request means "leave unchanged", so detaching the last bundle has to arrive as an

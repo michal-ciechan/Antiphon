@@ -381,6 +381,7 @@ const c1270Expectations: Record<C1270Read, Record<C1270Strength, { label: string
 }
 
 describe('C1270 failed-read matrix display', () => {
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.5 s ('none' Preferred Medium) x 1.5 full-suite factor.
   it.each(c1270Reads.flatMap(read => (['Preferred', 'Required'] as const).flatMap(strength =>
     (['Medium', 'Easy'] as const).map(tier => ({ read, strength, tier })))))(
     'C1270 V-2 $read read failure with a $strength pin on $tier', async ({ read, strength, tier }) => {
@@ -420,6 +421,7 @@ describe('C1270 failed-read matrix display', () => {
         expect(await within(screen.getByTestId('role-policy-section')).findByText('Could not load role policy.')).toBeInTheDocument()
       }
     },
+    17_000,
   )
 })
 

@@ -160,6 +160,7 @@ describe('ProviderEndpointFields on the project settings modal', () => {
     })))
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.1 s x 1.5 full-suite factor.
   it('omits providerEndpoints when saving an unrelated project field', async () => {
     const put = vi.fn()
     seedProject(put)
@@ -176,8 +177,9 @@ describe('ProviderEndpointFields on the project settings modal', () => {
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put.mock.calls[0][0]).toHaveProperty('name', 'Renamed project')
     expect(put.mock.calls[0][0]).not.toHaveProperty('providerEndpoints')
-  })
+  }, 19_000)
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.8 s x 1.5 full-suite factor.
   it('clears every endpoint with the empty map', async () => {
     const put = vi.fn()
     seedProject(put)
@@ -191,7 +193,7 @@ describe('ProviderEndpointFields on the project settings modal', () => {
 
     await waitFor(() => expect(put).toHaveBeenCalled())
     expect(put.mock.calls[0][0].providerEndpoints).toEqual({})
-  })
+  }, 18_000)
 
   it('shows the Codex key-required hint and blocks save without a key name', async () => {
     const put = vi.fn()
@@ -297,6 +299,7 @@ describe('ProviderEndpointFields on the agent settings modal', () => {
     })
   })
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 6.2 s x 1.5 full-suite factor.
   it('Direct mode hides the fields and submits providerEndpoint null', async () => {
     let submitted: Record<string, unknown> | null = null
     seedAgent((body) => { submitted = body })
@@ -315,5 +318,5 @@ describe('ProviderEndpointFields on the agent settings modal', () => {
     expect(submitted).toHaveProperty('providerEndpointMode', 'Direct')
     expect(submitted).toHaveProperty('providerEndpoint', null)
     expect(document.body.textContent ?? '').not.toContain(SENTINEL)
-  })
+  }, 19_000)
 })

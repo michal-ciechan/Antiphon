@@ -530,6 +530,7 @@ describe('creating a card', () => {
     }
   }
 
+  // Provisional budget (CARD-1690): 2x the loaded p95 5.9 s x 1.5 full-suite factor.
   it('creates with Inherit and sends private notes separately from the public description', async () => {
     const post = vi.fn()
     server.use(...boardHandlers(), http.post('/api/boards/board-1/cards', async ({ request }) => {
@@ -545,7 +546,7 @@ describe('creating a card', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New Card' })).not.toBeInTheDocument())
     await userEvent.click(screen.getByRole('button', { name: 'New Card' }))
     expect(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)')).toHaveValue('')
-  })
+  }, 18_000)
 
   it('counts the description against the shared limit and blocks an over-limit create', async () => {
     server.use(...boardHandlers())
