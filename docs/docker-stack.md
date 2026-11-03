@@ -763,6 +763,14 @@ quarantine with unpublished work still refuses a CARD-1008 recycle; a filesystem
 is published passes it. The slot ledger and quarantined directories must be read before a temp-runner
 drain (CARD-0831).
 
+The server chooses which roles lease with `Delegation:WorkspaceSlotRoles` (CARD-0824 S1c; a single string:
+`*`, `none` or `Plan,Docs`; an array is refused at startup, and `none`, not `[]`, is the soft rollback).
+The Docker server has no reloadable settings file and sets `Delegation__*` through `docker-compose.yml`,
+which is not reloaded, so its soft rollback is a server restart with `Delegation__WorkspaceSlotRoles=none`.
+A hot reload works only for the desktop AppHost's `appsettings.Development.json`, and only while no
+`Delegation__WorkspaceSlotRoles` environment variable shadows it. Confirm a rollback from the next task's
+`WorkspaceSlotDecision` event (`reason=roles_none`).
+
 ### Runner worktree retention (CARD-1677)
 
 The server job `antiphon:runner-worktree-retention` retires the `/work/worktrees/task-<8hex>` mirrors of

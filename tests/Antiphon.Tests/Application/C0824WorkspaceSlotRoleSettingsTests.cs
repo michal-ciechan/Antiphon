@@ -18,7 +18,9 @@ namespace Antiphon.Tests.Application;
 /// <see cref="DelegationSettingsRegistration.AddDelegationSettings"/>, the registration Program uses.
 /// </summary>
 [Category("Unit")]
-// The reload cases poll for up to 10 s (the 250 ms reload debounce plus inotify latency); the rest are under 50 ms.
+// The reload cases poll for up to 10 s (the 250 ms reload debounce plus inotify latency); measured at 2561829864 the
+// slowest case is 1.5 s and the rest are under 0.6 s. The budget covers the poll bound, so a slow reload fails with its
+// own message rather than the timeout.
 [Timeout(15_000)]
 public sealed class C0824WorkspaceSlotRoleSettingsTests
 {
@@ -136,12 +138,18 @@ public sealed class C0824WorkspaceSlotRoleSettingsTests
         }
 
         var refused = Should.Throw<OptionsValidationException>(() => _ = bound.Settings);
-        var failure = refused.Failures.Where(text => text.Contains("Delegation:WorkspaceSlotRoles", StringComparison.Ordinal))
-            .ShouldHaveSingleItem(string.Join(" | ", refused.Failures));
+        var failures = refused.Failures.Where(text => text.Contains("Delegation:WorkspaceSlotRoles", StringComparison.Ordinal)).ToList();
+        var all = string.Join(" | ", refused.Failures);
         if (json.StartsWith('['))
-            failure.ShouldContain("single string", Case.Sensitive, "the shape check refuses an array");
+        {
+            // The shape check must refuse an array itself. Measured here (net9.0): [] binds to "" (the grammar refuses that
+            // too) and ["Plan"] binds to the default "*", which only the shape check can refuse.
+            failures.Count(text => text.Contains("single string", StringComparison.Ordinal)).ShouldBe(1, all);
+        }
         else
-            failure.ShouldContain(CanonicalList, Case.Sensitive, "the grammar refuses an empty value");
+        {
+            failures.ShouldHaveSingleItem(all).ShouldContain(CanonicalList, Case.Sensitive, "the grammar refuses an empty value");
+        }
     }
 
     [Test]
