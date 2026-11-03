@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "d1766eff426d854d7d05197024823c707071a0e5d49886dbea40e66b41ede669",
+  "policyHash": "382fe6bcbef3cd9c468d498d9501c8e345b8c06e143c0950f2b6665668a40ffc",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -900,6 +900,13 @@
           "class": "C1677RetentionNativeProcessTests",
           "platform": "windows",
           "reason": "Linux-only by construction: the retention holder scan reads /proc/*/cwd and /proc/*/fd of real children and an unreadable proc root. The case remains required on Linux.",
+          "owner": "CARD-1677"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1677TempSweepNativeTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: a real symlinked /tmp entry and a real /proc cwd holder. The case remains required on Linux.",
           "owner": "CARD-1677"
         },
         {

@@ -747,6 +747,35 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
 A tree left in the retiring root (`retiring_refused`) stays registered, is reported, and is retried by phase B
 only on the next request for that task; it is never moved back.
 
+#### Runner temp sweep (CARD-1677 S2)
+
+The same tick can also sweep the runner's `/tmp`, under its own switch. It ships **OFF and dry-run**
+(`RunnerWorktreeRetention:TempSweep:Enabled=false`, `Execute=false`; the operator decision of 2026-11-03 turned
+on the worktree retention only). It runs only inside an enabled retention tick, so
+`RunnerWorktreeRetention:Enabled=false` stops it too. The runner (`src/Antiphon.SessionRunner/RunnerTempSweep.cs`)
+acts only on a **registered family**: a top-level `/tmp` name matching one of its exact, anchored regexes, each
+pinned to the repository file that creates it (`C1677TempFamilyRegistryTests`): `c487-probe`, `c487`,
+`pty-test-root` (the `TestSessionLogRoot.KnownPrefixes` roots), `c514-pty`, `c502-exit-cap`, `c1514`,
+`land-verify`, `bridge-queue`, `rcspeed`, plus `claude-scratch` (`/tmp/claude-1654/-work-worktrees-task-<8hex>`,
+the Claude CLI scratchpad; its own flag `TempSweep:Families:claude-scratch` stays false, and even when on it
+needs `/work/worktrees/task-<id>` gone and no `task-<id>.*` in the retiring root). An entry is removed only
+when it is not denied (`antiphon-pty-hosts`, `antiphon-pty-*`, `CoreFxPipe_*`, `dotnet-diagnostic-*`, `.X*`,
+`systemd-*`, `node-compile-cache` and the CARD-0826 `IsDenied` names), not a symlink, owned with every
+descendant by the runner uid, within 100,000 entries and 1 GiB, its newest regular-file write older than
+`MinAgeHours` (48), and the fail-closed holder scan finds no process with a cwd or fd inside. At most
+`MaxEntriesPerTick` (200) entries and `MaxBytesPerTick` (20 GiB) go per tick, oldest first, through the
+no-follow delete (an inner symlink is unlinked, never followed; a socket or FIFO keeps the entry). Every
+other name is reported as `unregistered` with its count and bytes per normalized prefix and never touched.
+
+Rows: Lane `RunnerTemp` in the tick's residue run (`Scope=runner-retention:server2`): one per family entry
+(`would_remove`, `removed` or a kept reason, `Branch=temp:<family>;bytes=<n>`) and one per unregistered prefix
+(`Branch=temp:unregistered;count=<n>;bytes=<n>`, a trailing `+` when the byte count hit its bound).
+
+Enabling (dry run first): set `TempSweep:Enabled=true`, read one tick's or the preview's `RunnerTemp` rows
+against the plan's census (docs/superpowers/plans/2026-11-03-card-1677-runner-worktree-retention-plan.md §1),
+then `TempSweep:Execute=true`. Turn `Families:claude-scratch` on only after its dry-run list has been read.
+Rollback: `TempSweep:Enabled=false` (or `Execute=false` for a dry run).
+
 ## Shared server2 runner caches (CARD-0849)
 
 The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,

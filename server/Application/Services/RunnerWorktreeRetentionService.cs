@@ -34,6 +34,7 @@ public sealed class RunnerWorktreeRetentionService
 {
     public const string LaneMirror = "RunnerMirror";
     public const string LaneInventory = "RunnerInventory";
+    public const string LaneTemp = "RunnerTemp";
     public const string EventPrefix = "runner_mirror_retained";
 
     private static readonly Regex LeafPattern = new(@"^task-[0-9a-f]{8}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -204,12 +205,102 @@ public sealed class RunnerWorktreeRetentionService
 
         if (inventory is not null)
             await RecordInventoryAsync(run, inventory, population, runnerId, ct);
+        // RED SHIM (CARD-1677 S2 red commit): the tick never sends a temp sweep.
+        if (_settings.CurrentValue.TempSweep.MinAgeHours < 0)
+            await SweepTempAsync(run, client, runnerId, preview: writeAll, tickStarted, ct);
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation(
             "Runner worktree retention {RunnerId} examined {Examined} eligible {Eligible} backedOff {BackedOff} sent {Sent}{Stopped}",
             runnerId, population.Count, eligible.Count, backedOff, sent, stopped is null ? "" : " stopped=" + stopped);
         return new TickResult(runnerId, sent, run.Id, population.Count, eligible.Count, backedOff, stopped);
+    }
+
+    /// <summary>
+    /// CARD-1677 S2 (plan §3.5). One bounded temp sweep per runner per tick, under its own switch
+    /// (<c>TempSweep:Enabled</c>, re-read right before the send, as are the kill switch and the tick budget) and in
+    /// DryRun unless <c>TempSweep:Execute</c> (the preview route always sends DryRun). The runner decides what is a
+    /// registered, old, unheld entry; every candidate and every unregistered prefix is a Lane RunnerTemp row.
+    /// </summary>
+    private async Task SweepTempAsync(WorktreeResidueRun run, PhoneHomeRunnerClient client, string runnerId, bool preview,
+        DateTime tickStarted, CancellationToken ct)
+    {
+        var temp = _settings.CurrentValue.TempSweep;
+        if (!temp.Enabled)
+            return;
+        var stopped = StopReason(execute: false, tickStarted);
+        if (stopped is not null || !_settings.CurrentValue.TempSweep.Enabled)
+        {
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Deferred, stopped ?? "tick_stopped_disabled", null, null, null, runnerId);
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+        var descriptor = await _runners.DescribeAsync(runnerId, ct);
+        if (descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.TempSweepV1, StringComparer.Ordinal) != true)
+        {
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Held, "runner_not_eligible", null, null, null, runnerId);
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+
+        var families = new Dictionary<string, bool>(temp.Families, StringComparer.Ordinal);
+        families.TryAdd(RunnerTempSweepSettings.ClaudeScratch, false);
+        var request = new PhoneHomeTempSweepRequest(temp.Execute && !preview ? TempSweepModes.Execute : TempSweepModes.DryRun,
+            Guid.NewGuid(), temp.MinAgeHours, temp.MaxEntriesPerTick, temp.MaxBytesPerTick, families);
+        PhoneHomeTempSweepResponse? response = null;
+        string? failure = null;
+        try
+        {
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            budget.CancelAfter(TimeSpan.FromMinutes(15));
+            response = await client.TempSweepAsync(request, budget.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            failure = ex.Message;
+        }
+
+        if (response is null || response.Reason is not null)
+        {
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Deferred, response?.Reason ?? "unknown", null, null, null, runnerId)
+                .OperationId = request.RequestId;
+            await _db.SaveChangesAsync(ct);
+            _logger.LogWarning("Runner temp sweep {RunnerId} mode {Mode}: {Reason} {Detail}", runnerId, request.Mode,
+                response?.Reason ?? "unknown", response?.Detail ?? failure ?? "");
+            return;
+        }
+
+        var root = (response.Root ?? "/tmp").TrimEnd('/');
+        foreach (var candidate in response.Candidates)
+        {
+            var (outcome, reason) = candidate.Verdict switch
+            {
+                TempSweepCodes.Removed => (WorktreeResidueCandidateOutcome.Removed, TempSweepCodes.Removed),
+                TempSweepCodes.WouldRemove => (WorktreeResidueCandidateOutcome.Preview, TempSweepCodes.WouldRemove),
+                TempSweepCodes.Kept when !string.IsNullOrWhiteSpace(candidate.Reason) => (WorktreeResidueCandidateOutcome.Held, candidate.Reason!),
+                _ => (WorktreeResidueCandidateOutcome.Deferred, "unknown"),
+            };
+            run.Candidates++;
+            if (outcome == WorktreeResidueCandidateOutcome.Held)
+                run.Held++;
+            var row = Row(run, LaneTemp, outcome, reason, null, root + "/" + candidate.Name,
+                "temp:" + candidate.Family + ";bytes=" + candidate.Bytes, runnerId);
+            row.OperationId = request.RequestId;
+            row.DirectoryRemoved = outcome == WorktreeResidueCandidateOutcome.Removed ? true : null;
+        }
+        foreach (var name in response.Unregistered)
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Held, "unregistered", null, root + "/" + name.Prefix,
+                "temp:unregistered;count=" + name.Count + ";bytes=" + name.Bytes + (name.BytesComplete ? "" : "+"), runnerId)
+                .OperationId = request.RequestId;
+        if (!response.Complete)
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Deferred, "temp_scan_incomplete", null, root, null, runnerId);
+        if (response.Truncated)
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Deferred, "temp_report_truncated", null, root, null, runnerId);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Runner temp sweep {RunnerId} mode {Mode}: candidates {Candidates} removed {Removed} ({RemovedBytes} bytes) unregistered prefixes {Unregistered}{Truncated}",
+            runnerId, request.Mode, response.Candidates.Count, response.Removed, response.RemovedBytes, response.Unregistered.Count,
+            response.Truncated ? " truncated" : "");
     }
 
     /// <summary>Review A-2/A-3: re-read before every request, so the kill switch and the tick budget act between requests.</summary>

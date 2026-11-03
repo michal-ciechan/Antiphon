@@ -84,13 +84,17 @@ builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
     // request is rechecked here.
     var phoneHome = sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value;
     RunnerWorkspaceRetention? retention = null;
+    RunnerTempSweep? tempSweep = null;
     if (phoneHome.Enabled && OperatingSystem.IsLinux())
     {
         var workspace = new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd);
         workspace.WorkspaceUseGate = runtime.WorkspaceUseGate;
         retention = new RunnerWorkspaceRetention(workspace, new ProcWorkspaceSlotProcessProbe());
+        // CARD-1677 S2: /tmp, registered families only; it acts only on a server TempSweep request, which ships off
+        // (RunnerWorktreeRetention:TempSweep:Enabled=false, Execute=false).
+        tempSweep = RunnerTempSweep.CreateDefault(retention.RetiringRoot);
     }
-    return new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve(), retention);
+    return new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve(), retention, tempSweep);
 });
 builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
 {

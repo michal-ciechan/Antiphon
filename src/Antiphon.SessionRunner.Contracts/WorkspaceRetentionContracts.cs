@@ -71,3 +71,64 @@ public sealed record WorkspaceRetentionEntry(
 
 public sealed record PhoneHomeWorkspaceRetentionInventoryResponse(
     IReadOnlyList<WorkspaceRetentionEntry> Entries, bool Complete, string? Detail = null);
+
+/// <summary>CARD-1677 S2. Request modes for <see cref="PhoneHomeOperation.TempSweep"/>.</summary>
+public static class TempSweepModes
+{
+    public const string DryRun = "DryRun";
+    public const string Execute = "Execute";
+}
+
+/// <summary>CARD-1677 S2. Verdicts and reason codes of one <see cref="PhoneHomeOperation.TempSweep"/> candidate. A refusal is always a kept entry.</summary>
+public static class TempSweepCodes
+{
+    public const string Kept = "kept";
+    public const string WouldRemove = "would_remove";
+    public const string Removed = "removed";
+
+    public const string Denied = "denied";
+    public const string FamilyDisabled = "family_disabled";
+    public const string MirrorPresent = "mirror_present";
+    public const string Symlink = "symlink";
+    public const string ForeignOwner = "foreign_owner";
+    public const string OwnerUnknown = "owner_unknown";
+    public const string InventoryLimit = "inventory_limit";
+    public const string TooYoung = "too_young";
+    public const string AgeUnknown = "age_unknown";
+    public const string LiveProcess = "live_process";
+    public const string HolderScanUnknown = "holder_scan_unknown";
+    public const string TickBound = "tick_bound";
+    public const string TickBudget = "tick_budget";
+    public const string UnprovenContent = "unproven_content";
+    public const string ChangedSinceInventory = "changed_since_inventory";
+    public const string DeleteFailed = "delete_failed";
+    public const string RequestInvalid = "request_invalid";
+}
+
+/// <summary>
+/// CARD-1677 S2. One sweep of the runner's own temp root. Only the runner's registered families are
+/// candidates; <see cref="Families"/> can switch a family off (or <c>claude-scratch</c> on), never add one.
+/// </summary>
+public sealed record PhoneHomeTempSweepRequest(
+    string Mode, Guid RequestId, int MinAgeHours, int MaxEntries, long MaxBytes,
+    IReadOnlyDictionary<string, bool>? Families = null);
+
+/// <summary>CARD-1677 S2. One registered-family entry and what the sweep did with it.</summary>
+public sealed record TempSweepCandidate(
+    string Name, string Family, string Verdict, string? Reason = null, long Bytes = 0, DateTime? NewestWriteUtc = null,
+    IReadOnlyList<WorkspaceRetainHolder>? Holders = null, string? Detail = null);
+
+/// <summary>CARD-1677 S2. Names that match no registered family, by normalized prefix: reported, never touched.</summary>
+public sealed record TempSweepUnregistered(string Prefix, int Count, long Bytes, bool BytesComplete);
+
+public sealed record PhoneHomeTempSweepResponse(
+    string Mode,
+    IReadOnlyList<TempSweepCandidate> Candidates,
+    IReadOnlyList<TempSweepUnregistered> Unregistered,
+    bool Complete = true,
+    bool Truncated = false,
+    int Removed = 0,
+    long RemovedBytes = 0,
+    string? Reason = null,
+    string? Detail = null,
+    string? Root = null);

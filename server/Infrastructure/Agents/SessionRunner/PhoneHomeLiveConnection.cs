@@ -342,6 +342,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         PhoneHomeOperation.SetCapacity => TimeSpan.FromMinutes(6),
         // CARD-1677: phase A waits for the runner's command lock, phase B removes a multi-GiB tree.
         PhoneHomeOperation.WorkspaceRetain => TimeSpan.FromMinutes(6),
+        // CARD-1677 S2: the runner starts no removal past its 10-minute budget; allow the one in flight to finish.
+        PhoneHomeOperation.TempSweep => TimeSpan.FromMinutes(15),
         _ => TimeSpan.FromSeconds(60),
     };
 

@@ -145,6 +145,12 @@ public enum PhoneHomeOperation
     /// (Execute) or only reported (DryRun). The server decides "finished"; the runner decides "safe".
     /// </summary>
     WorkspaceRetain = 46,
+
+    /// <summary>
+    /// CARD-1677 S2. One bounded sweep of the runner's temp root, limited to its registered name families (DryRun or
+    /// Execute). Not a workspace mutation: it never touches the worktree root and runs outside the mutation lock.
+    /// </summary>
+    TempSweep = 47,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>
