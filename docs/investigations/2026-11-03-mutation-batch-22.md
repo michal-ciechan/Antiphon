@@ -2,7 +2,7 @@
 
 Task 3af9f716 (Mutation, waived). This was an ordinary worktree sweep on master
 `91aa1636816e64bf4cf08aa4b631207f0e9df47a` (L). It ran on server2 (Linux) on 2026-11-03,
-from 03:24 to 03:50 UTC.
+from 03:24 to 04:03 UTC.
 
 **These results are NOT CARD-0478 evidence.** Merge-role lands have no land operation id, so
 there is no SourceLanding. The orchestrator waived the SourceLanding verification card and ran
@@ -13,7 +13,11 @@ this as an ordinary-worktree sweep. No product code was changed and nothing was 
 - 27 mutants were run: 20 killed, 7 survived. Two extra probes (P1, P2) tested the CARD-1665
   fixture guard. They are not mutants.
 - All four cards were covered in the brief's order, well inside the 180-minute budget. Slot waits were 0 to 30 s.
-- The baseline was green before any mutant (32/32 and 9/9), and the restored, rebuilt tree at L was green after (32/32 and 9/9).
+- The baseline was green before any mutant (32/32 and 9/9; 33/33 with the corrected filter), and the restored, rebuilt tree at L was green after (33/33 and 9/9).
+- **Filter correction.** The first Antiphon.Tests filter named the file `PhoneHomeRollingRunnerDrainTests`, but that file holds the partial class `PhoneHomeRollingRunnerTests`. So rounds r00 to r07 (32 tests) never ran `C1649_RecordReleaseStampsOnlyTheStuckAttemptOfATaskThatIsNotLive`.
+  - The WSR survivors M49-L, M56-WB and M56-WR were re-gated and re-run in rounds q00 to q03 with the corrected filter (33 tests). All three still survive.
+  - The killed results are unaffected, because a missing test can only hide a kill.
+  - `(A_stale*)` also pulled in DataRetentionServiceTests.A_stale_stopped_session_that_is_an_agents_PersistentSessionId_is_excluded. It ran in every round and stayed green.
 
 The survivors:
 
@@ -45,7 +49,7 @@ CARD-1670's landed witnesses killed only one of the CARD-1673 survivors: M56-WA,
   - r06: M68-8 (bound test) and M68-9 (the ModalBlocked case).
   - r02: M68-2 (bound test) and M68-7 (modal test).
   - Script and fixture mutants were never mixed, except in P2, which is the combination by design.
-- **The Antiphon.Tests filter.** Every round used the same filter (32 tests):
+- **The Antiphon.Tests filter.** Rounds r00 to r07 and r99 used the filter below (32 tests). Rounds q00 to q03 and q99 used the same filter with `(PhoneHomeRollingRunnerTests*)` in place of `(PhoneHomeRollingRunnerDrainTests*)` (33 tests, C1649 included):
   `/*/*/(RunnerStartupStaleObservationTests*)|(C1656RecordReleaseHardeningTests*)|(PhoneHomeRollingRunnerDrainTests*)|(DataRetentionServiceTests*)|(HostStatsPollServiceTests*)|(VolumeRetirementContentTests*)/(A_stale*)|(A_refusal*)|(An_uncertain*)|(A_modal*)|(A_dialog*)|(The_retry*)|(C1656_*)|(C1670_*)|(C1649_*)|(C1658_*)|(C1662_*)|(C1663_*)|(C1672_*)|(Fixture_setup_runs_once*)|(Temp_recycle_refuses*)`
 - **The SessionRunner.Tests filter (9 tests):** `/*/*/Card1653RefusalRetainsHostTests/*`.
 
@@ -60,6 +64,11 @@ CARD-1670's landed witnesses killed only one of the CARD-1673 survivors: M56-WA,
 | r06 | M68-8, M68-9, M49-L; script P1 (dedent) | 32 | 4 |
 | r07 | M68-7b, M65-X; script P1 (dedent), so P2 | 32 | 3 |
 | r99 restored | none, rebuilt at L | 32 | 0 |
+| q00 baseline (corrected filter, WSR re-gated) | none | 33 | 0 |
+| q01 | M49-L | 33 | 0 |
+| q02 | M56-WB | 33 | 0 |
+| q03 | M56-WR | 33 | 0 |
+| q99 restored | none, rebuilt at L | 33 | 0 |
 | s00 baseline | none | 9 | 0 |
 | s01 | PC-D2 | 9 | 1 |
 | s99 restored | none, rebuilt at L | 9 | 0 |
@@ -103,9 +112,9 @@ M1 to M5 come from Code report 3be64a0a.
 | PC | file:line (L) | Mutation | Result | Killing test (assertion) |
 |---|---|---|---|---|
 | M56-WA attempt term | WSR:220 | `t.Attempt == attempt` dropped | **killed now** | C1670_ReleaseOnATaskWhoseAttemptChangesIsRefusedChanged (same as M1) |
-| M56-WB binding term | WSR:220-221 | runner, slot and generation terms dropped | **SURVIVED** | none |
-| M56-WR release-null term | WSR:221 | `RemoteWorkspaceSlotReleasedAt == null` dropped | **SURVIVED** | none |
-| M49-L live-status pre-check | WSR:196 | the `HoldingLease.Contains(task.Status)` pre-check removed | **SURVIVED** | none |
+| M56-WB binding term | WSR:220-221 | runner, slot and generation terms dropped | **SURVIVED** | none (q02: 33/33 green) |
+| M56-WR release-null term | WSR:221 | `RemoteWorkspaceSlotReleasedAt == null` dropped | **SURVIVED** | none (q03: 33/33 green) |
+| M49-L live-status pre-check | WSR:196 | the `HoldingLease.Contains(task.Status)` pre-check removed | **SURVIVED** | none (q01: 33/33 green, C1649 included) |
 | M62-A1c | DRS:577 | `skipped ??= lastFailure` dropped | **SURVIVED** | none |
 
 **M56-WB.** This is a reachable coverage gap. CARD-1670 added the attempt-change witness only. Nothing rebinds the task between the checks and the stamp.
@@ -123,7 +132,8 @@ M1 to M5 come from Code report 3be64a0a.
 
 **M49-L.** This is still a reachable coverage gap. The analysis from batch 21 stands: the CARD-1656 conditional update gives the same `task_live` code for the stuck attempt.
 
-- **Proposed witness:** in `PhoneHomeRollingRunnerDrainTests.C1649_RecordReleaseStampsOnlyTheStuckAttemptOfATaskThatIsNotLive`, the row `SetAsync(2, AgentTaskStatus.Working)` should assert the code `workspace_slot_release_task_live`.
+- **Confirmed at L:** the row at PhoneHomeRollingRunnerDrainTests.cs:563 passes `code: null` to `RefusedAsync`.
+- **Proposed witness:** in `PhoneHomeRollingRunnerTests.C1649_RecordReleaseStampsOnlyTheStuckAttemptOfATaskThatIsNotLive`, the row `SetAsync(2, AgentTaskStatus.Working)` should assert the code `workspace_slot_release_task_live`.
 - Without the pre-check, that row reaches the attempt-mismatch check first and returns `workspace_slot_release_attempt_mismatch`.
 
 **M62-A1c.** This is still a reachable coverage gap.
@@ -194,13 +204,14 @@ Code: `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs` (the fix
 
   The two untracked `B22Mutant.cs` helper files were deleted.
 - **Rebuild.** Both test projects were rebuilt at L: `Antiphon.Tests` (275 s lease) and `Antiphon.SessionRunner.Tests` (29 s lease).
+  - After the q rounds, the WSR file was restored again, `server/B22Mutant.cs` was deleted again, and `Antiphon.Tests` was rebuilt at L once more (250 s lease).
 - **Stale-DLL check.** A UTF-16 search confirmed that no `B22_MUTANT` string is left in any of these DLLs:
   - Antiphon.Server.dll (both copies);
   - Antiphon.Tests.dll;
   - Antiphon.SessionRunner.dll (both copies).
-- **Restored green at L:** Antiphon.Tests total 32, failed 0. Antiphon.SessionRunner.Tests total 9, failed 0.
+- **Restored green at L:** Antiphon.Tests total 33, failed 0, skipped 0 (q99). Antiphon.SessionRunner.Tests total 9, failed 0 (s99).
 - **Final state.**
   - HEAD was `91aa1636816e64bf4cf08aa4b631207f0e9df47a` before this report commit.
   - Tracked source and index are clean, and no sweep process is still running.
   - The remaining untracked outputs are the gitignored native `bin/` and `obj/` trees and `.antiphon/inbox/`.
-- **Leases.** There were 12 build-slot leases: 4 builds that also ran tests, and 8 no-build runs. The logs and TRX files are in the task scratchpad (`logs/run-*.log`, `trx/<round>/`), which is not committed.
+- **Leases.** There were 17 build-slot leases: 6 builds that also ran tests, and 11 no-build runs. The logs and TRX files are in the task scratchpad (`logs/run-*.log`, `trx/<round>/`), which is not committed.
