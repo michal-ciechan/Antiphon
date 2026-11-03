@@ -1497,7 +1497,7 @@ implementation, with tests and fixture assertions unchanged:
 | PC-46 | Record WorktreeBaseSource.Explicit for the Repair arm | DG.C508_RepairRecordsOwnerAndSkipsSiblings; persisted Source must equal Repair |
 | PC-47 | Set repair WorktreeBaseTaskId=null | DG.C508_RepairRecordsOwnerAndSkipsSiblings; persisted TaskId must equal owner.Id |
 | PC-48 | Invert the recorded-vs-observed ref comparison in the mismatch producer | DG.C508_GuardRefMismatchWarnedOnce; unequal-ref row with one ordinary warning must have one mismatch event (mutant 0); equal-ref control must have none |
-| PC-49 | After constructing the mismatch event/note pair, append an additional valid pair with fresh IDs when guard.Warnings.Count > 1 | DG.C508_GuardRefMismatchWarnedOnce; two-sibling row must have one mismatch event and three total notes (mutant two/four); no uniqueness error qualifies |
+| PC-49 | After constructing the mismatch event/note pair, append an additional valid pair with fresh IDs when guard.Warnings.Count > 1 | DG.C508_VanishedDefaultMismatchWarnedOnce(2) (CARD-1612, amendment F; was DG.C508_GuardRefMismatchWarnedOnce): two-sibling vanished-default row must have one mismatch Warning, four total notes and four parent deliveries (mutant two/five/five); rows 0 and 1 are the below-threshold controls; no uniqueness error qualifies |
 | PC-50 | Retain mismatch Warning but omit only its notification insertion; the default-unresolved obligation remains | DE.C508_MismatchWarningReachesCaller and DBN.C508_VanishedDefaultWarningReachesCaller: vanished trunk yields one complete base-observation-stale prompt (mutant 0) |
 | PC-51 | Commit and dispose the explicit warning transaction immediately before its SaveChangesAsync; remove its later CommitAsync so SaveChanges commits implicitly | DBN.C508_WarningCommitAtomic; after warning-specific after-save exception, fresh observer must find zero warning events and notes (mutant one each) |
 | PC-52 | For DispatchBase in ReconcileAsync, replace note.ParentSessionId with current AgentTask.ParentSessionId before destination resolution | DBN.C508_WarningPayloadAndDestination; after task destination edit A->B, persisted note and queue destination must remain A |
@@ -2426,7 +2426,7 @@ mutated row, not exit status alone.
 | PC-46 | Record Explicit for Repair source | DG.C508_RepairRecordsOwnerAndSkipsSiblings: persisted Source=Repair |
 | PC-47 | Set repair WorktreeBaseTaskId=null | DG.C508_RepairRecordsOwnerAndSkipsSiblings: BaseTaskId=owner.Id |
 | PC-48 | Invert mismatch comparison when building capture drafts | DG.C508_GuardRefMismatchWarnedOnce: unequal-ref/one-sibling row mismatch count=1; equal-ref count=0 |
-| PC-49 | In mismatch materialization, if claim has >1 sibling intent, add a second valid Warning/note pair with fresh IDs and same detail | DG.C508_GuardRefMismatchWarnedOnce: two-sibling claim has one mismatch and three total notes (mutant two/four), no constraint error |
+| PC-49 | In mismatch materialization, if claim has >1 sibling intent, add a second valid Warning/note pair with fresh IDs and same detail | DG.C508_VanishedDefaultMismatchWarnedOnce(2) (CARD-1612, amendment F; was DG.C508_GuardRefMismatchWarnedOnce, which has no mismatch row since CARD-1349 S2): two-sibling vanished-default claim has one mismatch Warning, four total notes and four parent deliveries (mutant two/five/five), no constraint error; rows 0 and 1 stay green under the mutant |
 | PC-50 | Omit only mismatch note insertion in materializer; retain Warning/marker and the default-unresolved note | DE.C508_MismatchWarningReachesCaller: vanished trunk yields one complete native base-observation-stale prompt (mutant 0). DBN.C508_VanishedDefaultWarningReachesCaller is the Linux prompt witness (idle delivered, busy Pending then one prompt). DG.C508_GuardRefMismatchWarnedOnce (`moveTheDefault=true`) remains the re-observed-cut half and expects zero stale intents |
 | PC-51 | Commit/dispose projection transaction before SaveChanges; remove later commit | DBN.C508_WarningCommitAtomic: after-save fault leaves pair counts=0 and MaterializedAt=null |
 | PC-52 | In ReconcileAsync replace DispatchBase ParentSessionId with current task parent | DBN.C508_WarningPayloadAndDestination: after second A->B edit, queue destination remains A |
@@ -2754,3 +2754,25 @@ prompt witness. DG.C508_GuardRefMismatchWarnedOnce (`moveTheDefault=true`)
 stays the re-observed-cut half and expects zero stale intents. Amendment D's
 "move the project default under the lease" sentence is the historical producer;
 it is not the current PC-50 killer.
+
+## Plan amendment F — PC-49 killer with siblings (CARD-1612, 2026-11-03)
+
+Amendment E left PC-49 with no killer: DG.C508_GuardRefMismatchWarnedOnce has
+no mismatch row, and the vanished-default witnesses in DBN have no siblings.
+Deleting `trunk` under the lease is not a sibling arrangement either: with any
+divergent sibling the observation freezes the `trunk` tip, the claim's
+frozen-ref revalidation sees it vanish and refuses (`SiblingObservationStale`,
+CARD-1428 D-3), and the re-inspected tick observes HEAD with no mismatch.
+
+DG.C508_VanishedDefaultMismatchWarnedOnce (rows 0, 1 and 2 divergent siblings)
+deletes `trunk` after the claim's revalidation instead, at the cut's worktree
+listing that precedes the configured-default probe (an `IWorktreeManager`
+decorator armed once the repository lease is taken). The cut falls back to
+HEAD / RepoHead and owes exactly one `base-observation-stale` intent, one
+`default-unresolved` and one per sibling; after materialization and
+reconciliation each has one Warning, one note and one parent queued delivery.
+Row 2 is the PC-49 killer: the CARD-1612 scratch mutant in
+`DispatchBaseWarningIntentService.MaterializeAsync` turned it red on the
+mismatch Warning count (2 for 1) while rows 0 and 1 stayed green. Removing the
+mismatch intent, its note or its delivery is red on every row. PC-49 stays
+pending for SourceLanding Mutation.
