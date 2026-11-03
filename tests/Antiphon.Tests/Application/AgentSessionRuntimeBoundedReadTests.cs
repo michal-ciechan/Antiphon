@@ -1,6 +1,11 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -111,15 +116,112 @@ public sealed class AgentSessionRuntimeBoundedReadTests
         await Should.ThrowAsync<OperationCanceledException>(() => t2.WaitAsync(TimeSpan.FromSeconds(2)));
     }
 
+    /// <summary>
+    /// CARD-1679 D-2 (W1): a session bound to another runner reads live or unknown from that runner's
+    /// phone-home inventory alone. The local runner's List cannot name it, so a local List that is
+    /// canceled, refused or past its deadline must neither be called nor fail the answer.
+    /// </summary>
+    [Test]
+    [Arguments("canceled")]
+    [Arguments("http")]
+    [Arguments("deadline")]
+    public async Task C1679_Remote_bound_liveness_ignores_a_failing_local_list(string fault)
+    {
+        var live = Guid.NewGuid();
+        var unknown = Guid.NewGuid();
+        var absent = Guid.NewGuid();
+        var runner = new BlockingSessionRunnerClient();
+        Fault(runner, fault);
+        var time = new FakeTimeProvider(Start);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var runtime = NewRuntime(runner, provider, time, new RemoteInventoryDirectory([live], [unknown]));
+
+        (await AnswerAsync(runtime.IsLiveOrUnknownAsync(Bound(live, RemoteRunner), CancellationToken.None), runner, time))
+            .ShouldBeTrue("a live server2 session reads live from its inventory");
+        (await AnswerAsync(runtime.IsLiveOrUnknownAsync(unknown, RemoteRunner, CancellationToken.None), runner, time))
+            .ShouldBeTrue("an unknown server2 session is never read as gone");
+        (await AnswerAsync(runtime.IsLiveOrUnknownAsync(Bound(absent, RemoteRunner), CancellationToken.None), runner, time))
+            .ShouldBeFalse("a server2 session its inventory does not name is not live");
+        Volatile.Read(ref runner.ListCalls).ShouldBe(0, "no local List for a session bound to another runner");
+    }
+
+    /// <summary>CARD-1679 control (CARD-1362 D-3): a locally bound session still fails on a failed local List.</summary>
+    [Test]
+    [Arguments("canceled", null)]
+    [Arguments("http", null)]
+    [Arguments("deadline", null)]
+    [Arguments("canceled", PhoneHomeProtocol.LocalRunnerId)]
+    [Arguments("deadline", PhoneHomeProtocol.LocalRunnerId)]
+    public async Task C1679_Local_bound_liveness_still_propagates_a_list_failure(string fault, string? runnerId)
+    {
+        var live = Guid.NewGuid();
+        var runner = new BlockingSessionRunnerClient();
+        Fault(runner, fault);
+        var time = new FakeTimeProvider(Start);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var runtime = NewRuntime(runner, provider, time, new RemoteInventoryDirectory([live], []));
+
+        var failure = await Should.ThrowAsync<Exception>(
+            () => AnswerAsync(runtime.IsLiveOrUnknownAsync(Bound(live, runnerId), CancellationToken.None), runner, time));
+        if (fault == "http")
+            failure.ShouldBeOfType<HttpRequestException>();
+        else
+            failure.ShouldBeAssignableTo<OperationCanceledException>();
+        Volatile.Read(ref runner.ListCalls).ShouldBe(1);
+    }
+
+    private const string RemoteRunner = "server2";
+
+    private static AgentSession Bound(Guid id, string? runnerId) =>
+        new() { Id = id, RunnerId = runnerId, Status = SessionStatus.Running };
+
+    private static void Fault(BlockingSessionRunnerClient runner, string fault)
+    {
+        if (fault == "canceled")
+            runner.FaultAll(new TaskCanceledException("C1679 local list canceled"));
+        else if (fault == "http")
+            runner.FaultAll(new HttpRequestException("C1679 local runner refused"));
+        else if (fault != "deadline")
+            throw new ArgumentOutOfRangeException(nameof(fault), fault, null);
+    }
+
+    /// <summary>A blocked local List is released by advancing the injected clock past the 5 s deadline.</summary>
+    private static async Task<bool> AnswerAsync(Task<bool> answer, BlockingSessionRunnerClient runner, FakeTimeProvider time)
+    {
+        var calls = Volatile.Read(ref runner.ListCalls);
+        await WaitUntilAsync(() => answer.IsCompleted || Volatile.Read(ref runner.ListCalls) > calls);
+        if (!answer.IsCompleted)
+            time.Advance(TimeSpan.FromMilliseconds(5000));
+        return await answer.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private sealed class RemoteInventoryDirectory(Guid[] live, Guid[] unknown) : ISessionRunnerDirectory
+    {
+        public ISessionRunnerClient Local => throw new NotSupportedException();
+        public ISessionRunnerClient Resolve(string? runnerId) => throw new NotSupportedException();
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public IReadOnlyList<string> KnownRunnerIds { get; } = [PhoneHomeProtocol.LocalRunnerId, RemoteRunner];
+        public Guid? GetLiveStoreId(string? runnerId) => null;
+        public IReadOnlyCollection<Guid> LiveRemoteSessionIds() => live;
+        public IReadOnlyCollection<Guid> UnknownRemoteSessionIds() => unknown;
+        public bool RemoteInventoryPending(string? runnerId) => false;
+    }
+
     private static AgentSessionRuntime NewRuntime(
-        BlockingSessionRunnerClient runner, ServiceProvider provider, FakeTimeProvider time)
+        BlockingSessionRunnerClient runner, ServiceProvider provider, FakeTimeProvider time,
+        ISessionRunnerDirectory? directory = null)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c1362-{Guid.NewGuid():N}");
         return new AgentSessionRuntime(
             runner, new MockEventBus(),
             Options.Create(new AgentSessionSettings { SessionLogPath = Path.Combine(tempRoot, "session-logs") }),
             provider.GetRequiredService<IServiceScopeFactory>(),
-            time, NullLogger<AgentSessionRuntime>.Instance);
+            time, NullLogger<AgentSessionRuntime>.Instance, directory: directory);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
