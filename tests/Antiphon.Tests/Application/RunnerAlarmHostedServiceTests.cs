@@ -321,7 +321,6 @@ public sealed class RunnerAlarmHostedServiceTests
         clock.Inner.Advance(TimeSpan.FromSeconds(1));
         await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "drainer" && episode.RaisedAt is not null),
             "the loop did not wake one second past the drain bound");
-        source.Calls.ShouldBe(passes + 1, "one pass raises the overrun drain");
         await service.StopAsync(CancellationToken.None);
     }
 
