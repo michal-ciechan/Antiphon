@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react';
 import { afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { server } from './mocks/server';
 import { releaseDetachedStyleSheets } from './detachedStyleSheets';
+import { installPollingElementError } from './pollingElementError';
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -36,6 +37,8 @@ Object.defineProperty(globalThis, 'ResizeObserver', {
   writable: true,
   value: ResizeObserverMock,
 });
+
+installPollingElementError();
 
 // Start MSW server before all tests
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
