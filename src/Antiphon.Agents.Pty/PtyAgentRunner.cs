@@ -657,6 +657,18 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     }
 
     /// <summary>
+    /// CARD-1681: whether a pty master read error is the Linux hangup that ends output: an EIO
+    /// after the root has exited. An EIO while the root lives, or any other error, is not.
+    /// </summary>
+    internal static bool IsHangupAfterRootExit(IOException ex, bool rootExited) => false;
+
+    /// <summary>
+    /// CARD-1681: whether <c>/proc/&lt;pid&gt;/stat</c> shows the process gone (null), a zombie,
+    /// dead, or already inside do_exit (PF_EXITING, set before its descriptors close).
+    /// </summary>
+    internal static bool ProcStatShowsExit(string? stat) => false;
+
+    /// <summary>
     /// CARD-1617: whether the next explicit Linux release may issue the kill. Never after a
     /// success; after failed attempt k only once min(2^(k-1) s, 60 s) has passed since that
     /// attempt ended. Called under <see cref="_writeGate"/>.

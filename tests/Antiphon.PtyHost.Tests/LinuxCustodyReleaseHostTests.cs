@@ -332,6 +332,106 @@ public sealed class LinuxCustodyReleaseHostTests
         }
     }
 
+    /// <summary>
+    /// CARD-1681. After the root exits the pty master reads EIO; that is end of output, so an
+    /// explicit release of an empty tree drains and receipts. Red while EIO is a drain failure.
+    /// </summary>
+    [Test]
+    public async Task C1681_Eio_after_root_exit_drains_to_receipt()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        });
+        host.Session.UseContainmentForTests(containment);
+        var (store, binding) = Reserve(host, files: null);
+        var release = Path.Combine(host.TempDir, "release");
+        var child = 0;
+        try
+        {
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "printf 'c1681-tail\\n'", "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            child = ((LaunchedMessage)reply).ChildPid;
+            File.WriteAllText(release, "go");
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+            host.Session.Status.ShouldBe(PtyHostStatus.Exited);
+
+            var final = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+            final.State.ShouldBe(VerificationCustodyState.Exited, final.Reason);
+            var receipt = store.ValidateReceipt(final.Receipt!, binding, final.Host!);
+            receipt.ActiveProcesses.ShouldBe(0u);
+            receipt.OutputDrained.ShouldBeTrue();
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1681. A live root that closes every slave descriptor also makes the master read EIO.
+    /// That is not end of output: the drain fails and no receipt is written, even for an empty
+    /// tree. Green before the fix; red if every EIO is read as end of output.
+    /// </summary>
+    [Test]
+    public async Task C1681_Eio_while_root_alive_stays_drain_failure()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        });
+        host.Session.UseContainmentForTests(containment);
+        var (store, binding) = Reserve(host, files: null);
+        var release = Path.Combine(host.TempDir, "release");
+        var detached = Path.Combine(host.TempDir, "detached");
+        var child = 0;
+        try
+        {
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "exec </dev/null >/dev/null 2>&1", $": > '{detached}'",
+                HoldUntil(release + "-exit"), "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            child = ((LaunchedMessage)reply).ChildPid;
+            File.WriteAllText(release, "go");
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (!File.Exists(detached) && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+            File.Exists(detached).ShouldBeTrue();
+            host.Session.Status.ShouldNotBe(PtyHostStatus.Exited);
+
+            var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+            status.State.ShouldBe(VerificationCustodyState.Unknown);
+            status.Reason.ShouldBe("observation_failed");
+            status.Receipt.ShouldBeNull();
+            host.Session.Status.ShouldNotBe(PtyHostStatus.Exited);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            File.WriteAllText(release + "-exit", "go");
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
     private static async Task ShouldDrainAsync(HostHarness host, VerificationExecutionBinding binding)
     {
         var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
