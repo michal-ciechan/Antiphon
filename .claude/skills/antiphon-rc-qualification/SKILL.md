@@ -232,9 +232,10 @@ through a `1>` wrapper buffer; the run itself survived.
   nothing). It reads `launch-record.json` (`checkoutRoot`, `expectedSha`,
   `nightlyArguments`), refuses (exit 2) a record without `-RunId` or with a run id other than the
   supervisor's (`ANTIPHON_QUALIFICATION_RUN_ID`), refuses (exit 3) while `run.lock` names a live
-  owner, refuses a HEAD mismatch, and runs `build-slot.ps1 -- nightly-run.ps1`. The `run.lock`
-  check is point-in-time: a run that starts while the launch waits for a build slot (up to 45
-  min) makes nightly-run refuse it (exit 3), and one that ends in that wait lets it start after.
+  owner or cannot be read or parsed (a dead owner is left to nightly-run), refuses a HEAD
+  mismatch, and runs `build-slot.ps1 -- nightly-run.ps1`. The `run.lock` check is point-in-time:
+  a run that starts while the launch waits for a build slot (up to 45 min) makes nightly-run
+  refuse it (exit 3), and one that ends in that wait lets it start after.
 - `start-supervisor.ps1 -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
   <candidate>\logs -StateRoot <state-dir> -RunId <id>` starts `supervise-rc.ps1` with its **own
   hidden console** (setsid on Unix) and output in its own files, waits for
@@ -243,18 +244,25 @@ through a `1>` wrapper buffer; the run itself survived.
   identity and a run id that `last-run.json` or `run.lock` already names.
 - `supervise-rc.ps1` writes `supervisor.log` one flushed line at a time (START, LAUNCHED,
   PROGRESS, HANG_SUSPECTED, EXIT), `supervisor-heartbeat.json`, `launch-child.json` and finally
-  `commission-exit.txt`, and records the run id in the identity and launch-child records. It only
-  observes; it never stops anything.
+  `commission-exit.txt`, and records the run id in the identity and launch-child records. While
+  `last-run.json` names its run id it copies it to `own-last-run.json` in the task directory, every
+  poll and once more at child exit, because the next run overwrites the shared `last-run.json`. It
+  only observes; it never stops anything.
 - `observe.ps1 -TaskRoot <task-dir> -StateRoot <state-dir>` is read-only and credits only the
-  run id in `supervisor-identity.json`. `last-run.json` `completedAt` for that run id is the end
-  signal, not `commission-exit.txt`. A gone supervisor or stale heartbeat while that run still
-  owns `run.lock` (run id in both `run.lock` and `last-run.json`) is `supervisor-lost-run-alive`
+  run id in `supervisor-identity.json`. `completedAt` for that run id in `last-run.json`, or in
+  `own-last-run.json` once another run has overwritten `last-run.json`, is the end signal, not
+  `commission-exit.txt`. A gone supervisor or stale heartbeat while that run still owns
+  `run.lock` (run id in `run.lock`, and in `last-run.json` or the copy) is `supervisor-lost-run-alive`
   (exit 0): an observation gap, not a run failure, and no reason to stop or restart the run.
   Exit 3 `run-lost` (its `run.lock` owner gone without `completedAt`) needs investigation.
-  Exit 2 is `not-started` (run id not in `run.lock` or `last-run.json` yet, e.g. the build-slot
-  wait), `launch-failed` (`commission-exit.txt` written and the run id never seen; `runLock` and
-  `lockRunId` show another run's lock), or `unknown`. A nightly-run that exits through its error
-  path releases `run.lock` without writing `completedAt`: observe reports `unknown`
+  Exit 2 is `not-started` (run id not in `run.lock`, `last-run.json` or the copy yet, e.g. the
+  build-slot wait), `launch-failed` (`commission-exit.txt` written, the run id in none of them,
+  and `last-run.json` still names a run that started before `launch-child.json`; `runLock` and
+  `lockRunId` show another run's lock), or `unknown`. `unknown` with reason `state-superseded`
+  means `last-run.json` now names a later run and no copy proves completion: the run may have
+  started and even finished (e.g. its supervisor died before the end), so read its run directory
+  under LogRoot before any relaunch; never treat it as not-started. A nightly-run that exits
+  through its error path releases `run.lock` without writing `completedAt`: observe reports `unknown`
   (`run-lock-missing`, exit 2), not `run-lost`; read `last-run.json` `phase` and `exitCode`.
 - Offline witness: `scripts/test-qualification-supervisor.ps1` (C1667). The Windows console
   detach is recorded in `supervisor-identity.json` (`consoleProcessIds` must not contain the
