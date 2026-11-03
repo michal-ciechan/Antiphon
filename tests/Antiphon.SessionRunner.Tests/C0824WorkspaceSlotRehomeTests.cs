@@ -1,5 +1,6 @@
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.SessionRunner.Tests.C0824SlotScratch;
@@ -10,6 +11,7 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(10_000)]
+[NativeLinuxOnly("CARD-0824 Linux-only by construction: S1 workspace slots are Linux/server2 only and the git fault seam runs /bin/sh")]
 public sealed class C0824WorkspaceSlotRehomeTests
 {
     private const string Eacces = "warning: failed to remove src/a: Permission denied";

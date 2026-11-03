@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "d4c817ca8b8084de5fcdd42048057857452c2dd4863fd8091b647baf8158e2a7",
+  "policyHash": "d1766eff426d854d7d05197024823c707071a0e5d49886dbea40e66b41ede669",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -907,6 +907,27 @@
           "class": "C0824WorkspaceSlotNativeRehomeTests",
           "platform": "windows",
           "reason": "Linux-only by construction: a Unix 0555 directory makes the real git clean fail for the runner uid. The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C0824WorkspaceSlotRehomeTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CARD-0824 S1 workspace slots ship for Linux/server2 runners only (Windows desktop slots are S3) and the scripted git faults run /bin/sh. The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C0824WorkspaceSlotOverflowTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CARD-0824 S1 workspace slots ship for Linux/server2 runners only (Windows desktop slots are S3). The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C0824WorkspaceSlotResetTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CARD-0824 S1 workspace slots ship for Linux/server2 runners only (Windows desktop slots are S3) and the scripted git faults run /bin/sh. The case remains required on Linux.",
           "owner": "CARD-0824"
         },
         {
