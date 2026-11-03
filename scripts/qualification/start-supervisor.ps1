@@ -11,8 +11,9 @@ Waits for supervisor-identity.json, writes start-supervisor.json and exits 0 (1 
 RunId must be the -RunId in the launch record's nightlyArguments: the supervisor records it and
 passes it to launch-rc.ps1 (ANTIPHON_QUALIFICATION_RUN_ID), and observe.ps1 credits only that run.
 Refuses when TaskRoot already has a supervisor identity, or when StateRoot's last-run.json or
-run.lock already names RunId (a reused run id could credit an earlier run). To leave a caller's Job Object too,
-start this script itself through Win32_Process Create (docs: antiphon-rc-qualification skill).
+run.lock, or TaskRoot's own-last-run.json copy, already names RunId (a reused run id could credit
+an earlier run). To leave a caller's Job Object too, start this script itself through
+Win32_Process Create (docs: antiphon-rc-qualification skill).
 ASCII-only, Windows PowerShell 5.1 safe.
 #>
 [CmdletBinding()]
@@ -37,8 +38,8 @@ if ([string]::IsNullOrWhiteSpace($PowerShellPath)) { $PowerShellPath = [Diagnost
 if (-not [IO.Directory]::Exists($TaskRoot)) { Write-Output "start-supervisor: TaskRoot does not exist: $TaskRoot"; exit 1 }
 if (-not [IO.File]::Exists($LaunchScript)) { Write-Output "start-supervisor: LaunchScript does not exist: $LaunchScript"; exit 1 }
 if ([IO.File]::Exists($identityPath)) { Write-Output "start-supervisor: refused, a supervisor identity already exists: $identityPath"; exit 1 }
-foreach ($leaf in @('last-run.json', 'run.lock')) {
-    $seen = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath([IO.Path]::Combine($StateRoot, $leaf)))
+foreach ($seenPath in @([IO.Path]::Combine($StateRoot, 'last-run.json'), [IO.Path]::Combine($StateRoot, 'run.lock'), [IO.Path]::Combine($TaskRoot, 'own-last-run.json'))) {
+    $seen = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath($seenPath))
     if ($seen.status -ceq 'ok' -and [string]::Equals([string]$seen.record.runId, $RunId, [StringComparison]::OrdinalIgnoreCase)) {
         Write-Output "start-supervisor: refused, $($seen.path) already names run id $RunId; bind a fresh -RunId"; exit 1
     }

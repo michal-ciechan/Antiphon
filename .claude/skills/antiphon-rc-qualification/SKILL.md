@@ -241,7 +241,10 @@ through a `1>` wrapper buffer; the run itself survived.
   hidden console** (setsid on Unix) and output in its own files, waits for
   `supervisor-identity.json` and returns. Start the starter through `Win32_Process` Create to
   leave the caller's Job Object. It refuses a task directory that already has a supervisor
-  identity and a run id that `last-run.json` or `run.lock` already names.
+  identity and a run id that `last-run.json`, `run.lock` or the task directory's
+  `own-last-run.json` already names. observe, start-supervisor and supervise-rc read these
+  records with `FileShare.Delete`, so nightly-run's `File.Replace` of `last-run.json` is never
+  blocked.
 - `supervise-rc.ps1` writes `supervisor.log` one flushed line at a time (START, LAUNCHED,
   PROGRESS, HANG_SUSPECTED, EXIT), `supervisor-heartbeat.json`, `launch-child.json` and finally
   `commission-exit.txt`, and records the run id in the identity and launch-child records. While

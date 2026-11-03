@@ -149,7 +149,7 @@ function Save-QualificationOwnRunState {
     if (-not [IO.File]::Exists($source)) { return 'missing' }
     $text = $null
     try {
-        $stream = New-Object System.IO.FileStream($source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $stream = Open-RcQualificationSharedRead $source
         try {
             if ($stream.Length -gt 1048576) { return 'unreadable' }
             $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false, $true)))
