@@ -143,28 +143,7 @@ public sealed class RunnerTempSweep
 
     private sealed record Facts(string Name, string Path, TempFamily Family, bool IsFile, long Bytes, DateTime Newest);
 
-    /// <summary>RED SHIM (CARD-1677 S2 red commit): every top-level entry is "removed" with Directory.Delete(recursive), no check.</summary>
     public async Task<PhoneHomeTempSweepResponse> SweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct)
-    {
-        await Task.CompletedTask;
-        var candidates = new List<TempSweepCandidate>();
-        foreach (var entry in Directory.EnumerateFileSystemEntries(_tempRoot))
-        {
-            var name = Path.GetFileName(entry);
-            var family = _families.FirstOrDefault(f => f.Regex.IsMatch(name))?.Id ?? "shim";
-            if (request.Mode == TempSweepModes.Execute)
-            {
-                if (Directory.Exists(entry))
-                    Directory.Delete(entry, recursive: true);
-                else
-                    File.Delete(entry);
-            }
-            candidates.Add(new TempSweepCandidate(name, family, TempSweepCodes.Removed));
-        }
-        return new PhoneHomeTempSweepResponse(request.Mode, candidates, [], Removed: candidates.Count, Root: _tempRoot);
-    }
-
-    public async Task<PhoneHomeTempSweepResponse> SweepCheckedAsync(PhoneHomeTempSweepRequest request, CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();
         var execute = request.Mode == TempSweepModes.Execute;
