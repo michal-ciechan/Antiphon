@@ -17,6 +17,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $qualification = Join-Path $PSScriptRoot 'qualification'
 $observeScript = Join-Path $qualification 'observe.ps1'
 $startScript = Join-Path $qualification 'start-supervisor.ps1'
+$launchScript = Join-Path $qualification 'launch-rc.ps1'
 $isWindowsHost = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
 $pwshPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('c1667-' + [guid]::NewGuid().ToString('N'))
@@ -52,14 +53,37 @@ function Get-ExitedIdentity {
     $child.Dispose()
     return $identity
 }
-function New-ObservedRun([string]$Name, $RunOwner, $Supervisor, $HeartbeatUtc, $State) {
+# The supervisor identity carries the launch's bound run id (c1667run unless BoundRunId says otherwise).
+function New-ObservedRun([string]$Name, $RunOwner, $Supervisor, $HeartbeatUtc, $State, [string]$LockRunId = 'c1667run',
+    [string]$CommissionExit, [string]$BoundRunId = 'c1667run') {
     $task = New-OwnedDirectory ($Name + '-task')
     $stateRoot = New-OwnedDirectory ($Name + '-state')
-    if ($null -ne $RunOwner) { Write-OwnedJson (Join-Path $stateRoot 'run.lock') ([ordered]@{ pid = $RunOwner.pid; processStartedAt = $RunOwner.processStartedAt; runId = 'c1667run' }) }
+    if ($null -ne $RunOwner) { Write-OwnedJson (Join-Path $stateRoot 'run.lock') ([ordered]@{ pid = $RunOwner.pid; processStartedAt = $RunOwner.processStartedAt; runId = $LockRunId }) }
     if ($null -ne $State) { Write-OwnedJson (Join-Path $stateRoot 'last-run.json') $State }
-    if ($null -ne $Supervisor) { Write-OwnedJson (Join-Path $task 'supervisor-identity.json') $Supervisor }
+    if ($null -ne $Supervisor) {
+        $identity = [ordered]@{ pid = $Supervisor.pid; processStartedAt = $Supervisor.processStartedAt }
+        if ($BoundRunId) { $identity.runId = $BoundRunId }
+        Write-OwnedJson (Join-Path $task 'supervisor-identity.json') $identity
+    }
     if ($null -ne $HeartbeatUtc) { Write-OwnedJson (Join-Path $task 'supervisor-heartbeat.json') ([ordered]@{ observedAtUtc = $HeartbeatUtc; trx = 3; hangSuspected = $false }) }
+    if ($CommissionExit) {
+        $exitPath = Join-Path $task 'commission-exit.txt'
+        [IO.File]::WriteAllText($exitPath, $CommissionExit)
+        $script:owned.Add($exitPath)
+    }
     return [pscustomobject]@{ Task = $task; State = $stateRoot }
+}
+function Invoke-Launch([string]$Name, $Record, [string]$BoundRunId) {
+    $dir = New-OwnedDirectory ($Name + '-launch')
+    $config = Join-Path $dir 'launch-record.json'
+    Write-OwnedJson $config $Record
+    $previous = $env:ANTIPHON_QUALIFICATION_RUN_ID
+    try {
+        $env:ANTIPHON_QUALIFICATION_RUN_ID = $BoundRunId
+        $text = @(& $pwshPath -NoProfile -NonInteractive -File $launchScript -Config $config 2>&1) -join "`n"
+        $code = $LASTEXITCODE
+    } finally { $env:ANTIPHON_QUALIFICATION_RUN_ID = $previous }
+    return [pscustomobject]@{ Code = $code; Text = $text }
 }
 function Invoke-Observe($Run) {
     $text = @(& $pwshPath -NoProfile -NonInteractive -File $observeScript -TaskRoot $Run.Task -StateRoot $Run.State 2>&1) -join "`n"
@@ -129,6 +153,65 @@ try {
     Assert-C1667 ($r.classification -ceq 'completed' -and $r.exitCode -eq 0) `
         'observe probes the run owner before reading last-run.json' ($r | ConvertTo-Json -Compress)
 
+    # D-1 (Review b26811ff): the shared state root keeps the PREVIOUS run's last-run.json, so
+    # completed/running/supervisor-lost-run-alive are credited only for the launch's own run id.
+    $previousRun = [ordered]@{ runId = 'c1667prev'; phase = 'final'; completedAt = $now.AddHours(-3).ToString('o'); exitCode = 0; testsPassed = $true }
+    $run = New-ObservedRun 'refused' $null $gone $stale $previousRun -CommissionExit '2'
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'launch-failed' -and $o.Json.reason -ceq 'commission-exit-2' -and
+        $o.Json.runId -ceq 'c1667run' -and $o.Json.stateRunId -ceq 'c1667prev' -and $null -eq $o.Json.exitCode -and $null -eq $o.Json.testsPassed) `
+        'observe does not credit a previous run completedAt to a refused launch (commission-exit 2)' $o.Text
+
+    $otherRun = [ordered]@{ runId = 'c1667other'; phase = 'tests'; startedAt = $now.AddHours(-1).ToString('o') }
+    $run = New-ObservedRun 'foreignlock' $self $gone $stale $otherRun -LockRunId 'c1667other'
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'not-started' -and $o.Json.runLock -ceq 'foreign' -and
+        $o.Json.lockRunId -ceq 'c1667other' -and $o.Json.runOwner -ceq 'alive') `
+        'observe does not report supervisor-lost-run-alive for another run holding run.lock' $o.Text
+
+    $run = New-ObservedRun 'slotwait' $null $self $fresh $previousRun
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'not-started' -and $o.Json.reason -ceq 'run-id-not-seen' -and
+        $o.Json.runLock -ceq 'missing' -and $null -eq $o.Json.completedAt) `
+        'observe reports not-started while the launch waits for a build slot (no Started yet)' $o.Text
+
+    $run = New-ObservedRun 'prestart' $self $self $fresh $previousRun
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'not-started' -and $o.Json.reason -ceq 'state-not-written' -and $o.Json.runLock -ceq 'ours') `
+        'observe needs the last-run.json run id as well as the run.lock run id before crediting running' $o.Text
+
+    $run = New-ObservedRun 'unbound' $self $self $fresh $running -BoundRunId ''
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 2 -and $o.Json.classification -ceq 'unknown' -and $o.Json.reason -ceq 'run-id-unbound') `
+        'observe refuses to classify without a bound launch run id' $o.Text
+
+    # start-supervisor binds a fresh run id: one the state root already names is refused.
+    $reuseTask = New-OwnedDirectory 'reuse-task'
+    $reuseState = New-OwnedDirectory 'reuse-state'
+    Write-OwnedJson (Join-Path $reuseState 'last-run.json') ([ordered]@{ runId = 'c1667prev'; phase = 'final'; completedAt = $stale })
+    $reuseText = @(& $pwshPath -NoProfile -NonInteractive -File $startScript -TaskRoot $reuseTask -LaunchScript $observeScript -LogRoot $reuseTask `
+        -StateRoot $reuseState -RunId 'c1667prev' 2>&1) -join "`n"
+    $reuseCode = $LASTEXITCODE
+    Assert-C1667 ($reuseCode -eq 1 -and $reuseText -match 'already names run id c1667prev' -and -not (Test-Path -LiteralPath (Join-Path $reuseTask 'supervisor-identity.json'))) `
+        'start-supervisor refuses a run id the state root already records' "code=$reuseCode $reuseText"
+
+    # launch-rc refuses before git or build-slot when its run id is not the supervisor's bound id.
+    $sha = '0123456789abcdef0123456789abcdef01234567'
+    $l = Invoke-Launch 'norunid' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-Profile', 'rc') }) 'c1667run'
+    $m = Invoke-Launch 'otherrunid' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-RunId', 'c1667other') }) 'c1667run'
+    Assert-C1667 ($l.Code -eq 2 -and $l.Text -match 'requires -RunId' -and $m.Code -eq 2 -and $m.Text -match 'is not the supervisor run id c1667run') `
+        'launch-rc refuses a launch whose -RunId is missing or differs from the bound run id' ($l.Text + ' | ' + $m.Text)
+
+    # A-3: a live run.lock refuses the launch instead of queueing behind it.
+    $lockState = New-OwnedDirectory 'livelock-state'
+    Write-OwnedJson (Join-Path $lockState 'run.lock') ([ordered]@{ pid = $self.pid; processStartedAt = $self.processStartedAt; runId = 'c1667other' })
+    $l = Invoke-Launch 'livelock' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-RunId', 'c1667run', '-StateRoot', $lockState) }) 'c1667run'
+    $gonelock = New-OwnedDirectory 'stalelock-state'
+    Write-OwnedJson (Join-Path $gonelock 'run.lock') ([ordered]@{ pid = $gone.pid; processStartedAt = $gone.processStartedAt; runId = 'c1667other' })
+    $g = Invoke-Launch 'stalelock' ([ordered]@{ checkoutRoot = $scratch; expectedSha = $sha; nightlyArguments = @('-RunId:c1667run', '-StateRoot:' + $gonelock) }) 'c1667run'
+    Assert-C1667 ($l.Code -eq 3 -and $l.Text -match 'held by live pid' -and $l.Text -match 'c1667other' -and $g.Code -eq 2 -and $g.Text -match 'checkout HEAD') `
+        'launch-rc refuses a live run.lock and leaves a dead owner to nightly-run' ($l.Text + ' | ' + $g.Text)
+
     # Line-flushed log: every line is on disk when the call returns, and no handle stays open.
     $logDir = New-OwnedDirectory 'log'
     $log = Join-Path $logDir 'supervisor.log'
@@ -161,13 +244,13 @@ try {
     $e2eState = New-OwnedDirectory 'e2e-state'
     $fake = Join-Path $e2eTask 'fake-launch.ps1'
     $owned.Add($fake)
-    [IO.File]::WriteAllText($fake, "Start-Sleep -Seconds 6`r`n[IO.File]::WriteAllText((Join-Path '$e2eLogs' 'a.trx'), 'x')`r`nWrite-Output 'fake launch done'`r`nexit 7`r`n")
+    [IO.File]::WriteAllText($fake, "Start-Sleep -Seconds 6`r`n[IO.File]::WriteAllText((Join-Path '$e2eLogs' 'a.trx'), 'x')`r`nWrite-Output ('bound run=' + `$env:ANTIPHON_QUALIFICATION_RUN_ID)`r`nWrite-Output 'fake launch done'`r`nexit 7`r`n")
     foreach ($name in @('supervisor-identity.json', 'start-supervisor.json', 'supervisor.log', 'supervisor-stdout.log', 'supervisor-stderr.log',
         'supervisor-heartbeat.json', 'supervisor-heartbeat.json.tmp', 'commission-console.log', 'commission-stderr.log', 'commission-exit.txt',
         'commission-exit.txt.tmp', 'launch-child.json', 'hang-suspected.txt', 'wrapper-out.log', 'wrapper-err.log')) { $owned.Add((Join-Path $e2eTask $name)) }
     $owned.Add((Join-Path $e2eLogs 'a.trx'))
     $wrapperArgs = @('-NoProfile', '-NonInteractive', '-File', $startScript, '-TaskRoot', $e2eTask, '-LaunchScript', $fake,
-        '-LogRoot', $e2eLogs, '-StateRoot', $e2eState, '-PollSeconds', '1', '-ProgressMinutes', '1')
+        '-LogRoot', $e2eLogs, '-StateRoot', $e2eState, '-RunId', 'c1667e2e', '-PollSeconds', '1', '-ProgressMinutes', '1')
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
@@ -225,6 +308,11 @@ try {
     $o = Invoke-Observe ([pscustomobject]@{ Task = $e2eTask; State = $e2eState })
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.supervisor -ceq 'absent' -and $o.Json.commissionExit -ceq '7') `
         'observe reads the real supervisor identity and commission-exit of the finished run' $o.Text
+    $child = $null
+    try { $child = Get-Content -LiteralPath (Join-Path $e2eTask 'launch-child.json') -Raw | ConvertFrom-Json } catch { }
+    Assert-C1667 ($identity -and $identity.runId -ceq 'c1667e2e' -and $child -and $child.runId -ceq 'c1667e2e' -and $console.Contains('bound run=c1667e2e') -and
+        $o.Json.classification -ceq 'launch-failed' -and $o.Json.runId -ceq 'c1667e2e') `
+        'supervisor binds the launch run id in its identity, launch-child record and the launch environment' ($o.Text + ' ' + $console)
 
     $valid = $true
     $problems = @()
