@@ -216,6 +216,35 @@ These directions override the cited standing rules in
    - Scoped live-lane decisions D-3/D-4/D-5/D-6/D-9/D-11: host/account, quota,
      enforcement, external freshness, and receipt signing, as defined by that plan.
 
+### Supervisor launch set (CARD-1667)
+
+A new Full run is started with the repository set in `scripts/qualification/`, copied into the
+owned task directory with its launch record, never with a private copy. Run 7f8e9fd1 lost its
+supervisor (2026-11-02) because the supervisor shared its wrapper's console and wrote its log
+through a `1>` wrapper buffer; the run itself survived.
+
+- `launch-rc.ps1` reads `launch-record.json` (`checkoutRoot`, `expectedSha`,
+  `nightlyArguments`), refuses a HEAD mismatch and runs `build-slot.ps1 -- nightly-run.ps1`.
+- `start-supervisor.ps1 -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
+  <candidate>\logs -StateRoot <state-dir>` starts `supervise-rc.ps1` with its **own hidden
+  console** (setsid on Unix) and output in its own files, waits for `supervisor-identity.json`
+  and returns. Start the starter through `Win32_Process` Create to leave the caller's Job Object.
+  It refuses a task directory that already has a supervisor identity.
+- `supervise-rc.ps1` writes `supervisor.log` one flushed line at a time (START, LAUNCHED,
+  PROGRESS, HANG_SUSPECTED, EXIT), `supervisor-heartbeat.json`, `launch-child.json` and finally
+  `commission-exit.txt`. It only observes; it never stops anything.
+- `observe.ps1 -TaskRoot <task-dir> -StateRoot <state-dir>` is read-only. `last-run.json`
+  `completedAt` is the end signal, not `commission-exit.txt`. A gone supervisor or stale
+  heartbeat while nightly-run still owns `run.lock` is `supervisor-lost-run-alive` (exit 0): an
+  observation gap, not a run failure, and no reason to stop or restart the run. Exit 3
+  `run-lost` (nightly-run gone without `completedAt`) needs investigation; exit 2 is unknown.
+- Offline witness: `scripts/test-qualification-supervisor.ps1` (C1667). The Windows console
+  detach is recorded in `supervisor-identity.json` (`consoleProcessIds` must not contain the
+  starter pid); its native witness is still owed.
+- To name the killer of a future unexplained death, an operator (elevated, human-only) can
+  enable `auditpol /set /subcategory:"Process Termination" /success:enable` on the desktop and
+  read Security 4689 events; agents never change audit policy.
+
 ### Pre-run workspace slot cold reset (CARD-0824 S1)
 
 Before starting a whole rc qualification run, run
