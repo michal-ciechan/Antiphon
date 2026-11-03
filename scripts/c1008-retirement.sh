@@ -211,22 +211,30 @@ c1609_target_snapshot() {
 }
 
 # Trusted control-host configuration, never an audited volume's origin list.
+# C1609_ORIGINS_REASON names the failed registry check (CARD-1689).
 c1609_export_trusted_origins() {
     local requests="$1" destination="$2" registry="$SERVER2_ROOT/retirement-origins.json"
+    C1609_ORIGINS_REASON=''
     [ -s "$requests" ] || return 0
+    if [ ! -e "$registry" ] && [ ! -L "$registry" ]; then C1609_ORIGINS_REASON=registry-missing; return 1; fi
+    C1609_ORIGINS_REASON=registry-invalid
     c1609_read_canonical "$registry" >/dev/null || return 1
-    jq -e --arg project "$C1008_PROJECT_ID" '
+    jq -e '
       keys==["projects","schema"] and .schema==1 and (.projects|type)=="object" and
       all(.projects|to_entries[]; (.key|test("^[0-9a-f-]{36}$")) and
         (.value|keys)==["origins"] and (.value.origins|type)=="array" and
         (.value.origins|length)==(.value.origins|unique|length) and
-        all(.value.origins[];type=="string" and length>0)) and .projects[$project]!=null
+        all(.value.origins[];type=="string" and length>0))
       ' "$registry" >/dev/null || return 1
+    C1609_ORIGINS_REASON=registry-project
+    jq -e --arg project "$C1008_PROJECT_ID" '.projects[$project]!=null' "$registry" >/dev/null || return 1
+    C1609_ORIGINS_REASON=unapproved-origin
     jq -Rse --arg project "$C1008_PROJECT_ID" --slurpfile registry "$registry" '
       split("\n")|map(select(length>0))|all(.[];
         capture("^C1008_PRIVATE_ORIGIN repo=[A-Za-z0-9._/-]+ origin=(?<origin>[^ ]+) originHash=[0-9a-f]{64} proofName=[0-9a-f]{64}$").origin as $origin |
         $registry[0].projects[$project].origins|index($origin)!=null)
       ' "$requests" >/dev/null || return 1
+    C1609_ORIGINS_REASON=''
     jq -cS --arg project "$C1008_PROJECT_ID" '{schema:1,projectId:$project,origins:.projects[$project].origins}' "$registry" |
         c1609_persist "$destination"
 }
@@ -346,13 +354,17 @@ c1609_proof_set_digest() {
     ) | LC_ALL=C sort | sha256sum | cut -d' ' -f1
 }
 
+# C1609_PROOF_STAGE is the last step reached when the exchange fails (CARD-1689).
 c1609_request_host_proof() {
     local kind="$1" objects="$2" previous reply nonce marker name started proof_nonce inventory produced returned_previous returned_objects extra directory file digest root
+    C1609_PROOF_STAGE=request
     previous="$(c1609_proof_set_digest)" || return 1
     [ "$previous" = "${C1609_BOUND_PROOF_DIGEST:-none}" ] || return 1
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
     printf 'C1609_PROOF_REQUEST %s %s %s %s %s\n' "$nonce" "$C1609_PHASE_NONCE" "$kind" "$previous" "$objects"
+    C1609_PROOF_STAGE=response
     IFS=' ' read -r -t 600 marker reply name started proof_nonce inventory produced returned_previous returned_objects extra || return 1
+    C1609_PROOF_STAGE=binding
     [ "$marker" = C1609_PROOF_RESPONSE ] && [ "$reply" = "$nonce" ] && [ -z "$extra" ] &&
       [ "$returned_previous" = "$previous" ] && [ "$returned_objects" = "$objects" ] &&
       [[ "$started" =~ ^[0-9]{1,12}$ && "$proof_nonce" =~ ^[0-9a-f]{32}$ && "$inventory" =~ ^[0-9a-f]{64}$ && "$produced" =~ ^[0-9a-f]{64}$ ]] &&
@@ -361,9 +373,12 @@ c1609_request_host_proof() {
     directory="${C1609_EXCHANGE_PROOF_ROOT:?}/$name"
     C1008_HOST_PROOF="$directory"; C1008_OPERATION_STARTED="$started"
     C1609_PROOF_NONCE="$proof_nonce"; C1609_PROOF_INVENTORY="$inventory"
+    C1609_PROOF_STAGE=freshness
     c1609_publication_fresh || return 1
+    C1609_PROOF_STAGE=digest
     digest="$(c1609_proof_set_digest)" || return 1
     [ "$digest" = "$produced" ] || return 1
+    C1609_PROOF_STAGE=record
     # Retain graph bytes as well as the intent/response before Ready or effects.
     for file in "$directory"/*; do sync -- "$file" || return 1; done
     sync -- "$directory" || return 1
@@ -373,11 +388,15 @@ c1609_request_host_proof() {
       '{schema:1,phaseNonce:$phase,exchangeNonce:$nonce,kind:$kind,previousDigest:$previous,proofDigest:$proof,objectsDigest:$objects,inventoryDigest:$inventory}' |
       c1609_persist "$root/exchange-$nonce.json" || return 1
     C1609_BOUND_PROOF_DIGEST="$digest"; C1609_BOUND_OBJECT_DIGEST="$objects"
+    C1609_PROOF_STAGE=''
 }
 
+# The coordinator console shows only the diagnosis, so each cause names itself
+# and the host file holding its detail (CARD-1689). An unnamed failure stays a
+# bare RecycleGitAuditUnknown at the caller.
 c1609_prepare_exchange() {
     [ "${C1609_EXCHANGE:-0}" = 1 ] || return 0
-    local root destination out code=0 line empty
+    local root destination out code=0 line empty detail
     [ -z "${C1008_HOST_PROOF:-}" ] || return 1
     root="$(c1609_retirement_root)"; destination="$root/inventory-$C1609_PHASE_NONCE"
     [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
@@ -387,10 +406,23 @@ c1609_prepare_exchange() {
     c1008_audit_readonly inventory > "$out" || code=$?
     sync -- "$out" || return 1
     if [ "$code" != 0 ]; then
-        case "$code" in 3) c1008_refuse RecycleUnpublishedWork ;; 4) c1008_refuse RecycleWorktreeDirty ;; *) c1008_refuse RecycleGitAuditUnknown ;; esac
+        detail="$(sed -n '/^audit check=/{p;q}' "$out")"
+        [ -n "$detail" ] || detail='audit check=unclassified status= repo=.'
+        case "$code" in
+            3) c1008_refuse RecycleUnpublishedWork ;;
+            4) c1008_refuse RecycleWorktreeDirty ;;
+            *) c1008_refuse "RecycleGitAuditUnknown $detail reason=inventory detail=$out" ;;
+        esac
     fi
     LC_ALL=C awk '/^C1008_PRIVATE_ORIGIN / {print}' "$out" | LC_ALL=C sort > "$destination/private-origins.txt" || return 1
-    c1609_export_trusted_origins "$destination/private-origins.txt" "$destination/trusted-origins.json" || return 1
+    if ! c1609_export_trusted_origins "$destination/private-origins.txt" "$destination/trusted-origins.json"; then
+        case "${C1609_ORIGINS_REASON:-}" in
+            registry-missing|registry-invalid|registry-project) detail="$SERVER2_ROOT/retirement-origins.json" ;;
+            unapproved-origin) detail="$destination/private-origins.txt" ;;
+            *) return 1 ;;
+        esac
+        c1008_refuse "RecycleGitAuditUnknown reason=$C1609_ORIGINS_REASON detail=$detail"
+    fi
     : > "$destination/published-objects.txt"
     jq -cnS '{accepted:true,diagnosis:"",exit:0}' | c1609_persist "$destination/c590-result.json" || return 1
     for line in private-origins.txt published-objects.txt; do sync -- "$destination/$line" || return 1; done
@@ -399,7 +431,9 @@ c1609_prepare_exchange() {
     C1609_REQUEST_DIGEST="$(sha256sum "$destination/private-origins.txt" | cut -d' ' -f1)" || return 1
     empty="$(sha256sum "$destination/published-objects.txt" | cut -d' ' -f1)" || return 1
     C1609_BOUND_PROOF_DIGEST=none; C1609_BOUND_OBJECT_DIGEST="$empty"
-    if [ -s "$destination/private-origins.txt" ]; then c1609_request_host_proof initial "$empty" || return 1; fi
+    if [ -s "$destination/private-origins.txt" ] && ! c1609_request_host_proof initial "$empty"; then
+        c1008_refuse "RecycleGitAuditUnknown reason=proof-exchange stage=${C1609_PROOF_STAGE:-request}"
+    fi
 }
 
 c1609_publication_gate() {
