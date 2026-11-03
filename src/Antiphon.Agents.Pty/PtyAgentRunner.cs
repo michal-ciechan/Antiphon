@@ -346,8 +346,28 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         }
         catch (IOException ex)
         {
-            if (_custody is not null) _custodyReadFailure = ex;
+            // CARD-1681: the Linux custody master reads EIO once the last slave closes. After the
+            // root has exited that is end of output; while it lives, or for any other error, the
+            // drain still fails.
+            if (_custody is not null && _containment is not null
+                && IsHangupAfterRootExit(ex, RootExitedForHangup()))
+            {
+                PublishDecoded(_decoder.Decode(ReadOnlySpan<byte>.Empty, flush: true));
+                ReadProcessedForTest?.Invoke();
+            }
+            else if (_custody is not null) _custodyReadFailure = ex;
         }
+    }
+
+    private bool RootExitedForHangup()
+    {
+        if (_exitTcs.Task.IsCompleted) return true;
+        if (_conn is not { Pid: > 0 } conn) return false;
+        string? stat;
+        try { stat = File.ReadAllText("/proc/" + conn.Pid + "/stat"); }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { stat = null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+        return ProcStatShowsExit(stat);
     }
 
     private void PublishDecoded(string chunk)
@@ -660,13 +680,27 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// CARD-1681: whether a pty master read error is the Linux hangup that ends output: an EIO
     /// after the root has exited. An EIO while the root lives, or any other error, is not.
     /// </summary>
-    internal static bool IsHangupAfterRootExit(IOException ex, bool rootExited) => false;
+    internal static bool IsHangupAfterRootExit(IOException ex, bool rootExited) =>
+        rootExited && ex.GetType() == typeof(IOException) && ex.HResult == LinuxEio;
+
+    private const int LinuxEio = 5;
+    private const uint LinuxPfExiting = 0x4;
 
     /// <summary>
     /// CARD-1681: whether <c>/proc/&lt;pid&gt;/stat</c> shows the process gone (null), a zombie,
     /// dead, or already inside do_exit (PF_EXITING, set before its descriptors close).
     /// </summary>
-    internal static bool ProcStatShowsExit(string? stat) => false;
+    internal static bool ProcStatShowsExit(string? stat)
+    {
+        if (stat is null) return true;
+        // comm (field 2) may hold spaces and ')'; the fields after the last ')' start at state.
+        var close = stat.LastIndexOf(')');
+        if (close < 0) return false;
+        var fields = stat[(close + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length < 7) return false;
+        if (fields[0] is "Z" or "X" or "x") return true;
+        return uint.TryParse(fields[6], out var flags) && (flags & LinuxPfExiting) != 0;
+    }
 
     /// <summary>
     /// CARD-1617: whether the next explicit Linux release may issue the kill. Never after a
