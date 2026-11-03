@@ -165,6 +165,10 @@ establishes that same non-retiring drain if needed. Both paths hold new work awa
 temp during cache seed, container start, and cache verification. A connected temp can be
 `dispatchEligible=true` while draining; only after verification does the phase POST the
 final `/drain/clear` and wait for `acceptingNewWork=true` at the requested SHA.
+That hold lift does not repeat the volume and journal census, because the container this run
+just deployed owns the four temp volumes. Under the rollout lock it rereads temp status and
+refuses `TempRunnerRetiredDuringHold` when temp is retired, or `TempHoldLiftBuildMismatch`
+when temp is not at the requested SHA, before the POST.
 An offline slot can retain its prior `buildVersion=<sha>`; the phase still starts a new
 container when it is not dispatch eligible.
 The phase writes `temp-retirement-clear.json` under its printed
