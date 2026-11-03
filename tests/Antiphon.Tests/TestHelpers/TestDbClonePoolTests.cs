@@ -39,6 +39,44 @@ public sealed class TestDbClonePoolTests
     }
 
     [Test]
+    public async Task Workers_fill_in_parallel_without_overshooting_capacity()
+    {
+        var running = 0;
+        var peak = 0;
+        var cloned = 0;
+        var pool = TestDbClonePool.Start(6, async _ =>
+        {
+            var now = Interlocked.Increment(ref running);
+            InterlockedMax(ref peak, now);
+            await Task.Delay(50);
+            Interlocked.Decrement(ref running);
+            Interlocked.Increment(ref cloned);
+        }, workers: 3);
+
+        await WaitUntil(() => pool.Depth == 6);
+        await Task.Delay(100);
+
+        Volatile.Read(ref cloned).ShouldBe(6, "in-flight clones count toward capacity");
+        Volatile.Read(ref peak).ShouldBe(3);
+
+        for (var i = 0; i < 3; i++)
+            pool.TryTake(out _).ShouldBeTrue();
+        await WaitUntil(() => pool.Depth == 6);
+        Volatile.Read(ref cloned).ShouldBe(9);
+
+        await pool.StopAsync();
+    }
+
+    private static void InterlockedMax(ref int target, int value)
+    {
+        int current;
+        while (value > (current = Volatile.Read(ref target))
+               && Interlocked.CompareExchange(ref target, value, current) != current)
+        {
+        }
+    }
+
+    [Test]
     public async Task Hands_out_each_database_once()
     {
         var pool = TestDbClonePool.Start(4, _ => Task.CompletedTask);

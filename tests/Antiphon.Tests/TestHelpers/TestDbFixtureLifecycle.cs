@@ -36,6 +36,7 @@ internal class TestDbOperations
             .WithDatabase(TestDbFixture.SharedDatabaseName)
             .WithUsername(DatabaseUser)
             .WithPassword("test")
+            .Tuned()
             .Own()
             .Build();
         return Task.FromResult(new OwnedTestDbContainer { Real = container });
@@ -45,6 +46,7 @@ internal class TestDbOperations
     {
         using var phase = TestTiming.BeginFixturePhase("db-assembly", TestPhaseKind.DbCreate, "start");
         System.Diagnostics.Activity.Current?.SetTag("antiphon.reaper", TestDbContainerOwnership.Reaper);
+        System.Diagnostics.Activity.Current?.SetTag("antiphon.pg.max_connections", TestDbServerSettings.MaxConnections);
         if (container.Real is null)
             throw new InvalidOperationException("Owned container has no Testcontainers handle.");
         await container.Real.StartAsync().ConfigureAwait(false);
@@ -149,8 +151,8 @@ internal class TestDbOperations
                     // FILE_COPY copies the template's files (one checkpoint) instead of streaming
                     // every page through WAL (the PG15+ default, WAL_LOG). Measured on a fresh
                     // container: the first WAL_LOG clone 1.1 s, later ones ~60 ms; FILE_COPY ~50 ms
-                    // every time. Clones run one at a time under cloneLock, so this is also the
-                    // queue every other waiting test sees.
+                    // every time. Clones run up to TestDbServerSettings.CloneWidth at a time under
+                    // cloneLock (parallel clones of the protected template do not block each other).
                     await TestDbFixtureLifecycle.ExecuteNonQueryAsync(
                         maintenance,
                         $"CREATE DATABASE {databaseName} TEMPLATE {TestDbFixture.TemplateDatabaseName} STRATEGY FILE_COPY")
@@ -331,7 +333,8 @@ internal sealed class TestDbFixtureLifecycle
     private readonly TestDbOperations _ops;
     private readonly TestSchemaCache _cache;
     private readonly TestDbBakedImages _images;
-    private readonly SemaphoreSlim _cloneLock = new(1, 1);
+    private readonly int _cloneWidth = TestDbServerSettings.CloneWidth;
+    private readonly SemaphoreSlim _cloneLock;
     private Task<TestDbReadyState>? _task;
     private Task? _disposeTask;
     private Task _orphanSweep = Task.CompletedTask;
@@ -349,6 +352,7 @@ internal sealed class TestDbFixtureLifecycle
         int? poolCapacity = null)
     {
         _poolCapacity = poolCapacity ?? (operations is null ? TestDbClonePool.CapacityFromEnvironment() : 0);
+        _cloneLock = new SemaphoreSlim(_cloneWidth, _cloneWidth);
         _ops = operations ?? new TestDbOperations();
         _cache = cache ?? (operations is null ? TestSchemaCache.FromEnvironment() : TestSchemaCache.Disabled);
         _images = images ?? (operations is null ? TestDbBakedImages.FromEnvironment() : TestDbBakedImages.Disabled);
@@ -565,7 +569,8 @@ internal sealed class TestDbFixtureLifecycle
             {
                 _ready = ready;
                 if (_poolCapacity > 0 && !_disposeStarted)
-                    _pool = TestDbClonePool.Start(_poolCapacity, name => _ops.CloneAsync(ready, name, _cloneLock));
+                    _pool = TestDbClonePool.Start(
+                        _poolCapacity, name => _ops.CloneAsync(ready, name, _cloneLock), _cloneWidth);
             }
             return ready;
         }
