@@ -285,11 +285,15 @@ R-2 junction and custody qualification stays pending/required.
 rows and that those obligation gaps still leave coverage incomplete. Since CARD-1686
 it keeps no list of its own: it derives the census from the prefixed policy rows and
 the `[NativeLinuxOnly]` markers under each suite's project directory, and fails on a
-marker without a row or a row without a marker. It parses only the canonical
-`[NativeLinuxOnly(...)]` line form; any other non-comment `NativeLinuxOnly(` or
-`NativeLinuxOnlyAttribute(` use, such as a stacked, qualified or spaced marker, fails
-closed as `marker-noncanonical` (`-Case C1686_LinuxOnlyCensus` proves all three on
-fixtures). The selection set `release-gate.platform` runs
+marker without a row or a row without a marker. The census is line-based and never
+lexes C# strings or comments. A line whose trimmed text starts with `[NativeLinuxOnly(`
+is a marker and is parsed. Any other use of the whole word `NativeLinuxOnly` or
+`NativeLinuxOnlyAttribute` fails closed as `marker-noncanonical`, unless its line
+starts with `//`, `/*` or `*` or its file is one of the exact-path exemptions listed
+in the script (the attribute definition and the witnesses that reflect over it). So a
+stacked, qualified, spaced or split-line marker, a `using` alias, a string literal and
+a trailing comment all fail, and a marker inside `#if false` or a block comment still
+counts (`-Case C1686_LinuxOnlyCensus` proves these on fixtures). The selection set `release-gate.platform` runs
 `ReleaseGatePlatformTests` when the policy, this harness or a narrowly routed marker
 file changes; any other marker file has no rule and selects Full. The compiled
 marker witness is `NativeLinuxPolicyWitnessTests` in each of the four suites.
