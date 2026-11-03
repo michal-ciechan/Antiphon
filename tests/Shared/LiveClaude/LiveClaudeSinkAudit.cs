@@ -440,12 +440,38 @@ internal static class LiveClaudeSinkAudit
     {
         left = Peel(left);
         if (left is DeclarationExpressionSyntax or TupleExpressionSyntax) return true;
-        // An undeclared _ is a discard.
-        if (left is IdentifierNameSyntax name) return locals.Contains(name.Identifier.ValueText) || name.Identifier.ValueText == "_";
+        // _ is a discard only when no declaration named _ can be in scope at the store.
+        if (left is IdentifierNameSyntax name)
+            return locals.Contains(name.Identifier.ValueText) || (name.Identifier.ValueText == "_" && !UnderscoreInScope(name));
         if (left is ElementAccessExpressionSyntax or MemberAccessExpressionSyntax)
             return RootName(left) is { } root && CreatedInPlace(root, bufferOnly: false);
         return false;
     }
+
+    // A declaration named _ anywhere in the file: a member (field, property, event, method, type,
+    // primary-constructor or record parameter) is always in scope; a parameter, local, pattern,
+    // loop, catch or range variable is in scope only inside the method or lambda that declares it.
+    private static bool UnderscoreInScope(IdentifierNameSyntax use)
+    {
+        foreach (var token in use.SyntaxTree.GetRoot().DescendantTokens())
+        {
+            if (token.ValueText != "_" || token.Parent is null or IdentifierNameSyntax or DiscardDesignationSyntax) continue;
+            if (!IsScopedDeclaration(token.Parent)) return true;
+            var owner = token.Parent.Ancestors().FirstOrDefault(node => node is AnonymousFunctionExpressionSyntax
+                or LocalFunctionStatementSyntax or BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);
+            if (owner is null || owner.Span.Contains(use.Span)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsScopedDeclaration(SyntaxNode declaration) => declaration switch
+    {
+        ParameterSyntax parameter => parameter.Parent?.Parent is not TypeDeclarationSyntax,
+        VariableDeclaratorSyntax declarator => !IsField(declarator),
+        SingleVariableDesignationSyntax or ForEachStatementSyntax or CatchDeclarationSyntax or LocalFunctionStatementSyntax
+            or FromClauseSyntax or JoinClauseSyntax or JoinIntoClauseSyntax or LetClauseSyntax or QueryContinuationSyntax => true,
+        _ => false
+    };
 
     private static string? RootIdentifier(ExpressionSyntax expression) => RootName(expression)?.Identifier.ValueText;
 
