@@ -35,18 +35,24 @@ public static class GrokNativeSessionStore
         }
     }
 
-    // File.Exists is true for a link to a file and, on Unix, a dangling link: neither is a store.
-    private static bool FirstExistingAncestorIsNonDirectory(string path)
+    private static bool FirstExistingAncestorIsNonDirectory(string path) =>
+        FirstExistingAncestorIsNonDirectory(path, File.Exists, Directory.Exists, LinkTargetIsAbsent);
+
+    // File.Exists is true for a link to a file and for a dangling file link on every OS: neither is a store.
+    internal static bool FirstExistingAncestorIsNonDirectory(string path, Func<string, bool> fileExists,
+        Func<string, bool> directoryExists, Func<string, bool> linkTargetIsAbsent)
     {
         for (var current = path; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
         {
-            if (File.Exists(current))
+            if (fileExists(current))
                 return true;
-            if (Directory.Exists(current))
+            if (directoryExists(current))
                 return false;
         }
         return false;
     }
+
+    internal static bool LinkTargetIsAbsent(string path) => false;
 
     /// <summary>
     /// The session directory (parent of <c>updates.jsonl</c>), or <see langword="null"/> when
