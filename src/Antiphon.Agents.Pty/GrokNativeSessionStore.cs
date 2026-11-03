@@ -26,11 +26,26 @@ public static class GrokNativeSessionStore
         }
         // CARD-1669: Unix maps ENOTDIR (a file at the sessions root) to DirectoryNotFoundException;
         // unreadable storage is Unavailable, never Missing (Missing means only a fresh start helps).
-        catch (DirectoryNotFoundException) when (!File.Exists(root)) { return NativeSessionPresence.Missing; }
+        // CARD-1675: Windows and Unix both report a file at GROK_HOME or above the same way, so
+        // only a chain of missing directories under an existing directory is Missing.
+        catch (DirectoryNotFoundException) when (!FirstExistingAncestorIsNonDirectory(root)) { return NativeSessionPresence.Missing; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return NativeSessionPresence.Unavailable;
         }
+    }
+
+    // File.Exists is true for a link to a file and, on Unix, a dangling link: neither is a store.
+    private static bool FirstExistingAncestorIsNonDirectory(string path)
+    {
+        for (var current = path; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            if (File.Exists(current))
+                return true;
+            if (Directory.Exists(current))
+                return false;
+        }
+        return false;
     }
 
     /// <summary>
