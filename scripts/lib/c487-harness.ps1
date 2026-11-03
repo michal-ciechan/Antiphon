@@ -326,7 +326,9 @@ function Clear-C487OwnedResultReadOnly {
     while ($pending.Count -gt 0) {
         $directory = $pending.Pop()
         if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
-        foreach ($item in @(Get-ChildItem -LiteralPath $directory.FullName -Force -ErrorAction Stop)) {
+        # The .NET listing, not Get-ChildItem: on Unix the provider resolves each entry's owner and
+        # group names, ~40 ms an entry on loaded server2 (12 s for one live-lane fixture, CARD-1687).
+        foreach ($item in @($directory.GetFileSystemInfos())) {
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
             if (($item.Attributes -band [IO.FileAttributes]::Directory) -ne 0) { $pending.Push($item) }
             elseif (($item.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
