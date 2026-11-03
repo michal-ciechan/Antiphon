@@ -7,10 +7,12 @@ import { configure, getConfig } from '@testing-library/react';
 // server2 (CARD-1690): 7.3 s of 37.4 s CPU in 32 RoutingSettingsTab matrix cases.
 //
 // While waitFor runs its callback, Testing Library sets `_disableExpensiveErrorDiagnostics`
-// (the flag getByRole already reads to skip its role listing). This keeps the message and the
-// error name, which waitFor checks, and leaves out only the DOM. A timed-out waitFor still
-// reports it: its onTimeout calls getElementError again outside the poll, and that call prints
-// the DOM as it stands at the timeout. A getBy* outside waitFor is unchanged.
+// (the flag getByRole already reads to skip its role listing). A poll error then defers the
+// print: its message is a getter that calls the default printer with the same message and
+// container the first time anything reads it, and keeps that text. waitFor drops unread poll
+// errors, so those never print. Whatever does read one prints what the default prints: the
+// timeout handler and the stack copy read the last error, and a several-matches query reads
+// each element's error to build its listing. A getBy* outside waitFor is unchanged.
 export function installPollingElementError(): void {
   const printing = getConfig().getElementError;
   configure({
@@ -18,9 +20,23 @@ export function installPollingElementError(): void {
       if (!(getConfig() as { _disableExpensiveErrorDiagnostics?: boolean })._disableExpensiveErrorDiagnostics) {
         return printing(message, container);
       }
-      const error = new Error(message ?? '');
-      error.name = 'TestingLibraryElementError';
-      return error;
+      return lazyElementError(() => printing(message, container).message);
     },
   });
+}
+
+function lazyElementError(print: () => string): Error {
+  const error = new Error();
+  error.name = 'TestingLibraryElementError';
+  let printed: string | undefined;
+  // Configurable: waitFor's onTimeout redefines message on the error it rejects with.
+  Object.defineProperty(error, 'message', {
+    configurable: true,
+    enumerable: false,
+    get: () => (printed ??= print()),
+    set: (value: string) => {
+      Object.defineProperty(error, 'message', { value, writable: true, configurable: true, enumerable: false });
+    },
+  });
+  return error;
 }
