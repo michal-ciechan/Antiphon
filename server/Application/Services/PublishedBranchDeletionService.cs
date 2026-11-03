@@ -147,6 +147,11 @@ public sealed class PublishedBranchDeletionService(AppDbContext db, ILandingGit 
             await SaveAsync(op, ct);
         }
 
+        // Review 370083f1 A-2: the dependents and the card rule are read again under the lease, immediately before the
+        // intent, because the runner step can take minutes. Deleting runner refs that are still published loses nothing.
+        if (await PublishedBranchDeletionDependents.FindAsync(db, op, ct) is { } late)
+            return await SettleAsync(op, LandBranchDeletionState.Deferred, "dependent_open", $"{late.Term}: {late.TaskId}", false, ct);
+
         // D-1: the intent is durable before the push, so a restart can tell its own delete from a stranger's.
         op.BranchDeletionState = LandBranchDeletionState.Deleting;
         op.BranchDeletionAt = Now();
@@ -210,12 +215,15 @@ public sealed class PublishedBranchDeletionService(AppDbContext db, ILandingGit 
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>Every runner volume that held the branch: the owner's and any other task's on the same branch.</summary>
+    /// <summary>
+    /// Every runner volume that held the branch: the owner's and any other task's on the same branch, in any spelling
+    /// the dependents check accepts (A-1).
+    /// </summary>
     private async Task<IReadOnlyList<string>> RunnersAsync(AgentTaskLanding op, CancellationToken ct)
     {
-        var branch = op.SourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) ? op.SourceFullRef[11..] : op.SourceFullRef;
+        var names = PublishedBranchDeletionDependents.BranchNames(op.SourceFullRef);
         var ids = await db.AgentTasks.AsNoTracking()
-            .Where(t => (t.Id == op.TaskId || t.WorktreeBranch == branch) && t.RunnerId != null)
+            .Where(t => (t.Id == op.TaskId || t.WorktreeBranch != null && names.Contains(t.WorktreeBranch)) && t.RunnerId != null)
             .Select(t => t.RunnerId!).Distinct().ToListAsync(ct);
         return [.. ids.Where(id => !string.IsNullOrWhiteSpace(id) && id != PhoneHomeProtocol.LocalRunnerId)
             .Order(StringComparer.Ordinal)];
