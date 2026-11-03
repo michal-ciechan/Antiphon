@@ -1305,6 +1305,11 @@ public sealed class AgentTaskService
         if (binding.Warning is not null)
             warning = warning is null ? binding.Warning : warning + " " + binding.Warning;
 
+        // CARD-1647: a fourth Review round on a card is flagged, never refused.
+        if (request.Role == AgentTaskRole.Review
+            && await ReviewRoundGuard.EvaluateAsync(_db, binding.CardId, binding.Identifier, request.Goal, ct) is { } roundWarning)
+            warning = warning is null ? roundWarning : warning + " " + roundWarning;
+
         var inheritedLaunchEnv = skipInheritedSnapshot
             ? AgentLaunchEnv.Empty
             : request.InheritedLlmEnv is not null

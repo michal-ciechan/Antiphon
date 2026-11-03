@@ -131,7 +131,8 @@ public sealed class ScopedVerificationInstructionTests
                      InstructionBundles.StageMutation, InstructionBundles.StageReview
                  })
         {
-            InstructionBundles.TextOf(key).Length.ShouldBeLessThanOrEqualTo(2500, key);
+            // CARD-1647: stage-review carries the review-rounds evidence lines under a 2,600 cap.
+            InstructionBundles.TextOf(key).Length.ShouldBeLessThanOrEqualTo(key == InstructionBundles.StageReview ? 2600 : 2500, key);
         }
     }
 
