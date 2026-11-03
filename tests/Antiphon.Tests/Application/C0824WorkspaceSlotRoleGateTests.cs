@@ -26,9 +26,10 @@ namespace Antiphon.Tests.Application;
 /// no-feature cases run on the scripted peer, where the request shape is the whole oracle.
 /// </summary>
 [Category("Integration")]
-// Each test builds its own world and the class runs in parallel (CARD-1660 R5). Two-lease and retry cases measure about
-// 20-25 s loaded (the CARD-1677 transport-world figure); the budget is 2x that.
-[Timeout(45_000)]
+// Each test builds its own world and the class runs in parallel (CARD-1660 R5). First green TRX on server2, 2026-11-03 at
+// 2561829864 (load 29-33, 19 cases at once): every case 29-38.6 s, most of it the shared fixture start they all wait on.
+// The budget is 2x that p95; the design's 45 s estimate left under 7 s of headroom.
+[Timeout(80_000)]
 public sealed class C0824WorkspaceSlotRoleGateTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(15);
@@ -69,7 +70,8 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         if (mode == "invalid")
             monitor.Invalid();
         await using var world = await C0824SlotTransportWorld.StartAsync(configure: WithMonitor(monitor));
-        var role = mode switch { "role-not-listed" => AgentTaskRole.Code, "mutation" => AgentTaskRole.Mutation, _ => AgentTaskRole.Plan };
+        // An unlisted Review task (a Code task fails at the progress-baseline capture in this world before remote prep).
+        var role = mode switch { "role-not-listed" => AgentTaskRole.Review, "mutation" => AgentTaskRole.Mutation, _ => AgentTaskRole.Plan };
         var taskId = await SeedAsync(world, role, cold: mode == "role-not-listed");
         await PrepareAsync(world);
 
@@ -83,9 +85,11 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         var task = await world.Rig.ReadTaskAsync(taskId);
         Normal(task.RemoteWorktreePath).ShouldBe(Normal(mirror));
         task.RemoteWorkspaceSlotId.ShouldBeNull();
-        (await world.Rig.EventsAsync(taskId, AgentTaskEventType.Held)).ShouldBeEmpty("never held");
+        // Never held for a slot and never warned (a gate that threw would leave the task Queued with a Warning). The
+        // ordinary remote-prep Held events (in flight, then ready) are not slot holds.
         (await AllEventsAsync(world.Rig, taskId))
-            .Where(item => item.Detail.Contains(WorkspaceSlotCodes.Unavailable, StringComparison.Ordinal)).ShouldBeEmpty();
+            .Where(item => item.Detail.Contains(WorkspaceSlotCodes.Unavailable, StringComparison.Ordinal)).ShouldBeEmpty("never held");
+        (await world.Rig.EventsAsync(taskId, AgentTaskEventType.Warning)).ShouldBeEmpty("never warned");
         var reason = mode switch
         {
             "role-not-listed" => "role_not_listed", "none" => "roles_none", "invalid" => "roles_invalid", _ => "mutation",

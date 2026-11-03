@@ -379,6 +379,21 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   release; the operator releases the lease where it is held, or records the release with
   `POST /api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release`.
   Do not enable either flag on a server without this rule.
+- Role allow-list (CARD-0824 S1c). With the server flag on, `Delegation:WorkspaceSlotRoles` decides which
+  roles lease: a single string, `*` (default, every role except Mutation), `none` (the soft rollback: no
+  new leases, releases continue) or exact comma-separated role names (`Plan,Investigate,TestDesign,Docs`;
+  canonical case, no spaces). Anything else, including an array such as `[]` or `["Plan"]`, fails the
+  host at startup; an invalid hot reload makes `WorkspaceSlotRoleGate` lease nothing (one warning) until
+  it is fixed, and a task then gets its legacy `task-<id>` mirror, never a hold. Mutation and SourceLanding
+  never lease. An unlisted role's request is the exact legacy shape. The first decision for a preparation is
+  saved as a `WorkspaceSlotDecision` task event (`workspace_slot_decision: slot|legacy preparation=<id>
+  reason=<reason>`) before its first send, and every resend of that preparation reuses it, so a role flip
+  between a lost reply and its resend never strands a slot or puts a `task-<id>` beside one; only a
+  definitive runner refusal records `cleared` and lets the next send decide again. The flag stays
+  restart-only (the hard rollback); the role value is read from the options monitor at each decision. Change
+  it only in the server's reloadable JSON (`appsettings.Development.json` under the desktop AppHost), never
+  through `Delegation__WorkspaceSlotRoles`: environment variables are not reloaded and shadow the file. The
+  next task's `WorkspaceSlotDecision` event (`reason=roles_none`) confirms a rollback.
 
 ## Dormant terminal runner seat integration (CARD-0667 S4b)
 
