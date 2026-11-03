@@ -203,7 +203,7 @@ try {
     $exitText = $null
     if (Test-Path -LiteralPath $exitFile) { $exitText = (Get-Content -LiteralPath $exitFile -Raw).Trim() }
     $logText = ''
-    if (Test-Path -LiteralPath (Join-Path $e2eTask 'supervisor.log')) { $logText = Get-Content -LiteralPath (Join-Path $e2eTask 'supervisor.log') -Raw }
+    if (Test-Path -LiteralPath (Join-Path $e2eTask 'supervisor.log')) { $logText = [string](Get-Content -LiteralPath (Join-Path $e2eTask 'supervisor.log') -Raw) }
     $detail = "wrapperCode=$wrapperCode teardown=$teardown exit=$exitText gone=$supervisorGone wrapper=[$wrapperText] log=[$logText]"
     Assert-C1667 ($wrapperExited -and $wrapperCode -eq 0 -and $identity -and [int]$identity.pid -ne $wrapperPid) `
         'start-supervisor returns after the supervisor records its own identity' $detail
@@ -220,7 +220,7 @@ try {
         $logText.EndsWith("`n") -and $beat -and $null -ne $beat.observedAtUtc) `
         'supervisor writes START, LAUNCHED and EXIT lines and a heartbeat' $detail
     $console = ''
-    if (Test-Path -LiteralPath (Join-Path $e2eTask 'commission-console.log')) { $console = Get-Content -LiteralPath (Join-Path $e2eTask 'commission-console.log') -Raw }
+    if (Test-Path -LiteralPath (Join-Path $e2eTask 'commission-console.log')) { $console = [string](Get-Content -LiteralPath (Join-Path $e2eTask 'commission-console.log') -Raw) }
     Assert-C1667 ($console.Contains('fake launch done')) 'launch child output goes to its own commission-console.log' $console
     $o = Invoke-Observe ([pscustomobject]@{ Task = $e2eTask; State = $e2eState })
     Assert-C1667 ($o.Code -eq 2 -and $o.Json.supervisor -ceq 'absent' -and $o.Json.commissionExit -ceq '7') `
