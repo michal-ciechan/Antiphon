@@ -170,6 +170,59 @@ public sealed class AgentSessionRuntimeBoundedReadTests
         Volatile.Read(ref runner.ListCalls).ShouldBe(1);
     }
 
+    /// <summary>
+    /// CARD-1688 (mutants A17/A18): a session-id caller (the resume guard, pool release, orchestrator
+    /// liveness) passes the local runner id or none, and is answered from the local List. The remote
+    /// inventory never names a local session, so answering from it reads a running local session as gone.
+    /// </summary>
+    [Test]
+    [Arguments(null)]
+    [Arguments(PhoneHomeProtocol.LocalRunnerId)]
+    public async Task C1679_Session_id_liveness_on_the_local_runner_reads_the_local_list(string? runnerId)
+    {
+        var live = Guid.NewGuid();
+        var gone = Guid.NewGuid();
+        var runner = new BlockingSessionRunnerClient();
+        runner.ReleaseList([new SessionRunnerSessionDto(live, 4242, Start.UtcDateTime, "Running", null, AgentExitReason.Unknown, 0)]);
+        var time = new FakeTimeProvider(Start);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var runtime = NewRuntime(runner, provider, time, new RemoteInventoryDirectory([Guid.NewGuid()], []));
+
+        (await runtime.IsLiveOrUnknownAsync(live, runnerId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("a running local session the remote inventory does not name is live");
+        Volatile.Read(ref runner.ListCalls).ShouldBe(1, "a local session is answered by the local List");
+        (await runtime.IsLiveOrUnknownAsync(gone, runnerId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)))
+            .ShouldBeFalse("a local session neither the List nor the inventory names is gone");
+    }
+
+    /// <summary>
+    /// CARD-1688 (mutant A21), the session-id twin of the control above (CARD-1362 D-3): a failed
+    /// local List, the deadline included, propagates to a session-id caller and never reads as gone.
+    /// </summary>
+    [Test]
+    [Arguments("canceled", null)]
+    [Arguments("http", null)]
+    [Arguments("deadline", null)]
+    [Arguments("canceled", PhoneHomeProtocol.LocalRunnerId)]
+    [Arguments("deadline", PhoneHomeProtocol.LocalRunnerId)]
+    public async Task C1679_Session_id_liveness_on_the_local_runner_propagates_a_list_failure(string fault, string? runnerId)
+    {
+        var live = Guid.NewGuid();
+        var runner = new BlockingSessionRunnerClient();
+        Fault(runner, fault);
+        var time = new FakeTimeProvider(Start);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var runtime = NewRuntime(runner, provider, time, new RemoteInventoryDirectory([live], []));
+
+        var failure = await Should.ThrowAsync<Exception>(
+            () => AnswerAsync(() => runtime.IsLiveOrUnknownAsync(live, runnerId, CancellationToken.None), runner, time));
+        if (fault == "http")
+            failure.ShouldBeOfType<HttpRequestException>();
+        else
+            failure.ShouldBeAssignableTo<OperationCanceledException>();
+        Volatile.Read(ref runner.ListCalls).ShouldBe(1);
+    }
+
     private const string RemoteRunner = "server2";
 
     private static AgentSession Bound(Guid id, string? runnerId) =>
