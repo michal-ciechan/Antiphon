@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "6a3ce13fbde1504d0546eb1897d8827501a59f08d80afe2f7dd63456f2e1a01e",
+  "policyHash": "73a7447cea2b789495d2e891cfeac7be61381d2ed1021cf98a96107dd2ecc962",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -879,6 +879,13 @@
           "class": "Card1653FreshLaunchIdentityTests",
           "platform": "windows",
           "reason": "Linux-only by construction: the fake pty-host source is a /bin/sh script plus a copied /usr/bin/sleep. The case remains required on Linux.",
+          "owner": "CARD-1653"
+        },
+        {
+          "suite": "session-runner",
+          "class": "Card1653SocketDirTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: statx, SO_PEERCRED, Unix socket files and the /bin/sh fake pty-host. The case remains required on Linux.",
           "owner": "CARD-1653"
         },
         {

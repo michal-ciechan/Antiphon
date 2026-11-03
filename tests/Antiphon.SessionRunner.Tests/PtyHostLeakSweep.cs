@@ -20,7 +20,7 @@ public static class TestSessionLogRoot
         "c502-v25", "c502-v26", "c502-v26-manifest", "c502-v26-herdr", "c502-v27",
         "c514-gen", "c514-seq", "c514-gate", "c514-dest", "c649-prompt",
         "c79-stop", "c628-token", "c710-platform", "c1636-adopt",
-        "c1653-adopt", "c1653-launch",
+        "c1653-adopt", "c1653-launch", "c1653-sock", "c1653-peer",
     ];
 
     public static string Create(string prefix)
