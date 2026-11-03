@@ -138,6 +138,28 @@ public sealed partial class LandGraphEvaluationTests
         repo.AssertUntouched();
     }
 
+    // rc qualification 7f8e9fd1: a git-ignored file inside a project's default None glob (an E2E
+    // run's tests/Antiphon.E2E/TestOutput/) is evaluated in the repository pass. The canary copies
+    // tracked and untracked-unignored files only, so the same glob must still match it there.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_IgnoredFileInDefaultGlobApproves()
+    {
+        await using var repo = await AuditRepo.CreateAsync(new()
+        {
+            [".gitignore"] = "App/TestOutput/\n",
+            ["App/Program.cs"] = "System.Console.WriteLine();\n",
+            ["App/App.csproj"] = SdkProject(""),
+        }, untrackedFiles: new() { ["App/TestOutput/Logs/run.log"] = "run output\n" });
+
+        var run = await repo.RunToolAsync();
+
+        run.Text.ShouldNotContain("refused:");
+        run.ExitCode.ShouldBe(0, run.Text);
+        run.Lines.ShouldContain("approved", run.Text);
+        repo.AssertUntouched();
+    }
+
     // V-3: anything MSBuild cannot evaluate denies with exit 2 and never approves.
     [Test]
     [Timeout(300_000)]
