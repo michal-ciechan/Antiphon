@@ -707,6 +707,27 @@ Legacy unsealed copies retain their current-process ledger behavior.
 - **Declared additions.** A declared addition is identified by project, namespace, class and method together. A twin elsewhere is `undeclared-new-uid`, and a declared identity absent from the after set is `declared-additive-missing`.
 - **Witnesses.** Synthetic engine and scratch-Git witnesses carry these rules: `LiveLaneInventoryTests.CensusAdditiveIdentity` and `LiveLaneInventoryTests.CensusTargetScope`.
 
+### Live-lane sink audit residuals (CARD-1645)
+
+`tests/Shared/LiveClaude/LiveClaudeSinkAudit.cs` gates `LiveClaudeEvidenceWiringTests.CanarySinksCannotBypassSanitizer` (Pty canaries) and `LiveLaneEvidenceTests.C680EvidenceIsSanitized` (the C680 watchdog and its diagnostics file). It is a closed allow-list: screen-derived text that reaches a call, a creation, a throw, a ref/out argument or a non-local store counts as `Escape` unless the target is allow-listed. The rules below close the CARD-1645 review round 1 holes:
+
+- **Walked helpers.** A helper is resolved by its declaring type and argument count. A bare or `this.` call reaches the caller's own type or an enclosing local function. `receiver.Name(...)` reaches a helper only when the receiver's innermost visible declaration (local, field or parameter, or `var x = new T(...)`) is a type declared in the walked roots. A same-named method elsewhere never launders `output.Write(...)` or `s_log.Append(...)`.
+- **Lambdas and queries.** A lambda that is handed tainted text through the receiver or a sibling argument gets tainted parameters. The one reviewed exception is the `write` callback of `ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync`, which only ever receives `ClaudeTrustDialogKeys` constants. Query range variables (`from`, `join`, `let`, `into`) over tainted text are tainted too. A method group passed as the delegate of a listed delegate-taking call (`ForEach`, `Select`, `Where`, `Any`, `Exists` and similar) counts unless it resolves to a walked helper.
+- **Stores.** An element or member store stays local only through a local that created its object in place, and buffer-mutator exemptions follow the same rule. An alias (`var bag = TestContext.Current!.ObjectBag`), a parameter or a catch variable (`ex.Data[...]`) counts. So does a `ref` or `out` argument that is not a local or a discard, when the call carries taint.
+
+Known residuals, each counting 0 today:
+- Bool-predicate leaves (`Contains`, `StartsWith`, `Any`, `Exists` and the rest) are matched by name on any receiver, so a sink method that happens to share one of those names is exempt (`s_sink.Contains(screen)`).
+- Reviewed screen readers and text transforms are matched by exact call text, so an unrelated type spelled the same way would also match.
+- A member store on an object created in place is local, so a property setter with a side effect is not seen (`var h = new Holder(); h.Text = screen;`).
+- A method group handed tainted text by a call outside the listed delegate-taking leaves (for example `Aggregate(seed, OtherFile.Log)` on a tainted receiver) is not counted.
+- Text that leaves through a `ToString()` override, an operator, an implicit conversion or an event is not modelled. Neither is a `ref` argument of a constructor.
+
+Fail-closed approximations, which over-count rather than launder:
+- Taint is tracked by simple name across every walked root.
+- Declarations are resolved syntactically, within the file. A pattern variable's scope is approximated by its nearest block.
+- Properties, `using static` members and inherited members are never treated as walked helpers.
+- Method roots (the Pty walk) declare no walked types, so every receiver helper call there that carries taint counts.
+
 ## OS branch witnesses
 
 For each changed OS-selected production behavior, Code and Review must identify
