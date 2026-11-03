@@ -37,12 +37,19 @@ public sealed class PtyHostClient : IAsyncDisposable
         _readLoop = Task.Run(ReadLoopAsync);
     }
 
-    /// <summary>Connects (with retry while the host's pipe server comes up) and completes the hello.</summary>
+    /// <summary>
+    /// Connects (with retry while the host's pipe server comes up) and completes the hello. With a
+    /// <paramref name="policy"/> (CARD-1653 S2) each attempt first checks the socket file, then reads
+    /// the kernel's peer credentials, and writes the hello only to the expected host. Under Enforce
+    /// a failed check throws <see cref="PtyHostPeerRefusedException"/>, which is not retried; under
+    /// Observe it is reported once and the connect continues. A null policy is the unchecked connect.
+    /// </summary>
     public static async Task<PtyHostClient> ConnectAsync(
         string pipeName, TimeSpan timeout, CancellationToken ct, PtyHostConnectPolicy? policy = null)
     {
         var deadline = DateTime.UtcNow + timeout;
         Exception? last = null;
+        var observed = false;
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
@@ -56,7 +63,29 @@ public sealed class PtyHostClient : IAsyncDisposable
                 // sit in the listen backlog and the host's Accept never completes (CARD-0490
                 // Docker phone-home: socket existed, host waited 30s, runner timed out at 15s).
                 var milliseconds = (int)Math.Clamp(remaining.TotalMilliseconds, 50, int.MaxValue);
-                await Task.Run(() => pipe.Connect(milliseconds), ct);
+                var socketFile = policy?.CheckSocketFile?.Invoke(pipeName);
+                if (socketFile is SocketFileVerdict.Refused)
+                    Unproven(policy!, ref observed);
+                try
+                {
+                    await Task.Run(() => pipe.Connect(milliseconds), ct);
+                }
+                catch (UnauthorizedAccessException) when (policy is { CurrentUserOnly: true })
+                {
+                    // Windows: the pipe server is owned by another account.
+                    throw new PtyHostPeerRefusedException(PtyHostPeerRefusedException.MismatchCode);
+                }
+
+                if (policy is not null)
+                {
+                    // Connect waits for an absent socket to appear, so check the file it reached.
+                    if (socketFile is SocketFileVerdict.Absent
+                        && policy.CheckSocketFile!(pipeName) is not SocketFileVerdict.Ok)
+                        Unproven(policy, ref observed);
+                    // Before any write: the hello already tells a squatter the session is wanted.
+                    if (!policy.AcceptPeer(policy.ReadPeer(pipe.SafePipeHandle)))
+                        Unproven(policy, ref observed);
+                }
 
                 await PtyHostFraming.WriteAsync(pipe, new HelloMessage(PtyHostProtocol.Version), ct);
                 var reply = await PtyHostFraming.ReadAsync(pipe, ct);
@@ -89,6 +118,16 @@ public sealed class PtyHostClient : IAsyncDisposable
         }
 
         throw new TimeoutException($"Could not connect to pty-host pipe '{pipeName}' within {timeout}.", last);
+    }
+
+    /// <summary>Enforce refuses; Observe reports the fixed code once per connect and continues.</summary>
+    private static void Unproven(PtyHostConnectPolicy policy, ref bool observed)
+    {
+        if (!policy.Observe)
+            throw new PtyHostPeerRefusedException(PtyHostPeerRefusedException.MismatchCode);
+        if (observed) return;
+        observed = true;
+        policy.OnObserved?.Invoke(PtyHostPeerRefusedException.MismatchCode);
     }
 
     public async Task<LaunchedMessage> LaunchAsync(LaunchMessage launch, CancellationToken ct)
@@ -303,7 +342,9 @@ public sealed class PtyHostConnectPolicy
     public Action<string>? OnObserved { get; init; }
 
     /// <summary>The client stream options: a null policy keeps <see cref="PipeOptions.Asynchronous"/> exactly.</summary>
-    public static PipeOptions PipeOptionsFor(PtyHostConnectPolicy? policy) => PipeOptions.Asynchronous;
+    public static PipeOptions PipeOptionsFor(PtyHostConnectPolicy? policy) => policy is { CurrentUserOnly: true }
+        ? PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly
+        : PipeOptions.Asynchronous;
 }
 
 /// <summary>CARD-1653 S2: the peer is not the expected host. Never retried; the message is the fixed code.</summary>

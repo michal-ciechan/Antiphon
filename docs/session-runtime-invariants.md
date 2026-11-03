@@ -68,6 +68,47 @@ a boot wedge. Reconcile receipts first, then allow Enter-only recovery only from
 a complete idle composer. A positively changed generation can take the ordinary
 first-write path. Other providers and ordinary messages retain their existing rules.
 
+## pty-host rendezvous and peer proof (CARD-1653 S2)
+
+Two runner settings, both default off. With the defaults the pipe names, the client
+`PipeOptions.Asynchronous`, the frame order, the catch routing, the kill path and the log lines
+are unchanged, and no statx, getsockopt or `GetNamedPipeServerProcessId` call runs.
+
+- `SessionRunner:PtyHostSocketDirMode` = `Legacy` (default) | `Owned`; `SessionRunner:PtyHostSocketDir`
+  overrides `<PtyHostDir>/sock`. Under Owned a new non-custody Linux launch binds
+  `<sock>/<id:N>`. The launch first proves the directory: owned by the runner's euid, mode exactly
+  0700 (an owned wider mode is tightened and re-read), not a symlink, every ancestor (a symlinked
+  ancestor is resolved) owned by the euid or root and not group- or other-writable unless sticky,
+  and `<sock>/<32 hex>` within 107 UTF-8 bytes. A failure is `pty_host_socket_dir_unsafe` or
+  `pty_host_socket_path_too_long` before any host is spawned; there is no `/tmp` fallback.
+  Custody launches keep `PtyHostProtocol.PipeNameFor` (the custody ledger pins it), and Windows
+  keeps `antiphon-pty-<id:N>` in every mode (Owned logs one ignored line at startup). The
+  adoption sweep runs the same directory check as a diagnostic only: adoption is proven per path.
+- `SessionRunner:PtyHostPeerCheck` = `Off` (default) | `Observe` | `Enforce`. After connect and
+  before the hello the client asks the kernel who is behind the pipe: on Linux the socket file must
+  be a socket owned by the euid (checked before connect, and again after a connect that waited for
+  an absent file) and `SO_PEERCRED` must name the expected pid and the euid; on Windows Enforce
+  adds `PipeOptions.CurrentUserOnly` and `GetNamedPipeServerProcessId` must name the expected
+  pid. The expected pid is the host this launch spawned, or `manifest.HostPid` alive at its
+  recorded start for an adoption. Unreadable credentials are unproven.
+  - Enforce writes nothing to an unproven peer, not even the hello, and does not retry. A fresh
+    launch fails (`pty_host_peer_mismatch: launch refused for session <id>`) and tears down the
+    host it spawned. An adoption refusal (`pty_host_peer_mismatch: adoption refused for session
+    <id>`) never kills `manifest.HostPid` or deletes its manifest: the session is a held pending
+    row `pty_host_peer_unproven` (Starting, no SessionExited). The vanish sweep releases it as
+    `Exited/ProcessVanished` once the host pid is dead at its start, exactly as S1's
+    `pty_host_identity_unproven`. A proven peer's later adoption failure keeps today's exit path.
+  - Observe connects anyway and logs `pty_host_peer_mismatch (observe): session <id>` once per
+    connect. Windows Observe does not set `CurrentUserOnly` (it would refuse, not log).
+  - Under Owned, adopting a host still on `/tmp/antiphon-pty-<id>` logs
+    `pty_host_legacy_socket_path: session <id>` once; it gets the same checks and is never
+    refused for its path.
+
+Every line names the session and a fixed token only, never a claimed pid, uid or path. Returning a
+flag to Off or Legacy is a runner restart; no host change is involved. S2 changes no protocol
+message, host code or manifest schema. Witnesses: `Card1653SocketDirTests` (Linux),
+`Card1653PeerCheckTests` (portable).
+
 ## Ceiling supervision (CARD-1610 S2)
 
 A confirmed Working task at its role ceiling stays Working and counted. Its typed,
