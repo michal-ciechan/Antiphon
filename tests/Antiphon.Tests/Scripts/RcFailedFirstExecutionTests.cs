@@ -72,4 +72,37 @@ public sealed class RcFailedFirstExecutionTests
         skipped.ShouldAllBe(file => !file.GetProperty("copied").GetBoolean() &&
             file.GetProperty("path").GetString()!.Contains(".git", StringComparison.Ordinal));
     }
+
+    // CARD-1691 F1: only a whole .git segment is Git admin. Files whose names merely contain
+    // .git are archived as regular copies, and every archived file is accounted for.
+    [Test]
+    public async Task C1590_ArchiveKeepsGitNamedFiles(CancellationToken cancellationToken)
+    {
+        var result = await ScriptHarnessProcess.RunAsync("test-nightly-failed-first.ps1", "FF", "C1590_ArchiveSegments",
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-failed-first.ps1"),
+            ScriptHarnessOptions.Default, cancellationToken);
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("PASS FF C1590_ArchiveSegments.fixture", Case.Sensitive, output);
+        var archive = output.ReplaceLineEndings("\n").Split('\n')
+            .Single(line => line.StartsWith("FF EVIDENCE ", StringComparison.Ordinal))["FF EVIDENCE ".Length..].Trim();
+        using var inventory = JsonDocument.Parse(File.ReadAllText(Path.Combine(archive, "inventory.json")));
+        var rows = inventory.RootElement.GetProperty("files").EnumerateArray().ToDictionary(
+            file => file.GetProperty("path").GetString()!.Replace('\\', '/'), file => file, StringComparer.Ordinal);
+        foreach (var relative in new[] { ".gitignore", ".github/workflow.yml", "foo.git.txt", "checkout/.gitignore", "checkout/tracked.txt" })
+        {
+            rows.ShouldContainKey(relative, output);
+            rows[relative].GetProperty("kind").GetString().ShouldBe("regular", relative);
+            rows[relative].GetProperty("copied").GetBoolean().ShouldBeTrue(relative);
+            File.ReadAllText(Path.Combine(archive, relative)).ShouldBe(relative);
+        }
+        var skipped = rows.Where(row => row.Value.GetProperty("kind").GetString() == "git-dir").ToList();
+        skipped.Select(row => row.Key).ShouldContain("checkout/.git/HEAD");
+        skipped.ShouldAllBe(row => row.Key.StartsWith("checkout/.git/", StringComparison.Ordinal) && !row.Value.GetProperty("copied").GetBoolean());
+        var regular = rows.Where(row => row.Value.GetProperty("kind").GetString() == "regular").Select(row => row.Key).Order(StringComparer.Ordinal);
+        var archived = Directory.EnumerateFiles(archive, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(archive, path).Replace('\\', '/'))
+            .Where(path => path is not ("inventory.json" or "performance.json")).Order(StringComparer.Ordinal);
+        archived.ShouldBe(regular);
+    }
 }
