@@ -96,6 +96,70 @@ public sealed class C1677DiskAlarmTests
         (await world.ReadAsync(schema)).ShouldBeEmpty("same-sample-repeated-stays-stale");
     }
 
+    // CARD-1683 (sweep 974b0c17 C7). S-7 stays exact for a raising huge reading too: 100 * (Total - Free)
+    // overflows a long, and only the exact compare sees 90 percent used.
+    [Test]
+    public async Task Huge_reading_at_90_percent_raises_one_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new World();
+        world.Record(Server2, ("/work", long.MaxValue / 10, long.MaxValue));
+
+        (await world.ReadAsync(schema)).ShouldHaveSingleItem("huge-90-one-row")
+            .Evidence.ShouldContain("usedPercent=90");
+    }
+
+    // CARD-1683 (sweep 974b0c17 C8). The freshness bound is inclusive: a sample first observed exactly
+    // SampleFreshMinutes ago still raises.
+    [Test]
+    public async Task Sample_observed_exactly_at_the_freshness_bound_raises()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new World(start: Now.AddMinutes(-15));
+        world.Record(Server2, ("/work", 1 * GiB, 100 * GiB));
+        world.Clock.SetUtcNow(Now);
+
+        (await world.ReadAsync(schema)).ShouldHaveSingleItem("fresh-15-min-inclusive");
+    }
+
+    // CARD-1683 (sweep 974b0c17 C10). Freshness is the server's first-observed time, not the runner's clock:
+    // a sample stamped 30 minutes behind the server but first seen now is fresh.
+    [Test]
+    public async Task Skewed_runner_clock_with_a_freshly_observed_sample_raises()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new World();
+        world.Record(Server2, ("/work", 1 * GiB, 100 * GiB), at: Now.AddMinutes(-30));
+
+        (await world.ReadAsync(schema)).ShouldHaveSingleItem("skewed-runner-clock-fresh");
+    }
+
+    // CARD-1683 (sweep 974b0c17 C19). The row starts when the server first observed the sample, not when
+    // the feed is read.
+    [Test]
+    public async Task Row_start_is_the_observed_time_not_the_read_time()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new World();
+        world.Record(Server2, ("/work", 1 * GiB, 100 * GiB));
+        world.Clock.Advance(TimeSpan.FromMinutes(5));
+
+        (await world.ReadAsync(schema)).ShouldHaveSingleItem().SinceUtc
+            .ShouldBe(Now.UtcDateTime, "since-is-observed-at");
+    }
+
+    // CARD-1683 (sweep 974b0c17 C13). The configured volume matches exactly: a volume whose path only
+    // starts with it does not count, wherever it is listed.
+    [Test]
+    public async Task A_volume_that_only_shares_the_prefix_does_not_count()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new World();
+        world.Record(Server2, ("/workspace", 1 * GiB, 100 * GiB), ("/work", 50 * GiB, 100 * GiB));
+
+        (await world.ReadAsync(schema)).ShouldBeEmpty("prefix-volume-no-row");
+    }
+
     // Brief: a missing or unusable reading raises nothing and never throws out of the feed read.
     [Test]
     [Arguments("no-cache")]
@@ -158,6 +222,11 @@ public sealed class C1677DiskAlarmTests
 
         world.Settings.Runners[RunnerPlatformWire.DesktopId] = "/work";
         (await world.ReadAsync(schema)).ShouldBeEmpty("desktop-listed-still-no-row");
+
+        // CARD-1683 (sweep 974b0c17 V6): desktop matching ignores case.
+        world.Record("Desktop", ("/work", 1 * GiB, 100 * GiB));
+        world.Settings.Runners["Desktop"] = "/work";
+        (await world.ReadAsync(schema)).ShouldBeEmpty("desktop-other-case-no-row");
 
         world.Record(Server2, ("/work", 1 * GiB, 100 * GiB));
         (await world.ReadAsync(schema)).ShouldHaveSingleItem("listed-control-one-row")
@@ -272,8 +341,10 @@ public sealed class C1677DiskAlarmTests
     [Test]
     [Arguments("fresh-0", false)]
     [Arguments("fresh-1", true)]
+    [Arguments("fresh-1440", true)]
     [Arguments("fresh-1441", false)]
     [Arguments("desktop-listed", false)]
+    [Arguments("desktop-other-case", false)]
     [Arguments("blank-runner", false)]
     [Arguments("relative-path", false)]
     [Arguments("blank-path", false)]
@@ -285,8 +356,10 @@ public sealed class C1677DiskAlarmTests
         {
             case "fresh-0": settings.SampleFreshMinutes = 0; break;
             case "fresh-1": settings.SampleFreshMinutes = 1; break;
+            case "fresh-1440": settings.SampleFreshMinutes = 1440; break;
             case "fresh-1441": settings.SampleFreshMinutes = 1441; break;
             case "desktop-listed": settings.Runners[RunnerPlatformWire.DesktopId] = "/work"; break;
+            case "desktop-other-case": settings.Runners["Desktop"] = "/work"; break;
             case "blank-runner": settings.Runners[" "] = "/work"; break;
             case "relative-path": settings.Runners[Server2] = "work"; break;
             case "blank-path": settings.Runners[Server2] = ""; break;

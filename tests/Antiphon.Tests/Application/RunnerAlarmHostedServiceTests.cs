@@ -24,6 +24,12 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RunnerAlarmHostedServiceTests
 {
+    /// <summary>
+    /// CARD-1683: the start pass before the first timer. A cold test process on loaded server2 took over
+    /// 5 s (CARD-1678, sweep 974b0c17), the old bound; measured MEASUREMENT_PENDING.
+    /// </summary>
+    private static readonly TimeSpan FirstPassWait = TimeSpan.FromSeconds(45);
+
     [Test]
     public void a_timer_is_registered_before_the_clock_reports_it_ready()
     {
@@ -51,13 +57,18 @@ public sealed class RunnerAlarmHostedServiceTests
         var clock = new AlarmClock(DateTimeOffset.UtcNow);
         var (service, state, wake) = Build(schema.ConnectionString, source, clock, new AlarmSettings());
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await FirstPassAsync(clock);
 
         clock.Inner.Advance(TimeSpan.FromSeconds(179));
         await Task.Delay(100);
         state.Current.Episodes.ShouldHaveSingleItem().RaisedAt.ShouldBeNull();
         clock.Inner.Advance(TimeSpan.FromSeconds(1));
         await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RaisedAt is not null), "grace timer did not raise");
+        // CARD-1683 (sweep 974b0c17 A9): a raised episode's past grace time is not a wake; the loop waits for
+        // the sweep or a signal instead of passing again with the clock standing still.
+        var passes = source.Calls;
+        await Task.Delay(200);
+        source.Calls.ShouldBe(passes, "the loop passed again after the raise without the clock moving");
 
         wake.Fenced(common);
         await UntilAsync(() => state.Current.Journals.Any(finding => LandingGit.PathsEqual(finding.CommonDirectory, common)),
@@ -85,7 +96,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var clock = new AlarmClock(DateTimeOffset.UtcNow);
         var (service, _, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings(), inspector);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await FirstPassAsync(clock);
         var snapshots = source.Calls;
         var inspections = inspector.Calls;
         snapshots.ShouldBeGreaterThanOrEqualTo(1);
@@ -132,7 +143,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var logger = new ListLogger<RunnerAlarmHostedService>();
         var (service, state, wake) = Build(schema.ConnectionString, source, clock, new AlarmSettings(), logger: logger);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await FirstPassAsync(clock);
         var before = clock.Inner.GetUtcNow();
         wake.Signal("server2");
         await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "server2"), "failing pass was not retried");
@@ -204,7 +215,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await FirstPassAsync(clock);
         state.Current.Episodes.ShouldBeEmpty();
 
         clock.Inner.Advance(TimeSpan.FromMinutes(30));
@@ -236,7 +247,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await FirstPassAsync(clock);
         state.Current.DrainExpiresAt.ShouldContainKey("drainer");
         var passes = source.Calls;
 
@@ -306,8 +317,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        // A cold first pass took over 5 s on loaded server2 (CARD-1678); only the timer it arms is asserted.
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await FirstPassAsync(clock);
         var passes = source.Calls;
         passes.ShouldBe(1, "the start pass runs once before the loop waits");
         clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
@@ -345,7 +355,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 120 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await FirstPassAsync(clock);
         state.Current.DrainExpiresAt.Count.ShouldBe(2);
         clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
             "the timer is due one second past the earliest drain expiry");
@@ -355,6 +365,26 @@ public sealed class RunnerAlarmHostedServiceTests
             "the loop did not wake when the earliest drain passed its bound");
         state.Current.Episodes.ShouldNotContain(episode => episode.RunnerId == "late", "the later drain is still within its bound");
         await service.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    public void C1683_a_raised_episode_never_schedules_a_wake()
+    {
+        // CARD-1683 (sweep 974b0c17 A9), the episode-side twin of CARD-1674: once an episode is raised its
+        // grace time (now past) is not a wake, or the loop spins; an unraised one still wakes at its grace.
+        var lastPass = DateTimeOffset.UtcNow;
+        var nextSweep = lastPass.AddMinutes(15);
+        var grace = TimeSpan.FromSeconds(180);
+        var raised = new RunnerOutageEpisode("server2", "server2", lastPass.AddMinutes(-10), "transport_abort",
+            lastPass.AddMinutes(-7), 0, 0, [], []);
+        var snapshot = RunnerAlarmSnapshot.Empty with { Episodes = [raised] };
+
+        RunnerAlarmHostedService.NextDue(snapshot, nextSweep, lastPass, grace)
+            .ShouldBe(nextSweep, "a raised episode must not make the loop wake on its past grace time");
+
+        var pending = raised with { RunnerId = "server3", DownSince = lastPass.AddMinutes(-1), RaisedAt = null };
+        RunnerAlarmHostedService.NextDue(snapshot with { Episodes = [raised, pending] }, nextSweep, lastPass, grace)
+            .ShouldBe(lastPass.AddMinutes(2), "an unraised episode still wakes at the end of its grace");
     }
 
     [Test]
@@ -430,6 +460,14 @@ public sealed class RunnerAlarmHostedServiceTests
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(
             new RepositoryChildJournal.ChildRecord(1, common, Environment.ProcessId, ticks)));
         File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-10));
+    }
+
+    // FirstPassWait: see the class remarks for the measurement.
+    private static async Task FirstPassAsync(AlarmClock clock)
+    {
+        var watch = Stopwatch.StartNew();
+        await clock.FirstTimer.Task.WaitAsync(FirstPassWait);
+        Console.WriteLine($"first pass armed its timer after {watch.ElapsedMilliseconds} ms");
     }
 
     private static async Task UntilAsync(Func<bool> ready, string why)

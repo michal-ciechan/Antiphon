@@ -90,6 +90,7 @@ public sealed class ReviewRoundsPolicyTests
     [Test]
     [Arguments("ROUND 4 OF 3 (blockers only)", 4)]
     [Arguments("Review round 5 (diff-only)", 5)]
+    [Arguments("REVIEW ROUND 10 OF 3", 10)]
     public void C1676_a_colon_less_fourth_round_warns(string goal, int round)
     {
         var flagged = ReviewRoundGuard.Evaluate("CARD-0001", goal, []);
@@ -111,6 +112,9 @@ public sealed class ReviewRoundsPolicyTests
     [Arguments("Review the change in 4 rounds")]
     [Arguments("Rounds 4 of the suite ran green")]
     [Arguments("Review 5 files around 6 call sites")]
+    [Arguments("round 12345")]
+    [Arguments("Round 3rd pass")]
+    [Arguments("PREVIEW ROUND 4 OF 3")]
     public void C1676_a_colon_less_round_keeps_the_ascii_and_same_line_rules(string goal)
     {
         int? declared = -1;
@@ -120,6 +124,23 @@ public sealed class ReviewRoundsPolicyTests
         Should.NotThrow(() => counted = ReviewRoundGuard.Evaluate("CARD-0001", goal, ["aaaaaaaa", "bbbbbbbb", "cccccccc"]));
         counted.ShouldNotBeNull();
         counted.ShouldContain("CARD-0001 already has 3 completed Review tasks", Case.Sensitive, "an undeclared round falls back to the count");
+    }
+
+    /// <summary>
+    /// CARD-1683 (sweep 974b0c17 B3, B11). The first ASCII round line declares the round: a fullwidth digit
+    /// line is not a round line, so it never hides a later valid one, and a later line never overrides the first.
+    /// </summary>
+    [Test]
+    [Arguments("REVIEW ROUND ４ OF 3\nround: 4", 4)]
+    [Arguments("round: 2\nrange: a..b\nround: 5", 2)]
+    public void C1683_the_first_ascii_round_line_declares_the_round(string goal, int round)
+    {
+        ReviewRoundGuard.DeclaredRound(goal).ShouldBe(round);
+        var verdict = ReviewRoundGuard.Evaluate("CARD-0001", goal, []);
+        if (round > ReviewRoundGuard.MaxRounds)
+            verdict.ShouldNotBeNull().ShouldContain($"declares round {round}");
+        else
+            verdict.ShouldBeNull("the first line declares a round inside the limit");
     }
 
     // ---- item 2: the stage-review evidence block carries the round ------------------------------
