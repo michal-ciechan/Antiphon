@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/sessions'
+import { releaseDetachedStyleSheets } from '../../test/detachedStyleSheets'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { SessionTerminal } from './SessionTerminal'
 import * as mirrorFactory from './terminalMirror'
@@ -53,6 +54,9 @@ const layout: ITerminalOptions & ITerminalInitOnlyOptions = {
 }
 const realFactory = mirrorFactory.createMirrorTerminal
 const realMousePolicy = mousePolicy.configureLocalTerminalMouse
+const realComputedStyle = window.getComputedStyle
+const screenPadding = '0px'
+let screenPaddingChecked = false
 const owned: Terminal[] = []
 const hosts: HTMLElement[] = []
 const restoreProperties: Array<() => void> = []
@@ -91,6 +95,19 @@ function installGeometry() {
   style.textContent = '.xterm, .xterm-screen { padding: 0; }'
   document.head.append(style)
   restoreProperties.push(() => style.remove())
+  // xterm reads the screen's padding through getComputedStyle on every mouse event. jsdom
+  // resolves each call by matching the element and its ancestors against every rule in the
+  // document, and each open DOM renderer injects ~790 theme rules: one call measured ~29 ms
+  // with two terminals open on server2, and 0.3-1.4 s once disposed terminals had leaked
+  // their sheets (detachedStyleSheets) and the reset case passed its 20 s cap (rc run f40ad905).
+  // The screen's padding is layout, so it is supplied; assertGeometry checks the supply
+  // against jsdom's real cascade once per file.
+  vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+    if (pseudo || !element.classList.contains('xterm-screen')) return realComputedStyle.call(window, element, pseudo)
+    const supplied = document.createElement('div').style
+    supplied.padding = screenPadding
+    return supplied
+  })
 }
 
 type MeasuredTerminal = { _core: { _renderService: { dimensions: {
@@ -102,6 +119,11 @@ function assertGeometry(terminal: Terminal) {
   expect(dimensions.css.cell, 'harness CSS cell').toEqual({ width: 10, height: 20 })
   expect(dimensions.css.canvas, 'harness canvas').toEqual({ width: 200, height: 120 })
   expect(dimensions.device.cell, 'harness device cell').toEqual({ width: 10, height: 20 })
+  if (screenPaddingChecked) return
+  const real = realComputedStyle.call(window, terminal.element!.querySelector('.xterm-screen')!)
+  expect([real.getPropertyValue('padding-left'), real.getPropertyValue('padding-top')],
+    'harness screen padding').toEqual([screenPadding, screenPadding])
+  screenPaddingChecked = true
 }
 function openTerminal(mirror: boolean, options: ITerminalOptions = {}) {
   const terminal = mirror ? realFactory({ ...layout, ...options }) : new Terminal({ ...layout, ...options })
@@ -119,6 +141,7 @@ function closeTerminal(terminal: Terminal) {
   owned.splice(owned.indexOf(terminal), 1)
   hosts.splice(hosts.indexOf(host), 1)
   host.remove()
+  releaseDetachedStyleSheets()
 }
 function collect(terminal: Terminal) {
   const data: string[] = []
@@ -243,6 +266,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
     hosts.splice(0).forEach(host => host.remove())
     restoreProperties.splice(0).reverse().forEach(restore => restore())
     vi.restoreAllMocks()
+    releaseDetachedStyleSheets()
     expect(document.styleSheets.length, 'disposed terminals release their style sheets').toBe(sheetsBefore)
   })
 
