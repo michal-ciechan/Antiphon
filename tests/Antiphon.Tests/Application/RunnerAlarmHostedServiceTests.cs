@@ -26,10 +26,10 @@ public sealed class RunnerAlarmHostedServiceTests
 {
     /// <summary>
     /// CARD-1683: the start pass before the first timer. A cold test process on loaded server2 took over
-    /// 5 s, the old bound (CARD-1678, sweep 974b0c17). Measured on server2 (load average 12-16) over four
-    /// class runs: 6.1-8.5 s cold (p95 ~8.4 s), ~0.1 s warm; about 2x the cold p95. The CARD-1678 waits keep 30 s.
+    /// 5 s, the old bound (CARD-1678, sweep 974b0c17). Measured on server2 over five class runs (load average
+    /// 12-25): 6.1-13.2 s cold (p95 ~13.2 s), ~0.1 s warm; about 2x the cold p95, the CARD-1678 bound.
     /// </summary>
-    private static readonly TimeSpan FirstPassWait = TimeSpan.FromSeconds(17);
+    private static readonly TimeSpan FirstPassWait = TimeSpan.FromSeconds(30);
 
     [Test]
     public void a_timer_is_registered_before_the_clock_reports_it_ready()
