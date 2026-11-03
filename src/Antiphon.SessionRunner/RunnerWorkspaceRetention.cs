@@ -32,9 +32,10 @@ public sealed record WorkspaceRetainStep(
 /// </summary>
 public sealed class RunnerWorkspaceRetention
 {
-    private static readonly Regex LeafPattern = new(@"^task-[0-9a-f]{8}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex ShaPattern = new("^[0-9a-f]{40}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex BranchPattern = new(@"^[A-Za-z0-9._/-]{1,200}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // \z, never $: in .NET $ also matches just before a final newline (review d0b57b9c A-3).
+    private static readonly Regex LeafPattern = new(@"^task-[0-9a-f]{8}\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex ShaPattern = new(@"^[0-9a-f]{40}\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex BranchPattern = new(@"^[A-Za-z0-9._/-]{1,200}\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly RunnerWorkspaceService _service;
     private readonly IWorkspaceHolderScan _holders;
@@ -214,6 +215,8 @@ public sealed class RunnerWorkspaceRetention
     /// <summary>Step 1 confinement, before any filesystem or git read of the tree.</summary>
     private PhoneHomeWorkspaceRetainResponse? Confine(PhoneHomeWorkspaceRetainRequest request, string path)
     {
+        if (WorkspaceRetentionNames.HasControlCharacter(path))
+            return Kept(WorkspaceRetentionCodes.NameControlCharacter, "path holds a control character: " + WorkspaceRetentionNames.Escape(path));
         if (!_service.IsUnderRoot(path))
             return Kept(WorkspaceRetentionCodes.OutsideScope, "not a direct child of the runner worktree root");
         var leaf = Path.GetFileName(path);
@@ -375,7 +378,10 @@ public sealed class RunnerWorkspaceRetention
         PhoneHomeWorkspaceRetainRequest request, string path, bool execute, long started, CancellationToken ct)
     {
         var leaf = Path.GetFileName(path);
-        var residue = Residues(leaf);
+        var (residue, doubt) = Residues(leaf);
+        if (doubt is { } refused)
+            return Final(new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, refused.Reason,
+                RetiringResidue: true, Detail: refused.Detail));
         if (residue is null)
             return Final(new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.AlreadyAbsent, RetiringResidue: false));
         var facts = new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, RetiringResidue: true, MovedPath: residue);
@@ -411,23 +417,37 @@ public sealed class RunnerWorkspaceRetention
         return new WorkspaceRetainStep(null, residue, repository, facts with { PhaseAMs = phaseA });
     }
 
-    /// <summary>The single retiring entry <c>&lt;leaf&gt;.&lt;8 hex&gt;</c> of this leaf (a real directory), or null.</summary>
-    private string? Residues(string leaf)
+    /// <summary>
+    /// The single retiring entry <c>&lt;leaf&gt;.&lt;8 hex&gt;</c> of this leaf (a real directory), or null. Any
+    /// other entry that begins <c>&lt;leaf&gt;.</c> (a control character, a trailing space, upper-case hex) is a
+    /// doubt, reported and kept rather than skipped: it is never taken as the residue nor read as its absence.
+    /// </summary>
+    private (string? Residue, (string Reason, string Detail)? Doubt) Residues(string leaf)
     {
         try
         {
             if (!Directory.Exists(RetiringRoot))
-                return null;
-            var pattern = new Regex("^" + Regex.Escape(leaf) + @"\.[0-9a-f]{8}$", RegexOptions.CultureInvariant);
-            return Directory.EnumerateFileSystemEntries(RetiringRoot)
-                .Select(entry => RetiringRoot + "/" + Path.GetFileName(entry))
-                .Where(entry => pattern.IsMatch(Path.GetFileName(entry)) && !IsLink(entry) && Directory.Exists(entry))
-                .OrderBy(entry => entry, StringComparer.Ordinal)
-                .FirstOrDefault();
+                return (null, null);
+            var pattern = new Regex("^" + Regex.Escape(leaf) + @"\.[0-9a-f]{8}\z", RegexOptions.CultureInvariant);
+            var names = Directory.EnumerateFileSystemEntries(RetiringRoot)
+                .Select(entry => Path.GetFileName(entry))
+                .Where(name => name.StartsWith(leaf + ".", StringComparison.Ordinal))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+            foreach (var name in names)
+            {
+                if (WorkspaceRetentionNames.HasControlCharacter(name))
+                    return (null, (WorkspaceRetentionCodes.NameControlCharacter,
+                        "retiring entry holds a control character: " + WorkspaceRetentionNames.Escape(name)));
+                if (!pattern.IsMatch(name))
+                    return (null, (WorkspaceRetentionCodes.WorkspaceRetiringOrUnknown, "retiring entry is not " + leaf + ".<8 hex>: " + name));
+            }
+            return (names.Select(name => RetiringRoot + "/" + name)
+                .FirstOrDefault(entry => !IsLink(entry) && Directory.Exists(entry)), null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return (null, null);
         }
     }
 

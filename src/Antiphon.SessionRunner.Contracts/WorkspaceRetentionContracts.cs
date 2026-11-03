@@ -44,6 +44,24 @@ public static class WorkspaceRetentionCodes
     public const string NameControlCharacter = "name_control_character";
 }
 
+/// <summary>
+/// CARD-1677 S1 hardening (review d0b57b9c A-3). A retention name or path holding a control character
+/// (<see cref="char.IsControl(char)"/>, which covers LF, CR, TAB, NUL, DEL and U+0085) or U+2028/U+2029 is
+/// never a candidate: the runner and the server refuse it before any name pattern sees it, and every name
+/// pattern ends in <c>\z</c> (in .NET <c>$</c> also matches just before a final newline).
+/// </summary>
+public static class WorkspaceRetentionNames
+{
+    public static bool HasControlCharacter(string? name) => (name ?? "").Any(IsControl);
+
+    /// <summary>The name for a report line, each refused character spelled as <c>\uXXXX</c>.</summary>
+    public static string Escape(string name) => string.Concat(name.Select(c => IsControl(c)
+        ? "\\u" + ((int)c).ToString("x4", System.Globalization.CultureInfo.InvariantCulture)
+        : c.ToString()));
+
+    private static bool IsControl(char c) => char.IsControl(c) || c is '\u2028' or '\u2029';
+}
+
 public sealed record WorkspaceRetainHolder(int Pid, string Argv0, string Kind);
 
 /// <summary>

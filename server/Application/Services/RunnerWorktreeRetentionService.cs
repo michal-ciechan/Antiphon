@@ -36,8 +36,10 @@ public sealed class RunnerWorktreeRetentionService
     public const string LaneInventory = "RunnerInventory";
     public const string EventPrefix = "runner_mirror_retained";
 
-    private static readonly Regex LeafPattern = new(@"^task-[0-9a-f]{8}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex OwnerPrefix = new(@"^task-(?<id>[0-9a-f]{8})(?:$|[^0-9a-f])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // \z, never $: in .NET $ also matches just before a final newline (review d0b57b9c A-3). A name holding a
+    // control character is refused before either pattern sees it (WorkspaceRetentionNames).
+    private static readonly Regex LeafPattern = new(@"^task-[0-9a-f]{8}\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex OwnerPrefix = new(@"^task-(?<id>[0-9a-f]{8})(?:\z|[^0-9a-f])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly AgentTaskStatus[] Terminal = [AgentTaskStatus.Succeeded, AgentTaskStatus.Failed, AgentTaskStatus.Canceled];
     private static readonly AgentTaskStatus[] Open =
         [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
@@ -256,6 +258,8 @@ public sealed class RunnerWorktreeRetentionService
         var path = task.RemoteWorktreePath ?? "";
         var root = settings.WorktreeRoot.TrimEnd('/');
         var leaf = path.StartsWith(root + "/", StringComparison.Ordinal) ? path[(root.Length + 1)..] : "";
+        if (WorkspaceRetentionNames.HasControlCharacter(path))
+            return WorkspaceRetentionCodes.NameControlCharacter;
         if (!LeafPattern.IsMatch(leaf) || leaf != "task-" + task.Id.ToString("N")[..8])
             return "outside_scope";
         if (string.IsNullOrWhiteSpace(task.WorktreeBranch))
@@ -374,8 +378,13 @@ public sealed class RunnerWorktreeRetentionService
             }
             if (entry.SlotLeaf || known.Contains(entry.Name))
                 continue;
-            var match = OwnerPrefix.Match(entry.Name);
             var path = settings.WorktreeRoot.TrimEnd('/') + "/" + entry.Name;
+            if (WorkspaceRetentionNames.HasControlCharacter(entry.Name))
+            {
+                Row(run, LaneInventory, WorktreeResidueCandidateOutcome.Held, WorkspaceRetentionCodes.NameControlCharacter, null, path, null, runnerId);
+                continue;
+            }
+            var match = OwnerPrefix.Match(entry.Name);
             if (!match.Success)
             {
                 Row(run, LaneInventory, WorktreeResidueCandidateOutcome.Held, "identity_unknown", null, path, null, runnerId);

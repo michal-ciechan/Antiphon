@@ -38,6 +38,9 @@ public sealed class RunnerWorkspaceIgnoredContent
             return RunnerIgnoredContentKind.Protected;
         if (CompletedCardWorkspaceReport.IsTaskReportPath(path) || _evidence.IsMatch(path))
             return RunnerIgnoredContentKind.Evidence;
+        // CARD-1677 S1 hardening (review d0b57b9c A-3): a name holding a control character is never disposable.
+        if (WorkspaceRetentionNames.HasControlCharacter(path))
+            return RunnerIgnoredContentKind.Protected;
         if ((NamesAntiphon(path) ? _antiphonDisposable : _disposable).IsMatch(path))
             return RunnerIgnoredContentKind.Disposable;
         return RunnerIgnoredContentKind.Protected;
@@ -58,7 +61,7 @@ public sealed class RunnerWorkspaceIgnoredContent
     private static Regex Compile(IEnumerable<string> patterns)
     {
         var alternatives = patterns.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => Glob(Normalize(p.Trim()))).ToArray();
-        return new Regex(alternatives.Length == 0 ? "(?!)" : "^(?:" + string.Join('|', alternatives) + ")$",
+        return new Regex(alternatives.Length == 0 ? "(?!)" : "^(?:" + string.Join('|', alternatives) + @")\z",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     }
     private static string Glob(string pattern)
