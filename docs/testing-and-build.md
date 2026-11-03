@@ -694,6 +694,19 @@ Legacy unsealed copies retain their current-process ledger behavior.
 
 `import --plan <plan.md>` writes the same manifest as YAML under `.antiphon/` when a row needs `knownFlaky`, `serial`, or a timeout pin. A legacy eight-column table (minutes stored under `Min`) is refused until the time column is renamed `EstimatedMinutes` (CARD-0617). `import` treats 45 minutes as an advisory threshold: imported row timeouts are `max(15, 3 * selected EstimatedMinutes)`, using the platform-selected estimate. Estimate 15 gives 45 minutes without a warning; estimate 16 gives 48 minutes with a warning suggesting a split. Row timeouts are not capped at 45 minutes; positive explicit timeouts are used unchanged, and without an estimate the manifest fallback is `max(15, manifestDefault)`. The independent total-run deadline still applies and can stop a row earlier. `import` also warns when a row names more than four land classes. It also warns, without changing the exit code or the manifest, when a row defines a second build equivalent to an earlier one: a different `bin-<x>/` id with the same project (separators, a leading `./`, a trailing `/` and a `<Dir>/<Dir>.csproj` file name normalised, case-insensitive), the same expanded `After` and the same `Repeat`; the warning names the Build cell to write: the earlier `CP-n` id, or the earlier `<project> -> bin-<x>/` cell when that row id is not `CP-<digits>` (CARD-1493). Builds in different `After` groups are never equivalent. A land row stays at about 120 `[Test]` methods. `row` runs one row with the same lines as `scripts/run-checkpoint.ps1`. The repo tool manifest does not list this package until a feed exists; prove the package with `dotnet pack` and `dotnet tool install --tool-path`.
 
+### CARD-1545 CP-30 census scope (CARD-1645)
+
+`scripts/test-live-lane-manifest.ps1 -Case FullCensusUnchanged` (CP-30) is a commission-scoped historical check. It proves that the S1 commission introduced no drift relative to the landing target. It does not compare against a seed of the caller's choosing, and it is not a check to re-run on later trees.
+
+- **Scope line.** The command first prints `census scope=commission not-run-on-later-trees`. The same line names the seed, the pre-S1 base, the head, `target=<ref>@<sha>`, the fixture blob and `fixture=unauthenticated`.
+- **The fixture is not authenticated.** It is a committed blob the seed author wrote. A Review compares that blob with an independent CP-27/CP-28 recapture before relying on it.
+- **Target ancestry.** The S1a group fetches `origin master`. The census then refuses `pre-not-on-target` when the pre-S1 base is not an ancestor of `refs/remotes/origin/master`, and `target-unresolved` when that ref is absent.
+- **Later trees.** The census refuses `later-tree` in two cases. The first is a candidate that has merged target mainline commits from after the seed, for example a subject merged with a newer master; this applies even after a no-ff land. The second is an unlanded candidate whose merge-base with the target is past the seed.
+- **Re-seeding.** Do not re-pin the census to make a later tree pass. Re-seed at the merge-base instead.
+- **Residual.** A tree that is already on the target, such as the master tip, is not diagnosed. CP-30 is simply not run there.
+- **Declared additions.** A declared addition is identified by project, namespace, class and method together. A twin elsewhere is `undeclared-new-uid`, and a declared identity absent from the after set is `declared-additive-missing`.
+- **Witnesses.** Synthetic engine and scratch-Git witnesses carry these rules: `LiveLaneInventoryTests.CensusAdditiveIdentity` and `LiveLaneInventoryTests.CensusTargetScope`.
+
 ## OS branch witnesses
 
 For each changed OS-selected production behavior, Code and Review must identify
