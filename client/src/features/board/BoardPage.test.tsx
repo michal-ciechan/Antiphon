@@ -2,7 +2,7 @@ import { HttpResponse, delay, http } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { boardKeys, type BoardDetailDto, type CardDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { BoardPage } from './BoardPage'
 
@@ -537,9 +537,9 @@ describe('creating a card', () => {
     }))
     const { title, description } = await openCreateDialog()
     expect(screen.getByRole('textbox', { name: 'Card-file visibility' })).toHaveValue('Inherit')
-    await userEvent.type(title, 'Public title')
-    await userEvent.type(description, 'Public description')
-    await userEvent.type(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)'), '  C408_PRIVATE  ')
+    await pasteInto(title, 'Public title')
+    await pasteInto(description, 'Public description')
+    await pasteInto(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)'), '  C408_PRIVATE  ')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.objectContaining({ description: 'Public description', privateNotes: '  C408_PRIVATE  ', cardFileVisibility: 'Inherit' })))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New Card' })).not.toBeInTheDocument())
@@ -551,7 +551,7 @@ describe('creating a card', () => {
     server.use(...boardHandlers())
     const { title, description } = await openCreateDialog()
 
-    await userEvent.type(title, 'A new card')
+    await pasteInto(title, 'A new card')
     expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled()
 
     setInputValue(description, 'x'.repeat(20_001))
@@ -571,7 +571,7 @@ describe('creating a card', () => {
     )
     const { title } = await openCreateDialog()
 
-    await userEvent.type(title, 'A new card')
+    await pasteInto(title, 'A new card')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
     expect(await screen.findByText('Title must be at most 300 characters; got 301.')).toBeInTheDocument()
