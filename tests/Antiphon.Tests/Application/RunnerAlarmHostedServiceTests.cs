@@ -288,6 +288,101 @@ public sealed class RunnerAlarmHostedServiceTests
             .ShouldBe(lastPass.AddMinutes(5).AddSeconds(1), "a drain still within its bound wakes just past it");
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1678_one_pass_arms_one_timer_exactly_one_second_past_the_drain_bound()
+    {
+        // CARD-1678 (sweep 2deb2419 M71-6): the bound is inclusive, so the one wake is one second
+        // past it. A wake at the bound itself finds the drain still hiding the outage and passes
+        // again; the eventual raise alone cannot tell the two apart.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var start = DateTimeOffset.UtcNow;
+        var source = new FakeEligibilitySource();
+        source.Rows.Add(new RunnerEligibilitySnapshot("drainer", "drainer", true, false, "socket_closed", start, 0));
+        var exclusion = new FakeExclusion();
+        exclusion.Reasons["drainer"] = "draining";
+        exclusion.Expires["drainer"] = start.AddMinutes(30);
+        var clock = new AlarmClock(start);
+        var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
+            exclusion: exclusion);
+        await service.StartAsync(CancellationToken.None);
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var passes = source.Calls;
+        passes.ShouldBe(1, "the start pass runs once before the loop waits");
+        clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
+            "the timer is due exactly one second past the drain bound");
+
+        clock.Inner.Advance(TimeSpan.FromMinutes(30));
+        await Task.Delay(200);
+        source.Calls.ShouldBe(passes, "no pass at the bound itself");
+        clock.Timers.Count.ShouldBe(1, "no timer re-armed at the bound");
+        state.Current.Episodes.ShouldBeEmpty();
+
+        clock.Inner.Advance(TimeSpan.FromSeconds(1));
+        await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "drainer" && episode.RaisedAt is not null),
+            "the loop did not wake one second past the drain bound");
+        source.Calls.ShouldBe(passes + 1, "one pass raises the overrun drain");
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1678_the_loop_wakes_one_second_past_the_earliest_of_several_drains()
+    {
+        // CARD-1678 (sweep 2deb2419 M71-8): with two drains the wake follows the one that ends
+        // first; the later drain is still hidden when the earlier one raises.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var start = DateTimeOffset.UtcNow;
+        var source = new FakeEligibilitySource();
+        source.Rows.Add(new RunnerEligibilitySnapshot("late", "late", true, false, "socket_closed", start, 0));
+        source.Rows.Add(new RunnerEligibilitySnapshot("early", "early", true, false, "socket_closed", start, 0));
+        var exclusion = new FakeExclusion();
+        exclusion.Reasons["late"] = "draining";
+        exclusion.Expires["late"] = start.AddMinutes(60);
+        exclusion.Reasons["early"] = "draining";
+        exclusion.Expires["early"] = start.AddMinutes(30);
+        var clock = new AlarmClock(start);
+        var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 120 },
+            exclusion: exclusion);
+        await service.StartAsync(CancellationToken.None);
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        state.Current.DrainExpiresAt.Count.ShouldBe(2);
+        clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
+            "the timer is due one second past the earliest drain expiry");
+
+        clock.Inner.Advance(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)));
+        await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "early" && episode.RaisedAt is not null),
+            "the loop did not wake when the earliest drain passed its bound");
+        state.Current.Episodes.ShouldNotContain(episode => episode.RunnerId == "late", "the later drain is still within its bound");
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    public void C1678_NextDue_is_one_second_past_the_earliest_drain_bound()
+    {
+        // CARD-1678 (M71-6, M71-8): the pure schedule. One drain wakes exactly one second past its
+        // bound; of several, the earliest wins whatever the dictionary order.
+        var lastPass = DateTimeOffset.UtcNow;
+        var nextSweep = lastPass.AddMinutes(120);
+        var grace = TimeSpan.FromSeconds(180);
+        var one = RunnerAlarmSnapshot.Empty with
+        {
+            DrainExpiresAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal) { ["only"] = lastPass.AddMinutes(30) },
+        };
+        RunnerAlarmHostedService.NextDue(one, nextSweep, lastPass, grace).ShouldBe(lastPass.AddMinutes(30).AddSeconds(1));
+
+        foreach (var order in new[] { new[] { 60, 30, 45 }, new[] { 30, 60, 45 }, new[] { 45, 60, 30 } })
+        {
+            var several = RunnerAlarmSnapshot.Empty with
+            {
+                DrainExpiresAt = order.ToDictionary(minutes => $"drain-{minutes}", minutes => lastPass.AddMinutes(minutes),
+                    StringComparer.Ordinal),
+            };
+            RunnerAlarmHostedService.NextDue(several, nextSweep, lastPass, grace)
+                .ShouldBe(lastPass.AddMinutes(30).AddSeconds(1), $"order {string.Join(",", order)}");
+        }
+    }
+
     private static (RunnerAlarmHostedService Service, RunnerAlarmState State, AlarmWakeQueue Wake) Build(
         string connection, FakeEligibilitySource source, AlarmClock clock, AlarmSettings settings,
         RepositoryChildJournalInspector? journals = null, ListLogger<RunnerAlarmHostedService>? logger = null,
