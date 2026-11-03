@@ -11,7 +11,7 @@ namespace Antiphon.TestSupport.LiveClaude;
 /// </summary>
 internal static class LiveClaudeSinkAudit
 {
-    internal readonly record struct Counts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File, int Process);
+    internal readonly record struct Counts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File, int Process, int Escape = 0);
 
     internal static Counts Walk(IEnumerable<SyntaxNode> roots)
     {
