@@ -193,6 +193,7 @@ function Write-LiveLaneGroupContext {
         cp1Export = (Join-Path $captureRoot 'cp1-export.json')
         fixturePath = $script:LiveLaneFixtureRel
         fixtureBlob = $fixtureBlob
+        landingTarget = $script:LiveLaneLandingTargetRef
         producerProvenance = $provenance
         protectedPaths = @($script:LiveLaneProtectedPaths)
         allowedSeedPaths = @($script:LiveLaneAllowedSeedPaths)
@@ -468,11 +469,29 @@ function Invoke-LiveLaneTargetScopeWitness {
         Invoke-LiveLaneScratchGit $dir @('checkout', '-q', 'subject') | Out-Null
         Invoke-LiveLaneScratchGit $dir @('merge', '-q', '--no-edit', '--no-ff', 'master') | Out-Null
         $merged = Invoke-LiveLaneScratchGit $dir @('rev-parse', 'HEAD')
+        # The reviewed subject after it lands is not a later tree: a no-ff merge keeps its
+        # commits off the target first-parent line, a fast-forward keeps them on its own.
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', '-b', 'landedmerge', $later) | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('merge', '-q', '--no-edit', '--no-ff', $head) | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('update-ref', 'refs/remotes/origin/landedmerge', 'HEAD') | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('update-ref', 'refs/remotes/origin/landedff', $head) | Out-Null
+        # The D-4 tree (subject merged with later master) stays a later tree after a no-ff land.
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', '-b', 'landedlater', $later) | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('merge', '-q', '--no-edit', '--no-ff', $merged) | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('update-ref', 'refs/remotes/origin/landedlater', 'HEAD') | Out-Null
+        # A candidate cut from the target after the seed carries the seed only through a merge.
+        Invoke-LiveLaneScratchGit $dir @('checkout', '-q', '-b', 'forkedlater', $later) | Out-Null
+        Invoke-LiveLaneScratchGit $dir @('merge', '-q', '--no-edit', '--no-ff', $seed) | Out-Null
+        $forked = New-LiveLaneScratchCommit $dir 'h.txt' 'forked candidate'
         $target = 'refs/remotes/origin/master'
         $cases = [ordered]@{
             honest = @{ Pre = $pre; Seed = $seed; Head = $head; Target = $target; Want = @(); Forbid = @('pre-not-on-target', 'later-tree', 'target-unresolved') }
             offTarget = @{ Pre = $offPre; Seed = $offSeed; Head = $offHead; Target = $target; Want = @('pre-not-on-target'); Forbid = @() }
             laterTree = @{ Pre = $pre; Seed = $seed; Head = $merged; Target = $target; Want = @('later-tree'); Forbid = @('pre-not-on-target') }
+            landedMerge = @{ Pre = $pre; Seed = $seed; Head = $head; Target = 'refs/remotes/origin/landedmerge'; Want = @(); Forbid = @('later-tree', 'pre-not-on-target') }
+            landedFastForward = @{ Pre = $pre; Seed = $seed; Head = $head; Target = 'refs/remotes/origin/landedff'; Want = @(); Forbid = @('later-tree', 'pre-not-on-target') }
+            forkedLater = @{ Pre = $pre; Seed = $seed; Head = $forked; Target = $target; Want = @('later-tree'); Forbid = @('pre-not-on-target') }
+            landedLaterMerge = @{ Pre = $pre; Seed = $seed; Head = $merged; Target = 'refs/remotes/origin/landedlater'; Want = @('later-tree'); Forbid = @('pre-not-on-target') }
             noTarget = @{ Pre = $pre; Seed = $seed; Head = $head; Target = 'refs/remotes/origin/c1645-absent'; Want = @('target-unresolved'); Forbid = @() }
         }
         foreach ($name in @($cases.Keys)) {
@@ -597,6 +616,8 @@ switch ($Case) {
         $head = (Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', 'HEAD')).Text.Trim()
         $expected = $ExpectedSourceSha
         if ([string]::IsNullOrWhiteSpace($expected)) { $expected = $head }
+        # CARD-1645: the census checks the pre-S1 base against the fetched landing target.
+        if ($Group -eq 'S1a') { & git -C $RepoRoot fetch -q origin master }
         $results = Join-Path $RepoRoot ('.antiphon/live-lane-runs/' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $results -Force | Out-Null
         $contextPath = Write-LiveLaneGroupContext -Head $head -CheckpointResults $results

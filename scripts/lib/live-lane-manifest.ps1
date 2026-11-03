@@ -8,6 +8,8 @@ $script:AntiphonLiveLaneManifestLoaded = $true
 $script:LiveLanePreS1BaseSha = 'bf0b874e695a642118e2dd55913228e2f635d009'
 $script:LiveLaneFixtureRel = 'tests/fixtures/live-lanes/full-discovery-before.json'
 $script:LiveLanePreS1PinRel = 'tests/fixtures/live-lanes/pre-s1-base.sha'
+# CARD-1645: the landing target the pre-S1 base must be on (fetched by the S1a group).
+$script:LiveLaneLandingTargetRef = 'refs/remotes/origin/master'
 $script:LiveLaneAllowedSeedPaths = @(
     'tests/live-lanes.json',
     'scripts/lib/live-lane-manifest.ps1',
@@ -2109,8 +2111,7 @@ public static class LiveLaneCensusEngine
             bool declared = false;
             for (int i = 0; i < additive.Length; i++)
             {
-                if (string.Equals(additive[i].Class, n.Type, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(additive[i].Method, n.Method, StringComparison.OrdinalIgnoreCase))
+                if (SameId(additive[i], n))
                 {
                     declared = true;
                     break;
@@ -2125,13 +2126,26 @@ public static class LiveLaneCensusEngine
         {
             for (int i = 0; i < additive.Length; i++)
             {
-                if (string.Equals(additive[i].Class, n.Type, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(additive[i].Method, n.Method, StringComparison.OrdinalIgnoreCase))
+                if (SameId(additive[i], n))
                 {
                     allowed.Add(n.Uid ?? "");
                     break;
                 }
             }
+        }
+        // CARD-1645: a declared addition that is no longer in the after set is a removal.
+        for (int i = 0; i < additive.Length; i++)
+        {
+            bool present = false;
+            foreach (var n in after)
+            {
+                if (SameId(additive[i], n))
+                {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) Add(diag, "declared-additive-missing");
         }
         var beforeDefault = Disposition(before, null, false);
         var afterDefault = Disposition(after, null, false);
@@ -2158,6 +2172,15 @@ public static class LiveLaneCensusEngine
         }
         if (liveAdds != 6) Add(diag, "liveclaude-count");
         return diag;
+    }
+
+    // A declared identity is project, namespace, class and method; a twin elsewhere is not it.
+    static bool SameId(Id id, Node n)
+    {
+        return string.Equals(id.Project, n.Project, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(id.Ns, n.Ns, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(id.Class, n.Type, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(id.Method, n.Method, StringComparison.OrdinalIgnoreCase);
     }
 
     static void CategoryDelta(string[] before, string[] after, out bool removed, out bool addedOther, out bool addedLive)
@@ -2463,14 +2486,69 @@ function Get-LiveLaneCensusSeedMaterial {
     return $entry
 }
 
+# CARD-1645 D-1/D-4. CP-30 proves no drift against the landing target, not a caller-chosen
+# seed: the pre-S1 base must be on the fetched target. It is commission-scoped: a candidate
+# that has merged target commits from after the seed is a later tree, so their new UIDs are
+# not this commission's delta. Re-seed at the merge-base instead of re-running.
 function Get-LiveLaneTargetDiagnostics {
     param([string]$RepoRoot, [string]$Pre, [string]$Seed, [string]$Head, [string]$TargetRef)
-    return @()
+    $found = New-Object System.Collections.Generic.List[string]
+    $resolved = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-parse', '--verify', '--quiet', ($TargetRef + '^{commit}'))
+    $target = ([string]$resolved.Text).Trim().ToLowerInvariant()
+    if ($resolved.Exit -ne 0 -or $target -notmatch '^[0-9a-f]{40}$') {
+        $found.Add('target-unresolved')
+        return @($found)
+    }
+    $onTarget = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('merge-base', '--is-ancestor', $Pre, $target)
+    if ($onTarget.Exit -ne 0) { $found.Add('pre-not-on-target') }
+    # A later tree carries a target mainline commit past the seed that entered the candidate
+    # through a merge, not through its own first-parent line, or is an unlanded candidate cut
+    # from the target after the seed. The landed subject itself is neither: a no-ff land keeps
+    # it off the mainline, a fast-forward keeps it first-parent. Residual: a candidate that is
+    # already on the target is not diagnosed here; the scope line says CP-30 is not run on it.
+    $landed = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('merge-base', '--is-ancestor', $Head, $target)
+    if ($landed.Exit -ne 0) {
+        $base = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('merge-base', $Head, $target)
+        $baseSha = ([string]$base.Text).Trim()
+        $covered = $null
+        if ($base.Exit -eq 0 -and $baseSha -match '^[0-9a-f]{40}$') {
+            $covered = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('merge-base', '--is-ancestor', $baseSha, $Seed)
+        }
+        if ($null -eq $covered -or $covered.Exit -ne 0) { $found.Add('later-tree') }
+    }
+    $carried = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-list', $Head, ('^' + $Seed))
+    $mainline = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-list', '--first-parent', $target, ('^' + $Seed))
+    $own = Get-LiveLaneGit -RepoRoot $RepoRoot -GitArgs @('rev-list', '--first-parent', $Head, ('^' + $Seed))
+    if ($carried.Exit -ne 0 -or $mainline.Exit -ne 0 -or $own.Exit -ne 0) {
+        $found.Add('later-tree')
+    } else {
+        $onMainline = New-Object 'System.Collections.Generic.HashSet[string]'
+        foreach ($line in @(([string]$mainline.Text) -split "`n")) { if ($line.Trim()) { [void]$onMainline.Add($line.Trim()) } }
+        $ownLine = New-Object 'System.Collections.Generic.HashSet[string]'
+        foreach ($line in @(([string]$own.Text) -split "`n")) { if ($line.Trim()) { [void]$ownLine.Add($line.Trim()) } }
+        foreach ($line in @(([string]$carried.Text) -split "`n")) {
+            $commit = $line.Trim()
+            if ($commit -and $onMainline.Contains($commit) -and -not $ownLine.Contains($commit)) {
+                $found.Add('later-tree')
+                break
+            }
+        }
+    }
+    return @($found | Select-Object -Unique)
 }
 
+# The fixture is a committed blob the seed author wrote; nothing here re-derives it. The line
+# records the binding so a reviewer can compare the blob with an independent CP-27/CP-28 recapture.
 function Get-LiveLaneCensusScopeLine {
     param($Context, [string]$TargetSha)
-    return ''
+    $target = [string](Get-LiveLaneProp $Context 'landingTarget')
+    if ([string]::IsNullOrWhiteSpace($target)) { $target = $script:LiveLaneLandingTargetRef }
+    return ('census scope=commission not-run-on-later-trees seed=' + [string](Get-LiveLaneProp $Context 'censusBaseSha') +
+        ' pre=' + [string](Get-LiveLaneProp $Context 'preS1BaseSha') +
+        ' head=' + [string](Get-LiveLaneProp $Context 'sourceSha') +
+        ' target=' + $target + '@' + $TargetSha +
+        ' fixtureBlob=' + [string](Get-LiveLaneProp $Context 'fixtureBlob') +
+        ' fixture=unauthenticated (compare the blob with an independent CP-27/CP-28 recapture)')
 }
 
 function Invoke-LiveLaneCensus {
@@ -2495,6 +2573,12 @@ function Invoke-LiveLaneCensus {
     if ($pre -eq $seed -or $pre -eq $head) { $diagnostics.Add('self-seed') }
     $preAncestor = Get-LiveLaneGit -RepoRoot $repo -GitArgs @('merge-base', '--is-ancestor', $pre, $seed)
     if ($preAncestor.Exit -ne 0) { $diagnostics.Add('baseline-drift') }
+    $targetRef = [string](Get-LiveLaneProp $Context 'landingTarget')
+    if ([string]::IsNullOrWhiteSpace($targetRef)) { $targetRef = $script:LiveLaneLandingTargetRef }
+    if ($Mutant -and $Mutant.ContainsKey('targetRef')) { $targetRef = [string]$Mutant.targetRef }
+    foreach ($item in @(Get-LiveLaneTargetDiagnostics -RepoRoot $repo -Pre $pre -Seed $seed -Head $head -TargetRef $targetRef)) {
+        $diagnostics.Add([string]$item)
+    }
     if ($Mutant -and $Mutant.ContainsKey('boundSha')) {
         $boundMutant = ([string]$Mutant.boundSha).ToLowerInvariant()
         if ($boundMutant -ne $script:LiveLanePreS1BaseSha) { $diagnostics.Add('seed-engine') }
@@ -2820,6 +2904,12 @@ function Invoke-LiveLaneFullCensusBody {
         Write-Output 'context-required'
         return 2
     }
+    $scopeTarget = [string](Get-LiveLaneProp $context 'landingTarget')
+    if ([string]::IsNullOrWhiteSpace($scopeTarget)) { $scopeTarget = $script:LiveLaneLandingTargetRef }
+    $scopeRepo = [string](Get-LiveLaneProp $context 'candidateRoot')
+    if ([string]::IsNullOrWhiteSpace($scopeRepo)) { $scopeRepo = $RepoRoot }
+    $scopeSha = (Get-LiveLaneGit -RepoRoot $scopeRepo -GitArgs @('rev-parse', '--verify', '--quiet', ($scopeTarget + '^{commit}'))).Text
+    Write-Output (Get-LiveLaneCensusScopeLine -Context $context -TargetSha ([string]$scopeSha).Trim())
     $real = Invoke-LiveLaneCensus -Context $context
     if (-not $real.Accepted) {
         foreach ($item in @($real.Diagnostics)) { Write-Output $item }
