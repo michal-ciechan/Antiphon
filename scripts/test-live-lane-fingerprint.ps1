@@ -24,8 +24,13 @@ function Commit { [void](Git @('add','--all')); [void](Git @('commit','-qm','fix
 function Commit-Index { [void](Git @('commit','-qm','fixture')); return Git @('rev-parse','HEAD') }
 function Reset-Fixture { [void](Git @('checkout','-q','-f','--detach',$script:base)); [void](Git @('clean','-q','-fdx')) }
 function Check($ok, [string]$label, [string]$detail='') { Assert-C487 ([bool]$ok) "C1545 $($script:Method)/$label" $detail }
+# Parsed project documents are keyed by Git blob id (immutable bytes), so one case shares them
+# across its fingerprints; every graph, closure and inventory is still resolved per commit. A
+# fixture case otherwise spawns ~18 git processes per fingerprint, the dominant cost on a loaded
+# Windows host (rc run f40ad905 group-125 exceeded the 60 s budget).
+$script:Documents=@{}
 function Fp([string]$sha, [string]$lane=$script:Lane, [string]$at=$script:root) {
-    return Get-LiveLaneFingerprint -RepositoryRoot $at -Sha $sha -Lane $lane
+    return Get-LiveLaneFingerprint -RepositoryRoot $at -Sha $sha -Lane $lane -DocumentCache $script:Documents
 }
 function Canon($value) { return ConvertTo-TestSelectionCanonicalJson $value }
 function Differs($a, $b, [string[]]$components=@()) {
@@ -167,7 +172,7 @@ switch ($Case) {
         try {
             $head=Git @('rev-parse','HEAD') $repository
             $real1=Fp $head 'live-claude-core-windows' $repository
-            $real2=Get-LiveLaneFingerprint -RepositoryRoot $repository -Sha $head -Lane 'live-claude-core-windows'
+            $real2=Get-LiveLaneFingerprint -RepositoryRoot $repository -Sha $head -Lane 'live-claude-core-windows' -DocumentCache $script:Documents
             $declaration=(Invoke-TestSelectionGit $repository @('cat-file','blob',"${head}:tests/live-lane-inputs.json")).Stdout | ConvertFrom-Json -AsHashtable
             $real=$declaration.lanes['live-claude-core-windows']
             $paths=Paths $real1; $empty=@()
