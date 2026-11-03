@@ -188,6 +188,40 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("tempPrivateVolumes=0", Case.Sensitive, "c1609-docs: Retired zero is still required");
     }
 
+    // CARD-1689 D-1/D-2. Gate 9 names the operator-written origins registry, the section
+    // gives the one-time command in the reader's schema, and every exchange reason the
+    // operator can see is one the script actually emits.
+    [Test]
+    public void Temp_retirement_trusted_origins_registry_is_documented()
+    {
+        var text = Read("docs/docker-stack.md");
+        var gateRow = text.Split('\n').Single(line => line.StartsWith("| 9. Retire temp |", StringComparison.Ordinal));
+        gateRow.ShouldContain("/home/mc/antiphon-server2/retirement-origins.json", Case.Sensitive, "c1689-docs: gate 9 prerequisite");
+        gateRow.ShouldContain("(#temp-retirement-trusted-origins-card-1689)", Case.Sensitive, "c1689-docs: gate 9 links the section");
+        const string heading = "#### Temp retirement trusted origins (CARD-1689)";
+        var start = text.IndexOf(heading, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "c1689-docs: section");
+        var end = text.IndexOf("\n#### ", start + heading.Length, StringComparison.Ordinal);
+        var section = end < 0 ? text[start..] : text[start..end];
+        section.ShouldContain("jq -ncS --arg p '<project-id>' '{schema:1,projects:{($p):{origins:[\"https://github.com/michal-ciechan/Antiphon.git\"]}}}' > /home/mc/antiphon-server2/retirement-origins.json",
+            Case.Sensitive, "c1689-docs: the one-time operator command");
+        foreach (var pin in new[] { "umask 077", "-Phase check-census", "RECYCLE_PROJECT id=<guid>", "with and without the `.git` suffix",
+                     "No agent creates or edits this file.", "`remote-output.txt`" })
+            section.ShouldContain(pin, Case.Sensitive, "c1689-docs: " + pin);
+        var script = Read("scripts/c1008-retirement.sh");
+        var reasons = System.Text.RegularExpressions.Regex.Matches(section, @"reason=([a-z-]+)")
+            .Select(match => match.Groups[1].Value).Distinct().ToArray();
+        reasons.ShouldBe(new[] { "registry-missing", "inventory", "registry-invalid", "registry-project", "unapproved-origin", "proof-exchange" },
+            "c1689-docs: the exchange reasons");
+        foreach (var reason in reasons)
+            script.ShouldContain("=" + reason, Case.Sensitive, "c1689-docs: the script emits " + reason);
+        foreach (var stage in new[] { "request", "response", "binding", "freshness", "digest", "record" })
+        {
+            section.ShouldContain("`" + stage + "` means", Case.Sensitive, "c1689-docs: stage " + stage);
+            script.ShouldContain("C1609_PROOF_STAGE=" + stage + "\n", Case.Sensitive, "c1689-docs: the script sets stage " + stage);
+        }
+    }
+
     [Test]
     public void Docker_stack_doc_names_the_nested_daemon()
     {
