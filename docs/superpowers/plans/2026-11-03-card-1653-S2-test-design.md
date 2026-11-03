@@ -490,13 +490,13 @@ These rows replace the plan's rows with the same numbers. `Min` is the TUnit exe
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-4 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1653-s2l/ | linux-native-socket-dir | /*/Antiphon.SessionRunner.Tests/Card1653SocketDirTests/* | V-8a, V-8, V-8b, V-8c, V-9, V-9b, V-11d, V-13b, V-14, V-14b, V-6b | class, 0 failed/skipped | 18 | 5 | true |
-| CP-5 | S2 | CP-4 | portable-peer-check-linux | /*/Antiphon.SessionRunner.Tests/Card1653PeerCheckTests/* | V-10, V-11, V-11b, V-11c, V-11e, V-11f, V-12, V-13, V-15, V-17, V-18a, V-18b | class, 0 failed/skipped | 24 | 2 | true |
+| CP-4 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1653-s2l/ | linux-native-socket-dir | /*/Antiphon.SessionRunner.Tests/Card1653SocketDirTests/* | V-8a, V-8, V-8b, V-8c, V-9, V-9b, V-11d, V-13b, V-14, V-14b, V-6b, D-1 (ii)-(v) | class, 0 failed/skipped | 28 | 5 | true |
+| CP-5 | S2 | CP-4 | portable-peer-check-linux | /*/Antiphon.SessionRunner.Tests/Card1653PeerCheckTests/* | V-10, V-11, V-11b, V-11c, V-11e, V-11f, V-12, V-13, V-15, V-17, V-18a, V-18b, D-1 (i), (v) | class, 0 failed/skipped | 29 | 2 | true |
 | CP-6 | S2 | CP-4 | portable-identity-regression-linux | /*/Antiphon.SessionRunner.Tests/(Card1636AdoptionIdentity*)\|(Card1653RefusalRetainsHost*)\|(Card1653FreshLaunchIdentity*)/* | R-1 | 3 classes, 0 failed/skipped | 17 | 1 | true |
 | CP-17 | S2 | CP-4 | portable-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-3 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-18 | S2 | CP-4 | portable-workspace-conflict-regression | /*/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceRemovalTests/C1032_FenceStartupAdoptionOrders | R-4 | method, 0 failed/skipped | 1 | 1 | true |
 | CP-20 | S2 | CP-4 | linux-native-connect-retry-regression | /*/Antiphon.SessionRunner.Tests/Card1619RunnerExitTests/(Relisten_hello_eof*)\|(Eof_every_hello*)\|(Corrupt_hello_frame*)\|(Non_ack_hello*) | R-2 | 4 methods, 0 failed/skipped | 4 | 1 | true |
-| CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1653-s2w/ | windows-native-peer-check | /*/Antiphon.SessionRunner.Tests/Card1653PeerCheckTests/* | V-10, V-11 (overall V-16, M-13), V-13 Windows, V-17, V-18a, V-18b on Windows | class, 0 failed/skipped | 24 | 8 | true |
+| CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1653-s2w/ | windows-native-peer-check | /*/Antiphon.SessionRunner.Tests/Card1653PeerCheckTests/* | V-10, V-11 (overall V-16, M-13), V-13 Windows, V-17, V-18a, V-18b, D-1 (i), (v) on Windows | class, 0 failed/skipped | 29 | 8 | true |
 | CP-8 | S2 | CP-7 | windows-native-c1636-regression | /*/Antiphon.SessionRunner.Tests/Card1636AdoptionIdentityTests/* | R-5 (CARD-1636 Windows) | class, 0 failed/skipped | 6 | 1 | true |
 | CP-19 | S2 | CP-7 | windows-native-s1-refusal-regression | /*/Antiphon.SessionRunner.Tests/Card1653RefusalRetainsHostTests/(Refused_identity*)\|(Stop_of_a_pending*)\|(Pending_identity_row*)\|(Vanish_sweep*)\|(Non_identity*) | R-5 (S1 no-kill on Windows) | 5 methods, 0 failed/skipped | 7 | 1 | true |
 
@@ -505,6 +505,9 @@ How Min is counted (executions):
 - CP-4: V-8a 1 + V-8 1 + V-8b 5 + V-8c 2 + V-9 3 + V-9b 1 + V-11d 1 + V-13b 1 + V-14 1 + V-14b 1 + V-6b 1 = 18.
 - CP-5 and CP-7: 9 single methods + V-17 6 + V-18a 8 + V-18b 1 = 24 (the class has no Linux-only method, so
   the Windows count is the same).
+- D-1 repair (Review db8d32c0, task 006e0b89) adds class-scoped witnesses, so the filters are unchanged:
+  CP-4 gains the post-connect re-check witness 1 and D-1 (ii) 3, (iii) 2 + 1, (iv) 2, (v) file probe 1 = 28;
+  CP-5 and CP-7 gain D-1 (i) 3 and (v) peer reader and liveness 2 = 29.
 - CP-6: 6 + 8 + 3 = 17, CP-17: 3, CP-20: 4 (all measured at the tip). CP-18: 1 (S1 measured).
   CARD-1672 (not landed) adds one method to `Card1653RefusalRetainsHostTests`; `Min` is a floor, so 17 stays
   valid.
