@@ -31,6 +31,13 @@ public sealed class C1677RetentionSettingsTests
         defaults.MaxTickMinutes.ShouldBe(20);
         defaults.KeptRecheckMinutes.ShouldBe(60);
         defaults.KeptRecheckMaxHours.ShouldBe(24);
+        // CARD-1684 S26, S27 and the low J07-J10 values: the per-tick bound, the pacing and the shipped roots, cron and timeout.
+        defaults.MaxRemovalsPerTick.ShouldBe(25);
+        defaults.PauseBetweenSeconds.ShouldBe(5);
+        defaults.RequestTimeoutSeconds.ShouldBe(300);
+        defaults.Cron.ShouldBe("*/30 * * * *");
+        defaults.WorktreeRoot.ShouldBe("/work/worktrees");
+        defaults.RetiringRoot.ShouldBe("/work/worktrees-retiring");
         defaults.TempSweep.Enabled.ShouldBeFalse();
         defaults.TempSweep.Execute.ShouldBeFalse();
         defaults.TempSweep.Families["claude-scratch"].ShouldBeFalse();
@@ -45,6 +52,13 @@ public sealed class C1677RetentionSettingsTests
         section.GetProperty("MaxTickMinutes").GetInt32().ShouldBe(20);
         section.GetProperty("KeptRecheckMinutes").GetInt32().ShouldBe(60);
         section.GetProperty("KeptRecheckMaxHours").GetInt32().ShouldBe(24);
+        // CARD-1684 J05-J10.
+        section.GetProperty("MaxRemovalsPerTick").GetInt32().ShouldBe(25);
+        section.GetProperty("PauseBetweenSeconds").GetInt32().ShouldBe(5);
+        section.GetProperty("RequestTimeoutSeconds").GetInt32().ShouldBe(300);
+        section.GetProperty("Cron").GetString().ShouldBe("*/30 * * * *");
+        section.GetProperty("WorktreeRoot").GetString().ShouldBe("/work/worktrees");
+        section.GetProperty("RetiringRoot").GetString().ShouldBe("/work/worktrees-retiring");
         var temp = section.GetProperty("TempSweep");
         temp.GetProperty("Enabled").GetBoolean().ShouldBeFalse();
         temp.GetProperty("Execute").GetBoolean().ShouldBeFalse();
@@ -56,6 +70,8 @@ public sealed class C1677RetentionSettingsTests
         bound.Runners.ShouldBe(["server2"]);
         bound.Enabled.ShouldBeTrue();
         bound.Execute.ShouldBeTrue();
+        bound.MaxRemovalsPerTick.ShouldBe(25);
+        bound.PauseBetweenSeconds.ShouldBe(5);
     }
 
     [Test]
