@@ -306,7 +306,8 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // A cold first pass took over 5 s on loaded server2 (CARD-1678); only the timer it arms is asserted.
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var passes = source.Calls;
         passes.ShouldBe(1, "the start pass runs once before the loop waits");
         clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
@@ -344,7 +345,7 @@ public sealed class RunnerAlarmHostedServiceTests
         var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 120 },
             exclusion: exclusion);
         await service.StartAsync(CancellationToken.None);
-        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(30));
         state.Current.DrainExpiresAt.Count.ShouldBe(2);
         clock.Timers.ShouldHaveSingleItem().Due.ShouldBe(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)),
             "the timer is due one second past the earliest drain expiry");
