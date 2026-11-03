@@ -13,6 +13,7 @@ import { configure, getConfig } from '@testing-library/react';
 // errors, so those never print. Whatever does read one prints what the default prints: the
 // timeout handler and the stack copy read the last error, and a several-matches query reads
 // each element's error to build its listing. A getBy* outside waitFor is unchanged.
+// The lazy print shows the DOM at the time the message is first read, not at the failed poll.
 export function installPollingElementError(): void {
   const printing = getConfig().getElementError;
   configure({
