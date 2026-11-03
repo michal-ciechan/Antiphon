@@ -13,9 +13,13 @@ public sealed class AlarmSettings
 
     /// <summary>
     /// CARD-1666 A-2: how long a draining runner that is offline stays excluded from the outage
-    /// alarm. Past it (or with no drain start) the alarm raises again. Retired runners have no bound. Must be positive.
+    /// alarm. Past it (or with no drain start) the alarm raises again. Retired runners have no bound.
+    /// Must be positive and at most <see cref="RunnerDrainMaxMinutesLimit"/> (CARD-1671).
     /// </summary>
     public int RunnerDrainMaxMinutes { get; set; } = 30;
+
+    /// <summary>CARD-1671: seven days, the largest <see cref="RunnerDrainMaxMinutes"/>.</summary>
+    public const int RunnerDrainMaxMinutesLimit = 7 * 24 * 60;
 
     /// <summary>Backstop sweep period. Must be positive.</summary>
     public int SweepMinutes { get; set; } = 15;

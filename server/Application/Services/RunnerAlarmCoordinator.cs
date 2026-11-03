@@ -35,8 +35,9 @@ public sealed class RunnerAlarmCoordinator(
         var episodes = current.Episodes.ToDictionary(episode => episode.RunnerId, StringComparer.Ordinal);
         var resolved = new Dictionary<string, DateTimeOffset>(current.LastResolvedAt, StringComparer.Ordinal);
         var pending = current.PendingRecoveries.ToList();
+        var drains = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         var recoveryHints = await DrainPendingRecoveriesAsync(pending, ct);
-        Publish(current, episodes, resolved, pending);
+        Publish(current, episodes, resolved, pending, drains);
         await RehintAsync(recoveryHints, ct);
         Exception? failure = null;
         foreach (var snapshot in runners.Snapshots())
@@ -45,26 +46,26 @@ public sealed class RunnerAlarmCoordinator(
                 continue;
             try
             {
-                await EvaluateRunnerAsync(snapshot, now, grace, episodes, resolved, pending, ct);
-                Publish(current, episodes, resolved, pending);
+                await EvaluateRunnerAsync(snapshot, now, grace, episodes, resolved, pending, drains, ct);
+                Publish(current, episodes, resolved, pending, drains);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // A later runner must not drop notes the earlier runners already sent (G-30).
                 logger.LogWarning(ex, "Runner {RunnerId} alarm pass failed", snapshot.RunnerId);
-                Publish(current, episodes, resolved, pending);
+                Publish(current, episodes, resolved, pending, drains);
                 failure ??= ex;
             }
         }
 
-        Publish(current, episodes, resolved, pending);
+        Publish(current, episodes, resolved, pending, drains);
         if (failure is not null)
             throw failure;
     }
 
     private async Task EvaluateRunnerAsync(RunnerEligibilitySnapshot snapshot, DateTimeOffset now, TimeSpan grace,
         Dictionary<string, RunnerOutageEpisode> episodes, Dictionary<string, DateTimeOffset> resolved,
-        List<PendingRecoveryNote> pending, CancellationToken ct)
+        List<PendingRecoveryNote> pending, Dictionary<string, DateTimeOffset> drains, CancellationToken ct)
     {
         episodes.TryGetValue(snapshot.RunnerId, out var episode);
         var excluded = exclusion.Excluded(snapshot.RunnerId);
@@ -72,6 +73,9 @@ public sealed class RunnerAlarmCoordinator(
         var overran = excluded == "draining" ? exclusion.DrainOverran(snapshot.RunnerId, now) : null;
         if (overran is not null && !snapshot.Eligible)
             excluded = null;
+        // CARD-1671: a drain still within its bound wakes the loop when it expires.
+        if (excluded == "draining" && overran is null && exclusion.DrainExpiresAt(snapshot.RunnerId) is { } expires)
+            drains[snapshot.RunnerId] = expires;
         if (excluded is not null)
         {
             if (episode is { RaisedAt: not null })
@@ -152,12 +156,14 @@ public sealed class RunnerAlarmCoordinator(
     }
 
     private void Publish(RunnerAlarmSnapshot basis, Dictionary<string, RunnerOutageEpisode> episodes,
-        Dictionary<string, DateTimeOffset> resolved, List<PendingRecoveryNote> pending) =>
+        Dictionary<string, DateTimeOffset> resolved, List<PendingRecoveryNote> pending,
+        Dictionary<string, DateTimeOffset> drains) =>
         state.Publish(basis with
         {
             Episodes = episodes.Values.ToArray(),
             LastResolvedAt = resolved,
             PendingRecoveries = pending.ToArray(),
+            DrainExpiresAt = new Dictionary<string, DateTimeOffset>(drains, StringComparer.Ordinal),
         });
 
     public async Task EvaluateJournalsAsync(IReadOnlyList<string>? repositories, DateTimeOffset now, CancellationToken ct)
@@ -244,10 +250,14 @@ public sealed class RunnerAlarmCoordinator(
         var minutes = (now - episode.DownSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
         // CARD-1663: a runner closed because it is retired or draining has not recovered.
         // CARD-1666 A-4: a reachable draining runner is up but takes no new work.
+        // CARD-1671: so is a reachable retired runner.
         var header = $"[runner {episode.RunnerId} {excluded ?? "recovered"}]";
-        var standing = excluded == "draining" && reachable
-            ? "It is reachable but not accepting new work while it drains"
-            : "It is not dispatch-eligible";
+        var standing = (excluded, reachable) switch
+        {
+            ("draining", true) => "It is reachable but not accepting new work while it drains",
+            ("retired", true) => "It is reachable but retired, so it takes no new work",
+            _ => "It is not dispatch-eligible",
+        };
         var body = header + "\n" + (excluded is null
             ? $"Runner '{episode.DisplayName}' is dispatch-eligible again after {minutes} min down (since {episode.DownSince:O}). Queued work bound to it dispatches on the next tick."
             : $"Runner '{episode.DisplayName}' is {excluded}, so it is no longer alarming after {minutes} min down (since {episode.DownSince:O}). {standing}; this is not a recovery.");

@@ -13,6 +13,9 @@ public sealed class RunnerAlarmHostedService(
     TimeProvider clock,
     ILogger<RunnerAlarmHostedService> logger) : BackgroundService
 {
+    /// <summary>The bound is inclusive; one second past it the drain counts as overrun.</summary>
+    private static readonly TimeSpan DrainWakeSlack = TimeSpan.FromSeconds(1);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!settings.Value.Enabled)
@@ -66,6 +69,14 @@ public sealed class RunnerAlarmHostedService(
             var raiseAt = episode.DownSince + grace;
             if (raiseAt < due)
                 due = raiseAt;
+        }
+
+        // CARD-1671: a drain hides an outage only up to its bound (inclusive), so wake just past it.
+        foreach (var expires in state.Current.DrainExpiresAt.Values)
+        {
+            var overrunAt = expires + DrainWakeSlack;
+            if (overrunAt < due)
+                due = overrunAt;
         }
 
         return due;

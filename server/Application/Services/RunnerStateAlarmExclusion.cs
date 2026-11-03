@@ -26,7 +26,12 @@ public sealed class RunnerStateAlarmExclusion(PhoneHomeRunnerDirectory directory
     public DateTimeOffset? DrainExpiresAt(string runnerId) =>
         ExpiresAt(directory.DrainState(runnerId), settings.Value.RunnerDrainMaxMinutes);
 
-    public static DateTimeOffset? ExpiresAt(RunnerState? state, int maxMinutes) => null;
+    /// <summary>
+    /// The drain start plus the bound for a draining (not retired) runner, else null. A missing
+    /// start has no expiry: <see cref="Overran"/> already fails it safe.
+    /// </summary>
+    public static DateTimeOffset? ExpiresAt(RunnerState? state, int maxMinutes) =>
+        Reason(state) == "draining" && state!.DrainedAt is { } since ? since.AddMinutes(maxMinutes) : null;
 
     /// <summary>
     /// Null within the bound (inclusive). A missing or future drain start cannot be aged, so it
