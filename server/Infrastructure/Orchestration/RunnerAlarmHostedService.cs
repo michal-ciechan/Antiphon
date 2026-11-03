@@ -73,10 +73,11 @@ public sealed class RunnerAlarmHostedService(
         }
 
         // CARD-1671: a drain hides an outage only up to its bound (inclusive), so wake just past it.
+        // CARD-1674: a wake at or before the last pass is stale, and taking it would spin the loop.
         foreach (var expires in current.DrainExpiresAt.Values)
         {
             var overrunAt = expires + DrainWakeSlack;
-            if (overrunAt < due)
+            if (overrunAt > lastPass && overrunAt < due)
                 due = overrunAt;
         }
 
