@@ -10,9 +10,18 @@ internal sealed class CanaryRepository : IDisposable
 
     // Preserve ancestor configuration discovery (.editorconfig/.globalconfig, SDK searches).
     // A temporary directory under a different parent changes more than documentation.
-    private CanaryRepository(string repo) => Root = Path.Combine(
-        Path.GetDirectoryName(repo) ?? throw new IOException("repository has no parent for canary evaluation"),
-        DirectoryPrefix + Guid.NewGuid().ToString("N"));
+    private CanaryRepository(string repo)
+    {
+        _repo = repo;
+        Root = Path.Combine(
+            Path.GetDirectoryName(repo) ?? throw new IOException("repository has no parent for canary evaluation"),
+            DirectoryPrefix + Guid.NewGuid().ToString("N"));
+    }
+
+    private readonly string _repo;
+
+    // The copy set: tracked and untracked-not-ignored files plus docs/**/*.md, as Git or '/' paths.
+    private HashSet<string> _copied = new(StringComparer.Ordinal);
 
     public string Root { get; }
 
@@ -23,12 +32,7 @@ internal sealed class CanaryRepository : IDisposable
     private static string? ActiveRoot;
     private static volatile bool Cancelled;
 
-    /// <param name="evaluatedItems">
-    /// FullPaths the repository pass evaluated as items. A git-ignored file among them (an E2E run's
-    /// TestOutput/ under a default None glob) is not copied, so it gets an empty placeholder: the same
-    /// globs then match the same names in both passes. Item contents are never an evaluation input.
-    /// </param>
-    public static CanaryRepository Create(string repo, IEnumerable<string>? evaluatedItems = null)
+    public static CanaryRepository Create(string repo)
     {
         Cancelled = false;
         var copy = new CanaryRepository(repo);
@@ -48,6 +52,8 @@ internal sealed class CanaryRepository : IDisposable
                     if (file.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
                         documentation.Add(Path.GetRelativePath(repo, file));
             var files = CanaryEntries.Build(tracked, documentation, Path.DirectorySeparatorChar);
+            // A case-insensitive file system resolves another spelling to the same copied file.
+            copy._copied = OperatingSystem.IsWindows() ? new HashSet<string>(files, StringComparer.OrdinalIgnoreCase) : files;
             var rewriteOrdinarySource = CopyRaceRewrite(repo);
 
             var ordinary = new List<(string Source, string Destination, bool Skippable)>();
@@ -95,16 +101,6 @@ internal sealed class CanaryRepository : IDisposable
                 else File.CreateSymbolicLink(destination, target);
             }
             CopyOrdinary();
-            foreach (var placeholder in IgnoredItemFiles(repo, files, evaluatedItems))
-            {
-                if (Cancelled) throw new IOException("canary copy cancelled");
-                var destination = Path.GetFullPath(Path.Combine(copy.Root, placeholder));
-                if (!destination.StartsWith(copy.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                    throw new IOException("canary path outside repository: " + placeholder);
-                copy.CheckDestination(destination);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                if (!File.Exists(destination)) File.WriteAllBytes(destination, []);
-            }
             var added = Path.Combine(copy.Root, "docs", "c1483-canary", "canary.md");
             copy.CheckDestination(added);
             Directory.CreateDirectory(Path.GetDirectoryName(added)!);
@@ -114,22 +110,30 @@ internal sealed class CanaryRepository : IDisposable
         catch { copy.Dispose(); throw; }
     }
 
-    // Ordinary, existing, non-link files inside the repository that the copy set does not hold.
-    // Documentation stays with the copy set, which already writes every docs/**/*.md as the canary.
-    private static IEnumerable<string> IgnoredItemFiles(string repo, HashSet<string> files, IEnumerable<string>? evaluatedItems)
+    /// <summary>
+    /// True only for a git-ignored repository file: an existing ordinary file inside the repository,
+    /// reached through no link, that the copy set does not hold (an E2E run's TestOutput/ under a
+    /// default None glob). The canary never holds such a file, so its own item row is missing from
+    /// the canary pass by construction. A link, a path outside the repository, a missing path or a
+    /// copied file is false, and its missing row still refuses.
+    /// </summary>
+    public bool IsIgnoredRepositoryFile(string fullPath)
     {
-        var result = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var item in evaluatedItems ?? [])
+        if (string.IsNullOrEmpty(fullPath)) return false;
+        var full = Path.GetFullPath(Path.DirectorySeparatorChar == '/' ? fullPath.Replace('\\', '/') : fullPath);
+        if (!full.StartsWith(_repo + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return false;
+        var relative = Path.GetRelativePath(_repo, full);
+        if (_copied.Contains(relative.Replace(Path.DirectorySeparatorChar, '/'))) return false;
+        if (!File.Exists(full) || File.Exists(Path.Combine(Root, relative))) return false;
+        // No component below the repository root may be a link (a file link, or a directory link
+        // or junction that leads outside the repository).
+        var current = _repo;
+        foreach (var part in relative.Split(Path.DirectorySeparatorChar))
         {
-            if (string.IsNullOrEmpty(item)) continue;
-            var full = Path.GetFullPath(Path.DirectorySeparatorChar == '/' ? item.Replace('\\', '/') : item);
-            if (!full.StartsWith(repo + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
-            var relative = Path.GetRelativePath(repo, full);
-            if (files.Contains(relative.Replace(Path.DirectorySeparatorChar, '/'))) continue;
-            if (!File.Exists(full) || (File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0) continue;
-            result.Add(relative);
+            current = Path.Combine(current, part);
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false;
         }
-        return result;
+        return true;
     }
 
     internal static void CancelCopy() => Cancelled = true;
