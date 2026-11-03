@@ -949,4 +949,21 @@ public sealed class VolumeRetirementContentTests
         File.Exists(Path.Combine(fixture.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
             .ShouldBeFalse("c1673-t: the refusal precedes the recycle journal");
     }
+
+    // Task 5b7656a9: the real census read (no C727 stub) streams the packet to ssh stdin.
+    // Its awaited write must not leak a VoidTaskResult into the function output, or the
+    // manifest check sees two items and every real deploy-temp stops TempRetirementJournalUnknown.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Real_census_read_returns_only_the_census_text()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var rows = await VolumeRetirementFixture.RunOutputWitness("Census");
+        rows.ShouldBe(new[]
+        {
+            "OUTPUT census count=1 types=System.String streamed=True",
+            "OUTPUT proof count=1 types=System.String",
+            "OUTPUT clearable ok",
+        }, string.Join("\n", rows));
+    }
 }
