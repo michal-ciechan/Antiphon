@@ -79,12 +79,36 @@ public sealed class SessionRunnerSettings
     /// </summary>
     public bool LinuxCustodyQualified { get; set; }
 
+    /// <summary>
+    /// CARD-1653 S2. Owned puts new non-custody Linux sockets in <see cref="ResolvedPtyHostSocketDir"/>,
+    /// which must be owned by the runner, mode 0700, not a symlink and under safe ancestors; an unsafe
+    /// directory fails the launch (no /tmp fallback). Legacy (the default) keeps
+    /// <c>/tmp/antiphon-pty-&lt;id&gt;</c>. Ignored on Windows.
+    /// </summary>
+    public PtyHostSocketDirMode PtyHostSocketDirMode { get; set; } = PtyHostSocketDirMode.Legacy;
+
+    /// <summary>CARD-1653 S2. Overrides <c>&lt;ResolvedPtyHostDir&gt;/sock</c>.</summary>
+    public string? PtyHostSocketDir { get; set; }
+
+    /// <summary>
+    /// CARD-1653 S2. The kernel peer check after connect and before the hello. Off (the default) is
+    /// the unchecked connect; Observe logs a mismatch and connects; Enforce refuses it.
+    /// </summary>
+    public PtyHostPeerCheckMode PtyHostPeerCheck { get; set; } = PtyHostPeerCheckMode.Off;
+
     public string ResolvedPtyHostDir => PtyHostDir ?? Path.Combine(SessionLogPath, "pty-hosts");
     public string PtyHostManifestDir => Path.Combine(ResolvedPtyHostDir, "manifests");
     public string PtyHostBinDir => Path.Combine(ResolvedPtyHostDir, "bin");
     public string PtyHostLogDir => Path.Combine(ResolvedPtyHostDir, "logs");
     public string ResolvedPtyHostSourceDir => PtyHostSourceDir ?? AppContext.BaseDirectory;
+    public string ResolvedPtyHostSocketDir => Path.GetFullPath(PtyHostSocketDir ?? Path.Combine(ResolvedPtyHostDir, "sock"));
 }
+
+/// <summary>CARD-1653 S2: where new Linux pty-host sockets live.</summary>
+public enum PtyHostSocketDirMode { Legacy, Owned }
+
+/// <summary>CARD-1653 S2: the kernel peer check before the hello.</summary>
+public enum PtyHostPeerCheckMode { Off, Observe, Enforce }
 
 public sealed class RunnerAbsenceEvidenceSettings
 {

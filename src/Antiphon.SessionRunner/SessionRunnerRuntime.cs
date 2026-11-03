@@ -2108,7 +2108,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     session.SetCustody(_custody.Value, binding);
                 try
                 {
-                    var running = await session.AdoptAsync(manifest, ct);
+                    var running = await session.AdoptAsync(manifest, probe, ct);
                     _sessions.TryAdd(manifest.SessionId, session);
                     adopted++;
                     hostAttempt.Complete(1, running ? "running" : "exited");
@@ -3458,6 +3458,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
                     _hostStartTimeUtc = host.StartTime.ToUniversalTime();
+                PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(null);
                 _client = await PtyHostClient.ConnectAsync(
                     PtyHostProtocol.PipeNameFor(_sessionId),
                     TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
@@ -3561,13 +3562,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// sequence, and - if the child exited while the runner was down - publishes the missed
         /// SessionExited and acks Shutdown. Returns true if the session is still running.
         /// </summary>
-        public async Task<bool> AdoptAsync(PtyHostManifest manifest, CancellationToken ct)
+        public async Task<bool> AdoptAsync(PtyHostManifest manifest, IProcessLivenessProbe probe, CancellationToken ct)
         {
-            try { return await AdoptCoreAsync(manifest, ct); }
+            try { return await AdoptCoreAsync(manifest, probe, ct); }
             finally { _launchFinished.TrySetResult(); }
         }
 
-        private async Task<bool> AdoptCoreAsync(PtyHostManifest manifest, CancellationToken ct)
+        private async Task<bool> AdoptCoreAsync(PtyHostManifest manifest, IProcessLivenessProbe probe, CancellationToken ct)
         {
             RetainCheckout(manifest.Cwd ?? TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId))?.Cwd);
             if (manifest.GrokRulesReceipt is { } receipt
@@ -3585,6 +3586,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Cols > 0 ? manifest.Cols : 120,
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
+            PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(null);
             _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
             // CARD-1636: the pipe name is not a peer identity. Custody adoption compares the
             // binding below; every other host must name this session and, when its manifest

@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using Microsoft.Win32.SafeHandles;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 
@@ -38,7 +39,7 @@ public sealed class PtyHostClient : IAsyncDisposable
 
     /// <summary>Connects (with retry while the host's pipe server comes up) and completes the hello.</summary>
     public static async Task<PtyHostClient> ConnectAsync(
-        string pipeName, TimeSpan timeout, CancellationToken ct)
+        string pipeName, TimeSpan timeout, CancellationToken ct, PtyHostConnectPolicy? policy = null)
     {
         var deadline = DateTime.UtcNow + timeout;
         Exception? last = null;
@@ -48,7 +49,7 @@ public sealed class PtyHostClient : IAsyncDisposable
             var remaining = deadline - DateTime.UtcNow;
             if (remaining < TimeSpan.FromMilliseconds(50))
                 break;
-            var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PtyHostConnectPolicy.PipeOptionsFor(policy));
             try
             {
                 // Do not slice ConnectAsync into 2s cancels: on Linux those aborted connects
@@ -277,4 +278,38 @@ public sealed class PtyHostClient : IAsyncDisposable
     {
         public HelloEofException(string message) : base(message) { }
     }
+}
+
+/// <summary>
+/// CARD-1653 S2: what <see cref="PtyHostClient.ConnectAsync"/> proves about the peer before it writes
+/// the hello. A null policy is the unchecked connect.
+/// </summary>
+public sealed class PtyHostConnectPolicy
+{
+    /// <summary>Windows only: the client refuses a pipe server owned by another account.</summary>
+    public bool CurrentUserOnly { get; init; }
+
+    /// <summary>Linux only: the socket file's type and owner, read before each connect attempt.</summary>
+    public Func<string, SocketFileVerdict>? CheckSocketFile { get; init; }
+
+    public Func<SafePipeHandle, PtyHostPeerCredentials?> ReadPeer { get; init; } = PtyHostPeerCredentials.Read;
+
+    /// <summary>True only for the expected host. Unreadable credentials arrive as null.</summary>
+    public Func<PtyHostPeerCredentials?, bool> AcceptPeer { get; init; } = _ => false;
+
+    /// <summary>Report a failed check through <see cref="OnObserved"/> and connect anyway.</summary>
+    public bool Observe { get; init; }
+
+    public Action<string>? OnObserved { get; init; }
+
+    /// <summary>The client stream options: a null policy keeps <see cref="PipeOptions.Asynchronous"/> exactly.</summary>
+    public static PipeOptions PipeOptionsFor(PtyHostConnectPolicy? policy) => PipeOptions.Asynchronous;
+}
+
+/// <summary>CARD-1653 S2: the peer is not the expected host. Never retried; the message is the fixed code.</summary>
+public sealed class PtyHostPeerRefusedException(string code) : UnauthorizedAccessException(code)
+{
+    public const string MismatchCode = "pty_host_peer_mismatch";
+
+    public string Code { get; } = code;
 }
