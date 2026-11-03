@@ -39,6 +39,7 @@
     <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestSupport\HerdrTestProcess.cs" />
     <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestSupport\ReadOnlyDirectory.cs" />
     <Compile Include="..\Shared\TestTiming.cs" Link="TestSupport\TestTiming.cs" />
+    <Compile Include="..\Shared\TestTrace.cs" Link="TestSupport\TestTrace.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestOwnedPtyHost.cs" Link="TestSupport\TestOwnedPtyHost.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

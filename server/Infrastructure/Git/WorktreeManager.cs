@@ -1282,6 +1282,9 @@ public sealed class WorktreeManager : IWorktreeManager
         CancellationToken ct,
         bool throwOnError = true)
     {
+        // Verb (and the worktree subcommand) only: arguments carry paths and branch names.
+        using var span = Antiphon.Observability.AntiphonTrace.Span("git " + (arguments.Count == 0 ? ""
+            : arguments[0] == "worktree" && arguments.Count > 1 ? "worktree " + arguments[1] : arguments[0]));
         var budget = TimeoutFor(arguments);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(budget);

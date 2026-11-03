@@ -16,6 +16,7 @@ public sealed class TestTimingAttribute : Attribute, ITestStartEventReceiver, IT
 
     public ValueTask OnTestStart(TestContext context)
     {
+        TestTrace.EnsureFileExporter();
         var session = TestTiming.Resolve();
         if (session is { Enabled: true })
             session.OnTestStart(context);
@@ -32,6 +33,7 @@ public sealed class TestTimingAttribute : Attribute, ITestStartEventReceiver, IT
 
     public ValueTask OnLastTestInAssembly(AssemblyHookContext context, TestContext testContext)
     {
+        TestTrace.Flush();
         var session = TestTiming.Resolve();
         if (session is { Enabled: true })
             session.FlushHealth();

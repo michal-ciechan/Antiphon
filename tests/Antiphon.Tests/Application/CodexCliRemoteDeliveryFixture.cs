@@ -31,6 +31,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
 
     public static async Task RunAsync(string body, RunnerCodexCliVersionDto? sample, bool busy, AgentModelLevel level = AgentModelLevel.High, string? negative = null)
     {
+        using var scenario = TestTrace.Span("scenario remote-delivery", ("c959.version", sample?.CodexCliVersion ?? "none"), ("c959.busy", busy), ("c959.negative", negative ?? "none"));
         var vector = $"remote/{sample?.CodexCliVersion}/{sample?.CodexCliVersionError}/busy={busy}";
         await using var world = await World.CreateAsync(sample, busy);
         {

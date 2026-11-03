@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.44.0" />
     <Compile Include="../Shared/TestTiming.cs" Link="TestTiming.cs" />
+    <Compile Include="../Shared/TestTrace.cs" Link="TestTrace.cs" />
     <Compile Include="../Shared/TestTimingAttribute.cs" Link="TestTimingAttribute.cs" />
     <Compile Include="../Shared/TestTimingRegistration.cs" Link="TestTimingRegistration.cs" />
   </ItemGroup>

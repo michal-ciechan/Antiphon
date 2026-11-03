@@ -16,6 +16,7 @@ public sealed class ScratchGitRepo : IDisposable
 
     public ScratchGitRepo(string prefix = "antiphon-deleg-wt")
     {
+        using var span = TestTrace.Span("git-repo create");
         Path = Directory.CreateTempSubdirectory($"{prefix}-repo").FullName;
         WorktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
         GitAsync("init", "-b", "master").GetAwaiter().GetResult();
@@ -47,6 +48,8 @@ public sealed class ScratchGitRepo : IDisposable
 
     public static async Task<GitResult> GitInAsync(string dir, IReadOnlyDictionary<string, string>? env, params string[] args)
     {
+        // The git verb only: arguments can carry paths and messages.
+        using var span = TestTrace.Span("git " + (args.Length > 0 ? args[0] : ""), "antiphon.phase", "process");
         var psi = new ProcessStartInfo
         {
             FileName = "git",
@@ -115,6 +118,7 @@ public sealed class ScratchGitRepo : IDisposable
 
     public void Dispose()
     {
+        using var span = TestTrace.Span("git-repo delete");
         foreach (var dir in new[] { WorktreeRoot, Path, _bareOrigin })
         {
             if (dir is null) continue;

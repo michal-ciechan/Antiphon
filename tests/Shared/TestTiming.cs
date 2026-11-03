@@ -79,30 +79,49 @@ public static class TestTiming
 
     public static void BindTestId(string? testId) => BoundId.Value = testId;
 
+    // Every phase is also an OpenTelemetry-style span (TestTrace), independent of the recorder:
+    // a span exists only when a listener (TUnit's report, ANTIPHON_TEST_TRACE_FILE) is attached,
+    // and the recorder stays a true no-op while ANTIPHON_TEST_PHASE_ROOT is unset.
     public static IDisposable BeginPhase(TestPhaseKind phase, string operation)
     {
+        var span = TestTrace.Span(TestTimingMathNames.Name(phase) + " " + operation, "antiphon.phase", TestTimingMathNames.Name(phase));
         var session = Resolve();
         if (session is null || !session.Enabled)
-            return Noop.Instance;
+            return Traced(Noop.Instance, span);
         if (session.EventDelayMilliseconds > 0)
             global::System.Threading.Thread.Sleep(session.EventDelayMilliseconds);
-        return session.BeginPhase(phase, operation);
+        return Traced(session.BeginPhase(phase, operation), span);
     }
 
     public static IDisposable BeginProcess(string exeBasename, int? argc, string category)
     {
+        var span = TestTrace.Span("process " + exeBasename, ("antiphon.phase", "process"), ("process.category", category));
         var session = Resolve();
         if (session is null || !session.Enabled)
-            return Noop.Instance;
-        return session.BeginProcess(exeBasename, argc, category);
+            return Traced(Noop.Instance, span);
+        return Traced(session.BeginProcess(exeBasename, argc, category), span);
     }
 
     public static IDisposable BeginFixturePhase(string fixtureId, TestPhaseKind phase, string operation)
     {
+        var span = TestTrace.Span(TestTimingMathNames.Name(phase) + " " + operation,
+            ("antiphon.phase", TestTimingMathNames.Name(phase)), ("antiphon.fixture", fixtureId));
         var session = Resolve();
         if (session is null || !session.Enabled)
-            return Noop.Instance;
-        return session.BeginFixturePhase(fixtureId, phase, operation);
+            return Traced(Noop.Instance, span);
+        return Traced(session.BeginFixturePhase(fixtureId, phase, operation), span);
+    }
+
+    private static IDisposable Traced(IDisposable inner, Activity? span) =>
+        span is null ? inner : new TracedLease(inner, span);
+
+    private sealed class TracedLease(IDisposable inner, Activity span) : IDisposable
+    {
+        public void Dispose()
+        {
+            try { inner.Dispose(); }
+            finally { span.Dispose(); }
+        }
     }
 
     public static void RemovePhaseVariables(ProcessStartInfo start)

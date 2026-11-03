@@ -16,5 +16,6 @@
     <!-- CheckpointTestScope uses the shared read-only cleanup helper and its timing seam. -->
     <Compile Include="../Shared/ReadOnlyDirectory.cs" Link="TestHelpers/ReadOnlyDirectory.cs" />
     <Compile Include="../Shared/TestTiming.cs" Link="TestHelpers/TestTiming.cs" />
+    <Compile Include="../Shared/TestTrace.cs" Link="TestHelpers/TestTrace.cs" />
   </ItemGroup>
 </Project>

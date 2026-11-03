@@ -337,6 +337,8 @@ public class GitService : IGitService
         TimeSpan? timeout = null)
     {
         using var timing = _timing?.BeginExternal(ExternalOperation.Git);
+        // Verb only: the rest of the argument string carries paths and messages.
+        using var span = Antiphon.Observability.AntiphonTrace.Span("git " + arguments.TrimStart().Split(' ', 2)[0]);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout ?? GitTimeout);
 
@@ -399,6 +401,8 @@ public class GitService : IGitService
         TimeSpan? timeout = null)
     {
         using var timing = _timing?.BeginExternal(ExternalOperation.Git);
+        // Verb only: the rest of the argument string carries paths and messages.
+        using var span = Antiphon.Observability.AntiphonTrace.Span("git " + arguments.TrimStart().Split(' ', 2)[0]);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout ?? GitTimeout);
 

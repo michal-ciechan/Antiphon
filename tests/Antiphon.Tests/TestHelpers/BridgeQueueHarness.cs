@@ -107,6 +107,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public static async Task<BridgeQueueHarness> CreateAsync(HarnessOptions? options = null)
     {
+        using var span = TestTrace.Span("harness create");
         options ??= new HarnessOptions();
         if (options.ClockSpeed is not null && options.TimeProvider is not null)
             throw new InvalidOperationException(
@@ -262,7 +263,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 new System.IO.Abstractions.FileSystem()));
         services.AddLogging();
         options.ConfigureServices?.Invoke(services);
-        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = options.ValidateScopes });
+        ServiceProvider provider;
+        using (TestTrace.Span("harness di-build"))
+            provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = options.ValidateScopes });
         var scope = provider.CreateScope();
         var actionWorker = options.StartRuntimeActions
             ? new SessionRuntimeActionHostedService(provider.GetRequiredService<SessionRuntimeActionCoordinator>()) : null;
@@ -672,6 +675,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var span = TestTrace.Span("harness dispose");
         if (ActionWorker is not null)
         {
             await ActionWorker.StopAsync(CancellationToken.None);

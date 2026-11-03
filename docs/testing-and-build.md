@@ -1817,6 +1817,27 @@ Each shard row:
 
 Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Shard runtimes are UNMEASURED. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, executing the shard rows does not demonstrate `ordinaryScopeCompleted=Full`. A Full Final receipt for the Unit lane is not yet demonstrated.
 
+## Test traces (OpenTelemetry-style spans)
+
+Fixtures emit `Activity` spans from the `Antiphon.Tests` source (`tests/Shared/TestTrace.cs`). Every
+`TestTiming.BeginPhase`/`BeginProcess`/`BeginFixturePhase` call is also a span, and the shared choke
+points add their own: `harness create`/`harness di-build`/`harness dispose` (BridgeQueueHarness),
+`git-repo create`/`git-repo delete` and one `git <verb>` span per ScratchGitRepo command. A span
+exists only while something listens; the CARD-1514 recorder below is unaffected and stays a
+no-op without `ANTIPHON_TEST_PHASE_ROOT`.
+
+- TUnit's HTML report (`bin/<config>/<tfm>/TestResults/*-report.html`) already nests these under
+  each test's trace, together with Npgsql and HttpClient spans, up to `TUNIT_OTEL_MAX_EXTERNAL_SPANS`
+  external spans per run (default 100).
+- For a whole run, set `ANTIPHON_TEST_TRACE_FILE` to a file path: every completed span from every
+  source is appended as one JSON object per line, uncapped. Then
+  `pwsh -NoProfile -File scripts/summarize-test-trace.ps1 -Path <file> [-Test <name>] [-MinMs 25]`
+  prints tests by duration, span names by self and total time, and with `-Test` the span tree.
+
+Span names and tags are code-supplied labels. Never put prompts, bodies, credentials or
+argument lists in them (the git span names the verb only). Npgsql spans carry the SQL text and the
+test connection string of the throwaway container.
+
 ## Opt-in per-test phase timing (CARD-1514)
 
 S1 and S2 record where a test spends time when a run opts in. The sole runtime enable is `ANTIPHON_TEST_PHASE_ROOT`. When that variable is unset or blank the recorder does nothing: no file, no stopwatch, no redaction, and no default path. Metadata variables are `ANTIPHON_TEST_PHASE_RUN_ID`, `ANTIPHON_TEST_PHASE_GROUP_ID`, `ANTIPHON_TEST_PHASE_ATTEMPT`, and `ANTIPHON_TEST_PHASE_SUITE`. Missing or invalid metadata disables only that recorder (`phase-metadata-missing`, `phase-root-invalid`). A failed append disables the sink with `phase-sink-failed` and leaves the test outcome unchanged. Discovery, npm, lint, dotnet build, and ordinary child wrappers do not receive the variables. Ordinary CI and dev runs stay off unless the root is set.

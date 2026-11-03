@@ -138,6 +138,7 @@ public sealed class CodexCliObservationTests
         foreach (var version in kind == AgentKind.Codex ? new[] { "0.159.1", "0.160.0" } : new[] { "0.160.0" })
         {
             var vector = $"{kind}/busy={busy}/worktree={worktree}/{version}";
+            using var scenario = TestTrace.Span("scenario", "c959.vector", vector);
             using var git = worktree ? new ScratchGitRepo("c959-launch") : null;
             if (git is not null) await git.CommitFileAsync("seed.txt", "C959 isolated worktree\n");
             await using var k = await DispatchKit.BuildAsync(git, kind, busy);
@@ -145,7 +146,7 @@ public sealed class CodexCliObservationTests
             var task = await k.CreateAsync();
             await k.TickAsync();
             k.Factory.ReadyHold?.TrySetResult(true);
-            await k.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            using (TestTrace.Span("launch-queue wait")) await k.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
             k.Factory.Created.Count.ShouldBe(1, "C959-pc-190");
             var adapter = k.Factory.Created.Single();
             await using var db = k.Context();
@@ -218,6 +219,7 @@ public sealed class CodexCliObservationTests
         foreach (var worktree in new[] { false, true })
         {
             var vector = $"lost-claim/{version}/busy={busy}/worktree={worktree}";
+            using var scenario = TestTrace.Span("scenario", "c959.vector", vector);
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             using var git = worktree ? new ScratchGitRepo("c959-recovery") : null;
             if (git is not null) await git.CommitFileAsync("seed.txt", "C959 isolated recovery\n");
@@ -272,7 +274,7 @@ public sealed class CodexCliObservationTests
                 recovered.Client.Requests.ShouldBeEmpty("C959-pc-238 " + vector);
                 await recovered.TickAsync();
                 recovered.Factory.ReadyHold?.TrySetResult(true);
-                await recovered.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+                using (TestTrace.Span("launch-queue wait")) await recovered.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
                 await using var finalDb = recovered.Context();
                 var row = await finalDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
                 row.AgentSessionId.ShouldNotBe(lostSession, "C959-v22-retry-session " + vector);
@@ -375,6 +377,7 @@ public sealed class CodexCliObservationTests
 
     private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
     {
+        using var scenario = TestTrace.Span("scenario never-refuses", "c959.vector", vector);
         foreach (var remote in new[] { false, true })
         {
             await using var create = await Kit.CreateAsync();
@@ -476,6 +479,7 @@ public sealed class CodexCliObservationTests
 
     private static async Task AssertWarmReuseAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, string vector)
     {
+        using var span = TestTrace.Span("warm-reuse", "c959.vector", vector);
         await using var warm = await DispatchKit.BuildAsync();
         await using var db = warm.Context();
         await db.Agents.Where(a => a.Id == warm.Harness.AgentId).ExecuteUpdateAsync(u => u
@@ -510,7 +514,7 @@ public sealed class CodexCliObservationTests
 
     private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label, string expectedModel = "gpt-6.1-sol")
     {
-        await kit.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        using (TestTrace.Span("launch-queue wait")) await kit.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
         await using var db = kit.Context();
         var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
         var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == row.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
@@ -611,6 +615,7 @@ public sealed class CodexCliObservationTests
             IsolatedTestSchema? schema = null, TimeProvider? clock = null, bool preserve = false,
             CancellationTokenSource? cancelAfterClaim = null, Guid? attachSession = null, Guid? attachAgent = null)
         {
+            using var span = TestTrace.Span("dispatch-kit build", ("c959.kind", kind.ToString()), ("c959.busy", busy), ("c959.worktree", git is not null));
             var ownsSchema = schema is null;
             schema ??= await TestDbFixture.CreateIsolatedSchemaAsync();
             clock ??= TimeProvider.System;
@@ -659,6 +664,7 @@ public sealed class CodexCliObservationTests
         }
         public async Task<AgentTaskCreatedDto> CreateAsync(AgentModelLevel level = AgentModelLevel.High, string? exactModel = null)
         {
+            using var span = TestTrace.Span("task create");
             Guid? agentId = null;
             if (exactModel is not null)
             {
@@ -683,10 +689,16 @@ public sealed class CodexCliObservationTests
         }
         public async Task TickAsync(CancellationToken ct = default)
         {
+            using var span = TestTrace.Span("dispatch tick");
             using var scope = Harness.Provider.CreateScope();
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
         }
-        public async ValueTask DisposeAsync() { await Harness.DisposeAsync(); if (OwnsSchema) await Schema.DisposeAsync(); }
+        public async ValueTask DisposeAsync()
+        {
+            using var span = TestTrace.Span("dispatch-kit dispose");
+            await Harness.DisposeAsync();
+            if (OwnsSchema) await Schema.DisposeAsync();
+        }
     }
     private sealed record FrozenBrief(string Full, string Wire, string? Path);
 

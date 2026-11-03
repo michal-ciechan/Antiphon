@@ -75,6 +75,7 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 
     private async Task ResumeOwnedAsync(Guid sessionId, Guid agentId)
     {
+        using var span = Antiphon.Observability.AntiphonTrace.Span("session.resume");
         ResumeInProgress.Value = sessionId;
         try
         {
@@ -158,6 +159,7 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
         Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec, string? remoteControlName, bool resume, LaunchNotes? notes,
         string? initialPrompt)
     {
+        using var span = Antiphon.Observability.AntiphonTrace.Span("session.launch-interactive");
         await using var scope = _scopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
         await service.LaunchInteractiveAsync(
@@ -248,6 +250,7 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
         AgentLaunchSpec spec,
         AgentSessionLaunchBehavior behavior)
     {
+        using var span = Antiphon.Observability.AntiphonTrace.Span("session.launch");
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var retryScheduler = scope.ServiceProvider.GetRequiredService<RetryScheduler>();

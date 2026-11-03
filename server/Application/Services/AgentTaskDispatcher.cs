@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Agents.Pty;
+using Antiphon.Observability;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -372,8 +373,13 @@ public sealed partial class AgentTaskDispatcher
     /// <summary>Compatibility path for direct callers; hosting owns the two loops separately.</summary>
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
-        var maintenance = await RunMaintenanceAsync(ct);
-        var admission = await DispatchQueuedAsync(ct);
+        using var span = AntiphonTrace.Span("dispatcher.tick");
+        TickResult maintenance;
+        using (AntiphonTrace.Span("dispatcher.maintenance"))
+            maintenance = await RunMaintenanceAsync(ct);
+        TickResult admission;
+        using (AntiphonTrace.Span("dispatcher.admission"))
+            admission = await DispatchQueuedAsync(ct);
         return admission with
         {
             SweepFailures = admission.SweepFailures + maintenance.SweepFailures,
@@ -2033,6 +2039,7 @@ public sealed partial class AgentTaskDispatcher
     internal async Task<int> RunSweepAsync(
         string name, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep, CancellationToken ct)
     {
+        using var span = AntiphonTrace.Span("dispatcher.sweep " + name);
         var budget = TimeSpan.FromSeconds(_settings.SweepBudgetSeconds);
         if (_scopeFactory is null || _sweepInFlight is null)
             return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);
@@ -5603,6 +5610,7 @@ public sealed partial class AgentTaskDispatcher
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation,
         CardSiblingInspectionIntent? siblingIntent = null)
     {
+        using var span = AntiphonTrace.Span("dispatch.task");
         // CARD-0507 D-2: before the claim, so a task queued before the configuration changed
         // launches nothing; the tick's catch fails it with the code, role and key
         // (RolePolicyToolBundleDispatchTests.the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing).
@@ -5626,7 +5634,7 @@ public sealed partial class AgentTaskDispatcher
         // capture the baseline, still does.
         var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
             && task.RepoPath is not null && !LaunchesPreparedMirror(task) && !RearmsPreparedWorktree(task);
-        var preflight = needsLease ? await _worktrees.PreflightAsync(task, ct) : null;
+        var preflight = needsLease ? await AntiphonTrace.Run("dispatch.worktree-preflight", () => _worktrees.PreflightAsync(task, ct)) : null;
         await using var repositoryLease = needsLease && _repositoryLeases is not null
             ? preflight is not null
                 ? await _repositoryLeases.TryAcquirePreflightAsync(task.RepoPath!, preflight,
@@ -5659,6 +5667,7 @@ public sealed partial class AgentTaskDispatcher
 
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
+        var claimSpan = AntiphonTrace.Span("dispatch.claim");
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         if (task.SpecialistInputPolicyJson is not null && task.AgentId is Guid physicalId)
         {
@@ -5677,6 +5686,7 @@ public sealed partial class AgentTaskDispatcher
                 && t.ConcurrencyToken == task.ConcurrencyToken, ct);
         if (claimed is null)
         {
+            claimSpan?.Dispose();
             await transaction.RollbackAsync(ct);
             return DispatchOneResult.NotClaimed;
         }
@@ -5684,6 +5694,8 @@ public sealed partial class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
+        // Ends the claim span on this path; an exception before here leaves it unexported only.
+        claimSpan?.Dispose();
         if (preflight is not null && !DelegationWorktreeService.IsOrdinaryPreflightTask(claimed))
         {
             await transaction.RollbackAsync(ct);
@@ -5984,8 +5996,9 @@ public sealed partial class AgentTaskDispatcher
             var cardBase = selected?.Decision == CardWorktreeBaseDecision.Continue
                 ? new ResolvedBase(selected.SourceSha!, WorktreeBaseSource.CardCurrent, null)
                 : null;
-            baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct,
-                repairStartSha, cardBase, selected?.SourceTaskId, selected?.SourceBranch);
+            using (AntiphonTrace.Span("dispatch.worktree-create"))
+                baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct,
+                    repairStartSha, cardBase, selected?.SourceTaskId, selected?.SourceBranch);
             if (selected is not null)
             {
                 previewChangeWarning = DescribeBasePreviewChange(claimed.WorktreeBasePreviewJson, selected);
@@ -6088,7 +6101,7 @@ public sealed partial class AgentTaskDispatcher
         // its branch or leaves a mirror on the runner. cardStart is false: a card-bound delegated
         // task is not a card start (its session has no CardId and runs in the task worktree); the
         // card-start refusal belongs to a standing agent's card spawn (AgentControlService).
-        var (agent, freshAgent) = await ResolveAgentAsync(claimed, now, ct);
+        var (agent, freshAgent) = await AntiphonTrace.Run("dispatch.resolve-agent", () => ResolveAgentAsync(claimed, now, ct));
         if (_phoneHome?.IsRunnerBound(agent) == true)
         {
             _phoneHome.RefuseUnsupportedStart(
