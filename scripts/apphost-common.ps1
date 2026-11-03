@@ -1125,6 +1125,78 @@ function Get-AppHostLauncherFailure {
     return $null
 }
 
+function Test-AppHostProcessAlive {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+}
+
+function Get-AppHostLaunchedPid {
+    <#
+      CARD-1680: the AppHost wrapper PID dev-aspire.ps1 wrote for THIS launch.
+      A pid file older than the launch belongs to the AppHost the restart killed.
+    #>
+    param([Parameter(Mandatory = $true)][string]$PidFile, [Parameter(Mandatory = $true)][datetime]$SinceUtc)
+    $item = Get-Item -LiteralPath $PidFile -ErrorAction SilentlyContinue
+    if (-not $item -or $item.LastWriteTimeUtc -lt $SinceUtc.AddSeconds(-2)) { return $null }
+    $text = $null
+    try { $text = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction Stop).Trim() } catch { return $null }
+    if ($text -match '^\d+$') { return [int]$text }
+    return $null
+}
+
+function Get-AppHostLaunchSnapshot {
+    <#
+      CARD-1680: what a launch has visibly done so far. Each entry is one
+      progress signal; a changed value between two polls is progress. Files
+      cover the AppHost log (build, BUILD SLOT and dotnet run output), the
+      launcher's captured output and the dashboard URL file.
+    #>
+    param([string[]]$Files, [int]$ServerPort = 17202)
+    $signals = [ordered]@{}
+    foreach ($f in $Files) {
+        $leaf = Split-Path $f -Leaf
+        $item = Get-Item -LiteralPath $f -ErrorAction SilentlyContinue
+        if ($item) { $signals[$leaf] = ('{0}:{1}' -f $item.Length, $item.LastWriteTimeUtc.Ticks) }
+        else { $signals[$leaf] = 'absent' }
+    }
+    $listening = 'unknown'
+    try { $listening = [string](@(Get-AppHostPortOwners $ServerPort).Count -gt 0) } catch { }
+    $signals["port $ServerPort"] = $listening
+    return $signals
+}
+
+function Get-AppHostLaunchProgress {
+    # Names the first signal that changed between two snapshots, or $null.
+    param($Before, $After)
+    foreach ($key in $After.Keys) {
+        $old = $null
+        if ($Before -and $Before.Contains($key)) { $old = $Before[$key] }
+        if ($old -eq $After[$key]) { continue }
+        if ($key -like 'port *') { return "server $key listening=$($After[$key])" }
+        if ($old -eq 'absent' -or $null -eq $old) { return "$key appeared" }
+        return "$key grew"
+    }
+    return $null
+}
+
+function Move-AppHostLogHistory {
+    <#
+      CARD-1680: rotate apphost.log to apphost.log.1 .. .<Keep> instead of
+      emptying it, so earlier launches' LIVE_TIMING lines survive. Leaves an
+      empty apphost.log as before. A rotation that cannot move a file falls
+      back to emptying it; it never fails the restart.
+    #>
+    param([Parameter(Mandatory = $true)][string]$LogPath, [int]$Keep = 10)
+    try {
+        for ($i = $Keep - 1; $i -ge 1; $i--) {
+            $older = "$LogPath.$i"
+            if (Test-Path -LiteralPath $older) { Move-Item -LiteralPath $older -Destination "$LogPath.$($i + 1)" -Force -ErrorAction Stop }
+        }
+        if (Test-Path -LiteralPath $LogPath) { Move-Item -LiteralPath $LogPath -Destination "$LogPath.1" -Force -ErrorAction Stop }
+    } catch { }
+    '' | Set-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue
+}
+
 function Update-AppHostOutage {
     param($State, [bool]$HealthOk, [bool]$Maintenance, [datetime]$NowUtc)
     $down = ConvertTo-UtcStamp (Get-AppHostField $State 'downSinceUtc')

@@ -26,7 +26,10 @@
     the lock; BuildFailed also Stop-Process the spawned dev-aspire.ps1.
 
 .PARAMETER NoBuild            Pass -NoBuild through to dev-aspire.ps1 (skip restore/npm).
-.PARAMETER TimeoutSec         Seconds to wait for the dashboard + backend health (default 150).
+.PARAMETER TimeoutSec         No-progress window, in seconds, for the dashboard + backend health (default 150).
+                              CARD-1680: log or launcher output growth, the dashboard URL file, the server
+                              port opening or a non-200 /health answer restart the window.
+.PARAMETER MaxWaitSec         Hard cap on the whole health wait (default 600; never below TimeoutSec).
 .PARAMETER LockMaxAgeMinutes  Ignore a lock older than this (default 15, the watchdog's number).
 .PARAMETER AllowWorktree      Intentionally allow a linked worktree to control the shared local stack.
 .PARAMETER GracefulStopTimeoutSec
@@ -44,7 +47,7 @@
     Exit codes:
       0  restarted, dashboard up, /health 200, and /api/version SHA matches the intended HEAD;
          also -StopOnly finished and did not relaunch
-      1  failed (build failed, or did not come up within TimeoutSec)
+      1  failed (build failed, launcher or AppHost exited, no progress for TimeoutSec, or MaxWaitSec reached)
       3  REFUSED - a linked/unverifiable worktree root, SHA admission failure, another restart or launch is in flight, or -WhatIf without -StopOnly; nothing was killed
       4  Aspire's DCP dependency check timed out (see the printed verdict)
       5  server build unverified - health succeeded but /api/version SHA did not match; lock retained, child left running
@@ -61,6 +64,7 @@
 param(
     [switch]$NoBuild,
     [int]$TimeoutSec = 150,
+    [int]$MaxWaitSec = 600,
     [int]$LockMaxAgeMinutes,
     [switch]$AllowWorktree,
     [string]$ExpectedServerSha,
@@ -266,8 +270,9 @@ try {
     }
 
     # 4) Reset launch signals so the wait below is not fooled by stale state.
+    #    CARD-1680: rotate apphost.log (kept as apphost.log.1..10) instead of emptying it.
     Remove-Item $urlFile -ErrorAction SilentlyContinue
-    '' | Set-Content -LiteralPath $logFile -ErrorAction SilentlyContinue
+    Move-AppHostLogHistory -LogPath $logFile
 
     # 5) Relaunch in a normal window (detached) - dev-aspire.ps1 backgrounds the AppHost.
     Write-Host "  launching dev-aspire.ps1$(if ($NoBuild) { ' -NoBuild' })..." -ForegroundColor DarkGray
@@ -277,11 +282,25 @@ try {
     $launchTag = [guid]::NewGuid().ToString('N')
     $launcherOut = Join-Path $logDir "apphost-launcher-$launchTag.out"
     $launcherErr = Join-Path $logDir "apphost-launcher-$launchTag.err"
+    $launchStartedUtc = [datetime]::UtcNow
     $devProcess = Start-AppHostDevLaunch -ArgumentList $devArgs -OutputPath $launcherOut -ErrorPath $launcherErr
     $keepRestartLock = $true
 
     # 6) Wait for the dashboard URL + backend health + intended loaded SHA.
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    #    CARD-1680: TimeoutSec is a NO-PROGRESS window. A launch that is visibly
+    #    progressing (log or launcher output grows, dashboard URL appears, server
+    #    port opens, /health answers non-200) restarts it, up to MaxWaitSec from
+    #    launch. Progress is not credited once /health answers 200: the SHA
+    #    check then has the remainder of the current window, as before.
+    $waitStarted = Get-Date
+    $hardCapSec = [Math]::Max($MaxWaitSec, $TimeoutSec)
+    $hardDeadline = $waitStarted.AddSeconds($hardCapSec)
+    $deadline = $waitStarted.AddSeconds($TimeoutSec)
+    $lastProgressAt = $waitStarted
+    $lastProgress = 'launch started'
+    $progressFiles = @($logFile, $launcherOut, $launcherErr, $urlFile)
+    $snapshot = Get-AppHostLaunchSnapshot -Files $progressFiles
+    $waitEnd = 'no-progress'
     $dashUrl = $null
     $backendOk = $false
     $identityVerified = $false
@@ -290,7 +309,10 @@ try {
     $freshHeadNow = $null
     $healthTiming = Start-LiveStartupPhase -Operation health-wait
     try {
-    while ((Get-Date) -lt $deadline) {
+    while ($true) {
+        $now = Get-Date
+        if ($now -ge $hardDeadline) { $waitEnd = 'hard-cap'; break }
+        if ($now -ge $deadline) { $waitEnd = 'no-progress'; break }
         Wait-AppHostPollInterval -Seconds 3
         if (-not $dashUrl -and (Test-Path $urlFile)) {
             $u = (Get-Content -LiteralPath $urlFile -Raw -ErrorAction SilentlyContinue).Trim()
@@ -311,9 +333,34 @@ try {
                 -LaunchLock $launchLock -RestartLock $restartLock -WatchdogLog $watchdogLog
             exit 4
         }
-        if (-not $dashUrl) { continue }
-        $health = Invoke-AppHostHealthProbe
-        if ([string]$health.StatusCode -ne '200') { continue }
+        if (-not $backendOk) {
+            # CARD-1680: a dead launch ends the wait at once instead of at the window.
+            if ($null -ne (Get-AppHostLauncherFailure -Process $devProcess)) { $waitEnd = 'launcher-exited'; break }
+            $appHostLaunchPid = Get-AppHostLaunchedPid -PidFile $pidFile -SinceUtc $launchStartedUtc
+            if ($appHostLaunchPid -and -not (Test-AppHostProcessAlive -ProcessId $appHostLaunchPid) -and
+                @(Get-AppHostPortOwners 17202).Count -eq 0) {
+                $keepRestartLock = $false
+                Stop-AppHostLaunchChild -Process $devProcess
+                Write-Host "AppHost process $appHostLaunchPid exited before health was confirmed and nothing listens on 17202; removing this restart's lock." -ForegroundColor Red
+                Write-Host "  check: Get-Content '$logFile' -Tail 40; launcher output: $launcherOut; stderr: $launcherErr" -ForegroundColor DarkGray
+                exit 1
+            }
+        }
+        $previousSnapshot = $snapshot
+        $snapshot = Get-AppHostLaunchSnapshot -Files $progressFiles
+        $progress = Get-AppHostLaunchProgress -Before $previousSnapshot -After $snapshot
+        $health = $null
+        if ($dashUrl) { $health = Invoke-AppHostHealthProbe }
+        $healthOk = $null -ne $health -and [string]$health.StatusCode -eq '200'
+        if (-not $progress -and $null -ne $health -and $null -ne $health.StatusCode -and -not $healthOk) {
+            $progress = "/health answered $($health.StatusCode)"
+        }
+        if ($progress -and -not $backendOk -and -not $healthOk) {
+            $lastProgressAt = Get-Date
+            $lastProgress = $progress
+            $deadline = $lastProgressAt.AddSeconds($TimeoutSec)
+        }
+        if (-not $healthOk) { continue }
         $backendOk = $true
         $versionProbe = Invoke-AppHostVersionProbe
         $ident = Resolve-AppHostLoadedIdentity -Probe $versionProbe
@@ -338,6 +385,12 @@ try {
     }
 
     } finally { Stop-LiveStartupPhase -Phase $healthTiming -Succeeded $identityVerified }
+    $waitedSec = [int]((Get-Date) - $waitStarted).TotalSeconds
+    $progressAgeSec = [int]((Get-Date) - $lastProgressAt).TotalSeconds
+    $waitSummary = "  health wait ended after ${waitedSec}s: "
+    if ($waitEnd -eq 'hard-cap') { $waitSummary += "hit the hard cap of ${hardCapSec}s" }
+    else { $waitSummary += "no launch progress for ${TimeoutSec}s (hard cap ${hardCapSec}s)" }
+    $waitSummary += "; last progress: $lastProgress, ${progressAgeSec}s ago"
     $launcherFailure = Get-AppHostLauncherFailure -Process $devProcess
     if (-not $backendOk -and $null -ne $launcherFailure) {
         $keepRestartLock = $false
@@ -351,6 +404,7 @@ try {
         Write-Host "AppHost restarted - dashboard $dashUrl, backend healthy, server $identityObserved." -ForegroundColor Green
         exit 0
     } elseif ($dashUrl -and $backendOk) {
+        Write-Host $waitSummary -ForegroundColor DarkGray
         $observedText = $identityObserved
         if ([string]::IsNullOrWhiteSpace($observedText)) { $observedText = $identityReason }
         Write-Host "REFUSED: server build unverified (exit 5)." -ForegroundColor Yellow
@@ -366,13 +420,15 @@ try {
         Write-Host "  The launched child was left running; the restart lock is retained." -ForegroundColor DarkGray
         exit 5
     } elseif ($dashUrl) {
-        Write-Host "Dashboard up ($dashUrl) but backend health not confirmed in ${TimeoutSec}s." -ForegroundColor Yellow
+        Write-Host "Dashboard up ($dashUrl) but backend health not confirmed in ${waitedSec}s." -ForegroundColor Yellow
+        Write-Host $waitSummary -ForegroundColor DarkGray
         Write-Host "  Leaving $restartLock so a watchdog fire treats this as still in flight." -ForegroundColor DarkGray
         exit 1
     } else {
-        Write-Host "AppHost did not come up within ${TimeoutSec}s - check '$logFile'." -ForegroundColor Red
+        Write-Host "AppHost did not come up within ${waitedSec}s - check '$logFile'." -ForegroundColor Red
+        Write-Host $waitSummary -ForegroundColor DarkGray
         Write-Host "  NOTE: the dev-aspire.ps1 this script spawned may STILL be launching (its own" -ForegroundColor DarkGray
-        Write-Host "  budget is longer than ${TimeoutSec}s). Do not re-run blind - re-running kills a" -ForegroundColor DarkGray
+        Write-Host "  budget is longer than ${waitedSec}s). Do not re-run blind - re-running kills a" -ForegroundColor DarkGray
         Write-Host "  DCP that is still coming up (CARD-0075). Check $launchLock first." -ForegroundColor DarkGray
         Write-Host "  Leaving $restartLock for LockMaxAgeMinutes; delete it to force a retry." -ForegroundColor DarkGray
         exit 1
