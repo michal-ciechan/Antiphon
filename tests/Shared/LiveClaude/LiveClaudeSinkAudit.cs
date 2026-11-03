@@ -12,6 +12,10 @@ namespace Antiphon.TestSupport.LiveClaude;
 /// LiveClaudeEvidence projection, a named bool predicate, a reviewed product screen reader,
 /// a pure text transform (its result stays tainted), a mutator of an in-memory buffer local,
 /// or a walked helper (whose parameters, out arguments and return values carry the taint).
+/// A walked helper is resolved by its declaring type and argument count, never by name alone.
+/// Lambda parameters and query range variables over tainted text are tainted; a method group,
+/// an alias store or a ref/out argument handed tainted text counts. Residuals:
+/// docs/testing-and-build.md, "Live-lane sink audit residuals".
 /// </summary>
 internal static class LiveClaudeSinkAudit
 {
@@ -103,6 +107,13 @@ internal static class LiveClaudeSinkAudit
             {
                 if (!Carries(assignment.Right, tainted)) continue;
                 if (!StaysLocal(assignment.Left, locals)) escape++;
+            }
+            // A ref or out argument of a call that carries taint may be stored through: Fill(ref s_last, screen).
+            foreach (var argument in root.DescendantNodes().OfType<ArgumentSyntax>())
+            {
+                if (argument.RefKindKeyword.ValueText is not ("ref" or "out")) continue;
+                if (argument.Parent?.Parent is not InvocationExpressionSyntax call || !CallCarries(call, tainted)) continue;
+                if (!StaysLocal(argument.Expression, locals)) escape++;
             }
             foreach (var created in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>())
             {
@@ -203,14 +214,17 @@ internal static class LiveClaudeSinkAudit
     // The walked helpers a call can reach. A bare or this. call reaches the caller's own type or
     // an enclosing local function. receiver.Name(...) reaches a helper only when the receiver is
     // declared as a walked type; a same-named method elsewhere never launders the call.
-    private static IEnumerable<Callee> Resolve(InvocationExpressionSyntax call, CalleeTable callees)
+    private static IEnumerable<Callee> Resolve(InvocationExpressionSyntax call, CalleeTable callees) =>
+        Resolve(call.Expression, call.ArgumentList.Arguments.Count, callees);
+
+    // target is the called expression of an invocation, or a method group taking count arguments.
+    private static IEnumerable<Callee> Resolve(ExpressionSyntax target, int count, CalleeTable callees)
     {
-        var count = call.ArgumentList.Arguments.Count;
-        var (name, type, bare) = call.Expression switch
+        var (name, type, bare) = target switch
         {
-            IdentifierNameSyntax identifier => (identifier.Identifier.ValueText, EnclosingType(call), true),
+            IdentifierNameSyntax identifier => (identifier.Identifier.ValueText, EnclosingType(target), true),
             MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } member =>
-                (member.Name.Identifier.ValueText, EnclosingType(call), false),
+                (member.Name.Identifier.ValueText, EnclosingType(target), false),
             MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax receiver } member =>
                 (member.Name.Identifier.ValueText, BoundType(receiver, callees.Types), false),
             _ => (null, null, false)
@@ -218,7 +232,7 @@ internal static class LiveClaudeSinkAudit
         if (name is null || !callees.ByName.TryGetValue(name, out var candidates)) return [];
         return candidates.Where(callee => callee.Takes(count)
             && (callee.Type is not null ? type is not null && callee.Type == type
-                : bare && callee.Scope is not null && call.Ancestors().Contains(callee.Scope)));
+                : bare && callee.Scope is not null && target.Ancestors().Contains(callee.Scope)));
     }
 
     private static bool IsCallee(InvocationExpressionSyntax call, CalleeTable callees) => Resolve(call, callees).Any();
@@ -322,6 +336,8 @@ internal static class LiveClaudeSinkAudit
 
     private static bool Escapes(InvocationExpressionSyntax call, Taint tainted)
     {
+        // A method group is not walked: one that is handed tainted text escapes unless it is a walked helper.
+        if (HandedGroups(call, tainted).Any(group => !Resolve(group, 1, tainted.Callees).Any())) return true;
         if (!call.ArgumentList.Arguments.Any(arg => ArgumentCarries(arg, tainted))) return false;
         var leaf = SimpleName(call);
         if (IsPredicate(leaf) || IsSanitizing(call) || IsReviewedCall(call)) return false;
@@ -424,7 +440,8 @@ internal static class LiveClaudeSinkAudit
     {
         left = Peel(left);
         if (left is DeclarationExpressionSyntax or TupleExpressionSyntax) return true;
-        if (left is IdentifierNameSyntax name) return locals.Contains(name.Identifier.ValueText);
+        // An undeclared _ is a discard.
+        if (left is IdentifierNameSyntax name) return locals.Contains(name.Identifier.ValueText) || name.Identifier.ValueText == "_";
         if (left is ElementAccessExpressionSyntax or MemberAccessExpressionSyntax)
             return RootName(left) is { } root && CreatedInPlace(root, bufferOnly: false);
         return false;
@@ -489,10 +506,26 @@ internal static class LiveClaudeSinkAudit
         {
             if (Carries(loop.Expression, tainted)) tainted.Add(loop.Identifier.ValueText);
         }
+        // Query range variables: from l in lines, join, let, and select ... into.
+        foreach (var clause in root.DescendantNodes())
+        {
+            var (name, source) = clause switch
+            {
+                FromClauseSyntax from => (from.Identifier.ValueText, from.Expression),
+                JoinClauseSyntax join => (join.Identifier.ValueText, join.InExpression),
+                LetClauseSyntax let => (let.Identifier.ValueText, let.Expression),
+                QueryContinuationSyntax { Parent: QueryBodySyntax body } into => (into.Identifier.ValueText, (SyntaxNode)body.SelectOrGroup),
+                _ => (null, null)
+            };
+            if (name is not null && source is not null && Carries(source, tainted)) tainted.Add(name);
+        }
         foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             var carried = call.ArgumentList.Arguments.Select(arg => ArgumentCarries(arg, tainted)).ToArray();
             TaintLambdaParameters(call, carried, tainted);
+            foreach (var group in HandedGroups(call, tainted))
+            foreach (var callee in Resolve(group, 1, tainted.Callees))
+                if (callee.Parameters.Length > 0) tainted.Add(callee.Parameters[0]);
             if (!carried.Any(item => item)) continue;
             if (call.Expression is MemberAccessExpressionSyntax member
                 && member.Expression is IdentifierNameSyntax receiver
@@ -561,6 +594,31 @@ internal static class LiveClaudeSinkAudit
         // The write callback receives only ClaudeTrustDialogKeys constants (Enter, the legacy digit,
         // the highlight candidates); the screen goes to the snapshot callback alone.
         index == 1 && call.Expression.ToString() == "ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync";
+
+    // Method-group arguments that a delegate-taking call hands its tainted receiver or argument:
+    // lines.ForEach(OtherFile.Log), Array.Exists(lines, OtherFile.IsBad).
+    private static IEnumerable<ExpressionSyntax> HandedGroups(InvocationExpressionSyntax call, Taint tainted)
+    {
+        if (!TakesDelegate(SimpleName(call))) yield break;
+        var receiver = Receiver(call);
+        var arguments = call.ArgumentList.Arguments;
+        var index = receiver is IdentifierNameSyntax { Identifier.ValueText: "Array" } ? 1 : 0;
+        if (arguments.Count <= index || !CallCarries(call, tainted)) yield break;
+        var group = Peel(arguments[index].Expression);
+        if (Carries(group, tainted) || IsConsoleMethodGroup(group)) yield break;
+        if (group is MemberAccessExpressionSyntax || group is IdentifierNameSyntax name && Declaration(name) is null)
+            yield return group;
+    }
+
+    private static bool TakesDelegate(string leaf) =>
+        leaf is "ForEach" or "Select" or "SelectMany" or "Where" or "ConvertAll" or "TrueForAll" or "Find" or "FindAll"
+            or "FindIndex" or "FindLast" or "FindLastIndex" or "RemoveAll" or "Exists" or "Any" or "All" or "First"
+            or "FirstOrDefault" or "Last" or "LastOrDefault" or "Single" or "SingleOrDefault" or "Count" or "Sum"
+            or "Average" or "TakeWhile" or "SkipWhile";
+
+    private static bool CallCarries(InvocationExpressionSyntax call, Taint tainted) =>
+        Receiver(call) is { } receiver && Carries(receiver, tainted)
+        || call.ArgumentList.Arguments.Any(arg => ArgumentCarries(arg, tainted));
 
     private static ExpressionSyntax? Receiver(InvocationExpressionSyntax call)
     {
