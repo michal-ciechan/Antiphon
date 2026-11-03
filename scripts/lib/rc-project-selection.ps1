@@ -35,12 +35,21 @@ function Get-RcDownstream {
     return @(Get-TestSelectionSorted @($seen))
 }
 
+function Read-RcProjectBlob {
+    # Blob text by immutable id, kept in a parsed-document cache under its own key space.
+    param([string]$Root, [string]$Blob, [hashtable]$Cache)
+    $key="text:$Blob"
+    if (-not $Cache.ContainsKey($key)) { $Cache[$key]=(Invoke-TestSelectionGit $Root @('cat-file','blob',$Blob)).Stdout }
+    return $Cache[$key]
+}
+
 function Read-RcProjectGraph {
-    param([string]$Root, [string]$Sha, [hashtable]$DocumentCache = @{})
+    # Listing: this commit's own `ls-tree -r -z` output when the caller already read it.
+    param([string]$Root, [string]$Sha, [hashtable]$DocumentCache = @{}, [string]$Listing)
     $reasons=[Collections.Generic.List[string]]::new()
     $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $blobs=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-    $text=(Invoke-TestSelectionGit $Root @('ls-tree','-r','-z',$Sha,'--')).Stdout
+    $text=if ($Listing) { $Listing } else { (Invoke-TestSelectionGit $Root @('ls-tree','-r','-z',$Sha,'--')).Stdout }
     foreach ($entry in $text.Split([char]0)) {
         if (-not $entry) { continue }
         $tab=$entry.IndexOf([char]9)
@@ -53,7 +62,7 @@ function Read-RcProjectGraph {
     $catalog=@{projects=@{};batches=@()}
     try {
         if (-not $blobs.ContainsKey($catalogPath)) { throw 'category-inventory-absent' }
-        $catalog=Get-TestSelectionBlob $Root $Sha $catalogPath | ConvertFrom-Json -AsHashtable
+        $catalog=Read-RcProjectBlob $Root $blobs[$catalogPath] $DocumentCache | ConvertFrom-Json -AsHashtable
         if ($catalog.schemaVersion -ne 1 -or $catalog.projects -isnot [Collections.IDictionary] -or $catalog.batches -isnot [array]) { throw 'category-inventory-invalid' }
     } catch { $reasons.Add('category-inventory-invalid'); $catalog=@{projects=@{};batches=@()} }
     $projects=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
@@ -125,7 +134,10 @@ function Read-RcProjectGraph {
                         # globs conservatively across directories, with bounded work.
                         $expression='^'+[regex]::Escape($target).Replace('\*','.*').Replace('\?','.')+'$'
                         $pattern=[regex]::new($expression,([Text.RegularExpressions.RegexOptions]::CultureInvariant -bor [Text.RegularExpressions.RegexOptions]::Singleline),[TimeSpan]::FromMilliseconds(100))
-                        $inputs+=@($paths | Where-Object { $pattern.IsMatch($_) })
+                        # A loop, not a pipeline: ~20 globs over a ~10,000-path tree dominated a warm graph.
+                        $matched=[Collections.Generic.List[string]]::new()
+                        foreach ($candidate in $paths) { if ($pattern.IsMatch($candidate)) { $matched.Add($candidate) } }
+                        $inputs+=$matched.ToArray()
                     } else {
                         if ($node.LocalName -ceq 'Compile' -and -not $paths.Contains($target)) { throw "missing-linked-input:$input" }
                         $inputs+=$target

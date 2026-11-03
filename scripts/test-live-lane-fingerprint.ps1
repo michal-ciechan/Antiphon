@@ -243,7 +243,7 @@ switch ($Case) {
     'C1545_UnknownDependencyRefuses' {
         . $script:Library
         function Refused([string]$sha, [scriptblock]$reason) {
-            $state=Get-LiveLaneStatus -RepositoryRoot $script:root -Lane $script:Lane -CandidateSha $sha
+            $state=Get-LiveLaneStatus -RepositoryRoot $script:root -Lane $script:Lane -CandidateSha $sha -DocumentCache $script:Documents
             $fp=$state.fingerprint
             return ($null -ne $fp) -and ($fp.status -ceq 'unknown') -and ($state.state -ceq 'DUE') -and (@($state.reasons) -ccontains 'unknown-input') -and
                 @($fp.unknownReasons | Where-Object { $null -ne $_ } | Where-Object $reason).Count -gt 0 -and ($state.gateCredit -is [bool]) -and -not $state.gateCredit

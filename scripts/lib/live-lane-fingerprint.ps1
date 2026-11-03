@@ -50,9 +50,11 @@ function Test-LiveLaneStringList {
 }
 
 function Read-LiveLaneTree {
-    param([string]$RepositoryRoot, [string]$Sha)
+    param([string]$RepositoryRoot, [string]$Sha, [ref]$Listing)
     $tree=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    foreach ($entry in (Invoke-TestSelectionGit $RepositoryRoot @('ls-tree','-r','-z',$Sha,'--')).Stdout.Split([char]0)) {
+    $text=(Invoke-TestSelectionGit $RepositoryRoot @('ls-tree','-r','-z',$Sha,'--')).Stdout
+    if ($Listing) { $Listing.Value=$text }
+    foreach ($entry in $text.Split([char]0)) {
         if (-not $entry) { continue }
         if ($entry -cnotmatch '^([0-7]{6}) ([a-z]+) ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$') { throw 'malformed-lane-tree' }
         $tree[$Matches[4]]=[ordered]@{path=$Matches[4];mode=$Matches[1];blob=$Matches[3]}
@@ -60,10 +62,17 @@ function Read-LiveLaneTree {
     return $tree
 }
 
+function Read-LiveLaneBlob {
+    # The bytes of the tree entry at Path, read by its blob id: the same bytes as <sha>:<path>.
+    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path, [hashtable]$Cache)
+    if ($null -eq $Cache) { return Get-TestSelectionBlob $RepositoryRoot $Sha $Path }
+    return Read-RcProjectBlob $RepositoryRoot $Tree[$Path].blob $Cache
+}
+
 function Read-LiveLaneDeclaration {
-    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Lane)
+    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Lane, [hashtable]$Cache)
     if (-not $Tree.ContainsKey($script:LiveLaneDeclarationPath) -or $Tree[$script:LiveLaneDeclarationPath].mode -cnotmatch '^1006[0-7]{2}$') { throw 'declaration-invalid' }
-    try { $document=Get-TestSelectionBlob $RepositoryRoot $Sha $script:LiveLaneDeclarationPath | ConvertFrom-Json -AsHashtable } catch { throw 'declaration-invalid' }
+    try { $document=Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $script:LiveLaneDeclarationPath $Cache | ConvertFrom-Json -AsHashtable } catch { throw 'declaration-invalid' }
     if ($document -isnot [Collections.IDictionary]) { throw 'declaration-invalid' }
     $keys=@(Get-TestSelectionSorted @($document.Keys))
     if (($keys -join ',') -cne 'format,lanes' -or $document['format'] -cne 'antiphon-live-lane-inputs-v1' -or $document['lanes'] -isnot [Collections.IDictionary]) { throw 'declaration-invalid' }
@@ -81,9 +90,9 @@ function Read-LiveLaneDeclaration {
 }
 
 function Read-LiveLaneManifestProjects {
-    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path)
+    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path, [hashtable]$Cache)
     if (-not $Tree.ContainsKey($Path)) { throw 'manifest-missing' }
-    try { $manifest=Get-TestSelectionBlob $RepositoryRoot $Sha $Path | ConvertFrom-Json -AsHashtable } catch { throw 'manifest-invalid' }
+    try { $manifest=Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $Path $Cache | ConvertFrom-Json -AsHashtable } catch { throw 'manifest-invalid' }
     if ($manifest -isnot [Collections.IDictionary] -or $manifest['format'] -cne 'antiphon-live-lanes-v1' -or $manifest['core'] -isnot [Collections.IList] -or -not $manifest['core'].Count) { throw 'manifest-invalid' }
     $projects=foreach ($row in $manifest['core']) {
         if ($row -isnot [Collections.IDictionary] -or $row['project'] -isnot [string] -or $row['project'] -cnotmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$') { throw 'manifest-invalid' }
@@ -94,9 +103,9 @@ function Read-LiveLaneManifestProjects {
 
 function Get-LiveLaneManifestRoster {
     # The lane's expanded core uids at one commit (attestation rows and receipts bind to them).
-    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path)
+    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string]$Path, [hashtable]$Cache)
     if (-not $Tree.ContainsKey($Path)) { throw 'manifest-missing' }
-    try { $manifest=Get-TestSelectionBlob $RepositoryRoot $Sha $Path | ConvertFrom-Json -AsHashtable } catch { throw 'manifest-invalid' }
+    try { $manifest=Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $Path $Cache | ConvertFrom-Json -AsHashtable } catch { throw 'manifest-invalid' }
     return ConvertTo-LiveLaneRoster $manifest
 }
 
@@ -143,7 +152,7 @@ function Get-LiveLaneImportSet {
 
 function Get-LiveLaneInstructionImports {
     # Follows CLI `@path` lines relative to the importing file, bounded and cycle-safe.
-    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string[]]$Files, $Unknown)
+    param([string]$RepositoryRoot, [string]$Sha, $Tree, [string[]]$Files, $Unknown, [hashtable]$Cache)
     $found=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $queue=[Collections.Generic.Queue[object]]::new()
     foreach ($file in $Files) { $queue.Enqueue(@($file,0)) }
@@ -152,7 +161,7 @@ function Get-LiveLaneInstructionImports {
         $file,$depth=$queue.Dequeue()
         if (-not $read.Add($file)) { continue }
         if ($Tree[$file].mode -cnotmatch '^1006[0-7]{2}$') { continue }
-        $text=ConvertTo-TestSelectionLfText (Get-TestSelectionBlob $RepositoryRoot $Sha $file)
+        $text=ConvertTo-TestSelectionLfText (Read-LiveLaneBlob $RepositoryRoot $Sha $Tree $file $Cache)
         foreach ($line in $text.Split("`n")) {
             if ($line -cnotmatch '^\s*@(\S+)\s*$') { continue }
             $reference=$Matches[1]
@@ -172,29 +181,49 @@ function Get-LiveLaneInstructionImports {
 function Get-LiveLaneGrep {
     # One git process per scan; records are rev:path NUL line NUL text.
     param([string]$RepositoryRoot, [string]$Sha, [string]$Pattern, [string[]]$PathSpecs)
-    $rows=@()
+    $rows=[Collections.Generic.List[object]]::new()
     $text=(Invoke-TestSelectionGit $RepositoryRoot (@('grep','-z','-n','-I','-E',$Pattern,$Sha,'--')+$PathSpecs) @(0,1)).Stdout
     foreach ($record in $text.Split("`n")) {
         if (-not $record) { continue }
         $fields=$record.Split([char]0,3)
         if ($fields.Count -ne 3 -or -not $fields[0].StartsWith("${Sha}:",[StringComparison]::Ordinal)) { throw 'malformed-lane-grep' }
-        $rows+=,@($fields[0].Substring($Sha.Length+1),$fields[2])
+        $rows.Add(@($fields[0].Substring($Sha.Length+1),$fields[2]))
     }
     return $rows
+}
+
+function Get-LiveLaneEntryDigest {
+    # Get-TestSelectionDigest over the tree entries of Paths, byte for byte, without one recursive
+    # canonical call per field: the entry keys sort as blob, mode, path; blob and mode are hex and
+    # octal; a printable-ASCII path escapes only at '"' and '\' (so is copied when it has neither).
+    # Any other path takes the canonical serializer; a path the tree does not hold, the original form.
+    param([string[]]$Paths, $Tree)
+    foreach ($path in $Paths) { if (-not $Tree.ContainsKey($path)) { return Get-TestSelectionDigest @($Paths | ForEach-Object { $Tree[$_] }) } }
+    $builder=[Text.StringBuilder]::new('[')
+    foreach ($path in $Paths) {
+        if ($builder.Length -gt 1) { [void]$builder.Append(',') }
+        $entry=$Tree[$path]
+        if ($path -cmatch '^[ !#-\[\]-~]*$') {
+            [void]$builder.Append('{"blob":"').Append($entry.blob).Append('","mode":"').Append($entry.mode).Append('","path":"').Append($path).Append('"}')
+        } else { [void]$builder.Append((ConvertTo-TestSelectionCanonicalJson $entry)) }
+    }
+    $bytes=[Text.Encoding]::UTF8.GetBytes($builder.Append(']').ToString())
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
 
 function Get-LiveLaneFingerprint {
     param([string]$RepositoryRoot, [string]$Sha, [string]$Lane, [hashtable]$DocumentCache = @{}, [string]$Attestation)
     if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     if ($Lane -cnotmatch '^[a-z0-9][a-z0-9.-]*$') { throw 'declaration-invalid' }
-    $tree=Read-LiveLaneTree $RepositoryRoot $Sha
-    $declaration=Read-LiveLaneDeclaration $RepositoryRoot $Sha $tree $Lane
-    $projectNames=Read-LiveLaneManifestProjects $RepositoryRoot $Sha $tree $declaration['manifest']
+    $listing=$null
+    $tree=Read-LiveLaneTree $RepositoryRoot $Sha ([ref]$listing)
+    $declaration=Read-LiveLaneDeclaration $RepositoryRoot $Sha $tree $Lane $DocumentCache
+    $projectNames=Read-LiveLaneManifestProjects $RepositoryRoot $Sha $tree $declaration['manifest'] $DocumentCache
     $unknown=[Collections.Generic.List[string]]::new()
     $observations=[Collections.Generic.List[string]]::new()
 
     # Core rows name projects; each must resolve to exactly one csproj, never a fallback.
-    $csprojs=@($tree.Keys | Where-Object { $_.EndsWith('.csproj',[StringComparison]::Ordinal) })
+    $csprojs=@(foreach ($path in $tree.Keys) { if ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) { $path } })
     $selected=@()
     foreach ($name in $projectNames) {
         $hits=@($csprojs | Where-Object { ($_ -replace '^.*/','') -ceq "$name.csproj" })
@@ -204,7 +233,7 @@ function Get-LiveLaneFingerprint {
     }
 
     # Closure from the candidate graph: selected test projects and every transitive reference.
-    $graph=Read-RcProjectGraph $RepositoryRoot $Sha $DocumentCache
+    $graph=Read-RcProjectGraph $RepositoryRoot $Sha $DocumentCache $listing
     $closure=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $queue=[Collections.Generic.Queue[string]]::new()
     foreach ($project in $selected) { if ($closure.Add($project)) { $queue.Enqueue($project) } }
@@ -271,7 +300,7 @@ function Get-LiveLaneFingerprint {
     foreach ($root in $rootCounts.Keys) { if ($rootCounts[$root] -eq 0) { $unknown.Add("declared-root-empty:$root") } }
     for ($i=0; $i -lt $contract.Count; $i++) { if ($contractCounts[$i] -eq 0) { $unknown.Add("declared-root-empty:$($declaration['contractFiles'][$i])") } }
     $importers=@($instructionFiles | Where-Object { $script:LiveLaneImportingLeaves -ccontains ($_ -replace '^.*/','') })
-    foreach ($path in (Get-LiveLaneInstructionImports $RepositoryRoot $Sha $tree $importers $unknown)) { [void]$members.instructions.Add($path) }
+    foreach ($path in (Get-LiveLaneInstructionImports $RepositoryRoot $Sha $tree $importers $unknown $DocumentCache)) { [void]$members.instructions.Add($path) }
 
     $inventory=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($set in $members.Values) { $inventory.UnionWith($set) }
@@ -286,8 +315,9 @@ function Get-LiveLaneFingerprint {
     foreach ($row in (Get-LiveLaneGrep $RepositoryRoot $Sha '^[[:space:]]*namespace[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*' @('*.cs'))) {
         if ($row[1] -cnotmatch '^\s*namespace\s+([A-Za-z_][A-Za-z0-9_.]*)') { continue }
         $namespace=$Matches[1]
-        if (@($namespaceRoots | Where-Object { $namespace -ceq $_ -or $namespace.StartsWith("$_.",[StringComparison]::Ordinal) }).Count -and -not $inventory.Contains($row[0])) {
-            $unknown.Add("namespace-outside-inputs:$($row[0])")
+        if ($inventory.Contains($row[0])) { continue }
+        foreach ($root in $namespaceRoots) {
+            if ($namespace -ceq $root -or $namespace.StartsWith("$root.",[StringComparison]::Ordinal)) { $unknown.Add("namespace-outside-inputs:$($row[0])"); break }
         }
     }
 
@@ -311,13 +341,12 @@ function Get-LiveLaneFingerprint {
 
     $components=[ordered]@{}
     foreach ($name in $script:LiveLaneComponents) {
-        $entries=@(Get-TestSelectionSorted @($members[$name]) | ForEach-Object { $tree[$_] })
-        $components[$name]=Get-TestSelectionDigest $entries
+        $components[$name]=Get-LiveLaneEntryDigest (Get-TestSelectionSorted @($members[$name])) $tree
     }
     # S2a-2: an attested environment is one more component; unknown environment leaves the lane unknown.
     $environment=$null
     if ($Attestation) {
-        $roster=Get-LiveLaneManifestRoster $RepositoryRoot $Sha $tree $declaration['manifest']
+        $roster=Get-LiveLaneManifestRoster $RepositoryRoot $Sha $tree $declaration['manifest'] $DocumentCache
         $environment=Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane -Roster $roster
         if ($environment.status -ceq 'complete') { $components['environment']=$environment.digest }
         else { $unknown.Add('environment-unknown'); $components['environment']=Get-TestSelectionDigest @($environment.reasons) }
@@ -337,9 +366,9 @@ function Get-LiveLaneFingerprint {
 function Get-LiveLaneStatus {
     # Without receipt history (S2b -History) every lane is DUE. The document is shadow-only. An
     # attestation is validated before any Git read, so a schema fault refuses on its own.
-    param([string]$RepositoryRoot, [string]$Lane, [string]$CandidateSha, [string]$Attestation)
+    param([string]$RepositoryRoot, [string]$Lane, [string]$CandidateSha, [string]$Attestation, [hashtable]$DocumentCache = @{})
     if ($Attestation) { [void](Get-LiveLaneEnvironmentAttestation -Path $Attestation -Lane $Lane) }
-    $fingerprint=Get-LiveLaneFingerprint -RepositoryRoot $RepositoryRoot -Sha $CandidateSha -Lane $Lane -Attestation $Attestation
+    $fingerprint=Get-LiveLaneFingerprint -RepositoryRoot $RepositoryRoot -Sha $CandidateSha -Lane $Lane -Attestation $Attestation -DocumentCache $DocumentCache
     return [ordered]@{format='antiphon-live-lane-status-v1';laneId=$Lane;candidateSha=$CandidateSha;state='DUE'
         reasons=@($(if ($fingerprint.status -ceq 'complete') { 'no-history' } else { 'unknown-input' }))
         effectiveMode='Full';activation='shadow-only';gateCredit=$false;executionEvidence=$false
