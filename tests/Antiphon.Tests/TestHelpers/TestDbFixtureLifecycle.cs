@@ -335,6 +335,8 @@ internal sealed class TestDbFixtureLifecycle
     private Task<TestDbReadyState>? _task;
     private Task? _disposeTask;
     private Task _orphanSweep = Task.CompletedTask;
+    private readonly int _poolCapacity;
+    private TestDbClonePool? _pool;
     private bool _disposeStarted;
     private TestDbReadyState? _ready;
 
@@ -343,8 +345,10 @@ internal sealed class TestDbFixtureLifecycle
     /// operations without a cache keep the migrate path.
     /// </summary>
     public TestDbFixtureLifecycle(
-        TestDbOperations? operations = null, TestSchemaCache? cache = null, TestDbBakedImages? images = null)
+        TestDbOperations? operations = null, TestSchemaCache? cache = null, TestDbBakedImages? images = null,
+        int? poolCapacity = null)
     {
+        _poolCapacity = poolCapacity ?? (operations is null ? TestDbClonePool.CapacityFromEnvironment() : 0);
         _ops = operations ?? new TestDbOperations();
         _cache = cache ?? (operations is null ? TestSchemaCache.FromEnvironment() : TestSchemaCache.Disabled);
         _images = images ?? (operations is null ? TestDbBakedImages.FromEnvironment() : TestDbBakedImages.Disabled);
@@ -362,6 +366,9 @@ internal sealed class TestDbFixtureLifecycle
     public int DisposeOwned;
     public int Drop;
     public int TeardownDispose;
+    public int PoolHit;
+    public int PoolMiss;
+    public TestDbClonePool? Pool => _pool;
     public string? ContainerId { get; private set; }
     public string? SchemaSource { get; private set; }
     public ConcurrentBag<string> ClearedPools { get; } = [];
@@ -410,10 +417,28 @@ internal sealed class TestDbFixtureLifecycle
     public async Task<IsolatedTestSchema> CreateIsolatedSchemaAsync()
     {
         var ready = await EnsureReadyAsync().ConfigureAwait(false);
-        var databaseName = $"test_{Guid.NewGuid():N}";
+        string? pooled = null;
+        if (_pool is { } pool)
+        {
+            using (TestTiming.BeginPhase(TestPhaseKind.DbCreate, "pool"))
+            {
+                var hit = pool.TryTake(out pooled);
+                if (hit)
+                    Interlocked.Increment(ref PoolHit);
+                else
+                    Interlocked.Increment(ref PoolMiss);
+                System.Diagnostics.Activity.Current?.SetTag("antiphon.pool", hit ? "hit" : "miss");
+                System.Diagnostics.Activity.Current?.SetTag("antiphon.pool.depth", pool.Depth);
+                if (!hit)
+                    pooled = null;
+            }
+        }
+
+        var databaseName = pooled ?? $"test_{Guid.NewGuid():N}";
         try
         {
-            await _ops.CloneAsync(ready, databaseName, _cloneLock).ConfigureAwait(false);
+            if (pooled is null)
+                await _ops.CloneAsync(ready, databaseName, _cloneLock).ConfigureAwait(false);
             var connectionString = new NpgsqlConnectionStringBuilder(ready.SharedConnectionString)
             {
                 Database = databaseName
@@ -477,6 +502,9 @@ internal sealed class TestDbFixtureLifecycle
             return;
         }
 
+        // Before the container goes: an in-flight fill would otherwise fail against it.
+        if (_pool is { } pool)
+            await pool.StopAsync().ConfigureAwait(false);
         await _ops.DisposeOwnedAsync(ready.Container).ConfigureAwait(false);
         Interlocked.Increment(ref DisposeOwned);
         await _images.WaitForBakesAsync().ConfigureAwait(false);
@@ -534,7 +562,11 @@ internal sealed class TestDbFixtureLifecycle
                 MaintenanceConnectionString = maintenance
             };
             lock (_gate)
+            {
                 _ready = ready;
+                if (_poolCapacity > 0 && !_disposeStarted)
+                    _pool = TestDbClonePool.Start(_poolCapacity, name => _ops.CloneAsync(ready, name, _cloneLock));
+            }
             return ready;
         }
         catch (Exception ex)
