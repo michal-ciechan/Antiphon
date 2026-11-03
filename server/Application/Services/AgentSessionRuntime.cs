@@ -2071,10 +2071,19 @@ public sealed partial class AgentSessionRuntime
     /// <summary>
     /// CARD-1362 D-3: a List failure, the deadline included, propagates; a destructive caller must
     /// never read a timeout as "gone".
+    /// CARD-1679 D-2: a session bound to another runner is answered from that runner's phone-home
+    /// state alone. The local runner's List can never name it, so its failure must not fail the answer.
     /// </summary>
-    public async Task<bool> IsLiveOrUnknownAsync(Guid sessionId, string? runnerId, CancellationToken ct) =>
-        RemoteInventoryPending(runnerId)
-        || (await ListLiveOrUnknownSessionsAsync(ct)).Contains(sessionId);
+    public async Task<bool> IsLiveOrUnknownAsync(Guid sessionId, string? runnerId, CancellationToken ct)
+    {
+        if (RemoteInventoryPending(runnerId))
+            return true;
+        if (_directory is not null && !string.IsNullOrWhiteSpace(runnerId) && runnerId != PhoneHomeProtocol.LocalRunnerId)
+            return _directory.LiveRemoteSessionIds().Contains(sessionId)
+                || _directory.UnknownRemoteSessionIds().Contains(sessionId)
+                || _testAdapters.ContainsKey(sessionId);
+        return (await ListLiveOrUnknownSessionsAsync(ct)).Contains(sessionId);
+    }
 
     /// <summary>
     /// CARD-0679 (review f87b49a7): true while <paramref name="runnerId"/> is a remote runner no

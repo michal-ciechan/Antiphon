@@ -6398,8 +6398,14 @@ public sealed partial class AgentTaskDispatcher
             else
                 await EnsureLaunchBriefAsync(claimed, session.Id, session.StartedAt, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // CARD-1679 D-1: a timeout is a TaskCanceledException too; only the dispatcher's own
+            // token means shutdown. The claim and the launch have committed, so nothing here fails the task.
             // The message row is persisted BEFORE the queue probes the runner for liveness, so a
             // runner that is briefly unreachable has not lost the brief — it delivers when the
             // session comes up. Failing the task here would turn a transient transport blip into a
@@ -6835,8 +6841,13 @@ public sealed partial class AgentTaskDispatcher
             else
                 await EnsureLaunchBriefAsync(task, session.Id, session.StartedAt, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // CARD-1679 D-1: as on the fresh launch, a timeout is not shutdown.
             _logger.LogWarning(
                 ex, "Task {ShortId}: boot-wedge relaunch brief is queued but could not be delivered yet",
                 DelegationReportFormatter.Short(task.Id));
