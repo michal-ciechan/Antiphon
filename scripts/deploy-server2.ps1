@@ -1166,7 +1166,23 @@ function Invoke-HostCase {
         if (Test-Path -LiteralPath $resultFile -PathType Leaf) {
             try { $result = Get-Content -Raw -LiteralPath $resultFile | ConvertFrom-Json
                 if ($result.diagnosis -ceq 'TempContainerStillRunning') { $diagnosis = ' TempContainerStillRunning' }
+                elseif ($result.accepted -eq $false -and [string]$result.diagnosis -cmatch '^[A-Za-z][A-Za-z0-9 =._/:,-]{0,299}$') {
+                    $diagnosis = ' diagnosis=' + [string]$result.diagnosis
+                }
             } catch { }
+        }
+        # CARD-1693: retire-temp-runner reports its refusal from the exchange it ran (no case directory).
+        if (-not $diagnosis) {
+            $exchange = @(Get-ChildItem -LiteralPath $evidenceRoot -Directory -Filter 'exchange-*' -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
+            if ($exchange.Count -eq 1) {
+                $exchangeResult = Join-Path $exchange[0].FullName 'c590-result.json'
+                try { $result = Get-Content -Raw -LiteralPath $exchangeResult -ErrorAction Stop | ConvertFrom-Json
+                    if ($result.accepted -eq $false -and [string]$result.diagnosis -cmatch '^[A-Za-z][A-Za-z0-9 =._/:,-]{0,299}$') {
+                        $diagnosis = ' diagnosis=' + [string]$result.diagnosis
+                    }
+                } catch { }
+            }
         }
         throw "HostCaseFailed $Case exit=$LASTEXITCODE$diagnosis"
     }
