@@ -326,7 +326,7 @@ public sealed class PhoneHomeMirrorJoinTests
                 "CP-21 phone-home join requires Linux FIFOs and Unix file modes.");
     }
 
-    private sealed class JoinWorld : IAsyncDisposable
+    internal sealed class JoinWorld : IAsyncDisposable
     {
         private readonly CancellationTokenSource _runnerStop = new();
         private ServiceProvider? _provider;
