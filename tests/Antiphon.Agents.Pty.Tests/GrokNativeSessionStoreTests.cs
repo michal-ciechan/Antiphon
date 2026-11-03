@@ -1,7 +1,6 @@
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -25,10 +24,10 @@ public class GrokNativeSessionStoreTests
     }
 
     [Test]
-    public void Probe_reports_unavailable_for_Windows_non_directory_storage()
+    public void Probe_reports_unavailable_for_non_directory_storage()
     {
-        if (!OperatingSystem.IsWindows())
-            throw new SkipTestException("Windows file-as-directory I/O failure premise; Unix reports DirectoryNotFound (Missing)");
+        // CARD-1669: Unix maps ENOTDIR to DirectoryNotFoundException; a file at the sessions root is
+        // still unreadable storage, never missing history.
         var home = Path.Combine(Path.GetTempPath(), $"c466-unavailable-{Guid.NewGuid():N}");
         Directory.CreateDirectory(home);
         try

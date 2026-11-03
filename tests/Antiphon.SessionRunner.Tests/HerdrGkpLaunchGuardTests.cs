@@ -45,6 +45,20 @@ public class HerdrGkpLaunchGuardTests
     }
 
     [Test]
+    public void Gkp_launch_is_classified_alike_for_either_separator_on_any_runner_os()
+    {
+        // CARD-1669: the guard is a fail-safe keyed on a file name; a Windows-shaped wrapper path
+        // that reaches a Linux runner must still be recognised, and vice versa.
+        HerdrGkpLaunchGuard.IsGkpLaunch(["-File", "/home/x/.local/bin/gkp.ps1"]).ShouldBeTrue();
+        HerdrGkpLaunchGuard.IsGkpLaunch(["-File", @"C:/Users/x\.local/bin\gkp.ps1"]).ShouldBeTrue();
+        HerdrGkpLaunchGuard.IsGkpLaunch(["-File", @"\\server\share\bin\gkp.ps1"]).ShouldBeTrue();
+        HerdrGkpLaunchGuard.IsGkpLaunch(["-File", "C:gkp.ps1"]).ShouldBeTrue();
+        HerdrGkpLaunchGuard.IsGkpLaunch([@"C:\tools\gkp.ps1\grok.exe"]).ShouldBeFalse();
+        HerdrGkpLaunchGuard.IsGkpLaunch(["/opt/gkp.ps1/grok"]).ShouldBeFalse();
+        HerdrGkpLaunchGuard.IsGkpLaunch(["x/C:gkp.ps1"]).ShouldBeFalse();
+    }
+
+    [Test]
     public void Fully_routed_env_has_nothing_missing()
     {
         HerdrGkpLaunchGuard.MissingRequirements(GkpArgs, RoutingEnv()).ShouldBeEmpty();

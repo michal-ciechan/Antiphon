@@ -549,15 +549,21 @@ public class PhoneHomeConnectionServiceTests
         try
         {
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            _ = listener.AcceptTcpClientAsync();
             var settings = RunnableSettings();
             settings.ServerOrigin = $"http://127.0.0.1:{port}";
             Bind(settings, ("ConnectTimeoutSeconds", "1"));
             var service = Service(new RecordingRuntime(), settings, new TicketHandler());
             using var cts = new CancellationTokenSource();
 
-            await Should.ThrowAsync<OperationCanceledException>(() =>
-                service.RunConnectionAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(3)));
+            var run = service.RunConnectionAsync(cts.Token);
+            // CARD-1669: the hanging peer is held until the assertion. An unrooted accepted socket is
+            // finalised by any GC in the window and resets the connection (WebSocketException, not a
+            // timeout); the forced collection makes that hazard part of every run.
+            using var accepted = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+
+            await Should.ThrowAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(3)));
             cts.IsCancellationRequested.ShouldBeFalse();
         }
         finally

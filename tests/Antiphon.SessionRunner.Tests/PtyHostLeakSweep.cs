@@ -153,7 +153,7 @@ public class PtyHostLeakSweep
         var temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var full = Path.GetFullPath(exePath);
         if (!full.StartsWith(temp, StringComparison.OrdinalIgnoreCase)) return null;
-        var match = System.Text.RegularExpressions.Regex.Match(full, @"^(.*\\antiphon-(?:cpu-watchdog-tests|liveness-tests|adoption-tests|bufbounds-tests|backend-seam|first-write-race|0180-dto)-[0-9a-f]{32})\\pty-hosts\\bin\\", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var match = System.Text.RegularExpressions.Regex.Match(full, @"^(.*[\\/]antiphon-(?:cpu-watchdog-tests|liveness-tests|adoption-tests|bufbounds-tests|backend-seam|first-write-race|0180-dto)-[0-9a-f]{32})[\\/]pty-hosts[\\/]bin[\\/]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         return match.Success ? match.Groups[1].Value : null;
     }
 
