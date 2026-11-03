@@ -558,8 +558,10 @@ public class PhoneHomeConnectionServiceTests
             var run = service.RunConnectionAsync(cts.Token);
             // CARD-1669: the hanging peer is held until the assertion. An unrooted accepted socket is
             // finalised by any GC in the window and resets the connection (WebSocketException, not a
-            // timeout); the forced collection makes that hazard part of every run.
+            // timeout); the forced collection makes that hazard part of every run. The delay lets the
+            // upgrade request arrive unread and starts a fresh MoveNext frame, so only the field roots it.
             using var accepted = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(TimeSpan.FromMilliseconds(300));
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
