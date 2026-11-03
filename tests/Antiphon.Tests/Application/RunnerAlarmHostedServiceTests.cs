@@ -219,6 +219,75 @@ public sealed class RunnerAlarmHostedServiceTests
         await service.StopAsync(CancellationToken.None);
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1674_a_reachable_drain_past_its_bound_publishes_no_expiry_and_the_loop_does_not_wake_again()
+    {
+        // CARD-1674 A-1: a drain that overran must not keep publishing its (past) expiry, or the
+        // loop wakes on it again and again; after the wake at the bound the next wake is the sweep.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var start = DateTimeOffset.UtcNow;
+        var source = new FakeEligibilitySource();
+        source.Rows.Add(new RunnerEligibilitySnapshot("drainer", "drainer", true, true, null, null, 0));
+        var exclusion = new FakeExclusion();
+        exclusion.Reasons["drainer"] = "draining";
+        exclusion.Expires["drainer"] = start.AddMinutes(30);
+        var clock = new AlarmClock(start);
+        var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
+            exclusion: exclusion);
+        await service.StartAsync(CancellationToken.None);
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        state.Current.DrainExpiresAt.ShouldContainKey("drainer");
+        var passes = source.Calls;
+
+        clock.Inner.Advance(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)));
+        await UntilAsync(() => source.Calls == passes + 1, "the loop did not wake when the drain passed its bound");
+        await UntilAsync(() => clock.Timers.Count >= 2, "the loop did not wait again after the wake");
+        state.Current.DrainExpiresAt.ShouldBeEmpty("a drain past its bound has no expiry left to wake on");
+        state.Current.Episodes.ShouldBeEmpty("a reachable draining runner never raises");
+        await Task.Delay(200);
+        source.Calls.ShouldBe(passes + 1, "the loop woke again without the clock moving");
+
+        clock.Inner.Advance(TimeSpan.FromMinutes(29));
+        await Task.Delay(200);
+        source.Calls.ShouldBe(passes + 1, "the loop woke again before the sweep");
+        clock.Timers.Last().Due.ShouldBe(TimeSpan.FromMinutes(30).Subtract(TimeSpan.FromSeconds(1)));
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    public void C1674_a_drain_expiry_not_after_the_last_pass_never_schedules_a_wake()
+    {
+        // CARD-1674 A-1: whatever the snapshot carries, the loop never waits less than its floor:
+        // an expiry whose wake is at or before the last pass is stale and is ignored.
+        var lastPass = DateTimeOffset.UtcNow;
+        var nextSweep = lastPass.AddMinutes(15);
+        var grace = TimeSpan.FromSeconds(180);
+        var past = RunnerAlarmSnapshot.Empty with
+        {
+            DrainExpiresAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal)
+            {
+                ["long-gone"] = lastPass.AddMinutes(-10),
+                ["at-the-pass"] = lastPass.AddSeconds(-1),
+            },
+        };
+
+        var due = RunnerAlarmHostedService.NextDue(past, nextSweep, lastPass, grace);
+
+        (due - lastPass).ShouldBe(TimeSpan.FromMinutes(15), "a stale drain expiry must not make the loop spin");
+
+        var future = RunnerAlarmSnapshot.Empty with
+        {
+            DrainExpiresAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal)
+            {
+                ["stale"] = lastPass.AddMinutes(-10),
+                ["live"] = lastPass.AddMinutes(5),
+            },
+        };
+        RunnerAlarmHostedService.NextDue(future, nextSweep, lastPass, grace)
+            .ShouldBe(lastPass.AddMinutes(5).AddSeconds(1), "a drain still within its bound wakes just past it");
+    }
+
     private static (RunnerAlarmHostedService Service, RunnerAlarmState State, AlarmWakeQueue Wake) Build(
         string connection, FakeEligibilitySource source, AlarmClock clock, AlarmSettings settings,
         RepositoryChildJournalInspector? journals = null, ListLogger<RunnerAlarmHostedService>? logger = null,
