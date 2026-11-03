@@ -32,14 +32,15 @@ internal class TestDbOperations
     /// <summary>The same container from another image: a baked one already holds the schema.</summary>
     public virtual Task<OwnedTestDbContainer> CreateFromImageAsync(string image)
     {
-        var container = new PostgreSqlBuilder(image)
+        var builder = new PostgreSqlBuilder(image)
             .WithDatabase(TestDbFixture.SharedDatabaseName)
             .WithUsername(DatabaseUser)
             .WithPassword("test")
             .Tuned()
-            .Own()
-            .Build();
-        return Task.FromResult(new OwnedTestDbContainer { Real = container });
+            .Own();
+        if (!string.Equals(image, PostgresImage, StringComparison.Ordinal))
+            builder = TestDbBakedImages.RunFromVolume(builder);
+        return Task.FromResult(new OwnedTestDbContainer { Real = builder.Build() });
     }
 
     public virtual async Task StartAsync(OwnedTestDbContainer container)

@@ -26,6 +26,8 @@ internal class TestDbBakedImages
     public const string EnvVar = "ANTIPHON_TEST_PG_IMAGE";
     public const string Repository = "antiphon-test-pg";
     public const string DataDirectory = "/pgdata";
+    /// <summary>The base image's declared <c>VOLUME</c>; a started baked image runs Postgres there.</summary>
+    public const string VolumeDataDirectory = "/var/lib/postgresql/data";
     public const string KeyLabel = "net.codeperf.antiphon.test-schema-key";
     public const int KeepImages = 4;
 
@@ -46,6 +48,23 @@ internal class TestDbBakedImages
             : new TestDbBakedImages(true);
 
     public static string ImageName(string key) => $"{Repository}:{key}";
+
+    /// <summary>
+    /// Starts a baked image with Postgres running from a copy of <see cref="DataDirectory"/> in the
+    /// container's anonymous volume, not from the committed layer. On overlayfs every first
+    /// read-write open of a layer file is a copy-up, and a backend signalled during one, or while
+    /// it waits for another backend's copy-up of the same file, gets EINTR from open(), which
+    /// Postgres reports as <c>XX000 could not open file "base/16384/…": Interrupted system call</c>
+    /// (rc/2026-11-03 group-78). The copy (~85 MB) runs once in the entrypoint shell before
+    /// Postgres starts: reading layer files never copies them up.
+    /// </summary>
+    public static PostgreSqlBuilder RunFromVolume(PostgreSqlBuilder builder) =>
+        builder
+            .WithEnvironment("PGDATA", VolumeDataDirectory)
+            .WithEntrypoint("sh", "-c",
+                $"[ -s \"$PGDATA/PG_VERSION\" ] || cp -a {DataDirectory}/. \"$PGDATA\"/ || exit 1; " +
+                "exec docker-entrypoint.sh \"$@\"",
+                "sh");
 
     public virtual async Task<bool> ExistsAsync(string key)
     {
