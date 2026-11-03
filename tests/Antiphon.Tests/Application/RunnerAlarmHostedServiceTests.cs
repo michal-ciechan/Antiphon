@@ -187,13 +187,46 @@ public sealed class RunnerAlarmHostedServiceTests
         await service.StopAsync(CancellationToken.None);
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1671_the_loop_wakes_when_a_drain_passes_its_bound_and_raises_then_not_a_sweep_later()
+    {
+        // CARD-1671 (c): an offline draining runner must not stay hidden past the drain bound
+        // until the next sweep; the loop wakes when the drain expires.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var start = DateTimeOffset.UtcNow;
+        var source = new FakeEligibilitySource();
+        source.Rows.Add(new RunnerEligibilitySnapshot("drainer", "drainer", true, false, "socket_closed", start, 0));
+        var exclusion = new FakeExclusion();
+        exclusion.Reasons["drainer"] = "draining";
+        exclusion.Expires["drainer"] = start.AddMinutes(30);
+        var clock = new AlarmClock(start);
+        var (service, state, _) = Build(schema.ConnectionString, source, clock, new AlarmSettings { SweepMinutes = 60 },
+            exclusion: exclusion);
+        await service.StartAsync(CancellationToken.None);
+        await clock.FirstTimer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        state.Current.Episodes.ShouldBeEmpty();
+
+        clock.Inner.Advance(TimeSpan.FromMinutes(30));
+        await Task.Delay(100);
+        state.Current.Episodes.ShouldBeEmpty("within the bound (inclusive) the drain still hides the outage");
+        clock.Inner.Advance(TimeSpan.FromSeconds(1));
+        await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "drainer" && episode.RaisedAt is not null),
+            "the loop did not wake when the drain passed its bound");
+        var raised = state.Current.Episodes.ShouldHaveSingleItem();
+        raised.DownSince.ShouldBe(start);
+        raised.RaisedAt!.Value.ShouldBeLessThanOrEqualTo(start.AddMinutes(30).AddSeconds(1));
+        await service.StopAsync(CancellationToken.None);
+    }
+
     private static (RunnerAlarmHostedService Service, RunnerAlarmState State, AlarmWakeQueue Wake) Build(
         string connection, FakeEligibilitySource source, AlarmClock clock, AlarmSettings settings,
-        RepositoryChildJournalInspector? journals = null, ListLogger<RunnerAlarmHostedService>? logger = null)
+        RepositoryChildJournalInspector? journals = null, ListLogger<RunnerAlarmHostedService>? logger = null,
+        FakeExclusion? exclusion = null)
     {
         var state = new RunnerAlarmState();
         var wake = new AlarmWakeQueue();
-        var services = Provider(connection, source, new FakeExclusion(), state, wake, settings, clock, journals);
+        var services = Provider(connection, source, exclusion ?? new FakeExclusion(), state, wake, settings, clock, journals);
         var service = new RunnerAlarmHostedService(services.GetRequiredService<IServiceScopeFactory>(), wake, state,
             Options.Create(settings), clock, logger ?? (Microsoft.Extensions.Logging.ILogger<RunnerAlarmHostedService>)NullLogger<RunnerAlarmHostedService>.Instance);
         return (service, state, wake);

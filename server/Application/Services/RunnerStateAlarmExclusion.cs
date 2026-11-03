@@ -23,6 +23,11 @@ public sealed class RunnerStateAlarmExclusion(PhoneHomeRunnerDirectory directory
     public string? DrainOverran(string runnerId, DateTimeOffset now) =>
         Overran(directory.DrainState(runnerId), now, settings.Value.RunnerDrainMaxMinutes);
 
+    public DateTimeOffset? DrainExpiresAt(string runnerId) =>
+        ExpiresAt(directory.DrainState(runnerId), settings.Value.RunnerDrainMaxMinutes);
+
+    public static DateTimeOffset? ExpiresAt(RunnerState? state, int maxMinutes) => null;
+
     /// <summary>
     /// Null within the bound (inclusive). A missing or future drain start cannot be aged, so it
     /// fails safe: the drain counts as overrun and the runner alarms.

@@ -14,4 +14,10 @@ public interface IRunnerAlarmExclusion
     /// runner with this sentence alarms again; a retired runner never has one.
     /// </summary>
     string? DrainOverran(string runnerId, DateTimeOffset now);
+
+    /// <summary>
+    /// CARD-1671: when a draining (not retired) runner with a recorded drain start reaches
+    /// <c>Alarms:RunnerDrainMaxMinutes</c>, or null. The alarm loop wakes just past it.
+    /// </summary>
+    DateTimeOffset? DrainExpiresAt(string runnerId);
 }
