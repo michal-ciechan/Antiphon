@@ -229,10 +229,11 @@ c1609_export_trusted_origins() {
     C1609_ORIGINS_REASON=registry-project
     jq -e --arg project "$C1008_PROJECT_ID" '.projects[$project]!=null' "$registry" >/dev/null || return 1
     C1609_ORIGINS_REASON=unapproved-origin
+    # An unmatched capture yields nothing, which all() would count as approved.
     jq -Rse --arg project "$C1008_PROJECT_ID" --slurpfile registry "$registry" '
       split("\n")|map(select(length>0))|all(.[];
-        capture("^C1008_PRIVATE_ORIGIN repo=[A-Za-z0-9._/-]+ origin=(?<origin>[^ ]+) originHash=[0-9a-f]{64} proofName=[0-9a-f]{64}$").origin as $origin |
-        $registry[0].projects[$project].origins|index($origin)!=null)
+        first(capture("^C1008_PRIVATE_ORIGIN repo=[A-Za-z0-9._/-]+ origin=(?<origin>[^ ]+) originHash=[0-9a-f]{64} proofName=[0-9a-f]{64}$").origin, null) as $origin |
+        $origin!=null and ($registry[0].projects[$project].origins|index($origin)!=null))
       ' "$requests" >/dev/null || return 1
     C1609_ORIGINS_REASON=''
     jq -cS --arg project "$C1008_PROJECT_ID" '{schema:1,projectId:$project,origins:.projects[$project].origins}' "$registry" |
