@@ -45,7 +45,7 @@ Tested source: e1094e501db692d9232ea6d265c0e26dfb64b5f6. Branch: feat/card-task-
 - The probe source is kept at scratchpad zzScratchC1690.test.tsx.txt and was removed from the tree.
 
 ## Commits (pushed)
-1. **092d066203c7cf7a5c79c8bbf3ac2fc5a34eb6a2** `test(client): pin the base failure messages of failing waits (red)`
+1. **092d066207506c5b475c4156eadc45b23759661c** `test(client): pin the base failure messages of failing waits (red)`
    - client/src/test/setupGuards.test.tsx: the two lossy expectations are reverted to the base shape.
      - A read poll error carries its dump, taken from the DOM at read time; this proves the global install is lazy.
      - A timed-out waitFor prints 2 dumps.
