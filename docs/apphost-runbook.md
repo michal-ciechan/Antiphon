@@ -177,13 +177,14 @@ ordinary age check. This window starts at the stamp, not at the holder's exit.
 
 The health wait is a no-progress window, not a fixed budget (CARD-1680). Growth of
 `apphost.log` or the launcher's captured output, the dashboard URL file appearing,
-the server port 17202 opening, or a non-200 `/health` answer restarts the
-`-TimeoutSec` window, up to `-MaxWaitSec` from launch (never below `-TimeoutSec`).
+any change in whether server port 17202 is listening (opening or closing), or a
+non-200 `/health` answer restarts the `-TimeoutSec` window, up to `-MaxWaitSec` from launch (never below `-TimeoutSec`).
 Once `/health` answers 200 no further progress is credited: the `/api/version` SHA
 check has the rest of the current window, then exits 5. `apphost.pid` names this
 launch's AppHost only after `dev-aspire.ps1` rewrites it; a pid file left from
 before the launch never counts. Each restart rotates `apphost.log` to
-`apphost.log.1` to `.10` instead of emptying it.
+`apphost.log.1` to `.10` instead of emptying it; if a move fails, rotation stops
+and `apphost.log` is emptied in place, so the previous launch's log can be missing.
 
 The script's `If the holder is genuinely gone, delete ...` and `delete it to
 force a retry` hints describe a manual override, not a sufficient safety check.
@@ -309,11 +310,13 @@ Restart admission rechecks health, activity and the exact stamp while it holds a
 exclusive write handle on that existing restart file; it writes its own stamp
 through that handle instead of deleting and recreating the file. A competing
 holder or replacement refuses. Ordinary 15-minute admission remains the fallback.
-At health timeout, only when backend health has not been confirmed and the
-launcher is known to have exited nonzero does the script remove this restart's
-own stamp, print both captured paths (`logs/apphost-launcher-<id>.out` and `.err`)
-and exit 1. A successful detached exit, running launcher or unreadable exit still
-retains it. Restart exit codes remain 0, 1, 3, 4 and 5 as listed above.
+Before backend health is confirmed, a nonzero launcher exit, or this launch's
+AppHost exiting with nothing listening on 17202, ends the wait at once: the script
+removes this restart's own stamp, prints both captured paths
+(`logs/apphost-launcher-<id>.out` and `.err`) and exits 1. A no-progress or
+hard-cap timeout retains the stamp while the launcher is still running, exited 0
+or has an unreadable exit code. Restart exit codes remain 0, 1, 3, 4 and 5 as
+listed above.
 
 Outage state is written atomically in `logs/apphost-watchdog.state`. Overlapping
 fires serialize on `logs/apphost-watchdog.fire.lock`. At the first observation of
