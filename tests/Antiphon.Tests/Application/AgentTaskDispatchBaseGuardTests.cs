@@ -1463,6 +1463,97 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     /// <summary>
+    /// V-16 / G-49, G-50, CARD-1612: the configured default is deleted after the pre-lease
+    /// observation, so the claim cuts from HEAD and owes exactly one <c>base-observation-stale</c>
+    /// warning, note and parent delivery beside the unresolved-default one, with zero, one and two
+    /// divergent siblings warned exactly once each. The two-sibling row is the PC-49 killer: a
+    /// second mismatch pair is visible as a second Warning, note and queued delivery.
+    /// </summary>
+    [Test]
+    [Timeout(120_000)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task C508_VanishedDefaultMismatchWarnedOnce(int divergentSiblings, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-vanished-siblings");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "trunk", "master");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0508");
+        var siblings = new List<AgentTask>();
+        for (var i = 0; i < divergentSiblings; i++)
+            siblings.Add(await SeedKeptSiblingAsync(db, repo, card.Id, $"divergent sibling {i}"));
+
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "trunk",
+            onLeaseAcquired: async () =>
+            {
+                (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
+            });
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
+        dispatched.WorktreeBaseRef.ShouldBe("HEAD");
+
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
+        db.ChangeTracker.Clear();
+        var intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == task.Id).ToListAsync(ct);
+        var mismatch = intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
+        mismatch.Detail.ShouldContain("trunk");
+        mismatch.Detail.ShouldContain("HEAD");
+        intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey)
+            .Detail.ShouldContain("trunk");
+        var siblingIntents = intents
+            .Where(i => i.WarningKey.StartsWith(
+                DispatchBaseNotificationPayload.SiblingKeyPrefix, StringComparison.Ordinal))
+            .ToList();
+        siblingIntents.Count.ShouldBe(divergentSiblings);
+        foreach (var sibling in siblings)
+        {
+            siblingIntents.ShouldContain(
+                i => i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
+        }
+
+        intents.Count.ShouldBe(divergentSiblings + 2);
+        intents.ShouldAllBe(i => i.MaterializedAt != null && i.LastErrorCode == null);
+
+        // One pair per intent, under the intent's own identity: a duplicated mismatch pair is a
+        // second Warning carrying the same detail, a second note and a second parent delivery.
+        var warnings = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)
+            .ToListAsync(ct);
+        warnings.Count(w => w.Detail == mismatch.Detail)
+            .ShouldBe(1, $"one stale-observation warning with {divergentSiblings} sibling(s)");
+        warnings.Single(w => w.Detail == mismatch.Detail).Id.ShouldBe(mismatch.Id);
+        var notes = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.TaskId == task.Id).ToListAsync(ct);
+        notes.Count.ShouldBe(divergentSiblings + 2);
+        var mismatchNote = notes.Single(n => n.SourceEventId == mismatch.Id);
+        mismatchNote.Id.ShouldBe(mismatch.NotificationId);
+        mismatchNote.Kind.ShouldBe(LandNotificationKind.DispatchBase);
+        mismatchNote.ParentSessionId.ShouldBe(parentSessionId);
+        var delivered = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == parentSessionId && m.SourceLandNotificationId != null)
+            .ToListAsync(ct);
+        delivered.Count.ShouldBe(divergentSiblings + 2);
+        delivered.Count(m => m.Body.Contains(mismatch.Detail, StringComparison.Ordinal))
+            .ShouldBe(1, $"one stale-observation delivery with {divergentSiblings} sibling(s)");
+        delivered.Single(m => m.SourceLandNotificationId == mismatchNote.Id)
+            .Body.ShouldContain(mismatch.Detail);
+    }
+
+    /// <summary>
     /// V-31 / G-22: containment is evaluated against the ACTUAL configured default, not a hard
     /// <c>master</c>. A sibling rebased (cherry-picked, so a different sha and the same patch) onto
     /// the configured default is contained and stays silent, even though <c>master</c> lacks it.
