@@ -66,7 +66,7 @@ public sealed class RunnerRestartPreflightSafetyTests
     public async Task Resolved_shell_is_the_process_that_runs(string shell)
     {
         using var f = new RestartFixture(new RestartPreflightCache());
-        var identity = new ShellIdentityResolver().Resolve(shell);
+        var identity = new ShellIdentityResolver().Resolve(RestartFixture.HostShell(shell));
         var result = await f.Script("""
             $p=(Get-Process -Id $PID).Path
             Write-Output $p
@@ -91,7 +91,9 @@ public sealed class RunnerRestartPreflightSafetyTests
             Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(gac))).ShouldBe(identity.EngineSha256);
         }
 
-        lines[1].ShouldBe(identity.Version);
+        // An ELF pwsh carries no version resource: its FileVersion is empty and prints no line.
+        if (OperatingSystem.IsWindows() || identity.Version.Length > 0)
+            lines[1].ShouldBe(identity.Version);
     }
 
     [Test]
@@ -146,6 +148,8 @@ public sealed class RunnerRestartPreflightSafetyTests
     [Arguments("powershell.exe", "core-bypass")]
     public async Task Malformed_syntax_non_inert_helper_missing_core_and_core_bypass_are_rejected(string shell, string shape)
     {
+        // The refusal below is caught as any Exception, so a host skip must be raised before it.
+        RestartFixture.HostShell(shell);
         using var f = new RestartFixture(new RestartPreflightCache());
         var owned = Path.Combine(f.Root, "owned.txt");
         switch (shape)
@@ -227,6 +231,8 @@ public sealed class RunnerRestartPreflightSafetyTests
             return;
         }
 
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: denying delete and move of an open input is Windows share-mode semantics; Unix unlinks and renames open files");
         IOException? write = null, delete = null, move = null;
         f.OnBeforeExecution = () =>
         {

@@ -81,7 +81,8 @@ public sealed class RunnerCustodyLedgerBackendTests
     [Test]
     public void Windows_path_unchanged()
     {
-        if (!OperatingSystem.IsWindows()) return;
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: the WindowsJob custody backend is the Windows lane; its Linux twin is the native-Linux test above");
         using var fixture = new LedgerFixture();
         var binding = fixture.Binding(VerificationCustodyBackends.WindowsJob);
 
@@ -101,7 +102,8 @@ public sealed class RunnerCustodyLedgerBackendTests
     [Test]
     public void Windows_backend_still_requires_modern_conpty()
     {
-        if (!OperatingSystem.IsWindows()) return;
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: the WindowsJob backend and its modern-ConPTY requirement exist only on Windows");
         using var fixture = new LedgerFixture();
         var binding = fixture.Binding(VerificationCustodyBackends.WindowsJob);
 

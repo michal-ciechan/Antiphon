@@ -122,6 +122,8 @@ public class DaemonLogRotationTests
         int logRetainDays = 5,
         int logRetainCount = 10)
     {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: run-daemon.ps1 starts the service under cmd.exe with a >> capture and launches pwsh.exe; both exist only on Windows");
         var stateFile = Path.Combine(temp.Path, "svc.state");
         var pidFile = Path.Combine(temp.Path, "svc.service.pid");
         await File.WriteAllTextAsync(stateFile, "running");
