@@ -379,7 +379,13 @@ public class LiveClaudeEvidenceWiringTests
             // CARD-1645 review D-3: a store through an alias of a shared object is not local.
             ("R1D3-AliasBag", "var bag = TestContext.Current!.ObjectBag; bag[\"s\"] = runner.SnapshotScreen();", "raw-any"),
             ("R1D3-CatchData", "try { OtherFile.Log(\"x\"); } catch (Exception ex) { ex.Data[\"s\"] = runner.SnapshotScreen(); throw; }", "raw-any"),
-            ("R1D3-ParamAlias", "void Keep(Dictionary<string, string> d, string s) { d[\"k\"] = s; } Keep(s_map, runner.SnapshotScreen());", "raw-any")
+            ("R1D3-ParamAlias", "void Keep(Dictionary<string, string> d, string s) { d[\"k\"] = s; } Keep(s_map, runner.SnapshotScreen());", "raw-any"),
+            // CARD-1645 review D-2 class: a method group or query range variable over tainted text,
+            // and a ref/out argument that stores tainted text outside the walk.
+            ("R1D2-Group", "runner.SnapshotScreen().Split('\\n').ToList().ForEach(OtherFile.Log);", "raw-any"),
+            ("R1D2-Query", "var q = from l in runner.SnapshotScreen().Split('\\n') select OtherFile.Log(l);", "raw-any"),
+            ("R1D2-QueryLet", "var q = from n in new[] { 1 } let l = runner.SnapshotScreen() select OtherFile.Log(l);", "raw-any"),
+            ("R1D3-RefField", "static void Fill(ref string target, string value) { target = value; } Fill(ref s_last, runner.SnapshotScreen());", "raw-any")
         };
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
         {
