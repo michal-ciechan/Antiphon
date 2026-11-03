@@ -134,6 +134,48 @@ public class AgentTaskCardBindingTests
         warnings[0].Detail.ShouldContain("bound to CARD-0177");
     }
 
+    /// <summary>
+    /// CARD-1647 item 1. A Review on a card that already has three completed Reviews is flagged at
+    /// creation (docs/orchestration-loop.md#review-rounds caps rounds at three); the caller sees the
+    /// warning and the timeline records it. A Review on a card with none is not flagged.
+    /// </summary>
+    [Test]
+    public async Task C1647_a_fourth_review_on_a_card_is_flagged_at_creation()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
+        var (_, board) = await SeedProjectBoardAsync(db);
+        var reviewed = await SeedCardAsync(db, board.Id, "CARD-0164");
+        var fresh = await SeedCardAsync(db, board.Id, "CARD-0165");
+        var prior = new List<Guid>();
+        for (var round = 1; round <= 3; round++)
+        {
+            var row = await SeedTaskAsync(db, workspace.Path, reviewed.Id);
+            row.Role = AgentTaskRole.Review;
+            row.Status = AgentTaskStatus.Succeeded;
+            row.CompletedAt = DateTime.UtcNow;
+            prior.Add(row.Id);
+        }
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db, workspace);
+        var review = Request(workspace.Path) with
+        {
+            Goal = "Review the change.", Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Review, Workspace = WorkspaceMode.Shared,
+        };
+        var flagged = await service.CreateAsync(review with { Card = reviewed.Id.ToString() }, Manual(workspace.Path), CancellationToken.None);
+        flagged.Warning.ShouldNotBeNull();
+        flagged.Warning!.ShouldContain(ReviewRoundGuard.Code);
+        flagged.Warning.ShouldContain("CARD-0164 already has 3 completed Review tasks");
+        foreach (var id in prior)
+            flagged.Warning.ShouldContain(DelegationReportFormatter.Short(id));
+        (await EventsFor(db, flagged.Id)).ShouldContain(e => e.Type == AgentTaskEventType.Warning && e.Detail.Contains(ReviewRoundGuard.Code));
+
+        var control = await service.CreateAsync(review with { Card = fresh.Id.ToString() }, Manual(workspace.Path), CancellationToken.None);
+        (control.Warning ?? "").ShouldNotContain(ReviewRoundGuard.Code);
+    }
+
     [Test]
     public async Task an_identifier_on_two_boards_with_no_scope_binds_nothing_and_says_so()
     {
