@@ -489,7 +489,14 @@ public class LiveLaneEvidenceTests
             ("R2D1-FieldOut", "private static string _ = \"\";", keep + "Keep(snapshot.RenderedScreen, out _); ", true),
             ("R2D1-PropertyStore", "private static string _ { get; set; } = \"\";", "_ = snapshot.RenderedScreen; ", true),
             ("R2D1-Discard", "", "_ = snapshot.RenderedScreen; ", false),
-            ("R2D1-DiscardOut", "", keep + "Keep(snapshot.RenderedScreen, out _); ", false)
+            ("R2D1-DiscardOut", "", keep + "Keep(snapshot.RenderedScreen, out _); ", false),
+            // CARD-1645 review r3 D-1: a _ declared elsewhere in the file does not shadow a member _.
+            ("R3D1-FieldOtherParameter", "private static string _ = \"\";\n\n    private static void Other(string _) { }", "_ = snapshot.RenderedScreen; ", true),
+            ("R3D1-FieldLambdaInit", "private static string _ = \"\";\n\n    private static readonly System.Func<string, int> Other = _ => 0;", "_ = snapshot.RenderedScreen; ", true),
+            ("R3D1-FieldOtherParameterOut", "private static string _ = \"\";\n\n    private static void Other(string _) { }", keep + "Keep(snapshot.RenderedScreen, out _); ", true),
+            ("R3D1-OtherParameter", "private static void Other(string _) { }", "_ = snapshot.RenderedScreen; " + keep + "Keep(snapshot.RenderedScreen, out _); ", false),
+            // CARD-1645 review r3 A-1: a parameter X elsewhere in the file does not make a field X store local.
+            ("R3A1-FieldOtherParameter", "private static string s_held = \"\";\n\n    private static void OtherHeld(string s_held) { }", "s_held = snapshot.RenderedScreen; ", true)
         };
         if (watchdog.Split(memberFrom).Length != 2) throw new InvalidOperationException("C1545 R2D1 anchor");
         var missed = new List<string>();
