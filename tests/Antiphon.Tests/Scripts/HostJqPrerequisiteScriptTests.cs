@@ -826,6 +826,16 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
+    // Task 5b7656a9: on the real transport the awaited helper write must not leak a
+    // VoidTaskResult; a healthy check emits no pipeline output at all.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1025_Real_transport_emits_no_pipeline_output()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var rows = await VolumeRetirementFixture.RunOutputWitness("HostJq");
+        rows.ShouldBe(new[] { "OUTPUT hostjq count=0 types= streamed=True receipt=True" }, string.Join("\n", rows));
+    }
+
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Receipt_requires_complete_current_proof()
     {
