@@ -50,6 +50,9 @@ public sealed class HostSession : IAsyncDisposable
     internal void UseContainmentForTests(IPtyCustodyContainment containment) =>
         _runner.UseContainmentForTests(containment);
 
+    /// <summary>CARD-1617 test seam. Production leaves the system clock.</summary>
+    internal void UseCustodyClockForTests(TimeProvider clock) => _runner.UseCustodyClockForTests(clock);
+
     public HostSession(PtyHostOptions options, HostLog log, IVerificationCustodyFiles? custodyFiles = null)
     {
         _custodyFiles = custodyFiles;

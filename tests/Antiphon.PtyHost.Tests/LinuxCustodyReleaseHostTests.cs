@@ -190,6 +190,201 @@ public sealed class LinuxCustodyReleaseHostTests
         }
     }
 
+    /// <summary>
+    /// CARD-1617 W1. A successful kill that leaves survivors is not repeated, however much time
+    /// passes. Red if every explicit-seal read terminates again.
+    /// </summary>
+    [Test]
+    public async Task C1617_Explicit_seal_reads_terminate_once_after_success()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment { KeepPids = true, Result = new(true, 0) };
+        var clock = new ManualClock();
+        var (host, store, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            for (var read = 0; read < 10; read++)
+            {
+                if (read > 0)
+                    clock.Advance(TimeSpan.FromMinutes(10));
+                await ShouldDrainAsync(host, binding);
+            }
+
+            containment.Terminations.ShouldBe(1);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+            File.Exists(store.PathFor(binding.ExecutionId, "linux-release-disposition.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1617 W2. A failed kill is retried only after min(2^(k-1) s, 60 s) from the end of
+    /// failed attempt k, exactly at the boundary and through the cap. A skipped read still
+    /// re-reads accounting, and the receipt carries the last real attempt.
+    /// </summary>
+    [Test]
+    public async Task C1617_Failed_termination_retries_on_capped_backoff()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment { KeepPids = true, Result = new(false, 3) };
+        var clock = new ManualClock();
+        var (host, store, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            for (var read = 0; read < 5; read++)
+                await ShouldDrainAsync(host, binding);
+            containment.Terminations.ShouldBe(1, "five reads at t=0");
+
+            for (var k = 1; k <= 8; k++)
+            {
+                var wait = TimeSpan.FromSeconds(Math.Min(1 << (k - 1), 60));
+                clock.Advance(wait - TimeSpan.FromMilliseconds(1));
+                await ShouldDrainAsync(host, binding);
+                containment.Terminations.ShouldBe(k, $"1 ms before backoff {k} ({wait})");
+                clock.Advance(TimeSpan.FromMilliseconds(1));
+                await ShouldDrainAsync(host, binding);
+                containment.Terminations.ShouldBe(k + 1, $"at backoff {k} ({wait})");
+            }
+
+            containment.Pids.Clear();
+            var final = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+            final.State.ShouldBe(VerificationCustodyState.Exited, final.Reason);
+            containment.Terminations.ShouldBe(9);
+            var receipt = store.ValidateReceipt(final.Receipt!, binding, final.Host!);
+            receipt.ActiveProcesses.ShouldBe(0u);
+            receipt.TerminationSucceeded.ShouldBe(false);
+            receipt.TerminationError.ShouldBe(3);
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1617 W3. After the one successful kill, a read that finds the tree empty still drains
+    /// and receipts the real attempt's outcome. Green before the bound; red if the bound skips
+    /// accounting or overwrites the outcome on a skipped read.
+    /// </summary>
+    [Test]
+    public async Task C1617_Bounded_release_still_finalizes()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment { KeepPids = true, Result = new(true, 0) };
+        var clock = new ManualClock();
+        var (host, store, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            await ShouldDrainAsync(host, binding);
+
+            containment.Pids.Clear();
+            var final = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+            final.State.ShouldBe(VerificationCustodyState.Exited, final.Reason);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeTrue();
+            var receipt = store.ValidateReceipt(final.Receipt!, binding, final.Host!);
+            receipt.TerminationSucceeded.ShouldBe(true);
+            receipt.TerminationError.ShouldBe(0);
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1617 W4. A kill that throws is swallowed by the host's stop recorder and counts as a
+    /// failed attempt, so it backs off too. Red if the bound is keyed on a non-null outcome.
+    /// </summary>
+    [Test]
+    public async Task C1617_Throwing_termination_counts_as_failed_attempt()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment { KeepPids = true, Throw = new IOException("c1617") };
+        var clock = new ManualClock();
+        var (host, _, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            await ShouldDrainAsync(host, binding);
+            containment.Terminations.ShouldBe(1);
+
+            for (var read = 0; read < 3; read++)
+                await ShouldDrainAsync(host, binding);
+            containment.Terminations.ShouldBe(1, "three more reads at t=0");
+
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await ShouldDrainAsync(host, binding);
+            containment.Terminations.ShouldBe(2);
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    private static async Task ShouldDrainAsync(HostHarness host, VerificationExecutionBinding binding)
+    {
+        var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Draining, status.Reason);
+        status.Reason.ShouldBe("descendants_running");
+        status.Receipt.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// CARD-1617: the root has exited, a descendant survives in the fake tree and the runner has
+    /// persisted its release intent, so every read below is an explicit seal.
+    /// </summary>
+    private static async Task<(HostHarness Host, VerificationCustodyStore Store,
+        VerificationExecutionBinding Binding, int Child)> ExitedWithSurvivorAsync(
+        FakeContainment containment, ManualClock clock)
+    {
+        containment.Pids.Add(424242);
+        var host = HostHarness.Start(o => o with
+        {
+            PtyBackend = "inbox",
+            CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
+            CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
+            LingerTtl = TimeSpan.FromHours(24),
+        });
+        var child = 0;
+        try
+        {
+            host.Session.UseContainmentForTests(containment);
+            host.Session.UseCustodyClockForTests(clock);
+            var (store, binding) = Reserve(host, files: null);
+            var release = Path.Combine(host.TempDir, "release");
+            var reply = await host.Session.LaunchAsync(Spec(host, store, binding,
+                HoldUntil(release), "exit 0"), CancellationToken.None);
+            reply.ShouldBeOfType<LaunchedMessage>(reply is ErrorMessage error
+                ? error.Code + ": " + error.Message : "launch reply");
+            child = ((LaunchedMessage)reply).ChildPid;
+            File.WriteAllText(release, "go");
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (host.Session.Status != PtyHostStatus.Exited && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+            host.Session.Status.ShouldBe(PtyHostStatus.Exited);
+            containment.Terminations.ShouldBe(0);
+            store.WriteRecord(binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
+            return (host, store, binding, child);
+        }
+        catch
+        {
+            KillChild(child);
+            await Finish(host);
+            throw;
+        }
+    }
+
     private static string HoldUntil(string releasePath) =>
         $"while [ ! -f '{releasePath}' ]; do sleep 0.05; done";
 
@@ -260,6 +455,10 @@ public sealed class LinuxCustodyReleaseHostTests
         public List<int> Pids { get; } = [];
         public int Terminations { get; private set; }
         public bool Missing { get; set; }
+        /// <summary>CARD-1617: survivors stay after a kill.</summary>
+        public bool KeepPids { get; set; }
+        public PtyTerminationObservation Result { get; set; } = new(true, 0);
+        public Exception? Throw { get; set; }
         public PtyTrackedLaunch Place(PtyTrackedLaunch launch) => launch;
         public PtyCustodyPopulation ReadActive()
         {
@@ -270,9 +469,21 @@ public sealed class LinuxCustodyReleaseHostTests
         public PtyTerminationObservation Terminate()
         {
             Terminations++;
-            Pids.Clear();
-            return new(true, 0);
+            if (Throw is not null)
+                throw Throw;
+            if (!KeepPids)
+                Pids.Clear();
+            return Result;
         }
+    }
+
+    /// <summary>CARD-1617: a monotonic clock the test moves by hand; one tick is 100 ns.</summary>
+    private sealed class ManualClock : TimeProvider
+    {
+        private long _ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
     }
 
     private sealed class TrackingRefusal : IVerificationCustodyFiles
