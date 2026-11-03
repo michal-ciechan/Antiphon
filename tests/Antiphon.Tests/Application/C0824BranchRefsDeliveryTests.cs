@@ -48,7 +48,7 @@ public sealed class C0824BranchRefsDeliveryTests
         w.RefsAtOriginDelete.ShouldNotBeNull();
         w.RefsAtOriginDelete!.ShouldBeEmpty("runner-before-origin");
         w.Runners.Results.Count.ShouldBe(1);
-        w.Runners.Results[0].Deleted!.Order(StringComparer.Ordinal).ShouldBe([w.LocalRef, w.TrackingRef], "response-round-trip");
+        w.Runners.Results[0].Deleted!.Order(StringComparer.Ordinal).AsEnumerable().ShouldBe([w.LocalRef, w.TrackingRef], "response-round-trip");
         var row = await w.RowAsync(ct);
         row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deleted);
         row.RunnerRefsDeletedAt.ShouldNotBeNull();
@@ -116,7 +116,7 @@ public sealed class C0824BranchRefsDeliveryTests
         await w.SweepAsync(ct);
         w.Runners.Results.Count.ShouldBe(2, "runner-op-repeated");
         w.Runners.Results[1].Deleted.ShouldBeEmpty("second-delivery-idempotent");
-        w.Runners.Results[1].Absent!.Order(StringComparer.Ordinal).ShouldBe([w.LocalRef, w.TrackingRef], "second-delivery-idempotent");
+        w.Runners.Results[1].Absent!.Order(StringComparer.Ordinal).AsEnumerable().ShouldBe([w.LocalRef, w.TrackingRef], "second-delivery-idempotent");
         w.Git.Deleted.Count.ShouldBe(1, "origin-deleted-once");
         var row = await w.RowAsync(ct);
         row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deleted);
@@ -180,8 +180,8 @@ public sealed class C0824BranchRefsDeliveryTests
                 var ownerId = Guid.NewGuid();
                 var branch = DelegateBranchName.Legacy(ownerId);
                 // The runner primary holds both refs at the landed source SHA, as a retired legacy mirror leaves them.
-                Git(join.Clone, "update-ref", "refs/heads/" + branch, join.Sha);
-                Git(join.Clone, "update-ref", "refs/remotes/origin/" + branch, join.Sha);
+                RunGit(join.Clone, "update-ref", "refs/heads/" + branch, join.Sha);
+                RunGit(join.Clone, "update-ref", "refs/remotes/origin/" + branch, join.Sha);
                 var op = PublishedLandingRow.Build(ownerId, branch, Start.AddDays(-5));
                 op.OriginalSourceSha = op.ReviewedSourceSha = op.SourceLocalSha = op.SourceRemoteSha = join.Sha;
                 await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(join.Schema.ConnectionString)))
@@ -240,7 +240,7 @@ public sealed class C0824BranchRefsDeliveryTests
                 .Where(name => name.EndsWith("/" + Branch, StringComparison.Ordinal)).Order(StringComparer.Ordinal)];
         }
 
-        private static void Git(string cwd, params string[] args)
+        private static void RunGit(string cwd, params string[] args)
         {
             var (code, output) = TryGit(cwd, args);
             if (code != 0) throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {output}");
