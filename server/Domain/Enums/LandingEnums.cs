@@ -35,3 +35,9 @@ public enum LandSourceRelationship
 }
 
 public enum LandApprovalKind { ExplicitCaller = 0, ReviewEvidence = 1, InheritedResume = 2, LateBinding = 3 }
+
+/// <summary>
+/// CARD-0824 S2. <see cref="Deleting"/> is the intent saved before the origin push; <see cref="Deleted"/> and
+/// <see cref="Kept"/> are terminal; <see cref="Deferred"/> is re-evaluated every sweep.
+/// </summary>
+public enum LandBranchDeletionState { None = 0, Deferred = 1, Deleting = 2, Deleted = 3, Kept = 4 }

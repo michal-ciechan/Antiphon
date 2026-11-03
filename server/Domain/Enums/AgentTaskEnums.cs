@@ -282,6 +282,8 @@ public enum AgentTaskEventType
     SourceAdopted = 39,
     /// <summary>CARD-0407. An audited in-turn internal decision check, never a task settlement.</summary>
     DecisionQuestion = 40,
+    /// <summary>CARD-0824 S2. One origin branch deletion state or reason change on a landing row.</summary>
+    LandingBranchDeletion = 41,
 }
 
 /// <summary>

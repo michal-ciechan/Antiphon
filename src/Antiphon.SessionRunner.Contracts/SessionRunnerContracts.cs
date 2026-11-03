@@ -156,6 +156,9 @@ public static class RunnerCapabilityFeatures
 
     /// <summary>CARD-1677 S2: this (Linux) runner answers TempSweep over its registered temp families.</summary>
     public const string TempSweepV1 = "tempSweepV1";
+
+    /// <summary>CARD-0824 S2: this runner answers WorkspaceBranchRefsDelete for its primary repository.</summary>
+    public const string WorkspaceBranchRefsV1 = "workspaceBranchRefsV1";
     public const string WorkspaceRepositoryIdentityV1 = "workspaceRepositoryIdentityV1";
     public const string WorkspaceParkSourceModesV1 = "workspaceParkSourceModesV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";

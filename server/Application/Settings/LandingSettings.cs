@@ -39,4 +39,36 @@ public sealed class LandingSettings
     /// concurrent fallbacks (lands in other repositories) use at most this count each.
     /// </summary>
     public int BuildSlotMemoryFloorFallbackMaxCpuCount { get; set; } = 2;
+
+    /// <summary>
+    /// CARD-0824 S2. Delete the task's origin branch after a confirmed publication. Off by default; enabled per
+    /// runner volume only after its legacy mirrors are drained (docs/orchestration-loop.md). Re-read before every
+    /// deletion, so switching it off stops an in-flight run (the kill switch).
+    /// </summary>
+    public bool DeleteSourceBranchAfterPublication { get; set; }
+
+    /// <summary>CARD-0824 S2 (H-1). Grace after <c>RemoteConfirmedAt</c> before a branch is eligible. Default 24 h.</summary>
+    public int SourceBranchDeleteDelayMinutes { get; set; } = 1440;
+
+    /// <summary>
+    /// CARD-0824 S2 (Q-3). Backlog cutoff: only publications confirmed strictly after this UTC instant are eligible.
+    /// Null means none is, so a first enable cannot sweep the historical backlog.
+    /// </summary>
+    public DateTimeOffset? SourceBranchDeletionAfterUtc { get; set; }
+
+    /// <summary>CARD-0824 S2. Origin deletions (push attempts) started per run. Default 25.</summary>
+    public int MaxSourceBranchDeletionsPerRun { get; set; } = 25;
+
+    /// <summary>
+    /// CARD-0824 S2 (Q-5). Runner volumes whose legacy mirrors are drained. A branch any of whose tasks ran on an
+    /// unlisted runner is deferred (<c>runner_volume_not_enabled</c>). Desktop-only tasks need only the flag.
+    /// </summary>
+    public List<string> SourceBranchDeletionRunnerIds { get; set; } = [];
+
+    /// <summary>CARD-0824 S2. Classify and recheck only: no runner call, no push, no row write.</summary>
+    public bool SourceBranchDeletionDryRun { get; set; }
+
+    /// <summary>CARD-0824 S2 (Q-6). Recurring job id and cron of the deletion sweep.</summary>
+    public string SourceBranchDeletionJobId { get; set; } = "antiphon:published-branch-deletion";
+    public string SourceBranchDeletionCron { get; set; } = "*/15 * * * *";
 }
