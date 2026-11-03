@@ -716,6 +716,14 @@ function c1270D1Present(surface: HTMLElement, text: string): boolean {
   return (surface.textContent ?? '').includes(text) || within(surface).queryAllByDisplayValue(text).length > 0
 }
 
+// Each D-1 case waits three times on fetch-driven state: the populated first read, the query
+// state, then the rendered surface. The 1 s waitFor default failed the Plan effective cells
+// 'fetching with stale data' case once in a full suite (771 ms alone, 2,885 ms under load;
+// CARD-1690). A wait cannot outlast its case, so the bound is 2x the case duration under load:
+// p95 of the 62 cases 1,058-2,296 ms on server2 (one full suite, two 21-file runs) and the 2,885 ms
+// failure, rounded up. Provisional: a few loaded samples, not a measured p95 of the wait itself.
+const C1270_D1_READ_WAIT_MS = 6_000
+
 describe('C1270 D-1 read state table', () => {
   afterEach(() => {
     cleanup()
@@ -739,7 +747,7 @@ describe('C1270 D-1 read state table', () => {
       const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
 
       if (state === 'paused' || state === 'refetch failed' || state === 'fetching with stale data') {
-        await waitFor(() => expect(c1270D1Present(screen.getByTestId(read.surface), read.shown[0])).toBe(true))
+        await waitFor(() => expect(c1270D1Present(screen.getByTestId(read.surface), read.shown[0])).toBe(true), { timeout: C1270_D1_READ_WAIT_MS })
         if (state === 'paused') {
           act(() => {
             onlineManager.setOnline(false)
@@ -767,7 +775,7 @@ describe('C1270 D-1 read state table', () => {
           'success empty': { status: 'success', fetchStatus: 'idle', hasData: true },
           success: { status: 'success', fetchStatus: 'idle', hasData: true },
         }[state])
-      })
+      }, { timeout: C1270_D1_READ_WAIT_MS })
 
       const expected: string | null = state === 'loading' ? read.loading
         : state === 'paused' ? read.paused
@@ -779,7 +787,7 @@ describe('C1270 D-1 read state table', () => {
         for (const label of [read.loading, read.paused, read.failed]) expect(c1270D1Present(current, label)).toBe(label === expected)
         if (valueShown) expect(c1270D1Present(current, read.shown[0])).toBe(true)
         if (state === 'success empty' && read.emptyShown) expect(c1270D1Present(current, read.emptyShown)).toBe(true)
-      })
+      }, { timeout: C1270_D1_READ_WAIT_MS })
       const surface = screen.getByTestId(read.surface)
       for (const text of read.shown) expect(c1270D1Present(surface, text)).toBe(valueShown)
       if (read.emptyShown) expect(c1270D1Present(surface, read.emptyShown)).toBe(state === 'success empty')
