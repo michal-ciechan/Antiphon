@@ -39,6 +39,8 @@ public static class GrokNativeSessionStore
         FirstExistingAncestorIsNonDirectory(path, File.Exists, Directory.Exists, LinkTargetIsAbsent);
 
     // File.Exists is true for a link to a file and for a dangling file link on every OS: neither is a store.
+    // Windows reports a directory link or junction to a missing directory as an existing directory
+    // (Unix reports it as a file), so an existing directory is a store only when its link target exists.
     internal static bool FirstExistingAncestorIsNonDirectory(string path, Func<string, bool> fileExists,
         Func<string, bool> directoryExists, Func<string, bool> linkTargetIsAbsent)
     {
@@ -47,12 +49,23 @@ public static class GrokNativeSessionStore
             if (fileExists(current))
                 return true;
             if (directoryExists(current))
-                return false;
+                return linkTargetIsAbsent(current);
         }
         return false;
     }
 
-    internal static bool LinkTargetIsAbsent(string path) => false;
+    // A link loop or an unreadable link is as unreachable as a missing target.
+    internal static bool LinkTargetIsAbsent(string path)
+    {
+        try
+        {
+            return Directory.ResolveLinkTarget(path, returnFinalTarget: true) is { Exists: false };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
 
     /// <summary>
     /// The session directory (parent of <c>updates.jsonl</c>), or <see langword="null"/> when
