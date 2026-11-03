@@ -344,7 +344,30 @@ public class LiveClaudeEvidenceWiringTests
             ("SM-Split", "runner.SnapshotScreen().Split('x').ShouldBeEmpty();", "raw-actual"),
             ("SM-Arr", "new[] { runner.SnapshotScreen() }.ShouldBeEmpty();", "raw-actual"),
             ("SM-Fast", "Environment.FailFast(runner.SnapshotScreen());", "raw-assertion"),
-            ("SM-Dbg", "Debug.Assert(false, runner.SnapshotScreen());", "raw-assertion")
+            ("SM-Dbg", "Debug.Assert(false, runner.SnapshotScreen());", "raw-assertion"),
+            // CARD-1645 D-3: shapes outside the named categories. Any unprotected count is red.
+            ("D3-ListJoin", "var parts = new List<string>(); parts.Add(runner.SnapshotScreen()); throw new InvalidOperationException(string.Join(\",\", parts));", "raw-any"),
+            ("D3-OutputWriter", "var w = TestContext.Current!.OutputWriter; w.WriteLine(runner.SnapshotScreen());", "raw-any"),
+            ("D3-Ternary", "(DateTime.Now.Ticks > 0 ? Console.Out : Console.Error).WriteLine(runner.SnapshotScreen());", "raw-any"),
+            ("D3-CreateText", "using var t = File.CreateText(\"a.txt\"); t.Write(runner.SnapshotScreen());", "raw-any"),
+            ("D3-AppendText", "using var t = File.AppendText(\"a.txt\"); t.Write(runner.SnapshotScreen());", "raw-any"),
+            ("D3-OpenWrite", "using var t = File.OpenWrite(\"a.txt\"); t.Write(System.Text.Encoding.UTF8.GetBytes(runner.SnapshotScreen()));", "raw-any"),
+            ("D3-LinesAsync", "File.WriteAllLinesAsync(\"a.txt\", new[] { runner.SnapshotScreen() });", "raw-any"),
+            ("D3-Copy", "File.Copy(runner.SnapshotScreen(), \"b\");", "raw-any"),
+            ("D3-StringWriter", "var sw = new StringWriter(); sw.Write(runner.SnapshotScreen()); throw new InvalidOperationException(sw.ToString());", "raw-any"),
+            ("D3-Lambda", "Action<string> boom = s => throw new InvalidOperationException(s); boom(runner.SnapshotScreen());", "raw-any"),
+            ("D3-LocalThrow", "void Boom(string s) => throw new InvalidOperationException(s); Boom(runner.SnapshotScreen());", "raw-any"),
+            ("D3-ActionField", "s_log(runner.SnapshotScreen());", "raw-any"),
+            ("D3-StdErr", "var e = Console.OpenStandardError(); var b = System.Text.Encoding.UTF8.GetBytes(runner.SnapshotScreen()); e.Write(b, 0, b.Length);", "raw-any"),
+            ("D3-Reflection", "typeof(Console).GetMethod(\"WriteLine\", new[] { typeof(string) })!.Invoke(null, new object[] { runner.SnapshotScreen() });", "raw-any"),
+            ("D3-CrossFile", "OtherFile.Log(runner.SnapshotScreen());", "raw-any"),
+            ("D3-ExData", "var ex = new InvalidOperationException(\"x\"); ex.Data[\"s\"] = runner.SnapshotScreen(); throw ex;", "raw-any"),
+            ("D3-ExDataAdd", "var ex = new InvalidOperationException(\"x\"); ex.Data.Add(\"s\", runner.SnapshotScreen()); throw ex;", "raw-any"),
+            ("D3-TraceError", "System.Diagnostics.Trace.TraceError(runner.SnapshotScreen());", "raw-any"),
+            ("D3-SetEnv", "Environment.SetEnvironmentVariable(\"X\", runner.SnapshotScreen());", "raw-any"),
+            ("D3-Field", "s_last = runner.SnapshotScreen();", "raw-any"),
+            ("D3-Member", "this.Last = runner.SnapshotScreen();", "raw-any"),
+            ("D3-LocalHelper", "var s = runner.SnapshotScreen(); OtherFile.Log(s);", "raw-any")
         };
         foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
         {
@@ -369,6 +392,7 @@ public class LiveClaudeEvidenceWiringTests
                     "raw-skip" => found.Skip > 0,
                     "raw-file" => found.File > 0,
                     "raw-process" => found.Process > 0,
+                    "raw-any" => found.Console + found.Assertion + found.Skip + found.Actual + found.File + found.Process + found.Escape > 0,
                     _ => found.Actual > 0
                 };
                 if (!red) throw new InvalidOperationException("C1545 " + insert.Pc + " did not reach expected assertion " + family.Method);
@@ -414,12 +438,12 @@ public class LiveClaudeEvidenceWiringTests
         }
     }
 
-    private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0);
+    private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0, int Escape = 0);
 
     private static SinkCounts Count(IEnumerable<MethodDeclarationSyntax> methods)
     {
         var counts = LiveClaudeSinkAudit.Walk(methods.SelectMany(LiveClaudeSinkAudit.WithHelpers));
-        return new SinkCounts(counts.Recognized, counts.Console, counts.Assertion, counts.Skip, counts.Actual, counts.File, counts.Process);
+        return new SinkCounts(counts.Recognized, counts.Console, counts.Assertion, counts.Skip, counts.Actual, counts.File, counts.Process, counts.Escape);
     }
 
     private static string RunToken()
