@@ -179,6 +179,30 @@ public class Card1653SocketDirTests
         elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
     }
 
+    /// <summary>
+    /// Connect waits inside its budget for an absent socket, so the file it finally reached is
+    /// checked again before the hello: a foreign-owned socket that appears during the wait is refused
+    /// even though the peer reader says it is the host.
+    /// </summary>
+    [Test]
+    public async Task Socket_appearing_during_the_connect_wait_is_checked_before_hello()
+    {
+        await using var world = await PtyHostStrangerWorld.StartAsync(recordHostInstance: true, rootPrefix: "c1653-sock",
+            peerCheck: PtyHostPeerCheckMode.Enforce, manifestPipeName: (root, _) => Path.Combine(root, "p", "host"),
+            listenDelay: TimeSpan.FromSeconds(1));
+        world.Answer(world.SessionId, world.HostInstance);
+        var real = PtyHostSocketDirectory.DefaultProbe;
+        PtyHostPeerPolicy.FileProbeOverride.Value = new LateForeignSocketProbe(real, world.ManifestPipeName);
+        PtyHostPeerPolicy.PeerReaderOverride.Value = world.ProvenPeer();
+
+        (await world.AdoptAsync()).ShouldBe(0, "the socket that appeared is foreign-owned");
+
+        await world.PeerClosedAsync(TimeSpan.FromSeconds(5));
+        world.Connections.ShouldBe(1, "the socket was absent before connect, so the refusal follows the connect");
+        world.Frames.ShouldBeEmpty("the re-check runs before the hello");
+        AssertHeld(world, "adoption");
+    }
+
     [Test]
     public async Task Peer_uid_must_match_the_runner()
     {
@@ -386,6 +410,16 @@ public class Card1653SocketDirTests
             AcceptedStartedAt: SessionGeneration.Normalize(DateTime.UtcNow));
 
     private static uint DirectoryMode(int permissions) => 0x4000 | (uint)permissions;
+
+    /// <summary>Absent while the kernel says so; once the path exists it reads as another uid's socket.</summary>
+    private sealed class LateForeignSocketProbe(IUnixFileProbe real, string path) : IUnixFileProbe
+    {
+        public UnixFileFacts? Lstat(string candidate) => candidate != path ? real.Lstat(candidate)
+            : real.Lstat(candidate) is null ? null
+            : new UnixFileFacts(UnixFileKind.Socket, real.Euid() + 1, 0xC000 | 0b111_101_101);
+
+        public uint Euid() => real.Euid();
+    }
 
     private static Exception Innermost(Exception error)
     {
