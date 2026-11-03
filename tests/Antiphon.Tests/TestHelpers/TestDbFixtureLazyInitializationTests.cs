@@ -414,8 +414,10 @@ public sealed class TestDbFixtureLazyInitializationTests
         start.ArgumentList.Add("child.trx");
         start.ArgumentList.Add("--results-directory");
         start.ArgumentList.Add(root);
-        // CARD-1420 D-7: the C476 child contract is a statement about the migrate path.
+        // CARD-1420 D-7: the C476 child contract is a statement about the migrate path, so neither
+        // the schema cache nor a baked image may stand in for it.
         start.Environment[TestSchemaCache.EnvVar] = "off";
+        start.Environment[TestDbBakedImages.EnvVar] = "off";
         foreach (var pair in extraEnv)
             start.Environment[pair.Key] = pair.Value;
         using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");

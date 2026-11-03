@@ -27,9 +27,12 @@ internal class TestDbOperations
     internal const string PostgresImage = "postgres:16-alpine";
     internal const string DatabaseUser = "test";
 
-    public virtual Task<OwnedTestDbContainer> CreateAsync()
+    public virtual Task<OwnedTestDbContainer> CreateAsync() => CreateFromImageAsync(PostgresImage);
+
+    /// <summary>The same container from another image: a baked one already holds the schema.</summary>
+    public virtual Task<OwnedTestDbContainer> CreateFromImageAsync(string image)
     {
-        var container = new PostgreSqlBuilder(PostgresImage)
+        var container = new PostgreSqlBuilder(image)
             .WithDatabase(TestDbFixture.SharedDatabaseName)
             .WithUsername(DatabaseUser)
             .WithPassword("test")
@@ -79,6 +82,33 @@ internal class TestDbOperations
     }
 
     public virtual Task AfterIsTemplateAsync() => Task.CompletedTask;
+
+    /// <summary>
+    /// True when the clone template already exists as a protected template (a baked image ships
+    /// it), so <see cref="ProtectTemplateAsync"/> and its ~1 s database copy can be skipped.
+    /// </summary>
+    public virtual async Task<bool> TemplateIsProtectedAsync(string maintenanceConnectionString)
+    {
+        await using var maintenance = new NpgsqlConnection(maintenanceConnectionString);
+        await maintenance.OpenAsync().ConfigureAwait(false);
+        await using var command = new NpgsqlCommand(
+            "SELECT datistemplate AND NOT datallowconn FROM pg_database WHERE datname = @t", maintenance);
+        command.Parameters.AddWithValue("t", TestDbFixture.TemplateDatabaseName);
+        return await command.ExecuteScalarAsync().ConfigureAwait(false) is true;
+    }
+
+    /// <summary>Drops a baked template so a reset shared database can be re-protected.</summary>
+    public virtual async Task DropTemplateAsync(string maintenanceConnectionString)
+    {
+        await using var maintenance = new NpgsqlConnection(maintenanceConnectionString);
+        await maintenance.OpenAsync().ConfigureAwait(false);
+        var name = TestDbFixture.TemplateDatabaseName;
+        await TestDbFixtureLifecycle.ExecuteNonQueryAsync(maintenance,
+            $"DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_database WHERE datname = '{name}') THEN " +
+            $"ALTER DATABASE {name} IS_TEMPLATE false; END IF; END $$").ConfigureAwait(false);
+        await TestDbFixtureLifecycle.ExecuteNonQueryAsync(maintenance,
+            $"DROP DATABASE IF EXISTS {name} WITH (FORCE)").ConfigureAwait(false);
+    }
 
     public virtual Task BeforeAllowConnectionsAsync() => Task.CompletedTask;
 
@@ -229,12 +259,10 @@ internal class TestDbOperations
             $"CREATE DATABASE {TestDbFixture.SharedDatabaseName}").ConfigureAwait(false);
     }
 
+    // The fingerprint's reflection list (the same IDs EF's GetMigrations returns, pinned by
+    // TestMigrationFingerprintTests) without building an AppDbContext, which costs ~2 s of JIT.
     private static readonly Lazy<IReadOnlyList<string>> AssemblyMigrations = new(() =>
-    {
-        using var context = new AppDbContext(TestDbFixtureLifecycle.BuildOptions(
-            "Host=127.0.0.1;Database=antiphon_test;Username=test;Password=test"));
-        return context.Database.GetMigrations().ToArray();
-    });
+        TestMigrationFingerprint.Default.MigrationIds);
 
     private static PostgreSqlContainer RequireOwnedSharedTarget(OwnedTestDbContainer container, string databaseName)
     {
@@ -288,6 +316,7 @@ internal sealed class TestDbFixtureLifecycle
     private readonly object _gate = new();
     private readonly TestDbOperations _ops;
     private readonly TestSchemaCache _cache;
+    private readonly TestDbBakedImages _images;
     private readonly SemaphoreSlim _cloneLock = new(1, 1);
     private Task<TestDbReadyState>? _task;
     private Task? _disposeTask;
@@ -298,10 +327,12 @@ internal sealed class TestDbFixtureLifecycle
     /// CARD-1420 D-7: the default lifecycle reads the schema cache from the environment; injected
     /// operations without a cache keep the migrate path.
     /// </summary>
-    public TestDbFixtureLifecycle(TestDbOperations? operations = null, TestSchemaCache? cache = null)
+    public TestDbFixtureLifecycle(
+        TestDbOperations? operations = null, TestSchemaCache? cache = null, TestDbBakedImages? images = null)
     {
         _ops = operations ?? new TestDbOperations();
         _cache = cache ?? (operations is null ? TestSchemaCache.FromEnvironment() : TestSchemaCache.Disabled);
+        _images = images ?? (operations is null ? TestDbBakedImages.FromEnvironment() : TestDbBakedImages.Disabled);
     }
 
     public int Create;
@@ -309,6 +340,7 @@ internal sealed class TestDbFixtureLifecycle
     public int Migrate;
     public int Protect;
     public int Restore;
+    public int ImageStart;
     public int Capture;
     public int CacheFallback;
     public int ResetSharedDatabase;
@@ -432,6 +464,7 @@ internal sealed class TestDbFixtureLifecycle
 
         await _ops.DisposeOwnedAsync(ready.Container).ConfigureAwait(false);
         Interlocked.Increment(ref DisposeOwned);
+        await _images.WaitForBakesAsync().ConfigureAwait(false);
         Interlocked.Increment(ref TeardownDispose);
     }
 
@@ -442,7 +475,12 @@ internal sealed class TestDbFixtureLifecycle
         try
         {
             Interlocked.Increment(ref Create);
-            container = await _ops.CreateAsync().ConfigureAwait(false);
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var schemaKey = ComputeSchemaKey();
+            var baked = schemaKey is { } k && await BakedImageExistsAsync(k.Key).ConfigureAwait(false);
+            container = baked
+                ? await _ops.CreateFromImageAsync(TestDbBakedImages.ImageName(schemaKey!.Value.Key)).ConfigureAwait(false)
+                : await _ops.CreateAsync().ConfigureAwait(false);
             ContainerId = container.Id;
 
             await _ops.StartAsync(container).ConfigureAwait(false);
@@ -452,16 +490,23 @@ internal sealed class TestDbFixtureLifecycle
             var shared = _ops.GetConnectionString(container);
             var maintenance = DeriveMaintenance(shared);
 
-            await PrepareSharedSchemaAsync(container, shared, maintenance).ConfigureAwait(false);
+            var templateReady = false;
+            if (baked)
+                templateReady = await PrepareFromBakedImageAsync(shared, maintenance, schemaKey!.Value.Key, timer).ConfigureAwait(false);
+            else if (await PrepareSharedSchemaAsync(container, shared, maintenance, schemaKey).ConfigureAwait(false) is { } sql)
+                _images.BakeInBackground(schemaKey!.Value.Key, sql);
 
             _ops.ClearPool(shared);
             ClearedPools.Add(shared);
 
-            await _ops.ProtectTemplateAsync(
-                maintenance,
-                TestDbFixture.SharedDatabaseName,
-                TestDbFixture.TemplateDatabaseName).ConfigureAwait(false);
-            Interlocked.Increment(ref Protect);
+            if (!templateReady)
+            {
+                await _ops.ProtectTemplateAsync(
+                    maintenance,
+                    TestDbFixture.SharedDatabaseName,
+                    TestDbFixture.TemplateDatabaseName).ConfigureAwait(false);
+                Interlocked.Increment(ref Protect);
+            }
 
             var ready = new TestDbReadyState
             {
@@ -500,28 +545,95 @@ internal sealed class TestDbFixtureLifecycle
     /// and publish a snapshot. A failed restore resets the database and migrates; a failed capture
     /// is logged and ignored. One stderr line per bootstrap names the outcome.
     /// </summary>
-    private async Task PrepareSharedSchemaAsync(OwnedTestDbContainer container, string shared, string maintenance)
+    /// <summary>
+    /// The schema key when the cache or baked images will use it; null when both are off or the
+    /// key cannot be computed (then the shared schema is migrated, uncached).
+    /// </summary>
+    private (string Key, string ServerSha)? ComputeSchemaKey()
     {
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        if (!_cache.IsEnabled)
-        {
-            await MigrateSharedAsync(shared).ConfigureAwait(false);
-            ReportSchemaSource("off", "-", timer);
-            return;
-        }
-
-        string key, serverSha;
+        if (!_cache.IsEnabled && !_images.IsEnabled)
+            return null;
         try
         {
-            (key, serverSha) = TestSchemaCache.ComputeDefaultKey();
+            return TestSchemaCache.ComputeDefaultKey();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception ex)
         {
             Console.Error.WriteLine($"C1420 schema-cache key unavailable: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task<bool> BakedImageExistsAsync(string key)
+    {
+        try
+        {
+            return await _images.ExistsAsync(key).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"C1420 pg-image lookup failed key={key}: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A baked image already holds the migrated shared database and, normally, its protected clone
+    /// template. Its history must equal the assembly's migrations; anything else drops both and
+    /// migrates. Returns whether the template is ready to clone.
+    /// </summary>
+    private async Task<bool> PrepareFromBakedImageAsync(
+        string shared, string maintenance, string key, System.Diagnostics.Stopwatch timer)
+    {
+        Interlocked.Increment(ref ImageStart);
+        string? failure = null;
+        var templateReady = false;
+        try
+        {
+            using var verify = TestTrace.Span("db-image verify");
+            var applied = await _ops.ReadAppliedMigrationsAsync(shared).ConfigureAwait(false);
+            var expected = _ops.GetAssemblyMigrations();
+            if (!applied.SequenceEqual(expected, StringComparer.Ordinal))
+                failure = $"image history has {applied.Count} migrations, assembly has {expected.Count}";
+            else
+                templateReady = await _ops.TemplateIsProtectedAsync(maintenance).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failure = ex.GetType().Name + ": " + ex.Message;
+        }
+
+        if (failure is null)
+        {
+            ReportSchemaSource("image", key, timer);
+            return templateReady;
+        }
+
+        Console.Error.WriteLine($"C1420 pg-image unusable key={key}: {failure}");
+        _ops.ClearPool(shared);
+        await _ops.DropTemplateAsync(maintenance).ConfigureAwait(false);
+        await _ops.ResetSharedDatabaseAsync(maintenance).ConfigureAwait(false);
+        Interlocked.Increment(ref ResetSharedDatabase);
+        await MigrateSharedAsync(shared).ConfigureAwait(false);
+        ReportSchemaSource("image-fallback", key, timer);
+        return false;
+    }
+
+    /// <returns>The schema SQL a baked image can be made from, or null.</returns>
+    private async Task<byte[]?> PrepareSharedSchemaAsync(
+        OwnedTestDbContainer container, string shared, string maintenance, (string Key, string ServerSha)? schemaKey)
+    {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        if (!_cache.IsEnabled || schemaKey is null)
+        {
             await MigrateSharedAsync(shared).ConfigureAwait(false);
             ReportSchemaSource("off", "-", timer);
-            return;
+            if (schemaKey is null || !_images.IsEnabled)
+                return null;
+            return await TryCaptureAsync(container, shared, schemaKey.Value.Key).ConfigureAwait(false);
         }
+
+        var (key, serverSha) = schemaKey.Value;
 
         if (_cache.TryRead(key, out var snapshot) && snapshot is not null)
         {
@@ -548,7 +660,7 @@ internal sealed class TestDbFixtureLifecycle
                 Interlocked.Increment(ref Restore);
                 _cache.Touch(key);
                 ReportSchemaSource("hit", key, timer);
-                return;
+                return snapshot.Sql;
             }
 
             Console.Error.WriteLine($"C1420 schema-cache restore failed key={key}: {failure}");
@@ -559,10 +671,11 @@ internal sealed class TestDbFixtureLifecycle
             Interlocked.Increment(ref ResetSharedDatabase);
             await MigrateSharedAsync(shared).ConfigureAwait(false);
             ReportSchemaSource("fallback", key, timer);
-            return;
+            return null;
         }
 
         await MigrateSharedAsync(shared).ConfigureAwait(false);
+        byte[]? captured = null;
         try
         {
             var sql = await _ops.CaptureSnapshotAsync(container, TestDbFixture.SharedDatabaseName).ConfigureAwait(false);
@@ -570,6 +683,7 @@ internal sealed class TestDbFixtureLifecycle
             if (!applied.SequenceEqual(_ops.GetAssemblyMigrations(), StringComparer.Ordinal))
                 throw new InvalidOperationException("migrated history differs from the assembly migrations");
             Interlocked.Increment(ref Capture);
+            captured = sql;
             if (_cache.Publish(key, new TestSchemaSnapshot(sql, [.. applied], serverSha, TestDbOperations.PostgresImage)))
                 _cache.Prune(DateTimeOffset.UtcNow);
         }
@@ -579,6 +693,25 @@ internal sealed class TestDbFixtureLifecycle
         }
 
         ReportSchemaSource("miss", key, timer);
+        return captured;
+    }
+
+    private async Task<byte[]?> TryCaptureAsync(OwnedTestDbContainer container, string shared, string key)
+    {
+        try
+        {
+            var sql = await _ops.CaptureSnapshotAsync(container, TestDbFixture.SharedDatabaseName).ConfigureAwait(false);
+            var applied = await _ops.ReadAppliedMigrationsAsync(shared).ConfigureAwait(false);
+            if (!applied.SequenceEqual(_ops.GetAssemblyMigrations(), StringComparer.Ordinal))
+                throw new InvalidOperationException("migrated history differs from the assembly migrations");
+            Interlocked.Increment(ref Capture);
+            return sql;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"C1420 pg-image capture failed key={key}: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
     }
 
     private async Task MigrateSharedAsync(string shared)

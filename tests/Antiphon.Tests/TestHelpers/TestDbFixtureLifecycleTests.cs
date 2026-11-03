@@ -31,6 +31,24 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     public int RestoreCalls;
     public int ResetCalls;
     public byte[]? RestoredSql;
+    public string? CreatedFromImage;
+    public bool TemplateBaked;
+    public int DropTemplateCalls;
+
+    public override Task<bool> TemplateIsProtectedAsync(string maintenanceConnectionString) =>
+        Task.FromResult(TemplateBaked);
+
+    public override Task DropTemplateAsync(string maintenanceConnectionString)
+    {
+        Interlocked.Increment(ref DropTemplateCalls);
+        return Task.CompletedTask;
+    }
+
+    public override Task<OwnedTestDbContainer> CreateFromImageAsync(string image)
+    {
+        CreatedFromImage = image;
+        return CreateAsync();
+    }
 
     public override Task<OwnedTestDbContainer> CreateAsync()
     {

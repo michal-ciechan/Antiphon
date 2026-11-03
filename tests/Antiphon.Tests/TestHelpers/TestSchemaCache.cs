@@ -14,7 +14,9 @@ internal sealed record TestSchemaSnapshot(
     string Image);
 
 /// <summary>
-/// CARD-1420: host-wide store of migrated schema snapshots keyed by the migrations assembly.
+/// CARD-1420: host-wide store of migrated schema snapshots keyed by the migrations themselves
+/// (<see cref="TestMigrationFingerprint"/>), not the whole server assembly, so a server edit that
+/// touches no migration still hits.
 /// An entry is <c>&lt;root&gt;/&lt;key&gt;/schema.sql</c> plus <c>manifest.json</c>; publish is a
 /// temp directory renamed into place, so concurrent publishers keep one winner and a reader never
 /// sees a partial entry. Anything unverifiable is a miss.
@@ -22,7 +24,7 @@ internal sealed record TestSchemaSnapshot(
 internal sealed class TestSchemaCache
 {
     public const string EnvVar = "ANTIPHON_TEST_SCHEMA_CACHE";
-    public const string Format = "c1420-v1";
+    public const string Format = "c1420-v2";
     public const string DefaultDirectoryName = "antiphon-test-schema-cache";
     public const string SqlFileName = "schema.sql";
     public const string ManifestFileName = "manifest.json";
@@ -71,18 +73,18 @@ internal sealed class TestSchemaCache
         return new TestSchemaCache(Path.GetFullPath(value));
     }
 
-    public static string ComputeKey(byte[] serverAssemblyBytes, string image, string efVersion, string npgsqlVersion)
+    public static string ComputeKey(byte[] migrationsFingerprint, string image, string efVersion, string npgsqlVersion)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         AppendField(hash, Encoding.UTF8.GetBytes(Format));
-        AppendField(hash, serverAssemblyBytes);
+        AppendField(hash, migrationsFingerprint);
         AppendField(hash, Encoding.UTF8.GetBytes(image));
         AppendField(hash, Encoding.UTF8.GetBytes(efVersion));
         AppendField(hash, Encoding.UTF8.GetBytes(npgsqlVersion));
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()[..32];
     }
 
-    /// <summary>The key of this process's migrations assembly, image and EF provider versions.</summary>
+    /// <summary>The key of this process's migrations, image and EF provider versions.</summary>
     public static (string Key, string ServerAssemblySha256) ComputeDefaultKey() => DefaultKey.Value;
 
     public bool TryRead(string key, out TestSchemaSnapshot? snapshot)
@@ -272,9 +274,11 @@ internal sealed class TestSchemaCache
 
     private static (string Key, string ServerAssemblySha256) ComputeDefaultKeyCore()
     {
-        var server = File.ReadAllBytes(typeof(Antiphon.Server.Infrastructure.Data.AppDbContext).Assembly.Location);
+        using var span = TestTrace.Span("db-schema key");
+        var contextType = typeof(Antiphon.Server.Infrastructure.Data.AppDbContext);
+        var server = File.ReadAllBytes(contextType.Assembly.Location);
         var key = ComputeKey(
-            server,
+            TestMigrationFingerprint.Default.Sha256,
             TestDbOperations.PostgresImage,
             InformationalVersion(typeof(Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions).Assembly),
             InformationalVersion(typeof(Microsoft.EntityFrameworkCore.NpgsqlDbContextOptionsBuilderExtensions).Assembly));
