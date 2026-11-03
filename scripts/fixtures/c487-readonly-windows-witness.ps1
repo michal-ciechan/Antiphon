@@ -1,5 +1,6 @@
 # String-only Windows cleanup witness. No real filesystem or process is changed.
-param([string]$SourceRef = '')
+# Case and ResultsDirectory are the ScriptHarness launch arguments (C487_WindowsReadOnlyWitness); unused.
+param([string]$SourceRef = '', [string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if ($SourceRef) {
