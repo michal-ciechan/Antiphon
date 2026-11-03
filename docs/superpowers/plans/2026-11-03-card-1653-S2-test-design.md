@@ -517,7 +517,11 @@ or `PtyHostFakeHost`; the new classes diverge after `Card1653` from each other a
 build cannot reuse a Linux one); `import` may print the CARD-1493 equivalent-build warning for it, which does
 not change the exit code.
 
-**Import verdict.** See the line below, written after `import --plan` ran on this document.
+**Import verdict (measured, server2, 2026-11-03, one lease, held 39 s):** `dotnet run --project
+tools/Antiphon.Checkpoints -- import --plan docs/superpowers/plans/2026-11-03-card-1653-S2-test-design.md
+--out .antiphon/c1653-s2-manifest.yaml` → exit 0, `imported 9 rows`. One warning, as expected:
+`WARNING CP-7: Build 'bin-c1653-s2w' duplicates 'bin-c1653-s2l' from CP-4 (same project …, After 'S2', Repeat 1)`.
+It is kept on purpose: Run W builds on Windows and Run L on Linux, and the two runs never share a build.
 
 ### Cost
 
