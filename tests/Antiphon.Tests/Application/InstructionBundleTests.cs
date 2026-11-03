@@ -927,8 +927,11 @@ public class InstructionBundleTests
     public void each_stage_bundle_is_ascii_and_under_the_size_cap(string key)
     {
         var text = InstructionBundles.TextOf(key);
+        // CARD-1647: stage-review alone carries the review-rounds evidence lines (reviewRound,
+        // reviewedRange) on top of pinned verbatim instructions, so its cap is raised to 2,600.
+        var cap = key == InstructionBundles.StageReview ? 2_600 : 2_500;
 
-        text.Length.ShouldBeLessThanOrEqualTo(2_500, $"{key} is {text.Length} chars; stage bundles cap at 2,500");
+        text.Length.ShouldBeLessThanOrEqualTo(cap, $"{key} is {text.Length} chars; stage bundles cap at {cap:N0}");
         foreach (var ch in text)
         {
             ((int)ch).ShouldBeLessThan(128, $"{key} is not ASCII-safe (U+{(int)ch:X4})");

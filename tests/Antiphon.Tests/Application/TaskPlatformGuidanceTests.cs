@@ -14,7 +14,8 @@ public sealed class TaskPlatformGuidanceTests
         {
             var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", name))
                 .Replace("\r\n", "\n").Replace('\r', '\n').Trim();
-            text.Length.ShouldBeLessThanOrEqualTo(2_480, name);
+            // CARD-1647: stage-review's cap is 2,600 (review-rounds evidence lines), the rest 2,500.
+            text.Length.ShouldBeLessThanOrEqualTo(name == "stage-review.md" ? 2_580 : 2_480, name);
         }
     }
 
