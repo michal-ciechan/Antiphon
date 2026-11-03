@@ -60,6 +60,10 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Ceiling decision', color: 'warning', icon: TbClockPause,
     hint: 'The delegate continues and still consumes capacity. Open the task to inspect its ceiling decision.',
   },
+  WorkspaceDiskLow: {
+    label: 'Worktree disk low', color: 'warning', icon: TbAlertTriangle,
+    hint: 'The worktree volume of an allow-listed Linux runner crossed the configured used percentage in a fresh host sample. Report only - nothing is deleted.',
+  },
   TaskInputUnreadable: {
     label: 'Input unreadable', color: 'warning', icon: TbEyeOff,
     hint: 'The delegate says it cannot read a caller refinement or reply. Open the task and session evidence.',
