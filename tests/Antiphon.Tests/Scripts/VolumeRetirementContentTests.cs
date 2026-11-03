@@ -966,4 +966,37 @@ public sealed class VolumeRetirementContentTests
             "OUTPUT clearable ok",
         }, string.Join("\n", rows));
     }
+
+    // Task bb0cd0ec: deploy-temp lifts its own deployment hold after deploy-temp-runner has
+    // created the four temp volumes. Only the reactivation clear of a retired placeholder
+    // runs the volume/journal check; the hold lift must reach its POST, and the reactivation
+    // clear must still refuse while the volumes are present.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Hold_lift_clear_after_deploy_is_not_refused_for_its_own_volumes()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var rows = await VolumeRetirementFixture.RunOutputWitness("HoldLift");
+        rows.ShouldBe(new[]
+        {
+            "OUTPUT reactivate ok posts=1",
+            "OUTPUT holdlift ok posts=2",
+            "OUTPUT reactivate-retained threw:TempVolumesRetained antiphon-runner-temp_work posts=2",
+        }, string.Join("\n", rows));
+    }
+
+    // Task bb0cd0ec: the hold lift skips the volume check only for the runner this run
+    // deployed. A retired runner or another build refuses under the lock before the POST.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Hold_lift_clear_refuses_a_retired_or_other_build_runner()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var rows = await VolumeRetirementFixture.RunOutputWitness("HoldLiftRefused");
+        rows.ShouldBe(new[]
+        {
+            "OUTPUT holdlift-retired threw:TempRunnerRetiredDuringHold posts=0",
+            "OUTPUT holdlift-other-build threw:TempHoldLiftBuildMismatch posts=0",
+        }, string.Join("\n", rows));
+    }
 }
