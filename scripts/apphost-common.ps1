@@ -1133,11 +1133,12 @@ function Test-AppHostProcessAlive {
 function Get-AppHostLaunchedPid {
     <#
       CARD-1680: the AppHost wrapper PID dev-aspire.ps1 wrote for THIS launch.
-      A pid file older than the launch belongs to the AppHost the restart killed.
+      StaleStampUtc is the pid file's mtime before the launch; a file still
+      carrying it belongs to the AppHost the restart killed, whatever its age.
     #>
-    param([Parameter(Mandatory = $true)][string]$PidFile, [Parameter(Mandatory = $true)][datetime]$SinceUtc)
+    param([Parameter(Mandatory = $true)][string]$PidFile, $StaleStampUtc)
     $item = Get-Item -LiteralPath $PidFile -ErrorAction SilentlyContinue
-    if (-not $item -or $item.LastWriteTimeUtc -lt $SinceUtc.AddSeconds(-2)) { return $null }
+    if (-not $item -or ($null -ne $StaleStampUtc -and $item.LastWriteTimeUtc -eq $StaleStampUtc)) { return $null }
     $text = $null
     try { $text = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction Stop).Trim() } catch { return $null }
     if ($text -match '^\d+$') { return [int]$text }

@@ -282,7 +282,9 @@ try {
     $launchTag = [guid]::NewGuid().ToString('N')
     $launcherOut = Join-Path $logDir "apphost-launcher-$launchTag.out"
     $launcherErr = Join-Path $logDir "apphost-launcher-$launchTag.err"
-    $launchStartedUtc = [datetime]::UtcNow
+    $stalePidStamp = $null
+    $stalePidItem = Get-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue
+    if ($stalePidItem) { $stalePidStamp = $stalePidItem.LastWriteTimeUtc }
     $devProcess = Start-AppHostDevLaunch -ArgumentList $devArgs -OutputPath $launcherOut -ErrorPath $launcherErr
     $keepRestartLock = $true
 
@@ -336,7 +338,7 @@ try {
         if (-not $backendOk) {
             # CARD-1680: a dead launch ends the wait at once instead of at the window.
             if ($null -ne (Get-AppHostLauncherFailure -Process $devProcess)) { $waitEnd = 'launcher-exited'; break }
-            $appHostLaunchPid = Get-AppHostLaunchedPid -PidFile $pidFile -SinceUtc $launchStartedUtc
+            $appHostLaunchPid = Get-AppHostLaunchedPid -PidFile $pidFile -StaleStampUtc $stalePidStamp
             if ($appHostLaunchPid -and -not (Test-AppHostProcessAlive -ProcessId $appHostLaunchPid) -and
                 @(Get-AppHostPortOwners 17202).Count -eq 0) {
                 $keepRestartLock = $false
