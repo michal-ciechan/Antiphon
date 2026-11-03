@@ -885,4 +885,68 @@ public sealed class VolumeRetirementContentTests
         File.Exists(Path.Combine(fixture.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
             .ShouldBeFalse("c1665-a3: the refusal precedes the recycle journal");
     }
+
+    // CARD-1673 (M65-B). The generation binding refuses a present owned temp container on its own:
+    // it answers before the topology layer (c1008_owned_mounts) is ever called, so that layer cannot
+    // mask its loss. The wrapper only records that the topology layer was reached.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Temp_recycle_generation_binding_refuses_a_present_owned_container_alone()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        fixture.ReloadDocker();
+        fixture.Statuses["server2-temp"]!["runnerSessions"] = 0;
+        fixture.Docker["containers"]!.AsArray().Add(
+            fixture.Container('7', "antiphon-runner-temp", "session-runner", running: false));
+        var reached = Path.Combine(fixture.Root, "c1673-owned-mounts-reached");
+        var run = await fixture.Run("retire-temp-runner", extra: $$"""
+            eval "$(declare -f c1008_owned_mounts | sed '1s/^c1008_owned_mounts/c1673_real_owned_mounts/')"
+            c1008_owned_mounts() { : > '{{reached}}'; c1673_real_owned_mounts "$@"; }
+            """);
+        run.Exit.ShouldBe(2, "c1673-b: a present owned temp container refuses; " + run.Output);
+        run.Output.ShouldContain("DIAGNOSIS=RecycleContainerStateUnknown");
+        File.Exists(reached).ShouldBeFalse("c1673-b: the generation binding refused before the topology layer; " + run.Output);
+        File.Exists(Path.Combine(fixture.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
+            .ShouldBeFalse("c1673-b: the refusal precedes the recycle journal");
+    }
+
+    // CARD-1673 (M65-T). The topology layer refuses a present owned temp container on its own: the
+    // generation binding is shown a census without the project's containers (so it passes), and the
+    // owned-container topology at the recycle (the temp model declares no services) still refuses
+    // with the same diagnosis before any run, stop or rm and before the journal.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Temp_recycle_topology_layer_refuses_a_present_owned_container_alone()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        fixture.ReloadDocker();
+        fixture.Statuses["server2-temp"]!["runnerSessions"] = 0;
+        fixture.Docker["containers"]!.AsArray().Add(
+            fixture.Container('7', "antiphon-runner-temp", "session-runner", running: false));
+        var bound = Path.Combine(fixture.Root, "c1673-generation-bound");
+        var traceBefore = fixture.Trace.Length;
+        var run = await fixture.Run("retire-temp-runner", extra: $$"""
+            eval "$(declare -f c1008_bind_generation | sed '1s/^c1008_bind_generation/c1673_real_bind_generation/')"
+            c1008_bind_generation() {
+                local c1673_census="$C1008_CENSUS"
+                C1008_CENSUS="$(printf '%s' "$c1673_census" | jq -c --arg p "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]!=$p)]')"
+                c1673_real_bind_generation "$@"
+                C1008_CENSUS="$c1673_census"
+                : > '{{bound}}'
+            }
+            """);
+        File.Exists(bound).ShouldBeTrue("c1673-t: the generation binding passed with the container hidden; " + run.Output);
+        run.Exit.ShouldBe(2, "c1673-t: the topology layer refuses the present owned temp container; " + run.Output);
+        run.Output.ShouldContain("DIAGNOSIS=RecycleContainerStateUnknown");
+        var observed = fixture.Trace.Skip(traceBefore).ToArray();
+        observed.Count(a => a[0] == "run").ShouldBe(0, "c1673-t: no content audit before the refusal; " + run.Output);
+        observed.Count(a => a[0] is "stop" or "rm" or "create" or "start").ShouldBe(0, "c1673-t: no container effect");
+        fixture.Removed.ShouldBeEmpty("c1673-t: no volume removed");
+        File.Exists(Path.Combine(fixture.Root, "server", "recycle", "c100800000000000000000000000000000001.json"))
+            .ShouldBeFalse("c1673-t: the refusal precedes the recycle journal");
+    }
 }

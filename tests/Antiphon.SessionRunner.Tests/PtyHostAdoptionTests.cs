@@ -233,6 +233,46 @@ public class PtyHostAdoptionTests
         KillBestEffort(dto.Pid);
     }
 
+    /// <summary>
+    /// CARD-1673 (CARD-1652 PC-3d). A host that recorded its child's real exit and then died is
+    /// registered from the manifest alone (<c>CreateAdoptedExited</c>, no host to ask): the
+    /// recorded exit code and reason survive adoption, not ProcessVanished or a null code.
+    /// </summary>
+    [Test]
+    public async Task Dead_host_with_a_recorded_exit_is_registered_with_that_exit_code()
+    {
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var manifestPath = PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId);
+        Directory.CreateDirectory(settings.PtyHostManifestDir);
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        new PtyHostManifest
+        {
+            SessionId = sessionId,
+            PipeName = "c1673-dead-host-" + sessionId.ToString("N"),
+            HostPid = int.MaxValue - 7,
+            HostStartTimeUtc = DateTime.UtcNow.AddMinutes(-5),
+            Cwd = Path.GetTempPath(),
+            CreatedAtUtc = DateTime.UtcNow.AddMinutes(-5),
+            ExitCode = 7,
+            ExitReason = "ProcessExited",
+            ExitedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            AcceptedStartedAt = generation,
+        }.SaveAtomic(manifestPath);
+
+        var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var adopted = await runtime.AdoptOrphanedHostsAsync(new DeadProcessProbe(), CancellationToken.None);
+
+        adopted.ShouldBe(0, "the host is gone, so nothing is reconnected");
+        var dto = runtime.Get(sessionId);
+        dto.Status.ShouldBe("Exited");
+        dto.ExitCode.ShouldBe(7, "the manifest's recorded exit code is the session's fate");
+        dto.ExitReason.ShouldBe("ProcessExited");
+        dto.AcceptedStartedAt.ShouldBe(generation);
+        File.Exists(manifestPath).ShouldBeFalse();
+        await runtime.DisposeAsync();
+    }
+
     [Test]
     public async Task KillAll_kills_every_live_session_and_their_hosts()
     {
