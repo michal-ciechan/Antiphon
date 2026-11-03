@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "382fe6bcbef3cd9c468d498d9501c8e345b8c06e143c0950f2b6665668a40ffc",
+  "policyHash": "82affc88957d2e87e8abeaa62577b1fd10bd5db397eb2509aa6c81d21f21419b",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -663,6 +663,20 @@
           "platform": "windows",
           "reason": "Linux-only by construction: CP-21 phone-home join requires Linux FIFOs and Unix file modes. The case remains required on Linux.",
           "owner": "CARD-1032"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824BranchRefsDeliveryTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CP-18 op-48 delivery runs in the CARD-1032 phone-home join world (Linux FIFOs and Unix file modes). The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824BranchDeletionRecycleAuditTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CP-17 runs the real CARD-1008 recycle audit (bash, flock, real Git and POSIX mounts). The case remains required on Linux.",
+          "owner": "CARD-0824"
         },
         {
           "suite": "antiphon",
