@@ -747,6 +747,30 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    public async Task Known_leaf_with_a_trailing_space_is_reported_not_skipped()
+    {
+        // CARD-1677 S1 hardening mutation XS (task cde14651). An inventory name that is a known task leaf plus a
+        // trailing space is not that leaf: it is held and reported with the owner hint, never silently taken
+        // for the known leaf. Control: the eligible task itself is still sent, and its own exact leaf is not reported.
+        await using var w = await World.StartAsync();
+        var control = await w.EligibleAsync();
+        var leaf = "task-" + control.ToString("N")[..8];
+        w.Inventory.Add(new WorkspaceRetentionEntry("worktrees", leaf, true, false, true, false, null));
+        w.Inventory.Add(new WorkspaceRetentionEntry("worktrees", leaf + " ", true, false, true, false, null));
+
+        await w.TickAsync();
+
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(control);
+        var rows = (await w.RowsAsync()).Where(r => r.Lane == RunnerWorktreeRetentionService.LaneInventory).ToList();
+        var row = rows.ShouldHaveSingleItem("the exact leaf is known; the space-suffixed name is reported once");
+        row.Path.ShouldBe("/work/worktrees/" + leaf + " ");
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("identity_unknown");
+        row.TaskId.ShouldBe(control);
+        row.Branch.ShouldNotBeNull().ShouldStartWith("owner_hint:" + leaf + ":");
+    }
+
+    [Test]
     public async Task Retain_round_trip_real_runner(CancellationToken ct)
     {
         // V-39 (F-4). Producer -> client -> socket -> real runner dispatcher -> real engine -> real git.
