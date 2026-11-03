@@ -417,6 +417,42 @@ public class LiveClaudeEvidenceWiringTests
                 Console.WriteLine("C1545 " + insert.Pc + " assertion-red; restored-green " + family.Method + " " + insert.Assertion);
             }
         }
+        // CARD-1645 review r2 D-1: with a field or property named _ in the class, "_ = x" and
+        // "out _" store into it; a discard or a parameter named _ stays local.
+        const string keep = "static bool Keep(string value, out string kept) { kept = value; return true; } ";
+        var underscores = new (string Pc, string Member, string Code, bool Red)[]
+        {
+            ("R2D1-FieldStore", "private static string _ = \"\";", "_ = runner.SnapshotScreen();", true),
+            ("R2D1-FieldOut", "private static string _ = \"\";", keep + "Keep(runner.SnapshotScreen(), out _);", true),
+            ("R2D1-PropertyStore", "private static string _ { get; set; } = \"\";", "_ = runner.SnapshotScreen();", true),
+            ("R2D1-Discard", "", "_ = runner.SnapshotScreen();", false),
+            ("R2D1-DiscardOut", "", keep + "Keep(runner.SnapshotScreen(), out _);", false),
+            ("R2D1-OtherParameter", "private static void Other(string _) { }", "_ = runner.SnapshotScreen(); " + keep + "Keep(runner.SnapshotScreen(), out _);", false),
+            ("R2D1-OwnParameter", "", "void Hold(string _) { _ = runner.SnapshotScreen(); } Hold(\"x\");", false)
+        };
+        var missed = new List<string>();
+        foreach (var family in new[] { Callers[0], Callers[3], Callers[5] })
+        {
+            var source = LiveClaudeExecutableAudit.Read(family.Path);
+            var close = (LiveClaudeExecutableAudit.Method(source, family.Method).Body
+                ?? throw new InvalidOperationException("C1545 R2D1/no-body")).ToString();
+            var brace = close.LastIndexOf('}');
+            foreach (var underscore in underscores)
+            {
+                var mutated = source.Replace(close, close[..brace] + underscore.Code + close[brace..], StringComparison.Ordinal);
+                if (underscore.Member.Length > 0)
+                {
+                    var at = LiveClaudeExecutableAudit.Method(mutated, family.Method).SpanStart;
+                    mutated = mutated.Insert(at, underscore.Member + "\n\n    ");
+                }
+                var found = Count([LiveClaudeExecutableAudit.Method(mutated, family.Method)]);
+                var total = found.Console + found.Assertion + found.Skip + found.Actual + found.File + found.Process + found.Escape;
+                if (underscore.Red ? total < 1 : total != 0) missed.Add(underscore.Pc + " count=" + total + " " + family.Method);
+                else Console.WriteLine("C1545 " + underscore.Pc + (underscore.Red ? " assertion-red" : " discard-zero") + "; restored-green " + family.Method);
+            }
+        }
+        if (missed.Count > 0)
+            throw new InvalidOperationException("C1545 " + string.Join(", ", missed) + " did not reach expected assertion");
         var startup = LiveClaudeExecutableAudit.Read(Callers[0].Path);
         var helper = LiveClaudeExecutableAudit.Method(startup, "RunStartupControlAsync");
         var helperBody = helper.Body ?? throw new InvalidOperationException("C1545 N8/no-body");

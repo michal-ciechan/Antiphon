@@ -479,6 +479,31 @@ public class LiveLaneEvidenceTests
             watchdog.Replace(callFrom, "OtherFile.Log(debug.Peek(after)); " + callFrom, StringComparison.Ordinal));
         if (returned < 1) throw new InvalidOperationException("C1545 R1D1-Return did not reach expected assertion");
         Console.WriteLine("C1545 R1D1-Return assertion-red; restored-green debug.Peek");
+        // CARD-1645 review r2 D-1: with a field or property named _ in the class, "_ = x" and
+        // "out _" store into it; with no such declaration they stay discards.
+        const string memberFrom = "    private static LiveClaudeExecutable RequireExecutable()";
+        const string keep = "static bool Keep(string value, out string kept) { kept = value; return true; } ";
+        var underscores = new (string Pc, string Member, string Code, bool Red)[]
+        {
+            ("R2D1-FieldStore", "private static string _ = \"\";", "_ = snapshot.RenderedScreen; ", true),
+            ("R2D1-FieldOut", "private static string _ = \"\";", keep + "Keep(snapshot.RenderedScreen, out _); ", true),
+            ("R2D1-PropertyStore", "private static string _ { get; set; } = \"\";", "_ = snapshot.RenderedScreen; ", true),
+            ("R2D1-Discard", "", "_ = snapshot.RenderedScreen; ", false),
+            ("R2D1-DiscardOut", "", keep + "Keep(snapshot.RenderedScreen, out _); ", false)
+        };
+        if (watchdog.Split(memberFrom).Length != 2) throw new InvalidOperationException("C1545 R2D1 anchor");
+        var missed = new List<string>();
+        foreach (var underscore in underscores)
+        {
+            var mutated = watchdog.Replace(callFrom, underscore.Code + callFrom, StringComparison.Ordinal);
+            if (underscore.Member.Length > 0)
+                mutated = mutated.Replace(memberFrom, "    " + underscore.Member + "\n\n" + memberFrom, StringComparison.Ordinal);
+            var count = RawSinks(diagnostics, mutated);
+            if (underscore.Red ? count < 1 : count != 0) missed.Add(underscore.Pc + " count=" + count);
+            else Console.WriteLine("C1545 " + underscore.Pc + (underscore.Red ? " assertion-red" : " discard-zero") + "; restored-green");
+        }
+        if (missed.Count > 0)
+            throw new InvalidOperationException("C1545 " + string.Join(", ", missed) + " did not reach expected assertion");
     }
 
     private static int RawSinks(string diagnostics, string watchdog)
