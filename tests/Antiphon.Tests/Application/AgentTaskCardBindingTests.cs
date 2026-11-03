@@ -179,6 +179,51 @@ public class AgentTaskCardBindingTests
     }
 
     /// <summary>
+    /// CARD-1678 (sweep 2deb2419 M47-8). Only a Succeeded Review is a completed round: a card whose
+    /// three prior Reviews are Failed, Canceled and Working is not flagged, while a card with three
+    /// Succeeded Reviews is.
+    /// </summary>
+    [Test]
+    public async Task C1678_only_succeeded_reviews_count_toward_the_round_limit()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
+        var (_, board) = await SeedProjectBoardAsync(db);
+        var unfinished = await SeedCardAsync(db, board.Id, "CARD-0168");
+        var completed = await SeedCardAsync(db, board.Id, "CARD-0169");
+        foreach (var status in new[] { AgentTaskStatus.Failed, AgentTaskStatus.Canceled, AgentTaskStatus.Working })
+        {
+            var row = await SeedTaskAsync(db, workspace.Path, unfinished.Id);
+            row.Role = AgentTaskRole.Review;
+            row.Status = status;
+            if (status != AgentTaskStatus.Working)
+                row.CompletedAt = DateTime.UtcNow;
+        }
+        for (var round = 1; round <= 3; round++)
+        {
+            var row = await SeedTaskAsync(db, workspace.Path, completed.Id);
+            row.Role = AgentTaskRole.Review;
+            row.Status = AgentTaskStatus.Succeeded;
+            row.CompletedAt = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db, workspace);
+        var review = Request(workspace.Path) with
+        {
+            Goal = "Review the change.", Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Review, Workspace = WorkspaceMode.Shared,
+        };
+        var control = await service.CreateAsync(review with { Card = unfinished.Id.ToString() }, Manual(workspace.Path), CancellationToken.None);
+        (control.Warning ?? "").ShouldNotContain(ReviewRoundGuard.Code, customMessage: "Failed, Canceled and Working Reviews are not completed rounds");
+        (await EventsFor(db, control.Id)).ShouldNotContain(e => e.Type == AgentTaskEventType.Warning && e.Detail.Contains(ReviewRoundGuard.Code));
+
+        var flagged = await service.CreateAsync(review with { Card = completed.Id.ToString() }, Manual(workspace.Path), CancellationToken.None);
+        flagged.Warning.ShouldNotBeNull();
+        flagged.Warning!.ShouldContain("CARD-0169 already has 3 completed Review tasks");
+    }
+
+    /// <summary>
     /// CARD-1647 D-1. The round guard warns and never blocks: a brief whose round line carries a
     /// non-ASCII digit (fullwidth U+FF14) still creates the Review, and the count rule still applies.
     /// </summary>
