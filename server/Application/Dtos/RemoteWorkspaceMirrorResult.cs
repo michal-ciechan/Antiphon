@@ -27,6 +27,6 @@ public sealed record WorkspaceSlotColdResetRouteRequest(IReadOnlyList<string>? S
 /// <summary>
 /// Review f4c293bc D-1. <c>POST /api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release</c>: an operator
 /// records the release of a <c>workspace_slot_release_stuck</c> slot for this task and lease generation. CARD-1649 A-2:
-/// the optional requester (at most 64 characters, never a credential) goes into the audit event.
+/// the optional requester (at most 64 UTF-16 code units, never a credential) goes into the audit event.
 /// </summary>
 public sealed record WorkspaceSlotRecordReleaseRouteRequest(Guid TaskId, int Generation, string Reason, string? Requester = null);

@@ -500,8 +500,11 @@ public sealed class DataRetentionService
     /// CARD-1662: the failed attempts are budgeted per sweep. When a range ends with
     /// <see cref="RetentionSettings.TaskPruneMaxFailedAttemptsPerSweep"/> or more failed attempts
     /// spent, the pass stops for this sweep and reports Failed (the last failure), the later passes
-    /// run, and the cursor resumes after that range. Without it a sweep in which every batch times
-    /// out ran every batch up to the cap three times (about 2.5 hours at the defaults).
+    /// run, and the cursor resumes after that range (CARD-1670: a short final range completes the scan and
+    /// still reports the spent budget). The budget is read when a range ends and a range gets all
+    /// <see cref="TaskBatchAttempts"/> attempts, so one sweep spends at most the budget plus two.
+    /// Without it a sweep in which every batch times out ran every batch up to the cap three times
+    /// (about 2.5 hours at the defaults).
     /// </summary>
     private async Task<int> PruneTaskBatchesAsync(TaskPruneTally tally, CancellationToken ct)
     {
@@ -565,6 +568,18 @@ public sealed class DataRetentionService
                     }
                 }
                 tally.BatchMilliseconds.Add((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                // CARD-1670 (f). The budget is read at every range end, the short final range included, so a budget
+                // spent there reports FailureBudgetSpent (and Failed) the same as one spent on a full range.
+                var budgetSpent = tally.FailedAttempts >= failureBudget;
+                if (budgetSpent)
+                {
+                    tally.FailureBudgetSpent = true;
+                    skipped ??= lastFailure;
+                    _logger.LogWarning(
+                        "Data retention task prune stopped for this sweep after {FailedAttempts} failed attempt(s) (budget {Budget}); the scan resumes next sweep",
+                        tally.FailedAttempts, failureBudget);
+                }
+
                 if (batch.Count < batchSize)
                 {
                     _taskCursor.After = null;
@@ -573,15 +588,8 @@ public sealed class DataRetentionService
                 }
 
                 _taskCursor.After = batch[^1];
-                if (tally.FailedAttempts >= failureBudget)
-                {
-                    tally.FailureBudgetSpent = true;
-                    skipped ??= lastFailure;
-                    _logger.LogWarning(
-                        "Data retention task prune stopped for this sweep after {FailedAttempts} failed attempt(s) (budget {Budget}); the scan resumes next sweep",
-                        tally.FailedAttempts, failureBudget);
+                if (budgetSpent)
                     break;
-                }
             }
         }
         finally

@@ -32,7 +32,7 @@ public sealed class WorkspaceSlotReleaseService(
 {
     private static readonly AgentTaskStatus[] Terminal = [AgentTaskStatus.Succeeded, AgentTaskStatus.Failed, AgentTaskStatus.Canceled];
     internal const int UnknownSlotAttempts = 3;
-    /// <summary>CARD-1649 A-2. The longest requester the operator route records.</summary>
+    /// <summary>CARD-1649 A-2. The longest requester the operator route records, in UTF-16 code units (<see cref="string.Length"/>).</summary>
     internal const int MaxRequesterLength = 64;
     internal const string AttemptMismatchCode = "workspace_slot_release_attempt_mismatch";
     internal const string TaskLiveCode = "workspace_slot_release_task_live";
@@ -158,7 +158,8 @@ public sealed class WorkspaceSlotReleaseService(
         $"/api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release";
 
     /// <summary>
-    /// CARD-1649 A-2. The requester the operator route records: at most <see cref="MaxRequesterLength"/> characters,
+    /// CARD-1649 A-2. The requester the operator route records: at most <see cref="MaxRequesterLength"/> UTF-16 code units
+    /// (CARD-1670 (c): a character outside the Basic Multilingual Plane counts as two),
     /// none of them a control, format, line separator or paragraph separator character (CARD-1656 A-3: the label is
     /// written into the audit event and the log line), and never holding the presented operator token in any letter
     /// case (A-4: the token is hex, so an upper-case copy is the same credential).
@@ -224,13 +225,15 @@ public sealed class WorkspaceSlotReleaseService(
                 .SetProperty(t => t.RemoteWorktreePath, (string?)null), ct);
         if (stamped != 1)
         {
-            var current = await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId).Select(t => t.Status).SingleAsync(ct);
-            throw HoldingLease.Contains(current)
+            // CARD-1670 (b). A task deleted since the checks has no row to re-read: the same changed refusal, not a 500.
+            var current = await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId)
+                .Select(t => (AgentTaskStatus?)t.Status).SingleOrDefaultAsync(ct);
+            throw current is AgentTaskStatus status && HoldingLease.Contains(status)
                 ? new ConflictException(
-                    $"Task {taskId} became {current} on runner '{runnerId}' while its release was recorded and holds {SlotText(task)}; "
+                    $"Task {taskId} became {status} on runner '{runnerId}' while its release was recorded and holds {SlotText(task)}; "
                     + "its release is never recorded.", TaskLiveCode)
                 : new ConflictException(
-                    $"Task {taskId} changed while the release of {SlotText(task)} was recorded; read it again.", ChangedCode);
+                    $"Task {taskId} changed or was deleted while the release of {SlotText(task)} was recorded; read it again.", ChangedCode);
         }
         db.AgentTaskEvents.Add(new AgentTaskEvent
         {

@@ -407,8 +407,10 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   current attempt (`workspace_slot_release_attempt_mismatch` when it names another attempt: a reset runner may
   have leased the same slot and generation again; CARD-1649 A-1). The stamp is one conditional update with the
   audit event (CARD-1656 A-1): a task that changes after the checks is refused `workspace_slot_release_task_live`
-  when it went Dispatched, Working or Blocked, else `workspace_slot_release_changed`. The optional `requester`
-  (default `operator`, at most 64 characters, none of them a control, format, line or paragraph separator
+  when it went Dispatched, Working or Blocked, else `workspace_slot_release_changed` (also when the task was
+  deleted meanwhile; CARD-1670). A failure writing the audit event rolls the stamp back. The optional `requester`
+  (default `operator`, at most 64 UTF-16 code units, so a character outside the Basic Multilingual Plane counts as
+  two (CARD-1670), none of them a control, format, line or paragraph separator
   character, and never the token in any letter case; CARD-1656 A-3, A-4) is recorded in the audit event (A-2).
   Nothing is sent to the runner; a held drain rebind moves on the next tick.
 - Runner phone-home operations (no HTTP route on the runner yet): `WorkspaceSlotRelease`
