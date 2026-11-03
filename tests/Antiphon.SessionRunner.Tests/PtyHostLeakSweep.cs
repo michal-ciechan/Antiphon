@@ -208,14 +208,16 @@ public class TestSessionTeardownTests
         try
         {
             var clock = Stopwatch.StartNew();
-            var failure = await Should.ThrowAsync<ShouldAssertException>(async () =>
+            Exception? failure = null;
+            try
             {
                 try { 0.ShouldBe(1, "the adoption assertion"); }
                 finally { await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, Guid.NewGuid(), host.Id); }
-            });
+            }
+            catch (Exception error) { failure = error; }
             clock.Stop();
 
-            failure.Message.ShouldContain("the adoption assertion");
+            failure.ShouldBeOfType<ShouldAssertException>().Message.ShouldContain("the adoption assertion");
             clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
                 "a never-adopted host is killed at once, well inside the 10 s timeout of the adoption witnesses");
             host.HasExited.ShouldBeTrue("the teardown leaves no host running");
