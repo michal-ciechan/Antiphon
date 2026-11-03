@@ -1,4 +1,7 @@
+using System.Text.Json;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
@@ -44,4 +47,29 @@ public sealed class RcFailedFirstExecutionTests
              "FF JournalCustodySurvivesInterleaving.authorityBinding", "FF JournalCustodySurvivesInterleaving.originalManifestBytes",
              "FF JournalCustodySurvivesInterleaving.artifactSchemas", "FF JournalCustodySurvivesInterleaving.phaseBindings"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(481), TimeSpan.FromSeconds(10)), cancellationToken);
+
+    // CARD-1590: the retained archive keeps the authority fixture inputs but never the
+    // fixture checkout's Git admin files, so no nested repository lands in the worktree.
+    // Provisional budget: the DiagnosticsOnly tail of JournalCustodySurvivesInterleaving.
+    [Test, Timeout(541_000)]
+    public async Task C1590_ArchiveHoldsNoGitRepository(CancellationToken cancellationToken)
+    {
+        var result = await ScriptHarnessProcess.RunAsync("test-nightly-failed-first.ps1", "FF", "ConservationDiagnostics",
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-nightly-failed-first.ps1"),
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(481), TimeSpan.FromSeconds(10)), cancellationToken);
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldBe(0, output);
+        var archive = output.ReplaceLineEndings("\n").Split('\n')
+            .Single(line => line.StartsWith("FF EVIDENCE ", StringComparison.Ordinal))["FF EVIDENCE ".Length..].Trim();
+        Directory.Exists(archive).ShouldBeTrue(output);
+        Directory.EnumerateFileSystemEntries(archive, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetRelativePath(archive, path).Split('/', '\\').Contains(".git", StringComparer.OrdinalIgnoreCase))
+            .ShouldBeEmpty();
+        using var inventory = JsonDocument.Parse(File.ReadAllText(Path.Combine(archive, "inventory.json")));
+        var skipped = inventory.RootElement.GetProperty("files").EnumerateArray()
+            .Where(file => file.GetProperty("kind").GetString() == "git-dir").ToList();
+        skipped.ShouldNotBeEmpty("the authority fixture checkout has a .git directory to skip");
+        skipped.ShouldAllBe(file => !file.GetProperty("copied").GetBoolean() &&
+            file.GetProperty("path").GetString()!.Contains(".git", StringComparison.Ordinal));
+    }
 }
