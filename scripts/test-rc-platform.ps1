@@ -514,6 +514,15 @@ function Get-C1323LinuxOnlyCensus {
     # must route to the census set; an unnamed file already falls back to a full selection.
     param([string]$Root, $Policy, $Catalog, [string]$CensusSet = 'release-gate.platform',
         [string[]]$FixtureProjects = @('tests/Antiphon.NativeLinuxPolicy.Probe/'),
+        # These files name the type without marking a test: the definition (class and constructor declarations, an
+        # error string) and the witnesses that read, reflect over or construct it (typeof, new, a resource-name string).
+        [string[]]$ExemptFiles = @(
+            'tests/Shared/NativeLinuxOnlyAttribute.cs'
+            'tests/Shared/NativeLinuxPolicyWitness.cs'
+            'tests/Shared/NativeLinuxPolicyWitnessTests.cs'
+            'tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs'
+            'tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs'
+        ),
         [string[]]$RoutedPaths = @('tests/test-execution-policy.json', 'scripts/test-rc-platform.ps1'))
     $prefix = 'Linux-only by construction:'
     $problems = [Collections.Generic.List[string]]::new()
@@ -550,25 +559,23 @@ function Get-C1323LinuxOnlyCensus {
         if (-not $text.Contains('NativeLinuxOnly')) { continue }
         $rel = [IO.Path]::GetFullPath($file).Substring($rootPrefix).Replace('\', '/')
         if (@($FixtureProjects | Where-Object { $rel.StartsWith($_, [StringComparison]::Ordinal) }).Count) { continue }
-        # Comments are blanked (keeping line breaks); string and char literals are matched first so a // inside one
-        # stays code. Only the canonical line form is parsed: any other call-shaped NativeLinuxOnly(Attribute) use
-        # fails closed, except an object creation or a constructor declaration, which cannot be an attribute.
-        $code = [regex]::Replace($text.Replace("`r`n", "`n"), '"{3,}[\s\S]*?"{3,}|@"(?:[^"]|"")*"|"(?:[^"\\\n]|\\.)*"|''(?:[^''\\\n]|\\[^\n]+?)''|//[^\n]*|/\*[\s\S]*?\*/', {
-                param($m)
-                if ($m.Value.StartsWith('//') -or $m.Value.StartsWith('/*')) { return [regex]::Replace($m.Value, '[^\n]', '') }
-                return $m.Value
-            })
-        $lines = $code.Split("`n")
+        # Line-based and fail closed: C# strings and comments are never lexed. A line whose trimmed text starts with
+        # [NativeLinuxOnly( is a canonical marker; a line that starts with //, /* or * is a comment line. Any other line
+        # (and any second use on a marker line) that names the whole-word token fails closed, outside an exempt file.
+        $lines = $text.Replace("`r`n", "`n").Split("`n")
+        $exempt = $ExemptFiles -ccontains $rel
         $hits = @()
         for ($i = 0; $i -lt $lines.Count; $i++) {
-            $canonical = [regex]::Match($lines[$i], '^\s*\[(?=NativeLinuxOnly\()')
-            if ($canonical.Success) { $hits += $i }
-            foreach ($use in [regex]::Matches($lines[$i], '\bNativeLinuxOnly(?:Attribute)?\s*\(')) {
-                if ($canonical.Success -and $use.Index -eq $canonical.Length) { continue }
-                $before = $lines[$i].Substring(0, $use.Index)
-                if ($before -match '\bnew\s+(?:global::)?(?:@?\w+\s*\.\s*)*$' -or $before -match '\b(?:public|internal|private|protected|static)\s+$') { continue }
-                $problems.Add("marker-noncanonical:${rel}:$($i + 1)")
+            $trimmed = $lines[$i].Trim()
+            $scan = $lines[$i]
+            if ($trimmed.StartsWith('[NativeLinuxOnly(', [StringComparison]::Ordinal)) {
+                $hits += $i
+                $scan = [regex]::Replace($lines[$i], '^\s*\[NativeLinuxOnly\((?:"(?:[^"\\]|\\.)*"|[^)"])*\)\]', '')
+                if ($scan -ceq $lines[$i]) { $scan = $trimmed.Substring('[NativeLinuxOnly'.Length) }
+            } elseif ($exempt -or $trimmed.StartsWith('//') -or $trimmed.StartsWith('/*') -or $trimmed.StartsWith('*')) {
+                continue
             }
+            if ([regex]::IsMatch($scan, '\bNativeLinuxOnly(?:Attribute)?\b')) { $problems.Add("marker-noncanonical:${rel}:$($i + 1)") }
         }
         if ($hits.Count -eq 0) { continue }
         $suite = @($suiteDirs.Keys | Where-Object { $rel.StartsWith($suiteDirs[$_], [StringComparison]::Ordinal) })
