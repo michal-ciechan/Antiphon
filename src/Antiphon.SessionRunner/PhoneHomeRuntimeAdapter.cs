@@ -39,8 +39,14 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     internal static IReadOnlyList<string> TempSweepFeatures(bool isLinux) =>
         isLinux ? [RunnerCapabilityFeatures.TempSweepV1] : [];
 
+    /// <summary>
+    /// CARD-1677 S2 (review 12ba9a25 D-2): the OS the temp sweep branches on, the real OS unless a test forces it, so
+    /// the off-Linux branch (not advertised, refused) is witnessed on the real adapter.
+    /// </summary>
+    internal bool TempSweepIsLinux { get; init; } = OperatingSystem.IsLinux();
+
     public Task<PhoneHomeTempSweepResponse> TempSweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct) =>
-        _tempSweep is not null && OperatingSystem.IsLinux()
+        _tempSweep is not null && TempSweepIsLinux
             ? Task.Run(() => _tempSweep.SweepAsync(request, ct), ct)
             : throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
                 "Temp sweep is not supported on this runner.", 501);
@@ -95,7 +101,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         if (_retention is not null)
             features = [.. features, .. RetentionFeatures(OperatingSystem.IsLinux())];
         if (_tempSweep is not null)
-            features = [.. features, .. TempSweepFeatures(OperatingSystem.IsLinux())];
+            features = [.. features, .. TempSweepFeatures(TempSweepIsLinux)];
         // CARD-1153 D-3: advertised only while the evidence service is ready (adoption done, no latch).
         if (_runtime.AbsenceEvidenceReady)
             features = [.. features, RunnerAbsenceEvidence.Feature];

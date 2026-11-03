@@ -16,7 +16,9 @@ namespace Antiphon.Tests.Application;
 /// CARD-1677 S2 CP-9. The server half of the /tmp sweep against the scripted phone-home peer (shared Postgres,
 /// isolated schema): <c>TempSweep:Enabled=false</c> sends nothing, an enabled sweep defaults to DryRun and its
 /// reply becomes Lane RunnerTemp rows, and <c>claude-scratch</c> is sent off by default (V-51, V-51b, V-51c).
-/// The settings start from the shipped type defaults; only the retention runner list is set.
+/// The settings start from the shipped type defaults; only the retention runner list is set. Review 12ba9a25 D-2(c):
+/// a runner without tempSweepV1 gets no sweep, Execute is sent only outside the preview route, and
+/// <c>RunnerWorktreeRetention:Enabled=false</c> sends nothing.
 /// </summary>
 [Category("Integration")]
 [Timeout(45_000)]
@@ -28,12 +30,15 @@ public sealed class C1677TempSweepServerTests
         public RunnerWorktreeRetentionSettings Settings { get; private init; } = null!;
         public PhoneHomeTempSweepResponse Reply { get; set; } = new(TempSweepModes.DryRun, [], []);
 
-        public static async Task<World> StartAsync()
+        public static async Task<World> StartAsync(bool tempSweepV1 = true)
         {
             var settings = new RunnerWorktreeRetentionSettings { PauseBetweenSeconds = 0 };
+            IReadOnlyList<string> features = tempSweepV1
+                ? [RunnerCapabilityFeatures.WorkspaceRetentionV1, RunnerCapabilityFeatures.TempSweepV1]
+                : [RunnerCapabilityFeatures.WorkspaceRetentionV1];
             var rig = await Rig.StartAsync(
                 capabilities: new("InboxConhost", "inbox", "test", false,
-                    Features: [RunnerCapabilityFeatures.WorkspaceRetentionV1, RunnerCapabilityFeatures.TempSweepV1],
+                    Features: features,
                     VerificationCustodyBackend: null),
                 configure: services =>
                 {
@@ -62,12 +67,18 @@ public sealed class C1677TempSweepServerTests
             new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
                 JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
 
-        public async Task TickAsync()
+        public async Task TickAsync(string? previewRunner = null)
+        {
+            (await RawTickAsync(previewRunner)).ShouldHaveSingleItem().RunnerId.ShouldBe(Rig.RunnerId);
+        }
+
+        public async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> RawTickAsync(string? previewRunner = null)
         {
             using var scope = Rig.Provider.CreateScope();
-            (await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunTickAsync(default))
-                .ShouldHaveSingleItem().RunnerId.ShouldBe(Rig.RunnerId);
+            return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunTickAsync(default, previewRunner);
         }
+
+        public int Requests() => Rig.Peer.Incoming.ToArray().Count(f => f.Kind == PhoneHomeFrameKind.Request);
 
         public List<PhoneHomeTempSweepRequest> Sweeps() =>
             Rig.Peer.Incoming.ToArray()
@@ -147,5 +158,50 @@ public sealed class C1677TempSweepServerTests
         await w.TickAsync();
         var families = w.Sweeps().ShouldHaveSingleItem().Families.ShouldNotBeNull();
         families[RunnerTempSweepSettings.ClaudeScratch].ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Runner_without_the_capability_gets_no_sweep()
+    {
+        // Review 12ba9a25 D-2(c). A runner that does not advertise tempSweepV1 is sent no TempSweep, even with the sweep
+        // enabled and executing; the tick records it runner_not_eligible.
+        await using var w = await World.StartAsync(tempSweepV1: false);
+        w.Settings.TempSweep.Enabled = true;
+        w.Settings.TempSweep.Execute = true;
+        await w.TickAsync();
+        w.Inventories().ShouldBe(1, "control: the tick reached the runner");
+        w.Sweeps().ShouldBeEmpty();
+        var row = (await w.TempRowsAsync()).ShouldHaveSingleItem();
+        (row.Outcome, row.ReasonCode).ShouldBe(("Held", "runner_not_eligible"));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Execute_is_sent_only_outside_the_preview_route(bool preview)
+    {
+        // Review 12ba9a25 D-2(c). With TempSweep:Execute=true a scheduled tick sends Execute; the preview route for the
+        // same runner sends DryRun.
+        await using var w = await World.StartAsync();
+        w.Settings.TempSweep.Enabled = true;
+        w.Settings.TempSweep.Execute = true;
+        await w.TickAsync(preview ? w.Rig.RunnerId : null);
+        w.Sweeps().ShouldHaveSingleItem().Mode.ShouldBe(preview ? TempSweepModes.DryRun : TempSweepModes.Execute);
+    }
+
+    [Test]
+    public async Task Retention_disabled_sends_no_sweep()
+    {
+        // Review 12ba9a25 D-2(c). RunnerWorktreeRetention:Enabled=false stops the whole tick, the temp sweep included,
+        // even with TempSweep enabled and executing: no runner is contacted and no row is written.
+        await using var w = await World.StartAsync();
+        w.Settings.Enabled = false;
+        w.Settings.TempSweep.Enabled = true;
+        w.Settings.TempSweep.Execute = true;
+        var before = w.Requests();
+        (await w.RawTickAsync()).ShouldBeEmpty();
+        w.Requests().ShouldBe(before, "no request of any kind reached the runner");
+        w.Sweeps().ShouldBeEmpty();
+        (await w.TempRowsAsync()).ShouldBeEmpty();
     }
 }
