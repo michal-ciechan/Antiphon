@@ -98,8 +98,8 @@ try {
         if ($sample.allocatedBytes -gt $peakBytes) { $peakBytes = $sample.allocatedBytes }
     }
     $child.WaitForExit()
-    $outCopy.GetAwaiter().GetResult()
-    $errCopy.GetAwaiter().GetResult()
+    [void]$outCopy.GetAwaiter().GetResult()
+    [void]$errCopy.GetAwaiter().GetResult()
 } finally {
     if (-not $child.HasExited) { $child.Kill($true); $child.WaitForExit() }
     $outStream.Dispose()
