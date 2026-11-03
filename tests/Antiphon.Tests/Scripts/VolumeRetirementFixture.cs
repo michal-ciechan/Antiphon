@@ -17,6 +17,19 @@ internal static class VolumeRetirementFixture
     // Keep GNU timeout active for every fixture caller, including these probes.
     internal const string ShellProbe = "";
 
+    // Runs scripts/fixtures/deploy-server2-output-witness.ps1: wrapper functions taken
+    // verbatim from the AST, no C727 stub, a fake ssh first on PATH. Returns its OUTPUT rows.
+    internal static async Task<string[]> RunOutputWitness(string caseName)
+    {
+        var result = await ScriptHarnessProcess.RunAsync("deploy-server2-output-witness.ps1", "Ds2Output", caseName,
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "fixtures", "deploy-server2-output-witness.ps1"),
+            ScriptHarnessOptions.Default, CancellationToken.None);
+        var output = result.Stdout + result.Stderr;
+        result.ExitCode.ShouldBe(0, output);
+        return result.Stdout.ReplaceLineEndings("\n").Split('\n')
+            .Where(line => line.StartsWith("OUTPUT ", StringComparison.Ordinal)).ToArray();
+    }
+
     internal static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 
     internal static string WorkMount(C1008HostFixture fixture) =>
