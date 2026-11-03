@@ -26,9 +26,10 @@ public sealed class RunnerAlarmHostedServiceTests
 {
     /// <summary>
     /// CARD-1683: the start pass before the first timer. A cold test process on loaded server2 took over
-    /// 5 s (CARD-1678, sweep 974b0c17), the old bound; measured MEASUREMENT_PENDING.
+    /// 5 s, the old bound (CARD-1678, sweep 974b0c17). Measured on server2 (load ~40) over four class runs:
+    /// 6.1-8.5 s cold (p95 ~8.4 s), ~0.1 s warm; about 2x the cold p95.
     /// </summary>
-    private static readonly TimeSpan FirstPassWait = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan FirstPassWait = TimeSpan.FromSeconds(17);
 
     [Test]
     public void a_timer_is_registered_before_the_clock_reports_it_ready()
@@ -462,7 +463,7 @@ public sealed class RunnerAlarmHostedServiceTests
         File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-10));
     }
 
-    // FirstPassWait: see the class remarks for the measurement.
+    // Prints the elapsed time so a later run can re-measure FirstPassWait.
     private static async Task FirstPassAsync(AlarmClock clock)
     {
         var watch = Stopwatch.StartNew();
