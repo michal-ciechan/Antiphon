@@ -205,9 +205,7 @@ public sealed class RunnerWorktreeRetentionService
 
         if (inventory is not null)
             await RecordInventoryAsync(run, inventory, population, runnerId, ct);
-        // RED SHIM (CARD-1677 S2 red commit): the tick never sends a temp sweep.
-        if (_settings.CurrentValue.TempSweep.MinAgeHours < 0)
-            await SweepTempAsync(run, client, runnerId, preview: writeAll, tickStarted, ct);
+        await SweepTempAsync(run, client, runnerId, preview: writeAll, tickStarted, ct);
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation(
