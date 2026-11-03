@@ -3,21 +3,28 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
-/// CARD-1677. Runner-side retention of FINISHED tasks' mirrors. Off by default (<see cref="Enabled"/> false,
-/// <see cref="Runners"/> empty) and dry-run by default (<see cref="Execute"/> false): the server decides which
-/// tasks are finished, the runner rechecks every filesystem and git fact itself. Enabling is the documented
-/// three-step rollout in docs/docker-stack.md ("Runner worktree retention (CARD-1677)").
+/// CARD-1677. Runner-side retention of FINISHED tasks' mirrors: the server decides which tasks are finished,
+/// the runner rechecks every filesystem and git fact itself. On by default (operator decision 2026-11-03):
+/// <see cref="Enabled"/> and <see cref="Execute"/> are true here and in server/appsettings.json, which also
+/// names the runner (<c>Runners=["server2"]</c>; the list stays empty here because configuration binding
+/// appends to a list initializer, so a default here could never be emptied). Kill switch:
+/// <c>Enabled=false</c>; dry run: <c>Execute=false</c> (or the preview route, always DryRun). See
+/// docs/docker-stack.md ("Runner worktree retention (CARD-1677)").
 /// </summary>
 public sealed class RunnerWorktreeRetentionSettings
 {
     public const string SectionName = "RunnerWorktreeRetention";
 
-    public bool Enabled { get; set; }
+    /// <summary>The kill switch. Re-read before every request, so switching it off also stops a running tick.</summary>
+    public bool Enabled { get; set; } = true;
 
-    /// <summary>False sends DryRun only (the runner reports <c>would_remove</c>, nothing moves).</summary>
-    public bool Execute { get; set; }
+    /// <summary>False sends DryRun only (the runner reports <c>would_remove</c>, nothing moves). Re-read before every request.</summary>
+    public bool Execute { get; set; } = true;
 
-    /// <summary>Allow-listed Linux phone-home runner ids. Empty contacts no runner.</summary>
+    /// <summary>
+    /// Allow-listed Linux phone-home runner ids. Empty contacts no runner. Deliberately empty here: the shipped
+    /// <c>["server2"]</c> lives in server/appsettings.json only (a list initializer would be appended to by binding).
+    /// </summary>
     public List<string> Runners { get; set; } = [];
 
     public string RecurringJobId { get; set; } = "antiphon:runner-worktree-retention";
@@ -35,9 +42,18 @@ public sealed class RunnerWorktreeRetentionSettings
 
     public int RequestTimeoutSeconds { get; set; } = 300;
 
-    // RED SHIM (CARD-1677 review c238f9ca round 1): the repair's settings, not yet read or validated.
+    /// <summary>
+    /// Review c238f9ca A-2. A tick starts no new request once it has run this long (a slow runner at
+    /// <see cref="RequestTimeoutSeconds"/> per request could otherwise outrun the 30-minute schedule).
+    /// </summary>
     public int MaxTickMinutes { get; set; } = 20;
+
+    /// <summary>
+    /// Review c238f9ca D-1. A tree the runner kept is not re-sent for this many minutes, doubling for each repeat
+    /// of the same reason up to <see cref="KeptRecheckMaxHours"/>; a changed reason or changed task facts re-send it at once.
+    /// </summary>
     public int KeptRecheckMinutes { get; set; } = 60;
+
     public int KeptRecheckMaxHours { get; set; } = 24;
 
     /// <summary>The runner's worktree root as the task rows name it; a candidate path is its direct child.</summary>
@@ -73,6 +89,12 @@ public sealed class RunnerWorktreeRetentionSettingsValidator : IValidateOptions<
             failures.Add("RunnerWorktreeRetention:PauseBetweenSeconds must not be negative.");
         if (options.RequestTimeoutSeconds < 1)
             failures.Add("RunnerWorktreeRetention:RequestTimeoutSeconds must be positive.");
+        if (options.MaxTickMinutes is < 1 or > 600)
+            failures.Add("RunnerWorktreeRetention:MaxTickMinutes must be between 1 and 600.");
+        if (options.KeptRecheckMinutes < 1)
+            failures.Add("RunnerWorktreeRetention:KeptRecheckMinutes must be at least 1.");
+        if (options.KeptRecheckMaxHours < 1)
+            failures.Add("RunnerWorktreeRetention:KeptRecheckMaxHours must be at least 1.");
         if (!IsPosixAbsolute(options.RetiringRoot))
             failures.Add("RunnerWorktreeRetention:RetiringRoot must be an absolute POSIX path.");
         if (!IsPosixAbsolute(options.WorktreeRoot))

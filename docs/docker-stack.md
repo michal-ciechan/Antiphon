@@ -712,21 +712,36 @@ an fd inside (an unreadable `/proc` keeps the tree). Execute moves the tree to
 `git worktree remove` WITHOUT `--force` outside it. It never runs `rm`, `git worktree prune`, `git fetch`
 or a branch deletion, and never touches Docker volumes, `/state`, `/work/repos`, `/work/cache` or slots.
 
-It ships off: `RunnerWorktreeRetention:Enabled=false`, `Runners=[]`, `Execute=false` (dry-run). Enabling:
+It ships ON for server2 (operator decision 2026-11-03): `RunnerWorktreeRetention:Enabled=true`,
+`Execute=true`, `Runners=["server2"]` (set in `server/appsettings.json` only; the C# default list stays empty
+so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPerTick=25` requests per tick,
+`PauseBetweenSeconds=5` apart, every 30 minutes (UTC cron `*/30 * * * *`).
 
-1. Set `Enabled=true` and `Runners=["server2"]`, leave `Execute=false`, restart the server. Each tick (or
-   `POST /api/agent-tasks/worktree-residue/runner-retention/server2/preview`, always DryRun) writes a residue
-   run with `Scope=runner-retention:server2`; read it with `GET /api/agent-tasks/worktree-residue/runs/{runId}?page=n`,
-   following every page. `RunnerMirror` rows carry the verdict (`would_remove` or a kept reason);
-   `RunnerInventory` rows report names that match no task (`identity_unknown` with an `owner_hint`,
-   `identity_ambiguous`) and `retiring_residue`. Those names are never acted on.
-2. Check the plan's §8 measurements (dry-run census against a manual check of 10 trees, `ls-remote` time,
-   holder-scan time, that `/work/worktrees-retiring` is on the same device as `/work/worktrees`).
-3. Set `Execute=true` with `MaxRemovalsPerTick=1` for one tick, confirm one `Removed` row and the
-   `df -Pk /work` delta, then raise it (default 25, `PauseBetweenSeconds` 5).
+- **Kill switch:** `RunnerWorktreeRetention:Enabled=false` (for example the environment variable
+  `RunnerWorktreeRetention__Enabled=false`). It is re-read before every request, so it also stops a tick that
+  is already running; the recurring job is removed at the next server start.
+- **Dry run:** `Execute=false` sends DryRun only (the runner reports `would_remove`, nothing moves); switching
+  it off mid-tick also stops that tick. `POST /api/agent-tasks/worktree-residue/runner-retention/server2/preview`
+  is always one DryRun tick whatever `Execute` says.
+- **Census:** each tick (or preview) writes a residue run with `Scope=runner-retention:server2`; read it with
+  `GET /api/agent-tasks/worktree-residue/runs/{runId}?page=n`, following every page. `RunnerMirror` rows
+  carry the verdict (`would_remove`, `removed` or a kept reason); `RunnerInventory` rows report names that
+  match no task (`identity_unknown` with an `owner_hint`, `identity_ambiguous`) and `retiring_residue`.
+  Those names are never acted on. The tick log line and the preview reply give `examined` (the runner's whole
+  mirror population), `eligible`, `backedOff` and `sent`.
+- **Progress over kept trees:** a tree the runner keeps (dirty, unpushed, branch gone from origin, a live
+  process, a refused remove) is not re-sent for `KeptRecheckMinutes` (60), doubling for each repeat of the same
+  reason up to `KeptRecheckMaxHours` (24). A changed reason, or changed task facts (it ran and finished again),
+  re-sends it at once. Never-sent trees go first, oldest first, so kept trees never starve removable ones and
+  successive dry-run ticks cover the whole population.
+- **Tick bound:** a tick starts no new request after `MaxTickMinutes` (20); the rest wait for the next tick.
+- **Runner-side recent use:** the runner keeps a tree it mirrored, or launched a session in, within the last
+  `PhoneHome:RetentionRecentUseMinutes` (10), and any tree one of its live sessions runs in
+  (`recently_mirrored`, `workspace_in_use`). That covers a task re-dispatched between the server's reread
+  and the move.
 
-Rollback is `Execute=false`. A tree left in the retiring root (`retiring_refused`) stays registered, is
-reported, and is retried by phase B only on the next request for that task; it is never moved back.
+A tree left in the retiring root (`retiring_refused`) stays registered, is reported, and is retried by phase B
+only on the next request for that task; it is never moved back.
 
 ## Shared server2 runner caches (CARD-0849)
 

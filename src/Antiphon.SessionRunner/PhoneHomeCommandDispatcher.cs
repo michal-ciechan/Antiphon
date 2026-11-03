@@ -110,6 +110,7 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly ILogger _logger;
     private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
     private RunnerWorkspaceService? _workspace;
+    private readonly RunnerWorkspaceActivity _workspaceActivity;
 
     public PhoneHomeCommandDispatcher(
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
@@ -127,6 +128,7 @@ public sealed class PhoneHomeCommandDispatcher
         _processBootId = identity?.BootId ?? Guid.NewGuid();
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _launchGenerations = new PhoneHomeLaunchGenerationStore(settings.LaunchGenerationsPath);
+        _workspaceActivity = new RunnerWorkspaceActivity(_time);
     }
 
     /// <summary>
@@ -441,6 +443,9 @@ public sealed class PhoneHomeCommandDispatcher
                     }
                     if (body.Slot == true && workspace.SlotPool is not null)
                         await MaintainedSlotPoolAsync(ct);
+                    // CARD-1677 D-2: stamped before the mirror runs, so a retain that follows it keeps the tree.
+                    if (body.Slot != true && !string.IsNullOrWhiteSpace(body.Name))
+                        _workspaceActivity.RecordMirror(workspace.WorktreeRoot + "/" + body.Name);
                     return Result(request, await workspace.MirrorAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceSlotRelease => await MutateAsync(request, async () =>
@@ -745,6 +750,8 @@ public sealed class PhoneHomeCommandDispatcher
             // Durable before the process exists: a crash between the two can only refuse a re-send.
             if (launch.AcceptedStartedAt is { } accepting)
                 _launchGenerations.Record(launch.SessionId, accepting);
+            // CARD-1677 D-2: retention keeps a tree one of this runner's sessions was launched in.
+            _workspaceActivity.RecordLaunch(launch.SessionId, launch.Cwd);
             var started = await _runtime.StartAsync(launch, ct);
             trace.Outcome = "started";
             return Result(request, started);
@@ -953,7 +960,7 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     /// <summary>
-    /// CARD-1677 D-6. Phase A (every check, then <c>git worktree move</c>) runs under the mutation lock;
+    /// CARD-1677 D-6. Phase A (the recent-use guard of D-2, every check, then <c>git worktree move</c>) runs under the mutation lock;
     /// phase B (the unforced <c>git worktree remove</c> of a multi-GiB tree) runs after the lock is
     /// released, so it never stalls a session's Input. Phase B runs only for a moved tree.
     /// </summary>
@@ -965,6 +972,10 @@ public sealed class PhoneHomeCommandDispatcher
         WorkspaceRetainStep? step = null;
         var locked = await MutateAsync(request, async () =>
         {
+            // D-2: under the same lock as Mirror and Launch, so a re-dispatch after the server's reread is seen here.
+            var live = _runtime.List().Where(session => session.Status != "Exited").Select(session => session.SessionId);
+            if (_workspaceActivity.Covers(body.Path ?? "", TimeSpan.FromMinutes(_settings.RetentionRecentUseMinutes), live) is { } use)
+                return Result(request, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, use.Reason, Detail: use.Detail));
             step = await _runtime.RetainWorkspaceCheckAndMoveAsync(body, ct);
             return Result(request, step.Final ?? new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept));
         });
