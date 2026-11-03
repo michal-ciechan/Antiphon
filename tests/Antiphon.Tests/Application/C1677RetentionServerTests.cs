@@ -514,7 +514,7 @@ public sealed class C1677RetentionServerTests
         {
             var cursor = await db.WorktreeResidueCandidateCursors.AsNoTracking()
                 .SingleAsync(c => c.CandidateKey == RunnerWorktreeRetentionService.SendCursorKey(id));
-            cursor.NotBefore.ShouldBe(w.Rig.Now.AddHours(w.Settings.KeptRecheckMaxHours), TimeSpan.FromSeconds(1));
+            cursor.NotBefore.ShouldNotBeNull().ShouldBe(w.Rig.Now.AddHours(w.Settings.KeptRecheckMaxHours), TimeSpan.FromSeconds(1));
         }
         await w.Rig.AdvanceAsync(TimeSpan.FromHours(24) - TimeSpan.FromMinutes(1));
         await w.TickAsync();
