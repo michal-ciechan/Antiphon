@@ -75,7 +75,10 @@ Two runner settings, both default off. With the defaults the pipe names, the cli
 are unchanged, and no statx, getsockopt or `GetNamedPipeServerProcessId` call runs.
 
 - `SessionRunner:PtyHostSocketDirMode` = `Legacy` (default) | `Owned`; `SessionRunner:PtyHostSocketDir`
-  overrides `<PtyHostDir>/sock`. Under Owned a new non-custody Linux launch binds
+  overrides `<PtyHostDir>/sock`; null, empty and whitespace-only (an empty environment variable
+  binds `""`) mean unset, and a trailing separator is dropped before the length bound. A setting
+  that names no directory (an embedded NUL) fails an Owned launch as `pty_host_socket_dir_unsafe`
+  and is never read by adoption in a way that can throw. Under Owned a new non-custody Linux launch binds
   `<sock>/<id:N>`. The launch first proves the directory: owned by the runner's euid, mode exactly
   0700 (an owned wider mode is tightened and re-read), not a symlink, every ancestor (a symlinked
   ancestor is resolved) owned by the euid or root and not group- or other-writable unless sticky,
@@ -90,7 +93,9 @@ are unchanged, and no statx, getsockopt or `GetNamedPipeServerProcessId` call ru
   an absent file) and `SO_PEERCRED` must name the expected pid and the euid; on Windows Enforce
   adds `PipeOptions.CurrentUserOnly` and `GetNamedPipeServerProcessId` must name the expected
   pid. The expected pid is the host this launch spawned, or `manifest.HostPid` alive at its
-  recorded start for an adoption. Unreadable credentials are unproven.
+  recorded start for an adoption. Unreadable credentials are unproven, and so is a proof step that
+  throws (a socket-file probe, the peer reader or the start-time liveness read): no configuration
+  value or probe fault may make the adoption sweep kill a live host it has not proven (D-1).
   - Enforce writes nothing to an unproven peer, not even the hello, and does not retry. A fresh
     launch fails (`pty_host_peer_mismatch: launch refused for session <id>`) and tears down the
     host it spawned. An adoption refusal (`pty_host_peer_mismatch: adoption refused for session

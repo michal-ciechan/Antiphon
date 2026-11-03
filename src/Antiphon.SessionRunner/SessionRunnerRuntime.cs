@@ -731,17 +731,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
             else
             {
-                // CARD-1653 S2: the pipe name is chosen once. An owned directory that is not safe fails
-                // the launch here, before any host is spawned; there is no /tmp fallback.
-                var pipeName = PtyHostRendezvous.PipeNameFor(_settings, request, OperatingSystem.IsWindows());
-                if (pipeName != PtyHostProtocol.PipeNameFor(request.SessionId))
+                // CARD-1653 S2: the pipe name is chosen once. An owned directory that is not safe, or a
+                // setting that names no directory, fails the launch here, before any host is spawned;
+                // there is no /tmp fallback.
+                string pipeName;
+                try
                 {
-                    try { PtyHostSocketDirectory.EnsureSafe(_settings.ResolvedPtyHostSocketDir, PtyHostPeerPolicy.FileProbe); }
-                    catch (PtyHostSocketDirUnsafeException unsafeDir)
-                    {
-                        _logger.LogWarning("{Code}: launch refused for session {SessionId}", unsafeDir.Code, request.SessionId);
-                        throw;
-                    }
+                    pipeName = PtyHostRendezvous.PipeNameFor(_settings, request, OperatingSystem.IsWindows());
+                    if (pipeName != PtyHostProtocol.PipeNameFor(request.SessionId))
+                        PtyHostSocketDirectory.EnsureSafe(_settings.ResolvedPtyHostSocketDir, PtyHostPeerPolicy.FileProbe);
+                }
+                catch (PtyHostSocketDirUnsafeException unsafeDir)
+                {
+                    _logger.LogWarning("{Code}: launch refused for session {SessionId}", unsafeDir.Code, request.SessionId);
+                    throw;
                 }
                 if (request.InstalledGrokRulesReceipt is { } receipt)
                     new PtyHostManifest
@@ -3635,9 +3638,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
             // CARD-1653 S2: a host launched before Owned keeps its /tmp path and gets the same checks.
+            // No setting may throw here (D-1): this runs before the proof, and a throw would reach the
+            // sweep arm that kills. A setting that names no directory is not the legacy comparison.
             if (_settings.PtyHostSocketDirMode == PtyHostSocketDirMode.Owned && OperatingSystem.IsLinux()
-                && !string.Equals(Path.GetDirectoryName(manifest.PipeName),
-                    Path.TrimEndingDirectorySeparator(_settings.ResolvedPtyHostSocketDir), StringComparison.Ordinal))
+                && _settings.TryResolvePtyHostSocketDir(out var ownedDir)
+                && !string.Equals(Path.GetDirectoryName(manifest.PipeName), ownedDir, StringComparison.Ordinal))
                 _logger.LogInformation("pty_host_legacy_socket_path: session {SessionId}", _sessionId);
             var policy = PeerPolicy(manifest.HostPid, manifest.HostStartTimeUtc, probe);
             PtyHostPeerPolicy.ConnectPolicyObserver.Value?.Invoke(policy);

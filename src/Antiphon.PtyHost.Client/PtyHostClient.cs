@@ -63,7 +63,7 @@ public sealed class PtyHostClient : IAsyncDisposable
                 // sit in the listen backlog and the host's Accept never completes (CARD-0490
                 // Docker phone-home: socket existed, host waited 30s, runner timed out at 15s).
                 var milliseconds = (int)Math.Clamp(remaining.TotalMilliseconds, 50, int.MaxValue);
-                var socketFile = policy?.CheckSocketFile?.Invoke(pipeName);
+                var socketFile = policy?.CheckSocketFile is { } check ? CheckSocketFile(check, pipeName) : (SocketFileVerdict?)null;
                 if (socketFile is SocketFileVerdict.Refused)
                     Unproven(policy!, ref observed);
                 try
@@ -80,10 +80,10 @@ public sealed class PtyHostClient : IAsyncDisposable
                 {
                     // Connect waits for an absent socket to appear, so check the file it reached.
                     if (socketFile is SocketFileVerdict.Absent
-                        && policy.CheckSocketFile!(pipeName) is not SocketFileVerdict.Ok)
+                        && CheckSocketFile(policy.CheckSocketFile!, pipeName) is not SocketFileVerdict.Ok)
                         Unproven(policy, ref observed);
                     // Before any write: the hello already tells a squatter the session is wanted.
-                    if (!policy.AcceptPeer(policy.ReadPeer(pipe.SafePipeHandle)))
+                    if (!AcceptsPeer(policy, pipe.SafePipeHandle))
                         Unproven(policy, ref observed);
                 }
 
@@ -118,6 +118,21 @@ public sealed class PtyHostClient : IAsyncDisposable
         }
 
         throw new TimeoutException($"Could not connect to pty-host pipe '{pipeName}' within {timeout}.", last);
+    }
+
+    // CARD-1653 S2 (D-1/A-4): a proof step that throws (a probe without its libc entry point, a
+    // reader or liveness fault) proves nothing. It is a failed check, so Enforce refuses without a
+    // write and the caller holds the host; it is never a transport retry or an escape to a kill.
+    private static SocketFileVerdict CheckSocketFile(Func<string, SocketFileVerdict> check, string pipeName)
+    {
+        try { return check(pipeName); }
+        catch (Exception) { return SocketFileVerdict.Refused; }
+    }
+
+    private static bool AcceptsPeer(PtyHostConnectPolicy policy, SafePipeHandle handle)
+    {
+        try { return policy.AcceptPeer(policy.ReadPeer(handle)); }
+        catch (Exception) { return false; }
     }
 
     /// <summary>Enforce refuses; Observe reports the fixed code once per connect and continues.</summary>

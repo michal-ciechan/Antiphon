@@ -87,7 +87,10 @@ public sealed class SessionRunnerSettings
     /// </summary>
     public PtyHostSocketDirMode PtyHostSocketDirMode { get; set; } = PtyHostSocketDirMode.Legacy;
 
-    /// <summary>CARD-1653 S2. Overrides <c>&lt;ResolvedPtyHostDir&gt;/sock</c>.</summary>
+    /// <summary>
+    /// CARD-1653 S2. Overrides <c>&lt;ResolvedPtyHostDir&gt;/sock</c>. Null, empty and whitespace-only
+    /// (an empty environment variable binds <c>""</c>) all mean unset.
+    /// </summary>
     public string? PtyHostSocketDir { get; set; }
 
     /// <summary>
@@ -101,7 +104,31 @@ public sealed class SessionRunnerSettings
     public string PtyHostBinDir => Path.Combine(ResolvedPtyHostDir, "bin");
     public string PtyHostLogDir => Path.Combine(ResolvedPtyHostDir, "logs");
     public string ResolvedPtyHostSourceDir => PtyHostSourceDir ?? AppContext.BaseDirectory;
-    public string ResolvedPtyHostSocketDir => Path.GetFullPath(PtyHostSocketDir ?? Path.Combine(ResolvedPtyHostDir, "sock"));
+
+    /// <summary>
+    /// CARD-1653 S2: the owned socket directory, full and without a trailing separator, so the
+    /// socket path a launch uses is the one <c>EnsureSafe</c> bounds. An unresolvable setting throws
+    /// <see cref="Antiphon.PtyHost.Client.PtyHostSocketDirUnsafeException"/>, which fails a launch closed.
+    /// </summary>
+    public string ResolvedPtyHostSocketDir => TryResolvePtyHostSocketDir(out var dir) ? dir
+        : throw new Antiphon.PtyHost.Client.PtyHostSocketDirUnsafeException(
+            Antiphon.PtyHost.Client.PtyHostSocketDirUnsafeException.UnsafeCode);
+
+    /// <summary>Never throws: false when the setting cannot name a directory (an embedded NUL, for example).</summary>
+    public bool TryResolvePtyHostSocketDir([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? dir)
+    {
+        try
+        {
+            dir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(string.IsNullOrWhiteSpace(PtyHostSocketDir)
+                ? Path.Combine(ResolvedPtyHostDir, "sock") : PtyHostSocketDir));
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            dir = null;
+            return false;
+        }
+    }
 }
 
 /// <summary>CARD-1653 S2: where new Linux pty-host sockets live.</summary>
