@@ -59,4 +59,8 @@ Positive controls (pending, Mutation):
 | PC-18 | Missing file/directory is not gone (FileNotFound/DirectoryNotFound catch returns false) | `C1681_Root_missing_stat_is_gone` x2, `C1681_Root_stat_reader_reads_real_files` |
 | PC-19 | `RootExitedForHangup` passes no reader, or `RootExited` reads the stat when the exit is observed | CP-3 `C1681_Eio_after_root_exit_drains_to_receipt` (race-dependent), `C1681_Root_exited_when_exit_observed_without_reading_stat` |
 
+CP-8 recorded (run 20261103-094631-f866 at 6b526a262, RED exit 1): 30 executed, 12 failed. The
+expected 10 plus `C1681_Root_live_stat_is_not_exited` x2, whose read-count assertion is red under
+the stub because the stub never reads.
+
 Review M1 (S2 backoff formula) and M4 (root-exit condition always true) stay witnessed by CP-3.
