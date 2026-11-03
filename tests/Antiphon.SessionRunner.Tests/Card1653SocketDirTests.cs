@@ -376,6 +376,187 @@ public class Card1653SocketDirTests
         }
     }
 
+    /// <summary>
+    /// D-1 (review db8d32c0): an empty, whitespace or unresolvable socket directory setting, as an
+    /// empty environment variable binds it, never makes the sweep kill a live host it would adopt.
+    /// Linux accepts a whitespace-only file name, so that case is red at the base only through the
+    /// sweep's directory diagnostic, which must check the default directory.
+    /// </summary>
+    [Test]
+    [Arguments("empty")]
+    [Arguments("whitespace")]
+    [Arguments("nul")]
+    public async Task Unusable_socket_dir_setting_never_kills_a_live_host_at_adoption(string shape)
+    {
+        var root = NewRoot();
+        var legacy = new SessionRunnerSettings { SessionLogPath = root, PtyHostLingerHours = 0.02 };
+        var owned = new SessionRunnerSettings
+        {
+            SessionLogPath = root, PtyHostLingerHours = 0.02, PtyHostSocketDir = UnusableSetting(shape),
+            PtyHostSocketDirMode = PtyHostSocketDirMode.Owned, PtyHostPeerCheck = PtyHostPeerCheckMode.Off,
+        };
+        var defaultDir = Path.Combine(root, "pty-hosts", "sock");
+        var sessionId = Guid.NewGuid();
+        var runtimeA = new SessionRunnerRuntime(Options.Create(legacy), new PtyHostStrangerWorld.RecordingLogger());
+        var logger = new PtyHostStrangerWorld.RecordingLogger();
+        SessionRunnerRuntime? runtimeB = null;
+        RunnerSessionDto? dto = null;
+        try
+        {
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "c1653-d1-legacy-host-launch"))
+                dto = await runtimeA.StartAsync(Launch(sessionId, root), CancellationToken.None);
+            dto.Status.ShouldBe("Running");
+            await runtimeA.DisposeAsync();
+            var manifestPath = PtyHostManifest.PathFor(legacy.PtyHostManifestDir, sessionId);
+            Directory.Exists(defaultDir).ShouldBeFalse("precondition: a Legacy launch creates no socket directory");
+
+            runtimeB = new SessionRunnerRuntime(Options.Create(owned), logger);
+            int adopted;
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "c1653-d1-unusable-setting-adoption"))
+                adopted = await runtimeB.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+
+            new SystemProcessLivenessProbe().IsAlive(dto.HostPid!.Value, DateTime.UtcNow)
+                .ShouldBeTrue($"no socket directory setting may kill a live host; log: {logger.Text}");
+            File.Exists(manifestPath).ShouldBeTrue("the live host's manifest is kept");
+            logger.Text.ShouldNotContain("treating as dead");
+            adopted.ShouldBe(1, "the setting changes where new sockets go, not whether a live host is adopted");
+            runtimeB.Get(sessionId).Status.ShouldBe("Running");
+            if (shape == "nul")
+                logger.Text.ShouldContain(UnsafeCode, customMessage: "an unresolvable setting is reported by the sweep diagnostic");
+            else
+                File.GetUnixFileMode(defaultDir).ShouldBe(OwnerOnly, "a blank setting is unset, so the sweep checks the default directory");
+        }
+        finally
+        {
+            if (runtimeB is not null)
+            {
+                await TestSessionTeardown.KillAndAwaitHostExitAsync(runtimeB, sessionId, dto?.HostPid);
+                await runtimeB.DisposeAsync();
+            }
+            else
+            {
+                await runtimeA.DisposeAsync();
+                KillBestEffort(dto?.HostPid);
+            }
+            KillBestEffort(dto?.Pid);
+        }
+    }
+
+    [Test]
+    [Arguments("empty")]
+    [Arguments("whitespace")]
+    public async Task Blank_socket_dir_setting_launches_into_the_default_directory(string shape)
+    {
+        var root = NewRoot();
+        var settings = new SessionRunnerSettings
+        {
+            SessionLogPath = root, PtyHostLingerHours = 0.02, PtyHostConnectTimeoutSec = 5,
+            PtyHostSocketDir = UnusableSetting(shape),
+            PtyHostSocketDirMode = PtyHostSocketDirMode.Owned, PtyHostPeerCheck = PtyHostPeerCheckMode.Enforce,
+        };
+        var defaultDir = Path.Combine(root, "pty-hosts", "sock");
+        var sessionId = Guid.NewGuid();
+        var runtime = new SessionRunnerRuntime(Options.Create(settings), new PtyHostStrangerWorld.RecordingLogger());
+        RunnerSessionDto? dto = null;
+        try
+        {
+            using (TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "c1653-d1-blank-setting-launch"))
+                dto = await runtime.StartAsync(Launch(sessionId, root), CancellationToken.None);
+
+            dto.Status.ShouldBe("Running");
+            PtyHostManifest.TryLoad(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId))!
+                .PipeName.ShouldBe(defaultDir + "/" + sessionId.ToString("N"), "a blank setting is the default directory");
+            File.GetUnixFileMode(defaultDir).ShouldBe(OwnerOnly);
+        }
+        finally
+        {
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, dto?.HostPid);
+            await runtime.DisposeAsync();
+            KillBestEffort(dto?.Pid);
+        }
+    }
+
+    [Test]
+    public async Task Unresolvable_socket_dir_setting_fails_the_launch_closed()
+    {
+        var root = NewRoot();
+        var settings = FakeHostSettings(root);
+        settings.PtyHostSocketDir = UnusableSetting("nul");
+        var sessionId = Guid.NewGuid();
+        var logger = new PtyHostStrangerWorld.RecordingLogger();
+        var runtime = new SessionRunnerRuntime(Options.Create(settings), logger);
+        var pidFile = Path.Combine(root, "fake-host.pid");
+        try
+        {
+            var error = await Should.ThrowAsync<Exception>(() => runtime.StartAsync(Launch(sessionId, root), CancellationToken.None));
+
+            var innermost = Innermost(error);
+            innermost.ShouldBeOfType<PtyHostSocketDirUnsafeException>(error.ToString());
+            innermost.Message.ShouldBe(UnsafeCode);
+            logger.Text.Split('\n').Where(line => line.Contains(UnsafeCode, StringComparison.Ordinal))
+                .ShouldBe([$"{UnsafeCode}: launch refused for session {sessionId}"]);
+            File.Exists(pidFile).ShouldBeFalse("no host is spawned for an unresolvable socket directory");
+            File.Exists(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId)).ShouldBeFalse();
+            File.Exists(PtyHostProtocol.PipeNameFor(sessionId)).ShouldBeFalse("there is no /tmp fallback");
+            runtime.List().ShouldNotContain(s => s.SessionId == sessionId, "the failed launch is removed");
+        }
+        finally
+        {
+            KillPidFile(pidFile);
+            await runtime.DisposeAsync();
+        }
+    }
+
+    /// <summary>A-3: a trailing separator names the same directory, and the bound counts the socket path a launch uses.</summary>
+    [Test]
+    [Arguments(107, false)]
+    [Arguments(108, true)]
+    public void Trailing_separator_is_normalised_before_the_length_bound(int length, bool refused)
+    {
+        var root = NewRoot();
+        var padding = length - 33 - (root.Length + 1);
+        padding.ShouldBeGreaterThan(0, $"precondition: the temp root {root} leaves room for a {length}-byte socket path");
+        var bare = root + "/" + new string('a', padding);
+        var settings = new SessionRunnerSettings
+        {
+            SessionLogPath = root, PtyHostSocketDir = bare + "/", PtyHostSocketDirMode = PtyHostSocketDirMode.Owned,
+        };
+        var id = Guid.NewGuid();
+
+        settings.ResolvedPtyHostSocketDir.ShouldBe(bare, "a trailing separator names the same directory");
+        var name = PtyHostRendezvous.PipeNameFor(settings, Launch(id, root), isWindows: false);
+        name.ShouldBe(bare + "/" + id.ToString("N"));
+        System.Text.Encoding.UTF8.GetByteCount(name).ShouldBe(length);
+
+        if (refused)
+        {
+            Should.Throw<PtyHostSocketDirUnsafeException>(() =>
+                PtyHostSocketDirectory.EnsureSafe(settings.ResolvedPtyHostSocketDir, PtyHostSocketDirectory.DefaultProbe))
+                .Message.ShouldBe(TooLongCode);
+            return;
+        }
+
+        PtyHostSocketDirectory.EnsureSafe(settings.ResolvedPtyHostSocketDir, PtyHostSocketDirectory.DefaultProbe);
+        File.GetUnixFileMode(bare).ShouldBe(OwnerOnly, "a 107-byte socket path is accepted");
+    }
+
+    /// <summary>D-1/A-4: a probe that throws (an old libc without statx) cannot prove the socket file, so the row is held, never killed.</summary>
+    [Test]
+    public async Task Socket_file_probe_fault_holds_the_row_before_connect()
+    {
+        await using var world = await PtyHostStrangerWorld.StartAsync(recordHostInstance: true, rootPrefix: "c1653-sock",
+            peerCheck: PtyHostPeerCheckMode.Enforce);
+        world.Answer(world.SessionId, world.HostInstance);
+        PtyHostPeerPolicy.FileProbeOverride.Value = new ThrowingProbe(PtyHostSocketDirectory.DefaultProbe, world.ManifestPipeName);
+        PtyHostPeerPolicy.PeerReaderOverride.Value = world.ProvenPeer();
+
+        (await world.AdoptAsync()).ShouldBe(0, "an unproven socket file is not adopted");
+
+        world.Connections.ShouldBe(0, "the socket file check runs before connect");
+        world.Frames.ShouldBeEmpty();
+        AssertHeld(world, "adoption");
+    }
+
     private static void AssertHeld(PtyHostStrangerWorld world, string verb)
     {
         world.StandIn.WaitForExit(500).ShouldBeFalse("a peer refusal never kills the manifest's host");
@@ -417,6 +598,24 @@ public class Card1653SocketDirTests
         public UnixFileFacts? Lstat(string candidate) => candidate != path ? real.Lstat(candidate)
             : real.Lstat(candidate) is null ? null
             : new UnixFileFacts(UnixFileKind.Socket, real.Euid() + 1, 0xC000 | 0b111_101_101);
+
+        public uint Euid() => real.Euid();
+    }
+
+    private static string UnusableSetting(string shape) => shape switch
+    {
+        "empty" => "",
+        "whitespace" => "   ",
+        "nul" => "c1653\0sock",
+        _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+    };
+
+    /// <summary>The real probe, except that a stat of <paramref name="path"/> throws as a missing entry point would.</summary>
+    private sealed class ThrowingProbe(IUnixFileProbe real, string path) : IUnixFileProbe
+    {
+        public UnixFileFacts? Lstat(string candidate) => candidate == path
+            ? throw new EntryPointNotFoundException("c1653 injected statx fault")
+            : real.Lstat(candidate);
 
         public uint Euid() => real.Euid();
     }

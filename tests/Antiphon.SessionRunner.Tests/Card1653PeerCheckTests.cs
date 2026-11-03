@@ -294,6 +294,55 @@ public class Card1653PeerCheckTests
         }
     }
 
+    /// <summary>
+    /// D-1 (review db8d32c0): an empty environment variable binds <c>""</c>, not null. A null, empty
+    /// or whitespace-only setting is unset and resolves to the default without throwing.
+    /// </summary>
+    [Test]
+    [Arguments("empty")]
+    [Arguments("spaces")]
+    [Arguments("tab")]
+    public void Blank_socket_dir_setting_means_the_default(string shape)
+    {
+        var blank = shape switch { "empty" => "", "spaces" => "   ", "tab" => "\t", _ => throw new ArgumentOutOfRangeException(nameof(shape)) };
+        var bound = new ServiceCollection()
+            .Configure<SessionRunnerSettings>(new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["SessionRunner:PtyHostSocketDir"] = blank })
+                .Build().GetSection("SessionRunner"))
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
+        bound.PtyHostSocketDir.ShouldBe(blank, "precondition: configuration binds the blank value, not null");
+
+        foreach (var settings in new[] { new SessionRunnerSettings { PtyHostSocketDir = blank }, bound })
+            Should.NotThrow(() => settings.ResolvedPtyHostSocketDir)
+                .ShouldBe(Path.GetFullPath(Path.Combine(settings.ResolvedPtyHostDir, "sock")));
+    }
+
+    /// <summary>
+    /// D-1/A-4: an exception inside the proof (the peer reader, the start-time liveness re-check) is
+    /// not a proof. Nothing is written and the row is held exactly as a refusal; the host is never
+    /// killed through the sweep's generic arm.
+    /// </summary>
+    [Test]
+    [Arguments("peer-reader")]
+    [Arguments("liveness")]
+    public async Task Proof_step_exception_holds_the_row_without_a_kill(string step)
+    {
+        await using var world = await RefusalWorldAsync();
+        IProcessLivenessProbe? probe = null;
+        if (step == "peer-reader")
+            PtyHostPeerPolicy.PeerReaderOverride.Value = _ => throw new InvalidOperationException("c1653 injected peer reader fault");
+        else
+        {
+            var throwing = new ThrowAfterReadProbe();
+            PtyHostPeerPolicy.PeerReaderOverride.Value = throwing.Wrap(world.ProvenPeer());
+            probe = throwing;
+        }
+
+        await AssertRefusedAsync(world, await world.AdoptAsync(probe));
+        world.Logger.Text.ShouldNotContain("treating as dead");
+    }
+
     /// <summary>The CARD-1636 stranger shape: the correct session and instance, under Enforce, from a foreign peer.</summary>
     private static async Task<PtyHostStrangerWorld> RefusalWorldAsync()
     {
@@ -341,6 +390,25 @@ public class Card1653PeerCheckTests
         new VerificationSessionGeneration(sessionId, DateTime.UtcNow),
         new VerificationCreationCoordinates("r", "g", "w", "wg", "main", Guid.NewGuid()),
         VerificationCustodyBackends.LinuxCgroup, Guid.NewGuid());
+
+    /// <summary>Alive (as the system says) until a wrapped peer reader has run; then every liveness read throws.</summary>
+    private sealed class ThrowAfterReadProbe : IProcessLivenessProbe
+    {
+        private readonly SystemProcessLivenessProbe _real = new();
+        private volatile bool _read;
+
+        public Func<Microsoft.Win32.SafeHandles.SafePipeHandle, PtyHostPeerCredentials?> Wrap(
+            Func<Microsoft.Win32.SafeHandles.SafePipeHandle, PtyHostPeerCredentials?> reader) =>
+            handle => { _read = true; return reader(handle); };
+
+        public bool IsAlive(int pid, DateTime startedAt) => _read
+            ? throw new InvalidOperationException("c1653 injected liveness fault")
+            : _real.IsAlive(pid, startedAt);
+
+        public string? TryGetProcessName(int pid) => _real.TryGetProcessName(pid);
+
+        public DateTime? TryGetStartTimeUtc(int pid) => _real.TryGetStartTimeUtc(pid);
+    }
 
     private static void KillBestEffort(int? pid)
     {
