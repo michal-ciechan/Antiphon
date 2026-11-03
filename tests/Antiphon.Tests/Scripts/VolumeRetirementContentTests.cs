@@ -999,4 +999,158 @@ public sealed class VolumeRetirementContentTests
             "OUTPUT holdlift-other-build threw:TempHoldLiftBuildMismatch posts=0",
         }, string.Join("\n", rows));
     }
+
+    // CARD-1689: the temp-retirement exchange refused three different causes as the
+    // same bare RecycleGitAuditUnknown, and the coordinator console shows only that
+    // diagnosis. Each cause now names itself and the host file that holds its detail.
+    private const string ExchangeProject = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+    private const string ExchangeNonce = "0123456789abcdef0123456789abcdef";
+    private const string ExchangeOrigin = "https://fixture.invalid/card-1689/private.git";
+    private static readonly string ExchangeRequest = "C1008_PRIVATE_ORIGIN repo=repos/private origin=" + ExchangeOrigin +
+        " originHash=" + new string('1', 64) + " proofName=" + new string('2', 64);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_inventory_refusal_names_its_check_and_detail_file()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            var refused = await PrepareExchange(root, 2,
+                "audit check=git-dir-shape status=0 repo=repos/private\nRecycleGitAuditUnknown\n", registry: "", stdin: "/dev/null");
+            refused.Exit.ShouldBe(2, refused.Output);
+            Diagnosis(refused.Output).ShouldBe("RecycleGitAuditUnknown audit check=git-dir-shape status=0 repo=repos/private reason=inventory detail=" +
+                ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + ".out", refused.Output);
+            var empty = await PrepareExchange(root, 2, "", registry: "", stdin: "/dev/null", fresh: true);
+            Diagnosis(empty.Output).ShouldBe("RecycleGitAuditUnknown audit check=unclassified status= repo=. reason=inventory detail=" +
+                ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + ".out", empty.Output);
+
+            // Publication and dirty-tree refusals keep their established diagnoses.
+            var unpublished = await PrepareExchange(root, 3, "", registry: "", stdin: "/dev/null", fresh: true);
+            Diagnosis(unpublished.Output).ShouldBe("RecycleUnpublishedWork", unpublished.Output);
+            var dirty = await PrepareExchange(root, 4, "", registry: "", stdin: "/dev/null", fresh: true);
+            Diagnosis(dirty.Output).ShouldBe("RecycleWorktreeDirty", dirty.Output);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_registry_refusals_name_the_registry_cause()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            var registry = Path.Combine(root, "server", "retirement-origins.json");
+            var requests = ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/private-origins.txt";
+            var write = "umask 077; jq -ncS --arg p " + VolumeRetirementFixture.Quote(ExchangeProject) + " --arg o " +
+                VolumeRetirementFixture.Quote(ExchangeOrigin) + " ";
+            var vectors = new (string Name, string Registry, string Expected)[]
+            {
+                ("missing", "", "RecycleGitAuditUnknown reason=registry-missing detail=" + registry),
+                ("non-canonical", "umask 077; jq -nS --arg p " + VolumeRetirementFixture.Quote(ExchangeProject) +
+                    " '{schema:1,projects:{($p):{origins:[]}}}' > \"$registry\"",
+                    "RecycleGitAuditUnknown reason=registry-invalid detail=" + registry),
+                ("writable", write + "'{schema:1,projects:{($p):{origins:[$o]}}}' > \"$registry\"; chmod 0666 \"$registry\"",
+                    "RecycleGitAuditUnknown reason=registry-invalid detail=" + registry),
+                ("project", write + "'{schema:1,projects:{\"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2\":{origins:[$o]}}}' > \"$registry\"",
+                    "RecycleGitAuditUnknown reason=registry-project detail=" + registry),
+                ("unapproved", write + "'{schema:1,projects:{($p):{origins:[($o|rtrimstr(\".git\"))]}}}' > \"$registry\"",
+                    "RecycleGitAuditUnknown reason=unapproved-origin detail=" + requests),
+            };
+            var seen = new List<string>();
+            foreach (var vector in vectors)
+            {
+                var run = await PrepareExchange(root, 0, ExchangeRequest + "\n", vector.Registry, stdin: "/dev/null", fresh: seen.Count > 0);
+                run.Exit.ShouldBe(2, vector.Name + "; " + run.Output);
+                Diagnosis(run.Output).ShouldBe(vector.Expected, vector.Name + "; " + run.Output);
+                run.Output.ShouldNotContain("C1609_PROOF_REQUEST", Case.Sensitive, vector.Name + ": the registry refuses before the exchange");
+                seen.Add(vector.Expected);
+            }
+            seen.Distinct().Count().ShouldBe(4, "missing, invalid, project and unapproved are distinct causes");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Exchange_proof_failure_names_its_stage()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1689-exchange-").FullName;
+        try
+        {
+            var registry = "umask 077; jq -ncS --arg p " + VolumeRetirementFixture.Quote(ExchangeProject) + " --arg o " +
+                VolumeRetirementFixture.Quote(ExchangeOrigin) + " '{schema:1,projects:{($p):{origins:[$o]}}}' > \"$registry\"";
+            var silent = await PrepareExchange(root, 0, ExchangeRequest + "\n", registry, stdin: "/dev/null");
+            silent.Exit.ShouldBe(2, silent.Output);
+            silent.Output.ShouldContain("C1609_PROOF_REQUEST ", Case.Sensitive, "a registered origin reaches the desktop exchange");
+            Diagnosis(silent.Output).ShouldBe("RecycleGitAuditUnknown reason=proof-exchange stage=response", silent.Output);
+
+            var reply = Path.Combine(root, "reply");
+            await File.WriteAllTextAsync(reply, "C1609_PROOF_RESPONSE " + new string('0', 32) + "\n");
+            var mismatched = await PrepareExchange(root, 0, ExchangeRequest + "\n", registry, stdin: reply, fresh: true);
+            Diagnosis(mismatched.Output).ShouldBe("RecycleGitAuditUnknown reason=proof-exchange stage=binding", mismatched.Output);
+
+            // No private origin: no registry read and no exchange, as before.
+            var none = await PrepareExchange(root, 0, "", registry: "", stdin: "/dev/null", fresh: true);
+            none.Exit.ShouldBe(0, none.Output);
+            none.Output.ShouldContain("PREPARE_EXIT=0", Case.Sensitive);
+            none.Output.ShouldNotContain("DIAGNOSIS=");
+            File.Exists(ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/c590-result.json").ShouldBeTrue(none.Output);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static string ExchangeOperationRoot(string root) =>
+        Path.Combine(root, "server", "retirement", VolumeRetirementFixture.Operation);
+
+    private static string Diagnosis(string output) =>
+        output.Split('\n').Where(line => line.StartsWith("DIAGNOSIS=", StringComparison.Ordinal))
+            .Select(line => line["DIAGNOSIS=".Length..]).SingleOrDefault() ?? "<none>";
+
+    // Real c1609_prepare_exchange with only the host inventory helper and the
+    // c590-remote refusal writer stubbed. stdin is the desktop coordinator's reply.
+    private static async Task<(int Exit, string Output)> PrepareExchange(string root, int inventoryExit, string inventory,
+        string registry, string stdin, bool fresh = false)
+    {
+        var inventoryFile = Path.Combine(root, "inventory-lines");
+        await File.WriteAllTextAsync(inventoryFile, inventory);
+        var run = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(root, "server"))}}
+            registry="$SERVER2_ROOT/retirement-origins.json"
+            {{(fresh ? "rm -rf -- \"$SERVER2_ROOT\"" : ":")}}
+            C1008_OPERATION={{VolumeRetirementFixture.Operation}}
+            C1008_PROJECT_ID={{ExchangeProject}}
+            C1609_EXCHANGE=1
+            C1609_PHASE_NONCE={{ExchangeNonce}}
+            C1609_EXCHANGE_PROOF_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(root, "control"))}}
+            c1008_refuse() { printf 'DIAGNOSIS=%s\n' "$1"; exit 2; }
+            c1008_audit_readonly() {
+                [ "$1" = inventory ] || return 9
+                cat -- {{VolumeRetirementFixture.Quote(inventoryFile)}}
+                return {{inventoryExit}}
+            }
+            source {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh"))}}
+            (umask 077; mkdir -p -- "$(c1609_retirement_root)")
+            {{(registry.Length == 0 ? ":" : registry)}}
+            code=0
+            c1609_prepare_exchange < {{VolumeRetirementFixture.Quote(stdin)}} || code=$?
+            printf 'PREPARE_EXIT=%s\n' "$code"
+            exit "$code"
+            """);
+        return run;
+    }
 }
