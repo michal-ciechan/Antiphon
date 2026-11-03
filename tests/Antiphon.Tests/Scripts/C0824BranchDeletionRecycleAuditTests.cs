@@ -63,18 +63,19 @@ public sealed class C0824BranchDeletionRecycleAuditTests
         (await runner.RemoveAsync(new(w.Mirror, PublishedSha: w.BranchSha), ct)).Removed.ShouldBeTrue("mirror-removed");
         var deleted = await runner.DeleteBranchRefsAsync(new(Branch, w.BranchSha), ct);
         deleted.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Deleted, deleted.Code);
-        deleted.Deleted.Order(StringComparer.Ordinal).ShouldBe([LocalRef, TrackingRef]);
-        (await w.RefAsync(LocalRef)).ShouldBeNull("runner-refs-gone");
-        (await w.RefAsync(TrackingRef)).ShouldBeNull("runner-refs-gone");
         await w.DeleteOriginBranchWithLeaseAsync();
         (await w.OriginShaAsync()).ShouldBeNull("origin-deleted");
 
+        // The audit is the oracle: any runner ref left naming the deleted tip refuses the recycle.
         var preview = await VolumeRetirementFixture.Preview(fixture);
         var text = preview.Output + await VolumeRetirementFixture.AuditText(fixture);
         preview.Exit.ShouldBe(0, "c0824-v43: no ref names an unadvertised tip; " + VolumeRetirementFixture.Truncate(text));
         text.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         text.ShouldNotContain("RecycleUnpublishedWork");
         fixture.Removed.ShouldBeEmpty();
+        deleted.Deleted.Order(StringComparer.Ordinal).ShouldBe([LocalRef, TrackingRef]);
+        (await w.RefAsync(LocalRef)).ShouldBeNull("runner-refs-gone");
+        (await w.RefAsync(TrackingRef)).ShouldBeNull("runner-refs-gone");
     }
 
     [Test]
@@ -142,7 +143,7 @@ public sealed class C0824BranchDeletionRecycleAuditTests
                 git -C {{Q(publisher)}} push -q origin HEAD:{{Q(LocalRef)}}
                 task=$(git -C {{Q(publisher)}} rev-parse HEAD)
                 git -C {{Q(publisher)}} checkout -q main
-                git -C {{Q(publisher)}} -c commit.gpgsign=false cherry-pick -q --allow-empty "$task" >/dev/null
+                git -C {{Q(publisher)}} -c commit.gpgsign=false cherry-pick --allow-empty "$task" >/dev/null
                 git -C {{Q(publisher)}} commit -q --amend -m 'task work (rebased by the land)'
                 git -C {{Q(publisher)}} push -q origin HEAD:refs/heads/main
                 if git -C {{Q(publisher)}} merge-base --is-ancestor "$task" main; then
