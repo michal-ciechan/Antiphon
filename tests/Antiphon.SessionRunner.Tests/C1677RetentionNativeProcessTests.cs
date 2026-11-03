@@ -173,7 +173,7 @@ public sealed class C1677RetentionNativeProcessTests
     {
         "lf" => "\n",
         "cr" => "\r",
-        "ls" => " ",
+        "ls" => "\u2028",
         _ => " ",
     };
 
