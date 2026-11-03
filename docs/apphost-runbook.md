@@ -178,13 +178,14 @@ ordinary age check. This window starts at the stamp, not at the holder's exit.
 The health wait is a no-progress window, not a fixed budget (CARD-1680). Growth of
 `apphost.log` or the launcher's captured output, the dashboard URL file appearing,
 any change in whether server port 17202 is listening (opening or closing), or a
-non-200 `/health` answer restarts the `-TimeoutSec` window, up to `-MaxWaitSec` from launch (never below `-TimeoutSec`).
-Once `/health` answers 200 no further progress is credited: the `/api/version` SHA
-check has the rest of the current window, then exits 5. `apphost.pid` names this
-launch's AppHost only after `dev-aspire.ps1` rewrites it; a pid file left from
-before the launch never counts. Each restart rotates `apphost.log` to
-`apphost.log.1` to `.10` instead of emptying it; if a move fails, rotation stops
-and `apphost.log` is emptied in place, so the previous launch's log can be missing.
+non-200 `/health` answer restarts the `-TimeoutSec` window, up to `-MaxWaitSec`
+from launch (never below `-TimeoutSec`). Once `/health` answers 200 no further
+progress is credited: the `/api/version` SHA check has the rest of the current
+window, then exits 5. `apphost.pid` names this launch's AppHost only after
+`dev-aspire.ps1` rewrites it; a pid file left from before the launch never counts.
+Each restart rotates `apphost.log` to `apphost.log.1` to `.10` instead of emptying
+it; if a move fails, rotation stops and `apphost.log` is emptied in place, so the
+previous launch's log can be missing.
 
 The script's `If the holder is genuinely gone, delete ...` and `delete it to
 force a retry` hints describe a manual override, not a sufficient safety check.
