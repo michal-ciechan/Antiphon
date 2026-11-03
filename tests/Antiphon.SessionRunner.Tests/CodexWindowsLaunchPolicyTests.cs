@@ -14,6 +14,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Standard_npm_shim_becomes_node_exe_plus_codex_js()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var args = new[] { "--no-alt-screen", "-c", "developer_instructions=" + CodexInstructionFixtures.Incident };
         var request = CodexRequest(layout.ShimPath, args, layout.Root);
@@ -29,6 +30,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Sibling_node_wins_over_PATH_node()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var pathDir = layout.PathNodeDir();
         var request = CodexRequest(
@@ -43,6 +45,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void PATH_node_is_used_when_no_sibling()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(siblingNode: false);
         var pathDir = layout.PathNodeDir();
         var request = CodexRequest(
@@ -56,6 +59,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Install_root_with_spaces_and_unicode_round_trips()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(rootName: "c0497 npm rôot 😀 " + Guid.NewGuid().ToString("N")[..8]);
         var request = CodexRequest(layout.ShimPath, ["--no-alt-screen"], layout.Root);
 
@@ -71,6 +75,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void An_already_normalized_request_is_not_prefixed_twice()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var args = new[] { layout.JsPath, "--no-alt-screen" };
         var request = CodexRequest(layout.SiblingNodePath!, args, layout.Root);
@@ -84,6 +89,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Explicit_codex_exe_is_left_alone()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var request = CodexRequest(layout.NativePath, ["--no-alt-screen"], layout.Root);
 
@@ -95,6 +101,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Explicit_node_codex_js_is_left_alone_but_still_budgeted()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var args = new[] { layout.JsPath, "--no-alt-screen" };
         var request = CodexRequest(layout.SiblingNodePath!, args, layout.Root, budget: 100);
@@ -107,6 +114,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Serialized_hop1_at_budget_is_accepted_and_plus_one_is_refused()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         const int budget = 30_000;
         var sentinel = "C0497-HOP1-" + Guid.NewGuid().ToString("N");
@@ -131,6 +139,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Native_hop_is_bounded_by_the_longest_installed_native_path()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(nativeTriple: "x86_64-pc-windows-msvc-" + new string('N', 120));
         const int hop1Target = 29_980;
         var sentinel = "C0497-HOP2-" + Guid.NewGuid().ToString("N");
@@ -152,6 +161,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Quote_expansion_is_counted_not_estimated()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var quotes = new string('"', 9_047);
         var args = new[] { "--no-alt-screen", quotes };
@@ -175,6 +185,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Missing_sibling_and_PATH_node_is_codex_launcher_unavailable()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(siblingNode: false);
         var dummy = Path.Combine(layout.Root, "empty-path");
         Directory.CreateDirectory(dummy);
@@ -191,6 +202,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Shim_without_codex_js_is_codex_launcher_unavailable()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(js: false);
         var ex = Should.Throw<CodexLaunchException>(() =>
             CodexWindowsLaunchPolicy.Apply(CodexRequest(layout.ShimPath, ["--no-alt-screen"], layout.Root), false));
@@ -201,6 +213,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Recognized_shim_without_a_vendored_native_package_is_codex_launcher_unsupported()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(native: false);
         var ex = Should.Throw<CodexLaunchException>(() =>
             CodexWindowsLaunchPolicy.Apply(CodexRequest(layout.ShimPath, ["--no-alt-screen"], layout.Root), false));
@@ -210,6 +223,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void A_customized_wrapper_is_not_rewritten_and_falls_under_the_batch_ceiling()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(shimText: CodexWindowsLaunchPolicy.StockNpmShimText + "\necho extra\n");
         var original = CodexRequest(layout.ShimPath, ["--no-alt-screen"], layout.Root);
         var effective = CodexWindowsLaunchPolicy.Apply(original, useHerdr: false);
@@ -225,6 +239,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void A_configured_budget_above_30000_does_not_raise_the_transport_ceiling()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var sentinel = "C0497-CEIL-" + Guid.NewGuid().ToString("N");
         var prefix = new[] { "--no-alt-screen", "-c" };
@@ -239,6 +254,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Explicit_cmd_launcher_is_capped_at_7000()
     {
+        RequireWindowsHost();
         var wrapper = Path.Combine(Path.GetTempPath(), $"c0497-wrap-{Guid.NewGuid():N}.cmd");
         File.WriteAllText(wrapper, "echo custom\n");
         try
@@ -269,6 +285,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Arguments(-1)]
     public void Nonpositive_budget_is_refused(int budget)
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var ex = Should.Throw<CodexLaunchException>(() =>
             CodexWindowsLaunchPolicy.Apply(
@@ -280,6 +297,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Nul_in_any_argument_is_refused()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var ex = Should.Throw<CodexLaunchException>(() =>
             CodexWindowsLaunchPolicy.Apply(
@@ -291,6 +309,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Surrogate_pairs_count_two_units()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var emojis = string.Concat(Enumerable.Repeat("😀", 2_048));
         emojis.Length.ShouldBe(4_096);
@@ -307,6 +326,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void The_incident_fixture_is_accepted_on_the_node_path()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var args = new[]
         {
@@ -329,6 +349,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Missing_node_never_returns_the_batch_request()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout(siblingNode: false);
         var dummy = Path.Combine(layout.Root, "no-node");
         Directory.CreateDirectory(dummy);
@@ -343,6 +364,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void A_claude_request_whose_exe_ends_in_codex_cmd_is_untouched()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var request = new RunnerLaunchRequest(
             Guid.NewGuid(), layout.ShimPath, ["--append-system-prompt", "x"],
@@ -354,6 +376,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void A_codex_transcript_request_with_a_non_shim_exe_is_untouched()
     {
+        RequireWindowsHost();
         var exe = Path.Combine(Environment.SystemDirectory, "notepad.exe");
         var request = CodexRequest(exe, ["--no-alt-screen"], Path.GetTempPath());
         var effective = CodexWindowsLaunchPolicy.Apply(request, false);
@@ -363,6 +386,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void A_path_based_custom_exe_is_not_replaced_by_a_stock_npm_shim_on_PATH()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var customDir = Path.Combine(layout.Root, "custom-bin");
         Directory.CreateDirectory(customDir);
@@ -394,6 +418,7 @@ public sealed class CodexWindowsLaunchPolicyTests
     [Test]
     public void Relative_direct_node_codex_js_resolves_against_request_cwd()
     {
+        RequireWindowsHost();
         using var layout = new CodexNpmLayout();
         var relativeJs = Path.GetRelativePath(layout.Root, layout.JsPath);
         Path.IsPathRooted(relativeJs).ShouldBeFalse();
@@ -431,6 +456,14 @@ public sealed class CodexWindowsLaunchPolicyTests
             30,
             TranscriptFormat: TranscriptFormats.Codex,
             CommandLineBudgetChars: budget);
+
+    // CARD-1669: CodexWindowsLaunchPolicy.Apply returns the request unchanged off Windows, so every
+    // assertion here is Windows behaviour; off Windows the test is a skip, not a vacuous pass.
+    private static void RequireWindowsHost()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: CodexWindowsLaunchPolicy applies only on Windows (it is the identity elsewhere)");
+    }
 
     private static RunnerLaunchRequest ApplySized(
         CodexNpmLayout layout, IReadOnlyList<string> prefix, string payload, int budget) =>

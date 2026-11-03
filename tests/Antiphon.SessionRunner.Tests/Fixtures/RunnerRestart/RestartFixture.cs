@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -56,8 +57,20 @@ internal sealed class RestartFixture : IDisposable
 
     public static string Quote(string value) => value.Replace("'", "''");
 
+    // CARD-1669: the rows name the Windows engines. Off Windows PowerShell 7 is the `pwsh` host and
+    // Windows PowerShell 5.1 does not exist, so its rows are a skip. On Windows the name is unchanged.
+    public static string HostShell(string shell)
+    {
+        if (OperatingSystem.IsWindows())
+            return shell;
+        if (string.Equals(shell, "powershell.exe", StringComparison.OrdinalIgnoreCase))
+            Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
+        return string.Equals(shell, "pwsh.exe", StringComparison.OrdinalIgnoreCase) ? "pwsh" : shell;
+    }
+
     public async Task<(int Exit, string Output)> Script(string script, string shell = "pwsh.exe", params string[] args)
     {
+        shell = HostShell(shell);
         ScriptChildStarts++;
         var path = Path.Combine(Root, "driver.ps1");
         File.WriteAllText(path, script);
@@ -97,6 +110,7 @@ internal sealed class RestartFixture : IDisposable
 
     public async Task<RestartResult> Run(string shell = "pwsh.exe", params string[] args)
     {
+        shell = HostShell(shell);
         foreach (var required in new[] { CopiedEntry, CopiedHelper, CopiedPlatform, WrapperPath })
         {
             if (!File.Exists(required))

@@ -14,7 +14,8 @@ public sealed class CodexCliVersionWindowsTests
     [Test]
     public async Task C1031_Npm_notice_preserves_version()
     {
-        OperatingSystem.IsWindows().ShouldBeTrue("C1031-windows-notice native host");
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: C1031-windows-notice native host: the npm shim, PATHEXT and node.exe launch resolution under test is Windows-only");
         using var kit = new CodexCliVersionTestFixture();
         Directory.Exists(kit.EmptyPath).ShouldBeTrue("C1031-sealed-path exists");
         Directory.EnumerateFileSystemEntries(kit.EmptyPath).ShouldBeEmpty("C1031-sealed-path empty");
@@ -50,7 +51,8 @@ public sealed class CodexCliVersionWindowsTests
     [Test]
     public async Task C959_Npm_probe_uses_launch_resolution()
     {
-        OperatingSystem.IsWindows().ShouldBeTrue("C959-v06-Windows-host");
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: C959-v06-Windows-host: the npm shim, PATHEXT and node.exe launch resolution under test is Windows-only");
         using var kit = new CodexCliVersionTestFixture();
         using var layout = new CodexNpmLayout(rootName: "C959 npm rôot α " + Guid.NewGuid().ToString("N"));
         File.Copy(Environment.ProcessPath!, layout.SiblingNodePath!, true);
@@ -74,7 +76,8 @@ public sealed class CodexCliVersionWindowsTests
     [Test]
     public async Task C959_Native_and_direct_node_probe()
     {
-        OperatingSystem.IsWindows().ShouldBeTrue("C959-v07-Windows-host");
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: C959-v07-Windows-host: the npm shim, PATHEXT and node.exe launch resolution under test is Windows-only");
         using var kit = new CodexCliVersionTestFixture();
         var otherNative = Path.Combine(kit.Root, "other", "codex.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(otherNative)!);
@@ -110,7 +113,8 @@ public sealed class CodexCliVersionWindowsTests
     [Test]
     public async Task C959_Unverified_launcher_is_unknown()
     {
-        OperatingSystem.IsWindows().ShouldBeTrue("C959-v08-Windows-host");
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: C959-v08-Windows-host: the npm shim, PATHEXT and node.exe launch resolution under test is Windows-only");
         using var kit = new CodexCliVersionTestFixture();
         foreach (var (node, js, native, shim, label) in new[]
         {

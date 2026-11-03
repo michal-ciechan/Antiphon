@@ -611,7 +611,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     [Test] public async Task C1032_RemovalLateFileContentRefuses()
     {
         await LateFileRefuses(replace: false);
-        if (!OperatingSystem.IsWindows()) return;
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1669: the portable late-content refusal above ran; the PC-587 held-handle writer/rename variants need Windows delete-disposition sharing");
         // Native PC-587 variants: a gate callback runs after hash/identity validation
         // while the disposition handle is still held. No sleep selects the writer.
         foreach (var effect in new[] { "write", "rename" })
