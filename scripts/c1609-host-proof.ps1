@@ -140,11 +140,41 @@ function Read-C1609Advertisement([string]$Text) {
     return $array
 }
 
+# CARD-1693: the standing fleet pushes to the shared origin all the time, so the before/after
+# advertisement compare can move during a full fetch (52 s on 2026-11-03 run c7275700). Only that
+# 'snapshot' move is retried, at most three attempts inside the one network budget; every attempt
+# repeats every check. Each failed attempt logs its fixed reason token (never a URL or Git stderr)
+# to the local host-proof.log, which is not uploaded. The refusal text stays unchanged.
 function Write-C1609HostOriginProof {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofDirectory,
         [long]$CreatedUnix,[string]$LogPath,[string]$PhaseNonce,[string]$InventoryDigest,[string[]]$ApprovedOrigins,
         [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='')
-    $scratch=''; $bundle=''
+    $budget=[Diagnostics.Stopwatch]::StartNew()
+    for($attempt=1;;$attempt++){
+        $script:C1609HostProofReason=''
+        $remaining=$NetworkBudgetMs-[int]$budget.ElapsedMilliseconds
+        try {
+            Invoke-C1609HostOriginProofAttempt -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId `
+                -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce `
+                -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $remaining `
+                -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile
+            return
+        } catch {
+            $reason=[string]$script:C1609HostProofReason
+            if($reason -cnotmatch '^[a-z][a-z-]{0,31}$'){$reason='other'}
+            if($LogPath -and $RepoRelative -cmatch '^[A-Za-z0-9._/-]+$'){
+                try{[IO.File]::AppendAllText($LogPath,('repo='+$RepoRelative+' attempt='+$attempt+' reason='+$reason+[char]10),[Text.UTF8Encoding]::new($false))}catch{}
+            }
+            if($reason -cne 'snapshot' -or $attempt -ge 3 -or ($NetworkBudgetMs-[int]$budget.ElapsedMilliseconds) -le 0){throw}
+        }
+    }
+}
+
+function Invoke-C1609HostOriginProofAttempt {
+    param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofDirectory,
+        [long]$CreatedUnix,[string]$LogPath,[string]$PhaseNonce,[string]$InventoryDigest,[string[]]$ApprovedOrigins,
+        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='')
+    $scratch=''; $bundle=''; $bundleCreated=$false
     try {
         if($OperationId -cnotmatch '^c1008[0-9a-f]{32}$' -or $PhaseNonce -cnotmatch '^[0-9a-f]{32}$' -or
             $InventoryDigest -cnotmatch '^[0-9a-f]{64}$' -or $RepoRelative -cnotmatch '^[A-Za-z0-9._/-]+$' -or
@@ -205,6 +235,7 @@ function Write-C1609HostOriginProof {
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         Assert-C1609RequiredObjects -RequiredObjects $RequiredObjects -Advertisement $before -Scratch $scratch -Repo $RepoRelative -TimeoutMs $cap
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
+        $bundleCreated=$true
         if($reuse){[IO.File]::Copy($PreviousProofFile+'.bundle',$bundle,$false)}
         else {[void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','create',$bundle,'--all')) -TimeoutMs $cap -WorkingDirectory $scratch)}
         $cap=[Math]::Min(30000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
@@ -224,7 +255,13 @@ function Write-C1609HostOriginProof {
         try{$file.Write($bytes);$file.Flush($true)}finally{$file.Dispose()}
         [IO.File]::AppendAllText($LogPath,('repo='+$RepoRelative+' refs='+$after.Count+$nl),[Text.UTF8Encoding]::new($false))
     } catch {
-        # No URL, credential or raw Git stderr crosses this boundary.
+        # No URL, credential or raw Git stderr crosses this boundary. The reason is a fixed token.
+        $reason=[string]$_.Exception.Message
+        $script:C1609HostProofReason=if($reason -cmatch '^RecycleGitAuditUnknown'){'git'}elseif($reason -cmatch '^[a-z][a-z-]{0,31}$'){$reason}else{'other'}
+        # A failed attempt's bundle is never a proof; remove only the file this attempt wrote.
+        if($bundleCreated -and $bundle -and [IO.File]::Exists($bundle) -and -not [IO.File]::Exists($proofFile)){
+            try{[IO.File]::Delete($bundle)}catch{}
+        }
         throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)
     } finally {
         if($scratch -and [IO.Directory]::Exists($scratch)){Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue}
