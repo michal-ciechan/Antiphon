@@ -702,6 +702,14 @@ public sealed class DelegationSettings
     /// </summary>
     public bool WorkspaceSlotsEnabled { get; set; }
 
+    /// <summary>
+    /// CARD-0824 S1c (T-D-1). Which task roles may lease a workspace slot while <see cref="WorkspaceSlotsEnabled"/> is on:
+    /// <c>*</c> (default: every role except Mutation), <c>none</c> (the soft rollback: no new leases, releases continue)
+    /// or a comma-separated list of exact role names (<c>Plan,Investigate,TestDesign,Docs</c>). A single string, never an
+    /// array: an array value is refused. Hot-reloadable from the server's JSON file; an invalid reload leases nothing.
+    /// </summary>
+    public string WorkspaceSlotRoles { get; set; } = Settings.WorkspaceSlotRoles.All;
+
     /// <summary>CARD-0633 D-6: the remote-preparation backoff cap. Default 900; at least the base.</summary>
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 

@@ -10,6 +10,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -41,6 +42,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly int _remotePrepPushBudgetMinutes;
     private readonly bool _workspaceSlots;
+    private readonly WorkspaceSlotRoleGate _roleGate;
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
@@ -51,7 +53,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         IWorkspaceReservationJournal? reservations = null,
         IOptions<DelegationSettings>? settings = null,
         IRunnerMirrorPublisher? mirrorPublisher = null,
-        RepositoryLeaseWaiters? leaseWaiters = null)
+        RepositoryLeaseWaiters? leaseWaiters = null,
+        IOptionsMonitor<DelegationSettings>? monitor = null,
+        WorkspaceSlotRoleGate? roleGate = null)
     {
         _runners = runners;
         _git = git;
@@ -65,6 +69,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         SyncBudget = TimeSpan.FromSeconds(configured.RunnerSyncBudgetSeconds);
         _remotePrepPushBudgetMinutes = configured.RemotePrepPushBudgetMinutes;
         _workspaceSlots = configured.WorkspaceSlotsEnabled;
+        // CARD-0824 S1c S-3: the flag stays restart-only (IOptions); only the role list is read live, from the monitor.
+        _roleGate = roleGate ?? new WorkspaceSlotRoleGate(monitor, NullLogger<WorkspaceSlotRoleGate>.Instance);
     }
 
     /// <summary>
@@ -178,11 +184,41 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 
     /// <summary>
+    /// CARD-0824 S1c S-3. The lease decision for a task now: the server flag, the role allow-list and SourceLanding. The
+    /// runner's <c>workspaceSlotV1</c> and the committed preparation are checked by <see cref="ResolveSlotDecisionAsync"/>.
+    /// </summary>
+    public WorkspaceSlotDecision DecideSlot(AgentTask task)
+    {
+        if (!_workspaceSlots)
+            return new WorkspaceSlotDecision(false, "flag_off");
+        var verdict = _roleGate.Evaluate(task.Role, task.SourceLandingOperationId);
+        return new WorkspaceSlotDecision(verdict.Lease, verdict.Reason);
+    }
+
+    /// <summary>
+    /// CARD-0824 S1c S-4 (T-D-4/T-D-5). The lease decision for this preparation.
+    /// </summary>
+    public async Task<WorkspaceSlotDecision> ResolveSlotDecisionAsync(
+        AppDbContext db, AgentTask task, MirrorBindingExpectation? expectation, DateTime at, CancellationToken ct)
+    {
+        // S1c red-first stub: decided anew for every send, never recorded.
+        if (!_workspaceSlots || expectation is null || !await AdvertisesSlotsAsync(task.RunnerId, ct))
+            return new WorkspaceSlotDecision(false, "ineligible");
+        return DecideSlot(task);
+    }
+
+    private async Task<bool> AdvertisesSlotsAsync(string? runnerId, CancellationToken ct) =>
+        (await _runners.DescribeAsync(runnerId, ct))?.Capabilities?.Features
+            ?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1, StringComparer.Ordinal) == true;
+
+    /// <summary>
     /// Asks the runner for a mirror of the pushed branch. When <paramref name="expectation"/> is
     /// set, the request carries that stored preparation and the caller keeps the returned binding.
+    /// <paramref name="decision"/> is the preparation's slot decision from <see cref="ResolveSlotDecisionAsync"/>.
     /// </summary>
     public async Task<RemoteWorkspaceMirrorResult> MirrorAsync(
-        AgentTask task, string sha, string repository, MirrorBindingExpectation? expectation, CancellationToken ct)
+        AgentTask task, string sha, string repository, MirrorBindingExpectation? expectation,
+        WorkspaceSlotDecision decision, CancellationToken ct)
     {
         var branch = task.WorktreeBranch!;
         var sentSha = sha;
@@ -213,11 +249,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 throw new ConflictException("runner_card_branch_unsupported");
         }
         var request = new PhoneHomeWorkspaceMirrorRequest(branch, sentSha, MirrorName(task.Id), sentRepository, binding);
-        // CARD-0824 S1: a slot lease needs both halves on (this server's flag and the runner's
-        // workspaceSlotV1) and a committed preparation; otherwise the request stays the legacy shape.
-        if (_workspaceSlots && binding is not null
-            && (await _runners.DescribeAsync(task.RunnerId, ct))?.Capabilities?.Features
-                ?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1, StringComparer.Ordinal) == true)
+        // CARD-0824 S1/S1c: a slot lease needs both halves on (this server's flag and the runner's
+        // workspaceSlotV1), a committed preparation and an admitted role, all folded into the preparation's
+        // decision; otherwise the request stays the exact legacy shape (no slot, no cold).
+        if (decision.Slot && binding is not null)
             request = request with { Slot = true, Cold = task.WorkspaceColdReset };
         var response = await client.MirrorWorkspaceAsync(request, ct);
         return new RemoteWorkspaceMirrorResult(response.Path, response.Binding, expectation, response.SlotId, response.Generation);

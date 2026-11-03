@@ -271,7 +271,9 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                     var originatingAttempt = task.Attempt;
                     var expectation = await remote.BeginMirrorPreparationAsync(
                         db, task, push.Sha, push.Repository!, ct);
-                    var mirrored = await remote.MirrorAsync(task, push.Sha, push.Repository!, expectation, ct);
+                    var decision = await remote.ResolveSlotDecisionAsync(
+                        db, task, expectation, _clock.GetUtcNow().UtcDateTime, ct);
+                    var mirrored = await remote.MirrorAsync(task, push.Sha, push.Repository!, expectation, decision, ct);
                     if (mirrored.Binding is { } returned)
                     {
                         var captured = mirrored.Expectation is not null
