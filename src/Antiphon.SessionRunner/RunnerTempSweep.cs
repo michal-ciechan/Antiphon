@@ -136,11 +136,17 @@ public sealed class RunnerTempSweep
     }
 
     /// <summary>The production sweep: <c>/tmp</c>, the shipped families, the real /proc scan and lstat owner.</summary>
-    public static RunnerTempSweep CreateDefault(string retiringRoot) =>
-        new("/tmp", RegisteredFamilies, new ProcWorkspaceSlotProcessProbe(), TempSweepNative.LstatUid,
+    public static RunnerTempSweep CreateDefault(string retiringRoot) => CreateDefault(retiringRoot, "/tmp");
+
+    /// <summary>The production composition over another temp root (the native witnesses bind it to a test root, never /tmp).</summary>
+    internal static RunnerTempSweep CreateDefault(string retiringRoot, string tempRoot) =>
+        new(tempRoot, RegisteredFamilies, new ProcWorkspaceSlotProcessProbe(), TempSweepNative.LstatUid,
             TempSweepNative.EffectiveUid(), TimeProvider.System, new TempSweepLimits(), DefaultMirrorPresent, retiringRoot);
 
     public string TempRoot => _tempRoot;
+
+    /// <summary>Test seam (review 12ba9a25 A-2): runs between the delete-time inventory and the validated delete.</summary>
+    internal Action<string>? AfterDeleteInventory { get; set; }
 
     private sealed record Facts(string Name, string Path, TempFamily Family, bool IsFile, long Bytes, DateTime Newest);
 
@@ -495,6 +501,7 @@ public sealed class RunnerTempSweep
             {
                 var identity = RunnerWorkspaceNoFollowDelete.Identity(facts.Path);
                 var entries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(facts.Path, identity, ct, allowLinks: true);
+                AfterDeleteInventory?.Invoke(facts.Path);
                 await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(facts.Path, identity, entries, null, null, ct, allowLinks: true);
             }
         }

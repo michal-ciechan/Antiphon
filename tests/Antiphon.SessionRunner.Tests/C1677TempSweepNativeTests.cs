@@ -12,7 +12,8 @@ namespace Antiphon.SessionRunner.Tests;
 /// CARD-1677 S2 CP-8 (linux-native). A real symlinked temp entry is refused and its target kept, an inner
 /// symlink is unlinked without following it, and a real child whose cwd is in an old family entry keeps it
 /// through the real fail-closed /proc scan (V-49, V-49b, V-50). Review 12ba9a25 D-1: a family name carrying a line
-/// break or any control character is unregistered and kept.
+/// break or any control character is unregistered and kept. Review 12ba9a25 D-2/A-2: the production statx owner seam,
+/// and a tree changed between the delete inventory and the delete is refused.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -149,5 +150,87 @@ public sealed class C1677TempSweepNativeTests
             Directory.EnumerateFiles(s.Tmp + "/" + name).Count().ShouldBe(3, name.Replace("\n", "\\n"));
         response.Unregistered.Sum(u => u.Count).ShouldBe(names.Length);
         response.Unregistered.ShouldAllBe(u => !u.Prefix.Any(char.IsControl));
+    }
+    [Test]
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real statx owner seam of the production temp sweep")]
+    public async Task Production_owner_seam_reads_each_entrys_own_uid(CancellationToken ct)
+    {
+        // Review 12ba9a25 D-2(b). The real statx owner lookup and effective uid that RunnerTempSweep.CreateDefault
+        // composes, bound to the test root (never /tmp). The effective uid equals /proc/self/status; a file this test
+        // made reads that uid; the root-owned / and /proc read 0 (a foreign-owned entry cannot be made without root, so
+        // root-owned paths are only read); a link to / reads its own uid, not its target's. The production composition
+        // then reports an old owned entry holding that link would_remove (DryRun): a wrong statx offset or a followed
+        // link would refuse it as foreign_owner or owner_unknown.
+        using var s = new Scratch();
+        var euid = TempSweepNative.EffectiveUid();
+        euid.ShouldBe(ProcStatusEffectiveUid());
+        euid.ShouldNotBe(0, "this witness needs a non-root runner: root owns / and /proc too");
+        var name = "c502-exit-cap-" + Hex32();
+        var path = s.Entry(name, TimeSpan.FromHours(49));
+        foreach (var file in Directory.EnumerateFiles(path))
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddHours(-100));
+        Directory.CreateSymbolicLink(path + "/root-link", "/");
+
+        TempSweepNative.LstatUid(path + "/f0.bin").ShouldBe(euid);
+        TempSweepNative.LstatUid(path).ShouldBe(euid);
+        TempSweepNative.LstatUid("/").ShouldBe(0);
+        TempSweepNative.LstatUid("/proc").ShouldBe(0);
+        TempSweepNative.LstatUid(path + "/root-link").ShouldBe(euid, "lstat: the link itself, never its target");
+        TempSweepNative.LstatUid(path + "/absent").ShouldBeNull();
+        TempSweepNative.LstatKind(path + "/f0.bin").ShouldBe(0x8000);
+        TempSweepNative.LstatKind(path).ShouldBe(0x4000);
+        TempSweepNative.LstatKind(path + "/root-link").ShouldBe(0xA000);
+
+        var sweep = RunnerTempSweep.CreateDefault(s.Root + "/retiring", s.Tmp);
+        sweep.TempRoot.ShouldBe(s.Tmp);
+        var response = await sweep.SweepAsync(Request(execute: false), ct);
+        var candidate = Single(response, name);
+        candidate.Verdict.ShouldBe(TempSweepCodes.WouldRemove, candidate.Reason + " " + candidate.Detail);
+        Directory.EnumerateFiles(path).Count().ShouldBe(3);
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: a real directory swapped for a symlink after the delete inventory")]
+    public async Task Tree_changed_after_the_delete_inventory_is_refused(CancellationToken ct)
+    {
+        // Review 12ba9a25 A-2 (the surviving plain-recursive-delete mutant). Between the delete-time inventory and the
+        // validated delete, an inner directory is swapped for a symlink to a directory outside the sweep root holding a
+        // canary. The no-follow primitive re-inventories, sees the change and refuses: the entry is kept as
+        // changed_since_inventory, the link is still there and the canary survives. A plain Directory.Delete(recursive)
+        // removes the entry and reports removed.
+        using var s = new Scratch();
+        var outside = s.Root + "/outside";
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(outside + "/canary.txt", "canary");
+        var name = "c1514-" + Hex32();
+        var path = s.Entry(name, TimeSpan.FromHours(49));
+        Directory.CreateDirectory(path + "/inner");
+        File.WriteAllText(path + "/inner/f.txt", "x");
+        s.Age(path, TimeSpan.FromHours(49));
+        var sweep = s.Sweep();
+        var swaps = 0;
+        sweep.AfterDeleteInventory = entry =>
+        {
+            swaps++;
+            Directory.Delete(entry + "/inner", recursive: true);
+            Directory.CreateSymbolicLink(entry + "/inner", outside);
+        };
+
+        var response = await sweep.SweepAsync(Request(), ct);
+
+        swaps.ShouldBe(1, "the swap ran between the delete inventory and the delete");
+        var candidate = Single(response, name);
+        candidate.Verdict.ShouldBe(TempSweepCodes.Kept, candidate.Detail);
+        candidate.Reason.ShouldBe(TempSweepCodes.ChangedSinceInventory, candidate.Detail);
+        response.Removed.ShouldBe(0);
+        Directory.Exists(path).ShouldBeTrue();
+        new DirectoryInfo(path + "/inner").LinkTarget.ShouldBe(outside);
+        File.ReadAllText(outside + "/canary.txt").ShouldBe("canary");
+    }
+
+    private static int ProcStatusEffectiveUid()
+    {
+        var line = File.ReadLines("/proc/self/status").Single(l => l.StartsWith("Uid:", StringComparison.Ordinal));
+        return int.Parse(line.Split('\t', StringSplitOptions.RemoveEmptyEntries)[2], System.Globalization.CultureInfo.InvariantCulture);
     }
 }
