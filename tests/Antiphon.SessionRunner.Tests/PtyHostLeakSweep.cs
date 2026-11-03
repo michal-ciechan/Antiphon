@@ -42,19 +42,23 @@ public static class TestSessionTeardown
     public static async Task KillAndAwaitHostExitAsync(
         SessionRunnerRuntime runtime, Guid sessionId, int? hostPid)
     {
-        try { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None); }
+        var killed = false;
+        try { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None); killed = true; }
         catch { /* A partially started session still needs the caller's pid fallback. */ }
 
         if (hostPid is not int pid)
             return;
 
-        var until = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        // CARD-1682: a session this runtime never owned (a failed adoption) was sent no kill, so
+        // its host is killed at once. Waiting here outlasts a 10 s class timeout, which then hides
+        // the failing assertion and leaves the host running.
+        var until = DateTime.UtcNow + (killed ? TimeSpan.FromSeconds(15) : TimeSpan.Zero);
         while (DateTime.UtcNow < until && IsAlive(pid))
             await Task.Delay(100);
 
         if (IsAlive(pid))
         {
-            try { Process.GetProcessById(pid).Kill(entireProcessTree: true); }
+            try { using var process = Process.GetProcessById(pid); process.Kill(entireProcessTree: true); process.WaitForExit(5_000); }
             catch { /* Already gone. */ }
         }
     }

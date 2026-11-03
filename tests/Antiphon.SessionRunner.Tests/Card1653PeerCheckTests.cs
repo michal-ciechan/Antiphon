@@ -376,13 +376,26 @@ public class Card1653PeerCheckTests
             "one fixed refusal line naming the session only");
     }
 
+    /// <summary>
+    /// The owner uid as <c>stat</c> reports it, independently of the code under test. CARD-1682: under
+    /// load one lookup printed nothing, so an empty answer is asked again (three tries) and a final
+    /// failure names stat's exit code and stderr instead of a bare parse error.
+    /// </summary>
     private static uint OwnerUid(string path)
     {
-        using var stat = Process.Start(new ProcessStartInfo("stat", ["-c", "%u", path])
-            { UseShellExecute = false, RedirectStandardOutput = true })!;
-        var output = stat.StandardOutput.ReadToEnd();
-        stat.WaitForExit(5_000).ShouldBeTrue();
-        return uint.Parse(output.Trim());
+        var attempts = new List<string>();
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var stat = Process.Start(new ProcessStartInfo("stat", ["-c", "%u", path])
+                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            var error = stat.StandardError.ReadToEndAsync();
+            var output = stat.StandardOutput.ReadToEnd();
+            stat.WaitForExit(5_000).ShouldBeTrue();
+            if (stat.ExitCode == 0 && uint.TryParse(output.Trim(), out var uid))
+                return uid;
+            attempts.Add($"exit {stat.ExitCode}, stdout '{output.Trim()}', stderr '{error.Result.Trim()}'");
+        }
+        throw new ShouldAssertException($"stat -c %u {path} gave no uid: {string.Join("; ", attempts)}");
     }
 
     private static VerificationExecutionBinding Binding(Guid sessionId) => new(
