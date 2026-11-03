@@ -76,6 +76,13 @@ public sealed class C1677RetentionServerTests
             return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunTickAsync(ct);
         }
 
+        /// <summary>The operator preview route's call: one DryRun tick for this rig's runner.</summary>
+        public async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> PreviewAsync(CancellationToken ct = default)
+        {
+            using var scope = Rig.Provider.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunTickAsync(ct, previewRunner: Rig.RunnerId);
+        }
+
         public List<PhoneHomeWorkspaceRetainRequest> Requests() =>
             Rig.Peer.Incoming.ToArray()
                 .Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == PhoneHomeOperation.WorkspaceRetain)
@@ -380,6 +387,172 @@ public sealed class C1677RetentionServerTests
         await w.TickAsync();
         w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
         (await w.RowsAsync(second)).ShouldHaveSingleItem().ReasonCode.ShouldBe("live_owner");
+        (await w.Rig.ReadTaskAsync(second)).RemoteWorktreePath.ShouldBe(World.PathOf(second));
+    }
+
+    [Test]
+    public async Task Kept_trees_do_not_starve_newer_removable_ones()
+    {
+        // Review c238f9ca D-1. Thirty trees the runner keeps (dirty) are older than five removable ones, with the
+        // shipped bound of 25: the kept ones are not re-sent while backed off, so the removable ones go on tick 2.
+        await using var w = await World.StartAsync();
+        var kept = new HashSet<Guid>();
+        for (var i = 0; i < 30; i++)
+            kept.Add(await w.EligibleAsync(TimeSpan.FromHours(100 - i)));
+        var removable = new List<Guid>();
+        for (var i = 0; i < 5; i++)
+            removable.Add(await w.EligibleAsync(TimeSpan.FromHours(20 - i)));
+        w.Retain = (request, frame) => kept.Contains(request.TaskId)
+            ? World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, WorkspaceRetentionCodes.Dirty))
+            : World.Answer(frame, Removed());
+
+        await w.TickAsync();
+        var first = w.Requests().Select(r => r.TaskId).ToList();
+        first.Count.ShouldBe(25);
+        first.ShouldAllBe(id => kept.Contains(id), "the 25 oldest are the kept ones");
+
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(30));
+        var results = await w.TickAsync();
+        var second = w.Requests().Skip(first.Count).Select(r => r.TaskId).ToList();
+        second.ShouldNotContain(id => first.Contains(id), "a kept tree is backed off, not re-sent every tick");
+        second.ShouldBe(kept.Except(first).Concat(removable).ToList(), ignoreOrder: true);
+        foreach (var id in removable)
+            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        var result = results.ShouldHaveSingleItem();
+        result.Examined.ShouldBe(35);
+        result.Eligible.ShouldBe(35);
+        result.BackedOff.ShouldBe(25);
+    }
+
+    [Test]
+    public async Task Dry_run_census_covers_the_whole_population()
+    {
+        // Review c238f9ca D-1. In DryRun nothing clears, so a would_remove moves the task behind the never-sent
+        // ones: two ticks with a bound of 2 examine all three trees.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        w.Settings.MaxRemovalsPerTick = 2;
+        var ids = new List<Guid>();
+        for (var hours = 30; hours >= 20; hours -= 5)
+            ids.Add(await w.EligibleAsync(TimeSpan.FromHours(hours)));
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.WouldRemove));
+
+        (await w.TickAsync()).ShouldHaveSingleItem().Examined.ShouldBe(3);
+        w.Requests().Select(r => r.TaskId).ShouldBe([ids[0], ids[1]]);
+        await w.TickAsync();
+        w.Requests().Select(r => r.TaskId).Skip(2).First().ShouldBe(ids[2], "the never-sent tree goes first");
+        w.Requests().Select(r => r.TaskId).Distinct().ShouldBe(ids, ignoreOrder: true);
+        w.Requests().ShouldAllBe(r => r.Mode == WorkspaceRetainModes.DryRun);
+    }
+
+    [Test]
+    public async Task Kept_tree_backs_off_until_its_reason_changes()
+    {
+        // Review c238f9ca D-1. A keep backs the tree off (60 min, doubling per repeat); a changed reason is
+        // re-sent on the next tick; a repeat of the new reason backs off again.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        var reasons = new Queue<string>([WorkspaceRetentionCodes.Dirty, WorkspaceRetentionCodes.LiveProcess, WorkspaceRetentionCodes.LiveProcess]);
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, reasons.Dequeue()));
+
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(1);
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(30));
+        (await w.TickAsync()).ShouldHaveSingleItem().BackedOff.ShouldBe(1);
+        w.Requests().Count.ShouldBe(1, "dirty again within its backoff is not re-sent");
+        await w.Rig.AdvanceAsync(TimeSpan.FromMinutes(30));
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(2, "the backoff has passed");
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(3, "the reason changed (dirty -> live_process), so it is re-sent at once");
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(3, "the same reason again backs off");
+        (await w.RowsAsync(id)).Where(r => r.OperationId != null).Select(r => r.ReasonCode)
+            .ShouldBe([WorkspaceRetentionCodes.Dirty, WorkspaceRetentionCodes.LiveProcess, WorkspaceRetentionCodes.LiveProcess]);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+    }
+
+    [Test]
+    public async Task Changed_task_facts_resend_a_backed_off_tree_at_once()
+    {
+        // Review c238f9ca D-1. The backoff belongs to the facts it was answered for: a task that ran again and
+        // finished again (a new CompletedAt) is re-sent at once.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, WorkspaceRetentionCodes.Unpushed));
+        await w.TickAsync();
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(1, "backed off");
+        await using (var db = w.Rig.NewDb())
+            await db.AgentTasks.Where(t => t.Id == id)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.CompletedAt, w.Rig.Now - TimeSpan.FromHours(13)));
+        await w.TickAsync();
+        w.Requests().Count.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task Preview_is_dry_run_even_when_execute_is_on()
+    {
+        // Review c238f9ca D-3 (a). With the shipped Execute=true the preview route still sends DryRun only.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute.ShouldBeTrue();
+        var id = await w.EligibleAsync();
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.WouldRemove));
+        var result = (await w.PreviewAsync()).ShouldHaveSingleItem();
+        result.Sent.ShouldBe(1);
+        w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.DryRun);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+        await using var db = w.Rig.NewDb();
+        var run = await db.WorktreeResidueRuns.AsNoTracking().SingleAsync(r => r.Id == result.RunId);
+        run.Execute.ShouldBeFalse();
+        run.Preview.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Tick_stops_starting_requests_past_its_budget()
+    {
+        // Review c238f9ca A-2. Past MaxTickMinutes the tick sends no further request; the rest stay for later.
+        await using var w = await World.StartAsync();
+        w.Settings.MaxTickMinutes = 1;
+        w.Settings.PauseBetweenSeconds = 5;
+        var first = await w.EligibleAsync(TimeSpan.FromHours(30));
+        var second = await w.EligibleAsync(TimeSpan.FromHours(20));
+        var tick = w.TickAsync();
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+        for (var i = 0; i < 100 && (await w.RowsAsync(first)).Count == 0; i++)
+            await Task.Delay(100);
+        // Past the budget while the pause runs; the pause timer may arm after the first move, so keep moving.
+        await w.Rig.AdvanceAsync(TimeSpan.FromSeconds(61));
+        for (var i = 0; i < 20 && !tick.IsCompleted && w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain) < 2; i++)
+            await w.Rig.AdvanceAsync(TimeSpan.FromSeconds(5));
+        var result = (await tick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldHaveSingleItem();
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        result.Stopped.ShouldBe("tick_budget_exhausted");
+        (await w.RowsAsync()).ShouldContain(r => r.ReasonCode == "tick_budget_exhausted" && r.Outcome == nameof(WorktreeResidueCandidateOutcome.Deferred));
+        (await w.Rig.ReadTaskAsync(second)).RemoteWorktreePath.ShouldBe(World.PathOf(second));
+    }
+
+    [Test]
+    [Arguments("enabled")]
+    [Arguments("execute")]
+    public async Task Switching_off_stops_a_running_tick(string setting)
+    {
+        // Review c238f9ca A-3. Enabled=false (the kill switch) or Execute=false, set while a tick runs, stops it
+        // before its next request.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync(TimeSpan.FromHours(30));
+        var second = await w.EligibleAsync(TimeSpan.FromHours(20));
+        w.Retain = (_, frame) =>
+        {
+            if (setting == "enabled")
+                w.Settings.Enabled = false;
+            else
+                w.Settings.Execute = false;
+            return World.Answer(frame, Removed());
+        };
+        var result = (await w.TickAsync()).ShouldHaveSingleItem();
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        result.Stopped.ShouldBe(setting == "enabled" ? "tick_stopped_disabled" : "tick_stopped_execute_off");
         (await w.Rig.ReadTaskAsync(second)).RemoteWorktreePath.ShouldBe(World.PathOf(second));
     }
 

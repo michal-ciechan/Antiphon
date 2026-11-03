@@ -20,6 +20,7 @@ public static class WorkspaceRetentionCodes
     public const string OutsideScope = "outside_scope";
     public const string SlotManaged = "slot_managed";
     public const string WorkspaceInUse = "workspace_in_use";
+    public const string RecentlyMirrored = "recently_mirrored";
     public const string WorkspaceRetiringOrUnknown = "workspace_retiring_or_unknown";
     public const string Locked = "locked";
     public const string LockStateUnknown = "lock_state_unknown";

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -85,6 +86,66 @@ public sealed class C1677RetentionDispatchTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    [Arguments("mirror-then-retain")]
+    [Arguments("live-session")]
+    [Arguments("window-elapsed")]
+    public async Task Recent_use_by_this_runner_keeps_the_tree(string shape, CancellationToken ct)
+    {
+        // CARD-1677 D-2 (review c238f9ca). A task re-dispatched after the server's reread: the runner's own
+        // Mirror (a reuse at the same sha) or Launch in the tree keeps it, over a real engine and real git.
+        // window-elapsed is the control: the same mirror older than the window is removed.
+        using var s = C1677RetentionScratch.Create();
+        var m = s.Mirror();
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-11-03T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+        var runtime = new EngineRuntime(s.Engine());
+        var settings = new PhoneHomeSettings
+        {
+            Enabled = true, AllowedCwd = s.Work, Capacity = 2, CapacityStatePath = s.Root + "/capacity",
+            StoreIdPath = s.Root + "/runner-store-id", RunnerRepository = s.Repository, RunnerCloneSource = s.OriginGit,
+            AllowedCloneSources = [s.OriginGit],
+        };
+        var dispatcher = new PhoneHomeCommandDispatcher(runtime, settings, time: clock);
+        dispatcher.UseWorkspace(s.Service());
+        if (shape == "live-session")
+        {
+            var launch = await dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
+                JsonSerializer.SerializeToElement(new RunnerLaunchRequest(Guid.NewGuid(), "/bin/sh", [], new Dictionary<string, string>(), m.Path, 80, 24),
+                    PhoneHomeFraming.Json)), ct);
+            launch.Kind.ShouldBe(PhoneHomeFrameKind.Result, launch.ErrorDetail);
+            clock.Advance(TimeSpan.FromHours(1));
+        }
+        else
+        {
+            var mirror = await dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorRequest(m.Branch, m.Head, "task-a1677001"), PhoneHomeFraming.Json)), ct);
+            mirror.Kind.ShouldBe(PhoneHomeFrameKind.Result, mirror.ErrorDetail);
+            mirror.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)!.Path.ShouldBe(m.Path, "the mirror reused the tree");
+            clock.Advance(shape == "window-elapsed"
+                ? TimeSpan.FromMinutes(settings.RetentionRecentUseMinutes) + TimeSpan.FromSeconds(1)
+                : TimeSpan.FromMinutes(settings.RetentionRecentUseMinutes) - TimeSpan.FromSeconds(1));
+        }
+
+        var before = C1677RetentionScratch.Tree(m.Path);
+        var response = Read(await dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+            PhoneHomeOperation.WorkspaceRetain, JsonSerializer.SerializeToElement(C1677RetentionScratch.Request(m), PhoneHomeFraming.Json)), ct));
+        if (shape == "window-elapsed")
+        {
+            response.Verdict.ShouldBe(WorkspaceRetentionCodes.Removed, response.Detail);
+            Directory.Exists(m.Path).ShouldBeFalse();
+            return;
+        }
+
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(shape == "live-session" ? WorkspaceRetentionCodes.WorkspaceInUse : WorkspaceRetentionCodes.RecentlyMirrored);
+        Directory.Exists(m.Path).ShouldBeTrue("the tree stays at its path");
+        C1677RetentionScratch.Tree(m.Path).ShouldBe(before);
+        s.Registered(m.Path).ShouldBeTrue();
+        s.RetiringEntries().ShouldBeEmpty();
+        s.Calls("worktree", "move").ShouldBeEmpty();
+        runtime.CheckAndMoveStarts.ShouldBe(0, "the guard answers before phase A");
+    }
+
     private static WorkspaceRetainStep Moved() =>
         new(null, "/scratch/retiring/task-a1677001.0badf00d", "/scratch/repos/antiphon",
             new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept));
@@ -113,6 +174,50 @@ public sealed class C1677RetentionDispatchTests
             Enabled = true, AllowedCwd = scratch.Replace('\\', '/'), Capacity = 2,
             CapacityStatePath = Path.Combine(scratch, "capacity"),
         });
+    }
+
+    /// <summary>CARD-1677 D-2. Advertises retention over a real engine; a Launch is recorded and listed as Running.</summary>
+    private sealed class EngineRuntime(RunnerWorkspaceRetention engine) : IPhoneHomeRuntimeSurface
+    {
+        private readonly List<RunnerSessionDto> _sessions = [];
+        private int _checkAndMoveStarts;
+        public int CheckAndMoveStarts => Volatile.Read(ref _checkAndMoveStarts);
+
+        public Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _checkAndMoveStarts);
+            return engine.CheckAndMoveAsync(request, ct);
+        }
+
+        public Task<PhoneHomeWorkspaceRetainResponse> RetainWorkspaceCompleteAsync(WorkspaceRetainStep step, CancellationToken ct) =>
+            engine.CompleteAsync(step, ct);
+
+        public RunnerCapabilitiesDto Capabilities() =>
+            new("InboxConhost", "inbox", "test", false, Features: [RunnerCapabilityFeatures.WorkspaceRetentionV1]);
+        public int OwnedSessionCount { get { lock (_sessions) return _sessions.Count; } }
+        public string Health() => "Healthy";
+        public IReadOnlyList<RunnerSessionDto> List() { lock (_sessions) return _sessions.ToList(); }
+        public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new KeyNotFoundException();
+
+        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
+        {
+            var session = new RunnerSessionDto(request.SessionId, 4242, DateTime.UtcNow, "Running", null, "", 0);
+            lock (_sessions)
+                _sessions.Add(session);
+            return Task.FromResult(session);
+        }
+
+        public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new RunnerSnapshotDto(sessionId, "", "", 0, DateTime.UtcNow));
+        public RunnerTranscriptDto GetTranscript(Guid sessionId) => new(sessionId, [], 0);
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => Task.CompletedTask;
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>
+            Task.FromResult(new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unsupported, null, null));
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
+            Task.FromResult(new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null));
     }
 
     /// <summary>F-2. Advertises retention; each phase and Input can be held at a gate.</summary>
