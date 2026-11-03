@@ -359,16 +359,10 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         }
     }
 
-    private bool RootExitedForHangup()
-    {
-        if (_exitTcs.Task.IsCompleted) return true;
-        if (_conn is not { Pid: > 0 } conn) return false;
-        string? stat;
-        try { stat = File.ReadAllText("/proc/" + conn.Pid + "/stat"); }
-        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { stat = null; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
-        return ProcStatShowsExit(stat);
-    }
+    private bool RootExitedForHangup() =>
+        RootExited(
+            _exitTcs.Task.IsCompleted,
+            _conn is { Pid: > 0 } conn ? ProcStatReader("/proc/" + conn.Pid + "/stat") : null);
 
     private void PublishDecoded(string chunk)
     {
@@ -703,12 +697,24 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     }
 
     /// <summary>
-    /// CARD-1617 review D-1: whether the root has exited for the hangup decision. Inert stub.
+    /// CARD-1681: whether the root has exited for the hangup decision: the runner observed its
+    /// exit, or its stat shows it gone, a zombie, dead or exiting. A missing stat file or
+    /// directory is gone; a stat that cannot be read is not exited, so the drain fails closed.
+    /// <paramref name="readStat"/> is null when there is no root pid.
     /// </summary>
-    internal static bool RootExited(bool exitObserved, Func<string?>? readStat) => false;
+    internal static bool RootExited(bool exitObserved, Func<string?>? readStat)
+    {
+        if (exitObserved) return true;
+        if (readStat is null) return false;
+        string? stat;
+        try { stat = readStat(); }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { stat = null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+        return ProcStatShowsExit(stat);
+    }
 
-    /// <summary>CARD-1617 review D-1: the production stat reader over one path. Inert stub.</summary>
-    internal static Func<string?> ProcStatReader(string path) => () => null;
+    /// <summary>CARD-1681: the <c>/proc/&lt;pid&gt;/stat</c> reader <see cref="RootExited"/> uses.</summary>
+    internal static Func<string?> ProcStatReader(string path) => () => File.ReadAllText(path);
 
     /// <summary>
     /// CARD-1617: whether the next explicit Linux release may issue the kill. Never after a
