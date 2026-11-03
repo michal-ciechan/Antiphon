@@ -173,6 +173,51 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
+    // CARD-1693: the retire-temp census compares only rows bound to the retired temp runner across its
+    // two passes. A standing-runner task that finishes normally between the passes (the 2026-11-03
+    // c7270d95 refusal) no longer ends Unstable, and a task bound to server2-temp still refuses.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Arguments("finish-between-passes")]
+    [Arguments("bound-appears")]
+    public async Task C1693_Retire_temp_census_ignores_standing_runner_churn_between_passes(string vector)
+    {
+        const string project = C994TaskVectors.Project;
+        const string id = "11111111-1111-1111-1111-111111111111";
+        using var f = new C1008WrapperFixture();
+        var empty = f.State["tasks"]!.DeepClone();
+        var row = C1087TaskRow(id, project);
+        var envelope = empty.DeepClone();
+        if (vector == "finish-between-passes")
+        {
+            row["status"] = "Working"; row["runnerId"] = "server2";
+            envelope["items"]!.AsArray().Add(row.DeepClone());
+            f.State["taskQueries"] = new JsonObject { [C1087ListPath(project, "open")] = new JsonArray(envelope, empty.DeepClone()) };
+            f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null } };
+        }
+        else
+        {
+            row["status"] = "Queued"; row["runnerId"] = "server2-temp";
+            envelope["items"]!.AsArray().Add(row.DeepClone());
+            f.State["taskQueries"] = new JsonObject { [C1087ListPath(project, "open")] = new JsonArray(empty.DeepClone(), envelope) };
+        }
+        var run = await f.Run("retire-temp");
+        if (vector == "finish-between-passes")
+        {
+            run.Exit.ShouldBe(0, vector + ": " + run.Output);
+            run.Output.ShouldNotContain("RecycleTaskCensusUnknown");
+            run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case" && t["name"]?.GetValue<string>() == "retire-temp-runner")
+                .ShouldBeTrue(vector + ": standing-runner churn reaches the host case; " + run.Output);
+            C1087Receipt(run.Trace)["tasks"]!.AsArray().Any(t => t!["id"]!.GetValue<string>() == id)
+                .ShouldBeTrue(vector + ": the finished task is still receipted");
+        }
+        else
+        {
+            run.Exit.ShouldBe(2, vector + ": " + run.Output);
+            run.Output.ShouldContain($"RecycleBoundTasks {id} status=Queued runner=server2-temp");
+            run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+        }
+    }
+
     internal static string C1087ListPath(string project, string kind) =>
         $"/api/agent-tasks?projectId={project}&unscoped=include&includeChecks=true&" +
         (kind == "open" ? "status=Queued,Dispatched,Working,Blocked" : "landPending=true");
@@ -231,11 +276,12 @@ public sealed class RollingVolumeRecycleScriptTests
                     queries[C1087ListPath(project, "land")] = envelope;
                     expected = "RecycleTaskCensusUnknown cause=UnfilteredRow id=" + id; break;
                 case "unstable":
-                    // A no-land appearance is CARD-1324. This vector keeps the land-request refusal.
+                    // A no-land appearance is CARD-1324. CARD-1693: retire-temp compares only rows bound to
+                    // server2-temp, so an off-runner appearance with a completed land is receipted and passes.
                     queries[C1087ListPath(project, "open")] = new JsonArray(empty.DeepClone(), envelope);
                     f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = new JsonObject {
                         ["state"] = "Completed", ["terminalEventId"] = "44444444-4444-4444-4444-444444444444" } } };
-                    expected = "RecycleTaskCensusUnknown cause=Unstable"; break;
+                    accepted = true; break;
                 case "closure":
                     const string other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
                     // Both closures independently walk the excluded scope, with their own filter.
