@@ -300,11 +300,11 @@ all its cases, and the named case is the one that must go red.
 | PC-23 | log `_client.Hello.SessionId` in the launch refusal line | same method, `("other-session")` at 4 |
 | PC-24 | build the exception with `$"{code}: {_client.Hello.SessionId}"` | same method, `("other-session")` at 3 |
 | PC-25 | `HelloNamesManifestHost` returns true | `Card1636AdoptionIdentityTests/Hello_naming_another_session_is_not_adopted` at `AdoptAsync() == 0` |
-| PC-26 | `server/Application/Services/SessionReconciliationService.cs:363`: hold only `Pending == HerdrPendingReasons.Unreachable` | `SessionReconciliationServiceTests/Pty_identity_unproven_pending_row_is_held_and_raises_the_pending_incident` at the first scan, DB `Running` |
+| PC-26 | `server/Application/Services/SessionReconciliationService.cs:363`: hold only `Pending == HerdrPendingReasons.Unreachable` | **Equivalent mutant (CARD-1672): no red is expected.** See the notes below. |
 | PC-27 | `:442`: select only Herdr reasons for pass 1b | same method, at the incident present |
 | PC-28 | remove `[NativeLinuxOnly]` from `Card1653FreshLaunchIdentityTests` (test file) | `Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/Policy_rows_require_pinned_attribute` |
 | PC-29 | `HelloNamesManifestHost` requires a non-null manifest instance | `Card1636AdoptionIdentityTests/Manifest_without_a_host_instance_adopts_only_its_own_session` at the legacy `ShouldBe(1)` |
-| PC-30 | the G2 check requires `Status == Running` (inverted) | `Card1636AdoptionIdentityTests/Real_host_records_its_hello_instance_and_is_adopted` at `dto.Status == "Running"` |
+| PC-30 | the G2 check requires `Status == Running` (inverted) | `Card1636AdoptionIdentityTests/Real_host_records_its_hello_instance_and_is_adopted`, red at the launch (`PtyHostIdentityRefusedException`), before the `dto.Status == "Running"` assertion |
 | PC-31 | `CreatePendingConflict` callers in the workspace branches pass `"pty_host_identity_unproven"` | `CompletedCardWorkspaceRemovalTests/C1032_FenceStartupAdoptionOrders` at `Pending == "workspace_ownership_conflict"` |
 | PC-32 | log `_client.Hello.SessionId` in the adoption refusal line | `Refused_identity_retains_the_host_as_a_pending_row("other-session")` at 10 |
 
@@ -312,6 +312,19 @@ Notes:
 
 - PC-22 uses a compiling defect that keeps the typed refusal but skips teardown. Zero tests run, a build
   error or a fixture error is not red.
+- PC-26 is an equivalent mutant (CARD-1672, from Mutation sweep 14adea19).
+  - `SessionReconciliationService.cs:363` (pass 1c) sits right after the `Status == "Running"` check at `:361`.
+  - Every pending runner row reports `Starting`: `CreatePendingConflict` sets `_status = "Starting"`, and so do
+    the Herdr pending rows.
+  - So no pending row reaches `:363`, and no mutation there can turn V-8 red. The pass-1 filters at `:519-520`
+    and `:1135-1136` are masked the same way.
+  - The "held" half of V-8 (the DB row stays `Running`) rests on the runner reporting `Starting`.
+  - No test is written for a `Running` + `Pending` row, because production cannot produce that shape.
+  - Mutation records PC-26 as equivalent, not as a survivor.
+- PC-30: sweep 14adea19 killed it, but the red comes at the launch, not at the assertion named above.
+  - The inverted check refuses the real host's fresh launch with `PtyHostIdentityRefusedException`.
+  - That happens before the test reaches the `dto.Status` assertion.
+  - Mutation records the launch failure as the expected red.
 - PC-28: the policy witness checks rows against attributes. Mutation confirms the exact red method name from
   the witness output at the land SHA and records it.
 
