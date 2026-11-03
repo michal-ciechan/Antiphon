@@ -53,6 +53,13 @@ public sealed record RunnerAlarmSnapshot(
     IReadOnlyList<JournalFinding> Journals,
     IReadOnlyList<PendingRecoveryNote> PendingRecoveries)
 {
+    /// <summary>
+    /// CARD-1671: when each drain that still hides a runner reaches <c>Alarms:RunnerDrainMaxMinutes</c>.
+    /// The alarm loop wakes just past the earliest one so an offline drain raises at its bound.
+    /// </summary>
+    public IReadOnlyDictionary<string, DateTimeOffset> DrainExpiresAt { get; init; } =
+        new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+
     public static RunnerAlarmSnapshot Empty { get; } = new(
         [], new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal), [], []);
 }

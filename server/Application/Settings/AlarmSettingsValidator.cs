@@ -11,6 +11,9 @@ public sealed class AlarmSettingsValidator : IValidateOptions<AlarmSettings>
             failures.Add("Alarms:RunnerGraceSeconds must be positive.");
         if (options.RunnerDrainMaxMinutes <= 0)
             failures.Add("Alarms:RunnerDrainMaxMinutes must be positive.");
+        // CARD-1671: a huge bound would turn the drain outage alarm off.
+        else if (options.RunnerDrainMaxMinutes > AlarmSettings.RunnerDrainMaxMinutesLimit)
+            failures.Add($"Alarms:RunnerDrainMaxMinutes must be at most {AlarmSettings.RunnerDrainMaxMinutesLimit} (7 days).");
         if (options.SweepMinutes <= 0)
             failures.Add("Alarms:SweepMinutes must be positive.");
         if (options.JournalStaleMinutes <= 0)
