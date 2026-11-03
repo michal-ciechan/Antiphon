@@ -547,12 +547,30 @@ function Get-C1323LinuxOnlyCensus {
     $rootPrefix = [IO.Path]::GetFullPath($Root).TrimEnd('/', '\').Length + 1
     foreach ($file in ($files | Sort-Object -CaseSensitive)) {
         $text = [IO.File]::ReadAllText($file)
-        if (-not $text.Contains('[NativeLinuxOnly(')) { continue }
-        $lines = $text.Replace("`r`n", "`n").Split("`n")
-        $hits = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*\[NativeLinuxOnly\(') { $i } })
-        if ($hits.Count -eq 0) { continue }
+        if (-not $text.Contains('NativeLinuxOnly')) { continue }
         $rel = [IO.Path]::GetFullPath($file).Substring($rootPrefix).Replace('\', '/')
         if (@($FixtureProjects | Where-Object { $rel.StartsWith($_, [StringComparison]::Ordinal) }).Count) { continue }
+        # Comments are blanked (keeping line breaks); string and char literals are matched first so a // inside one
+        # stays code. Only the canonical line form is parsed: any other call-shaped NativeLinuxOnly(Attribute) use
+        # fails closed, except an object creation or a constructor declaration, which cannot be an attribute.
+        $code = [regex]::Replace($text.Replace("`r`n", "`n"), '"{3,}[\s\S]*?"{3,}|@"(?:[^"]|"")*"|"(?:[^"\\\n]|\\.)*"|''(?:[^''\\\n]|\\[^\n]+?)''|//[^\n]*|/\*[\s\S]*?\*/', {
+                param($m)
+                if ($m.Value.StartsWith('//') -or $m.Value.StartsWith('/*')) { return [regex]::Replace($m.Value, '[^\n]', '') }
+                return $m.Value
+            })
+        $lines = $code.Split("`n")
+        $hits = @()
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $canonical = [regex]::Match($lines[$i], '^\s*\[(?=NativeLinuxOnly\()')
+            if ($canonical.Success) { $hits += $i }
+            foreach ($use in [regex]::Matches($lines[$i], '\bNativeLinuxOnly(?:Attribute)?\s*\(')) {
+                if ($canonical.Success -and $use.Index -eq $canonical.Length) { continue }
+                $before = $lines[$i].Substring(0, $use.Index)
+                if ($before -match '\bnew\s+(?:global::)?(?:@?\w+\s*\.\s*)*$' -or $before -match '\b(?:public|internal|private|protected|static)\s+$') { continue }
+                $problems.Add("marker-noncanonical:${rel}:$($i + 1)")
+            }
+        }
+        if ($hits.Count -eq 0) { continue }
         $suite = @($suiteDirs.Keys | Where-Object { $rel.StartsWith($suiteDirs[$_], [StringComparison]::Ordinal) })
         if ($suite.Count -ne 1) { $problems.Add("marker-outside-suite:$rel"); continue }
         $markerFiles += $rel
