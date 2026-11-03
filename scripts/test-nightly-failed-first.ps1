@@ -1401,6 +1401,12 @@ foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
         continue
     }
     if ($relative -ceq 'performance.json') { continue }
+    # A fixture checkout's Git admin files would make the archive a nested repository
+    # inside the task worktree, which the volume recycle audit refuses (CARD-1590).
+    if (@($relative -split '[\\/]') -contains '.git') {
+        $inventory.Add([ordered]@{path=$relative;kind='git-dir';copied=$false})
+        continue
+    }
     $destination=Join-Path $archive $relative
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
     [IO.File]::Copy($file.FullName,$destination,$false)

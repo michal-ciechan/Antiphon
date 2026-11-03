@@ -376,5 +376,8 @@ finally {
     [void][IO.Directory]::CreateDirectory($retained)
     foreach($item in Get-ChildItem $ResultsDirectory -Directory | Where-Object {$_.Name -match '^(native-|hop-native|hop-bindings|discovery)'}){Copy-Item $item.FullName $retained -Recurse}
     foreach($root in $script:FixtureRoots){Get-ChildItem $root -Recurse -Force -File|Where-Object {$_.IsReadOnly}|ForEach-Object {$_.IsReadOnly=$false}}
+    # Each fixture root holds nested Git repositories; delete it by its exact path so a
+    # direct run leaves none behind in the caller's results directory (CARD-1590).
+    foreach($root in $script:FixtureRoots){if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force}}
 }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 0
