@@ -80,6 +80,16 @@ internal static class HangfireConfiguration
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
     }
 
+    /// <summary>CARD-0824 S2. Registered only while Landing:DeleteSourceBranchAfterPublication is true.</summary>
+    public static void AddOrUpdatePublishedBranchDeletionJob(IRecurringJobManager manager, LandingSettings settings)
+    {
+        manager.AddOrUpdate<PublishedBranchDeletionJob>(
+            settings.SourceBranchDeletionJobId,
+            job => job.RunAsync(CancellationToken.None),
+            settings.SourceBranchDeletionCron,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+    }
+
     public static void AddOrUpdateExpectationWatchdogJob(IRecurringJobManager manager)
     {
         manager.AddOrUpdate<ExpectationWatchdogJob>(

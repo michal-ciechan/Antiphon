@@ -2620,6 +2620,67 @@ the preparation can be recorded or a local child merge can advance its parent.
 The CARD-0448 continuation is not rollout-ready until its complete verification matrix and
 creation-recovery/admission coverage are accepted. Do not deploy a checkpoint independently.
 
+## Origin branch deletion after a confirmed land (CARD-0824 S2)
+
+Ships **off**. `PublishedBranchDeletionService` (Hangfire `antiphon:published-branch-deletion`, every 15
+minutes, registered only while the flag is on at startup) deletes a landed task's origin branch. Settings
+(`Landing:`): `DeleteSourceBranchAfterPublication=false` (re-read before every row, so switching it off
+stops a run in flight), `SourceBranchDeleteDelayMinutes=1440`, `SourceBranchDeletionAfterUtc=null` (backlog
+cutoff: only publications confirmed strictly after it are eligible; null means none), `MaxSourceBranchDeletionsPerRun=25`,
+`SourceBranchDeletionRunnerIds=[]` (drained runner volumes), `SourceBranchDeletionDryRun=false` (classify and
+recheck only: no runner call, no push, no row write).
+
+A branch is deleted only when every one of these holds, in this order:
+- the landing row is a confirmed publication (`AgentTaskLandingState.HasPublication`), schema 3, no recovery
+  or adoption land, confirmed after the cutoff and at least the delay ago; refused, held, failed and
+  unconfirmed lands are never touched;
+- the source is a delegate branch (`feat/card-task-<8hex>` or `feat/card-<n>-<stage>-<8hex>`), never the
+  target, master, `rc/*` or any other name;
+- the source identity the lease is taken on holds (`SourceRemoteSha == ReviewedSourceSha == OriginalSourceSha`);
+- no open dependent: the owner itself reopened, another open task naming it as `WorktreeBaseBranch`,
+  `WorktreeBaseTaskId`, `RequestedWorktreeBaseTaskId` or `RepairSourceTaskId` (CARD-0753), an open task on
+  the same branch, a pending land request of another task on the branch, or a card on the branch that is not
+  `Done`. A dependent defers (`Deferred dependent_open`), re-evaluated every sweep;
+- every runner that held the branch is in `SourceBranchDeletionRunnerIds` (else `Deferred
+  runner_volume_not_enabled`);
+- under the repository lease, a **fresh** read shows origin's target still contains the published SHA (else
+  `Kept publication_not_contained`), and origin's branch is still at `SourceRemoteSha` (else `Kept branch_moved`,
+  no push);
+- each of those runners deletes its own `refs/heads/<b>` and `refs/remotes/origin/<b>` first
+  (`WorkspaceBranchRefsDelete`, capability `workspaceBranchRefsV1`): it refuses a checked-out branch, a ref
+  ahead of the leased SHA, a non-delegate name and an unknown expected object. Any refusal, missing capability
+  or transport failure defers with origin untouched.
+
+Then the `Deleting` intent is saved, the delete is pushed with `--force-with-lease=<ref>:<SourceRemoteSha>`
+(a branch that moved meanwhile is refused and kept), origin is read again, and only after it is absent is the
+desktop `refs/remotes/origin/<b>` removed (with its old value, at or behind the leased SHA). The desktop
+`refs/heads/<b>` (land cleanup owns it) and the `refs/antiphon/land/**` pins are never touched, so a reverted
+land keeps its original source commits locally; there is no automatic revert detection, and the 24 h delay
+is the window for a manual revert. The landing row records `BranchDeletionState` (`None`, `Deferred`,
+`Deleting`, `Deleted`, `Kept`), `BranchDeletionAt`, `BranchDeletionReason`, `BranchDeletionDetail` and
+`RunnerRefsDeletedAt`; one `LandingBranchDeletion` task event is written per state or reason change.
+
+**Enable order** (operator; each step gates the next):
+1. CARD-1677 runner retention is active on every runner to be listed (`workspaceRetentionV1` advertised),
+   and that volume's drain checklist below is green.
+2. A windows-native run of CP-12 and CP-15 of the S2 test design is green (the sweep runs in the desktop
+   server).
+3. Set `SourceBranchDeletionAfterUtc` to the enable time (no historical backlog) and keep
+   `MaxSourceBranchDeletionsPerRun=25`; optionally run one pass with `SourceBranchDeletionDryRun=true` and read
+   its log lines.
+4. A one-land canary on a disposable branch with delay 0 proves the real GitHub endpoint (protection,
+   credentials, latency); then restore delay 1440.
+
+**Per-volume drain checklist** (CARD-0824 amendment §3.3). A runner volume may be added to
+`SourceBranchDeletionRunnerIds` only when:
+1. CARD-1677 is active on that runner (`workspaceRetentionV1` advertised);
+2. one retention preview run, read across every page, shows no `task-*` row with terminal ≥ 24 h in
+   `would_remove`;
+3. every kept row has a reason the operator accepts (dirty, unpushed and similar);
+4. no S1 slot is `Releasing` or quarantined with a custody class (`ledger.json`).
+A legacy mirror that retention keeps still has its branch checked out, so the runner op refuses
+`branch_checked_out` and origin keeps the branch: the safe direction for the CARD-1008 recycle audit.
+
 ## CARD-0443 receipt-backed cleanup checkpoint
 
 The [CARD-0443 plan](superpowers/plans/2026-09-14-card-0443-receipt-backed-cleanup-plan.md)

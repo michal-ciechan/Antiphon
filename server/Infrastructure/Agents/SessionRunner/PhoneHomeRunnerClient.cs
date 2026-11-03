@@ -494,6 +494,14 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<PhoneHomeTempSweepResponse>(frame) ?? throw Missing("temp-sweep");
     }
 
+    /// <summary>CARD-0824 S2. Deletes the runner's local refs for one delegate branch at or behind the leased SHA.</summary>
+    public async Task<PhoneHomeWorkspaceBranchRefsDeleteResponse> DeleteWorkspaceBranchRefsAsync(
+        PhoneHomeWorkspaceBranchRefsDeleteRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceBranchRefsDelete, request, ct);
+        return Read<PhoneHomeWorkspaceBranchRefsDeleteResponse>(frame) ?? throw Missing("workspace-branch-refs-delete");
+    }
+
     public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveWorkspaceAsync(
         PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct)
     {

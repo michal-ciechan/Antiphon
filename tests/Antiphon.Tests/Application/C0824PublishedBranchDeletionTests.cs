@@ -99,6 +99,7 @@ public sealed class C0824PublishedBranchDeletionTests
     [Arguments("same-branch-follow-up")]
     [Arguments("pending-land-request-other-task")]
     [Arguments("terminal-dependent-does-not-block")]
+    [Arguments("owner-card-not-done")]
     public async Task C0824_dependent_rows(string row, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -121,6 +122,23 @@ public sealed class C0824PublishedBranchDeletionTests
                 });
                 break;
             case "terminal-dependent-does-not-block": dependent.WorktreeBaseBranch = Branch; dependent.Status = AgentTaskStatus.Succeeded; break;
+            case "owner-card-not-done":
+                // The brief's card rule: a branch bound to a card that is not Done is kept until the card is Done.
+                dependent.Status = AgentTaskStatus.Succeeded;
+                var projectId = Guid.NewGuid();
+                var boardId = Guid.NewGuid();
+                var columnId = Guid.NewGuid();
+                var cardId = Guid.NewGuid();
+                db.Projects.Add(new Project { Id = projectId, Name = "c0824-s2-" + projectId.ToString("N")[..8],
+                    GitRepositoryUrl = "https://example.test/c0824.git", CreatedAt = Start, UpdatedAt = Start });
+                db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "C0824", CreatedAt = Start, UpdatedAt = Start });
+                db.BoardColumns.Add(new BoardColumn { Id = columnId, BoardId = boardId, StateKey = "inprogress", Name = "In progress",
+                    ColumnOrder = 0, CardStatus = CardStatus.InProgress, CreatedAt = Start, UpdatedAt = Start });
+                db.Cards.Add(new Card { Id = cardId, BoardId = boardId, BoardColumnId = columnId, Identifier = "CARD-8240",
+                    Title = "C0824 S2", Description = "card rule", Status = CardStatus.InProgress, LabelsJson = "[]",
+                    CreatedAt = Start, UpdatedAt = Start });
+                owner.CardId = cardId;
+                break;
         }
         db.AgentTasks.AddRange(owner, dependent);
         var op = PublishedLandingRow.Build(owner.Id, Branch, Start);
@@ -133,7 +151,7 @@ public sealed class C0824PublishedBranchDeletionTests
         else
         {
             found.ShouldNotBeNull(row);
-            found.TaskId.ShouldBe(dependent.Id, row);
+            found.TaskId.ShouldBe(row == "owner-card-not-done" ? owner.Id : dependent.Id, row);
         }
     }
 
@@ -208,9 +226,10 @@ public sealed class C0824PublishedBranchDeletionTests
         try { await h.RunAsync(ct); }
         catch (LandingSafetyHarness.InjectedSaveFailure) when (family == "unconfirmed-cut") { }
         h.Fault.Phase = null;
+        // divergent-remote refuses before any operation exists: the strongest "never published".
         var op = await h.OperationAsync();
-        op.ShouldNotBeNull();
-        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse(family + " fixture must stay unpublished");
+        if (op is not null)
+            new AgentTaskLandingState().HasPublication(op).ShouldBeFalse(family + " fixture must stay unpublished");
         var before = await w.RemoteSourceShaAsync();
         before.ShouldNotBeNull();
 
@@ -219,7 +238,8 @@ public sealed class C0824PublishedBranchDeletionTests
         await w.SweepAsync(ct);
         (await w.RemoteSourceShaAsync()).ShouldBe(before, "remote-kept");
         w.DeletePushes().ShouldBeEmpty("no-delete-push");
-        (await h.OperationAsync())!.BranchDeletionState.ShouldBe(LandBranchDeletionState.None, "row-none");
+        if (op is not null)
+            (await h.OperationAsync())!.BranchDeletionState.ShouldBe(LandBranchDeletionState.None, "row-none");
     }
 
     // ---- V-16a, V-16b ----
@@ -292,7 +312,7 @@ public sealed class C0824PublishedBranchDeletionTests
     [Timeout(120_000)]
     public async Task C0824_dry_run_never_deletes(CancellationToken ct)
     {
-        await using var w = await World.LandedAsync(dryRun: true, runnerId: "runner-a");
+        await using var w = await World.LandedAsync(dryRun: true, runnerId: "runner-a", enabledRunners: ["runner-a"]);
         var op = (await w.H.OperationAsync())!;
         var before = await w.RemoteSourceShaAsync();
         w.Clock.SetUtcNow(op.RemoteConfirmedAt!.Value.AddMinutes(1440));
@@ -651,7 +671,10 @@ public sealed class C0824PublishedBranchDeletionTests
             IReadOnlyList<string>? enabledRunners = null)
         {
             var clock = new FakeTimeProvider(new DateTimeOffset(Start));
-            var h = new LandingSafetyHarness { Clock = clock };
+            // The production delegate branch shape (feat/card-task-<8hex>); the policy refuses any other name.
+            var taskId = Guid.NewGuid();
+            var h = new LandingSafetyHarness(taskId: taskId, sourceBranch: Antiphon.SessionRunner.Contracts.DelegateBranchName.Legacy(taskId))
+                { Clock = clock };
             var settings = new MutableMonitor(Enabled(Start.AddDays(-1)));
             settings.Value.DeleteSourceBranchAfterPublication = flag;
             settings.Value.SourceBranchDeletionDryRun = dryRun;

@@ -14,7 +14,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     public string Source => Path.Combine(Root, "trees", "source");
     public string Remote => Path.Combine(Root, "remote.git");
     public string Observer => Path.Combine(Root, "observer");
-    public string SourceRef => $"refs/heads/feat/card-task-{TaskId:N}";
+    /// <summary>The default keeps the historical full-id shape; CARD-0824 S2 passes the production short form.</summary>
+    public string SourceRef => "refs/heads/" + (SourceBranch ?? $"feat/card-task-{TaskId:N}");
+    public string? SourceBranch { get; }
     public string TargetRef => "refs/heads/master";
     public Guid TaskId { get; }
     public FixtureGit Git { get; }
@@ -22,8 +24,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     public LandSourceCoordinates Coordinates => new(TaskId, Repository, Source, SourceRef, TargetRef);
     public string ObservationRef => $"refs/antiphon/land/{TaskId:N}/{Guid.NewGuid():N}/remote-observed";
 
-    public LandingGitFixture(string? root = null, Guid? taskId = null)
+    public LandingGitFixture(string? root = null, Guid? taskId = null, string? sourceBranch = null)
     {
+        SourceBranch = sourceBranch;
         Root = root ?? Path.Combine(Path.GetTempPath(), "antiphon-c448-" + Guid.NewGuid().ToString("N"));
         TaskId = taskId ?? Guid.NewGuid();
         Directory.CreateDirectory(Root);

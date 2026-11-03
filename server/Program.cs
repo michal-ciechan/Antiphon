@@ -622,6 +622,9 @@ try
     builder.Services.AddScoped<WorktreeResidueJob>();
     builder.Services.AddScoped<RunnerWorktreeRetentionService>();
     builder.Services.AddScoped<RunnerWorktreeRetentionJob>();
+    builder.Services.AddScoped<IRunnerBranchRefs, PhoneHomeRunnerBranchRefs>();
+    builder.Services.AddScoped<PublishedBranchDeletionService>();
+    builder.Services.AddScoped<PublishedBranchDeletionJob>();
     builder.Services.AddScoped<RunnerSlotReconcileJob>();
     builder.Services.AddScoped<RunnerRetireJob>();
     builder.Services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
@@ -1166,6 +1169,12 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateRunnerWorktreeRetentionJob(recurringJobManager, retention);
             else
                 recurringJobManager.RemoveIfExists(retention.RecurringJobId);
+            // CARD-0824 S2: the origin branch deletion sweep exists only while its flag is on (default off).
+            var landing = scope.ServiceProvider.GetRequiredService<IOptions<LandingSettings>>().Value;
+            if (landing.DeleteSourceBranchAfterPublication)
+                HangfireConfiguration.AddOrUpdatePublishedBranchDeletionJob(recurringJobManager, landing);
+            else
+                recurringJobManager.RemoveIfExists(landing.SourceBranchDeletionJobId);
             if (ExpectationWatchdogJob.ShouldRun(hangfire,
                 scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value))
                 HangfireConfiguration.AddOrUpdateExpectationWatchdogJob(recurringJobManager);

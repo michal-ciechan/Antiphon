@@ -26,7 +26,7 @@ public sealed class C0824RunnerBranchRefsTests
         using var s = Scratch.Create();
         var result = await s.Service().DeleteBranchRefsAsync(new(Branch, s.Sha), ct);
         result.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Deleted, result.Code);
-        result.Deleted.Order(StringComparer.Ordinal).ShouldBe([Tracking, Local]);
+        result.Deleted.Order(StringComparer.Ordinal).ShouldBe([Local, Tracking]);
         s.Ref(Local).ShouldBeNull("local-gone");
         s.Ref(Tracking).ShouldBeNull("tracking-gone");
         s.Ref("refs/heads/main").ShouldNotBeNull("other refs untouched");
@@ -42,7 +42,7 @@ public sealed class C0824RunnerBranchRefsTests
         var again = await service.DeleteBranchRefsAsync(new(Branch, s.Sha), ct);
         again.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Deleted, again.Code);
         again.Deleted.ShouldBeEmpty();
-        again.Absent.Order(StringComparer.Ordinal).ShouldBe([Tracking, Local]);
+        again.Absent.Order(StringComparer.Ordinal).ShouldBe([Local, Tracking]);
     }
 
     [Test]

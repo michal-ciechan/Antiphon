@@ -98,6 +98,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         if (custody is not null)
             features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
         features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
+        // CARD-0824 S2: every runner can delete its own refs for a landed delegate branch (portable git).
+        features = [.. features, RunnerCapabilityFeatures.WorkspaceBranchRefsV1];
         if (_retention is not null)
             features = [.. features, .. RetentionFeatures(OperatingSystem.IsLinux())];
         if (_tempSweep is not null)
