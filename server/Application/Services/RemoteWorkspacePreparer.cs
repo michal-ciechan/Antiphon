@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -242,6 +244,9 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                 return;
 
             string? failure;
+            MirrorBindingExpectation? expectation = null;
+            WorkspaceSlotDecision? decision = null;
+            Exception? caught = null;
             try
             {
                 var gateKey = PushGateKey(task.RepoPath);
@@ -269,9 +274,9 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                     entry.Phase = RemotePrepPhase.Mirroring;
                     var originatingRunner = task.RunnerId;
                     var originatingAttempt = task.Attempt;
-                    var expectation = await remote.BeginMirrorPreparationAsync(
+                    expectation = await remote.BeginMirrorPreparationAsync(
                         db, task, push.Sha, push.Repository!, ct);
-                    var decision = await remote.ResolveSlotDecisionAsync(
+                    decision = await remote.ResolveSlotDecisionAsync(
                         db, task, expectation, _clock.GetUtcNow().UtcDateTime, ct);
                     var mirrored = await remote.MirrorAsync(task, push.Sha, push.Repository!, expectation, decision, ct);
                     if (mirrored.Binding is { } returned)
@@ -321,6 +326,7 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
+                caught = ex;
                 // D-10: name the transport code (phone_home_request_timeout, ...) when there is one.
                 var reason = ex is Antiphon.SessionRunner.Contracts.PhoneHomeTransportException transport
                     ? $"{transport.Code}: {ex.Message}"
@@ -335,6 +341,13 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
             var notBefore = now + Backoff(attempt, _settings);
             // CARD-0824 S1 D-6/H-2: a runner pool at its bound is a hold, never a fallback task-<id> mirror.
             var slotHold = WorkspaceSlotCodes.TryParseUnavailable(failure, out var bound);
+            // CARD-0824 S1c T-D-4: a definitive runner refusal (an Error frame: the client raises ConflictException for a
+            // 409 and for any other refusal status) leaves no lease, so the next send of this preparation decides again.
+            // A transport failure, a timeout or a malformed reply keeps the recorded decision. (A ConflictException thrown
+            // before the send, such as delegate_branch_identity_mismatch, sent nothing, so clearing it is safe too.)
+            if (decision is { Recorded: true } && expectation is not null && caught is ConflictException refused)
+                RemoteWorkspaceService.RecordSlotDecisionCleared(db, taskId, expectation, decision,
+                    slotHold ? WorkspaceSlotCodes.Unavailable : refused.Code ?? "conflict", now);
             db.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),

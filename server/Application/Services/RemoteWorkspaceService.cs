@@ -195,16 +195,73 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         return new WorkspaceSlotDecision(verdict.Lease, verdict.Reason);
     }
 
+    /// <summary>The detail prefix of every <see cref="AgentTaskEventType.WorkspaceSlotDecision"/> event.</summary>
+    public const string SlotDecisionPrefix = "workspace_slot_decision: ";
+
     /// <summary>
-    /// CARD-0824 S1c S-4 (T-D-4/T-D-5). The lease decision for this preparation.
+    /// CARD-0824 S1c S-4 (T-D-4/T-D-5). The lease decision for this preparation. Only with the flag on, a committed
+    /// preparation and a runner that advertises <c>workspaceSlotV1</c> is anything decided or recorded; otherwise the
+    /// request is the legacy shape and no event is written (flag-off handling stays byte-identical). The first decision
+    /// for a preparation is saved as a <see cref="AgentTaskEventType.WorkspaceSlotDecision"/> event BEFORE its first send
+    /// and reused for every resend of that preparation, so a role flip between a lost reply and its resend can never
+    /// strand a slot or put a task-&lt;id8&gt; beside one. Only a definitive runner refusal clears it
+    /// (<see cref="RecordSlotDecisionCleared"/>); the next send then decides again.
     /// </summary>
     public async Task<WorkspaceSlotDecision> ResolveSlotDecisionAsync(
         AppDbContext db, AgentTask task, MirrorBindingExpectation? expectation, DateTime at, CancellationToken ct)
     {
-        // S1c red-first stub: decided anew for every send, never recorded.
         if (!_workspaceSlots || expectation is null || !await AdvertisesSlotsAsync(task.RunnerId, ct))
             return new WorkspaceSlotDecision(false, "ineligible");
-        return DecideSlot(task);
+
+        var preparation = "preparation=" + expectation.PreparationId.ToString("D");
+        var events = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.WorkspaceSlotDecision
+                && e.Detail.Contains(preparation))
+            .OrderBy(e => e.At)
+            .Select(e => new { e.Detail, e.At })
+            .ToListAsync(ct);
+        var decided = events.Where(e => !e.Detail.StartsWith(SlotDecisionPrefix + "cleared ", StringComparison.Ordinal)).ToList();
+        // A cleared event follows each decision it clears, so a decision is in force while decisions outnumber clears.
+        if (decided.Count > events.Count - decided.Count)
+        {
+            var last = decided[^1];
+            var slot = last.Detail.StartsWith(SlotDecisionPrefix + "slot ", StringComparison.Ordinal);
+            var reasonAt = last.Detail.LastIndexOf(" reason=", StringComparison.Ordinal);
+            var reason = reasonAt < 0 ? "" : last.Detail[(reasonAt + " reason=".Length)..];
+            return new WorkspaceSlotDecision(slot, reason, true, last.At);
+        }
+
+        var decision = DecideSlot(task) with { Recorded = true, At = at };
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.WorkspaceSlotDecision,
+            Detail = $"{SlotDecisionPrefix}{(decision.Slot ? "slot" : "legacy")} {preparation} reason={decision.Reason}",
+            At = at,
+        });
+        await db.SaveChangesAsync(ct);
+        return decision;
+    }
+
+    /// <summary>
+    /// CARD-0824 S1c (T-D-4). After a definitive runner refusal (an Error frame, which never leaves a Leased record),
+    /// clears the preparation's recorded decision so its next send decides again. A transport failure, a timeout or a
+    /// malformed reply keeps it: the runner may have leased. Not saved here; the caller saves with its failure event.
+    /// </summary>
+    public static void RecordSlotDecisionCleared(
+        AppDbContext db, Guid taskId, MirrorBindingExpectation expectation, WorkspaceSlotDecision decision, string refusal, DateTime now)
+    {
+        // Ordered after the decision it clears even on a clock that has not moved since.
+        var at = decision.At is { } decided && now <= decided ? decided.AddTicks(10) : now;
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = taskId,
+            Type = AgentTaskEventType.WorkspaceSlotDecision,
+            Detail = $"{SlotDecisionPrefix}cleared preparation={expectation.PreparationId:D} refusal={refusal}",
+            At = at,
+        });
     }
 
     private async Task<bool> AdvertisesSlotsAsync(string? runnerId, CancellationToken ct) =>

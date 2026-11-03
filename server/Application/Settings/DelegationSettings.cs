@@ -1451,6 +1451,11 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             }
         }
 
+        // CARD-0824 S1c (T-D-1): '*', 'none' or exact role names; anything else fails the host, and on a hot reload it
+        // makes the role gate lease nothing until the file is fixed.
+        if (!Settings.WorkspaceSlotRoles.TryParse(options.WorkspaceSlotRoles, out _, out var slotRolesError))
+            failures.Add(slotRolesError);
+
         var instructions = options.OrchestratorInstructions ?? new OrchestratorInstructionsSettings();
         if (instructions.MaxBytes is < OrchestratorInstructionsSettings.MinMaxBytes
             or > OrchestratorInstructionsSettings.MaxMaxBytes)
