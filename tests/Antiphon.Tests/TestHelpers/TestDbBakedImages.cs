@@ -37,6 +37,9 @@ internal class TestDbBakedImages
 
     public bool IsEnabled { get; }
 
+    /// <summary>Whether a bake prunes older tags; a test's throwaway bake leaves real ones alone.</summary>
+    protected virtual bool PrunesAfterBake => true;
+
     public static TestDbBakedImages FromEnvironment() =>
         string.Equals(Environment.GetEnvironmentVariable(EnvVar)?.Trim(), "off", StringComparison.OrdinalIgnoreCase)
             ? Disabled
@@ -155,7 +158,8 @@ internal class TestDbBakedImages
                         Comment = "Antiphon test Postgres with the migrated schema baked in",
                         Labels = labels,
                     }).ConfigureAwait(false);
-                    await PruneAsync(client, key).ConfigureAwait(false);
+                    if (PrunesAfterBake)
+                        await PruneAsync(client, key).ConfigureAwait(false);
                 }
             }
 
