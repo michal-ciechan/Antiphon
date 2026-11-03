@@ -69,6 +69,17 @@ internal static class HangfireConfiguration
             });
     }
 
+    /// <summary>CARD-1677 S1. Registered only while RunnerWorktreeRetention:Enabled is true.</summary>
+    public static void AddOrUpdateRunnerWorktreeRetentionJob(
+        IRecurringJobManager manager, RunnerWorktreeRetentionSettings settings)
+    {
+        manager.AddOrUpdate<RunnerWorktreeRetentionJob>(
+            settings.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            settings.Cron,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+    }
+
     public static void AddOrUpdateExpectationWatchdogJob(IRecurringJobManager manager)
     {
         manager.AddOrUpdate<ExpectationWatchdogJob>(

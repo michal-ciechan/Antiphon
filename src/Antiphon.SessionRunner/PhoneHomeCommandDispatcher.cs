@@ -18,6 +18,21 @@ public interface IPhoneHomeRuntimeSurface
     Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
         Task.FromResult(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
     RunnerCapabilitiesDto Capabilities();
+
+    /// <summary>
+    /// CARD-1677 S-4. Retention phase A (every check, then the move into the retiring root). The dispatcher
+    /// runs it inside its mutation lock. Default refuses, so a surface that has not opted in never retains.
+    /// </summary>
+    Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+
+    /// <summary>CARD-1677 S-4. Retention phase B (the unforced remove). The dispatcher runs it after the lock is released, only for a moved tree.</summary>
+    Task<PhoneHomeWorkspaceRetainResponse> RetainWorkspaceCompleteAsync(WorkspaceRetainStep step, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+
+    /// <summary>CARD-1677 S1. Read-only inventory of the worktree and retiring roots; runs outside the lock.</summary>
+    Task<PhoneHomeWorkspaceRetentionInventoryResponse> WorkspaceRetentionInventoryAsync(CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
     /// <summary>CARD-1153: default unsupported, so an adapter without the evidence service never certifies.</summary>
     Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
         Task.FromResult(RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(PhoneHomeProblemTypes.UnsupportedOperation, 501, "absence evidence unsupported"));
@@ -565,6 +580,8 @@ public sealed class PhoneHomeCommandDispatcher
                     AbsenceFrame(request, await _runtime.PrepareAbsenceEvidenceAsync(ReadAbsenceRequest(request), ct))),
                 PhoneHomeOperation.CertifyAbsence => await MutateAsync(request, async () =>
                     AbsenceFrame(request, await _runtime.CertifyAbsenceAsync(ReadAbsenceRequest(request), ct))),
+                PhoneHomeOperation.WorkspaceRetentionInventory => await RetentionInventoryAsync(request, ct),
+                PhoneHomeOperation.WorkspaceRetain => await RetainAsync(request, ct),
                 PhoneHomeOperation.SetCapacity => await MutateAsync(request, () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeSetCapacityRequest>(PhoneHomeFraming.Json)
@@ -933,6 +950,35 @@ public sealed class PhoneHomeCommandDispatcher
         if (body.Version != 1 || !WorkspaceRepositoryIdentityRequest.Supported(_runtime.Capabilities()))
             return Result(request, new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported"));
         return Result(request, await _runtime.ReadWorkspaceRepositoryIdentityAsync(body, ct));
+    }
+
+    /// <summary>
+    /// CARD-1677 D-6. Phase A (every check, then <c>git worktree move</c>) runs under the mutation lock;
+    /// phase B (the unforced <c>git worktree remove</c> of a multi-GiB tree) runs after the lock is
+    /// released, so it never stalls a session's Input. Phase B runs only for a moved tree.
+    /// </summary>
+    private async Task<PhoneHomeFrame> RetainAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        RequireRetentionCapability();
+        var body = request.Payload?.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Workspace retain body is required.");
+        // CARD-1677 red shim: phase A outside the lock, phase B always and inside it.
+        var step = await _runtime.RetainWorkspaceCheckAndMoveAsync(body, ct);
+        return await MutateAsync(request, async () => Result(request, await _runtime.RetainWorkspaceCompleteAsync(step, ct)));
+    }
+
+    private async Task<PhoneHomeFrame> RetentionInventoryAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        RequireRetentionCapability();
+        return Result(request, await _runtime.WorkspaceRetentionInventoryAsync(ct));
+    }
+
+    // A surface that does not advertise retention never reaches its (refusing) members or any engine.
+    private void RequireRetentionCapability()
+    {
+        if (_runtime.Capabilities().Features?.Contains(RunnerCapabilityFeatures.WorkspaceRetentionV1, StringComparer.Ordinal) != true)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+                "Workspace retention is not supported on this runner.", 501);
     }
 
     internal bool IsAdmittedCwd(string? cwd) =>

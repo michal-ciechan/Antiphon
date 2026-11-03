@@ -18,6 +18,18 @@ public interface IWorkspaceSlotProcessProbe
     IReadOnlyList<WorkspaceSlotHolder> Holders(string path);
 }
 
+/// <summary>
+/// CARD-1677 D-7. A holder scan that says whether it saw every process it could read. <see cref="Complete"/>
+/// is false when the process table could not be enumerated (or off Linux): retention keeps the tree then.
+/// </summary>
+public sealed record HolderScan(bool Complete, IReadOnlyList<WorkspaceSlotHolder> Holders);
+
+/// <summary>CARD-1677 S1. The fail-closed holder scan retention uses; the slot pool keeps its fail-open probe.</summary>
+public interface IWorkspaceHolderScan
+{
+    HolderScan Scan(string path);
+}
+
 /// <summary>CARD-0824 S1 §3.2a. Volume free space and bounded pool measurement.</summary>
 public interface IWorkspaceSlotDiskProbe
 {
@@ -46,18 +58,40 @@ public sealed class PhysicalWorkspaceSlotFileSystem : IWorkspaceSlotFileSystem
 /// skipped, which scopes the scan to the runner's own uid. Other hosts report no holders (S3 owns
 /// Windows Restart Manager attribution).
 /// </summary>
-public sealed class ProcWorkspaceSlotProcessProbe : IWorkspaceSlotProcessProbe
+public sealed class ProcWorkspaceSlotProcessProbe : IWorkspaceSlotProcessProbe, IWorkspaceHolderScan
 {
-    public IReadOnlyList<WorkspaceSlotHolder> Holders(string path)
+    private readonly string _procRoot;
+    private readonly bool _isLinux;
+
+    public ProcWorkspaceSlotProcessProbe() : this("/proc")
     {
-        if (!OperatingSystem.IsLinux() || !Directory.Exists("/proc"))
-            return [];
+    }
+
+    /// <summary>CARD-1677 S-3 test seam: an unreadable proc root makes <see cref="Scan"/> incomplete.</summary>
+    internal ProcWorkspaceSlotProcessProbe(string procRoot = "/proc", bool? isLinux = null)
+    {
+        _procRoot = procRoot;
+        _isLinux = isLinux ?? OperatingSystem.IsLinux();
+    }
+
+    /// <summary>CARD-0824 S1 slot path: unchanged fail-open result (an unreadable table reports no holders).</summary>
+    public IReadOnlyList<WorkspaceSlotHolder> Holders(string path) => Probe(path).Holders;
+
+    /// <summary>CARD-1677 D-7: the same scan, but an unreadable table or a non-Linux host is incomplete.</summary>
+    public HolderScan Scan(string path) => new(true, Probe(path).Holders); // CARD-1677 red shim: fail-open
+
+    private HolderScan Probe(string path)
+    {
+        if (!_isLinux || !Directory.Exists(_procRoot))
+            return new HolderScan(false, []);
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         var self = Environment.ProcessId;
         var holders = new List<WorkspaceSlotHolder>();
-        IEnumerable<string> entries;
-        try { entries = Directory.EnumerateDirectories("/proc"); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+        List<string> entries;
+        try { entries = Directory.EnumerateDirectories(_procRoot).ToList(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new HolderScan(false, []); }
+        // A table that does not list this process is not a process table: the scan proves nothing.
+        var sawSelf = entries.Any(entry => Path.GetFileName(entry) == self.ToString(System.Globalization.CultureInfo.InvariantCulture));
         foreach (var entry in entries)
         {
             if (!int.TryParse(Path.GetFileName(entry), out var pid) || pid == self)
@@ -85,7 +119,7 @@ public sealed class ProcWorkspaceSlotProcessProbe : IWorkspaceSlotProcessProbe
                 holders.Add(new WorkspaceSlotHolder(pid, Argv0(entry), kind));
         }
 
-        return holders;
+        return new HolderScan(sawSelf, holders);
     }
 
     private static string? ReadLink(string path)

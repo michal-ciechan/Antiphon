@@ -76,7 +76,21 @@ builder.Services.AddHostedService<CodexCliVersionRefreshService>();
 builder.Services.AddSingleton(sp => new RunnerCapacityState(sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value));
 builder.Services.AddSingleton<IPhoneHomeAdoptionGate, PhoneHomeAdoptionGate>();
 builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
-    new PhoneHomeRuntimeAdapter(sp.GetRequiredService<SessionRunnerRuntime>(), RunnerBuildIdentity.Resolve()));
+{
+    var runtime = sp.GetRequiredService<SessionRunnerRuntime>();
+    // CARD-1677 S1: the retention engine exists only on a Linux phone-home runner, over this runner's own
+    // worktree root (PhoneHome:AllowedCwd/worktrees). It acts only on a server request, and the server job
+    // ships disabled (RunnerWorktreeRetention:Enabled=false, Runners=[], Execute=false).
+    var phoneHome = sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value;
+    RunnerWorkspaceRetention? retention = null;
+    if (phoneHome.Enabled && OperatingSystem.IsLinux())
+    {
+        var workspace = new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd);
+        workspace.WorkspaceUseGate = runtime.WorkspaceUseGate;
+        retention = new RunnerWorkspaceRetention(workspace, new ProcWorkspaceSlotProcessProbe());
+    }
+    return new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve(), retention);
+});
 builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
 {
     var hostStatsOptions = sp.GetRequiredService<IOptions<HostStatsSettings>>().Value;

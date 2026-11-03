@@ -1,0 +1,556 @@
+using System.Reflection;
+using System.Text.Json;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+using Rig = Antiphon.Tests.Application.RemoteWorkspacePreparerTests.Rig;
+
+namespace Antiphon.Tests.Application;
+
+/// <summary>
+/// CARD-1677 S1 CP-5. The server half of runner worktree retention against the scripted phone-home peer
+/// (shared Postgres, isolated schema, fake clock): selection, the allow-list and capability gates, the
+/// per-tick bound, pacing, the recheck before each send, recording, and the unmatched-name report. Every
+/// V-30 case seeds one eligible control task beside the ineligible one, so a case can never pass because
+/// nothing was sent. The V-39 cases drive a real runner dispatcher and engine (F-4).
+/// </summary>
+[Category("Integration")]
+[Timeout(45_000)]
+public sealed class C1677RetentionServerTests
+{
+    private static RunnerCapabilitiesDto RetentionRunner(bool capable = true) =>
+        new("InboxConhost", "inbox", "test", false,
+            Features: capable ? [RunnerCapabilityFeatures.WorkspaceRetentionV1] : [], VerificationCustodyBackend: null);
+
+    internal sealed class World : IAsyncDisposable
+    {
+        public Rig Rig { get; init; } = null!;
+        public RunnerWorktreeRetentionSettings Settings { get; init; } = null!;
+        public List<WorkspaceRetentionEntry> Inventory { get; } = [];
+        public Func<PhoneHomeWorkspaceRetainRequest, PhoneHomeFrame, PhoneHomeFrame?> Retain { get; set; } = (_, frame) => Answer(frame, Removed());
+
+        public static async Task<World> StartAsync(bool capable = true, Action<IServiceCollection>? configure = null)
+        {
+            var settings = new RunnerWorktreeRetentionSettings
+            {
+                Enabled = true, Execute = true, PauseBetweenSeconds = 0, MinTerminalHours = 12, MaxRemovalsPerTick = 25,
+            };
+            var rig = await Rig.StartAsync(capabilities: RetentionRunner(capable), configure: services =>
+            {
+                services.AddSingleton<IOptionsMonitor<RunnerWorktreeRetentionSettings>>(new Monitor(settings));
+                services.AddScoped<RunnerWorktreeRetentionService>();
+                configure?.Invoke(services);
+            });
+            settings.Runners.Add(rig.RunnerId);
+            var world = new World { Rig = rig, Settings = settings };
+            rig.Peer.Reply = world.Answer;
+            return world;
+        }
+
+        private PhoneHomeFrame? Answer(PhoneHomeFrame frame)
+        {
+            if (frame.Kind != PhoneHomeFrameKind.Request)
+                return null;
+            if (frame.Operation == PhoneHomeOperation.WorkspaceRetentionInventory)
+                return Answer(frame, new PhoneHomeWorkspaceRetentionInventoryResponse(Inventory.ToList(), true));
+            if (frame.Operation == PhoneHomeOperation.WorkspaceRetain)
+                return Retain(frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)!, frame);
+            return null;
+        }
+
+        public static PhoneHomeFrame Answer(PhoneHomeFrame request, object payload) =>
+            new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+                JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+        public async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> TickAsync(CancellationToken ct = default)
+        {
+            using var scope = Rig.Provider.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunTickAsync(ct);
+        }
+
+        public List<PhoneHomeWorkspaceRetainRequest> Requests() =>
+            Rig.Peer.Incoming.ToArray()
+                .Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == PhoneHomeOperation.WorkspaceRetain)
+                .Select(f => f.Payload!.Value.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)!)
+                .ToList();
+
+        public static string PathOf(Guid id) => "/work/worktrees/task-" + id.ToString("N")[..8];
+
+        /// <summary>F-5: a Succeeded Worktree task on this runner, finished <paramref name="ago"/> ago, report stored.</summary>
+        public Task<Guid> EligibleAsync(TimeSpan? ago = null, Action<AgentTask>? tweak = null)
+        {
+            var completedAgo = ago ?? TimeSpan.FromHours(24);
+            return Rig.SeedAsync(task =>
+            {
+                task.Status = AgentTaskStatus.Succeeded;
+                task.CompletedAt = Rig.Now - completedAgo;
+                task.RemoteWorktreePath = PathOf(task.Id);
+                task.Result = "done";
+                tweak?.Invoke(task);
+            });
+        }
+
+        public async Task<List<WorktreeResidueRunCandidate>> RowsAsync(Guid? taskId = null)
+        {
+            await using var db = Rig.NewDb();
+            return await db.WorktreeResidueRunCandidates.AsNoTracking()
+                .Where(r => taskId == null || r.TaskId == taskId)
+                .OrderBy(r => r.EvaluatedAt).ToListAsync();
+        }
+
+        public ValueTask DisposeAsync() => Rig.DisposeAsync();
+    }
+
+    private static PhoneHomeWorkspaceRetainResponse Removed() =>
+        new(WorkspaceRetentionCodes.Removed, HeadSha: new string('a', 40), OriginTip: new string('a', 40), PhaseAMs: 3, PhaseBMs: 7);
+
+    private sealed class Monitor(RunnerWorktreeRetentionSettings value) : IOptionsMonitor<RunnerWorktreeRetentionSettings>
+    {
+        public RunnerWorktreeRetentionSettings CurrentValue => value;
+        public RunnerWorktreeRetentionSettings Get(string? name) => value;
+        public IDisposable? OnChange(Action<RunnerWorktreeRetentionSettings, string?> listener) => null;
+    }
+
+    [Test]
+    [Arguments("queued")]
+    [Arguments("dispatched")]
+    [Arguments("working")]
+    [Arguments("blocked")]
+    [Arguments("settling")]
+    [Arguments("land-pending")]
+    [Arguments("sync-debt-pending")]
+    [Arguments("sync-debt-ready")]
+    [Arguments("sync-debt-held")]
+    [Arguments("slot-bound")]
+    [Arguments("source-landing")]
+    [Arguments("repair-source")]
+    [Arguments("mutation")]
+    [Arguments("path-shared")]
+    [Arguments("session-created")]
+    [Arguments("session-starting")]
+    [Arguments("session-running")]
+    [Arguments("session-stopping")]
+    [Arguments("report-unpreserved")]
+    [Arguments("leaf-mismatch")]
+    [Arguments("not-direct-child")]
+    [Arguments("other-runner")]
+    [Arguments("branch-null")]
+    public async Task Each_ineligible_task_alone_is_recorded_and_never_sent(string mode)
+    {
+        // V-30 (G-42..G-64, I-1, I-5, I-11). One fact differs from the eligible shape; the control is still sent.
+        await using var w = await World.StartAsync();
+        var control = await w.EligibleAsync();
+        Guid? landing = null;
+        if (mode == "source-landing")
+            landing = await w.Rig.SeedLandingAsync(await w.Rig.SeedOwnerAsync());
+        var sessionStatus = mode switch
+        {
+            "session-created" => SessionStatus.Created,
+            "session-starting" => SessionStatus.Starting,
+            "session-running" => SessionStatus.Running,
+            "session-stopping" => SessionStatus.Stopping,
+            _ => (SessionStatus?)null,
+        };
+        Guid? sessionId = sessionStatus is null ? null : await SeedSessionAsync(w.Rig, sessionStatus.Value);
+        var subject = await w.EligibleAsync(tweak: task =>
+        {
+            switch (mode)
+            {
+                case "queued": task.Status = AgentTaskStatus.Queued; break;
+                case "dispatched": task.Status = AgentTaskStatus.Dispatched; break;
+                case "working": task.Status = AgentTaskStatus.Working; break;
+                case "blocked": task.Status = AgentTaskStatus.Blocked; break;
+                case "settling": task.CompletedAt = w.Rig.Now - TimeSpan.FromHours(12) + TimeSpan.FromMinutes(1); break;
+                case "land-pending": task.LandRequestedAt = w.Rig.Now; break;
+                case "slot-bound": task.RemoteWorkspaceSlotId = "ws-02"; break;
+                case "source-landing": task.SourceLandingOperationId = landing; task.Role = AgentTaskRole.Code; break;
+                case "repair-source": task.RepairSourceTaskId = Guid.NewGuid(); task.Role = AgentTaskRole.Code; break;
+                case "mutation": task.Role = AgentTaskRole.Mutation; break;
+                case "report-unpreserved":
+                    task.Result = null;
+                    task.ResultFilePath = World.PathOf(task.Id) + "/.antiphon/task-" + task.Id.ToString("N")[..8] + ".md";
+                    break;
+                case "leaf-mismatch": task.RemoteWorktreePath = "/work/worktrees/task-ffffffff"; break;
+                case "not-direct-child": task.RemoteWorktreePath = "/work/worktrees/x/task-" + task.Id.ToString("N")[..8]; break;
+                case "other-runner": task.RunnerId = "server2-temp"; break;
+                case "branch-null": task.WorktreeBranch = null; break;
+            }
+            if (sessionId is not null)
+                task.AgentSessionId = sessionId;
+        });
+        if (mode.StartsWith("sync-debt-", StringComparison.Ordinal))
+            await SeedSyncDebtAsync(w.Rig, subject, mode switch
+            {
+                "sync-debt-pending" => AgentTaskSyncDebtState.Pending,
+                "sync-debt-ready" => AgentTaskSyncDebtState.Ready,
+                _ => AgentTaskSyncDebtState.Held,
+            });
+        if (mode == "path-shared")
+            await w.Rig.SeedAsync(task =>
+            {
+                task.Status = AgentTaskStatus.Working;
+                task.RemoteWorktreePath = World.PathOf(subject);
+            });
+        var before = (await w.Rig.ReadTaskAsync(subject)).RemoteWorktreePath;
+
+        await w.TickAsync();
+
+        var request = w.Requests().ShouldHaveSingleItem("only the control is sent");
+        request.TaskId.ShouldBe(control);
+        (await w.Rig.ReadTaskAsync(subject)).RemoteWorktreePath.ShouldBe(before);
+        var rows = await w.RowsAsync(subject);
+        if (mode == "other-runner")
+        {
+            rows.ShouldBeEmpty("another runner's task is in neither scope");
+            return;
+        }
+        var row = rows.ShouldHaveSingleItem();
+        row.Lane.ShouldBe(RunnerWorktreeRetentionService.LaneMirror);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe(mode switch
+        {
+            "queued" or "dispatched" or "working" or "blocked" => "live_owner",
+            "settling" => "settling",
+            "land-pending" => "land_pending",
+            "sync-debt-pending" or "sync-debt-ready" or "sync-debt-held" => "sync_debt",
+            "slot-bound" => "slot_managed",
+            "mutation" => "mutation_excluded",
+            "path-shared" => "path_shared",
+            "session-created" or "session-starting" or "session-running" or "session-stopping" => "live_session",
+            "report-unpreserved" => "report_unpreserved",
+            _ => "outside_scope",
+        });
+    }
+
+    [Test]
+    [Arguments(AgentTaskStatus.Succeeded)]
+    [Arguments(AgentTaskStatus.Failed)]
+    [Arguments(AgentTaskStatus.Canceled)]
+    public async Task Terminal_statuses_at_the_age_floor_are_sent(AgentTaskStatus status)
+    {
+        // V-30b. The no-false-refusal control: CompletedAt exactly MinTerminalHours ago is eligible.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync(TimeSpan.FromHours(12), task => task.Status = status);
+        await w.TickAsync();
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(id);
+    }
+
+    [Test]
+    public async Task Disabled_job_contacts_no_runner()
+    {
+        // V-31 (G-65). No retention frame of any kind, inventory included.
+        await using var w = await World.StartAsync();
+        w.Settings.Enabled = false;
+        await w.EligibleAsync();
+        (await w.TickAsync()).ShouldBeEmpty();
+        await Task.Delay(200);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(0);
+        (await w.RowsAsync()).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Execute_off_sends_dry_run_only()
+    {
+        // V-31b (G-66).
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.WouldRemove));
+        var id = await w.EligibleAsync();
+        await w.TickAsync();
+        w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.DryRun);
+        (await w.RowsAsync(id)).ShouldHaveSingleItem().ReasonCode.ShouldBe(WorkspaceRetentionCodes.WouldRemove);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+    }
+
+    [Test]
+    [Arguments("unlisted")]
+    [Arguments("not-phone-home")]
+    [Arguments("no-capability")]
+    public async Task Only_listed_capable_phone_home_runners_are_contacted(string shape)
+    {
+        // V-31c (G-67, G-68, G-69, D-11).
+        await using var w = await World.StartAsync(capable: shape != "no-capability");
+        var id = await w.EligibleAsync();
+        if (shape == "unlisted")
+            w.Settings.Runners.Clear();
+        if (shape == "not-phone-home")
+        {
+            w.Settings.Runners.Clear();
+            w.Settings.Runners.Add("desktop");
+            await w.EligibleAsync(tweak: task => task.RunnerId = "desktop");
+        }
+
+        var results = await w.TickAsync();
+        await Task.Delay(200);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(0);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+        if (shape == "unlisted")
+        {
+            results.ShouldBeEmpty();
+            (await w.RowsAsync()).ShouldBeEmpty();
+            return;
+        }
+        var row = (await w.RowsAsync()).ShouldHaveSingleItem();
+        row.ReasonCode.ShouldBe("runner_not_eligible");
+        row.RunnerId.ShouldBe(shape == "not-phone-home" ? "desktop" : w.Rig.RunnerId);
+    }
+
+    [Test]
+    public async Task Execute_requests_are_bounded_per_tick()
+    {
+        // V-32 (G-70). Five eligible, a bound of two: the two oldest, in order.
+        await using var w = await World.StartAsync();
+        w.Settings.MaxRemovalsPerTick = 2;
+        var ids = new List<Guid>();
+        for (var hours = 20; hours <= 24; hours++)
+            ids.Add(await w.EligibleAsync(TimeSpan.FromHours(hours)));
+        await w.TickAsync();
+        w.Requests().Select(r => r.TaskId).ShouldBe([ids[4], ids[3]]);
+    }
+
+    [Test]
+    public async Task Second_request_waits_for_the_first_reply()
+    {
+        // V-32b (G-71). One request at a time.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync(TimeSpan.FromHours(30));
+        await w.EligibleAsync(TimeSpan.FromHours(20));
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+        using var cancel = new CancellationTokenSource();
+        var tick = w.TickAsync(cancel.Token);
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+        await Task.Delay(2000);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        await cancel.CancelAsync();
+        var canceled = false;
+        try { await tick.WaitAsync(TimeSpan.FromSeconds(15)); }
+        catch (OperationCanceledException) { canceled = true; }
+        canceled.ShouldBeTrue("the silent request is abandoned only by cancellation");
+    }
+
+    [Test]
+    public async Task Requests_are_paced()
+    {
+        // V-32c (G-72). The pause runs on the fake clock.
+        await using var w = await World.StartAsync();
+        w.Settings.PauseBetweenSeconds = 5;
+        var first = await w.EligibleAsync(TimeSpan.FromHours(30));
+        await w.EligibleAsync(TimeSpan.FromHours(20));
+        var tick = w.TickAsync();
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+        // The first outcome is recorded before the pause starts; only then does "no second request" mean pacing.
+        for (var i = 0; i < 100 && (await w.RowsAsync(first)).Count == 0; i++)
+            await Task.Delay(100);
+        await Task.Delay(1000);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1, "the second request waits for the pause");
+        // The pause timer is armed after the first outcome is recorded; under load that can follow the 1 s
+        // window, so the clock moves one pause at a time until the second request is sent.
+        for (var i = 0; i < 20 && w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain) < 2; i++)
+        {
+            w.Rig.Clock.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(250);
+        }
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 2);
+        await tick.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [Test]
+    public async Task Reopened_task_is_rechecked_before_its_turn()
+    {
+        // V-33 (G-73). The second candidate is reopened while the first request is in flight.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync(TimeSpan.FromHours(30));
+        var second = await w.EligibleAsync(TimeSpan.FromHours(20));
+        w.Retain = (_, frame) =>
+        {
+            using (var db = w.Rig.NewDb())
+                db.AgentTasks.Where(t => t.Id == second).ExecuteUpdate(s => s.SetProperty(t => t.Status, AgentTaskStatus.Queued));
+            return World.Answer(frame, Removed());
+        };
+        await w.TickAsync();
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        (await w.RowsAsync(second)).ShouldHaveSingleItem().ReasonCode.ShouldBe("live_owner");
+        (await w.Rig.ReadTaskAsync(second)).RemoteWorktreePath.ShouldBe(World.PathOf(second));
+    }
+
+    [Test]
+    [Arguments("removed")]
+    [Arguments("kept")]
+    [Arguments("lost")]
+    [Arguments("already-absent")]
+    public async Task Outcome_recording(string outcome)
+    {
+        // V-34 (G-74, G-75, G-77, I-14).
+        await using var w = await World.StartAsync();
+        w.Retain = (_, frame) => outcome switch
+        {
+            "removed" => World.Answer(frame, Removed()),
+            "kept" => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, WorkspaceRetentionCodes.Dirty)),
+            "lost" => new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: "transport_lost", ErrorDetail: "lost", StatusCode: 503),
+            _ => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.AlreadyAbsent, RetiringResidue: false)),
+        };
+        var id = await w.EligibleAsync();
+        await w.TickAsync();
+        var task = await w.Rig.ReadTaskAsync(id);
+        var row = (await w.RowsAsync(id)).ShouldHaveSingleItem();
+        var events = (await w.Rig.EventsAsync(id, AgentTaskEventType.Warning))
+            .Where(e => e.Detail.StartsWith(RunnerWorktreeRetentionService.EventPrefix, StringComparison.Ordinal)).ToList();
+        switch (outcome)
+        {
+            case "removed":
+                task.RemoteWorktreePath.ShouldBeNull();
+                row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Removed));
+                row.ReasonCode.ShouldBe(WorkspaceRetentionCodes.Removed);
+                var note = events.ShouldHaveSingleItem().Detail;
+                note.ShouldContain(World.PathOf(id));
+                note.ShouldContain("phaseAMs 3");
+                note.ShouldContain("phaseBMs 7");
+                // I-12: the service has no desktop worktree dependency to call.
+                typeof(RunnerWorktreeRetentionService).GetConstructors().SelectMany(c => c.GetParameters())
+                    .Select(p => p.ParameterType).ShouldNotContain(typeof(IWorktreeManager));
+                break;
+            case "kept":
+                task.RemoteWorktreePath.ShouldBe(World.PathOf(id));
+                row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+                row.ReasonCode.ShouldBe(WorkspaceRetentionCodes.Dirty);
+                events.ShouldBeEmpty();
+                break;
+            case "lost":
+                task.RemoteWorktreePath.ShouldBe(World.PathOf(id));
+                row.ReasonCode.ShouldBe("unknown");
+                row.Outcome.ShouldNotBe(nameof(WorktreeResidueCandidateOutcome.Removed));
+                events.ShouldBeEmpty();
+                break;
+            default:
+                task.RemoteWorktreePath.ShouldBeNull();
+                row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Removed));
+                row.ReasonCode.ShouldBe(WorkspaceRetentionCodes.AlreadyAbsent);
+                break;
+        }
+    }
+
+    [Test]
+    public async Task Unmatched_inventory_names_are_reported_not_sent()
+    {
+        // V-35 (G-76). The 17-folder shape: reported with an owner hint, never sent.
+        await using var w = await World.StartAsync();
+        var control = await w.EligibleAsync();
+        var owner = Guid.Parse("cffa0c4b-0000-4000-8000-000000001677");
+        await w.Rig.SeedAsync(task => { task.Id = owner; task.RootTaskId = owner; task.Status = AgentTaskStatus.Succeeded; task.CompletedAt = w.Rig.Now; });
+        foreach (var n in new[] { 1, 2 })
+        {
+            var twin = Guid.Parse($"eeeeeeee-0000-4000-8000-00000000000{n}");
+            await w.Rig.SeedAsync(task => { task.Id = twin; task.RootTaskId = twin; });
+        }
+        w.Inventory.Add(new WorkspaceRetentionEntry("worktrees", "task-cffa0c4b-uA", true, false, true, false, null));
+        w.Inventory.Add(new WorkspaceRetentionEntry("worktrees", "task-eeeeeeee", true, false, true, false, null));
+
+        await w.TickAsync();
+
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(control);
+        var rows = (await w.RowsAsync()).Where(r => r.Lane == RunnerWorktreeRetentionService.LaneInventory).ToList();
+        var unknown = rows.Where(r => r.ReasonCode == "identity_unknown").ShouldHaveSingleItem();
+        unknown.Path.ShouldBe("/work/worktrees/task-cffa0c4b-uA");
+        unknown.TaskId.ShouldBe(owner);
+        unknown.Branch.ShouldBe("owner_hint:task-cffa0c4b:Succeeded");
+        rows.Where(r => r.ReasonCode == "identity_ambiguous").ShouldHaveSingleItem().Path.ShouldBe("/work/worktrees/task-eeeeeeee");
+    }
+
+    [Test]
+    public async Task Retain_round_trip_real_runner(CancellationToken ct)
+    {
+        // V-39 (F-4). Producer -> client -> socket -> real runner dispatcher -> real engine -> real git.
+        await using var world = await C1677RetentionTransportWorld.StartAsync();
+        var (id, path) = await world.SeedMirroredTaskAsync();
+        await world.TickAsync(ct);
+        Directory.Exists(path).ShouldBeFalse();
+        world.Registered(path).ShouldBeFalse();
+        (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        (await world.Server.RowsAsync(id)).ShouldHaveSingleItem().Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Removed));
+    }
+
+    [Test]
+    public async Task Busy_runner_retain_is_serialised(CancellationToken ct)
+    {
+        // V-39b. While one request is outstanding the tick sends no second; delivered, it removes once.
+        await using var world = await C1677RetentionTransportWorld.StartAsync();
+        var (id, path) = await world.SeedMirroredTaskAsync();
+        await world.SeedMirroredTaskAsync("b1677002");
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.Hold = gate.Task;
+        var tick = world.TickAsync(ct);
+        await world.Server.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+        await Task.Delay(1500, ct);
+        world.Server.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        gate.SetResult();
+        await tick.WaitAsync(TimeSpan.FromSeconds(30), ct);
+        world.Server.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(2);
+        Directory.Exists(path).ShouldBeFalse();
+        world.Moves(path).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments("reply-lost")]
+    [Arguments("crash-between-phases")]
+    public async Task Retain_recovery_at_each_handoff(string handoff, CancellationToken ct)
+    {
+        // V-39c (D-1 recovery rows). A lost reply is unknown with the path kept, then already_absent;
+        // a crash after the move is unknown, then a phase-B-only retry of the residue.
+        await using var world = await C1677RetentionTransportWorld.StartAsync();
+        var (id, path) = await world.SeedMirroredTaskAsync();
+        if (handoff == "reply-lost")
+            world.DropNextReply = true;
+        else
+            world.CrashAfterMoveOnce = true;
+
+        await world.TickAsync(ct);
+        (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(path, "an unknown outcome keeps the path");
+        (await world.Server.RowsAsync(id)).ShouldHaveSingleItem().ReasonCode.ShouldBe("unknown");
+
+        await world.TickAsync(ct);
+        (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        var second = (await world.Server.RowsAsync(id)).Last();
+        second.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Removed));
+        second.ReasonCode.ShouldBe(handoff == "reply-lost" ? WorkspaceRetentionCodes.AlreadyAbsent : WorkspaceRetentionCodes.Removed);
+        Directory.Exists(path).ShouldBeFalse();
+        world.RetiringEntries().ShouldBeEmpty();
+        world.Moves(path).ShouldBe(1, "a residue is never moved again");
+        world.Removes().ShouldBe(1, "phase B ran exactly once");
+    }
+
+    private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
+    {
+        var id = Guid.NewGuid();
+        await using var db = rig.NewDb();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id, DefinitionName = "grok", AgentKind = AgentKind.Grok, Status = status, Cwd = rig.WorkspacePath,
+            Cols = 80, Rows = 24, CreatedAt = rig.Now, StartedAt = rig.Now, LastSeenAt = rig.Now,
+            RunnerId = rig.RunnerId, RunnerStoreId = rig.Host.StoreId, RunnerCwd = "/work",
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task SeedSyncDebtAsync(Rig rig, Guid taskId, AgentTaskSyncDebtState state)
+    {
+        await using var db = rig.NewDb();
+        db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+        {
+            Id = Guid.NewGuid(), TaskId = taskId, Attempt = 1, SettlementEventId = Guid.NewGuid(), State = state,
+            ReasonCode = "runner_sync_lease_busy", CreatedAt = rig.Now, UpdatedAt = rig.Now,
+        });
+        await db.SaveChangesAsync();
+    }
+}

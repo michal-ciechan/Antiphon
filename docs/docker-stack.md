@@ -697,6 +697,37 @@ quarantine with unpublished work still refuses a CARD-1008 recycle; a filesystem
 is published passes it. The slot ledger and quarantined directories must be read before a temp-runner
 drain (CARD-0831).
 
+### Runner worktree retention (CARD-1677)
+
+The server job `antiphon:runner-worktree-retention` retires the `/work/worktrees/task-<8hex>` mirrors of
+FINISHED tasks. The server decides "finished" from the task table (Succeeded, Failed or Canceled for at
+least `MinTerminalHours`, default 12; no land pending, no open sync debt, no open task on the path, no live
+session, `Result` stored, not slot-bound, not SourceLanding/repair-source, not Mutation). The runner rechecks
+every fact itself right before it acts: the path is a direct child `task-<8hex>` of its own worktree root
+equal to the task id, not a slot, not locked, owned by a runner repository, on the task's branch, clean
+(`--untracked-files=all`), nothing outside `refs/remotes/origin`, the branch present on LIVE origin
+(`ls-remote` of the runner-owned clone source) and containing HEAD, and no live process with its cwd or
+an fd inside (an unreadable `/proc` keeps the tree). Execute moves the tree to
+`/work/worktrees-retiring/<leaf>.<request8>` under the runner's command lock and then runs
+`git worktree remove` WITHOUT `--force` outside it. It never runs `rm`, `git worktree prune`, `git fetch`
+or a branch deletion, and never touches Docker volumes, `/state`, `/work/repos`, `/work/cache` or slots.
+
+It ships off: `RunnerWorktreeRetention:Enabled=false`, `Runners=[]`, `Execute=false` (dry-run). Enabling:
+
+1. Set `Enabled=true` and `Runners=["server2"]`, leave `Execute=false`, restart the server. Each tick (or
+   `POST /api/agent-tasks/worktree-residue/runner-retention/server2/preview`, always DryRun) writes a residue
+   run with `Scope=runner-retention:server2`; read it with `GET /api/agent-tasks/worktree-residue/runs/{runId}?page=n`,
+   following every page. `RunnerMirror` rows carry the verdict (`would_remove` or a kept reason);
+   `RunnerInventory` rows report names that match no task (`identity_unknown` with an `owner_hint`,
+   `identity_ambiguous`) and `retiring_residue`. Those names are never acted on.
+2. Check the plan's §8 measurements (dry-run census against a manual check of 10 trees, `ls-remote` time,
+   holder-scan time, that `/work/worktrees-retiring` is on the same device as `/work/worktrees`).
+3. Set `Execute=true` with `MaxRemovalsPerTick=1` for one tick, confirm one `Removed` row and the
+   `df -Pk /work` delta, then raise it (default 25, `PauseBetweenSeconds` 5).
+
+Rollback is `Execute=false`. A tree left in the retiring root (`retiring_refused`) stays registered, is
+reported, and is retried by phase B only on the next request for that task; it is never moved back.
+
 ## Shared server2 runner caches (CARD-0849)
 
 The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,

@@ -23,12 +23,34 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     ];
     private readonly SessionRunnerRuntime _runtime;
     private readonly RunnerBuildDto _build;
+    private readonly RunnerWorkspaceRetention? _retention;
 
-    public PhoneHomeRuntimeAdapter(SessionRunnerRuntime runtime, RunnerBuildDto build)
+    public PhoneHomeRuntimeAdapter(SessionRunnerRuntime runtime, RunnerBuildDto build,
+        RunnerWorkspaceRetention? retention = null)
     {
         _runtime = runtime;
         _build = build;
+        _retention = retention;
     }
+
+    /// <summary>CARD-1677 D-11: retention is advertised only by a Linux runner (the desktop never retains).</summary>
+    internal static IReadOnlyList<string> RetentionFeatures(bool isLinux) =>
+        []; // CARD-1677 red shim
+
+    public Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct) =>
+        Retention().CheckAndMoveAsync(request, ct);
+
+    public Task<PhoneHomeWorkspaceRetainResponse> RetainWorkspaceCompleteAsync(WorkspaceRetainStep step, CancellationToken ct) =>
+        Retention().CompleteAsync(step, ct);
+
+    public Task<PhoneHomeWorkspaceRetentionInventoryResponse> WorkspaceRetentionInventoryAsync(CancellationToken ct) =>
+        Retention().InventoryAsync(ct);
+
+    private RunnerWorkspaceRetention Retention() =>
+        _retention is not null && OperatingSystem.IsLinux()
+            ? _retention
+            : throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+                "Workspace retention is not supported on this runner.", 501);
 
     public int OwnedSessionCount => _runtime.LiveSessionCount;
     public async Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
@@ -58,6 +80,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         if (custody is not null)
             features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
         features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
+        if (_retention is not null)
+            features = [.. features, .. RetentionFeatures(OperatingSystem.IsLinux())];
         // CARD-1153 D-3: advertised only while the evidence service is ready (adoption done, no latch).
         if (_runtime.AbsenceEvidenceReady)
             features = [.. features, RunnerAbsenceEvidence.Feature];
