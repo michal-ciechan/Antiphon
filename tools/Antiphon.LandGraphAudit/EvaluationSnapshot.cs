@@ -7,6 +7,9 @@ internal sealed class EvaluationSnapshot(string repo, string sourceRepo)
 {
     private readonly SortedDictionary<string, string[]> _projects = new(StringComparer.Ordinal);
 
+    /// <summary>The unnormalised FullPath of every evaluated item, for the canary's ignored-file placeholders.</summary>
+    public HashSet<string> ItemPaths { get; } = new(StringComparer.Ordinal);
+
     private string Normalize(string value)
     {
         // Repository relocation is the only normalization. Do not discard arbitrary properties,
@@ -28,6 +31,7 @@ internal sealed class EvaluationSnapshot(string repo, string sourceRepo)
             .Concat(project.ImportsIncludingDuplicates.Select(i => "import\0" + Normalize(i.ImportedProject.FullPath)))
             .Order(StringComparer.Ordinal).ToArray();
         _projects.Add(key, rows);
+        foreach (var item in project.AllEvaluatedItems) ItemPaths.Add(item.GetMetadataValue("FullPath"));
     }
 
     public string? Difference(EvaluationSnapshot other)
