@@ -347,7 +347,11 @@ Server: `tests/Antiphon.Tests/Application/C0824SlotAttentionTests.cs`.
   at `MirrorAsync`, and add the role term to `:218`.
 - `server/Program.cs` (the monitor is already registered with options).
 - `docs/session-runtime-invariants.md` (CARD-0824 paragraph, `:327-344`) and `docs/docker-stack.md`
-  (`:688-705`): the canary, soft rollback and hard rollback text from §4.4 and §4.5.
+  (`:688-705`): the canary, soft rollback and hard rollback text from §4.4 and §4.5. The docs state the
+  role setting as the single string `Delegation:WorkspaceSlotRoles` (default `"*"`, every role except
+  Mutation; `"none"` for no new leases; or a comma-separated list of exact role names), and that an
+  array value is refused: `[]` binds to `null`, which would widen the canary to every role. See the S1c
+  test design, 2026-11-03 (T-D-1..T-D-6).
 
 **Tests**: `tests/Antiphon.Tests/Application/C0824WorkspaceSlotRoleGateTests.cs`, using the existing
 `C0824SlotTransportWorld`.
@@ -392,7 +396,8 @@ Regression: `C0824WorkspaceSlotServerTests` (14 methods).
 
 ### 4.3 Canary configuration and observation
 
-1. **Roles.** Set `Delegation:WorkspaceSlotRoles=["Plan","Investigate","TestDesign","Docs"]` and
+1. **Roles.** Set `Delegation:WorkspaceSlotRoles="Plan,Investigate,TestDesign,Docs"` (a single string;
+   the default is `"*"`; see the S1c test design, 2026-11-03) and
    `Delegation:WorkspaceSlotsEnabled=true` on the dispatching server (restart, P-1 build). Set
    `PhoneHome__WorkspaceSlots__Enabled: "true"` on the server2 runner only (runner restart through
    `scripts/restart-session-runner.ps1`, or the rollout's runner phase). These are operator settings:
@@ -429,7 +434,9 @@ Regression: `C0824WorkspaceSlotServerTests` (14 methods).
 
 ### 4.5 Rollback, and what happens to leased slots
 
-- **Soft (default): `WorkspaceSlotRoles=[]`.** It is hot-reloaded, with no restart.
+- **Soft (default): `WorkspaceSlotRoles="none"`.** It is hot-reloaded, with no restart. The value is
+  the string `"none"`, never an array: `[]` binds to `null`, which would widen the canary to every role
+  (see the S1c test design, 2026-11-03).
   - New tasks get `task-<id>` mirrors at once.
   - Leased slots finish their tasks, and the reconciler releases them normally: the flag is still on.
   - When the ledger shows no slot in Leased or Releasing, turn both flags off. A runner restart with
