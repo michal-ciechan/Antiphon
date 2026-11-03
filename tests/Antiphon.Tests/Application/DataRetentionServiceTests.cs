@@ -1854,6 +1854,96 @@ public class DataRetentionServiceTests
     }
 
     /// <summary>
+    /// CARD-1670 (e). A zero or negative <see cref="RetentionSettings.TaskPruneMaxFailedAttemptsPerSweep"/>
+    /// uses the default budget of 6: two ranges of three failed attempts, never a stop after the first range
+    /// (a raw nonpositive budget is spent before any range) and never an unbounded sweep.
+    /// </summary>
+    [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    public async Task C1670_NonpositiveFailureBudgetFallsBackToSix(int budget)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 10).Select(_ => Guid.NewGuid()).OrderBy(g => g.ToString(), StringComparer.Ordinal).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1670-row-data", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var fault = new C1654PruneTimeout();
+        var settings = new RetentionSettings
+        {
+            TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 10, TaskPruneMaxFailedAttemptsPerSweep = budget,
+        };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(fault).Options))
+        {
+            var audit = new AuditSettings();
+            result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        fault.Thrown.ShouldBe(6, $"budget {budget} falls back to 6: two ranges of three attempts");
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.FailureBudgetSpent.ShouldBeTrue();
+        result.TaskPrune.Batches.ShouldBe(2);
+        result.TaskPrune.FailedAttempts.ShouldBe(6);
+        result.TaskPrune.Cursor.ShouldBe(roots[3]);
+    }
+
+    /// <summary>
+    /// CARD-1670 (d, f). The budget is checked when a range ends, so a sweep spends at most the budget plus two
+    /// failed attempts (here budget 4: the first range spends 3, the second 3 more, 6 in all). When the budget runs
+    /// out on a short final range the scan completes (it wraps next sweep) and still reports
+    /// <c>FailureBudgetSpent</c>, the same as a budget spent on a full range, and the Tasks pass reports Failed.
+    /// </summary>
+    [Test]
+    public async Task C1670_BudgetSpentOnAShortFinalRangeIsReported()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var stale = DaysAgo(200);
+        var roots = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).ToList();
+        await using (var seed = new AppDbContext(plain))
+        {
+            foreach (var root in roots) seed.AgentTasks.Add(TerminalTask(root, "c1670-row-data", stale));
+            await seed.SaveChangesAsync();
+        }
+
+        var fault = new C1654PruneTimeout();
+        var logger = new C768CaptureLogger();
+        var settings = new RetentionSettings
+        {
+            TaskPruneBatchSize = 2, TaskPruneMaxBatchesPerSweep = 10, TaskPruneMaxFailedAttemptsPerSweep = 4,
+        };
+        DataRetentionSweepResult result;
+        await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(plain)
+            .AddInterceptors(fault).Options))
+        {
+            var audit = new AuditSettings();
+            result = await new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                TimeProvider.System, logger, new AuditService(db, Options.Create(audit)))
+                .RunOnceAsync(CancellationToken.None);
+        }
+
+        fault.Thrown.ShouldBe(6, "budget 4 is checked at range ends: 3 then 3, the budget plus two");
+        result.TaskPrune.ShouldNotBeNull();
+        result.TaskPrune.Batches.ShouldBe(2);
+        result.TaskPrune.FailedAttempts.ShouldBe(6);
+        result.TaskPrune.SkippedRanges.ShouldBe(2);
+        result.TaskPrune.ScanComplete.ShouldBeTrue("the short final range ends the scan");
+        result.TaskPrune.Cursor.ShouldBeNull();
+        result.TaskPrune.FailureBudgetSpent.ShouldBeTrue("the budget ran out on the short final range");
+        (result.Passes ?? []).Single(p => p.Pass == "Tasks").Status.ShouldBe(DataRetentionPassStatus.Failed);
+        logger.Messages.ShouldContain(m => m.Contains("task prune stopped for this sweep after 6 failed attempt(s)"));
+    }
+
+    /// <summary>
     /// CARD-1662 A-2. The audit archive cutoff is fixed for the whole sweep: a record dated 100 ms
     /// after it, inserted between two batches and aged past a recomputed cutoff by the time the
     /// second batch runs, keeps its FullContent, and both batch statements carry the same cutoff.
