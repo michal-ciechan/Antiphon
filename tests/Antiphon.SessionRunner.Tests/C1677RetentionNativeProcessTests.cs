@@ -104,6 +104,83 @@ public sealed class C1677RetentionNativeProcessTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: a directory name ending in a newline or carriage return cannot exist on Windows")]
+    [Arguments("lf")]
+    [Arguments("cr")]
+    [Arguments("ls")]
+    [Arguments("space")]
+    public async Task End_suffixed_task_leaf_is_kept(string suffix, CancellationToken ct)
+    {
+        // CARD-1677 S1 hardening (review d0b57b9c A-3). A real mirror whose directory is task-<id8> plus a
+        // newline, carriage return, U+2028 or trailing space, requested for task <id8>: `$` matches before a
+        // final newline, so only the later exact-id check stood between it and the move. It is never a
+        // candidate: kept (a control character is named as such), untouched, registered, nothing moved.
+        using var s = Create();
+        var m = s.Mirror(path: s.Worktrees + "/task-a1677001" + Suffix(suffix));
+        RegisteredZ(s, m.Path).ShouldBeTrue("the suffixed mirror is a real registered worktree (precondition)");
+        var before = Tree(m.Path);
+        s.Argv.Clear();
+
+        var response = await s.Engine().RetainAsync(Request(m), ct);
+
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(suffix == "space" ? WorkspaceRetentionCodes.OutsideScope : "name_control_character", response.Detail);
+        Directory.Exists(m.Path).ShouldBeTrue("the tree stays at its path");
+        Tree(m.Path).ShouldBe(before);
+        RegisteredZ(s, m.Path).ShouldBeTrue("the registration stays");
+        s.RetiringEntries().ShouldBeEmpty("nothing was moved aside");
+        s.MutatingVerbs().ShouldBeEmpty("no git mutation ran");
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: a directory name ending in a newline or carriage return cannot exist on Windows")]
+    [Arguments("lf", WorkspaceRetainModes.Execute)]
+    [Arguments("lf", WorkspaceRetainModes.DryRun)]
+    [Arguments("cr", WorkspaceRetainModes.Execute)]
+    [Arguments("ls", WorkspaceRetainModes.Execute)]
+    [Arguments("space", WorkspaceRetainModes.Execute)]
+    [Arguments("space", WorkspaceRetainModes.DryRun)]
+    public async Task End_suffixed_retiring_residue_is_kept(string suffix, string mode, CancellationToken ct)
+    {
+        // CARD-1677 S1 hardening (review d0b57b9c A-3). The leaf is gone and the retiring root holds a real,
+        // clean, registered, unheld worktree named like this leaf's residue task-<id8>.<8 hex> plus a suffix.
+        // `^leaf\.[0-9a-f]{8}$` took the newline one as this task's residue and phase B removed it; the others
+        // were answered already_absent (which clears the server's mirror row). Each is kept and reported.
+        using var s = Create();
+        var m = s.Mirror();
+        var residue = s.Retiring + "/task-a1677001.0badf00d" + Suffix(suffix);
+        Directory.CreateDirectory(s.Retiring);
+        Git(s.Repository, "worktree", "move", m.Path, residue);
+        RegisteredZ(s, residue).ShouldBeTrue("the suffixed residue is a real registered worktree (precondition)");
+        var before = Tree(residue);
+        s.Argv.Clear();
+
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(suffix == "space" ? WorkspaceRetentionCodes.WorkspaceRetiringOrUnknown : "name_control_character", response.Detail);
+        response.RetiringResidue.ShouldBeTrue("a residue-shaped entry of this leaf is reported, not silently skipped");
+        Directory.Exists(residue).ShouldBeTrue("the residue stays");
+        Tree(residue).ShouldBe(before);
+        RegisteredZ(s, residue).ShouldBeTrue("the residue registration stays");
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+        s.MutatingVerbs().ShouldBeEmpty("no git mutation ran");
+        s.Holders.Calls.ShouldBe(0, "a refused name is never scanned as a candidate");
+    }
+
+    private static string Suffix(string suffix) => suffix switch
+    {
+        "lf" => "\n",
+        "cr" => "\r",
+        "ls" => " ",
+        _ => " ",
+    };
+
+    /// <summary>Registration read with <c>-z</c>: the line-based porcelain cannot name a path holding a newline.</summary>
+    private static bool RegisteredZ(C1677RetentionScratch s, string path) =>
+        Git(s.Repository, "worktree", "list", "--porcelain", "-z").Split('\0').Contains("worktree " + path);
+
     private static RunnerWorkspaceRetention Engine(C1677RetentionScratch s) =>
         new(s.Service(), new ProcWorkspaceSlotProcessProbe(), retiringRoot: s.Retiring);
 
