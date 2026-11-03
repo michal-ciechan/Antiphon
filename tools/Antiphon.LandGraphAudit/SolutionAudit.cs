@@ -53,7 +53,7 @@ internal static class SolutionAudit
                 },
                 copy: () =>
                 {
-                    canary = CanaryRepository.Create(repo);
+                    canary = CanaryRepository.Create(repo, baseline?.ItemPaths);
                     return Program.Approved;
                 },
                 pass2: () =>

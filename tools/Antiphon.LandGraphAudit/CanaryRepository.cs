@@ -23,7 +23,12 @@ internal sealed class CanaryRepository : IDisposable
     private static string? ActiveRoot;
     private static volatile bool Cancelled;
 
-    public static CanaryRepository Create(string repo)
+    /// <param name="evaluatedItems">
+    /// FullPaths the repository pass evaluated as items. A git-ignored file among them (an E2E run's
+    /// TestOutput/ under a default None glob) is not copied, so it gets an empty placeholder: the same
+    /// globs then match the same names in both passes. Item contents are never an evaluation input.
+    /// </param>
+    public static CanaryRepository Create(string repo, IEnumerable<string>? evaluatedItems = null)
     {
         Cancelled = false;
         var copy = new CanaryRepository(repo);
@@ -90,6 +95,16 @@ internal sealed class CanaryRepository : IDisposable
                 else File.CreateSymbolicLink(destination, target);
             }
             CopyOrdinary();
+            foreach (var placeholder in IgnoredItemFiles(repo, files, evaluatedItems))
+            {
+                if (Cancelled) throw new IOException("canary copy cancelled");
+                var destination = Path.GetFullPath(Path.Combine(copy.Root, placeholder));
+                if (!destination.StartsWith(copy.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                    throw new IOException("canary path outside repository: " + placeholder);
+                copy.CheckDestination(destination);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                if (!File.Exists(destination)) File.WriteAllBytes(destination, []);
+            }
             var added = Path.Combine(copy.Root, "docs", "c1483-canary", "canary.md");
             copy.CheckDestination(added);
             Directory.CreateDirectory(Path.GetDirectoryName(added)!);
@@ -97,6 +112,24 @@ internal sealed class CanaryRepository : IDisposable
             return copy;
         }
         catch { copy.Dispose(); throw; }
+    }
+
+    // Ordinary, existing, non-link files inside the repository that the copy set does not hold.
+    // Documentation stays with the copy set, which already writes every docs/**/*.md as the canary.
+    private static IEnumerable<string> IgnoredItemFiles(string repo, HashSet<string> files, IEnumerable<string>? evaluatedItems)
+    {
+        var result = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var item in evaluatedItems ?? [])
+        {
+            if (string.IsNullOrEmpty(item)) continue;
+            var full = Path.GetFullPath(Path.DirectorySeparatorChar == '/' ? item.Replace('\\', '/') : item);
+            if (!full.StartsWith(repo + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
+            var relative = Path.GetRelativePath(repo, full);
+            if (files.Contains(relative.Replace(Path.DirectorySeparatorChar, '/'))) continue;
+            if (!File.Exists(full) || (File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0) continue;
+            result.Add(relative);
+        }
+        return result;
     }
 
     internal static void CancelCopy() => Cancelled = true;
