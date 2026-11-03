@@ -123,6 +123,23 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    public async Task Unreadable_slot_ledger_keeps_a_removable_mirror(CancellationToken ct)
+    {
+        // CARD-0824 S1 mutation survivor X47 (CARD-1677 guard 3b). The mirror is otherwise removable (clean, pushed,
+        // its own task-<id8> leaf), but an unreadable slot ledger cannot prove the path is not a slot: kept, slot_managed.
+        using var s = Create();
+        var m = s.Mirror();
+        var ledger = new RunnerWorkspaceSlotLedger(s.Work + "/workspace-slots");
+        Directory.CreateDirectory(ledger.StateRoot);
+        File.WriteAllText(ledger.LedgerPath, "{ \"slots\": [ not json");
+        var before = Tree(m.Path);
+
+        var response = await s.Engine().RetainAsync(Request(m), ct);
+        s.Kept(response, WorkspaceRetentionCodes.SlotManaged, m, before);
+        response.Detail.ShouldBe("slot ledger unreadable");
+    }
+
+    [Test]
     [Arguments("use-owner")]
     [Arguments("removal-journal")]
     [Arguments("locked")]
