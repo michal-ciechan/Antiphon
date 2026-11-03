@@ -20,14 +20,17 @@ public static partial class ReviewRoundGuard
     /// <summary>The SQL comment on the guard's card query, so a test can fault exactly that query.</summary>
     public const string QueryTag = "ReviewRoundGuard";
 
-    // ASCII digits only (.NET \d matches every Unicode Nd digit, which int.Parse rejects) and no
-    // newline between the label and its number: "round:" then "7" on the next line is not round 7.
-    [GeneratedRegex(@"^[ \t]*round:[ \t]*([0-9]{1,4})\b", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
+    // CARD-1676: briefs write "REVIEW ROUND 2 OF 3 (...)", "Review round 2 (diff-only)" and "Round 2 of 3"
+    // as well as "round: 2 of 3", so the colon is optional and the label may follow "REVIEW ". ASCII digits
+    // only (.NET \d matches every Unicode Nd digit, which int.Parse rejects) and no newline between the label
+    // and its number: "round:" or "Round" then "7" on the next line is not round 7.
+    [GeneratedRegex(@"(?:^[ \t]*|\breview[ \t]+)round[ \t]*:?[ \t]*([0-9]{1,4})\b", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
     private static partial Regex DeclaredRoundLine();
 
     /// <summary>
-    /// The first <c>round: N</c> line in the brief, as the review-rounds brief lines write it. A line that
-    /// does not parse declares nothing, so the count rule applies; the guard never throws on brief text.
+    /// The first <c>round N</c> or <c>round: N</c> (any case, optionally <c>of 3</c>) at the start of a line or
+    /// after <c>REVIEW </c>, as review-rounds briefs write it. A round that does not parse declares nothing, so
+    /// the count rule applies; the guard never throws on brief text.
     /// </summary>
     public static int? DeclaredRound(string goal) =>
         DeclaredRoundLine().Match(goal) is { Success: true } match
