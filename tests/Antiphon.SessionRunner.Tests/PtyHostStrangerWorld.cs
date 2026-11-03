@@ -137,7 +137,10 @@ internal sealed class PtyHostStrangerWorld : IAsyncDisposable
     [DllImport("libc", EntryPoint = "geteuid")]
     private static extern uint GetEuid();
 
-    /// <summary>Completes once the fake host saw the runner close the current connection.</summary>
+    /// <summary>
+    /// Completes once the fake host saw the runner close the current connection, or the next one when
+    /// no connection has closed since the last completion.
+    /// </summary>
     public Task PeerClosedAsync(TimeSpan timeout) => Volatile.Read(ref _peerClosed).Task.WaitAsync(timeout);
 
     /// <summary>SessionExited events published for <paramref name="sessionId"/> by every runtime of this world.</summary>
@@ -179,8 +182,14 @@ internal sealed class PtyHostStrangerWorld : IAsyncDisposable
                 listening.TrySetResult();
                 await pipe.WaitForConnectionAsync(_stop.Token);
                 Interlocked.Increment(ref _connections);
-                closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                Volatile.Write(ref _peerClosed, closed);
+                // A waiter that arrived before this accept was observed holds the pending source, so
+                // reuse it: a client refused before any write can close before the server looks.
+                closed = Volatile.Read(ref _peerClosed);
+                if (closed.Task.IsCompleted)
+                {
+                    closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Volatile.Write(ref _peerClosed, closed);
+                }
                 var hello = await PtyHostFraming.ReadAsync(pipe, _stop.Token);
                 if (hello is not null) _frames.Enqueue(hello.GetType().Name);
                 if (hello is not HelloMessage) continue;
