@@ -136,11 +136,11 @@ public sealed class AgentSessionRuntimeBoundedReadTests
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var runtime = NewRuntime(runner, provider, time, new RemoteInventoryDirectory([live], [unknown]));
 
-        (await AnswerAsync(runtime.IsLiveOrUnknownAsync(Bound(live, RemoteRunner), CancellationToken.None), runner, time))
+        (await AnswerAsync(() => runtime.IsLiveOrUnknownAsync(Bound(live, RemoteRunner), CancellationToken.None), runner, time))
             .ShouldBeTrue("a live server2 session reads live from its inventory");
-        (await AnswerAsync(runtime.IsLiveOrUnknownAsync(unknown, RemoteRunner, CancellationToken.None), runner, time))
+        (await AnswerAsync(() => runtime.IsLiveOrUnknownAsync(unknown, RemoteRunner, CancellationToken.None), runner, time))
             .ShouldBeTrue("an unknown server2 session is never read as gone");
-        (await AnswerAsync(runtime.IsLiveOrUnknownAsync(Bound(absent, RemoteRunner), CancellationToken.None), runner, time))
+        (await AnswerAsync(() => runtime.IsLiveOrUnknownAsync(Bound(absent, RemoteRunner), CancellationToken.None), runner, time))
             .ShouldBeFalse("a server2 session its inventory does not name is not live");
         Volatile.Read(ref runner.ListCalls).ShouldBe(0, "no local List for a session bound to another runner");
     }
@@ -162,7 +162,7 @@ public sealed class AgentSessionRuntimeBoundedReadTests
         var runtime = NewRuntime(runner, provider, time, new RemoteInventoryDirectory([live], []));
 
         var failure = await Should.ThrowAsync<Exception>(
-            () => AnswerAsync(runtime.IsLiveOrUnknownAsync(Bound(live, runnerId), CancellationToken.None), runner, time));
+            () => AnswerAsync(() => runtime.IsLiveOrUnknownAsync(Bound(live, runnerId), CancellationToken.None), runner, time));
         if (fault == "http")
             failure.ShouldBeOfType<HttpRequestException>();
         else
@@ -186,9 +186,10 @@ public sealed class AgentSessionRuntimeBoundedReadTests
     }
 
     /// <summary>A blocked local List is released by advancing the injected clock past the 5 s deadline.</summary>
-    private static async Task<bool> AnswerAsync(Task<bool> answer, BlockingSessionRunnerClient runner, FakeTimeProvider time)
+    private static async Task<bool> AnswerAsync(Func<Task<bool>> ask, BlockingSessionRunnerClient runner, FakeTimeProvider time)
     {
         var calls = Volatile.Read(ref runner.ListCalls);
+        var answer = ask();
         await WaitUntilAsync(() => answer.IsCompleted || Volatile.Read(ref runner.ListCalls) > calls);
         if (!answer.IsCompleted)
             time.Advance(TimeSpan.FromMilliseconds(5000));

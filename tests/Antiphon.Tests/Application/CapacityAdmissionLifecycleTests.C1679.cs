@@ -66,6 +66,7 @@ public partial class CapacityAdmissionLifecycleTests
             return Task.CompletedTask;
         };
 
+        AgentTaskDispatcher.TickResult tick;
         await using (var scope = provider.CreateAsyncScope())
         {
             var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
@@ -77,15 +78,15 @@ public partial class CapacityAdmissionLifecycleTests
                 return;
             }
 
-            var tick = await dispatcher.TickAsync(tickCts.Token);
-            tick.Failures.ShouldBe(0);
-            tick.Dispatched.ShouldBe(1);
+            tick = await dispatcher.TickAsync(tickCts.Token);
         }
 
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
         stored.FailureReason.ShouldBeNull();
+        tick.Failures.ShouldBe(0);
+        tick.Dispatched.ShouldBe(1);
         var sessionId = stored.AgentSessionId.ShouldNotBeNull();
         sink.Sessions.ShouldBe([sessionId], "one launch enqueued");
         var briefs = await verify.SessionQueuedMessages.AsNoTracking()
