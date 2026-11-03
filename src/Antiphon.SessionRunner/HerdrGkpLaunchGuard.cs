@@ -31,14 +31,25 @@ internal static class HerdrGkpLaunchGuard
         {
             if (string.IsNullOrEmpty(arg))
                 continue;
-            string fileName;
-            try { fileName = Path.GetFileName(arg); }
-            catch (ArgumentException) { continue; }
-            if (string.Equals(fileName, WrapperFileName, StringComparison.OrdinalIgnoreCase))
+            if (FileName(arg).Equals(WrapperFileName, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// CARD-1669: the file name as Windows reads it, on every runner OS. <c>Path.GetFileName</c>
+    /// splits on <c>\</c> and strips a drive-relative <c>C:</c> only on Windows, so a Windows-shaped wrapper path
+    /// that reached a Linux runner skipped this fail-safe guard. On Windows both extra steps are no-ops.
+    /// </summary>
+    private static ReadOnlySpan<char> FileName(string arg)
+    {
+        var name = Path.GetFileName(arg.AsSpan());
+        name = name[(name.LastIndexOf('\\') + 1)..];
+        if (name.Length == arg.Length && name.Length >= 2 && name[1] == ':' && char.IsAsciiLetter(name[0]))
+            name = name[2..];
+        return name;
     }
 
     /// <summary>

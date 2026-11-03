@@ -9,9 +9,9 @@ public static class GrokNativeSessionStore
 {
     public static NativeSessionPresence Probe(string grokHome, Guid id)
     {
+        var root = Path.Combine(grokHome, "sessions");
         try
         {
-            var root = Path.Combine(grokHome, "sessions");
             foreach (var cwd in Directory.GetDirectories(root))
             {
                 try
@@ -24,7 +24,9 @@ public static class GrokNativeSessionStore
             }
             return NativeSessionPresence.Missing;
         }
-        catch (DirectoryNotFoundException) { return NativeSessionPresence.Missing; }
+        // CARD-1669: Unix maps ENOTDIR (a file at the sessions root) to DirectoryNotFoundException;
+        // unreadable storage is Unavailable, never Missing (Missing means only a fresh start helps).
+        catch (DirectoryNotFoundException) when (!File.Exists(root)) { return NativeSessionPresence.Missing; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return NativeSessionPresence.Unavailable;
