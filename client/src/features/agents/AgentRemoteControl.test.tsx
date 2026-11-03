@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, CreateAgentRequest, StartAgentRequest, UpdateAgentRequest } from '../../api/agents'
 import type { AgentTuiProfileDto, AgentTuiRunnerTypeDto } from '../../api/agentTui'
 import type { CardDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
 import { AgentCreateModal } from './AgentCreateModal'
@@ -224,12 +224,12 @@ describe('CARD-0212 remote control capability gate', () => {
     expect(rcSwitch).not.toBeChecked()
 
     const name = screen.getAllByLabelText('Name').find((el) => el instanceof HTMLInputElement) as HTMLInputElement
-    await userEvent.type(name, 'Grok Agent')
+    await pasteInto(name, 'Grok Agent')
     const directory = screen
       .getAllByLabelText('Working directory')
       .find((el): el is HTMLInputElement => el instanceof HTMLInputElement)!
     await userEvent.clear(directory)
-    await userEvent.type(directory, 'D:\\src\\grok-agent')
+    await pasteInto(directory, 'D:\\src\\grok-agent')
 
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(submitted).not.toBeNull())

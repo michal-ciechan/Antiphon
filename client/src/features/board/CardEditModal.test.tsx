@@ -1,8 +1,8 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
-import { Notifications } from '@mantine/notifications'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Notifications, notifications } from '@mantine/notifications'
 import type { CardDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { CardEditModal } from './CardEditModal'
 
@@ -57,6 +57,11 @@ const reasonInput = () => screen.getByLabelText(/^Reason/) as HTMLTextAreaElemen
 const saveButton = () => screen.getByRole('button', { name: 'Save' })
 
 describe('CardEditModal', () => {
+  // The notifications store is module state that outlives each render. Earlier cases' save
+  // notifications stay in it until their 4 s autoClose; once the cases run faster than that, the
+  // 409 case's notification queues behind the limit and never renders (CARD-1690).
+  afterEach(() => notifications.clean())
+
   it('failed note read never clears saved notes on unrelated edit', async () => {
     const patch = vi.fn()
     server.use(http.get('/api/cards/card-1/private-notes', () => HttpResponse.json({ detail: 'unavailable' }, { status: 500 })),
@@ -64,8 +69,8 @@ describe('CardEditModal', () => {
     renderEdit({ hasPrivateNotes: true })
     await userEvent.click(screen.getByRole('button', { name: 'Edit private notes' }))
     expect(await screen.findByText(/Private notes could not be read/)).toBeInTheDocument()
-    await userEvent.type(titleInput(), ' corrected')
-    await userEvent.type(reasonInput(), 'public correction')
+    await pasteInto(titleInput(), ' corrected')
+    await pasteInto(reasonInput(), 'public correction')
     await userEvent.click(saveButton())
     await waitFor(() => expect(patch).toHaveBeenCalled())
     expect(patch.mock.calls[0][0]).not.toHaveProperty('privateNotes')
@@ -80,7 +85,7 @@ describe('CardEditModal', () => {
     const notes = await screen.findByLabelText('Private notes (kept in Antiphon; excluded from card files)')
     expect(notes).toHaveValue('  C408_OLD\n')
     await userEvent.clear(notes)
-    await userEvent.type(reasonInput(), 'remove private detail')
+    await pasteInto(reasonInput(), 'remove private detail')
     await userEvent.click(saveButton())
     await waitFor(() => expect(patch).toHaveBeenCalled())
     expect(patch.mock.calls[0][0].privateNotes).toBe('')
@@ -104,10 +109,10 @@ describe('CardEditModal', () => {
     renderEdit()
     expect(saveButton()).toBeDisabled()
 
-    await userEvent.type(reasonInput(), '   ')
+    await pasteInto(reasonInput(), '   ')
     expect(saveButton()).toBeDisabled()
 
-    await userEvent.type(reasonInput(), 'the title named the wrong bug')
+    await pasteInto(reasonInput(), 'the title named the wrong bug')
     expect(saveButton()).toBeEnabled()
   })
 
@@ -120,7 +125,7 @@ describe('CardEditModal', () => {
     renderEdit()
     await userEvent.click(screen.getByTestId('card-platform'))
     await userEvent.click(await screen.findByRole('option', { name: 'Windows' }))
-    await userEvent.type(reasonInput(), 'windows tasks')
+    await pasteInto(reasonInput(), 'windows tasks')
     await userEvent.click(saveButton())
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ requiredPlatform: 'Windows' })))
 
@@ -130,7 +135,7 @@ describe('CardEditModal', () => {
     await userEvent.click(platforms[platforms.length - 1])
     await userEvent.click(await screen.findByRole('option', { name: 'Any' }))
     const reasons = screen.getAllByLabelText(/^Reason/)
-    await userEvent.type(reasons[reasons.length - 1], 'back to any')
+    await pasteInto(reasons[reasons.length - 1], 'back to any')
     const saves = screen.getAllByRole('button', { name: 'Save' })
     await userEvent.click(saves[saves.length - 1])
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ requiredPlatform: 'Any' })))
@@ -145,8 +150,8 @@ describe('CardEditModal', () => {
     const { onClose } = renderEdit()
 
     await userEvent.clear(titleInput())
-    await userEvent.type(titleInput(), 'Cards cannot be corrected, only closed')
-    await userEvent.type(reasonInput(), 'the title named the wrong bug')
+    await pasteInto(titleInput(), 'Cards cannot be corrected, only closed')
+    await pasteInto(reasonInput(), 'the title named the wrong bug')
     await userEvent.click(saveButton())
 
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith({
@@ -175,8 +180,8 @@ describe('CardEditModal', () => {
     }))
     const { onClose } = renderEdit()
 
-    await userEvent.type(screen.getByLabelText('Short alias'), 'Check header')
-    await userEvent.type(reasonInput(), 'give it a short label')
+    await pasteInto(screen.getByLabelText('Short alias'), 'Check header')
+    await pasteInto(reasonInput(), 'give it a short label')
     await userEvent.click(saveButton())
 
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(
@@ -194,7 +199,7 @@ describe('CardEditModal', () => {
     renderEdit({ alias: 'Check header' })
 
     await userEvent.clear(screen.getByLabelText('Short alias'))
-    await userEvent.type(reasonInput(), 'no longer needed')
+    await pasteInto(reasonInput(), 'no longer needed')
     await userEvent.click(saveButton())
 
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(
@@ -204,8 +209,8 @@ describe('CardEditModal', () => {
 
   it('will not submit a sixth-word alias', async () => {
     renderEdit()
-    await userEvent.type(screen.getByLabelText('Short alias'), 'one two three four five six')
-    await userEvent.type(reasonInput(), 'too many words')
+    await pasteInto(screen.getByLabelText('Short alias'), 'one two three four five six')
+    await pasteInto(reasonInput(), 'too many words')
     expect(saveButton()).toBeDisabled()
     expect(screen.getByText('Alias must be at most 5 words.')).toBeInTheDocument()
   })
@@ -219,7 +224,7 @@ describe('CardEditModal', () => {
     renderEdit()
 
     await userEvent.clear(descriptionInput())
-    await userEvent.type(reasonInput(), 'the description described a different card')
+    await pasteInto(reasonInput(), 'the description described a different card')
     await userEvent.click(saveButton())
 
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(
@@ -231,7 +236,7 @@ describe('CardEditModal', () => {
     renderEdit()
     // Typing 20,001 characters through userEvent would take minutes; paste the value in.
     fireChange(descriptionInput(), 'x'.repeat(20_001))
-    await userEvent.type(reasonInput(), 'pasted the whole spec by mistake')
+    await pasteInto(reasonInput(), 'pasted the whole spec by mistake')
 
     const counter = screen.getByText('20,001 / 20,000')
     expect(counter).toBeInTheDocument()
@@ -251,7 +256,7 @@ describe('CardEditModal', () => {
     renderEdit()
 
     await userEvent.type(descriptionInput(), '!')
-    await userEvent.type(reasonInput(), 'a limit the client thought was higher')
+    await pasteInto(reasonInput(), 'a limit the client thought was higher')
     await userEvent.click(saveButton())
 
     // Verbatim, because CARD_LIMITS is a constant that can drift from CardService.Max*Length.
@@ -268,7 +273,7 @@ describe('CardEditModal', () => {
       }, { status: 409 })))
     const { onClose } = renderEdit()
 
-    await userEvent.type(reasonInput(), 'racing another editor')
+    await pasteInto(reasonInput(), 'racing another editor')
     await userEvent.click(saveButton())
 
     expect(await screen.findByText("Card 'CARD-0019' was modified by another operation."))

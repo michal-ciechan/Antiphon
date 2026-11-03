@@ -1,6 +1,6 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
 import type { RoutingPinCandidateDto, RoutingPinDto } from '../../api/routingPins'
@@ -47,7 +47,7 @@ describe('DelegateModal', () => {
     expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — a card pin may apply; routing depends on the server')
     expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
     await userEvent.clear(screen.getByLabelText('Goal'))
-    await userEvent.type(screen.getByLabelText('Goal'), 'repair preview')
+    await pasteInto(screen.getByLabelText('Goal'), 'repair preview')
     expect(screen.getByTestId('delegate-tier-source-unknown').textContent).toBe('unknown — a card pin may apply; routing depends on the server')
     expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
   })
@@ -70,10 +70,10 @@ describe('DelegateModal', () => {
     expect((await screen.findByTestId('delegate-tier-source-matrix')).textContent).toBe('from the Medium row')
     expect(screen.getByTestId('tier-Frontier')).toBeInTheDocument()
     await userEvent.clear(screen.getByLabelText('Goal'))
-    await userEvent.type(screen.getByLabelText('Goal'), 'CARD-1250 repair')
+    await pasteInto(screen.getByLabelText('Goal'), 'CARD-1250 repair')
     expect(screen.getByTestId('delegate-tier-source-unknown')).toBeInTheDocument()
     await userEvent.clear(screen.getByLabelText('Goal'))
-    await userEvent.type(screen.getByLabelText('Goal'), 'Repair preview')
+    await pasteInto(screen.getByLabelText('Goal'), 'Repair preview')
     expect(screen.getByTestId('delegate-tier-source-matrix')).toBeInTheDocument()
     expect(screen.getByTestId('tier-Frontier')).toBeInTheDocument()
   })
@@ -89,7 +89,7 @@ describe('DelegateModal', () => {
   it('omits runner and platform unless the caller chooses them, and keeps a conflicting runner', async () => {
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ cardDefaultPlatform: 'Windows' }} />)
-    await userEvent.type(screen.getByLabelText('Goal'), 'stay automatic')
+    await pasteInto(screen.getByLabelText('Goal'), 'stay automatic')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
     await waitFor(() => expect(captured.body).not.toBeNull())
     expect(captured.body).not.toHaveProperty('runnerId')
@@ -97,7 +97,7 @@ describe('DelegateModal', () => {
 
     const conflicted = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
-    await userEvent.type(screen.getAllByLabelText('Goal')[1], 'windows on linux')
+    await pasteInto(screen.getAllByLabelText('Goal')[1], 'windows on linux')
     const platforms = screen.getAllByTestId('delegate-platform')
     await userEvent.click(platforms[platforms.length - 1])
     await userEvent.click(await screen.findByRole('option', { name: 'Windows' }))
@@ -114,7 +114,7 @@ describe('DelegateModal', () => {
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ workingDirectory: 'C:/worktrees/card-task-aabbccdd' }} />)
     await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
-    await userEvent.type(screen.getByLabelText('Goal'), 'run planned positive controls')
+    await pasteInto(screen.getByLabelText('Goal'), 'run planned positive controls')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
     await waitFor(() => expect(captured.body).not.toBeNull())
     expect(captured.body).toMatchObject({ role: 'Mutation', workspace: 'Worktree', workingDirectory: 'C:/worktrees/card-task-aabbccdd' })
@@ -124,7 +124,7 @@ describe('DelegateModal', () => {
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'rename the install section')
+    await pasteInto(screen.getByLabelText('Goal'), 'rename the install section')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -140,7 +140,7 @@ describe('DelegateModal', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'Test' }))
     expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'run the suite and report failures')
+    await pasteInto(screen.getByLabelText('Goal'), 'run the suite and report failures')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -169,7 +169,7 @@ describe('DelegateModal', () => {
     expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
     expect(screen.getByRole('radio', { name: 'Worktree' })).toBeChecked()
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'get the Postgres 18 upgrade shipped')
+    await pasteInto(screen.getByLabelText('Goal'), 'get the Postgres 18 upgrade shipped')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -188,7 +188,7 @@ describe('DelegateModal', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
     await userEvent.click(screen.getByRole('switch', { name: /Block direct edits/ }))
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'plan then run the migration')
+    await pasteInto(screen.getByLabelText('Goal'), 'plan then run the migration')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -201,7 +201,7 @@ describe('DelegateModal', () => {
 
     expect(screen.queryByRole('switch', { name: /Block direct edits/ })).not.toBeInTheDocument()
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'fix the typo')
+    await pasteInto(screen.getByLabelText('Goal'), 'fix the typo')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -215,7 +215,7 @@ describe('DelegateModal', () => {
 
     await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
     await userEvent.click(screen.getByRole('radio', { name: 'Shared' }))
-    await userEvent.type(screen.getByLabelText('Goal'), 'orchestrate in place')
+    await pasteInto(screen.getByLabelText('Goal'), 'orchestrate in place')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() =>
@@ -230,7 +230,7 @@ describe('DelegateModal', () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'override → low' }))
-    await userEvent.type(screen.getByLabelText('Goal'), 'restart the gateway and check health')
+    await pasteInto(screen.getByLabelText('Goal'), 'restart the gateway and check health')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -251,7 +251,7 @@ describe('DelegateModal', () => {
     const goal = screen.getByLabelText('Goal')
     expect(goal).toHaveValue('In docs/setup.md: ')
 
-    await userEvent.type(goal, 'say pwsh 7 instead of cmd')
+    await pasteInto(goal, 'say pwsh 7 instead of cmd')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -268,7 +268,7 @@ describe('DelegateModal', () => {
 
     expect(screen.getByRole('radio', { name: 'Worktree' })).toBeChecked()
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'rename the install section')
+    await pasteInto(screen.getByLabelText('Goal'), 'rename the install section')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -285,7 +285,7 @@ describe('DelegateModal', () => {
     expect(screen.getByRole('radio', { name: 'Shared' })).toBeChecked()
     expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'orchestrate in the caller directory')
+    await pasteInto(screen.getByLabelText('Goal'), 'orchestrate in the caller directory')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -297,7 +297,7 @@ describe('DelegateModal', () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
     await userEvent.click(screen.getByRole('radio', { name: 'Read-only' }))
-    await userEvent.type(screen.getByLabelText('Goal'), 'read the landing notes')
+    await pasteInto(screen.getByLabelText('Goal'), 'read the landing notes')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
@@ -354,7 +354,7 @@ describe('DelegateModal', () => {
     )))
     const onClose = vi.fn()
     renderWithProviders(<DelegateModal opened onClose={onClose} />)
-    await userEvent.type(screen.getByLabelText('Goal'), 'keep this draft')
+    await pasteInto(screen.getByLabelText('Goal'), 'keep this draft')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({ color: 'red', message: expect.stringContaining('card changed') }),
@@ -378,7 +378,7 @@ describe('DelegateModal', () => {
     expect(screen.getByTestId('tier-High')).toBeInTheDocument()
     expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
 
-    await userEvent.type(screen.getByLabelText('Goal'), 'run the positive controls')
+    await pasteInto(screen.getByLabelText('Goal'), 'run the positive controls')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
     await waitFor(() => expect(captured.body).not.toBeNull())
     expect(captured.body).toMatchObject({ role: 'Mutation', modelLevel: null })
@@ -407,7 +407,7 @@ describe('DelegateModal', () => {
     expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — role policy snapshot depends on the server')
     expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Goal')).toBeInTheDocument()
-    await userEvent.type(screen.getByLabelText('Goal'), 'run the positive controls')
+    await pasteInto(screen.getByLabelText('Goal'), 'run the positive controls')
     expect(screen.getByRole('button', { name: 'Delegate' })).toBeEnabled()
   })
 
