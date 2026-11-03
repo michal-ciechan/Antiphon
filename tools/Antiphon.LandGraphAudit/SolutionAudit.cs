@@ -53,7 +53,7 @@ internal static class SolutionAudit
                 },
                 copy: () =>
                 {
-                    canary = CanaryRepository.Create(repo, baseline?.ItemPaths);
+                    canary = CanaryRepository.Create(repo);
                     return Program.Approved;
                 },
                 pass2: () =>
@@ -80,7 +80,7 @@ internal static class SolutionAudit
                         return Program.Refused;
                     }
 
-                    var difference = baseline.Difference(changed);
+                    var difference = baseline.Difference(changed, canary.IsIgnoredRepositoryFile);
                     if (difference is not null)
                     {
                         output.WriteLine($"refused: differential {difference}");
