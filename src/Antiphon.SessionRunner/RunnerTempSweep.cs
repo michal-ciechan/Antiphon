@@ -6,7 +6,8 @@ using Antiphon.SessionRunner.Contracts;
 namespace Antiphon.SessionRunner;
 
 /// <summary>
-/// CARD-1677 S2. One registered temp family: an exact, anchored regex over a top-level temp name (or, with
+/// CARD-1677 S2. One registered temp family: an exact regex anchored by <c>^</c> and <c>\z</c> (never <c>$</c>, which also
+/// matches before a final line feed) over a top-level temp name (or, with
 /// <see cref="Container"/>, over <c>&lt;container&gt;/&lt;child&gt;</c> at depth 2), and the repository file whose
 /// <see cref="Literal"/> creates it. <see cref="Producer"/> is null only for the CLI harness family (D-12).
 /// </summary>
@@ -57,41 +58,41 @@ public sealed class RunnerTempSweep
     /// </summary>
     internal static IReadOnlyList<TempFamily> RegisteredFamilies { get; } =
     [
-        new("c487-probe", "^c487-probe-[0-9a-f]{32}$",
+        new("c487-probe", "^c487-probe-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/TestHelpers/TestClassificationPolicyTests.cs", "\"c487-probe-\"",
             "c487-probe-0123456789abcdef0123456789abcdef"),
-        new("c487", "^c487-[0-9a-f]{32}$",
+        new("c487", "^c487-[0-9a-f]{32}\\z",
             "scripts/lib/c487-harness.ps1", "('c487-' + [guid]::NewGuid().ToString('N'))",
             "c487-0123456789abcdef0123456789abcdef"),
         new("pty-test-root",
             "^antiphon-(cpu-watchdog-tests|liveness-tests|adoption-tests|bufbounds-tests|backend-seam|first-write-race|0180-dto"
             + "|card0395-adoption|card0395-write-fault|card0395-http|c420-barrier|c502-v25|c502-v26|c502-v26-manifest|c502-v26-herdr"
             + "|c502-v27|c514-gen|c514-seq|c514-gate|c514-dest|c649-prompt|c79-stop|c628-token|c710-platform|c1636-adopt"
-            + "|c1653-adopt|c1653-launch|c1653-sock|c1653-peer)-[0-9a-f]{32}$",
+            + "|c1653-adopt|c1653-launch|c1653-sock|c1653-peer)-[0-9a-f]{32}\\z",
             "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs", "$\"antiphon-{prefix}-{Guid.NewGuid():N}\"",
             "antiphon-adoption-tests-0123456789abcdef0123456789abcdef"),
-        new("c514-pty", "^antiphon-c514-pty-[0-9a-f]{32}$",
+        new("c514-pty", "^antiphon-c514-pty-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/TestHelpers/RemoteControlPtyLane.cs", "$\"antiphon-c514-pty-{sessionId:N}\"",
             "antiphon-c514-pty-0123456789abcdef0123456789abcdef"),
-        new("c502-exit-cap", "^c502-exit-cap-[0-9a-f]{32}$",
+        new("c502-exit-cap", "^c502-exit-cap-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/Application/SessionGenerationExitTests.cs", "$\"c502-exit-cap-{Guid.NewGuid():N}\"",
             "c502-exit-cap-0123456789abcdef0123456789abcdef"),
-        new("c1514", "^c1514-[0-9a-f]{32}$",
+        new("c1514", "^c1514-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/TestHelpers/C1514Support.cs", "\"c1514-\" + Guid.NewGuid().ToString(\"N\")",
             "c1514-0123456789abcdef0123456789abcdef"),
-        new("land-verify", "^antiphon-land-verify-[0-9a-f]{32}$",
+        new("land-verify", "^antiphon-land-verify-[0-9a-f]{32}\\z",
             "server/Application/Services/AgentTaskLandService.cs", "\"antiphon-land-verify-\" + Guid.NewGuid().ToString(\"N\")",
             "antiphon-land-verify-0123456789abcdef0123456789abcdef"),
-        new("bridge-queue", "^antiphon-bridge-queue-[0-9a-f]{32}$",
+        new("bridge-queue", "^antiphon-bridge-queue-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs", "$\"antiphon-bridge-queue-{Guid.NewGuid():N}\"",
             "antiphon-bridge-queue-0123456789abcdef0123456789abcdef"),
-        new("rcspeed", "^rcspeed-[0-9a-f]{32}(\\.ps1)?$",
+        new("rcspeed", "^rcspeed-[0-9a-f]{32}(\\.ps1)?\\z",
             "tests/Antiphon.Tests/Scripts/RcFullTimingContractTests.cs", "\"rcspeed-\" + Guid.NewGuid().ToString(\"N\")",
             "rcspeed-0123456789abcdef0123456789abcdef.ps1"),
         // D-12: the Claude Code CLI scratchpad keyed by the session cwd (the mirror). Produced by the CLI
         // harness, not by a repository file, so it has no producer pin, is off unless its flag is on, and
         // is eligible only when the mirror it names is gone from the worktree root and the retiring root.
-        new(ClaudeScratch, "^claude-1654/-work-worktrees-task-[0-9a-f]{8}$", null, null,
+        new(ClaudeScratch, "^claude-1654/-work-worktrees-task-[0-9a-f]{8}\\z", null, null,
             "claude-1654/-work-worktrees-task-0123abcd",
             Container: ClaudeContainer, DefaultEnabled: false, RequiresMirrorAbsent: true),
     ];
@@ -218,7 +219,7 @@ public sealed class RunnerTempSweep
                 foreach (var child in children)
                 {
                     var relative = name + "/" + child;
-                    var family = IsDenied(child) ? null : containerFamilies.FirstOrDefault(f => f.Regex.IsMatch(relative));
+                    var family = IsDenied(child) || HasControl(child) ? null : containerFamilies.FirstOrDefault(f => f.Regex.IsMatch(relative));
                     if (family is null)
                         Unregistered(relative, containerPath + "/" + child);
                     else
@@ -227,7 +228,9 @@ public sealed class RunnerTempSweep
                 continue;
             }
 
-            var match = _families.FirstOrDefault(f => f.Container is null && f.Regex.IsMatch(name));
+            // Review 12ba9a25 D-1: a name carrying a line break or any other control character is never a family
+            // candidate, whatever a pattern says (defence in depth beside the \z anchors).
+            var match = HasControl(name) ? null : _families.FirstOrDefault(f => f.Container is null && f.Regex.IsMatch(name));
             if (IsDenied(name))
             {
                 // Hard deny regardless of family; a denied name is never measured or touched.
@@ -348,9 +351,14 @@ public sealed class RunnerTempSweep
         DeniedExact.Contains(name, StringComparer.OrdinalIgnoreCase)
         || DeniedPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
 
+    internal static bool HasControl(string name) => name.Any(char.IsControl);
+
+    /// <summary>The reported prefix: hex and digit runs folded, then each control character escaped as <c>\xNN</c>.</summary>
     internal static string Normalize(string name)
     {
         var value = DigitRun.Replace(HexRun.Replace(name, "<hex>"), "<n>");
+        if (HasControl(value))
+            value = string.Concat(value.Select(c => char.IsControl(c) ? "\\x" + ((int)c).ToString("x2", System.Globalization.CultureInfo.InvariantCulture) : c.ToString()));
         return value.Length <= 120 ? value : value[..120];
     }
 
