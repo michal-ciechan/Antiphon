@@ -276,18 +276,17 @@ function Invoke-RunnerRequest {
     $lock = $null
     try {
         if ($Method -eq 'POST') { $lock = Enter-RolloutAdmissionLock }
-        if ($Method -eq 'POST' -and $RunnerId -ceq 'server2-temp' -and $Suffix -ceq '/drain/clear') {
-            if ($HoldLift) {
-                # Lifting this run's deployment hold: the container it just deployed owns
-                # the temp volumes. Reobserve under FD8 that it is not retired and is this build.
-                $s = Invoke-RunnerRequestCore -Method GET -RunnerId $RunnerId -Suffix '/status'
-                if ($null -eq $s -or $s.retiredAt) { throw 'TempRunnerRetiredDuringHold' }
-                if ([string]$s.buildVersion -cne $Sha) { throw 'TempHoldLiftBuildMismatch' }
-            } else {
-                # The earlier preflight is advisory. Reobserve while this exact POST
-                # owns FD8, before the retirement epoch can be cleared.
-                Assert-TempRetirementClearable
-            }
+        $tempClear = $Method -eq 'POST' -and $RunnerId -ceq 'server2-temp' -and $Suffix -ceq '/drain/clear'
+        if ($tempClear -and -not $HoldLift) {
+            # The earlier preflight is advisory. Reobserve while this exact POST
+            # owns FD8, before the retirement epoch can be cleared.
+            Assert-TempRetirementClearable
+        } elseif ($tempClear) {
+            # Lifting this run's deployment hold: the container it just deployed owns
+            # the temp volumes. Reobserve under FD8 that it is not retired and is this build.
+            $s = Invoke-RunnerRequestCore -Method GET -RunnerId $RunnerId -Suffix '/status'
+            if ($null -eq $s -or $s.retiredAt) { throw 'TempRunnerRetiredDuringHold' }
+            if ([string]$s.buildVersion -cne $Sha) { throw 'TempHoldLiftBuildMismatch' }
         }
         return Invoke-RunnerRequestCore -Method $Method -RunnerId $RunnerId -Suffix $Suffix -Body $Body
     } finally {
