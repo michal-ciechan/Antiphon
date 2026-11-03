@@ -333,6 +333,155 @@ public sealed class LinuxCustodyReleaseHostTests
     }
 
     /// <summary>
+    /// CARD-1685 S08. An explicit seal whose tree read throws is Unknown, never a clean zero, and
+    /// writes no receipt. Red if the seal path reads an unreadable tree as empty.
+    /// </summary>
+    [Test]
+    public async Task C1685_Explicit_seal_unreadable_tree_stays_unknown()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        var clock = new ManualClock();
+        var (host, store, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            containment.Missing = true;
+            for (var read = 0; read < 2; read++)
+            {
+                var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+                status.State.ShouldBe(VerificationCustodyState.Unknown, $"read {read}");
+                status.Reason.ShouldBe("observation_failed");
+                status.Receipt.ShouldBeNull();
+            }
+
+            containment.Terminations.ShouldBe(1);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1685 S02. A tree that is empty before the drain but repopulated after it is Draining
+    /// and writes no receipt. Red if the post-drain count is not a real re-read.
+    /// </summary>
+    [Test]
+    public async Task C1685_Tree_repopulated_after_drain_stays_draining()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment();
+        var clock = new ManualClock();
+        var (host, store, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            // Arm inside the kill: only the explicit seal kills, so a background ordinary read
+            // cannot take the repopulation. The seal's first read counts 0, then the tree refills.
+            containment.DuringTerminate = () => containment.AfterRead = () =>
+            {
+                containment.AfterRead = null;
+                containment.Pids.Add(424243);
+            };
+            var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
+            status.State.ShouldBe(VerificationCustodyState.Draining, status.Reason);
+            status.Reason.ShouldBe("descendants_running");
+            status.Receipt.ShouldBeNull();
+            containment.AfterRead.ShouldBeNull("the seal read the tree before the drain");
+            containment.Terminations.ShouldBe(1);
+            File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1685 S11. The failure count is clamped before the shift: past k = 32 the wait stays
+    /// 60 s, never negative or 1 s. Red if the shift is taken first and capped after.
+    /// </summary>
+    [Test]
+    public async Task C1685_Large_failure_count_keeps_sixty_second_backoff()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var containment = new FakeContainment { KeepPids = true, Result = new(false, 3) };
+        var clock = new ManualClock();
+        var (host, _, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            await ShouldDrainAsync(host, binding);
+            containment.Terminations.ShouldBe(1);
+
+            for (var k = 1; k <= 40; k++)
+            {
+                var wait = k < 7 ? TimeSpan.FromSeconds(1 << (k - 1)) : TimeSpan.FromMinutes(1);
+                if (k >= 7)
+                {
+                    clock.Advance(wait - TimeSpan.FromMilliseconds(1));
+                    await ShouldDrainAsync(host, binding);
+                    containment.Terminations.ShouldBe(k, $"1 ms before backoff {k} ({wait})");
+                    clock.Advance(TimeSpan.FromMilliseconds(1));
+                }
+                else
+                    clock.Advance(wait);
+                await ShouldDrainAsync(host, binding);
+                containment.Terminations.ShouldBe(k + 1, $"at backoff {k} ({wait})");
+            }
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1685 S15. The backoff counts from the end of the attempt: a kill that takes 45 s is
+    /// not retried 1 s after it started. Red if the wait is measured from the attempt start.
+    /// </summary>
+    [Test]
+    public async Task C1685_Backoff_counts_from_attempt_end()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException("The inbox pty launch runs on Linux.");
+        var clock = new ManualClock();
+        var containment = new FakeContainment
+        {
+            KeepPids = true,
+            Result = new(false, 3),
+            DuringTerminate = () => clock.Advance(TimeSpan.FromSeconds(45)),
+        };
+        var (host, _, binding, child) = await ExitedWithSurvivorAsync(containment, clock);
+        try
+        {
+            await ShouldDrainAsync(host, binding);
+            containment.Terminations.ShouldBe(1);
+
+            for (var k = 1; k <= 2; k++)
+            {
+                var wait = TimeSpan.FromSeconds(1 << (k - 1));
+                clock.Advance(wait - TimeSpan.FromMilliseconds(1));
+                await ShouldDrainAsync(host, binding);
+                containment.Terminations.ShouldBe(k, $"45 s + {wait} - 1 ms after attempt {k} started");
+                clock.Advance(TimeSpan.FromMilliseconds(1));
+                await ShouldDrainAsync(host, binding);
+                containment.Terminations.ShouldBe(k + 1, $"{wait} after attempt {k} ended");
+            }
+        }
+        finally
+        {
+            KillChild(child);
+            await Finish(host);
+        }
+    }
+
+    /// <summary>
     /// CARD-1681. After the root exits the pty master reads EIO; that is end of output, so an
     /// explicit release of an empty tree drains and receipts. Red while EIO is a drain failure.
     /// </summary>
@@ -559,16 +708,23 @@ public sealed class LinuxCustodyReleaseHostTests
         public bool KeepPids { get; set; }
         public PtyTerminationObservation Result { get; set; } = new(true, 0);
         public Exception? Throw { get; set; }
+        /// <summary>CARD-1685: runs after each read has taken its count.</summary>
+        public Action? AfterRead { get; set; }
+        /// <summary>CARD-1685: runs inside each kill, for example to spend clock time.</summary>
+        public Action? DuringTerminate { get; set; }
         public PtyTrackedLaunch Place(PtyTrackedLaunch launch) => launch;
         public PtyCustodyPopulation ReadActive()
         {
             if (Missing)
                 throw new IOException("verification_custody_tree_unreadable");
-            return new((uint)Pids.Count, Pids);
+            var population = new PtyCustodyPopulation((uint)Pids.Count, Pids);
+            AfterRead?.Invoke();
+            return population;
         }
         public PtyTerminationObservation Terminate()
         {
             Terminations++;
+            DuringTerminate?.Invoke();
             if (Throw is not null)
                 throw Throw;
             if (!KeepPids)
