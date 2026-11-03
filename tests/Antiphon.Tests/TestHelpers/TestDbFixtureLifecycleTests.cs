@@ -35,6 +35,8 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     public bool TemplateBaked;
     public int DropTemplateCalls;
 
+    public override Task SweepOrphanedContainersAsync() => Task.CompletedTask;
+
     public override Task<bool> TemplateIsProtectedAsync(string maintenanceConnectionString) =>
         Task.FromResult(TemplateBaked);
 

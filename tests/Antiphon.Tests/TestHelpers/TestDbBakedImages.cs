@@ -119,8 +119,10 @@ internal class TestDbBakedImages
                 .WithUsername(TestDbOperations.DatabaseUser)
                 .WithPassword("test")
                 .WithEnvironment("PGDATA", DataDirectory)
+                .Own()
                 .Build();
             await using (container.ConfigureAwait(false))
+            await using (TestDbContainerOwnership.RemoveOnDispose(container))
             {
                 using (TestTrace.Span("db-image bake start"))
                     await container.StartAsync().ConfigureAwait(false);
@@ -142,6 +144,8 @@ internal class TestDbBakedImages
                         if (name.StartsWith("org.testcontainers", StringComparison.Ordinal))
                             labels[name] = "antiphon-baked";
                     }
+                    // Nor may a container started from the image look like this baker's orphan.
+                    labels[TestDbContainerOwnership.OwnerLabel] = "baked-image";
                     labels[KeyLabel] = key;
                     await client.Images.CommitContainerChangesAsync(new CommitContainerChangesParameters
                     {

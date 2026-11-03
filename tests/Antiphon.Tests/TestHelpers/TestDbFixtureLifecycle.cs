@@ -36,6 +36,7 @@ internal class TestDbOperations
             .WithDatabase(TestDbFixture.SharedDatabaseName)
             .WithUsername(DatabaseUser)
             .WithPassword("test")
+            .Own()
             .Build();
         return Task.FromResult(new OwnedTestDbContainer { Real = container });
     }
@@ -43,6 +44,7 @@ internal class TestDbOperations
     public virtual async Task StartAsync(OwnedTestDbContainer container)
     {
         using var phase = TestTiming.BeginFixturePhase("db-assembly", TestPhaseKind.DbCreate, "start");
+        System.Diagnostics.Activity.Current?.SetTag("antiphon.reaper", TestDbContainerOwnership.Reaper);
         if (container.Real is null)
             throw new InvalidOperationException("Owned container has no Testcontainers handle.");
         await container.Real.StartAsync().ConfigureAwait(false);
@@ -114,6 +116,9 @@ internal class TestDbOperations
 
     public virtual Task AfterStartAsync() => Task.CompletedTask;
 
+    /// <summary>Removes test Postgres containers left by dead processes on this host (no Ryuk).</summary>
+    public virtual Task SweepOrphanedContainersAsync() => TestDbContainerOwnership.SweepAsync();
+
     public virtual Task AfterMigrateAsync() => Task.CompletedTask;
 
     public virtual void ClearPool(string connectionString)
@@ -141,9 +146,14 @@ internal class TestDbOperations
                     await TestDbFixtureLifecycle.TerminateBackendsAsync(
                         maintenance,
                         TestDbFixture.TemplateDatabaseName).ConfigureAwait(false);
+                    // FILE_COPY copies the template's files (one checkpoint) instead of streaming
+                    // every page through WAL (the PG15+ default, WAL_LOG). Measured on a fresh
+                    // container: the first WAL_LOG clone 1.1 s, later ones ~60 ms; FILE_COPY ~50 ms
+                    // every time. Clones run one at a time under cloneLock, so this is also the
+                    // queue every other waiting test sees.
                     await TestDbFixtureLifecycle.ExecuteNonQueryAsync(
                         maintenance,
-                        $"CREATE DATABASE {databaseName} TEMPLATE {TestDbFixture.TemplateDatabaseName}")
+                        $"CREATE DATABASE {databaseName} TEMPLATE {TestDbFixture.TemplateDatabaseName} STRATEGY FILE_COPY")
                         .ConfigureAwait(false);
                     return;
                 }
@@ -303,8 +313,12 @@ internal class TestDbOperations
 
     public virtual async ValueTask DisposeOwnedAsync(OwnedTestDbContainer container)
     {
-        if (container.Real is not null)
-            await container.Real.DisposeAsync().ConfigureAwait(false);
+        if (container.Real is null)
+            return;
+        var id = container.Real.Id;
+        await container.Real.DisposeAsync().ConfigureAwait(false);
+        // Without the reaper, Testcontainers' dispose stops the container but keeps it.
+        await TestDbContainerOwnership.RemoveAsync(id).ConfigureAwait(false);
     }
 }
 
@@ -320,6 +334,7 @@ internal sealed class TestDbFixtureLifecycle
     private readonly SemaphoreSlim _cloneLock = new(1, 1);
     private Task<TestDbReadyState>? _task;
     private Task? _disposeTask;
+    private Task _orphanSweep = Task.CompletedTask;
     private bool _disposeStarted;
     private TestDbReadyState? _ready;
 
@@ -465,6 +480,8 @@ internal sealed class TestDbFixtureLifecycle
         await _ops.DisposeOwnedAsync(ready.Container).ConfigureAwait(false);
         Interlocked.Increment(ref DisposeOwned);
         await _images.WaitForBakesAsync().ConfigureAwait(false);
+        try { await _orphanSweep.ConfigureAwait(false); }
+        catch (Exception) { /* the sweep reports its own failures */ }
         Interlocked.Increment(ref TeardownDispose);
     }
 
@@ -475,6 +492,8 @@ internal sealed class TestDbFixtureLifecycle
         try
         {
             Interlocked.Increment(ref Create);
+            // Off the startup path: a crashed process's container costs disk, not this run's time.
+            _orphanSweep = Task.Run(_ops.SweepOrphanedContainersAsync);
             var timer = System.Diagnostics.Stopwatch.StartNew();
             var schemaKey = ComputeSchemaKey();
             var baked = schemaKey is { } k && await BakedImageExistsAsync(k.Key).ConfigureAwait(false);
