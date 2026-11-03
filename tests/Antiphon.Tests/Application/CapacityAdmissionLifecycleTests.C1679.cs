@@ -17,13 +17,16 @@ namespace Antiphon.Tests.Application;
 /// CARD-1679 D-1 (W2). The brief's liveness probe runs after the claim and the launch have
 /// committed. A local runner List that times out (a <see cref="TaskCanceledException"/>) while the
 /// dispatcher's own token is live is a transient transport failure: the task stays Dispatched with
-/// its brief Pending. Only the dispatcher's own cancellation still propagates.
+/// its brief Pending. Only the dispatcher's own cancellation still propagates. "deadline" is the
+/// production shape of that timeout (CARD-1688, mutant A05): the CARD-1362 live-read deadline and an
+/// HttpClient timeout raise an exception whose own token is canceled, though it is not the dispatcher's.
 /// </summary>
 public partial class CapacityAdmissionLifecycleTests
 {
     [Test]
     [Arguments("remote")]
     [Arguments("local")]
+    [Arguments("deadline")]
     [Arguments("shutdown")]
     [Timeout(180_000)]
     public async Task C1679_Brief_probe_cancellation_does_not_fail_a_committed_dispatch(
@@ -41,7 +44,7 @@ public partial class CapacityAdmissionLifecycleTests
         }
 
         using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var client = new FaultingListClient(target == "shutdown" ? tickCts : null);
+        var client = new FaultingListClient(target == "shutdown" ? tickCts : null, foreignToken: target == "deadline");
         var sink = new CountingLaunchSink();
         await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
             schema.ConnectionString,
@@ -95,10 +98,84 @@ public partial class CapacityAdmissionLifecycleTests
         briefs.Count.ShouldBe(1);
         briefs[0].Status.ShouldBe(QueuedMessageStatus.Pending);
         briefs[0].AgentSessionId.ShouldBe(sessionId);
-        if (target == "local")
+        if (target != "remote")
             client.ArmedListCalls.ShouldBeGreaterThan(0, "the local probe met the canceled List");
         else
             client.ArmedListCalls.ShouldBe(0, "a remote-bound probe never asks the local runner (D-2)");
+    }
+
+    /// <summary>
+    /// CARD-1688 (mutants A06-A10, PC D-1b): the boot-wedge relaunch's brief probe runs after the
+    /// relaunch has committed the new session and enqueued its launch. A timed-out local List, with or
+    /// without a canceled foreign token, leaves the relaunch committed: the task stays Dispatched on the
+    /// new session with its brief Pending. Only the dispatcher's own cancellation propagates.
+    /// </summary>
+    [Test]
+    [Arguments("timeout")]
+    [Arguments("deadline")]
+    [Arguments("shutdown")]
+    [Timeout(180_000)]
+    public async Task C1679_Relaunch_brief_probe_cancellation_does_not_fail_a_committed_relaunch(
+        string fault, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var task = await SeedSharedAsync(schema.ConnectionString, workspace.Path, "c1679 relaunch " + fault, DateTime.UtcNow, ct);
+
+        using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var client = new FaultingListClient(fault == "shutdown" ? tickCts : null, foreignToken: fault == "deadline");
+        var sink = new CountingLaunchSink();
+        await using var provider = CapacityRecoveryTaskTests.CreateDispatcherProvider(
+            schema.ConnectionString,
+            configure: services =>
+            {
+                services.AddSingleton<ISessionRunnerClient>(client);
+                services.AddSingleton<IAgentTaskLaunchSink>(sink);
+                services.AddSingleton(Options.Create(Roots(workspace.Path)));
+            });
+
+        // A healthy first dispatch; the runner fault starts only at the relaunch's brief row.
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var first = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(tickCts.Token);
+            first.Dispatched.ShouldBe(1);
+        }
+        Guid oldSessionId;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            oldSessionId = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct)).AgentSessionId.ShouldNotBeNull();
+        client.ArmedListCalls.ShouldBe(0);
+        provider.GetRequiredService<SessionMessageQueueService>().BeforeDispatchBriefRowLock = _ =>
+        {
+            client.Armed = true;
+            return Task.CompletedTask;
+        };
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            if (fault == "shutdown")
+            {
+                await Should.ThrowAsync<OperationCanceledException>(async () =>
+                    await dispatcher.RelaunchWedgedAsync(task.Id, oldSessionId, tickCts.Token));
+                client.ArmedListCalls.ShouldBeGreaterThan(0, "the shutdown cut is the relaunch brief probe");
+                return;
+            }
+
+            await dispatcher.RelaunchWedgedAsync(task.Id, oldSessionId, tickCts.Token);
+        }
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
+        stored.FailureReason.ShouldBeNull();
+        stored.BootWedgeRelaunchCount.ShouldBe(1);
+        var sessionId = stored.AgentSessionId.ShouldNotBeNull();
+        sessionId.ShouldNotBe(oldSessionId);
+        sink.Sessions.ShouldBe([oldSessionId, sessionId], "the relaunch enqueued its launch");
+        var brief = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.ExecutionTaskId == task.Id && m.AgentSessionId == sessionId, ct);
+        brief.Status.ShouldBe(QueuedMessageStatus.Pending);
+        client.ArmedListCalls.ShouldBeGreaterThan(0, "the relaunch probe met the canceled List");
     }
 
     private sealed class CountingLaunchSink : IAgentTaskLaunchSink
@@ -119,9 +196,11 @@ public partial class CapacityAdmissionLifecycleTests
     /// <summary>
     /// The local runner during its restart: once armed, its List never answers in time, so it
     /// throws the <see cref="TaskCanceledException"/> an HttpClient or the live-read deadline throws.
-    /// With a shutdown source it cancels the dispatcher's own token first.
+    /// With a shutdown source it cancels the dispatcher's own token first. With a foreign token the
+    /// exception carries an already-canceled token that is not the dispatcher's, as the CARD-1362
+    /// live-read deadline and an HttpClient timeout do in production.
     /// </summary>
-    private sealed class FaultingListClient(CancellationTokenSource? shutdown) : ISessionRunnerClient
+    private sealed class FaultingListClient(CancellationTokenSource? shutdown, bool foreignToken = false) : ISessionRunnerClient
     {
         private int _armedListCalls;
         public volatile bool Armed;
@@ -137,6 +216,9 @@ public partial class CapacityAdmissionLifecycleTests
                 shutdown.Cancel();
                 throw new OperationCanceledException(shutdown.Token);
             }
+            if (foreignToken)
+                throw new TaskCanceledException(
+                    "C1679 local runner list passed its deadline during its restart", null, new CancellationToken(canceled: true));
             throw new TaskCanceledException("C1679 local runner list timed out during its restart");
         }
 
