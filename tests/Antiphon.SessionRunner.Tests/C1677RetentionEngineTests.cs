@@ -694,7 +694,7 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(".antiphon/inbox/brief.md", "\n")]
     [Arguments(".antiphon/inbox/brief.md", "\r")]
-    [Arguments(".antiphon/inbox/brief.md", " ")]
+    [Arguments(".antiphon/inbox/brief.md", "\u2028")]
     [Arguments(".antiphon/inbox/brief.md", " ")]
     [Arguments(".antiphon/task-1234-brief.md", "\n")]
     [Arguments("bin/cache.dat", "\n")]
