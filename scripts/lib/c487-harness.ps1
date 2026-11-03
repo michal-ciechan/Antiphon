@@ -33,7 +33,7 @@ function Assert-C487 {
 function New-C487Root {
     param([string]$ResultsDirectory)
     if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) {
-        $ResultsDirectory = Join-Path $env:TEMP ('c487-' + [guid]::NewGuid().ToString('N'))
+        $ResultsDirectory = Join-Path ([IO.Path]::GetTempPath()) ('c487-' + [guid]::NewGuid().ToString('N'))
     }
     New-Item -ItemType Directory -Path $ResultsDirectory -Force | Out-Null
     return (ConvertTo-NightlyCanonicalPath -Path $ResultsDirectory)
