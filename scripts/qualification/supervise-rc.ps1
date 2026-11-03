@@ -9,6 +9,9 @@ every ProgressMinutes, an observation-only HANG_SUSPECTED flag, and finally EXIT
 commission-exit.txt. Every log line is flushed to TaskRoot\supervisor.log as it is written.
 RunId is recorded in supervisor-identity.json and launch-child.json and handed to the launch as
 ANTIPHON_QUALIFICATION_RUN_ID; launch-rc.ps1 refuses a launch record with another -RunId.
+While StateRoot\last-run.json names RunId, every poll and once more at child exit copy it to
+TaskRoot\own-last-run.json (a copy with completedAt is never replaced by one without), so
+observe.ps1 can credit the run after the next run overwrites the shared last-run.json.
 The supervisor never stops, signals, or restarts a process and never clears a lock. Its death
 does not end the run: observe.ps1 reads last-run.json completedAt as the end signal.
 ASCII-only, Windows PowerShell 5.1 safe.
@@ -31,6 +34,15 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../lib/qualification-supervisor-heartbeat.ps1')
 $log = Join-Path $TaskRoot 'supervisor.log'
 $heartbeat = Join-Path $TaskRoot 'supervisor-heartbeat.json'
+# Copy our run's last-run.json into TaskRoot; a failed copy never ends the supervisor.
+function Save-OwnRunState {
+    try {
+        $copied = Save-QualificationOwnRunState -TaskRoot $TaskRoot -StateRoot $StateRoot -RunId $RunId
+        if ($copied -ceq 'copied') { Write-QualificationSupervisorLine -Path $log -Text 'STATE-COPY own-last-run.json' }
+    } catch {
+        try { Write-QualificationSupervisorLine -Path $log -Text ("STATE-COPY-ERROR " + $_.Exception.Message) } catch { }
+    }
+}
 $platform = Get-QualificationHostPlatform
 if ([string]::IsNullOrWhiteSpace($PowerShellPath)) { $PowerShellPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
 
@@ -67,6 +79,7 @@ try {
     $hangReported = $false
     $nextProgress = [datetime]::UtcNow.AddMinutes($ProgressMinutes)
     while (-not $child.WaitForExit($PollSeconds * 1000)) {
+        Save-OwnRunState
         try {
             $files = @()
             foreach ($rootPath in @($LogRoot, $StateRoot)) {
@@ -101,6 +114,7 @@ try {
     }
     $child.WaitForExit()
     $exitCode = $child.ExitCode
+    Save-OwnRunState
     Write-QualificationSupervisorLine -Path $log -Text ("EXIT {0}" -f $exitCode)
     Write-QualificationSupervisorRecord -Path (Join-Path $TaskRoot 'commission-exit.txt') -Text ([string]$exitCode)
 } catch {

@@ -138,26 +138,74 @@ function Get-QualificationProcessObservation {
     finally { if ($process) { $process.Dispose() } }
 }
 
+# D-1 (Review 9f29e134): last-run.json holds only the latest run, so the next run overwrites ours.
+# While it names our run id, supervise-rc keeps its exact text in TaskRoot\own-last-run.json; a
+# copy with completedAt is never replaced by one without. Returns copied, unchanged, kept,
+# foreign, missing or unreadable; it never writes the state root.
+function Save-QualificationOwnRunState {
+    param([Parameter(Mandatory)][string]$TaskRoot, [Parameter(Mandatory)][string]$StateRoot, [Parameter(Mandatory)][string]$RunId)
+    $source = [IO.Path]::GetFullPath([IO.Path]::Combine($StateRoot, 'last-run.json'))
+    $target = [IO.Path]::GetFullPath([IO.Path]::Combine($TaskRoot, 'own-last-run.json'))
+    if (-not [IO.File]::Exists($source)) { return 'missing' }
+    $text = $null
+    try {
+        $stream = New-Object System.IO.FileStream($source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            if ($stream.Length -gt 1048576) { return 'unreadable' }
+            $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false, $true)))
+            try { $text = $reader.ReadToEnd().TrimStart([char]0xfeff) } finally { $reader.Dispose() }
+        } finally { $stream.Dispose() }
+        $parsed = ConvertFrom-Json -InputObject $text -ErrorAction Stop
+    } catch { return 'unreadable' }
+    if ($parsed -isnot [pscustomobject] -or [string]$parsed.runId -cne $RunId) { return 'foreign' }
+    $existing = Read-RcQualificationRecord -Path $target
+    if ($existing.status -ceq 'ok' -and [string]$existing.record.runId -ceq $RunId) {
+        $kept = ConvertTo-RcQualificationTime $existing.record.completedAt
+        $incoming = ConvertTo-RcQualificationTime $parsed.completedAt
+        if ($null -ne $kept -and $null -eq $incoming) { return 'kept' }
+    }
+    if ([IO.File]::Exists($target)) {
+        $current = $null
+        try { $current = [IO.File]::ReadAllText($target) } catch { }
+        if ($current -ceq $text) { return 'unchanged' }
+    }
+    Write-QualificationSupervisorRecord -Path $target -Text $text
+    return 'copied'
+}
+
 # Classification. completedAt in last-run.json is the end signal; commission-exit.txt and the
 # heartbeat belong to the supervisor, which can die while nightly-run keeps going.
 # The state root is shared by every nightly and rc run, so last-run.json and run.lock may belong
 # to a previous or another run (Review b26811ff D-1): completed needs the bound run id in
-# last-run.json, and running / supervisor-lost-run-alive need it in both last-run.json and
-# run.lock. A launch whose run id appears in neither is not-started, or launch-failed once the
-# supervisor has recorded commission-exit.txt.
+# last-run.json or in the TaskRoot copy, and running / supervisor-lost-run-alive need it in
+# run.lock and in last-run.json or the copy. A launch whose run id appears in neither is
+# not-started, or launch-failed once the supervisor has recorded commission-exit.txt, unless
+# last-run.json was superseded (Review 9f29e134 D-1): our copy exists, or last-run.json names a
+# run that started at or after the launch child (or gives no start time), so "never seen" cannot
+# be told from "seen then overwritten": unknown/state-superseded.
 function Get-QualificationSupervisionClassification {
     param([string]$ExpectedRunId, [string]$StateStatus, $State, [string]$LockStatus, [string]$LockRunId,
         [string]$RunOwner, [string]$Supervisor, [string]$Heartbeat, $HeartbeatUtc, [datetime]$NowUtc,
-        [string]$CommissionExit, [double]$StaleMinutes = 5)
+        [string]$CommissionExit, [double]$StaleMinutes = 5, [string]$CopyStatus = 'missing', $Copy, $LaunchStartedUtc)
     if ([string]::IsNullOrWhiteSpace($ExpectedRunId)) { return [pscustomobject]@{ classification = 'unknown'; reason = 'run-id-unbound' } }
     $stateOurs = ($StateStatus -ceq 'ok') -and $State -and ([string]$State.runId -ceq $ExpectedRunId)
     $lockOurs = ($LockStatus -ceq 'ok') -and ($LockRunId -ceq $ExpectedRunId)
+    $copyOurs = ($CopyStatus -ceq 'ok') -and $Copy -and ([string]$Copy.runId -ceq $ExpectedRunId)
     $completedAt = $null
     if ($stateOurs -and $State.PSObject.Properties['completedAt']) { $completedAt = ConvertTo-RcQualificationTime $State.completedAt }
     if ($null -ne $completedAt) { return [pscustomobject]@{ classification = 'completed'; reason = 'state-completedAt' } }
+    if (-not $stateOurs -and $copyOurs -and $Copy.PSObject.Properties['completedAt']) {
+        if ($null -ne (ConvertTo-RcQualificationTime $Copy.completedAt)) { return [pscustomobject]@{ classification = 'completed'; reason = 'state-copy-completedAt' } }
+    }
     if ($StateStatus -cnotin @('ok', 'missing')) { return [pscustomobject]@{ classification = 'unknown'; reason = 'state-' + $StateStatus } }
     if ($LockStatus -cnotin @('ok', 'missing')) { return [pscustomobject]@{ classification = 'unknown'; reason = 'lock-' + $LockStatus } }
     if (-not $stateOurs -and -not $lockOurs) {
+        $superseded = $copyOurs
+        if (-not $superseded -and $StateStatus -ceq 'ok' -and $State -and $LaunchStartedUtc -is [datetime]) {
+            $otherStart = ConvertTo-RcQualificationTime $State.startedAt
+            $superseded = ($null -eq $otherStart) -or ($otherStart -ge $LaunchStartedUtc)
+        }
+        if ($superseded) { return [pscustomobject]@{ classification = 'unknown'; reason = 'state-superseded' } }
         if (-not [string]::IsNullOrEmpty($CommissionExit)) { return [pscustomobject]@{ classification = 'launch-failed'; reason = 'commission-exit-' + $CommissionExit } }
         return [pscustomobject]@{ classification = 'not-started'; reason = 'run-id-not-seen' }
     }
@@ -170,7 +218,7 @@ function Get-QualificationSupervisionClassification {
     }
     if ($RunOwner -cin @('absent', 'reused')) { return [pscustomobject]@{ classification = 'run-lost'; reason = 'run-owner-' + $RunOwner } }
     if ($RunOwner -cne 'alive') { return [pscustomobject]@{ classification = 'unknown'; reason = 'run-owner-' + $RunOwner } }
-    if (-not $stateOurs) { return [pscustomobject]@{ classification = 'not-started'; reason = 'state-not-written' } }
+    if (-not $stateOurs -and -not $copyOurs) { return [pscustomobject]@{ classification = 'not-started'; reason = 'state-not-written' } }
     if ($Supervisor -cne 'alive') { return [pscustomobject]@{ classification = 'supervisor-lost-run-alive'; reason = 'supervisor-' + $Supervisor } }
     if ($Heartbeat -cne 'ok' -or $null -eq $HeartbeatUtc) { return [pscustomobject]@{ classification = 'supervisor-lost-run-alive'; reason = 'heartbeat-' + $Heartbeat } }
     if (($NowUtc - $HeartbeatUtc).TotalMinutes -ge $StaleMinutes) { return [pscustomobject]@{ classification = 'supervisor-lost-run-alive'; reason = 'heartbeat-stale' } }
@@ -217,26 +265,42 @@ function Get-QualificationSupervision {
         $beatUtc = ConvertTo-RcQualificationTime $stamp
         if ($beat.record.hangSuspected -is [bool]) { $hang = $beat.record.hangSuspected }
     }
+    $copy = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath([IO.Path]::Combine($TaskRoot, 'own-last-run.json')))
+    $copyRecord = $null
+    $stateCopy = $copy.status
+    if ($copy.status -ceq 'ok') {
+        $stateCopy = 'foreign'
+        if (-not [string]::IsNullOrWhiteSpace($expectedRunId) -and [string]$copy.record.runId -ceq $expectedRunId) { $stateCopy = 'ours'; $copyRecord = $copy.record }
+    }
+    # The launch child start bounds which later last-run.json writer superseded ours.
+    $launch = Read-RcQualificationRecord -Path ([IO.Path]::GetFullPath([IO.Path]::Combine($TaskRoot, 'launch-child.json')))
+    $launchStartedUtc = $null
+    if ($launch.status -ceq 'ok' -and -not [string]::IsNullOrWhiteSpace($expectedRunId) -and [string]$launch.record.runId -ceq $expectedRunId) {
+        $launchStartedUtc = ConvertTo-RcQualificationTime $launch.record.processStartedAt
+    }
     $exitPath = [IO.Path]::Combine($TaskRoot, 'commission-exit.txt')
     $commissionExit = $null
     if ([IO.File]::Exists($exitPath)) { try { $commissionExit = ([IO.File]::ReadAllText($exitPath)).Trim() } catch { $commissionExit = 'unreadable' } }
     $now = [datetime]::UtcNow
     $verdict = Get-QualificationSupervisionClassification -ExpectedRunId $expectedRunId -StateStatus $state.status -State $state.record `
         -LockStatus $lock.status -LockRunId $lockRunId -RunOwner $runOwner.status -Supervisor $supervisor.status -Heartbeat $beat.status `
-        -HeartbeatUtc $beatUtc -NowUtc $now -CommissionExit $commissionExit -StaleMinutes $StaleMinutes
-    # Result fields come only from our own run's state, never from a previous run's last-run.json.
-    $ownState = $null
+        -HeartbeatUtc $beatUtc -NowUtc $now -CommissionExit $commissionExit -StaleMinutes $StaleMinutes `
+        -CopyStatus $copy.status -Copy $copyRecord -LaunchStartedUtc $launchStartedUtc
+    # Result fields come only from our own run's state (or its TaskRoot copy), never from another run's last-run.json.
+    $ownState = $copyRecord
     if (-not [string]::IsNullOrWhiteSpace($expectedRunId) -and $stateRunId -ceq $expectedRunId) { $ownState = $state.record }
     $fields = Select-RcQualificationFields $ownState @('phase', 'completedAt', 'exitCode', 'testsPassed', 'coverageComplete')
+    $launchStarted = $null
+    if ($null -ne $launchStartedUtc) { $launchStarted = $launchStartedUtc.ToString('o') }
     $age = $null
     if ($null -ne $beatUtc) { $age = [Math]::Round(($now - $beatUtc).TotalMinutes, 1) }
     return [pscustomobject][ordered]@{
         observedAtUtc = $now.ToString('o'); classification = $verdict.classification; reason = $verdict.reason
         runOwner = $runOwner.status; supervisor = $supervisor.status; heartbeat = $beat.status; heartbeatAgeMinutes = $age
-        hangSuspected = $hang; state = $state.status; runId = $expectedRunId; stateRunId = $stateRunId; runLock = $runLock; lockRunId = $lockRunId
+        hangSuspected = $hang; state = $state.status; stateCopy = $stateCopy; runId = $expectedRunId; stateRunId = $stateRunId; runLock = $runLock; lockRunId = $lockRunId
         phase = $fields.phase; completedAt = $fields.completedAt
         exitCode = $fields.exitCode; testsPassed = $fields.testsPassed; coverageComplete = $fields.coverageComplete
-        commissionExit = $commissionExit
+        commissionExit = $commissionExit; launchStartedAt = $launchStarted
     }
 }
 

@@ -219,6 +219,13 @@ try {
         $o.Json.exitCode -eq 1 -and $o.Json.testsPassed -eq $false -and $o.Json.stateRunId -ceq 'c1667next') `
         'observe credits completed from the TaskRoot copy of our last-run.json after it is superseded' $o.Text
 
+    # A refused run writes deferred-busy to last-run.json while ours still holds run.lock.
+    $busyRun = [ordered]@{ runId = 'c1667busy'; phase = 'deferred-busy'; startedAt = $now.AddMinutes(-5).ToString('o'); exitCode = 3 }
+    $run = New-ObservedRun 'busyover' $self $self $fresh $busyRun -LaunchStartedAt $launchedAt -OwnCopy $midRun
+    $o = Invoke-Observe $run
+    Assert-C1667 ($o.Code -eq 0 -and $o.Json.classification -ceq 'running' -and $o.Json.stateRunId -ceq 'c1667busy' -and $o.Json.phase -ceq 'tests') `
+        'observe credits running from run.lock and the copy when another run overwrote last-run.json' $o.Text
+
     # A previous run that started before the launch child is not a supersession: still launch-failed.
     $earlierRun = [ordered]@{ runId = 'c1667prev'; phase = 'final'; startedAt = $now.AddHours(-12).ToString('o'); completedAt = $now.AddHours(-10).ToString('o'); exitCode = 0 }
     $run = New-ObservedRun 'refusedlaunched' $null $gone $stale $earlierRun -CommissionExit '2' -LaunchStartedAt $launchedAt
