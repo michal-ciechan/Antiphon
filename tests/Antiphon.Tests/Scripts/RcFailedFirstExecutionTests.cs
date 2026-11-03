@@ -50,7 +50,7 @@ public sealed class RcFailedFirstExecutionTests
 
     // CARD-1590: the retained archive keeps the authority fixture inputs but never the
     // fixture checkout's Git admin files, so no nested repository lands in the worktree.
-    // Provisional budget: the DiagnosticsOnly tail of JournalCustodySurvivesInterleaving.
+    // Budget: 481 s is ~3x the 162 s red run on loaded server2 (2026-11-03, n=1; provisional).
     [Test, Timeout(541_000)]
     public async Task C1590_ArchiveHoldsNoGitRepository(CancellationToken cancellationToken)
     {

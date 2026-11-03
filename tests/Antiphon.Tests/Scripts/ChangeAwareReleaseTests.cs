@@ -21,7 +21,7 @@ public sealed class ChangeAwareReleaseTests
     // CARD-1590: a direct run must not leave its nested fixture repositories behind,
     // on the failure path (no -FilterHost: fixture-discovery-failed after New-Fx) or on success.
     [Test]
-    public Task C1590_FailedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_ModeCredit", [], (result, root) =>
+    public Task C1590_FailedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_ModeCredit", [], ScriptHarnessOptions.Default.ExecutionBudget, (result, root) =>
     {
         var output = result.Stdout + result.Stderr;
         result.ExitCode.ShouldNotBe(0, output);
@@ -30,8 +30,9 @@ public sealed class ChangeAwareReleaseTests
         AssertNoFixtureRepository(root, output);
     });
 
-    [Test]
-    public Task C1590_PassedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_BaselineAuthority", FilterHostArguments, (result, root) =>
+    // Budget: 2x the 358 s direct run on loaded server2 (2026-11-03, n=1; provisional).
+    [Test, Timeout(780_000)]
+    public Task C1590_PassedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_BaselineAuthority", FilterHostArguments, TimeSpan.FromSeconds(720), (result, root) =>
     {
         var output = result.Stdout + result.Stderr;
         result.ExitCode.ShouldBe(0, output);
@@ -49,11 +50,12 @@ public sealed class ChangeAwareReleaseTests
     }
 
     // The caller-owned root is inspected after the harness exits and before ScriptHarness removes it.
-    private static Task RunOwnedRoot(string name, string[] arguments, Action<ScriptHarnessResult, string> validate)
+    private static Task RunOwnedRoot(string name, string[] arguments, TimeSpan budget, Action<ScriptHarnessResult, string> validate)
     {
         string? root = null;
         var options = ScriptHarnessOptions.Default with
         {
+            ExecutionBudget = budget,
             AdditionalArguments = arguments,
             OwnerFactory = request =>
             {
