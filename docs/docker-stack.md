@@ -255,6 +255,8 @@ without confirmed absence still stops cleanup. Do not clear the hold to abandon 
 
 ### Volume recycling and disk reclaim (CARD-1008)
 
+CARD-0824 S2 (origin branch deletion after a confirmed land, off by default) is enabled per runner volume through `Landing:SourceBranchDeletionRunnerIds`, only after that volume's legacy mirrors are drained (the checklist in docs/orchestration-loop.md, "Origin branch deletion after a confirmed land"). Before origin is touched, the runner deletes its own `refs/heads/<b>` and `refs/remotes/origin/<b>` at or behind the leased SHA (`WorkspaceBranchRefsDelete`), so a later recycle audit does not count them as `gone-tracking` or `unadvertised-local`; a branch still checked out in a legacy mirror refuses there and keeps its origin branch.
+
 Every mutating rolling phase freshly checks outer-host jq and persists its
 `host-jq-<phase>.json` receipt **before** status, POST, cache seed, deploy, stop or
 removal. This includes same-SHA retries, `-DryRun`, `-ResumeRecycle` and each entry

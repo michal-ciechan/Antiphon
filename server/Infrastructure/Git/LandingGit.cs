@@ -1475,20 +1475,81 @@ public class LandingGit : ILandingGit
                 $"{sha}:{sourceFullRef}"], started, ct);
     }
 
-    /// <summary>CARD-0824 S2 (B-2). Stub: refuses.</summary>
-    public virtual Task<LandingGitResult> DeleteSourceBranchAsync(string repository, string sourceFullRef,
-        string expectedRemoteSha, string expectedFingerprint, CancellationToken ct) =>
-        Task.FromResult(new LandingGitResult(1, "", "delete_unsupported"));
+    /// <summary>
+    /// CARD-0824 S2 (B-2). The leased origin delete: <c>push &lt;endpoint&gt; --force-with-lease=&lt;ref&gt;:&lt;sha&gt; :&lt;ref&gt;</c>, after
+    /// the same endpoint fingerprint check as <see cref="RecheckSourceRemoteAsync"/>. A branch that moved refuses.
+    /// </summary>
+    public virtual async Task<LandingGitResult> DeleteSourceBranchAsync(string repository, string sourceFullRef,
+        string expectedRemoteSha, string expectedFingerprint, CancellationToken ct)
+    {
+        if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedRemoteSha))
+            return new(1, "", "invalid_source_delete_identity");
+        string endpoint;
+        try { endpoint = await EndpointAsync(repository, ct); }
+        catch (IOException) { return new(1, "", "source_remote_endpoint_ambiguous"); }
+        if (Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint))) != expectedFingerprint)
+            return new(1, "", "source_remote_endpoint_changed");
+        return await RunAsync(repository,
+            ["push", endpoint, $"--force-with-lease={sourceFullRef}:{expectedRemoteSha}", ":" + sourceFullRef], ct);
+    }
 
-    /// <summary>CARD-0824 S2. Stub: unsupported is never containment.</summary>
-    public virtual Task<LandingRemoteObservation> ConfirmTargetContainsAsync(string repository, string targetFullRef,
-        string sha, string expectedFingerprint, CancellationToken ct) =>
-        Task.FromResult(new LandingRemoteObservation(null, false, "containment_unsupported"));
+    /// <summary>
+    /// CARD-0824 S2. A fresh containment read at deletion time: endpoint fingerprint, one <c>ls-remote</c> of the target,
+    /// a fetch of its objects that writes no ref and no FETCH_HEAD, then <c>merge-base --is-ancestor</c>. Never a
+    /// cached observation; an error is a reason, never containment.
+    /// </summary>
+    public virtual async Task<LandingRemoteObservation> ConfirmTargetContainsAsync(string repository, string targetFullRef,
+        string sha, string expectedFingerprint, CancellationToken ct)
+    {
+        if (!targetFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha))
+            return new(null, false, "invalid_observation_identity");
+        string endpoint;
+        try { endpoint = await EndpointAsync(repository, ct); }
+        catch (IOException) { return new(null, false, "remote_endpoint_ambiguous"); }
+        if (Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint))) != expectedFingerprint)
+            return new(null, false, "remote_configuration_changed");
+        var read = await RunAsync(repository, ["ls-remote", "--refs", "--exit-code", endpoint, targetFullRef], ct);
+        if (read.ExitCode == 2) return new(null, false, "target_remote_missing");
+        if (!read.Succeeded) return new(null, false, "remote_read_failed");
+        var lines = read.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var fields = lines.Length == 1 ? lines[0].TrimEnd('\r').Split('\t') : [];
+        if (fields.Length != 2 || fields[1] != targetFullRef || !IsOid(fields[0]))
+            return new(null, false, "remote_response_invalid");
+        var fetch = await RunAsync(repository, ["fetch", "--no-tags", "--no-write-fetch-head", endpoint, targetFullRef], ct);
+        if (!fetch.Succeeded) return new(null, false, "remote_fetch_failed");
+        var ancestry = await RunAsync(repository, ["merge-base", "--is-ancestor", sha, fields[0]], ct);
+        return ancestry.ExitCode switch
+        {
+            0 => new(fields[0], true, null),
+            1 => new(fields[0], false, null),
+            _ => new(null, false, "remote_ancestry_error"),
+        };
+    }
 
-    /// <summary>CARD-0824 S2. Stub: refuses.</summary>
-    public virtual Task<LandingGitResult> DeleteTrackingRefAsync(string repository, string sourceFullRef,
-        string expectedSha, CancellationToken ct) =>
-        Task.FromResult(new LandingGitResult(1, "", "tracking_delete_unsupported"));
+    /// <summary>
+    /// CARD-0824 S2 (B-3 step 7). Deletes <c>refs/remotes/origin/&lt;b&gt;</c> with its old value when it is at, or behind,
+    /// <paramref name="expectedSha"/>; absent is success. <c>refs/heads/&lt;b&gt;</c> is never touched here.
+    /// </summary>
+    public virtual async Task<LandingGitResult> DeleteTrackingRefAsync(string repository, string sourceFullRef,
+        string expectedSha, CancellationToken ct)
+    {
+        if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedSha))
+            return new(1, "", "invalid_tracking_identity");
+        var tracking = "refs/remotes/origin/" + sourceFullRef["refs/heads/".Length..];
+        var exists = await RunAsync(repository, ["show-ref", "--exists", tracking], ct);
+        if (exists.ExitCode == 2) return new(0, "", "tracking_absent");
+        if (!exists.Succeeded) return new(1, "", "tracking_ref_query_error");
+        var read = await RunAsync(repository, ["rev-parse", "--verify", "-q", tracking], ct);
+        var value = read.Output.Trim();
+        if (!read.Succeeded || !IsOid(value)) return new(1, "", "tracking_ref_unreadable");
+        if (value != expectedSha)
+        {
+            var ancestry = await RunAsync(repository, ["merge-base", "--is-ancestor", value, expectedSha], ct);
+            if (ancestry.ExitCode != 0) return new(1, "", "tracking_ref_not_published");
+        }
+        var deleted = await RunAsync(repository, ["update-ref", "-d", tracking, value], ct);
+        return deleted.Succeeded ? deleted : new(1, deleted.Output, "tracking_ref_moved");
+    }
 
     internal async Task<string> CommitAsync(string repository, string revision, CancellationToken ct)
     {
