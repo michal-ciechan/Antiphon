@@ -113,6 +113,8 @@ public class LiveClaudeEvidenceWiringTests
             throw new InvalidOperationException("C1545 V-6/raw-file unprotectedFileSinkCount");
         if (counts.Process != 0)
             throw new InvalidOperationException("C1545 V-6/raw-process unprotectedProcessSinkCount");
+        if (counts.Escape != 0)
+            throw new InvalidOperationException("C1545 V-6/raw-escape unprotectedEscapeSinkCount");
         if (counts.Recognized == 0)
             throw new InvalidOperationException("C1545 V-6/raw-console unprotectedSuccessSinkCount");
         var menu = LiveClaudeExecutableAudit.Method(

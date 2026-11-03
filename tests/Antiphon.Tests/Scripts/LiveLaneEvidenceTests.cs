@@ -472,7 +472,7 @@ public class LiveLaneEvidenceTests
             CSharpSyntaxTree.ParseText(diagnostics).GetRoot(),
             CSharpSyntaxTree.ParseText(watchdog).GetRoot()
         ]);
-        return counts.Console + counts.Assertion + counts.Skip + counts.Actual + counts.File + counts.Process;
+        return counts.Console + counts.Assertion + counts.Skip + counts.Actual + counts.File + counts.Process + counts.Escape;
     }
 
     private static void ProveSerializerMutants()
