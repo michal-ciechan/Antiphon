@@ -547,15 +547,15 @@ LS = `C0824DesktopLegacyReleaseSettingsTests`, LP = `C0824DesktopLegacyReleasePo
 **Windows-native (LN, the desktop lane only):**
 
 - **N-1** LN `Held_directory_defers_never_forces(string holder)`, 2 cases:
-  - `"open-handle"`: a child `dotnet` process (a copied tiny console app) opens `bin/held.dll` inside the
-    tree with `FileShare.Read`;
+  - `"open-handle"`: a child `dotnet` process (a copied tiny console app) opens `obj/held.dll` (ignored build output)
+    inside the tree with `FileShare.Read`;
   - `"cwd"`: a child whose working directory is `<tree>/node_modules/x` (the MCP shape).
 
   Tick 1: Refused `worktree_remove_failed`. The directory, every file (the hash), the registration and the
   local branch are intact; the trace has no `--force`; the release stays active and the cursor is stamped.
   The child is killed in `finally`. Tick 2 at +61 min: retired (attempt 2).
 - **N-2** LN `Long_path_never_leaves_an_unregistered_orphan`. An ignored, allowlisted-disposable build path
-  of more than 300 characters under `bin/` inside the tree.
+  of more than 300 characters under `obj/` (ignored by the fixture; `bin/` is not) inside the tree.
   - **Hard assertion** (after the tick and after one retry): never "registration gone and directory present".
   - **Expected:** `Complete`.
   - If the result is `worktree_removal_incomplete` with a set-aside record, Code records it and files a card
@@ -566,7 +566,10 @@ LS = `C0824DesktopLegacyReleaseSettingsTests`, LP = `C0824DesktopLegacyReleasePo
   - `"junction-inside"`: an ignored junction inside the tree pointing outside → `ignored_reparse_point`,
     the target intact;
   - `"short-name"`: the 8.3 alias of the leaf (`GetShortPathName`; when 8.3 names are disabled on the
-    volume the case uses the synthesized string `CARD-T~1`) → `leaf_mismatch`, no release.
+    volume the case uses the synthesized string `CARD-T~1`) → `outside_root` for a real alias (`GetFullPath` expands it, so G-38 refuses it before the leaf), `leaf_mismatch` for the synthesized fallback; no release.
+- **N-2b** LN `Long_path_untracked_file_holds_the_tree`. An untracked, not ignored, file at a path of more
+  than 260 characters inside the tree → Held `source_dirty`, no release, the tree intact. It tells the
+  desktop lane whether the pre-check's `git status` sees untracked files past MAX_PATH.
 
 ### Guards the regression
 

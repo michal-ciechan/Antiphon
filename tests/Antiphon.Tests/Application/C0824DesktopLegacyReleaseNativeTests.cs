@@ -31,7 +31,9 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
         string? cwd = null;
         if (holder == "open-handle")
         {
-            var held = Path.Combine(a.Path, "bin", "held.dll");
+            // Ignored build output (the fixture ignores obj/, not bin/): an untracked file would hold the tree as
+            // source_dirty before the open handle mattered.
+            var held = Path.Combine(a.Path, "obj", "held.dll");
             Directory.CreateDirectory(Path.GetDirectoryName(held)!);
             await File.WriteAllBytesAsync(held, [1, 2, 3]);
             script = $"$f=[IO.File]::Open('{held}','Open','Read','Read'); 'ready'; Start-Sleep -Seconds 120";
@@ -77,7 +79,7 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
         if (!OperatingSystem.IsWindows()) Skip.Test("Windows MAX_PATH semantics");
         await using var w = await DesktopLegacyWorld.CreateAsync();
         var a = await w.AddTaskAsync();
-        var deep = Path.Combine(a.Path, "bin");
+        var deep = Path.Combine(a.Path, "obj");
         while (deep.Length < 300) deep = Path.Combine(deep, "segment-" + new string('d', 24));
         Directory.CreateDirectory(@"\\?\" + deep);
         await File.WriteAllTextAsync(@"\\?\" + Path.Combine(deep, "build.out"), "disposable\n");
@@ -95,6 +97,37 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
             await w.AssertRetiredAsync(a, origin);
         else
             release.LastReason.ShouldBe("worktree_removal_incomplete");
+    }
+
+    /// <summary>
+    /// N-2b/G-25: an untracked (not ignored) file past MAX_PATH holds the tree. The clean proof must see it; a
+    /// git status that skips the deep directory would release a tree with unsaved bytes.
+    /// </summary>
+    [Test]
+    public async Task Long_path_untracked_file_holds_the_tree()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("Windows MAX_PATH semantics");
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        var deep = Path.Combine(a.Path, "src");
+        while (deep.Length < 300) deep = Path.Combine(deep, "segment-" + new string('u', 24));
+        var file = Path.Combine(deep, "unsaved.txt");
+        file.Length.ShouldBeGreaterThan(260);
+        Directory.CreateDirectory(@"\\?\" + deep);
+        await File.WriteAllTextAsync(@"\\?\" + file, "unsaved\n");
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+
+        var tick = await w.TickAsync();
+
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("source_dirty");
+        await w.AssertIntactAsync(a, before);
+        File.Exists(file).ShouldBeTrue("the untracked file is kept");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is kept");
     }
 
     /// <summary>N-3/G-68: a junction leaf, an ignored junction inside the tree and an 8.3 alias are refused.</summary>
@@ -135,8 +168,15 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
             default:
                 var real = await w.AddTaskAsync(id: id);
                 var shortName = ShortPath(real.Path);
+                // A real 8.3 alias: Path.GetFullPath expands '~' names on Windows, so the path is not normalized and
+                // G-38 refuses it as outside_root before the leaf is read. Only the synthesized fallback (8.3 names
+                // disabled, a path that does not exist) stays normalized and reaches the leaf check.
+                reason = "outside_root";
                 if (string.Equals(shortName, real.Path, StringComparison.OrdinalIgnoreCase))
+                {
                     shortName = Path.Combine(w.Root, "CARD-T~1");
+                    reason = "leaf_mismatch";
+                }
                 await using (var db = w.Db())
                 {
                     var row = db.AgentTasks.Single(t => t.Id == id);
@@ -144,7 +184,6 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
                     await db.SaveChangesAsync();
                 }
                 a = real with { Path = shortName };
-                reason = "leaf_mismatch";
                 break;
         }
         var origin = await w.OriginRefsAsync();
