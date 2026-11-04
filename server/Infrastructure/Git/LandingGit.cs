@@ -29,8 +29,11 @@ public class LandingGit : ILandingGit
     private readonly IGitOperationObserver _observer;
     private readonly LandGitBackend? _backend;
 
+    /// <summary>The base constructor, kept with its exact signature: a crash worker builds it by reflection with one argument.</summary>
+    public LandingGit(CardFileBoardLookup? cardFiles = null) : this(null, null, cardFiles) { }
+
     /// <summary>CARD-1704 S1 (D-7): no <paramref name="backend"/> means <c>Cli</c>, so a test double never opts in.</summary>
-    public LandingGit(CardFileBoardLookup? cardFiles = null, IGitOperationObserver? observer = null, LandGitBackend? backend = null)
+    public LandingGit(IGitOperationObserver? observer, LandGitBackend? backend = null, CardFileBoardLookup? cardFiles = null)
     {
         _cardFiles = cardFiles;
         _observer = observer ?? NoGitOperationObserver.Instance;
