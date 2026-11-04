@@ -114,7 +114,8 @@ public sealed class CompletionNoteDurableSweepTests
         }
         finally
         {
-            await worker.StopAsync(default);
+            // Bounded: a loop wait that ignores shutdown is a red assertion here, not a hung session.
+            await worker.StopAsync(default).WaitAsync(TimeSpan.FromSeconds(10));
         }
     }
 
