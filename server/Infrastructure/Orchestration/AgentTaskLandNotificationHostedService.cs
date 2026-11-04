@@ -50,6 +50,9 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 { logger.LogWarning(ex, "Dispatch-base warning intent scan failed"); }
 
+                // CARD-1705: callers whose queue lock stayed held this pass; their notices wait for the next.
+                // One set spans the captured and land-notification phases, so both keep each caller's order.
+                var busySessions = new HashSet<Guid>();
                 var capturedEnabled = false;
                 await using (var probe = scopes.CreateAsyncScope())
                     capturedEnabled = probe.ServiceProvider.GetService<LegacyCheckNotePublicationService>() is not null;
@@ -73,7 +76,7 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                             {
                                 await using var rowScope = scopes.CreateAsyncScope();
                                 await rowScope.ServiceProvider.GetRequiredService<LegacyCheckNotePublicationService>()
-                                    .RecoverCapturedAsync(id, stoppingToken);
+                                    .RecoverCapturedAsync(id, stoppingToken, busySessions);
                             }
                             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                             { logger.LogWarning(ex, "Captured legacy Check publication {PublicationId} remains unresolved", id); }
@@ -90,8 +93,6 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 }
 
                 Guid? cursor = null;
-                // CARD-1705: callers whose queue lock stayed held this pass; their notices wait for the next.
-                var busySessions = new HashSet<Guid>();
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     await using var scope = scopes.CreateAsyncScope();
