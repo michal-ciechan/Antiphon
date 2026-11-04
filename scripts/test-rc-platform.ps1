@@ -838,7 +838,23 @@ function Test-C1686_LinuxOnlyCensus {
         'string-literal' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string Name = `"NativeLinuxOnly`";`n}`n", @("marker-noncanonical:${z}:5"))
         'trailing-comment' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    [Test] // [NativeLinuxOnlyAttribute(`"trailing comment`")]`n    public void Runs() { }`n}`n", @("marker-noncanonical:${z}:5"))
         'second-use-on-marker-line' = @($z, "namespace Fixture;`n`n[NativeLinuxOnly(`"x`")] [Category(`"Unit`"), NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3", 'marker-without-row:antiphon|ZetaTests|'))
-        'block-comment-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n}`n", @('marker-without-row:antiphon|ZetaTests|Old', "marker-noncanonical:${z}:8"))
+        # CARD-1707: inside an open block comment only a line that starts with * or /* reads as a comment line, and only
+        # when the comment opened at the start of its line. Any other line carrying the token is not a marker (C# ignores
+        # it) but still fails closed, so a misread comment state can never hide a marker or count a commented-out one.
+        'block-comment-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n}`n", @("marker-noncanonical:${z}:6", "marker-noncanonical:${z}:8"))
+        'block-comment-star-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n     * [NativeLinuxOnly(`"block comment`")]`n     */`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
+        'block-comment-mid-line-open' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    int a = 1; /* note`n     * [NativeLinuxOnly(`"y`")]`n     */`n}`n", @("marker-noncanonical:${z}:6"))
+        # CARD-1707: a line that starts with * outside a block comment is code (a multiplication split across lines).
+        'split-multiplication' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    int x = 2`n        * 3; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        'nested-block-comment' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /* outer /* inner */`n     * [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        # CARD-1707: a /* inside a string or char literal opens no comment.
+        'string-literal-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int Y = `"/*`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        'char-literal-quote' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int Y = '`"' + `"/*`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        'verbatim-multi-line-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int V = @`"a `"`" b`n/* c`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:7"))
+        'verbatim-string-marker-line' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string V = @`"`n    [NativeLinuxOnly(`"`"x`"`")]`n    public void M() { }`";`n}`n", @("marker-noncanonical:${z}:6"))
+        'raw-string-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string R = `"`"`"`n        /* not a comment`n        `"`"`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
+        # CARD-1707: an interpolation hole is not lexed, so its /* reads as an opener mid-line; the marker then fails closed.
+        'interpolation-hole-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static string S(string x) => `$`"{x ?? `"/*`"}`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
         'inactive-if' = @($z, "namespace Fixture;`n`n#if false`n[NativeLinuxOnly(`"inactive`")]`npublic sealed class ZetaTests { }`n#endif`n", @('marker-without-row:antiphon|ZetaTests|'))
         # CARD-1694 D-1: a line that starts as a comment but closes it before the token is code, not a comment line.
         'block-comment-prefix' = @($z, "namespace Fixture;`n`n/* x */ [NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3"))
