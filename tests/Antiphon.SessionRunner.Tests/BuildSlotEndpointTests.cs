@@ -108,6 +108,27 @@ public sealed class BuildSlotEndpointTests
         listing.Waiters.Select(w => (w.Pid, w.Label, w.Position)).ShouldBe([(102, "waiter", 1)]);
     }
 
+    // CARD-0851 V-5: past the TTL a live pid-mode holder with its recorded start still occupies its
+    // slot in GET /build-slots (holderAlive true) and a second driver is answered 409 busy.
+    [Test]
+    public async Task Get_counts_a_live_pid_holder_past_the_ttl_as_occupied()
+    {
+        var time = new FakeTimeProvider(T0);
+        await using var host = await StartAsync(maxConcurrent: 1, maxCpuCount: 4, time: time);
+        (await host.Http.PostAsJsonAsync("build-slots", Request(101, "qualification"))).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        time.Advance(TimeSpan.FromMinutes(91));
+        using var busy = await host.Http.PostAsJsonAsync("build-slots", Request(102, "land-verify"));
+        var listing = await host.Http.GetFromJsonAsync<BuildSlotListing>("build-slots");
+
+        busy.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        listing.ShouldNotBeNull();
+        listing.Occupied.ShouldBe(1);
+        var lease = listing.Leases.Single();
+        (lease.Pid, lease.Label, lease.HolderAlive).ShouldBe((101, "qualification", true));
+        lease.ExpiresAtUtc.ToUniversalTime().ShouldBe(T0.AddMinutes(90));
+    }
+
     [Test]
     public async Task Post_renew_answers_204_for_a_held_lease_and_404_otherwise()
     {
@@ -178,7 +199,7 @@ public sealed class BuildSlotEndpointTests
     private static BuildSlotRequest Request(int pid, string label) => new(pid, T0, label, "session-" + pid, "task-" + pid);
 
     private static Task<BuildSlotTestHost> StartAsync(int maxConcurrent, int maxCpuCount, int floorMb = 0,
-        long availableMb = 64 * 1024, int retryAfterMs = 15_000)
+        long availableMb = 64 * 1024, int retryAfterMs = 15_000, FakeTimeProvider? time = null)
     {
         var liveness = new BuildSlotBrokerTests.FakeLiveness();
         foreach (var pid in new[] { 101, 102, 103 }) liveness.Start(pid, T0);
@@ -192,6 +213,6 @@ public sealed class BuildSlotEndpointTests
             },
             liveness,
             new BuildSlotBrokerTests.FakeMemory { AvailableBytes = availableMb * 1024 * 1024 },
-            new FakeTimeProvider(T0));
+            time ?? new FakeTimeProvider(T0));
     }
 }
