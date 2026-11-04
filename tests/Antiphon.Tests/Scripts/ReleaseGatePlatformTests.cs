@@ -43,7 +43,7 @@ public sealed class ReleaseGatePlatformTests
     // and any use of the name outside a canonical marker line, a comment line or an exempt file's reference forms.
     [Test]
     public Task C1686_LinuxOnlyCensus() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 44,
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 49,
             "C1323 c1686-consistent-census-passes", "C1323 c1686-class-marker-without-row-fails",
             "C1323 c1686-method-marker-without-row-fails", "C1323 c1686-row-without-marker-fails",
             "C1323 c1686-row-attribution-fails", "C1323 c1686-marker-outside-suite-fails",
@@ -58,6 +58,9 @@ public sealed class ReleaseGatePlatformTests
             "C1323 c1686-fail-closed-block-comment-star-interior", "C1323 c1686-fail-closed-block-comment-mid-line-open",
             "C1323 c1686-fail-closed-split-multiplication", "C1323 c1686-fail-closed-nested-block-comment",
             "C1323 c1686-fail-closed-string-literal-opener", "C1323 c1686-fail-closed-char-literal-quote",
+            "C1323 c1686-fail-closed-char-literal-quote-before-string", "C1323 c1686-fail-closed-block-comment-star-close",
+            "C1323 c1686-fail-closed-block-comment-canonical-close", "C1323 c1686-fail-closed-exempt-file-block-close-reference",
+            "C1323 c1686-fail-closed-exempt-file-multi-line-string-reference",
             "C1323 c1686-fail-closed-verbatim-multi-line-opener", "C1323 c1686-fail-closed-verbatim-string-marker-line",
             "C1323 c1686-fail-closed-raw-string-opener", "C1323 c1686-fail-closed-interpolation-hole-opener",
             "C1323 c1686-fail-closed-inactive-if", "C1323 c1686-fail-closed-block-comment-prefix",
