@@ -122,14 +122,14 @@ public class GrokNativeSessionStoreTests
             Skip.Test(JunctionSkipReason);
         var root = Path.Combine(Path.GetTempPath(), $"c1675-junction-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
+        var (home, blocker) = level switch
+        {
+            "sessions" => (root, Path.Combine(root, "sessions")),
+            "home" => (Path.Combine(root, "home"), Path.Combine(root, "home")),
+            _ => (Path.Combine(root, "parent", "home"), Path.Combine(root, "parent")),
+        };
         try
         {
-            var (home, blocker) = level switch
-            {
-                "sessions" => (root, Path.Combine(root, "sessions")),
-                "home" => (Path.Combine(root, "home"), Path.Combine(root, "home")),
-                _ => (Path.Combine(root, "parent", "home"), Path.Combine(root, "parent")),
-            };
             var target = Path.Combine(root, "target");
             Directory.CreateDirectory(target);
             CreateJunction(blocker, target);
@@ -137,7 +137,14 @@ public class GrokNativeSessionStoreTests
             Directory.Delete(target);
             GrokNativeSessionStore.Probe(home, Guid.NewGuid()).ShouldBe(NativeSessionPresence.Unavailable, "junction-to-missing-directory");
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally
+        {
+            // A recursive delete unmounts a junction with DeleteVolumeMountPoint, which is denied once
+            // its target is gone; a non-recursive delete removes only the reparse point.
+            if (Directory.Exists(blocker))
+                Directory.Delete(blocker);
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Test]
