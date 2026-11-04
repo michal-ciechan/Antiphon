@@ -159,7 +159,6 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("sync-Held", "sync_debt")]
     [Arguments("path-shared", "path_shared")]
     [Arguments("live-session", "live_session")]
-    [Arguments("live-session-event-linked", "live_session")]
     [Arguments("result-null", "report_missing")]
     [Arguments("child-open", "dependent_open")]
     [Arguments("startref-open", "dependent_open")]
@@ -170,8 +169,6 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("startref-queued-remotes", "dependent_open")]
     [Arguments("startref-queued-case", "dependent_open")]
     [Arguments("baseref-heads-peeled", "dependent_open")]
-    [Arguments("startref-queued-refs-heads", "dependent_open")]
-    [Arguments("startref-open-refs-heads", "dependent_open")]
     [Arguments("basetask-queued", "dependent_open")]
     [Arguments("mutation", "mutation_excluded")]
     [Arguments("source-landing", "source_landing_excluded")]
@@ -193,7 +190,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             db.AgentTaskLandings.Add(Landing(landingId.Value, owner, w.Now, active: false));
             await db.SaveChangesAsync();
         }
-        if (predicate is "live-session" or "live-session-event-linked")
+        if (predicate == "live-session")
         {
             await using var db = w.Db();
             db.AgentSessions.Add(new AgentSession
@@ -246,22 +243,6 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 case "startref-open":
                     // WorktreeBaseRef is the base a provisioned task was cut from (CARD-0508).
                     db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.Branch; }));
-                    break;
-                case "live-session-event-linked":
-                    // CARD-0824 S4a survivor X-13b: the task row names no session; only an event links the Running one.
-                    db.AgentTaskEvents.Add(new AgentTaskEvent
-                    {
-                        Id = Guid.NewGuid(), AgentTaskId = a.Id, AgentSessionId = sessionId, Type = AgentTaskEventType.Dispatched,
-                        Detail = "c0824 event-linked session", At = w.Now,
-                    });
-                    break;
-                case "startref-open-refs-heads":
-                    // CARD-0824 S4a survivor PC-21e: the full-ref spelling of a provisioned base.
-                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.FullRef; }));
-                    break;
-                case "startref-queued-refs-heads":
-                    // CARD-0824 S4a survivor PC-21e: DelegationWorktreeService accepts a start ref spelled refs/heads/<branch>.
-                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Queued; t.WorktreeBaseRequestedRef = a.FullRef; }));
                     break;
                 case "startref-queued" or "startref-queued-origin" or "startref-queued-heads" or "startref-queued-peeled"
                     or "startref-queued-remotes" or "startref-queued-case":
@@ -333,6 +314,62 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         if (predicate is not ("landing-row" or "mutation" or "source-landing" or "operator-release-active"))
             w.AssertNoGit(a);
         w.Fixture.Git.Trace.ShouldNotContain(x => x.Length > 0 && x[0] == "update-ref" && x.Contains(a.FullRef));
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a survivors PC-21e and X-13b (V-9/G-18/G-20/G-21): a dependent whose base is spelled
+    /// <c>refs/heads/&lt;branch&gt;</c> (DelegationWorktreeService accepts that start ref), and a Running session linked
+    /// to the task only through an event row (the task row names no session), each keep the tree before any git.
+    /// </summary>
+    [Test]
+    [Arguments("startref-queued-refs-heads", "dependent_open")]
+    [Arguments("startref-open-refs-heads", "dependent_open")]
+    [Arguments("live-session-event-linked", "live_session")]
+    public async Task Full_ref_dependents_and_event_linked_sessions_keep_the_tree(string predicate, string reason)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        await using (var db = w.Db())
+        {
+            switch (predicate)
+            {
+                case "startref-queued-refs-heads":
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Queued; t.WorktreeBaseRequestedRef = a.FullRef; }));
+                    break;
+                case "startref-open-refs-heads":
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.FullRef; }));
+                    break;
+                default:
+                    var sessionId = Guid.NewGuid();
+                    db.AgentSessions.Add(new AgentSession
+                    {
+                        Id = sessionId, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
+                        Cwd = Path.Combine(w.Fixture.Root, "elsewhere"), Cols = 80, Rows = 24, CreatedAt = w.Now, StartedAt = w.Now, LastSeenAt = w.Now,
+                    });
+                    await db.SaveChangesAsync();
+                    db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(), AgentTaskId = a.Id, AgentSessionId = sessionId, Type = AgentTaskEventType.Dispatched,
+                        Detail = "c0824 event-linked session", At = w.Now,
+                    });
+                    break;
+            }
+            await db.SaveChangesAsync();
+        }
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+        w.ClearTrace();
+
+        var tick = await w.TickAsync();
+
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe(reason);
+        await w.AssertIntactAsync(a, before);
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+        w.AssertNoGit(a);
     }
 
     /// <summary>V-10/G-25..G-28/G-32: a dirty or unpushed tree is never released; the Held row is the evidence.</summary>
