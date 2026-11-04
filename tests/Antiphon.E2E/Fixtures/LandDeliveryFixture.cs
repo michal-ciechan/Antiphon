@@ -369,7 +369,9 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         Func<long>? progress = null, int capSeconds = 600, TimeProvider? clock = null)
         => ProgressAwareWait.UntilAsync(predicate, evidence, seconds, progress, capSeconds, clock);
 
-    public long ProtocolProgress() => Directory.GetFiles(Root, "protocol-git-*.json").LongLength;
+    // Committed protocol Git and land-verifier records (LandVerifierEvidence): the verifier's build runs no protocol Git.
+    public long ProtocolProgress() => Directory.GetFiles(Root, "protocol-git-*.json").LongLength
+        + Directory.GetFiles(Root, "protocol-verify-*.json").LongLength;
 
     /// <summary>
     /// C459 busy-caller gate. Completed protocol-git records renew the 60 s quiet window, up to the

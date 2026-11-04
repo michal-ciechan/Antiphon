@@ -75,6 +75,13 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandNotificationService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AttentionService>(p, clock));
         services.AddSingleton<ILandingGit>(new EvidenceGit(Root));
+        // The real verifier (build slot + dotnet build), recorded as receipt-wait progress.
+        var verifier = services.Last(d => d.ServiceType == typeof(ILandingVerifier));
+        services.Remove(verifier);
+        services.AddSingleton<ILandingVerifier>(p => new LandVerifierEvidence(Root, verifier.ImplementationFactory is { } make
+            ? (ILandingVerifier)make(p)
+            : verifier.ImplementationInstance as ILandingVerifier
+                ?? (ILandingVerifier)ActivatorUtilities.CreateInstance(p, verifier.ImplementationType!)));
         services.AddTransient<IStartupFilter>(_ => new AcceptanceObserver(Root));
         services.AddSingleton(p => new PtyDeliveryProfile(p.GetRequiredService<IServiceScopeFactory>(),
             p.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PtyDeliveryProfile>>(),

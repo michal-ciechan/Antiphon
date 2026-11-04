@@ -54,6 +54,8 @@ public sealed partial class LandDeliveryFixture
         catch (Exception ex) { text.Append("\nproducerState=unavailable:").Append(ex.GetType().Name); }
         try { text.Append('\n').Append(LastProtocolEvidence()); }
         catch (Exception ex) { text.Append("\nlastProtocolGit=unavailable:").Append(ex.GetType().Name); }
+        try { text.Append('\n').Append(LastVerifierEvidence()); }
+        catch (Exception ex) { text.Append("\nlastProtocolVerify=unavailable:").Append(ex.GetType().Name); }
         foreach (var directory in new[] { Path.Combine(Root, "server-logs"), Path.Combine(Root, "child-logs"),
                      _app is null ? "" : _app.OwnedRunnerDirectory })
         {
@@ -121,6 +123,22 @@ public sealed partial class LandDeliveryFixture
             or "remote" or "config" or "check-ref-format" or "log" or "cat-file" or "diff")) command = "other";
         return $"lastProtocolGit={path} gitCommand={command} exit={data.GetProperty("ExitCode").GetInt32()}"
             + $" at={data.GetProperty("at").GetDateTime():O} pid={data.GetProperty("pid").GetInt32()}";
+    }
+
+    private string LastVerifierEvidence()
+    {
+        var path = Directory.GetFiles(Root, "protocol-verify-*.json")
+            .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        if (path is null) return "lastProtocolVerify=none";
+        using var json = JsonDocument.Parse(File.ReadAllText(path));
+        var data = json.RootElement;
+        var phase = data.GetProperty("phase").GetString();
+        if (phase is not ("start" or "running" or "end")) phase = "other";
+        var passed = data.GetProperty("passed").ValueKind switch
+            { JsonValueKind.True => "true", JsonValueKind.False => "false", _ => "null" };
+        return $"lastProtocolVerify={path} phase={phase}"
+            + $" elapsedSeconds={data.GetProperty("elapsedSeconds").GetDouble().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}"
+            + $" passed={passed} at={data.GetProperty("at").GetDateTime():O} pid={data.GetProperty("pid").GetInt32()}";
     }
 
     private static string SafeLogTail(string path)
