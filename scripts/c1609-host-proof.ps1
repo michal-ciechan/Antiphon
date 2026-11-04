@@ -142,39 +142,49 @@ function Read-C1609Advertisement([string]$Text) {
 
 # CARD-1693: the standing fleet pushes to the shared origin all the time, so the before/after
 # advertisement compare can move during a full fetch (52 s on 2026-11-03 run c7275700). Only that
-# 'snapshot' move is retried, at most three attempts inside the one network budget; every attempt
+# 'snapshot' move is retried, at most five attempts inside the one network budget; every attempt
 # repeats every check. Each failed attempt logs its fixed reason token (never a URL or Git stderr)
 # to the local host-proof.log, which is not uploaded. The refusal text stays unchanged.
+# The attempts share one scratch repository: a retry fetches incrementally with --prune instead of
+# re-cloning the whole origin, so its ls-remote..ls-remote window is seconds, not a full clone (the
+# 2026-11-04 preview c72743c9 re-cloned 5081 refs per attempt and logged reason=snapshot three times).
+# Local refs still equal the fetched advertisement exactly; leftover objects reach no proof because
+# every reachability check and the bundle start from those refs.
 function Write-C1609HostOriginProof {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofDirectory,
         [long]$CreatedUnix,[string]$LogPath,[string]$PhaseNonce,[string]$InventoryDigest,[string[]]$ApprovedOrigins,
         [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='')
     $budget=[Diagnostics.Stopwatch]::StartNew()
-    for($attempt=1;;$attempt++){
-        $script:C1609HostProofReason=''
-        $remaining=$NetworkBudgetMs-[int]$budget.ElapsedMilliseconds
-        try {
-            Invoke-C1609HostOriginProofAttempt -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId `
-                -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce `
-                -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $remaining `
-                -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile
-            return
-        } catch {
-            $reason=[string]$script:C1609HostProofReason
-            if($reason -cnotmatch '^[a-z][a-z-]{0,31}$'){$reason='other'}
-            if($LogPath -and $RepoRelative -cmatch '^[A-Za-z0-9._/-]+$'){
-                try{[IO.File]::AppendAllText($LogPath,('repo='+$RepoRelative+' attempt='+$attempt+' reason='+$reason+[char]10),[Text.UTF8Encoding]::new($false))}catch{}
+    $scratch=Join-Path ([IO.Path]::GetTempPath()) ('c1609-host-'+[guid]::NewGuid().ToString('N'))
+    try {
+        for($attempt=1;;$attempt++){
+            $script:C1609HostProofReason=''
+            $remaining=$NetworkBudgetMs-[int]$budget.ElapsedMilliseconds
+            try {
+                Invoke-C1609HostOriginProofAttempt -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId `
+                    -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce `
+                    -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $remaining `
+                    -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile -Scratch $scratch
+                return
+            } catch {
+                $reason=[string]$script:C1609HostProofReason
+                if($reason -cnotmatch '^[a-z][a-z-]{0,31}$'){$reason='other'}
+                if($LogPath -and $RepoRelative -cmatch '^[A-Za-z0-9._/-]+$'){
+                    try{[IO.File]::AppendAllText($LogPath,('repo='+$RepoRelative+' attempt='+$attempt+' reason='+$reason+[char]10),[Text.UTF8Encoding]::new($false))}catch{}
+                }
+                if($reason -cne 'snapshot' -or $attempt -ge 5 -or ($NetworkBudgetMs-[int]$budget.ElapsedMilliseconds) -le 0){throw}
             }
-            if($reason -cne 'snapshot' -or $attempt -ge 3 -or ($NetworkBudgetMs-[int]$budget.ElapsedMilliseconds) -le 0){throw}
         }
+    } finally {
+        if([IO.Directory]::Exists($scratch)){Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue}
     }
 }
 
 function Invoke-C1609HostOriginProofAttempt {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofDirectory,
         [long]$CreatedUnix,[string]$LogPath,[string]$PhaseNonce,[string]$InventoryDigest,[string[]]$ApprovedOrigins,
-        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='')
-    $scratch=''; $bundle=''; $bundleCreated=$false
+        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='',[string]$Scratch)
+    $bundle=''; $bundleCreated=$false
     try {
         if($OperationId -cnotmatch '^c1008[0-9a-f]{32}$' -or $PhaseNonce -cnotmatch '^[0-9a-f]{32}$' -or
             $InventoryDigest -cnotmatch '^[0-9a-f]{64}$' -or $RepoRelative -cnotmatch '^[A-Za-z0-9._/-]+$' -or
@@ -199,14 +209,21 @@ function Invoke-C1609HostOriginProofAttempt {
         if($CreatedUnix -lt 0 -or $CreatedUnix -gt $now+60 -or $now-$CreatedUnix -gt 600){throw 'clock'}
         if($NetworkBudgetMs -le 0 -or $NetworkBudgetMs -gt 600000){throw 'deadline'}
         $watch=[Diagnostics.Stopwatch]::StartNew()
-        $scratch=Join-Path ([IO.Path]::GetTempPath()) ('c1609-host-'+[guid]::NewGuid().ToString('N'))
-        [void][IO.Directory]::CreateDirectory($scratch)
+        # The caller owns the scratch path and removes it. Only the first attempt creates it, and only a
+        # fresh repository may take a previous bundle: a retry fetches into the refs it already holds.
+        if(-not $Scratch -or [IO.Path]::GetFileName($Scratch) -cnotmatch '^c1609-host-[0-9a-f]{32}$'){throw 'custody'}
+        $fresh=-not [IO.Directory]::Exists($scratch)
+        if($fresh){[void][IO.Directory]::CreateDirectory($scratch)}
+        foreach($leftover in @('c1609-proof.bundle','required-trees')){
+            $path=Join-Path $scratch $leftover
+            if([IO.File]::Exists($path)){[IO.File]::Delete($path)}
+        }
         $originHash=Get-C1008Sha256 $OriginUrl
         $name=Get-C1008Sha256 ($RepoRelative+[char]10+$OriginUrl)
         $bundle=Join-Path $ProofDirectory ($name+'.bundle')
         $proofFile=Join-Path $ProofDirectory $name
         if([IO.File]::Exists($bundle) -or [IO.File]::Exists($proofFile)){throw 'existing'}
-        [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs @('init','-q','--bare','--template=',$scratch) -WorkingDirectory $scratch)
+        if($fresh){[void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs @('init','-q','--bare','--template=',$scratch) -WorkingDirectory $scratch)}
         $common=@('--git-dir',$scratch)
         $cap=[Math]::Min(30000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         $before=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('ls-remote','--heads','--tags',$OriginUrl)) -TimeoutMs $cap -WorkingDirectory $scratch))
@@ -218,7 +235,7 @@ function Invoke-C1609HostOriginProofAttempt {
                 ([IO.FileInfo]::new($PreviousProofFile).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
                 (Get-FileHash -LiteralPath ($PreviousProofFile+'.bundle') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $old[7].Substring(7)){throw 'previous-proof'}
             $oldAdvertisement=@(Read-C1609Advertisement (($old[11..($old.Length-1)] -join [char]10)+[char]10))
-            $reuse=($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
+            $reuse=$fresh -and ($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
         }
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         # CARD-1693: Git reads and writes a bundle only inside the short scratch directory. The desktop
@@ -232,7 +249,7 @@ function Invoke-C1609HostOriginProofAttempt {
             $updates=@($before|Where-Object{-not $_.EndsWith('^{}')}|ForEach-Object{'create '+$_.Substring(41)+' '+$_.Substring(0,40)})
             [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('update-ref','--stdin')) -TimeoutMs $cap -WorkingDirectory $scratch -InputText (($updates -join [char]10)+[char]10))
         } else {
-            [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('fetch','-q','--no-tags','--no-write-fetch-head',
+            [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('fetch','-q','--prune','--no-tags','--no-write-fetch-head',
                 '--no-recurse-submodules',$OriginUrl,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*')) -TimeoutMs $cap -WorkingDirectory $scratch)
         }
         $actual=Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('show-ref','--dereference')) -WorkingDirectory $scratch
@@ -269,8 +286,6 @@ function Invoke-C1609HostOriginProofAttempt {
             try{[IO.File]::Delete($bundle)}catch{}
         }
         throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)
-    } finally {
-        if($scratch -and [IO.Directory]::Exists($scratch)){Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue}
     }
 }
 
