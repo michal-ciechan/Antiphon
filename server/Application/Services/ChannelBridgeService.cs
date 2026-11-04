@@ -30,6 +30,23 @@ public sealed class ChannelBridgeService : BackgroundService
 {
     private static readonly TimeSpan ConsumeRetryBackoff = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SessionPollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan WakeIdleTick = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// CARD-1716: how long one wake-worker pass waits for a session's queue lock before leaving that
+    /// session's channel rows for the next pass.
+    /// </summary>
+    internal static readonly TimeSpan ScanQueueLockWait = TimeSpan.FromSeconds(1);
+
+    /// <summary>CARD-1716: a pass that left a busy session's rows behind runs again this soon, not at the idle tick.</summary>
+    internal static readonly TimeSpan BusyRetryDelay = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// CARD-1716 heartbeat: a deliverable row accepted this long ago and still unqueued, while the wake
+    /// worker has not completed a pass for as long, raises one Critical <c>ChannelReplyLost</c> incident.
+    /// </summary>
+    internal static readonly TimeSpan WakeWorkerStallAge = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan WakeWorkerStallCheckInterval = TimeSpan.FromMinutes(1);
 
     private readonly IAntiphonMessagingConsumer _consumer;
     private readonly SessionMessageQueueService _queue;
@@ -45,6 +62,8 @@ public sealed class ChannelBridgeService : BackgroundService
     private readonly Dictionary<Guid, long> _lastMemberScanSequence = [];
     private long _lastInboundScanSequence;
     private int _completedDrainIterations;
+    private readonly DateTimeOffset _createdAt;
+    private DateTimeOffset? _stallRaisedSince;
 
     internal int CompletedDrainIterations => Volatile.Read(ref _completedDrainIterations);
 
@@ -68,6 +87,7 @@ public sealed class ChannelBridgeService : BackgroundService
         _timeProvider = timeProvider;
         _logger = logger;
         _wakeSignal = wakeSignal ?? new ChannelInboundWakeSignal();
+        _createdAt = timeProvider.GetUtcNow();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -75,6 +95,7 @@ public sealed class ChannelBridgeService : BackgroundService
         _logger.LogInformation("Channel bridge started; consuming inbound channel messages");
         using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var worker = RunWakeWorkerAsync(workerCts.Token);
+        var stallCheck = RunWakeWorkerStallCheckAsync(workerCts.Token);
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -114,6 +135,7 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             await workerCts.CancelAsync();
             await worker;
+            await stallCheck;
         }
     }
 
@@ -173,10 +195,12 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             while (!ct.IsCancellationRequested)
             {
+                var delay = WakeIdleTick;
                 try
                 {
-                    await DrainPendingAsync(ct);
+                    var pass = await DrainPendingAsync(ct);
                     Interlocked.Increment(ref _completedDrainIterations);
+                    delay = NextWakeDelay(pass);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -184,7 +208,7 @@ public sealed class ChannelBridgeService : BackgroundService
                 }
                 using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 var signal = _wakeSignal.Reader.WaitToReadAsync(waitCts.Token).AsTask();
-                var tick = Task.Delay(TimeSpan.FromSeconds(10), _timeProvider, waitCts.Token);
+                var tick = Task.Delay(delay, _timeProvider, waitCts.Token);
                 await Task.WhenAny(signal, tick);
                 await waitCts.CancelAsync();
                 while (_wakeSignal.Reader.TryRead(out _)) { }
@@ -193,8 +217,32 @@ public sealed class ChannelBridgeService : BackgroundService
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
     }
 
-    internal async Task DrainPendingAsync(CancellationToken ct)
+    /// <summary>CARD-1716: skipped busy work is not a failure; it runs again after <see cref="BusyRetryDelay"/>.</summary>
+    internal static TimeSpan NextWakeDelay(ChannelWakeWorkerPass pass) =>
+        pass.SessionsSkippedBusy > 0 ? BusyRetryDelay : WakeIdleTick;
+
+    /// <summary>
+    /// CARD-1716: per-pass state. A session whose queue lock stays held past <see cref="ScanQueueLockWait"/>
+    /// joins <see cref="Busy"/>; its remaining rows in the pass are skipped unchanged, in order.
+    /// </summary>
+    private sealed class WakePass
     {
+        private readonly ConcurrentDictionary<Guid, byte> _busy = new();
+        private int _queued;
+        private volatile bool _open = true;
+        public bool Open => _open;
+        public int Queued => Volatile.Read(ref _queued);
+        public int BusyCount => _busy.Count;
+        public bool IsBusy(Guid sessionId) => _busy.ContainsKey(sessionId);
+        public void MarkBusy(Guid sessionId) => _busy.TryAdd(sessionId, 0);
+        public void AddQueued(int count) => Interlocked.Add(ref _queued, count);
+        public void Close() => _open = false;
+    }
+
+    internal async Task<ChannelWakeWorkerPass> DrainPendingAsync(CancellationToken ct)
+    {
+        var started = _timeProvider.GetTimestamp();
+        var pass = new WakePass();
         List<AgentBatch> batches;
         await _drainGate.WaitAsync(ct);
         try
@@ -254,7 +302,7 @@ public sealed class ChannelBridgeService : BackgroundService
                 {
                     await capacity.WaitAsync(ct);
                     acquired = true;
-                    advanced = await ProcessAgentGroupAsync(batch.AgentId, batch.InboundIds, direct: false, ct);
+                    advanced = await ProcessAgentGroupAsync(batch.AgentId, batch.InboundIds, direct: false, ct, pass);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -287,8 +335,88 @@ public sealed class ChannelBridgeService : BackgroundService
                 .OrderBy(q => q.CreatedAt).Take(64)
                 .Select(q => q.AgentSessionId).Distinct().ToListAsync(ct);
             foreach (var sessionId in ownedSessions)
-                await _queue.FlushSessionAsync(sessionId, ct);
+            {
+                // CARD-1716: one held queue lock must not stall this pass for every other agent.
+                if (pass.IsBusy(sessionId)) continue;
+                try { await _queue.FlushSessionAsync(sessionId, ct, ScanQueueLockWait); }
+                catch (SessionQueueBusyException busy)
+                {
+                    // Nothing was done under the lock. Not a failure: the next pass flushes it.
+                    pass.MarkBusy(busy.SessionId);
+                    _logger.LogDebug("Session {SessionId} queue lock is held; its channel rows wait for the next pass",
+                        busy.SessionId);
+                }
+            }
         }
+
+        pass.Close();
+        var summary = new ChannelWakeWorkerPass(_timeProvider.GetUtcNow(), batches.Sum(b => b.InboundIds.Length),
+            pass.Queued, pass.BusyCount, _timeProvider.GetElapsedTime(started));
+        _wakeSignal.PassCompleted(summary);
+        _logger.Log(summary.RowsQueued > 0 || summary.SessionsSkippedBusy > 0 ? LogLevel.Information : LogLevel.Debug,
+            "Channel wake worker pass completed at {CompletedAt:O}: {RowsSeen} pending row(s) seen, {RowsQueued} queued, "
+            + "{SessionsSkippedBusy} session(s) skipped busy, {ElapsedMs:F0} ms",
+            summary.CompletedAt, summary.RowsSeen, summary.RowsQueued, summary.SessionsSkippedBusy,
+            summary.Elapsed.TotalMilliseconds);
+        return summary;
+    }
+
+    private async Task RunWakeWorkerStallCheckAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(WakeWorkerStallCheckInterval, _timeProvider, ct);
+                try { await CheckWakeWorkerStallAsync(ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Channel wake worker stall check failed");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    /// <summary>
+    /// CARD-1716 heartbeat, independent of the wake worker: when the worker has completed no pass for
+    /// <see cref="WakeWorkerStallAge"/> and a deliverable row accepted at least that long ago is still
+    /// unqueued, log a Warning and raise one Critical <c>ChannelReplyLost</c> incident
+    /// (<c>ChannelWakeWorkerStalled</c>) on that row's agent. One incident per stall: the next completed
+    /// pass re-arms it. Returns whether it raised.
+    /// </summary>
+    internal async Task<bool> CheckWakeWorkerStallAsync(CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var lastPass = _wakeSignal.LastPass?.CompletedAt ?? _createdAt;
+        if (now - lastPass < WakeWorkerStallAge)
+            return false;
+        if (_stallRaisedSince == lastPass)
+            return false;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var cutoff = (now - WakeWorkerStallAge).UtcDateTime;
+        var oldest = await db.ChannelInbounds.AsNoTracking()
+            .Where(i => i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null
+                && i.AcceptedAt <= cutoff)
+            .OrderBy(i => i.AcceptanceSequence).FirstOrDefaultAsync(ct);
+        if (oldest is null)
+            return false;
+        var stalledMinutes = (int)(now - lastPass).TotalMinutes;
+        _logger.LogWarning(
+            "Channel wake worker has completed no pass for {Minutes} min; inbound {InboundId} accepted at {AcceptedAt:O} is still unqueued",
+            stalledMinutes, oldest.Id, oldest.AcceptedAt);
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(), AgentId = oldest.AgentId!.Value, Kind = AgentIncidentKind.ChannelReplyLost,
+            Severity = AlertSeverity.Critical, FailureReason = "ChannelWakeWorkerStalled", CreatedAt = now.UtcDateTime,
+            Message = ColumnText.Clip($"Inbound message {oldest.Provider}:{oldest.ConversationId}/{oldest.NativeMessageId} "
+                + $"is pending and has not reached the agent: the channel wake worker has completed no pass for {stalledMinutes} min "
+                + "(GET /api/channels/wake-worker).", AgentIncident.MessageMaxLength),
+        });
+        await db.SaveChangesAsync(ct);
+        _stallRaisedSince = lastPass;
+        return true;
     }
 
     private sealed record AgentBatch(Guid AgentId, Guid[] InboundIds);
@@ -304,8 +432,12 @@ public sealed class ChannelBridgeService : BackgroundService
         await ProcessAgentGroupAsync(agentId, [inboundId], direct: true, ct);
     }
 
+    /// <param name="pass">
+    /// CARD-1716: the wake worker's pass; null for the direct entry point. A session already busy in
+    /// this pass, or found busy by one of its rows, has its remaining rows skipped unchanged, in order.
+    /// </param>
     private async Task<bool> ProcessAgentGroupAsync(Guid agentId, IReadOnlyList<Guid> inboundIds,
-        bool direct, CancellationToken ct)
+        bool direct, CancellationToken ct, WakePass? pass = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -363,6 +495,8 @@ public sealed class ChannelBridgeService : BackgroundService
         var scheduled = true;
         foreach (var inbound in inbounds)
         {
+            if (pass?.IsBusy(liveSessionId) == true)
+                return false; // CARD-1716: the rest wait unchanged for the next pass, oldest first.
             var message = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson!, Antiphon.Messaging.MessagingJson.Options)!;
             var channel = await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == inbound.ChatChannelId, ct);
             if (!_buffered.TryAdd(inbound.Id, 0))
@@ -370,7 +504,8 @@ public sealed class ChannelBridgeService : BackgroundService
             try
             {
                 await _debouncer.AddAsync(message,
-                    batch => FlushLaneAsync(channel, agentId, liveSessionId, batch), ct);
+                    batch => FlushLaneAsync(channel, agentId, liveSessionId, batch, pass), ct);
+                if (_settings.DebounceWindowMs > 0) pass?.AddQueued(1); // handed to the debounce window
             }
             catch (Exception ex) when (ex is not OperationCanceledException && !direct)
             {
@@ -384,7 +519,7 @@ public sealed class ChannelBridgeService : BackgroundService
                 throw;
             }
         }
-        return scheduled;
+        return scheduled && pass?.IsBusy(liveSessionId) != true;
     }
 
     private async Task ApplyWakeDispositionAsync(ChannelInbound inbound, Guid agentId,
@@ -532,9 +667,14 @@ public sealed class ChannelBridgeService : BackgroundService
     // Routes one debounced batch (1..n same-sender messages) into the session: single truthful
     // envelope header (first message's metadata), one line per message text; attachments are saved
     // to the agent's inbox and referenced by path so the (vision-capable) agent can Read them.
+    // CARD-1716: a flush that runs inside an open wake-worker pass (the passthrough window) waits at most
+    // ScanQueueLockWait for the session's queue lock. A debounced flush after its pass keeps the
+    // unbounded wait; it holds only its own lane, never the worker.
     private async Task FlushLaneAsync(
-        ChatChannel channel, Guid agentId, Guid sessionId, IReadOnlyList<ChannelInboundDebouncer.Buffered> batch)
+        ChatChannel channel, Guid agentId, Guid sessionId, IReadOnlyList<ChannelInboundDebouncer.Buffered> batch,
+        WakePass? pass = null)
     {
+        var lockWait = pass is { Open: true } ? ScanQueueLockWait : (TimeSpan?)null;
         var memberIds = new List<Guid>();
         try
         {
@@ -584,13 +724,30 @@ public sealed class ChannelBridgeService : BackgroundService
                 deliverIfIdle: false,
                 sourceChannelInboundId: memberIds[0],
                 channelMemberInboundIds: memberIds,
-                onCreated: id => queueId = id);
+                onCreated: id => queueId = id,
+                lockWait: lockWait);
             if (queueId is null)
                 throw new InvalidOperationException("Channel queue insert did not identify its owner.");
-            await _queue.FlushSessionAsync(sessionId, CancellationToken.None);
+            if (lockWait is not null && _settings.DebounceWindowMs <= 0) pass!.AddQueued(batch.Count);
+            try { await _queue.FlushSessionAsync(sessionId, CancellationToken.None, lockWait); }
+            catch (SessionQueueBusyException busy) when (lockWait is not null)
+            {
+                // The row is queued; the pass's owned-row sweep flushes it once the lock frees.
+                pass!.MarkBusy(busy.SessionId);
+                _logger.LogDebug("Session {SessionId} queue lock is held; its channel rows wait for the next pass",
+                    busy.SessionId);
+            }
             _logger.LogInformation(
                 "Routed {Count} {Provider} message(s) on channel {ChannelId} to agent {AgentId} session {SessionId}",
                 batch.Count, channel.Provider, channel.Id, agentId, sessionId);
+        }
+        catch (SessionQueueBusyException busy) when (lockWait is not null)
+        {
+            // Nothing was written under the lock. Not a failure: no alert; the rows stay pending,
+            // unchanged, and the next pass retries them oldest first.
+            pass!.MarkBusy(busy.SessionId);
+            _logger.LogDebug("Session {SessionId} queue lock is held; its channel rows wait for the next pass",
+                busy.SessionId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

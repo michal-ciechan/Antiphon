@@ -69,6 +69,12 @@ waited `ChannelBridge:AgedHoldIncidentMinutes` (default 10) from acceptance, eac
 raises one Critical `ChannelReplyLost` incident for that inbound; the reason-specific stamp
 survives restarts and incident-history pruning. Herdr, capacity and wake-timeout paths keep their
 existing incident policies.
+The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
+are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each
+pass records its completion (`GET /api/channels/wake-worker`) and logs a summary at Information when it
+queued or skipped work. An independent check raises one Critical `ChannelReplyLost` incident
+(`ChannelWakeWorkerStalled`) when the worker has completed no pass for 5 minutes and a deliverable row
+accepted at least 5 minutes ago is still unqueued; the next completed pass re-arms it. It needs no setting.
 Capacity notices use the reply handle captured in that inbound envelope, even if the channel
 catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 

@@ -25,6 +25,10 @@ public static class ChannelEndpoints
             return Results.Ok(await service.GetAllAsync(cancellationToken));
         });
 
+        // CARD-1716 heartbeat: the inbound wake worker's last completed pass (null until one completes).
+        channels.MapGet("/wake-worker", (ChannelInboundWakeSignal wake) =>
+            Results.Ok(new { lastPass = wake.LastPass }));
+
         channels.MapGet("/outbound-profiles", (ChatChannelService service) =>
             Results.Ok(service.GetOutboundProfiles()));
 
