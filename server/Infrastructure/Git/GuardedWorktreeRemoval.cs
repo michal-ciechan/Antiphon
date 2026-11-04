@@ -11,7 +11,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     IWorktreeRemovalEvidence evidence, WorktreeGuardedCleanup? cleanup = null,
     WorktreeIgnoredContentGate? ignored = null)
 {
-    /// <summary>The set-aside renames; a test injects a Windows sharing violation here.</summary>
+    /// <summary>The set-aside renames and delete; a test injects a Windows sharing violation here.</summary>
     internal WorktreeRenames Renames { get; init; } = WorktreeRenames.System;
 
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
@@ -88,7 +88,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 else
                 {
-                    try { WorktreeNoFollowDelete.Delete(aside, preserveNestedRepositories: true); }
+                    try { Renames.DeleteTree(aside, true); }
                     catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
@@ -182,7 +182,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
                 }
-                try { WorktreeNoFollowDelete.Delete(aside, preserveNestedRepositories: true); }
+                try { Renames.DeleteTree(aside, true); }
                 catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
