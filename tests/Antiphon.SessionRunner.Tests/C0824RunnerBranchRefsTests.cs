@@ -151,12 +151,45 @@ public sealed class C0824RunnerBranchRefsTests
         using var s = Scratch.Create();
         var missing = Path.Combine(s.Root, "unmounted", "repo");
         var service = new RunnerWorkspaceService(missing, s.Work, s.Origin, psi => Process.Start(psi));
-        var result = await service.DeleteBranchRefsAsync(new(Branch, s.Sha), ct);
+        // Without the existence check git cannot start in the missing directory and the op throws instead of refusing.
+        var result = await Should.NotThrowAsync(() => service.DeleteBranchRefsAsync(new(Branch, s.Sha), ct),
+            "missing-repository-refused");
         result.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Refused, "missing-repository-refused");
         result.Code.ShouldBe(WorkspaceBranchRefsCodes.RepositoryUnavailable, "missing-repository-refused");
         result.Succeeded.ShouldBeFalse();
         result.Absent.ShouldBeEmpty("unknown is never absent");
         Directory.Exists(missing).ShouldBeFalse("the op never creates the repository");
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task C0824_non_repository_directory_refuses_unavailable(CancellationToken ct)
+    {
+        // An existing directory that is not a repository (an empty mount point) is unknown, never "every ref is absent".
+        using var s = Scratch.Create();
+        var empty = Path.Combine(s.Root, "empty-mount");
+        Directory.CreateDirectory(empty);
+        var result = await s.Service(empty).DeleteBranchRefsAsync(new(Branch, s.Sha), ct);
+        result.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Refused, "non-repository-refused");
+        result.Code.ShouldBe(WorkspaceBranchRefsCodes.RepositoryUnavailable, "non-repository-refused");
+        result.Succeeded.ShouldBeFalse();
+        result.Deleted.ShouldBeEmpty("unknown is never deleted");
+        result.Absent.ShouldBeEmpty("unknown is never absent");
+        Directory.EnumerateFileSystemEntries(empty).ShouldBeEmpty("the op never initialises a repository");
+        s.Ref(Local).ShouldBe(s.Sha, "primary-untouched");
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task C0824_branch_with_trailing_newline_refused(CancellationToken ct)
+    {
+        // .NET '$' also matches before a final LF: the delegate-name guard must consume the whole input.
+        using var s = Scratch.Create();
+        var result = await s.Service().DeleteBranchRefsAsync(new(Branch + "\n", s.Sha), ct);
+        result.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Refused, "trailing-newline-refused");
+        result.Code.ShouldBe(WorkspaceBranchRefsCodes.ProtectedBranch, "trailing-newline-refused");
+        s.Ref(Local).ShouldBe(s.Sha, "refs-kept");
+        s.Ref(Tracking).ShouldBe(s.Sha, "refs-kept");
     }
 
     /// <summary>Bare origin with the task branch, a runner clone with both refs at the branch tip.</summary>
@@ -193,10 +226,12 @@ public sealed class C0824RunnerBranchRefsTests
             return new Scratch { Root = root, Repo = repo, Origin = origin, Work = work.Replace('\\', '/'), Sha = sha };
         }
 
-        public RunnerWorkspaceService Service() =>
-            new(Repo, Work, Origin, psi =>
+        public RunnerWorkspaceService Service(string? repository = null) =>
+            new(repository ?? Repo, Work, Origin, psi =>
             {
                 Configure(psi, Root);
+                // The scratch root is the ceiling, so a non-repository directory never discovers an enclosing repository.
+                psi.Environment["GIT_CEILING_DIRECTORIES"] = Root;
                 return Process.Start(psi);
             });
 

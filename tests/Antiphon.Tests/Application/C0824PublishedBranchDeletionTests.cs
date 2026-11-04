@@ -45,6 +45,10 @@ public sealed class C0824PublishedBranchDeletionTests
     [Arguments("protected-rc", "Kept", "protected_branch")]
     [Arguments("non-delegate-name", "Kept", "protected_branch")]
     [Arguments("source-sha-mismatch", "Kept", "source_identity_mismatch")]
+    [Arguments("original-source-mismatch", "NotEligible", "not_published")]
+    [Arguments("fingerprint-missing", "Kept", "source_identity_mismatch")]
+    [Arguments("fingerprint-short", "Kept", "source_identity_mismatch")]
+    [Arguments("trailing-newline-name", "Kept", "protected_branch")]
     [Arguments("before-cutoff", "NotEligible", "before_cutoff")]
     [Arguments("runner-not-enabled", "Deferred", "runner_volume_not_enabled")]
     [Arguments("desktop-only-enabled", "Eligible", "eligible")]
@@ -79,6 +83,13 @@ public sealed class C0824PublishedBranchDeletionTests
             case "protected-rc": op.SourceFullRef = "refs/heads/rc/2026-11-01"; break;
             case "non-delegate-name": op.SourceFullRef = "refs/heads/feat/other"; break;
             case "source-sha-mismatch": op.SourceRemoteSha = Sha('e'); break;
+            // The approval identity (ReviewedSourceSha == OriginalSourceSha) is part of HasPublication, so the policy's
+            // own OriginalSourceSha term is unreachable (Mutation 29664acc PC-6b, equivalent): never Eligible.
+            case "original-source-mismatch": op.OriginalSourceSha = Sha('e'); break;
+            case "fingerprint-missing": op.SourceRemoteFingerprint = null; break;
+            case "fingerprint-short": op.SourceRemoteFingerprint = new string('F', 63); break;
+            // .NET '$' also matches before a final LF; the delegate-name parser must consume the whole input.
+            case "trailing-newline-name": op.SourceFullRef = "refs/heads/" + Branch + "\n"; break;
             case "before-cutoff": settings.SourceBranchDeletionAfterUtc = confirmed; break;
             case "runner-not-enabled": runners = ["runner-a"]; break;
             case "desktop-only-enabled": settings.SourceBranchDeletionRunnerIds = ["runner-b"]; break;
@@ -86,6 +97,41 @@ public sealed class C0824PublishedBranchDeletionTests
         }
         var decision = PublishedBranchDeletionPolicy.Decide(op, settings, runners, now);
         decision.ShouldBe(new BranchDeletionDecision(Enum.Parse<BranchDeletionDecisionKind>(kind), reason), name);
+    }
+
+    // ---- G-1 / Q-3: the shipped defaults (Mutation 29664acc PC-1; every other test sets the flag explicitly) ----
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task C0824_default_settings_ship_off_with_no_cutoff(CancellationToken ct)
+    {
+        var defaults = new LandingSettings();
+        defaults.DeleteSourceBranchAfterPublication.ShouldBeFalse("ships-off");
+        defaults.SourceBranchDeletionAfterUtc.ShouldBeNull("no-cutoff");
+        defaults.SourceBranchDeletionDryRun.ShouldBeFalse("dry-run-off");
+
+        // The defaults never reach the database or git.
+        var git = new RecordingLandingGit();
+        var runner = new RecordingRunnerBranchRefs();
+        async Task<PublishedBranchDeletionRunResult> Run(LandingSettings settings) =>
+            await new PublishedBranchDeletionService(null!, git, new FreeLease(), runner, new MutableMonitor(settings),
+                new FakeTimeProvider(Start), NullLogger<PublishedBranchDeletionService>.Instance).RunAsync(ct);
+        var off = await Run(new LandingSettings());
+        off.Enabled.ShouldBeFalse("ships-off");
+        off.Examined.ShouldBe(0, "ships-off");
+
+        // A first enable with the default (null) cutoff makes nothing eligible.
+        var firstEnable = await Run(new LandingSettings { DeleteSourceBranchAfterPublication = true });
+        firstEnable.Enabled.ShouldBeTrue();
+        firstEnable.Stopped.ShouldBe("no_cutoff", "null-cutoff-none");
+        firstEnable.Examined.ShouldBe(0, "null-cutoff-none");
+        var op = PublishedLandingRow.Build(Guid.NewGuid(), Branch, Start);
+        PublishedBranchDeletionPolicy.Decide(op, new LandingSettings { DeleteSourceBranchAfterPublication = true }, [],
+                Start.AddDays(365))
+            .ShouldBe(new BranchDeletionDecision(BranchDeletionDecisionKind.NotEligible, "before_cutoff"), "null-cutoff-none");
+        git.Touched.ShouldBeEmpty("no-git");
+        git.ContainmentReads.ShouldBe(0, "no-git");
+        runner.Calls.ShouldBe(0, "no-runner-call");
     }
 
     // ---- V-17 dependents (isolated schema, no git) ----
@@ -655,6 +701,113 @@ public sealed class C0824PublishedBranchDeletionTests
         (row.BranchDeletionDetail ?? "").ShouldContain(dependentId.ToString(), Case.Sensitive, "recheck-before-push");
     }
 
+    // ---- Mutation 29664acc coverage survivors PC-33b, PC-31b, PC-D1 ----
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C0824_dry_run_writes_no_kept_or_deferred_row(CancellationToken ct)
+    {
+        // Kept is terminal: a dry run that recorded it would settle the row for good.
+        await using var w = await SyntheticWorld.CreateAsync(3, ct);
+        var seeded = await w.RowsAsync(ct);
+        var (protectedRow, movedRow, dependentRow) = (seeded[0], seeded[1], seeded[2]);
+        await using (var db = w.Db())
+        {
+            var row = await db.AgentTaskLandings.SingleAsync(o => o.Id == protectedRow.Id, ct);
+            row.SourceFullRef = "refs/heads/feat/other";
+            var dependentId = Guid.NewGuid();
+            var dependent = Task_(dependentId, "feat/card-task-" + dependentId.ToString("N")[..8], AgentTaskStatus.Working);
+            dependent.WorktreeBaseBranch = dependentRow.SourceFullRef[11..];
+            db.AgentTasks.Add(dependent);
+            await db.SaveChangesAsync(ct);
+        }
+        w.Git.Moved[movedRow.SourceFullRef] = Sha('e');
+        w.Monitor.Value.SourceBranchDeletionDryRun = true;
+
+        var result = await w.RunAsync(ct);
+        result.DryRun.ShouldBeTrue();
+        result.Rows.Select(r => (r.OperationId, r.Outcome, r.Reason)).ShouldBe(
+        [
+            (protectedRow.Id, "would_kept", "protected_branch"),
+            (movedRow.Id, "would_kept", "branch_moved"),
+            (dependentRow.Id, "would_deferred", "dependent_open"),
+        ], "dry-run-reported");
+        foreach (var row in await w.RowsAsync(ct))
+        {
+            row.BranchDeletionState.ShouldBe(LandBranchDeletionState.None, "dry-run-no-row-write");
+            row.BranchDeletionReason.ShouldBeNull("dry-run-no-row-write");
+            row.BranchDeletionAt.ShouldBeNull("dry-run-no-row-write");
+            row.BranchDeletionDetail.ShouldBeNull("dry-run-no-row-write");
+        }
+        (await w.EventsAsync(ct)).ShouldBeEmpty("dry-run-no-event");
+        w.Git.Deleted.ShouldBeEmpty("dry-run-no-push");
+
+        // Liveness control: the same rows outside the dry run are recorded, so the fixture can write.
+        w.Monitor.Value.SourceBranchDeletionDryRun = false;
+        await w.RunAsync(ct);
+        (await w.RowsAsync(ct)).Select(r => (r.BranchDeletionState, r.BranchDeletionReason)).ShouldBe(
+        [
+            (LandBranchDeletionState.Kept, "protected_branch"),
+            (LandBranchDeletionState.Kept, "branch_moved"),
+            (LandBranchDeletionState.Deferred, "dependent_open"),
+        ], "live-run-records");
+        (await w.EventsAsync(ct)).Count.ShouldBe(3, "live-run-records");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C0824_containment_read_error_defers_and_retries(CancellationToken ct)
+    {
+        // An unreadable target is unknown, never "not contained": Kept(publication_not_contained) is terminal.
+        await using var w = await SyntheticWorld.CreateAsync(1, ct);
+        w.Git.ContainmentReason = "remote_target_unreadable";
+        await w.RunAsync(ct);
+        var row = (await w.RowsAsync(ct))[0];
+        row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deferred, "containment-deferred");
+        row.BranchDeletionReason.ShouldBe("containment_unknown", "containment-deferred");
+        (row.BranchDeletionDetail ?? "").ShouldContain("remote_target_unreadable", Case.Sensitive, "containment-deferred");
+        w.Git.ContainmentReads.ShouldBe(1);
+        w.Git.Touched.ShouldBeEmpty("no-recheck-or-push");
+        w.Git.Deleted.ShouldBeEmpty("no-recheck-or-push");
+
+        w.Git.ContainmentReason = null;
+        await w.RunAsync(ct);
+        w.Git.ContainmentReads.ShouldBe(2, "retried");
+        (await w.RowsAsync(ct))[0].BranchDeletionState.ShouldBe(LandBranchDeletionState.Deleted, "retried");
+        w.Git.Deleted.Count.ShouldBe(1, "retried");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C0824_open_dependent_defers_before_lease_and_runner(CancellationToken ct)
+    {
+        // The pre-lease check: an open dependent defers with no lease, no containment read and no runner-refs delete
+        // (the A-2 re-check under the lease would also defer, but only after deleting the runner refs).
+        await using var w = await SyntheticWorld.CreateAsync(1, ct, runnerIds: ["runner-a"]);
+        var lease = new CountingLease();
+        w.Lease = lease;
+        var op = (await w.RowsAsync(ct))[0];
+        var dependentId = Guid.NewGuid();
+        await using (var db = w.Db())
+        {
+            var dependent = Task_(dependentId, "feat/card-task-" + dependentId.ToString("N")[..8], AgentTaskStatus.Queued);
+            dependent.WorktreeBaseBranch = op.SourceFullRef[11..];
+            db.AgentTasks.Add(dependent);
+            await db.SaveChangesAsync(ct);
+        }
+        var result = await w.RunAsync(ct);
+        result.PushAttempts.ShouldBe(0, "no-attempt");
+        var row = (await w.RowsAsync(ct))[0];
+        row.BranchDeletionState.ShouldBe(LandBranchDeletionState.Deferred, "dependent-deferred");
+        row.BranchDeletionReason.ShouldBe("dependent_open", "dependent-deferred");
+        (row.BranchDeletionDetail ?? "").ShouldContain(dependentId.ToString(), Case.Sensitive, "dependent-deferred");
+        w.Runner.Calls.ShouldBe(0, "no-runner-call");
+        lease.Acquired.ShouldBe(0, "no-lease");
+        w.Git.ContainmentReads.ShouldBe(0, "no-containment-read");
+        w.Git.Touched.ShouldBeEmpty("no-git");
+        row.RunnerRefsDeletedAt.ShouldBeNull("no-runner-call");
+    }
+
     // ---- helpers ----
 
     /// <summary>
@@ -712,6 +865,13 @@ public sealed class C0824PublishedBranchDeletionTests
             return await db.AgentTaskLandings.AsNoTracking().OrderBy(o => o.RemoteConfirmedAt).ToListAsync(ct);
         }
 
+        public async Task<List<AgentTaskEvent>> EventsAsync(CancellationToken ct)
+        {
+            await using var db = Db();
+            return await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.Type == AgentTaskEventType.LandingBranchDeletion).ToListAsync(ct);
+        }
+
         public ValueTask DisposeAsync() => Schema.DisposeAsync();
     }
 
@@ -719,6 +879,18 @@ public sealed class C0824PublishedBranchDeletionTests
     {
         public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) => Task.FromResult<RepositoryLease?>(null);
         public bool Owns(RepositoryLease lease, string repository) => false;
+    }
+
+    private sealed class CountingLease : IRepositoryMutationLease
+    {
+        private readonly FreeLease _inner = new();
+        public int Acquired { get; private set; }
+        public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct)
+        {
+            Acquired++;
+            return _inner.TryAcquireAsync(repository, ct);
+        }
+        public bool Owns(RepositoryLease lease, string repository) => _inner.Owns(lease, repository);
     }
 
     internal static LandingSettings Enabled(DateTime? cutoff) => new()
@@ -817,25 +989,40 @@ public sealed class C0824PublishedBranchDeletionTests
         }
     }
 
-    /// <summary>V-47's git: every recheck answers the expected SHA until the ref is deleted, and every target contains it.</summary>
+    /// <summary>
+    /// V-47's git: every recheck answers the expected SHA until the ref is deleted (or the <see cref="Moved"/> SHA), and
+    /// every target contains it unless <see cref="ContainmentReason"/> makes the read fail.
+    /// </summary>
     internal sealed class RecordingLandingGit : LandingGit
     {
         public HashSet<string> Deleted { get; } = [];
         public List<string> Touched { get; } = [];
         public Action? OnDelete { get; set; }
+        /// <summary>Source refs whose origin tip has moved to the given SHA.</summary>
+        public Dictionary<string, string> Moved { get; } = [];
+        /// <summary>Non-null: the containment read fails with this reason (unknown, not "not contained").</summary>
+        public string? ContainmentReason { get; set; }
+        public int ContainmentReads { get; private set; }
 
         public override Task<LandingSourceRecheck> RecheckSourceRemoteAsync(string repository, string sourceFullRef,
             string expectedSha, string expectedFingerprint, CancellationToken ct)
         {
             Touched.Add(sourceFullRef);
+            if (Moved.TryGetValue(sourceFullRef, out var moved))
+                return Task.FromResult(new LandingSourceRecheck(moved, expectedFingerprint, null));
             return Task.FromResult(Deleted.Contains(sourceFullRef)
                 ? new LandingSourceRecheck(null, expectedFingerprint, "source_remote_missing")
                 : new LandingSourceRecheck(expectedSha, expectedFingerprint, null));
         }
 
         public override Task<LandingRemoteObservation> ConfirmTargetContainsAsync(string repository, string targetFullRef,
-            string sha, string expectedFingerprint, CancellationToken ct) =>
-            Task.FromResult(new LandingRemoteObservation(Sha('d'), true, null));
+            string sha, string expectedFingerprint, CancellationToken ct)
+        {
+            ContainmentReads++;
+            return Task.FromResult(ContainmentReason is { } reason
+                ? new LandingRemoteObservation(null, false, reason)
+                : new LandingRemoteObservation(Sha('d'), true, null));
+        }
 
         public override Task<LandingGitResult> DeleteSourceBranchAsync(string repository, string sourceFullRef,
             string expectedRemoteSha, string expectedFingerprint, CancellationToken ct)
