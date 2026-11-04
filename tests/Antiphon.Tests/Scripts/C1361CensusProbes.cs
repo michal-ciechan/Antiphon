@@ -41,7 +41,7 @@ internal static class C1361CensusProbes
         return envelope;
     }
     private sealed record Vector(string Name, JsonObject Requests, string Error = "", JsonObject? Expected = null,
-        JsonNode? Proof = null, int Sleeps = 0, bool Report = false, bool Wait = false);
+        JsonNode? Proof = null, int Sleeps = 0, bool Report = false, bool Wait = false, string[]? Receipted = null);
 
     private static Vector StatusVector(string name, bool passes, JsonObject before, JsonObject after,
         JsonNode? proof = null, string error = "", JsonObject? detailOverride = null, JsonNode? laterProof = null,
@@ -162,6 +162,75 @@ internal static class C1361CensusProbes
         await Boundaries(host, passes);
         if (!passes) await PendingDetailBoundary(host);
         Console.WriteLine($"C1361 {(host ? "host" : "wrapper")}/{(passes ? "passes" : "detail")}: {vectors.Count + 1} census cases plus boundary cases");
+    }
+
+    // CARD-1697: the standing runner's compared open closure keeps rows bound to server2 only, like
+    // server2-temp (CARD-1693). Off-runner rows that finish, appear (also under a nested scope), move to
+    // another runner or carry a land timestamp between the passes pass and stay receipted; a row bound to
+    // server2, rebinding to it or a bound land appearing still refuses, and in report mode a bound
+    // appearance with a land timestamp or in the land closure is still Unstable. Every vector runs so a red run names each defect.
+    internal static async Task StandingScope(bool host)
+    {
+        const string Scoped = "66666666-6666-6666-6666-666666666666";
+        var failures = new List<string>();
+        var vectors = new List<Vector>();
+        JsonObject Open(params JsonObject[][] passes) => new()
+        {
+            [PathFor(Project)] = new JsonArray(passes.Select(rows => (JsonNode)Envelope(Project, rows)).ToArray()),
+            [PathFor(Project, "land")] = new JsonArray(Envelope(Project))
+        };
+        var working = Row("Working");
+        var finish = Open([working], []);
+        finish["/api/agent-tasks/" + Id] = new JsonArray(Detail(working));
+        vectors.Add(new Vector("off-runner/finishes", finish, Receipted: [Id]));
+
+        var scoped = Row("Working"); scoped["id"] = Scoped; scoped["projectId"] = OtherProject; scoped["scopeSource"] = "Task";
+        var nested = Open([], []);
+        Exclude(nested[PathFor(Project)]![1]!.AsObject(), (OtherProject, 1));
+        nested[PathFor(OtherProject)] = new JsonArray(Envelope(OtherProject, scoped));
+        nested["/api/agent-tasks/" + Scoped] = new JsonArray(Detail(scoped));
+        vectors.Add(new Vector("off-runner/appears-nested-scope", nested, Receipted: [Scoped]));
+
+        var queued = Row(); var moved = Row("Dispatched"); moved["runnerId"] = "server2-temp";
+        var rebind = Open([queued], [moved]);
+        rebind["/api/agent-tasks/" + Id] = new JsonArray(Detail(queued), Detail(moved));
+        vectors.Add(new Vector("off-runner/moves-to-other-runner", rebind, Receipted: [Id]));
+
+        var stamped = Row("Working"); stamped["landRequestedAt"] = "2020-01-01T00:00:00Z";
+        var stamp = Open([], [stamped]);
+        stamp["/api/agent-tasks/" + Id] = new JsonArray(Detail(stamped));
+        vectors.Add(new Vector("off-runner/appears-with-land-timestamp", stamp, Receipted: [Id]));
+
+        var bound = Row(); bound["runnerId"] = "server2";
+        var appears = Open([], [bound]);
+        appears["/api/agent-tasks/" + Id] = new JsonArray(Detail(bound));
+        vectors.Add(new Vector("bound/appears", appears, "RecycleBoundTasks " + Id + " status=Queued runner=server2"));
+
+        var rebound = bound.DeepClone().AsObject(); rebound["status"] = "Dispatched";
+        var toRecycled = Open([queued], [rebound]);
+        toRecycled["/api/agent-tasks/" + Id] = new JsonArray(Detail(queued), Detail(rebound));
+        vectors.Add(new Vector("bound/rebinds-to-recycled", toRecycled, "RecycleBoundTasks " + Id + " status=Dispatched runner=server2"));
+
+        var landRow = Row("Succeeded"); landRow["runnerId"] = "server2"; landRow["landRequestedAt"] = "2020-01-01T00:00:00Z";
+        var landAppears = Open([], []);
+        landAppears[PathFor(Project, "land")] = new JsonArray(Envelope(Project), Envelope(Project, landRow));
+        vectors.Add(new Vector("bound/land-appears", landAppears, "RecycleLandInFlight " + Id));
+
+        if (!host)
+        {
+            var boundStamped = bound.DeepClone().AsObject(); boundStamped["status"] = "Working"; boundStamped["landRequestedAt"] = "2020-01-01T00:00:00Z";
+            var stampAppears = Open([], [boundStamped]);
+            stampAppears["/api/agent-tasks/" + Id] = new JsonArray(Detail(boundStamped));
+            vectors.Add(new Vector("bound/report-appears-with-land-timestamp", stampAppears, "RecycleTaskCensusUnknown cause=Unstable", Report: true));
+            vectors.Add(new Vector("bound/report-land-appears", landAppears, "RecycleTaskCensusUnknown cause=Unstable", Report: true));
+        }
+        foreach (var vector in vectors)
+        {
+            try { await Check(host, vector); }
+            catch (Exception e) { failures.Add(vector.Name + ": " + e.Message); }
+        }
+        failures.ShouldBeEmpty(string.Join("\n", failures));
+        Console.WriteLine($"C1697 {(host ? "host" : "wrapper")}: {vectors.Count} standing-runner scope cases PASS");
     }
 
     internal static async Task Counts()
@@ -382,6 +451,20 @@ internal static class C1361CensusProbes
             error.ShouldBe("", vector.Name + ": " + run.Output);
             result["code"]!.GetValue<int>().ShouldBe(0, vector.Name);
             if (vector.Name == "bound/report-stable") result["report"]!["boundOpen"]!.GetValue<int>().ShouldBe(1);
+            if (vector.Receipted is not null)
+            {
+                // CARD-1697: every walked row stays receipted; the compared open closure is bound-only.
+                var tasks = (host
+                    ? JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "census-probe-server2.json")))!["tasks"]
+                    : result["tasks"])!.AsObject();
+                foreach (var id in vector.Receipted) tasks.ContainsKey(id).ShouldBeTrue(vector.Name + " receipts " + id + ": " + tasks.ToJsonString());
+                var open = result["snapshot"]!["open"]!;
+                open["scopes"]!.AsObject().Count.ShouldBe(0, vector.Name + " compares no per-scope id lists: " + open.ToJsonString());
+                open["tasks"]!.AsObject().All(x => x.Value!["runnerId"]?.GetValue<string>() == "server2")
+                    .ShouldBeTrue(vector.Name + " compares bound rows only: " + open.ToJsonString());
+                open["land"]!.AsObject().All(x => open["tasks"]!.AsObject().ContainsKey(x.Key))
+                    .ShouldBeTrue(vector.Name + " compares bound land proofs only: " + open.ToJsonString());
+            }
             if (vector.Expected is not null)
             {
                 var snapshot = result["snapshot"]!;
@@ -396,8 +479,8 @@ internal static class C1361CensusProbes
         else
         {
             error.ShouldStartWith(vector.Error, customMessage: vector.Name + ": " + run.Output);
-            result["code"]!.GetValue<int>().ShouldBe(host && vector.Error == "RecycleBoundTasks" ? 4 :
-                host && vector.Error == "RecycleLandInFlight" ? 3 : 2, vector.Name);
+            result["code"]!.GetValue<int>().ShouldBe(host && vector.Error.StartsWith("RecycleBoundTasks", StringComparison.Ordinal) ? 4 :
+                host && vector.Error.StartsWith("RecycleLandInFlight", StringComparison.Ordinal) ? 3 : 2, vector.Name);
             if (vector.Error == "RecycleBoundTasks")
                 result["reads"]!.AsArray().Any(x => x!.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeFalse(vector.Name + " before detail");
         }
@@ -433,7 +516,7 @@ internal static class C1361CensusProbes
         $returned=$null; $reportResult=$null
         if ($code -eq 0 -and '{{report}}' -eq 'False' -and $null -ne $value) { $returned=$value|ConvertFrom-Json }
         if ($code -eq 0 -and '{{report}}' -eq 'True') { $reportResult=$value }
-        @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;report=$reportResult;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
+        @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;report=$reportResult;tasks=$script:recycleReceiptTasks;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
         """;
 
     private static string HostProgram(string root, bool wait)
