@@ -235,6 +235,9 @@ try
     builder.Services.AddOptions<RunnerWorktreeRetentionSettings>()
         .Bind(builder.Configuration.GetSection(RunnerWorktreeRetentionSettings.SectionName))
         .ValidateOnStart();
+    // CARD-0824 S4a: automatic desktop worktree release ships on (operator Q-3, 2026-11-03). Kill switch
+    // WorktreeLegacyRelease:Enabled=false; dry run Execute=false. Scalars only: a shape validator refuses arrays.
+    builder.Services.AddWorktreeLegacyReleaseSettings(builder.Configuration);
     builder.Services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
     builder.Services.AddOptions<WorktreeResidueSettings>()
         .Bind(builder.Configuration.GetSection("WorktreeResidue"))
@@ -625,6 +628,8 @@ try
     builder.Services.AddScoped<IRunnerBranchRefs, PhoneHomeRunnerBranchRefs>();
     builder.Services.AddScoped<PublishedBranchDeletionService>();
     builder.Services.AddScoped<PublishedBranchDeletionJob>();
+    builder.Services.AddScoped<DesktopLegacyReleasePolicyService>();
+    builder.Services.AddScoped<DesktopLegacyReleasePolicyJob>();
     builder.Services.AddScoped<RunnerSlotReconcileJob>();
     builder.Services.AddScoped<RunnerRetireJob>();
     builder.Services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
@@ -1175,6 +1180,12 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdatePublishedBranchDeletionJob(recurringJobManager, landing);
             else
                 recurringJobManager.RemoveIfExists(landing.SourceBranchDeletionJobId);
+            var legacy = DesktopLegacyReleasePolicyService.ReadSettings(
+                scope.ServiceProvider.GetRequiredService<IOptionsMonitor<WorktreeLegacyReleaseSettings>>());
+            if (legacy.Enabled && legacy.Settings is not null)
+                HangfireConfiguration.AddOrUpdateDesktopLegacyReleaseJob(recurringJobManager, legacy.Settings);
+            else
+                recurringJobManager.RemoveIfExists(legacy.Settings?.RecurringJobId ?? new WorktreeLegacyReleaseSettings().RecurringJobId);
             if (ExpectationWatchdogJob.ShouldRun(hangfire,
                 scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value))
                 HangfireConfiguration.AddOrUpdateExpectationWatchdogJob(recurringJobManager);

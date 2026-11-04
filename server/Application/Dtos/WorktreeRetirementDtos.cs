@@ -18,6 +18,13 @@ public sealed record ReleaseWorktreeRetirementRequest(
     IReadOnlyList<WorktreeHandoffDispositionDto>? HandoffDispositions = null,
     bool MissingReportReviewed = false);
 
+/// <summary>CARD-0824 S4a S-3: what the desktop legacy policy files for itself (no HTTP route reaches it).</summary>
+public sealed record SystemReleaseRequest(
+    Guid ExpectedTaskRevision,
+    string SourceSha,
+    string Reason,
+    IReadOnlyList<WorktreeHandoffDispositionDto>? HandoffDispositions = null);
+
 public sealed record WorktreeRetirementDto(
     Guid Id,
     Guid TaskId,

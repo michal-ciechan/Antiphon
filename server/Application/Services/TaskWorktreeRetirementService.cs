@@ -37,6 +37,10 @@ public sealed class TaskWorktreeRetirementService
     private readonly WorkspaceUseAdmission? _admission;
     private readonly ILogger<TaskWorktreeRetirementService> _logger;
     private readonly RemoteWorkspaceService? _remoteWorkspace;
+    private readonly IOptionsMonitor<RunnerWorktreeRetentionSettings>? _retention;
+
+    /// <summary>CARD-0824 S4a S-3: the caller identity of a release the desktop legacy policy filed.</summary>
+    public const string SystemCallerIdentity = "system:desktop-legacy-policy";
 
     public TaskWorktreeRetirementService(
         AppDbContext db,
@@ -52,9 +56,12 @@ public sealed class TaskWorktreeRetirementService
         IRepositoryMutationLease? leases = null,
         WorkspaceUseAdmission? admission = null,
         // CARD-0604 D-15: absent, a remote mirror is simply left for the runner-side sweep.
-        RemoteWorkspaceService? remoteWorkspace = null)
+        RemoteWorkspaceService? remoteWorkspace = null,
+        // CARD-0824 S4a T-D-6: the runners whose mirrors CARD-1677 retention owns.
+        IOptionsMonitor<RunnerWorktreeRetentionSettings>? retention = null)
     {
         _remoteWorkspace = remoteWorkspace;
+        _retention = retention;
         _db = db;
         _clock = clock;
         _settings = settings.Value;
@@ -83,7 +90,33 @@ public sealed class TaskWorktreeRetirementService
             throw new ValidationException(nameof(body.SourceSha), "SourceSha must be a full lowercase hex object id.");
 
         AuthorizeCaller(caller, taskId);
+        return await ReleaseCoreAsync(taskId, body, sourceSha,
+            caller.Task is null ? "operator" : caller.Task.Id.ToString("D"), caller.SessionId, caller.Task?.Id,
+            ownBranchDestination: false, ct);
+    }
 
+    /// <summary>
+    /// CARD-0824 S4a S-3. A release the desktop legacy policy files for itself, never reachable from the HTTP
+    /// route: the same checks as <see cref="ReleaseAsync"/>, <see cref="SystemCallerIdentity"/>, and (T-D-2) the
+    /// task's OWN origin branch as the destination when origin names it, else the merge target. Removal then
+    /// proves the source is contained in that origin ref and deletes only the local branch.
+    /// </summary>
+    public async Task<WorktreeRetirementDto> ReleaseSystemAsync(Guid taskId, SystemReleaseRequest body, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(body.Reason))
+            throw new ValidationException(nameof(body.Reason), "A disposition reason is required.");
+        if (!GitObjectId.TryNormalize(body.SourceSha, out var sourceSha))
+            throw new ValidationException(nameof(body.SourceSha), "SourceSha must be a full lowercase hex object id.");
+        var request = new ReleaseWorktreeRetirementRequest(body.ExpectedTaskRevision, sourceSha, null, true, body.Reason,
+            body.HandoffDispositions, MissingReportReviewed: false);
+        return await ReleaseCoreAsync(taskId, request, sourceSha, SystemCallerIdentity, null, null,
+            ownBranchDestination: true, ct);
+    }
+
+    private async Task<WorktreeRetirementDto> ReleaseCoreAsync(Guid taskId, ReleaseWorktreeRetirementRequest body,
+        string sourceSha, string callerIdentity, Guid? callerSessionId, Guid? callerTaskId, bool ownBranchDestination,
+        CancellationToken ct)
+    {
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
@@ -105,7 +138,7 @@ public sealed class TaskWorktreeRetirementService
         if (task.RepairSourceTaskId is not null)
             throw new ConflictException("Repair-source tasks cannot retire an owner's workspace.", "repair_source_excluded");
 
-        var identity = await RequireUniqueOrdinaryOwnerAsync(task, ct);
+        var identity = await RequireUniqueOrdinaryOwnerAsync(task, ct, ownBranchDestination);
         var reportDigest = Digest(task.Result);
         if (!string.IsNullOrWhiteSpace(body.ReportDigest)
             && !string.Equals(body.ReportDigest, reportDigest, StringComparison.OrdinalIgnoreCase))
@@ -156,9 +189,9 @@ public sealed class TaskWorktreeRetirementService
             ReportDigest = string.IsNullOrWhiteSpace(task.Result) ? null : reportDigest,
             MissingReportReviewed = body.MissingReportReviewed && string.IsNullOrWhiteSpace(task.Result),
             ReleasedTaskRevision = task.ConcurrencyToken,
-            CallerSessionId = caller.SessionId,
-            CallerTaskId = caller.Task?.Id,
-            CallerIdentity = caller.Task is null ? "operator" : caller.Task.Id.ToString("D"),
+            CallerSessionId = callerSessionId,
+            CallerTaskId = callerTaskId,
+            CallerIdentity = callerIdentity,
             ReleaseReason = body.Reason.Trim(),
             ReleasedAt = now,
             HandoffDispositionJson = JsonSerializer.Serialize(dispositions, JsonOptions),
@@ -291,7 +324,23 @@ public sealed class TaskWorktreeRetirementService
         await using var lease = await _leases.TryAcquireAsync(retirement.RepositoryPath, ct);
         if (lease is null) return new(false, false, false, "repository_lease_required");
 
+        var system = string.Equals(retirement.CallerIdentity, SystemCallerIdentity, StringComparison.Ordinal);
+        if (system)
+        {
+            // CARD-0824 S4a: a concurrent tick or the residue sweep may have finished this release under the lease,
+            // and a caller holding an untracked row (the residue sweep) must still persist what this pass does.
+            if (_db.Entry(retirement).State == EntityState.Detached)
+                retirement = await _db.TaskWorktreeRetirements.SingleAsync(r => r.Id == retirement.Id, ct);
+            else
+                await _db.Entry(retirement).ReloadAsync(ct);
+            if (retirement.State == WorktreeRetirementState.Complete)
+                return new(true, true, true, null);
+        }
+
         var attempt = await GetOrCreateAttemptAsync(retirement, runId, ct);
+        if (system && endpointId is null && attempt.CommandIntentId is not null
+            && await NothingRemovedAsync(retirement, attempt, ct))
+            attempt = await ReopenAttemptAsync(retirement, attempt, runId, ct);
         if (endpointId is null && attempt.CommandIntentId is Guid spent
             && attempt.DirectoryRemoved is not true)
             return new(attempt.DirectoryRemoved == true, attempt.RegistrationRemoved == true,
@@ -361,12 +410,96 @@ public sealed class TaskWorktreeRetirementService
         // effort and strictly after it: the mirror holds no work the branch does not, so failing
         // to reach the runner records residue for the operator's sweep and never blocks or
         // reverses the retirement of the thing that actually matters.
-        if (endpointId is null) await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
+        // CARD-0824 S4a T-D-6: a runner CARD-1677 retention owns keeps its mirror (the runner decides).
+        if (endpointId is null && !await MirrorOwnedByRetentionAsync(retirement.TaskId, ct))
+            await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
 
         retirement.UpdatedAt = UtcNow();
         retirement.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         return removed;
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a T-D-6. True when the task's runner is listed in the effective
+    /// <c>RunnerWorktreeRetention:Runners</c>, whatever <c>Enabled</c> says: leaving a mirror is the safe direction.
+    /// An unreadable setting counts as listed.
+    /// </summary>
+    public static bool MirrorOwnedByRetention(string? runnerId, IOptionsMonitor<RunnerWorktreeRetentionSettings>? retention)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || retention is null) return false;
+        try { return retention.CurrentValue.Runners.Contains(runnerId, StringComparer.Ordinal); }
+        catch (OptionsValidationException) { return true; }
+    }
+
+    private async Task<bool> MirrorOwnedByRetentionAsync(Guid taskId, CancellationToken ct)
+    {
+        if (_retention is null) return false;
+        var runnerId = await _db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId).Select(t => t.RunnerId).SingleOrDefaultAsync(ct);
+        return MirrorOwnedByRetention(runnerId, _retention);
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a T-D-4. A system release's spent attempt whose command removed nothing: no component stamp,
+    /// the directory and its registration present, no set-aside record, and HEAD still the source.
+    /// </summary>
+    private async Task<bool> NothingRemovedAsync(TaskWorktreeRetirement retirement, TaskWorktreeRetirementAttempt attempt,
+        CancellationToken ct)
+    {
+        if (_gitIo is null) return false;
+        if (attempt.DirectoryRemoved == true || attempt.RegistrationRemoved == true || attempt.BranchRemoved == true)
+            return false;
+        if (retirement.DirectoryRemovedAt is not null || retirement.RegistrationRemovedAt is not null
+            || retirement.BranchRemovedAt is not null)
+            return false;
+        try
+        {
+            if (!Directory.Exists(retirement.WorktreePath)
+                || File.GetAttributes(retirement.WorktreePath).HasFlag(FileAttributes.ReparsePoint))
+                return false;
+            if (Infrastructure.Git.WorktreeSetAside.Read(retirement.CommonDirectory, retirement.WorktreePath) is not null
+                || Path.Exists(Infrastructure.Git.WorktreeSetAside.SetAsidePath(retirement.WorktreePath)))
+                return false;
+            var registrations = await _gitIo.RegistrationsAsync(retirement.RepositoryPath, ct);
+            if (!registrations.Any(r => PathsEqual(r.Path, retirement.WorktreePath)))
+                return false;
+            var head = await _gitIo.RunAsync(retirement.WorktreePath, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+            return head.Succeeded && string.Equals(head.Output.Trim(), retirement.SourceSha, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<TaskWorktreeRetirementAttempt> ReopenAttemptAsync(TaskWorktreeRetirement retirement,
+        TaskWorktreeRetirementAttempt spent, Guid? runId, CancellationToken ct)
+    {
+        var now = UtcNow();
+        spent.FinishedAt = now;
+        var attempt = new TaskWorktreeRetirementAttempt
+        {
+            Id = Guid.NewGuid(),
+            RetirementId = retirement.Id,
+            SweepRunId = runId,
+            AttemptNumber = spent.AttemptNumber + 1,
+            CreatedAt = now,
+            StartedAt = now,
+            NotBefore = now,
+            ReleasedTaskRevision = retirement.ReleasedTaskRevision,
+        };
+        _db.TaskWorktreeRetirementAttempts.Add(attempt);
+        if (retirement.ClaimedAt is not null)
+        {
+            // The workspace claim survived the refusal (keepIntent); the new attempt inherits it.
+            retirement.ClaimAttemptId = attempt.Id;
+            retirement.State = WorktreeRetirementState.Claimed;
+        }
+        else
+            retirement.State = WorktreeRetirementState.Released;
+        retirement.UpdatedAt = now;
+        await _db.SaveChangesAsync(ct);
+        return attempt;
     }
 
     private async Task RemoveRemoteMirrorAsync(Guid taskId, CancellationToken ct)
@@ -458,7 +591,8 @@ public sealed class TaskWorktreeRetirementService
             throw new ForbiddenException("A child task token cannot release a sibling workspace.", "caller_scope");
     }
 
-    private async Task<RetirementIdentity> RequireUniqueOrdinaryOwnerAsync(AgentTask task, CancellationToken ct)
+    private async Task<RetirementIdentity> RequireUniqueOrdinaryOwnerAsync(AgentTask task, CancellationToken ct,
+        bool ownBranchDestination = false)
     {
         if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch)
             || string.IsNullOrWhiteSpace(task.RepoPath))
@@ -495,9 +629,22 @@ public sealed class TaskWorktreeRetirementService
         }
 
         var target = FullRef(ChooseTarget(task));
+        var destinationRef = target;
+        if (ownBranchDestination && _gitIo is not null)
+        {
+            // CARD-0824 S4a T-D-2: the task's own origin branch when origin names it, else the merge target.
+            // A read failure refuses; an absent branch never means pushed (removal still proves containment).
+            var source = FullRef(task.WorktreeBranch);
+            var listed = await _gitIo.RunAsync(repo, ["ls-remote", "origin", source], ct);
+            if (!listed.Succeeded)
+                throw new ConflictException("The task's origin branch could not be read.", "remote_unverified");
+            if (listed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Any(line => line.TrimEnd('\r').EndsWith("\t" + source, StringComparison.Ordinal)))
+                destinationRef = source;
+        }
         var destination = _gitIo is null
-            ? new LandingDestination("origin", target, "")
-            : await _gitIo.DestinationAsync(repo, target, ct);
+            ? new LandingDestination("origin", destinationRef, "")
+            : await _gitIo.DestinationAsync(repo, destinationRef, ct);
         return new RetirementIdentity(repo, common, task.WorktreePath!, gitDir, FullRef(task.WorktreeBranch),
             target, destination.RemoteName, destination.FullRef, destination.Fingerprint);
     }
