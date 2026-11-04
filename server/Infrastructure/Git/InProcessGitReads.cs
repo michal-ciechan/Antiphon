@@ -1,27 +1,33 @@
-using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
+using System.Text;
 using Antiphon.Server.Application.Dtos;
 using LibGit2Sharp;
+using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>
 /// Answers a small set of read-only git commands in process with libgit2 (LibGit2Sharp) instead of
 /// starting <c>git</c>: on Windows each git process costs ~40–80 ms to start, and one land runs
-/// ~270 of them, most of them these reads.
+/// ~270 of them, most of them reads.
 /// <para>
 /// Only the success shape of each command is answered, with git's exact exit code and output. Every
-/// other outcome (missing ref, lookup error, unusual argument, any libgit2 exception) returns null and
-/// the caller runs the real git command, so failure output and exit codes stay git's own. Commands
-/// that print paths are never answered: libgit2 returns the caller's spelling, git the on-disk one.
-/// <c>remote get-url</c> is not answered when any <c>insteadOf</c>/<c>pushInsteadOf</c> rewrite is
-/// configured. <c>ANTIPHON_GIT_INPROCESS=off</c> turns it all off.
+/// other outcome (missing ref, lookup error, unusual argument or repository, any libgit2 exception)
+/// returns null and the caller runs the real git command, so failures stay git's own. Shapes and
+/// fallbacks are pinned against the real CLI by <c>LibGit2VsGitDifferentialTests</c>.
 /// </para>
-/// <para>
-/// Each <see cref="Repositories"/> owns opened repositories (one per working path), so a land's
-/// operation scope reuses one handle for the whole operation; outside a scope a set is opened per call.
-/// libgit2 re-reads loose refs, packed-refs and config files when they change on disk, so a change made
-/// by another process mid-land is seen (covered by <c>InProcessGitReadsTests</c>).
-/// </para>
+/// <list type="bullet">
+/// <item>Config is never read: <c>remote get-url</c> and anything else whose answer depends on config
+/// (includes, includeIf, worktree config, GIT_CONFIG_* environment, insteadOf) stays with git.</item>
+/// <item>Paths are printed the way git prints them: the real path (on-disk case, links and subst
+/// drives resolved, <see cref="GitRealPath"/>) with forward slashes on Windows. UNC paths fall back.</item>
+/// <item>A repository with replace refs, grafts or a shallow file, or a reftable ref store, falls back
+/// for every command: libgit2 does not apply them the way git does.</item>
+/// <item>Each call opens its own handle and closes it before returning: a handle kept open goes stale
+/// (shallow boundary, a worktree re-registered at the same path) and, on Windows, keeps pack files
+/// from being deleted by another process's repack.</item>
+/// </list>
+/// <c>ANTIPHON_GIT_INPROCESS=off</c> turns it all off.
 /// </summary>
 internal static class InProcessGitReads
 {
@@ -30,72 +36,80 @@ internal static class InProcessGitReads
     public static bool Enabled { get; } =
         !string.Equals(Environment.GetEnvironmentVariable(EnvVar)?.Trim(), "off", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Opened repositories keyed by working path; each handle is used under its own lock.</summary>
-    public sealed class Repositories : IDisposable
-    {
-        private readonly ConcurrentDictionary<string, Handle?> _byPath = new(StringComparer.Ordinal);
-        private bool _disposed;
-
-        public sealed class Handle(Repository repository) : IDisposable
-        {
-            public Repository Repository { get; } = repository;
-            public object Gate { get; } = new();
-            public void Dispose() => Repository.Dispose();
-        }
-
-        public Handle? For(string path)
-        {
-            if (_disposed) return null;
-            // Opened through the working directory itself, never a discovered git dir: libgit2 opened
-            // at a linked worktree's <common>/worktrees/<name> skips the common config (no origin).
-            // Only a checkout root or a .git directory opens; a subdirectory is git's to answer.
-            return _byPath.GetOrAdd(path, p =>
-                Repository.IsValid(p) ? new Handle(new Repository(p)) : null);
-        }
-
-        public void Dispose()
-        {
-            _disposed = true;
-            foreach (var handle in _byPath.Values) handle?.Dispose();
-            _byPath.Clear();
-        }
-    }
-
     /// <summary>git's own result for <paramref name="arguments"/> run in <paramref name="repository"/>, or null to run git.</summary>
-    public static LandingGitResult? TryAnswer(string repository, IReadOnlyList<string> arguments, Repositories repositories,
-        bool allowRemoteConfig)
+    public static LandingGitResult? TryAnswer(string repository, IReadOnlyList<string> arguments)
     {
-        if (!Enabled || arguments.Count < 2) return null;
+        if (!Enabled || arguments.Count < 2 || !Handled(arguments)) return null;
         try
         {
-            var handle = repositories.For(repository);
-            if (handle is null) return null;
-            lock (handle.Gate)
-                return Answer(handle.Repository, arguments, allowRemoteConfig);
+            // Opened through the working directory itself, never a discovered git dir: libgit2 opened
+            // at a linked worktree's <common>/worktrees/<name> skips the common config. Only a
+            // checkout root or a .git directory opens; a subdirectory is git's to answer.
+            if (!Repository.IsValid(repository)) return null;
+            using var repo = new Repository(repository);
+            if (Unusual(repo)) return null;
+            return Answer(repo, arguments);
         }
-        catch (Exception ex) when (ex is LibGit2SharpException or IOException or ArgumentException
-            or UnauthorizedAccessException or InvalidOperationException or DllNotFoundException or TypeInitializationException)
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
             return null;
         }
     }
 
-    private static LandingGitResult? Answer(Repository repo, IReadOnlyList<string> a, bool allowRemoteConfig)
+    private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base";
+
+    /// <summary>Layouts whose answers libgit2 does not compute the way git does.</summary>
+    private static bool Unusual(Repository repo)
+    {
+        var gitDir = repo.Info.Path;
+        var common = CommonDirectory(gitDir);
+        return common is null
+            || File.Exists(Path.Combine(common, "shallow")) || File.Exists(Path.Combine(gitDir, "shallow"))
+            || File.Exists(Path.Combine(common, "info", "grafts"))
+            || Directory.Exists(Path.Combine(common, "refs", "replace")) && Directory.EnumerateFileSystemEntries(Path.Combine(common, "refs", "replace")).Any()
+            || HasPackedReplaceRefs(common)
+            || Directory.Exists(Path.Combine(common, "reftable"));
+    }
+
+    private static bool HasPackedReplaceRefs(string common)
+    {
+        var packed = Path.Combine(common, "packed-refs");
+        return File.Exists(packed) && File.ReadLines(packed).Any(l => l.Contains(" refs/replace/", StringComparison.Ordinal));
+    }
+
+    /// <summary>The common dir for a git dir, per gitrepository-layout(5): its commondir file, else itself.</summary>
+    private static string? CommonDirectory(string gitDir)
+    {
+        var file = Path.Combine(gitDir, "commondir");
+        if (!File.Exists(file)) return gitDir;
+        var lines = File.ReadAllText(file).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.TrimEnd('\r')).ToArray();
+        return lines.Length == 1 && lines[0].Length != 0 ? Path.GetFullPath(lines[0], gitDir) : null;
+    }
+
+    private static LandingGitResult? Answer(Repository repo, IReadOnlyList<string> a)
     {
         switch (a[0])
         {
             // rev-parse --verify <rev>^{commit}  |  rev-parse HEAD
             case "rev-parse" when a.Count == 3 && a[1] == "--verify" && a[2].EndsWith("^{commit}", StringComparison.Ordinal):
-                return Commit(repo, a[2][..^"^{commit}".Length]);
+                return Commit(repo, a[2][..^"^{commit}".Length], peel: true);
             case "rev-parse" when a.Count == 2 && a[1] == "HEAD":
-                return Commit(repo, "HEAD");
+                return Commit(repo, "HEAD", peel: false);
+
+            // Paths, printed as git prints them (real path, forward slashes on Windows).
+            case "rev-parse" when a.Count == 2 && a[1] == "--absolute-git-dir":
+                return PathAnswer(repo.Info.Path);
+            case "rev-parse" when a.Count == 3 && a[1] == "--path-format=absolute" && a[2] == "--git-common-dir":
+                return PathAnswer(CommonDirectory(repo.Info.Path));
+            case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path" && a[3] == "index.lock":
+                return GitRealPath(repo.Info.Path) is { } dir ? Ok(dir + "/index.lock\n") : null;
 
             // show-ref --verify --hash <ref>  |  show-ref --verify <ref>...  |  show-ref --exists <ref>
             case "show-ref" when a.Count == 4 && a[1] == "--verify" && a[2] == "--hash":
                 return Direct(repo, a[3]) is { } sha ? Ok(sha + "\n") : null;
-            case "show-ref" when a.Count >= 3 && a[1] == "--verify" && a.Skip(2).All(IsFullRef):
+            case "show-ref" when a.Count >= 3 && a[1] == "--verify" && a.Skip(2).All(IsPlainRef):
             {
-                var lines = new System.Text.StringBuilder();
+                var lines = new StringBuilder();
                 foreach (var name in a.Skip(2))
                 {
                     if (Direct(repo, name) is not { } refSha) return null;
@@ -103,27 +117,18 @@ internal static class InProcessGitReads
                 }
                 return Ok(lines.ToString());
             }
-            case "show-ref" when a.Count == 3 && a[1] == "--exists" && IsFullRef(a[2]):
+            case "show-ref" when a.Count == 3 && a[1] == "--exists" && IsPlainRef(a[2]):
+                return repo.Refs[a[2]] is null ? Exit(2) : Ok("");
+
+            // symbolic-ref -q <ref>: 0 + target when it points at a direct or missing ref, 1 when the
+            // ref itself is direct. A chain (target is itself symbolic) is git's: git follows it.
+            case "symbolic-ref" when a.Count == 3 && a[1] == "-q" && (a[2] == "HEAD" || IsPlainRef(a[2])):
             {
                 var found = repo.Refs[a[2]];
-                return found is null ? new LandingGitResult(2, "", "") : Ok("");
+                if (found is DirectReference) return Exit(1);
+                if (found is not SymbolicReference symbolic || !IsPlainRef(symbolic.TargetIdentifier)) return null;
+                return repo.Refs[symbolic.TargetIdentifier] is SymbolicReference ? null : Ok(symbolic.TargetIdentifier + "\n");
             }
-
-            // symbolic-ref -q <ref>: 0 + target when symbolic, 1 when a direct ref; missing -> git.
-            case "symbolic-ref" when a.Count == 3 && a[1] == "-q" && (a[2] == "HEAD" || IsFullRef(a[2])):
-            {
-                var found = repo.Refs[a[2]];
-                return found switch
-                {
-                    SymbolicReference symbolic => Ok(symbolic.TargetIdentifier + "\n"),
-                    DirectReference => new LandingGitResult(1, "", ""),
-                    _ => null,
-                };
-            }
-
-            // remote get-url --push --all origin
-            case "remote" when allowRemoteConfig && a.Count == 5 && a[1] == "get-url" && a[2] == "--push" && a[3] == "--all" && a[4] == "origin":
-                return PushUrls(repo);
 
             // merge-base --is-ancestor <oid> <oid>
             case "merge-base" when a.Count == 4 && a[1] == "--is-ancestor" && LandingGit.IsOid(a[2]) && LandingGit.IsOid(a[3]):
@@ -132,50 +137,98 @@ internal static class InProcessGitReads
                 var descendant = repo.Lookup<Commit>(a[3]);
                 if (ancestor is null || descendant is null) return null;
                 if (ancestor.Sha == descendant.Sha) return Ok("");
-                var bases = repo.ObjectDatabase.FindMergeBase(ancestor, descendant);
-                return bases?.Sha == ancestor.Sha ? Ok("") : new LandingGitResult(1, "", "");
+                var mergeBase = repo.ObjectDatabase.FindMergeBase(ancestor, descendant);
+                return mergeBase?.Sha == ancestor.Sha ? Ok("") : Exit(1);
             }
         }
         return null;
     }
 
-    private static LandingGitResult? Commit(Repository repo, string revision)
+    /// <summary>
+    /// rev-parse of HEAD, a full ref name or a full object id. Short names are git's: git also looks up
+    /// <c>$GIT_DIR/&lt;name&gt;</c> and ambiguity rules libgit2 does not share. Without
+    /// <paramref name="peel"/> the object must itself be a commit (a detached HEAD at a tag is git's).
+    /// </summary>
+    private static LandingGitResult? Commit(Repository repo, string revision, bool peel)
     {
-        if (revision.Length == 0 || revision.StartsWith('-') || revision.Contains(':') || revision.Contains(".."))
-            return null;
+        if (!(revision == "HEAD" || IsPlainRef(revision) || LandingGit.IsOid(revision))) return null;
+        if (revision != "HEAD" && IsPlainRef(revision) && repo.Refs[revision] is null) return null;
         var target = repo.Lookup(revision);
-        var commit = target is Commit c ? c : target?.Peel<Commit>();
+        var commit = target as Commit ?? (peel ? target?.Peel<Commit>() : null);
         return commit is null ? null : Ok(commit.Sha + "\n");
     }
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>
     private static string? Direct(Repository repo, string name) =>
-        IsFullRef(name) && repo.Refs[name] is DirectReference direct && LandingGit.IsOid(direct.TargetIdentifier)
+        IsPlainRef(name) && repo.Refs[name] is DirectReference direct && LandingGit.IsOid(direct.TargetIdentifier)
             ? direct.TargetIdentifier : null;
 
-    private static bool IsFullRef(string name) => name.StartsWith("refs/", StringComparison.Ordinal) && !name.Contains("..");
-
-    private static LandingGitResult? PushUrls(Repository repo)
+    /// <summary>A full ref name git would accept as written (libgit2 normalises some it would refuse).</summary>
+    private static bool IsPlainRef(string name)
     {
-        // A linked worktree's handle resolves refs through the common dir but does not load the
-        // common config (no origin), so its push URL is git's to answer.
-        if (File.Exists(Path.Combine(repo.Info.Path, "commondir"))) return null;
-        var config = repo.Config;
-        foreach (var entry in config)
-        {
-            var key = entry.Key.ToLowerInvariant();
-            if (key.StartsWith("url.", StringComparison.Ordinal)
-                && (key.EndsWith(".insteadof", StringComparison.Ordinal) || key.EndsWith(".pushinsteadof", StringComparison.Ordinal)))
-                return null;
-        }
-        // Only the repository's own config: a git child may run with another HOME/global config
-        // (LandingGit.ConfigureProcess), so an origin defined at any other level is git's to answer.
-        if (config.Find(@"^remote\.origin\.(push)?url$").Any(e => e.Level != ConfigurationLevel.Local)) return null;
-        var push = config.Find(@"^remote\.origin\.pushurl$", ConfigurationLevel.Local).Select(e => e.Value).ToList();
-        var urls = push.Count != 0 ? push : config.Find(@"^remote\.origin\.url$", ConfigurationLevel.Local).Select(e => e.Value).ToList();
-        if (urls.Count == 0) return null;
-        return Ok(string.Concat(urls.Select(u => u + "\n")));
+        if (!name.StartsWith("refs/", StringComparison.Ordinal) || name.EndsWith('/') || name.EndsWith(".lock", StringComparison.Ordinal))
+            return false;
+        if (name.Contains("//") || name.Contains("..") || name.Contains("@{") || name.Contains("/.")) return false;
+        foreach (var c in name)
+            if (c < 0x20 || c == 0x7f || c is ' ' or '~' or '^' or ':' or '?' or '*' or '[' or '\\') return false;
+        return true;
     }
 
+    private static LandingGitResult? PathAnswer(string? path) => path is not null && GitRealPath(path) is { } real ? Ok(real + "\n") : null;
+
+    /// <summary>
+    /// An existing directory's real path the way git prints it: on-disk case, junctions/symlinks and
+    /// subst drives resolved, no trailing separator, forward slashes on Windows. Null for UNC paths
+    /// or anything that cannot be resolved.
+    /// </summary>
+    internal static string? GitRealPath(string path)
+    {
+        var trimmed = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        if (!Directory.Exists(trimmed)) return null;
+        if (!OperatingSystem.IsWindows())
+            return RealPathUnix(trimmed);
+        var final = FinalPathWindows(trimmed);
+        if (final is null) return null;
+        if (final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return null;
+        if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
+        if (final.Length < 2 || final[1] != ':' || final.StartsWith(@"\\", StringComparison.Ordinal)) return null;
+        final = char.ToUpperInvariant(final[0]) + final[1..];
+        return Path.TrimEndingDirectorySeparator(final).Replace('\\', '/');
+    }
+
+    private static string? FinalPathWindows(string path)
+    {
+        const uint FileReadAttributes = 0x80, ShareAll = 0x7, OpenExisting = 3, BackupSemantics = 0x02000000;
+        using var handle = CreateFileW(path, FileReadAttributes, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero);
+        if (handle.IsInvalid) return null;
+        var buffer = new StringBuilder(1024);
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0 /* FILE_NAME_NORMALIZED | VOLUME_NAME_DOS */);
+        if (length == 0 || length >= buffer.Capacity) return null;
+        return buffer.ToString(0, (int)length);
+    }
+
+    private static string? RealPathUnix(string path)
+    {
+        var resolved = realpath(path, IntPtr.Zero);
+        if (resolved == IntPtr.Zero) return null;
+        try { return Marshal.PtrToStringUTF8(resolved); }
+        finally { free(resolved); }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern IntPtr realpath(string path, IntPtr resolved);
+
+    [DllImport("libc")]
+    private static extern void free(IntPtr pointer);
+
     private static LandingGitResult Ok(string output) => new(0, output, "");
+
+    /// <summary>A non-zero answer carries the same diagnostic the process path sets for that exit code.</summary>
+    private static LandingGitResult Exit(int code) => new(code, "", $"git_exit_{code}");
 }

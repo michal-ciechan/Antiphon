@@ -112,50 +112,37 @@ public class LandingGit : ILandingGit
         return await ExecuteScopedAsync(repository, arguments, started, options, ct);
     }
 
-    private (bool Reads, bool RemoteConfig)? _inProcessEligibility;
+    private bool? _inProcessEligible;
 
     /// <summary>
-    /// Whether this instance's git children see the same repository and config libgit2 does. A probe
-    /// start info is passed through <see cref="ConfigureProcess"/> once: another executable, or any
-    /// variable that redirects the repository, turns in-process reads off; injected config (an
-    /// environment GIT_CONFIG_KEY_n or a <c>-c</c> argument) that could change the push URL turns
-    /// off only the <c>remote get-url</c> answer.
+    /// Whether this instance's git children read the same repository libgit2 opens. A probe start
+    /// info is passed through <see cref="ConfigureProcess"/> once: another executable, or any variable
+    /// that redirects the repository, turns in-process reads off. Config differences (HOME,
+    /// GIT_CONFIG_*) do not matter: no answered command reads config. A config that would make git
+    /// itself fail (broken file, safe.directory refusal) is then seen by the next git command instead,
+    /// and every mutation is still a git process.
     /// </summary>
-    private (bool Reads, bool RemoteConfig) InProcessEligibility()
+    private bool InProcessEligible()
     {
-        if (_inProcessEligibility is { } known) return known;
+        if (_inProcessEligible is { } known) return known;
         var probe = new ProcessStartInfo("git");
-        bool reads, remote;
+        bool eligible;
         try
         {
             ConfigureProcess(probe);
             string[] redirects = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"];
-            reads = probe.FileName == "git" && !redirects.Any(name =>
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+                "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE"];
+            eligible = probe.FileName == "git" && !redirects.Any(name =>
                 !string.IsNullOrEmpty(probe.Environment.TryGetValue(name, out var v) ? v : Environment.GetEnvironmentVariable(name)));
-            static bool Touches(string? text) => text is not null
-                && (text.Contains("insteadof", StringComparison.OrdinalIgnoreCase) || text.Contains("remote.", StringComparison.OrdinalIgnoreCase));
-            remote = reads
-                && !probe.Environment.Where(e => e.Key.StartsWith("GIT_CONFIG_KEY_", StringComparison.Ordinal)).Any(e => Touches(e.Value))
-                && !probe.Environment.ContainsKey("GIT_CONFIG_PARAMETERS")
-                && !probe.ArgumentList.Any(Touches);
         }
-        catch (Exception) { reads = false; remote = false; }
-        var result = (reads, remote);
-        _inProcessEligibility = result;
-        return result;
+        catch (Exception) { eligible = false; }
+        _inProcessEligible = eligible;
+        return eligible;
     }
 
-    private LandingGitResult? InProcessAnswer(string repository, IReadOnlyList<string> arguments)
-    {
-        if (!InProcessGitReads.Enabled) return null;
-        var (reads, remote) = InProcessEligibility();
-        if (!reads) return null;
-        var scope = Scope;
-        if (scope is not null) return InProcessGitReads.TryAnswer(repository, arguments, scope.Repositories, remote);
-        using var once = new InProcessGitReads.Repositories();
-        return InProcessGitReads.TryAnswer(repository, arguments, once, remote);
-    }
+    private LandingGitResult? InProcessAnswer(string repository, IReadOnlyList<string> arguments) =>
+        InProcessGitReads.Enabled && InProcessEligible() ? InProcessGitReads.TryAnswer(repository, arguments) : null;
 
     private async Task<LandingGitResult> ExecuteScopedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
@@ -710,8 +697,6 @@ public class LandingGit : ILandingGit
             = new(StringComparer.Ordinal);
         public ConcurrentDictionary<string, string> Canonical { get; } = new(StringComparer.Ordinal);
         public ConcurrentDictionary<string, string> Common { get; } = new(StringComparer.Ordinal);
-        /// <summary>One libgit2 handle per repository for the whole operation (in-process reads).</summary>
-        public InProcessGitReads.Repositories Repositories { get; } = new();
 
         public void Invalidate(bool topology)
         {
@@ -725,7 +710,6 @@ public class LandingGit : ILandingGit
         public void Dispose()
         {
             Disposed = true;
-            Repositories.Dispose();
             if (ReferenceEquals(owner._scope.Value, this)) owner._scope.Value = null;
         }
     }
