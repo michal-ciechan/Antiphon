@@ -842,7 +842,7 @@ public sealed class VolumeRetirementContentTests
             case "$kind" in
                 extra-ref) printf '%s\n' "$oid" > "$dir/refs/heads/other" ;;
                 stash) printf '%s\n' "$oid" > "$dir/refs/stash" ;;
-                logs) mkdir -p -- "$dir/logs"; printf '%s %s x <x@x> 1 +0000\tx\n' 0000000000000000000000000000000000000000 "$oid" > "$dir/logs/HEAD" ;;
+                logs) mkdir -p -- "$dir/logs/refs/heads"; printf '%s %s x <x@x> 1 +0000\tx\n' 0000000000000000000000000000000000000000 "$oid" > "$dir/logs/refs/heads/main" ;;
                 packed-refs) printf '%s refs/heads/kept\n' "$oid" > "$dir/packed-refs" ;;
                 hooks) mkdir -p -- "$dir/hooks"; printf '#!/bin/sh\n' > "$dir/hooks/post-checkout"; chmod +x "$dir/hooks/post-checkout" ;;
                 remote) git config --file "$dir/config" remote.origin.url https://fixture.invalid/x.git ;;

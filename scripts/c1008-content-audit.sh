@@ -408,6 +408,79 @@ c1609_scan_git() {
     done < <(find "$base" -xdev -name .git -print0 2>/dev/null || true)
 }
 
+# Claude Code keeps one bash-edit-diff snapshot Git directory per Bash call in the
+# runner's /tmp: claude-<uid>/bash-edit-diff/<n>-<n>-<hex16>. It holds one synthetic
+# parentless "snapshot" commit on refs/heads/main, with objects borrowed through
+# alternates. Only that exact shape in the tmp volume is disposable tool scratch:
+# no logs, packed-refs, hooks, worktrees, stash, other ref, remote or include.
+# Every variant, and the same shape in the work volume, stays evidence-name.
+c1609_tool_snapshot() {
+    local role="$1" path="$2" dir rel entry name oid raw size config tree main=0
+    local stamp='bash-edit-diff <bash-edit-diff@localhost> 1000000000 +0000' nl=$'\n'
+    local -A present=()
+    [ "$role" = tmp ] && [ -n "${tmp_root:-}" ] && [ "${path##*/}" = HEAD ] || return 1
+    dir="${path%/HEAD}"
+    rel="${dir#"$tmp_root"/}"
+    [ "$rel" != "$dir" ] || return 1
+    [[ "$rel" =~ ^claude-[1-9][0-9]{0,9}/bash-edit-diff/[0-9]{1,20}-[0-9]{1,20}-[0-9a-f]{16}$ ]] || return 1
+    for entry in "$tmp_root/${rel%%/*}" "${dir%/*}" "$dir"; do
+        [ -d "$entry" ] && [ ! -L "$entry" ] || return 1
+    done
+    find -P "$dir" -mindepth 1 -maxdepth 1 -print0 > "$scratch/c1609-snapshot" 2>/dev/null || return 1
+    while IFS= read -r -d '' entry; do
+        name="${entry##*/}"
+        case "$name" in
+            HEAD|config|config.global|index) [ -f "$entry" ] && [ ! -L "$entry" ] || return 1 ;;
+            info|objects|refs) [ -d "$entry" ] && [ ! -L "$entry" ] || return 1 ;;
+            *) return 1 ;;
+        esac
+        present[$name]=1
+    done < "$scratch/c1609-snapshot"
+    for name in HEAD config objects refs; do [ -n "${present[$name]+x}" ] || return 1; done
+    [ "$(stat -c %s -- "$path")" = 21 ] && [ "$(cat -- "$path")" = 'ref: refs/heads/main' ] || return 1
+    find -P "$dir/refs" -mindepth 1 -print0 > "$scratch/c1609-snapshot" 2>/dev/null || return 1
+    while IFS= read -r -d '' entry; do
+        case "${entry#"$dir/"}" in
+            refs/heads|refs/tags) [ -d "$entry" ] && [ ! -L "$entry" ] || return 1 ;;
+            refs/heads/main) [ -f "$entry" ] && [ ! -L "$entry" ] || return 1; main=1 ;;
+            *) return 1 ;;
+        esac
+    done < "$scratch/c1609-snapshot"
+    [ "$main" = 1 ] || return 1
+    if [ -n "${present[info]+x}" ]; then
+        find -P "$dir/info" -mindepth 1 -print0 > "$scratch/c1609-snapshot" 2>/dev/null || return 1
+        while IFS= read -r -d '' entry; do
+            case "${entry#"$dir/info/"}" in
+                exclude|attributes) [ -f "$entry" ] && [ ! -L "$entry" ] || return 1 ;;
+                *) return 1 ;;
+            esac
+        done < "$scratch/c1609-snapshot"
+    fi
+    # Read as files: --file follows no include and opens no repository.
+    for config in "$dir/config" "$dir/config.global"; do
+        [ -f "$config" ] || continue
+        git config --file "$config" --name-only --list > "$scratch/c1609-snapshot" 2>/dev/null || return 1
+        while IFS= read -r name || [ -n "$name" ]; do
+            case "${name,,}" in
+                include.*|includeif.*|filter.*|fsmonitor.*|diff.external|core.hookspath|core.sshcommand|core.worktree|protocol.*|remote.*|extensions.*)
+                    return 1
+                    ;;
+            esac
+        done < "$scratch/c1609-snapshot"
+    done
+    [ "$(stat -c %s -- "$dir/refs/heads/main")" = 41 ] || return 1
+    oid="$(cat -- "$dir/refs/heads/main")" || return 1
+    [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+    size="$(git --git-dir="$dir" cat-file -s "$oid" 2>/dev/null)" || return 1
+    raw="$(git --git-dir="$dir" cat-file commit "$oid" 2>/dev/null; printf x)" || return 1
+    raw="${raw%x}"
+    [ "${#raw}" = "$size" ] || return 1
+    tree="${raw:5:40}"
+    [[ "$tree" =~ ^[0-9a-f]{40}$ ]] || return 1
+    [ "$raw" = "tree $tree${nl}author $stamp${nl}committer $stamp${nl}${nl}snapshot$nl" ] || return 1
+    printf 'disposable-fixture classifier=bash-edit-diff-v1 path=%s commit=%s\n' "$(rel_repo "$dir")" "$oid"
+}
+
 c1609_scan_evidence() {
     local base="$1" role="$2" path rel
     [ -d "$base" ] || return 0
@@ -415,6 +488,7 @@ c1609_scan_evidence() {
         case "$path" in
             */.git|*/.git/*) continue ;;
         esac
+        if c1609_tool_snapshot "$role" "$path"; then continue; fi
         rel="$(rel_repo "$path")"
         c1609_finding "$role" "$rel" evidence null null evidence-name
         [ -n "${c1609_block_reason:-}" ] || c1609_block_reason=evidence-name
