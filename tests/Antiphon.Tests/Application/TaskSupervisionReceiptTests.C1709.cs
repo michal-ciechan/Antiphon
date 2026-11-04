@@ -240,7 +240,7 @@ public sealed partial class TaskSupervisionReceiptTests
         await using var seed = h.Context();
         var operationId = Guid.NewGuid();
         var now = h.Clock.GetUtcNow().UtcDateTime;
-        seed.AgentTaskLandings.Add(new AgentTaskLanding { Id = operationId, TaskId = taskId,
+        seed.AgentTaskLandings.Add(new AgentTaskLanding { Id = operationId, TaskId = h.TaskId,
             Active = false, CreatedAt = now, UpdatedAt = now });
         seed.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId,
             Title = "Sourced completion recovery", Goal = "Recover the owed completion note",
