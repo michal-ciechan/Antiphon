@@ -100,6 +100,72 @@ public sealed class GitPushUrlCacheTests
     }
 
     [Test]
+    public async Task Worktree_config_created_after_the_fill_is_asked_again()
+    {
+        var (fixture, git) = await CreateAsync();
+        await using var _ = fixture;
+        await fixture.RequiredAsync(fixture.Repository, "config", "extensions.worktreeConfig", "true");
+        var before = (await UrlAsync(git, fixture.Source)).Trim();
+        before.ShouldBe(fixture.Remote);
+
+        var wt = Path.Combine(fixture.Root, "wt.git");
+        await fixture.RequiredAsync(fixture.Source, "config", "--worktree", "remote.origin.pushurl", wt);
+
+        (await UrlAsync(git, fixture.Source)).Trim().ShouldBe(wt);
+        git.Started("remote get-url").ShouldBe(2);
+    }
+
+    [Test]
+    public async Task A_removed_worktree_is_not_replayed()
+    {
+        var (fixture, git) = await CreateAsync();
+        await using var _ = fixture;
+        var extra = Path.Combine(fixture.Root, "trees", "extra");
+        await fixture.RequiredAsync(fixture.Repository, "worktree", "add", "--detach", extra, fixture.SeedSha);
+        await UrlAsync(git, extra);
+        await fixture.RequiredAsync(fixture.Repository, "worktree", "remove", "--force", extra);
+        Directory.CreateDirectory(extra); // the path exists again, but is no checkout
+
+        var after = await git.RunAsync(extra, GetUrl, CancellationToken.None);
+        git.Started("remote get-url").ShouldBe(2, "a removed checkout is a changed layout");
+        after.Output.Trim().ShouldNotBe(fixture.Remote, "git answers for whatever repository now encloses the path");
+    }
+
+    [Test]
+    public async Task Legacy_remote_files_are_stamped()
+    {
+        var (fixture, git) = await CreateAsync();
+        await using var _ = fixture;
+        await fixture.RequiredAsync(fixture.Repository, "remote", "remove", "origin");
+        var remotes = Path.Combine(fixture.Repository, ".git", "remotes");
+        Directory.CreateDirectory(remotes);
+        await File.WriteAllTextAsync(Path.Combine(remotes, "origin"), "URL: C:/legacy/one.git\n");
+        (await UrlAsync(git, fixture.Repository)).Trim().ShouldBe("C:/legacy/one.git");
+
+        await File.WriteAllTextAsync(Path.Combine(remotes, "origin"), "URL: C:/legacy/two.git\n");
+        (await UrlAsync(git, fixture.Repository)).Trim().ShouldBe("C:/legacy/two.git");
+    }
+
+    [Test]
+    public async Task A_one_byte_change_that_is_not_valid_utf8_is_still_a_change()
+    {
+        var (fixture, git) = await CreateAsync();
+        await using var _ = fixture;
+        await UrlAsync(git, fixture.Repository);
+        var config = Path.Combine(fixture.Repository, ".git", "config");
+        await File.AppendAllTextAsync(config, "[antiphon]\n\tnote = x\n");
+        var bytes = await File.ReadAllBytesAsync(config);
+        bytes[^3] = 0xE9; // 'x' -> a lone Latin-1 byte
+        await File.WriteAllBytesAsync(config, bytes);
+        await UrlAsync(git, fixture.Repository);
+        bytes[^3] = 0xE8; // another invalid byte: same decoded text, different bytes
+        await File.WriteAllBytesAsync(config, bytes);
+        await UrlAsync(git, fixture.Repository);
+
+        git.Started("remote get-url").ShouldBe(3, "raw bytes are hashed, not decoded text");
+    }
+
+    [Test]
     public async Task An_include_is_never_cached()
     {
         var (fixture, git) = await CreateAsync();

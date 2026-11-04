@@ -88,24 +88,74 @@ internal sealed class GitPushUrlCache
             if (scope == "system") systemFile = full;
         }
 
-        // Locations git reads even when they hold nothing today.
-        if (Env("GIT_CONFIG_GLOBAL") is { } global) files.Add(Path.GetFullPath(global));
+        // The repository itself: its .git entry (directory, or the gitfile's pointer) and, through it,
+        // the git dir and common dir. A removed, re-pointed or re-created checkout is a new layout.
+        var dotGit = Path.Combine(repository, ".git");
+        files.Add(dotGit);
+        if (GitDirectories(dotGit) is not { } dirs) return null;
+        var (gitDir, common) = dirs;
+        files.Add(Path.Combine(gitDir, "commondir"));
+        files.Add(Path.Combine(common, "config"));
+        // Read even when empty or absent today: worktree config (extensions.worktreeConfig, which
+        // git sparse-checkout turns on) and the legacy remote files git still honours.
+        files.Add(Path.Combine(gitDir, "config.worktree"));
+        files.Add(Path.Combine(common, "config.worktree"));
+        files.Add(Path.Combine(common, "remotes", "origin"));
+        files.Add(Path.Combine(common, "branches", "origin"));
+
+        // Global and system locations the git child reads even when they hold nothing today.
+        if (Env("GIT_CONFIG_GLOBAL") is { } global) files.Add(Path.GetFullPath(global, repository));
         else
         {
-            var home = Env("HOME") ?? Env("USERPROFILE");
-            if (home is null) return null;
-            files.Add(Path.Combine(home, ".gitconfig"));
-            files.Add(Path.Combine(Env("XDG_CONFIG_HOME") ?? Path.Combine(home, ".config"), "git", "config"));
+            // Git for Windows: HOME, else HOMEDRIVE+HOMEPATH, else USERPROFILE. Every candidate is
+            // stamped; an extra file only costs a miss.
+            string?[] homes = [Env("HOME"),
+                Env("HOMEDRIVE") is { } drive && Env("HOMEPATH") is { } homePath ? drive + homePath : null,
+                Env("USERPROFILE")];
+            var any = false;
+            foreach (var home in homes.OfType<string>().Distinct())
+            {
+                any = true;
+                files.Add(Path.Combine(home, ".gitconfig"));
+                files.Add(Path.Combine(home, ".config", "git", "config"));
+            }
+            if (!any) return null;
+            if (Env("XDG_CONFIG_HOME") is { } xdg) files.Add(Path.Combine(xdg, "git", "config"));
         }
-        if (Env("GIT_CONFIG_SYSTEM") is { } system) files.Add(Path.GetFullPath(system));
-        else if (Env("GIT_CONFIG_NOSYSTEM") is null && systemFile is null) return null; // cannot locate it
+        if (Env("GIT_CONFIG_SYSTEM") is { } system) files.Add(Path.GetFullPath(system, repository));
+        else if (!IsTrue(Env("GIT_CONFIG_NOSYSTEM")) && systemFile is null) return null; // cannot locate it
 
         foreach (var file in files)
         {
             if (!File.Exists(file)) continue;
-            if (ReadShared(file) is not { } text || text.Contains("[include", StringComparison.OrdinalIgnoreCase)) return null;
+            if (ReadShared(file) is not { } bytes) return null;
+            if (System.Text.Encoding.UTF8.GetString(bytes).Contains("[include", StringComparison.OrdinalIgnoreCase)) return null;
         }
         return [.. files];
+    }
+
+    /// <summary>git's boolean reading of an environment value (true/yes/on/1, case-insensitive).</summary>
+    private static bool IsTrue(string? value) =>
+        value is not null && (value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on");
+
+    /// <summary>The git dir and common dir behind a checkout's .git entry; null when it is neither a
+    /// directory nor a well-formed gitfile (git's to judge).</summary>
+    private static (string GitDir, string Common)? GitDirectories(string dotGit)
+    {
+        string gitDir;
+        if (Directory.Exists(dotGit)) gitDir = dotGit;
+        else if (File.Exists(dotGit))
+        {
+            var text = ReadShared(dotGit) is { } bytes ? System.Text.Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n') : null;
+            if (text is null || !text.StartsWith("gitdir: ", StringComparison.Ordinal) || text.Contains('\n')) return null;
+            gitDir = Path.GetFullPath(text["gitdir: ".Length..], Path.GetDirectoryName(dotGit)!);
+        }
+        else return null;
+        var commondir = Path.Combine(gitDir, "commondir");
+        if (!File.Exists(commondir)) return (gitDir, gitDir);
+        var line = ReadShared(commondir) is { } raw ? System.Text.Encoding.UTF8.GetString(raw).TrimEnd('\r', '\n') : null;
+        if (string.IsNullOrEmpty(line) || line.Contains('\n') || line != line.Trim()) return null;
+        return (gitDir, Path.GetFullPath(line, gitDir));
     }
 
     public static (string Path, string Hash)[] Stamp(string[] files) => [.. files.Select(f => (f, Hash(f)))];
@@ -118,21 +168,24 @@ internal sealed class GitPushUrlCache
         _entries[repository] = new Entry(result, before);
     }
 
+    /// <summary>The raw bytes' hash; a directory's existence and creation time; "absent".</summary>
     private static string Hash(string path)
     {
+        if (Directory.Exists(path)) return "dir:" + Directory.GetCreationTimeUtc(path).Ticks;
         if (!File.Exists(path)) return "absent";
-        var text = ReadShared(path);
-        return text is null ? "unreadable:" + Guid.NewGuid() : Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+        var bytes = ReadShared(path);
+        return bytes is null ? "unreadable:" + Guid.NewGuid() : Convert.ToHexString(SHA256.HashData(bytes));
     }
 
     /// <summary>Reads without blocking git's rename-over-write (FileShare.Delete), or null.</summary>
-    private static string? ReadShared(string path)
+    private static byte[]? ReadShared(string path)
     {
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream);
-            return reader.ReadToEnd();
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            return copy.ToArray();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
