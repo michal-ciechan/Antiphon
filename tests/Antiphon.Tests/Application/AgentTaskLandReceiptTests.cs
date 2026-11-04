@@ -231,7 +231,7 @@ public sealed partial class AgentTaskLandReceiptTests
     [Test]
     public async Task C488_ApprovalReceiptNeedsTimeFloor() => await C467_V11_RejectFalseReceipts("old-time");
 
-    internal static async Task<AgentTaskLandNotification> SeedAsync(AppDbContext db, Guid session, AgentTaskReplyTo replyTo = AgentTaskReplyTo.Session, string? detail = null)
+    internal static async Task<AgentTaskLandNotification> SeedAsync(AppDbContext db, Guid session, AgentTaskReplyTo replyTo = AgentTaskReplyTo.Session, string? detail = null, Guid? id = null)
     {
         var taskId = Guid.NewGuid();
         var task = new AgentTask { Id = taskId, RootTaskId = taskId, Title = "C467 receipt", Goal = "receipt fixture",
@@ -246,6 +246,8 @@ public sealed partial class AgentTaskLandReceiptTests
         request.TerminalEventId = terminal.Id;
         task.CurrentLandRequestId = request.Id;
         var note = LandNotificationPayload.Create(request, terminal, LandNotificationKind.Outcome);
+        // CARD-1705: a caller that needs a fixed scan order names the row id; the body keeps its generated header.
+        if (id is Guid fixedId) note.Id = fixedId;
         db.AgentTasks.Add(task);
         db.AgentTaskLandRequests.Add(request);
         db.AgentTaskEvents.Add(terminal);
