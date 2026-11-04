@@ -90,6 +90,8 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 }
 
                 Guid? cursor = null;
+                // CARD-1705: callers whose queue lock stayed held this pass; their notices wait for the next.
+                var busySessions = new HashSet<Guid>();
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     await using var scope = scopes.CreateAsyncScope();
@@ -104,7 +106,7 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                         {
                             await using var rowScope = scopes.CreateAsyncScope();
                             await rowScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
-                                .ReconcileAsync(id, stoppingToken);
+                                .ReconcileAsync(id, stoppingToken, busySessions);
                         }
                         catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                         { logger.LogWarning(ex, "Land notification {NotificationId} remains unresolved", id); }
