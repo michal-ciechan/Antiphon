@@ -1,5 +1,6 @@
 # CARD-1584 source-derived expanded roster. The e5a867361937752b959c1451824ab9716fac83c0
 # census recorded 177 identities. C467_RetainedEvidenceCompletesCleanup is the later case (178).
+# rc-0b05506b adds three land-verifier progress probes (186).
 # Planner-only identities, not captured TUnit UIDs or native execution evidence.
 # class|original method|Arguments contents (empty for a non-data test)
 Antiphon.E2E.AgentE2ETests|Agents_page_creates_agent_and_assigns_card_to_queue|
@@ -117,6 +118,9 @@ Antiphon.E2E.LandDeliveryFixtureProbeTests|Missing_polling_attention_reports_seq
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Stalled_receipt_names_identity_last_progress_and_safe_log_tail|
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Busy_queued_outcome_follows_protocol_git_past_the_quiet_window|
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Silent_busy_queued_outcome_names_recipient_and_last_evidence|
+Antiphon.E2E.LandDeliveryFixtureProbeTests|ProtocolProgress_counts_committed_protocol_verify_records|
+Antiphon.E2E.LandDeliveryFixtureProbeTests|Stalled_receipt_names_the_last_verifier_phase|
+Antiphon.E2E.LandDeliveryFixtureProbeTests|Verifier_evidence_heartbeats_in_flight_stops_at_its_budget_and_records_the_end|
 Antiphon.E2E.OrchestratorE2ETests|Orchestrator_user_can_view_snapshot_and_pause_resume|
 Antiphon.E2E.OutputDistillationApplyCanaryTests|Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup|
 Antiphon.E2E.OutputDistillationCanaryGuardTests|Configuration_refuses_unowned_resources_before_start|"absent"
