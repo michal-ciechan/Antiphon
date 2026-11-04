@@ -412,7 +412,7 @@ public sealed class WorkspaceParkPublicationTests
                 if (resolve != "control") result.Reason.ShouldBe("identity_path_unowned", guard);
             }
             directories.ShouldNotBeEmpty(guard + ": Git ran for the admitted checkout");
-            directories.ShouldAllBe(d => InMirror(d), guard + ": Git only in the admitted checkout");
+            directories.Where(d => !InMirror(d)).ShouldBeEmpty(guard + ": Git only in the admitted checkout");
         }
     }
 
