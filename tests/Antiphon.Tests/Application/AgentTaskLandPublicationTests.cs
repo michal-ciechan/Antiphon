@@ -229,7 +229,8 @@ public sealed partial class AgentTaskLandPublicationTests
         bool TargetObservation(IReadOnlyList<string> args) => args[0] switch
         {
             "ls-remote" => args.Contains(h.Fixture.TargetRef),
-            "fetch" => args.Any(a => a.StartsWith(h.Fixture.TargetRef + ":", StringComparison.Ordinal)),
+            // The observation pin: a fetch, or a create-only update-ref when the commit is local.
+            "fetch" or "update-ref" => LandObservation.IsPinStep(args, h.Fixture.TargetRef),
             "merge-base" => h.Fixture.Git.Trace.Any(t => t[0] == "ls-remote" && t.Contains(h.Fixture.TargetRef)),
             _ => false,
         };
@@ -244,7 +245,7 @@ public sealed partial class AgentTaskLandPublicationTests
                 "empty" when args[0] == "ls-remote" => new(0, "", ""),
                 "malformed" when args[0] == "ls-remote" => new(0, "invalid\\trefs/heads/master\\n", ""),
                 "missing" when args[0] == "ls-remote" => new(2, "", ""),
-                "fetch-error" when args[0] == "fetch" => new(128, "", "synthetic-private-marker"),
+                "fetch-error" when LandObservation.IsPinStep(args) => new(128, "", "synthetic-private-marker"),
                 "ancestry-error" when args[0] == "merge-base" => new(128, "", "synthetic-private-marker"),
                 _ => null,
             });

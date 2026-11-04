@@ -138,7 +138,7 @@ public sealed class AgentTaskLandRefusedRetryTests
         await s.RequestAsync();
         var b = await s.ExecuteAsync();
         s.Trace.ShouldContain(t => t.Args[0] == "ls-remote");
-        s.Trace.ShouldContain(t => t.Args[0] == "fetch" && t.Args.Any(a => a.Contains(b.RecoveryRefPrefix)));
+        s.Trace.ShouldContain(t => LandObservation.IsPinStep(t.Args, null) && (LandObservation.Pin(t.Args) ?? "").Contains(b.RecoveryRefPrefix));
         s.Trace.ShouldContain(t => t.Args[0] == "merge-base");
         s.Trace.ShouldContain(t => s.IsTargetStatus(t.Repository, t.Args));
         await s.AssertReplacementAsync(b);

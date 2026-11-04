@@ -1341,8 +1341,7 @@ public class LandingGit : ILandingGit
                 return new(null, false, "remote_response_invalid");
             // A unique immutable observation ref avoids FETCH_HEAD/shared tracking state.
             var pin = $"{observationRef}/{Guid.NewGuid():N}";
-            var fetch = await RunAsync(repository,
-                ["fetch", "--no-tags", "--no-write-fetch-head", endpoint, $"{destination.FullRef}:{pin}"], ct);
+            var fetch = await PinObservationAsync(repository, endpoint, destination.FullRef, pin, fields[0], ct);
             if (!fetch.Succeeded) return new(null, false, "remote_fetch_failed");
             var observed = await CommitAsync(repository, pin, ct);
             if (observed != fields[0]) continue;
@@ -1357,6 +1356,29 @@ public class LandingGit : ILandingGit
             };
         }
         return new(null, false, "remote_changed_during_confirmation");
+    }
+
+    /// <summary>
+    /// Pins the commit a fresh <c>ls-remote</c> just advertised for <paramref name="remoteRef"/> under
+    /// the unique observation ref <paramref name="pin"/>. When that commit is already in the local object
+    /// store (the land pushed it, or an earlier observation fetched it) a fetch would transfer nothing
+    /// and only create the pin, at three processes (fetch, upload-pack, rev-list), so the pin is created
+    /// directly with a create-only <c>update-ref &lt;pin&gt; &lt;sha&gt; &lt;zero&gt;</c>. Otherwise it fetches as before.
+    /// Either way the caller reads the pin back and compares it with the advertisement; the remote
+    /// read (the observation itself) is the ls-remote that always precedes this.
+    /// </summary>
+    internal const string ObservationMessagePrefix = "antiphon observe ";
+
+    private async Task<LandingGitResult> PinObservationAsync(string repository, string endpoint, string remoteRef,
+        string pin, string advertised, CancellationToken ct)
+    {
+        var local = await RunAsync(repository, ["rev-parse", "--verify", advertised + "^{commit}"], ct);
+        if (local.Succeeded && local.Output.Trim() == advertised)
+            // The message names the observed remote ref, as the fetch's refspec did, for traces.
+            return await RunAsync(repository, ["update-ref", "-m", ObservationMessagePrefix + remoteRef, pin, advertised,
+                new string('0', advertised.Length)], ct);
+        return await RunAsync(repository,
+            ["fetch", "--no-tags", "--no-write-fetch-head", endpoint, $"{remoteRef}:{pin}"], ct);
     }
 
     public virtual async Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
@@ -1391,8 +1413,7 @@ public class LandingGit : ILandingGit
             var pin = $"{observationPrefix}/{Guid.NewGuid():N}";
             var pinCheck = await RunAsync(repository, ["check-ref-format", pin], ct);
             if (!pinCheck.Succeeded) return new(null, null, fingerprint, "invalid_observation_ref");
-            var fetch = await RunAsync(repository,
-                ["fetch", "--no-tags", "--no-write-fetch-head", endpoint, $"{sourceFullRef}:{pin}"], ct);
+            var fetch = await PinObservationAsync(repository, endpoint, sourceFullRef, pin, fields[0], ct);
             if (!fetch.Succeeded) return new(null, null, fingerprint, "source_remote_fetch_failed");
             string observed;
             try { observed = await CommitAsync(repository, pin, ct); }
