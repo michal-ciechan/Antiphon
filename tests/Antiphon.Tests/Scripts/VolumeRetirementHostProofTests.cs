@@ -286,6 +286,84 @@ public sealed class VolumeRetirementHostProofTests
         finally { DeleteOwned(root, "c1609-h6-"); }
     }
 
+    // The desktop writes the proof under C:\src\Antiphon\.antiphon/rolling-server2/<run>/exchange-<n>/
+    // c1008-proof-<op>-<started>-<nonce>: 194 characters, so <name>.bundle is 266 and its .lock 271.
+    // Git for Windows without core.longpaths cannot create a file past MAX_PATH (259), so every
+    // retire-temp preview refused as host-ls-remote status=2 reason=git (2026-11-03 runs c7273562,
+    // c727c831, c7272de4). The seam fails any Git path that could not take a .lock under 259
+    // characters, the way that Git does; the .NET writes are long-path safe.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1693_Desktop_length_proof_directory_keeps_every_git_path_under_max_path()
+    {
+        const string prefix = "c1693-mp-";
+        var root = Directory.CreateTempSubdirectory(prefix).FullName;
+        try
+        {
+            var origin = Path.Combine(root, "origin.git");
+            var work = Path.Combine(root, "work");
+            (await Git(root, "init", "-q", "--bare", origin)).Exit.ShouldBe(0);
+            (await Git(root, "init", "-q", "-b", "main", work)).Exit.ShouldBe(0);
+            await File.WriteAllTextAsync(Path.Combine(work, "published"), "published\n");
+            (await Git(work, "add", "published")).Exit.ShouldBe(0);
+            (await Git(work, "commit", "-qm", "published")).Exit.ShouldBe(0);
+            (await Git(work, "tag", "-a", "v1", "-m", "published")).Exit.ShouldBe(0);
+            (await Git(work, "push", "-q", origin, "main", "--tags")).Exit.ShouldBe(0);
+            string LongDirectory(char fill)
+            {
+                var path = Path.Combine(root, new string(fill, 194 - root.Length - 1));
+                path.Length.ShouldBe(194);
+                Directory.CreateDirectory(path);
+                return path;
+            }
+            var first = LongDirectory('p');
+            var renewed = LongDirectory('r');
+            var violations = Path.Combine(root, "long-git-paths.txt");
+            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
+            var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
+                "$original=${function:Invoke-C1609HostGit}; " +
+                "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='', $InputText=$null, [string]$OutputFile='') " +
+                "foreach($path in @($GitArgs)+@($WorkingDirectory)){if(([string]$path).Length+'.lock'.Length -gt 259){" +
+                "$verb=if($GitArgs[0] -ceq '--git-dir'){$GitArgs[2]}else{$GitArgs[0]}; [IO.File]::AppendAllText($env:C1693_VIOLATIONS,($verb+' length='+([string]$path).Length+[char]10));" +
+                "throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2)}}; " +
+                "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
+                "$io=@{};if($null -ne $InputText){$io.InputText=$InputText};if($OutputFile){$io.OutputFile=$OutputFile}; " +
+                "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory @io }; " +
+                "$previous=@{};if($env:C1693_PREVIOUS){$previous.PreviousProofFile=$env:C1693_PREVIOUS}; " +
+                "Write-C1008HostOriginProof -OriginUrl 'https://fixture.invalid/proof.git' -RepoRelative '" + Repo + "' -OperationId '" + Operation +
+                "' -ProofVersion 2 -PhaseNonce ('b'*32) -InventoryDigest ('c'*64) -ApprovedOrigins @('https://fixture.invalid/proof.git') " +
+                "-ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @previous";
+            var name = Sha(Repo + "\nhttps://fixture.invalid/proof.git");
+
+            var wrote = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", first),
+                ("C1609_LOG", Path.Combine(first, "host-proof.log")), ("C1693_VIOLATIONS", violations), ("C1693_PREVIOUS", "") });
+            var seen = File.Exists(violations) ? File.ReadAllText(violations) : "";
+            seen.ShouldBeEmpty("C1693 a fresh proof hands Git no path past MAX_PATH; " + wrote.Output);
+            wrote.Exit.ShouldBe(0, "C1693 fresh proof at desktop length; " + wrote.Output);
+            var bundle = Path.Combine(first, name + ".bundle");
+            bundle.Length.ShouldBe(266);
+            File.Exists(bundle).ShouldBeTrue("C1693 the bundle lands in the long proof directory");
+            File.Exists(Path.Combine(first, name)).ShouldBeTrue();
+            var check = Path.Combine(root, "check.bundle");
+            File.Copy(bundle, check);
+            var heads = await Git(root, "bundle", "list-heads", check);
+            heads.Exit.ShouldBe(0, heads.Output);
+            heads.Output.ShouldContain("refs/heads/main");
+
+            // A renewal with an unchanged advertisement reuses the previous long-path bundle.
+            var reused = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", renewed),
+                ("C1609_LOG", Path.Combine(renewed, "host-proof.log")), ("C1693_VIOLATIONS", violations),
+                ("C1693_PREVIOUS", Path.Combine(first, name)) });
+            seen = File.Exists(violations) ? File.ReadAllText(violations) : "";
+            seen.ShouldBeEmpty("C1693 a reused renewal hands Git no path past MAX_PATH; " + reused.Output);
+            reused.Exit.ShouldBe(0, "C1693 reused renewal at desktop length; " + reused.Output);
+            File.ReadAllBytes(Path.Combine(renewed, name + ".bundle"))
+                .ShouldBe(File.ReadAllBytes(bundle), "C1693 the reused renewal keeps the proven graph bytes");
+            File.Exists(Path.Combine(renewed, name)).ShouldBeTrue();
+        }
+        finally { DeleteOwned(root, prefix); }
+    }
+
     [Test]
     public void Cleanup_clears_read_only_git_objects_before_windows_shaped_delete()
     {
