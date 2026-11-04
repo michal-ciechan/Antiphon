@@ -168,7 +168,8 @@ public sealed class LegacyCheckNotePublicationService
         string? eventDetail,
         bool suppress,
         string? suppressionReason,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISet<Guid>? busySessions = null)
     {
         await _db.Entry(publication).ReloadAsync(ct);
         if (publication.State == LegacyCheckNoteState.Produced)
@@ -224,7 +225,7 @@ public sealed class LegacyCheckNotePublicationService
         await _db.SaveChangesAsync(ct);
         await _boundary.ReachedAsync("legacy-note-produced", publication.Id, ct);
         if (publication.State == LegacyCheckNoteState.Produced && _notifications is not null)
-            await _notifications.ReconcileAsync(publication.NotificationId, ct);
+            await _notifications.ReconcileAsync(publication.NotificationId, ct, busySessions);
     }
 
     public async Task BindInterpretationAsync(Guid publicationId, CancellationToken ct)
@@ -312,7 +313,11 @@ public sealed class LegacyCheckNotePublicationService
         return changed ? "conflict" : null;
     }
 
-    public async Task RecoverCapturedAsync(Guid publicationId, CancellationToken ct)
+    /// <param name="busySessions">
+    /// CARD-1705: the hosted scan's per-pass busy set. The produced note is committed Queued before its
+    /// inline enqueue, so a caller whose queue lock stays held keeps the note for a later pass.
+    /// </param>
+    public async Task RecoverCapturedAsync(Guid publicationId, CancellationToken ct, ISet<Guid>? busySessions = null)
     {
         await _boundary.ReachedAsync("legacy-captured-scan", publicationId, ct);
         var publication = await _db.LegacyCheckNotePublications.FirstOrDefaultAsync(p => p.Id == publicationId, ct);
@@ -328,7 +333,7 @@ public sealed class LegacyCheckNotePublicationService
                     await SelectOutcomeAsync(publication.Id, run.Result, ct);
                 await _db.Entry(publication).ReloadAsync(ct);
                 if (publication.State == LegacyCheckNoteState.Captured)
-                    await ProduceAsync(publication, publication.InterpretationSnapshotJson ?? run.Result!, "recovered", false, null, ct);
+                    await ProduceAsync(publication, publication.InterpretationSnapshotJson ?? run.Result!, "recovered", false, null, ct, busySessions);
             }
 
             return;
@@ -336,7 +341,7 @@ public sealed class LegacyCheckNotePublicationService
 
         if (!ChecksEnabled() || UtcNow() >= publication.InterpretationDeadlineAt || !await AdmissionStillHoldsAsync(publication, ct))
         {
-            await ProduceAsync(publication, "Captured check could not be interpreted.", "degraded", false, null, ct);
+            await ProduceAsync(publication, "Captured check could not be interpreted.", "degraded", false, null, ct, busySessions);
             return;
         }
     }
