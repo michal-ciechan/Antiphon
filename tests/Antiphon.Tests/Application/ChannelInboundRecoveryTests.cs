@@ -2504,11 +2504,17 @@ public sealed class ChannelInboundRecoveryTests
         });
         await InstallTranscriptReceipt(recovered);
         await Bridge(recovered).DrainPendingAsync(Ct);
+        // The fake records SubmittedBodies before its OnSubmitted transcript sync finishes, so
+        // also wait for that submitted body's UserPrompt row before asserting on the transcript.
         await WaitForAsync(async () =>
         {
             await using var db = Db(schema.ConnectionString);
-            return await db.ChannelInbounds.CountAsync(i => i.ConversationId == chat && i.QueueMessageId != null) == 2
-                && recovered.Adapter.SubmittedBodies.Count == 1;
+            if (await db.ChannelInbounds.CountAsync(i => i.ConversationId == chat && i.QueueMessageId != null) != 2
+                || recovered.Adapter.SubmittedBodies.Count != 1)
+                return false;
+            var submitted = recovered.Adapter.SubmittedBodies[0];
+            return await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == submitted);
         });
         await using var db = Db(schema.ConnectionString);
         var members = await db.ChannelInbounds.Where(i => i.ConversationId == chat).OrderBy(i => i.AcceptedAt).ToListAsync();
