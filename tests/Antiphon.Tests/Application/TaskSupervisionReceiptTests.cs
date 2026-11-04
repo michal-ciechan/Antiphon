@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel]
-public sealed class TaskSupervisionReceiptTests
+public sealed partial class TaskSupervisionReceiptTests
 {
     [Test]
     public async Task C1610_Working_read_measurement_keeps_the_verdict_fresh()
@@ -716,13 +716,15 @@ public sealed class TaskSupervisionReceiptTests
     private static Task InvokeAsync(object target, string method, params object?[] arguments) =>
         (Task)target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, arguments)!;
 
-    private static async Task<BridgeQueueHarness> OpenAsync(TaskCeilingHarness h, Guid? session = null, NoticeInsertFault? fault = null)
+    private static async Task<BridgeQueueHarness> OpenAsync(TaskCeilingHarness h, Guid? session = null, NoticeInsertFault? fault = null,
+        Action<DbContextOptionsBuilder>? configure = null, Action<IServiceCollection>? services = null)
     {
         var bridge = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = h.ConnectionString, PreserveDatabaseOnDispose = true, ClaudeDialogObservation = true,
             AttachSessionId = session, AttachAgentId = session is null ? null : Guid.NewGuid(),
-            ConfigureDbContext = fault is null ? null : b => b.AddInterceptors(fault),
+            ConfigureDbContext = fault is null ? configure : b => b.AddInterceptors(fault),
+            ConfigureServices = services,
         });
         bridge.Adapter.OnSubmitted = async body =>
         {
@@ -749,8 +751,10 @@ public sealed class TaskSupervisionReceiptTests
             NullLogger<CompletionNoteWorkHostedService>.Instance);
         await using var scope = h.Provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
-        await (Task)typeof(CompletionNoteWorkHostedService).GetMethod("RecoverMissingAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .Invoke(worker, [scope.ServiceProvider, db, null, CancellationToken.None])!;
+        var recover = typeof(CompletionNoteWorkHostedService).GetMethod("RecoverMissingAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        // One call is one recovery pass; optional pass state keeps its default.
+        object?[] arguments = [scope.ServiceProvider, db, null, CancellationToken.None];
+        await (Task)recover.Invoke(worker, [.. arguments, .. recover.GetParameters().Skip(arguments.Length).Select(_ => Type.Missing)])!;
     }
 
     private static async Task<List<TranscriptEntry>> PromptsAsync(TaskCeilingHarness h, Guid session, long floor)
