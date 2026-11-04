@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-1637 D-1: the conflicted-file list and the Merge-role refusal text are bounded, so the
 /// LandRefused, Warning and Conflicted events fit AgentTaskEvents.Detail (varchar 4000).
 /// </summary>
+[Category("Unit")]
 public class LandConflictFileSummaryTests
 {
     private static IReadOnlyList<string> Names(int count, int length) => Enumerable.Range(0, count)
