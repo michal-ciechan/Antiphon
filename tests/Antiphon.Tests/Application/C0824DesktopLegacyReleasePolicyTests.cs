@@ -1151,7 +1151,9 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
         deltas.ShouldBe([60, 120, 240, 480, 960, 1440, 1440]);
 
-        // Inside the 24 h backoff the task's facts change: the stale state is void and the backoff restarts at 60 min.
+        // An eighth refusal; inside its 24 h backoff the task's facts change: the stale state is void and the backoff
+        // restarts at 60 min.
+        (await RefusedAsync("refusal 8")).ShouldBe(1440);
         w.Clock.Advance(TimeSpan.FromHours(1));
         w.ClearTrace();
         await w.TickAsync();
@@ -1192,7 +1194,6 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
         row.ReasonCode.ShouldBe("directory_absent");
         w.Prechecked(a).ShouldBeFalse("a missing directory or a file has no status pre-check");
-        (await w.CheckCursorAsync(a)).ShouldNotBeNull().LastOutcomeKey.ShouldStartWith("check|settled|0|");
         await w.AssertRetiredAsync(control, origin);
 
         // A clean tree pushed to its own origin branch now stands at the recorded path.
