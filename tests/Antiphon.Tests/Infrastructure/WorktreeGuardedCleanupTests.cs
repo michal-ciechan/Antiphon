@@ -87,7 +87,7 @@ public sealed class WorktreeGuardedCleanupTests
         await using var h = await RemovalHarness.CreateAsync();
         var reached = false;
         h.H.Fixture.Git.AfterCommand = (_, args, _) => {
-            if (h.Removes == 1 && args[0] == "fetch")
+            if (h.Removes == 1 && LandObservation.IsPinStep(args))
             { reached = true; h.Clock.Advance(TimeSpan.FromSeconds(10)); }
             return Task.CompletedTask;
         };
@@ -108,7 +108,7 @@ public sealed class WorktreeGuardedCleanupTests
         h.H.Fixture.Git.AfterCommand = (_, args, _) => {
             // The retry's registration read finishes before branch authority starts. Spend
             // the remaining allowance inside the latter's fresh remote read.
-            if (h.Removes == 2 && args[0] == "fetch")
+            if (h.Removes == 2 && LandObservation.IsPinStep(args))
             { reached = true; h.Clock.Advance(TimeSpan.FromSeconds(10)); }
             return Task.CompletedTask;
         };
