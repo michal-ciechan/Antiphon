@@ -2699,8 +2699,8 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
 
 # CARD-1698: summary.json records the toolchain versions, floors and warnings under
 # preflight.toolchain; the version comes from the ToolchainVersions seam, never the real git.
-# Invoke-E cannot reach the summary on Linux (fixture project universe), so the record is
-# proved on Get-NightlyToolchainPreflight and its call site in the preflight block.
+# This case proves Get-NightlyToolchainPreflight and its call site in the preflight block;
+# C1698_SummaryJsonRecordsToolchain reads the summary.json a real run writes.
 function Test-C1698_SummaryRecordsToolchain {
     $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $root 'docker') -Force | Out-Null
@@ -2729,6 +2729,43 @@ function Test-C1698_SummaryRecordsToolchain {
     $disk = $impl.IndexOf('$preflight.disk = [ordered]@{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB }')
     $write = $impl.IndexOf('preflight = $preflight')
     Assert-C487 -Cond ($call -gt $disk -and $disk -gt 0 -and $write -gt $call) -Name 'C1698 Summary preflight block records the toolchain' -Detail ('disk=' + $disk + ' call=' + $call + ' write=' + $write)
+}
+
+# CARD-1698: the same record through the real write path. The fixture clone gets every project
+# the policy names (the probe fixtures too, so the project universe matches on Linux) and the two
+# floor sources; Invoke-AntiphonNightlyTests runs its preflight block and writes summary.json,
+# which is read back from disk.
+function Test-C1698_SummaryJsonRecordsToolchain {
+    $fx = New-Efx
+    $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json
+    foreach ($p in @(Get-NightlyPolicyProjectUniverse -PolicyObject $policy)) {
+        $src = Join-Path $repo $p
+        $dest = Join-Path $fx.Clone $p
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
+        Copy-Item -LiteralPath $src -Destination $dest -Force
+    }
+    New-Item -ItemType Directory -Path (Join-Path $fx.Clone 'docker') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'docker/git-minimum-version.sh') -Destination (Join-Path $fx.Clone 'docker/git-minimum-version.sh')
+    Copy-Item -LiteralPath (Join-Path $repo 'global.json') -Destination (Join-Path $fx.Clone 'global.json')
+    $extra = [scriptblock]::Create("`$NightlySeams.ToolchainVersions = { param(`$tool) if (`$tool -eq 'git') { 'git version 2.42.0' } else { '10.0.204 [/fake/sdk]' } }")
+    Write-C487Seams -Path $fx.Seams -TracePath $fx.Trace -Extra $extra
+    $r = Invoke-E -Fx $fx 6>$null
+    $summaryPath = Join-Path $fx.Logs 'summary.json'
+    $json = ''
+    if (Test-Path -LiteralPath $summaryPath) { $json = [IO.File]::ReadAllText($summaryPath) }
+    $tc = $null
+    if ($json) { $tc = ($json | ConvertFrom-Json).preflight.toolchain }
+    $git = $null; $sdk = $null; $w = @()
+    if ($tc) {
+        $git = @($tc.tools | Where-Object { $_.tool -eq 'git' }) | Select-Object -First 1
+        $sdk = @($tc.tools | Where-Object { $_.tool -eq 'dotnet-sdk' }) | Select-Object -First 1
+        $w = @($tc.warnings)
+    }
+    $detail = 'exit=' + $r.ExitCode + ' error=' + $r.Error + ' summary=' + $(if ($json) { 'present' } else { 'missing' }) + ' toolchain=' + $(if ($tc) { ($tc | ConvertTo-Json -Depth 6 -Compress) } else { 'missing' })
+    Assert-C487 -Cond ($null -ne $git -and $git.found -eq '2.42.0' -and $git.floor -eq '2.43' -and $git.status -eq 'below-floor' -and
+        $null -ne $sdk -and $sdk.found -eq '10.0.204' -and $sdk.floor -eq '10.0.204' -and $sdk.status -eq 'ok') -Name 'C1698 Summary json on disk records the versions and floors' -Detail $detail
+    Assert-C487 -Cond ($w.Count -eq 1 -and $w[0].tool -eq 'git' -and ([string]$w[0].message).StartsWith('WARNING: git 2.42.0 is below the minimum 2.43; lands will fail')) -Name 'C1698 Summary json on disk records the warning' -Detail $detail
 }
 
 if ($Case) {

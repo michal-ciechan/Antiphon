@@ -1336,6 +1336,65 @@ function Test-C1698_RunPrintsToolchainWarning {
     Assert-C487 -Cond $same -Name 'C1698 Run exit code unchanged by the warning' -Detail ('below=' + $below.Result.ExitCode + '/' + $below.Result.Phase + ' at=' + $at.Result.ExitCode + '/' + $at.Result.Phase)
 }
 
+# CARD-1698: a toolchain library that fails to load (a throw, or a file PowerShell cannot parse)
+# is the only failure that reaches the run core's wrapper. The run core dot-sources the library
+# from its own directory, so a child harness runs from a copied scripts tree whose library is
+# broken; the run keeps the at-floor exit code and phase and still hops to the tests.
+function Test-C1698_RunLibraryLoadFailure {
+    $at = Invoke-C1698ToolchainRun -GitVersion '2.43.0'
+    $repoRoot = Split-Path $here -Parent
+    $broken = @(
+        @{ Name = 'throws'; Text = "throw 'C1698 toolchain lib load failure'" },
+        @{ Name = 'unparsable'; Text = "function Get-C1698Broken {`n    `$x = 1`n" }
+    )
+    foreach ($b in $broken) {
+        $copy = Join-Path $ResultsDirectory ('broken-lib-' + [guid]::NewGuid().ToString('N'))
+        foreach ($d in @('scripts/lib', 'docker')) { New-Item -ItemType Directory -Path (Join-Path $copy $d) -Force | Out-Null }
+        # The harness, the entry scripts the fixture clone copies, and the whole library directory.
+        # [IO.File]::Copy: per-file Copy-Item over the library costs tens of seconds on Linux.
+        foreach ($n in @('test-nightly-run.ps1', 'nightly-run.ps1', 'nightly-tests.ps1', 'nightly-report.ps1')) {
+            [IO.File]::Copy((Join-Path $here $n), (Join-Path $copy (Join-Path 'scripts' $n)))
+        }
+        foreach ($f in [IO.Directory]::GetFiles($lib)) { [IO.File]::Copy($f, (Join-Path (Join-Path $copy 'scripts') (Join-Path 'lib' ([IO.Path]::GetFileName($f))))) }
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'docker/git-minimum-version.sh') -Destination (Join-Path $copy 'docker/git-minimum-version.sh')
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'global.json') -Destination (Join-Path $copy 'global.json')
+        Set-Content -LiteralPath (Join-Path $copy 'scripts/lib/toolchain-floor.ps1') -Value $b.Text -Encoding ASCII
+        $out = Join-Path $copy 'child-result.json'
+        $saved = $env:C1698_LOAD_FAILURE_OUT
+        $env:C1698_LOAD_FAILURE_OUT = $out
+        try {
+            $console = & pwsh -NoProfile -NonInteractive -File (Join-Path $copy 'scripts/test-nightly-run.ps1') -Case C1698_RunLibraryLoadFailureChild -ResultsDirectory (Join-Path $copy 'results') 2>&1 | Out-String
+        } finally { $env:C1698_LOAD_FAILURE_OUT = $saved }
+        $child = $null
+        if (Test-Path -LiteralPath $out) { $child = [IO.File]::ReadAllText($out) | ConvertFrom-Json }
+        $lines = @()
+        if ($child) { $lines = @($child.lines | ForEach-Object { [string]$_ }) }
+        $w = -1; $hop = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($w -lt 0 -and $lines[$i] -match 'WARNING: the toolchain floor check failed') { $w = $i }
+            if ($hop -lt 0 -and $lines[$i] -match 'running .*nightly-tests\.ps1') { $hop = $i }
+        }
+        $ok = $null -ne $child -and $null -ne $at.Result -and [int]$child.exitCode -eq [int]$at.Result.ExitCode -and
+            [string]$child.phase -eq [string]$at.Result.Phase -and $w -ge 0 -and $hop -gt $w
+        $detail = 'warning=' + $w + ' hop=' + $hop
+        if ($child) { $detail += ' child=' + $child.exitCode + '/' + $child.phase }
+        else { $detail += ' no child result: ' + $console }
+        $detail += ' at=' + $at.Result.ExitCode + '/' + $at.Result.Phase
+        Assert-C487 -Cond $ok -Name ('C1698 Run survives a library that fails to load: ' + $b.Name) -Detail $detail
+    }
+}
+
+# Child half of C1698_RunLibraryLoadFailure; runs only from the copied tree, writes its result.
+function Test-C1698_RunLibraryLoadFailureChild {
+    if (-not $env:C1698_LOAD_FAILURE_OUT) { Assert-C487 -Cond $false -Name 'C1698 Run load-failure child needs C1698_LOAD_FAILURE_OUT'; return }
+    $r = $null
+    try { $r = Invoke-C1698ToolchainRun -GitVersion '2.43.0' } catch { $r = [pscustomobject]@{ Lines = @('THREW ' + $_.Exception.Message); Result = $null } }
+    $exit = $null; $phase = $null
+    if ($r.Result) { $exit = $r.Result.ExitCode; $phase = $r.Result.Phase }
+    $body = [ordered]@{ exitCode = $exit; phase = $phase; lines = @($r.Lines) } | ConvertTo-Json -Depth 4
+    [IO.File]::WriteAllText($env:C1698_LOAD_FAILURE_OUT, $body)
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
