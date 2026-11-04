@@ -341,23 +341,25 @@ try {
         if (-not $readers.ContainsKey($name) -or $readers[$name] -lt 1) { $shareProblems.Add("$name does not open through Open-RcQualificationSharedRead") }
     }
     if (-not $readers.ContainsKey('Open-RcQualificationSharedRead') -or $readOpens -lt 1) { $shareProblems.Add("no shared read opener (read opens=$readOpens)") }
-    if ($isWindowsHost) {
-        $shareDir = New-OwnedDirectory 'share'
-        $sharePath = Join-Path $shareDir 'last-run.json'
-        $shareTemp = Join-Path $shareDir 'last-run.json.next'
-        $owned.Add($shareTemp)
-        Write-OwnedJson $sharePath ([ordered]@{ runId = 'c1667share' })
-        $script:shareReplace = 'not-run'
-        $replaceUnder = { param($p) try { [IO.File]::WriteAllText($shareTemp, '{"runId":"c1667next"}'); [IO.File]::Replace($shareTemp, $p, $null); $script:shareReplace = 'replaced' } catch { $script:shareReplace = $_.Exception.Message } }
-        [void](Read-RcQualificationRecord -Path $sharePath -AfterRead $replaceUnder)
-        if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Read-RcQualificationRecord blocked File.Replace: $($script:shareReplace)") }
-        $script:shareReplace = 'not-run'
-        try {
-            $held = Open-RcQualificationSharedRead $sharePath
-            try { & $replaceUnder $sharePath } finally { $held.Dispose() }
-        } catch { $script:shareReplace = $_.Exception.Message }
-        if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Open-RcQualificationSharedRead blocked File.Replace: $($script:shareReplace)") }
-    } else { Write-Host 'NOTE C1667 FileShare.Delete File.Replace witness is Windows-only; the source pin ran' }
+    # The Replace runs on every host: Linux never blocks a rename under an open reader, so only Windows
+    # proves the FileShare.Delete sharing, but every host proves the call itself (group-128: a $null
+    # backup reached File.Replace as an empty path, which throws on Linux too).
+    $shareDir = New-OwnedDirectory 'share'
+    $sharePath = Join-Path $shareDir 'last-run.json'
+    $shareTemp = Join-Path $shareDir 'last-run.json.next'
+    $owned.Add($shareTemp)
+    Write-OwnedJson $sharePath ([ordered]@{ runId = 'c1667share' })
+    $script:shareReplace = 'not-run'
+    $replaceUnder = { param($p) try { [IO.File]::WriteAllText($shareTemp, '{"runId":"c1667next"}'); [IO.File]::Replace($shareTemp, $p, $null); $script:shareReplace = 'replaced' } catch { $script:shareReplace = $_.Exception.Message } }
+    [void](Read-RcQualificationRecord -Path $sharePath -AfterRead $replaceUnder)
+    if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Read-RcQualificationRecord blocked File.Replace: $($script:shareReplace)") }
+    $script:shareReplace = 'not-run'
+    try {
+        $held = Open-RcQualificationSharedRead $sharePath
+        try { & $replaceUnder $sharePath } finally { $held.Dispose() }
+    } catch { $script:shareReplace = $_.Exception.Message }
+    if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Open-RcQualificationSharedRead blocked File.Replace: $($script:shareReplace)") }
+    if (-not $isWindowsHost) { Write-Host "NOTE C1667 FileShare.Delete sharing is Windows-only; the source pin and the File.Replace call ran" }
     Assert-C1667 ($shareProblems.Count -eq 0) 'last-run.json readers open with FileShare.Delete so the nightly-run File.Replace is never blocked' ($shareProblems -join '; ')
 
     # launch-rc refuses before git or build-slot when its run id is not the supervisor's bound id.
