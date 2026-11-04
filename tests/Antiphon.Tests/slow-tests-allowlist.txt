@@ -395,3 +395,6 @@ Antiphon.Tests.Checkpoints.CheckpointShapeConflictTests
 Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests
 # CARD-1620: real Git, a seed dotnet build per import variant, then tool and script builds; Linux measured 13-72s per case (CP-43 5 cases 273s).
 Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests
+
+# CARD-1637: real Git land runs over isolated PostgreSQL (DelegationWorktreeTests land graph); merge-branch mutation witnesses.
+Antiphon.Tests.Application.LandMergeBranchWitnessTests

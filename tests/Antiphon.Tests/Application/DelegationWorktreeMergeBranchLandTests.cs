@@ -127,10 +127,10 @@ public partial class DelegationWorktreeTests
     private const int ManyConflicts = 80;
     private const int EventDetailBound = 3600;
 
-    private static IReadOnlyList<string> LongConflictNames() => Enumerable.Range(0, ManyConflicts)
+    internal static IReadOnlyList<string> LongConflictNames() => Enumerable.Range(0, ManyConflicts)
         .Select(i => $"long/{$"c1637-conflict-{i:D3}".PadRight(63, 'x')}.txt").ToList();
 
-    private static async Task WriteAllAsync(string root, IReadOnlyList<string> names, string content)
+    internal static async Task WriteAllAsync(string root, IReadOnlyList<string> names, string content)
     {
         foreach (var name in names)
         {
