@@ -509,6 +509,8 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["ls-remote", "--refs", "--exit-code", var endpoint, var fullRef] =>
                 endpoint == _endpoint && (fullRef == TargetRef || fullRef == SourceRef),
             ["merge-base", "--is-ancestor", var source, var target] => LooksOid(source) && LooksOid(target),
+            // CARD-1637: the land conflict path scans target..source for a merge commit.
+            ["rev-list", "--min-parents=2", "--max-count=1", var range] => IsOidRange(range),
             // CARD-1432 S2: the land ref retention list of one task.
             ["for-each-ref", "--format=%(refname) %(objectname)", var land, var progress] =>
                 land.StartsWith("refs/antiphon/land/", StringComparison.Ordinal) && land.EndsWith('/')
@@ -621,6 +623,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             var observed = args[^1];
             return new(IsAncestor(source, observed) ? 0 : 1, "", "");
         }
+        if (args[0] == "rev-list") return MergeScan(args[^1]);
         if (args[0] == "update-ref") return UpdateRef(args);
         // CARD-0688 D-12: no production caller rebases or fast-forwards the task worktree any more.
         if (args.Contains("rebase") || args.Contains("merge") && IsSource(repository)) throw Unsupported(args);
@@ -941,6 +944,31 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
                 foreach (var p in commit.Parents) queue.Enqueue(p);
         }
         return false;
+    }
+
+    private static bool IsOidRange(string range)
+        => range.Split("..") is [var target, var source] && LooksOid(target) && LooksOid(source);
+
+    /// <summary>
+    /// Real git prints one merge commit reachable from the source and not from the target, or
+    /// nothing. Every commit this model makes has one parent, so the answer is empty unless a test
+    /// answers the scan itself through <see cref="BeforeCommand"/>.
+    /// </summary>
+    private LandingGitResult MergeScan(string range)
+    {
+        var ends = range.Split("..");
+        var (target, source) = (ends[0], ends[1]);
+        var queue = new Queue<string>();
+        queue.Enqueue(source);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            if (!seen.Add(cur) || IsAncestor(cur, target) || !_objects.TryGetValue(cur, out var commit)) continue;
+            if (commit.Parents.Length >= 2) return new(0, cur + "\n", "");
+            foreach (var p in commit.Parents) queue.Enqueue(p);
+        }
+        return new(0, "", "");
     }
 
     private bool HasDirty(string repository)
