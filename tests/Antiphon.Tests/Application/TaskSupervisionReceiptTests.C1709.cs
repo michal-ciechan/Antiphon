@@ -356,7 +356,7 @@ public sealed partial class TaskSupervisionReceiptTests
         try
         {
             await clock.TimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(20));
-            clock.DueTimes.ShouldBe([TimeSpan.FromMinutes(15)], "nothing is owed: the startup sweep arms only the backstop");
+            clock.DueTimes.ToArray().ShouldBe([TimeSpan.FromMinutes(15)], "nothing is owed: the startup sweep arms only the backstop");
 
             var busyNote = await SeedSourcedCompletionAsync(h, h.ParentId);
             (await queueLock.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue("the test owns the held delivery's lock");
