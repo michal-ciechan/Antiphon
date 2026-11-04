@@ -108,7 +108,7 @@ public class C1704ProtocolGitRecorderTests
         Directory.CreateDirectory(evidence);
         try
         {
-            var type = typeof(LandDeliveryFixture).GetNestedType("EvidenceGit", BindingFlags.NonPublic).ShouldNotBeNull();
+            var type = typeof(LandDeliveryOptions).GetNestedType("EvidenceGit", BindingFlags.NonPublic).ShouldNotBeNull();
             var git = (LandingGit)Activator.CreateInstance(type, evidence)!;
             string[] argv = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
             var first = await git.RunAsync(repo, argv, ct);
