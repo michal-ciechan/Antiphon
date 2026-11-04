@@ -479,13 +479,17 @@ public sealed partial class SessionMessageQueueService
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
         Guid? sourceChannelInboundId = null,
         IReadOnlyList<Guid>? channelMemberInboundIds = null,
-        Guid? reviewThreadId = null, string? runtimeActionKey = null)
+        Guid? reviewThreadId = null, string? runtimeActionKey = null,
+        // CARD-1705. A WhenIdle enqueue normally waits for the session's queue lock however long
+        // a delivery holds it. A scan over many callers passes a bound instead: if the lock is
+        // still held when it expires, nothing is written and SessionQueueBusyException is thrown.
+        TimeSpan? lockWait = null)
         => EnqueueCoreAsync(sessionId, body, mode, origin, conversationKey, sourceTaskId,
             contentDigest, noteHeader, sourceScheduleId, onCreated, deliverIfIdle, holdUntil,
             executionDeadlineAt, executionTaskId, capacityRecoveryActionKey, capacityWaitId,
             sourceLandNotificationId, afterLandQueueInsert, sourceChannelInboundId: sourceChannelInboundId,
             channelMemberInboundIds: channelMemberInboundIds, reviewThreadId: reviewThreadId,
-            runtimeActionKey: runtimeActionKey, ct: ct);
+            runtimeActionKey: runtimeActionKey, lockWait: lockWait, ct: ct);
 
     internal async Task<Guid> EnqueueMentionAsync(Guid sessionId, string body, Guid occurrenceId, CancellationToken ct)
     {
@@ -525,6 +529,7 @@ public sealed partial class SessionMessageQueueService
         IReadOnlyList<Guid>? channelMemberInboundIds = null,
         Guid? reviewThreadId = null, string? runtimeActionKey = null,
         Guid? sourceTaskSupervisionNoticeId = null,
+        TimeSpan? lockWait = null,
         CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -681,7 +686,11 @@ public sealed partial class SessionMessageQueueService
         }
 
         var sem = GetLock(sessionId);
-        await sem.WaitAsync(ct);
+        if (lockWait is { } bound)
+        {
+            if (!await sem.WaitAsync(bound, ct)) throw new SessionQueueBusyException(sessionId);
+        }
+        else await sem.WaitAsync(ct);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();

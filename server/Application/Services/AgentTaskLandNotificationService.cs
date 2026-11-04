@@ -41,7 +41,19 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
         return row.Status == QueuedMessageStatus.Pending;
     }
 
-    public async Task ReconcileAsync(Guid id, CancellationToken ct)
+    /// <summary>
+    /// CARD-1705: how long one hosted scan waits for a caller's queue lock before leaving that
+    /// caller's notices for the next scan.
+    /// </summary>
+    internal static readonly TimeSpan ScanQueueLockWait = TimeSpan.FromSeconds(1);
+
+    /// <param name="busySessions">
+    /// CARD-1705: set by the hosted scan only. Its enqueue waits at most <see cref="ScanQueueLockWait"/>
+    /// for the caller's queue lock; a caller whose lock is still held joins this set, and its notices
+    /// in the same scan are skipped unchanged, so they keep their order and retry on the next scan.
+    /// Producers pass null and wait for the lock as before.
+    /// </param>
+    public async Task ReconcileAsync(Guid id, CancellationToken ct, ISet<Guid>? busySessions = null)
     {
         var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
         await db.Entry(note).ReloadAsync(ct);
@@ -136,6 +148,11 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                         return;
                     }
                 }
+                if (busySessions?.Contains(session) == true)
+                {
+                    db.ChangeTracker.Clear();
+                    return;
+                }
                 if (boundary is not null) await boundary.ReachedAsync("before-enqueue", note.TaskId, note.Id, ct);
                 if (note.Kind == LandNotificationKind.LegacyCheckNote && compactionBoundary is not null)
                     await compactionBoundary.ReachedAsync("before-note-enqueue", note.Id, ct);
@@ -151,7 +168,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     completion?.NoteHeader ?? note.Body.Split('\n')[0], onCreated: message => note.QueueMessageId = message,
                     deliverIfIdle: false, sourceLandNotificationId: note.Id,
                     afterLandQueueInsert: boundary is null ? null : (queueId, token) => boundary.ReachedAsync("queue-inserted", note.TaskId, queueId, token),
-                    holdUntil: completion is { DistillRequested: true, DistillMode: OutputDistillerMode.Apply } ? completion.DistillDeadlineAt : null);
+                    holdUntil: completion is { DistillRequested: true, DistillMode: OutputDistillerMode.Apply } ? completion.DistillDeadlineAt : null,
+                    lockWait: busySessions is null ? null : ScanQueueLockWait);
                 // This outbox kind is also the caller's completion note. Preserve the
                 // check-suppression stamp, including recovery after a lost insert acknowledgement.
                 if (IsCompletionNoteKind(note.Kind) && note.Kind != LandNotificationKind.LegacyCheckNote)
@@ -368,6 +386,12 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 scanCache.Publish(certificate.Context, certificate.Before, certificate.After, certificate.Matched,
                     saveCompleted: true, certificate.CompletedAt);
             }
+        }
+        catch (SessionQueueBusyException busy) when (busySessions is not null)
+        {
+            // Nothing was written under the lock. Not a failed attempt: no bookkeeping, no backoff.
+            db.ChangeTracker.Clear();
+            busySessions.Add(busy.SessionId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
