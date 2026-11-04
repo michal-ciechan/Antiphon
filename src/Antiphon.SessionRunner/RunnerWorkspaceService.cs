@@ -820,7 +820,13 @@ public sealed partial class RunnerWorkspaceService
     }
 
     /// <summary>Follow directory and file links. Null when a link cannot be resolved.</summary>
-    internal static string? TryResolveFinal(string path)
+    internal static string? TryResolveFinal(string path) => TryResolveFinal(path, ResolveFinalTarget);
+
+    /// <summary>
+    /// <see cref="TryResolveFinal(string)"/> over a final-target resolver seam, so a test can stand in for a
+    /// platform resolution failure that the local file system cannot produce.
+    /// </summary>
+    internal static string? TryResolveFinal(string path, Func<FileSystemInfo, FileSystemInfo?> resolveFinal)
     {
         string full;
         try
@@ -844,7 +850,7 @@ public sealed partial class RunnerWorkspaceService
             var candidate = Path.Combine(current, segments[i]);
             if (IsSymbolicLink(candidate))
             {
-                if (!TryResolveLinkTarget(candidate, out var resolved))
+                if (!TryResolveLinkTarget(candidate, resolveFinal, out var resolved))
                     return null;
                 current = resolved;
                 continue;
@@ -885,7 +891,8 @@ public sealed partial class RunnerWorkspaceService
     /// Follow the link to a target that exists. An unresolved link, including a dangling one,
     /// returns false so the caller refuses the write.
     /// </summary>
-    private static bool TryResolveLinkTarget(string path, out string resolved)
+    private static bool TryResolveLinkTarget(
+        string path, Func<FileSystemInfo, FileSystemInfo?> resolveFinal, out string resolved)
     {
         resolved = "";
         FileSystemInfo? final = null;
@@ -893,7 +900,7 @@ public sealed partial class RunnerWorkspaceService
         {
             try
             {
-                var found = info.ResolveLinkTarget(returnFinalTarget: true);
+                var found = resolveFinal(info);
                 if (found is not null)
                 {
                     final = found;
@@ -915,6 +922,9 @@ public sealed partial class RunnerWorkspaceService
         resolved = full;
         return true;
     }
+
+    private static FileSystemInfo? ResolveFinalTarget(FileSystemInfo info) =>
+        info.ResolveLinkTarget(returnFinalTarget: true);
 
     internal static bool IsInside(string candidate, string root)
     {
