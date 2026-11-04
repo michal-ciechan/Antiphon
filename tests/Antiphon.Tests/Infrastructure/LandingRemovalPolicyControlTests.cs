@@ -182,8 +182,11 @@ public sealed class LandingRemovalPolicyControlTests
         using var f = new RemovalFixture();
         if (change != "valid")
         {
+            // The residue names the refusing step: on a loaded Windows host a scanner briefly holding the
+            // fixture's fresh files can refuse the set-aside rename or record write (fail closed).
             using var safe = new RemovalFixture();
-            (await safe.RemoveAsync()).IsClean.ShouldBeTrue("the unchanged command path must be reachable");
+            var baseline = await safe.RemoveAsync();
+            baseline.IsClean.ShouldBeTrue($"the unchanged command path must be reachable: {baseline.Residue} {baseline.Detail}");
             safe.Mutations.Count.ShouldBe(2);
         }
         var op = f.Operation;
@@ -215,7 +218,7 @@ public sealed class LandingRemovalPolicyControlTests
         var result = await f.RemoveAsync();
         if (change == "valid")
         {
-            result.IsClean.ShouldBeTrue();
+            result.IsClean.ShouldBeTrue($"{result.Residue} {result.Detail}");
             f.Mutations[0].ShouldBe(f.UnregisterVector);
             f.Mutations[1].ShouldBe(["update-ref", "--no-deref", "-d", f.Request.Source.SourceFullRef, RemovalFixture.Sha]);
         }
