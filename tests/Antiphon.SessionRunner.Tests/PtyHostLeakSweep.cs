@@ -40,7 +40,7 @@ public static class TestSessionLogRoot
 public static class TestSessionTeardown
 {
     public static async Task KillAndAwaitHostExitAsync(
-        SessionRunnerRuntime runtime, Guid sessionId, int? hostPid)
+        SessionRunnerRuntime runtime, Guid sessionId, int? hostPid, DateTime? hostStartedAtUtc = null)
     {
         var killed = false;
         try { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None); killed = true; }
@@ -229,6 +229,42 @@ public class TestSessionTeardownTests
         finally
         {
             try { host.Kill(entireProcessTree: true); } catch { /* Already gone. */ }
+            await runtime.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-1696: the pid the teardown was given can belong to another process by the time it kills
+    /// (the host exited and the pid was reused). A process whose start time is not the host's is
+    /// left alone; one within the 1 s read tolerance is still the host and is killed.
+    /// </summary>
+    [Test]
+    [Arguments(-60_000, false)]
+    [Arguments(60_000, false)]
+    [Arguments(300, true)]
+    public async Task The_teardown_kills_the_pid_only_while_it_is_still_the_host(int startOffsetMs, bool killed)
+    {
+        var root = TestSessionLogRoot.Create("adoption-tests");
+        var runtime = new SessionRunnerRuntime(
+            Microsoft.Extensions.Options.Options.Create(new SessionRunnerSettings { SessionLogPath = root }),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionRunnerRuntime>.Instance);
+        using var process = Process.Start(OperatingSystem.IsWindows()
+            ? new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "PING.EXE"), ["-n", "60", "127.0.0.1"])
+            : new ProcessStartInfo("/bin/sleep", ["60"]))!;
+        try
+        {
+            var hostStartedAtUtc = process.StartTime.ToUniversalTime().AddMilliseconds(startOffsetMs);
+
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, Guid.NewGuid(), process.Id, hostStartedAtUtc);
+
+            process.WaitForExit(killed ? 5_000 : 500);
+            process.HasExited.ShouldBe(killed, killed
+                ? "a start time inside the tolerance is the host the test started"
+                : "a pid whose start time is not the host's belongs to another process and is not killed");
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* Already gone. */ }
             await runtime.DisposeAsync();
         }
     }
