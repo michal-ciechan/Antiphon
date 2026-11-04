@@ -2589,7 +2589,8 @@ most `WorktreeLegacyRelease:MaxReleasesPerTick` (25) per tick, oldest `Completed
 `Execute=false`; preview `POST /api/agent-tasks/worktree-residue/desktop-legacy-release/preview` (operator only,
 always dry, runs while disabled). Settings are scalars only: a shape validator refuses an array, object or null.
 A candidate is terminal for at least `MinTerminalHours` (48), and has no land, sync debt, shared path, live
-session, open dependent (a child task or a task started from its branch) or leased runner slot, and a
+session, open dependent (a child task, a task started from its branch, or a queued task whose requested start
+ref or base task names it) or leased runner slot, and a
 `Result`. Its leaf matches `^card-task-<id8>\z` under `Git:WorktreeBasePath`, and it is a clean linked worktree
 whose HEAD is on its branch and contained in its OWN origin branch (else the merge target). The release
 deletes only the local branch; the origin branch keeps the work. A task with a next stage gets a `Superseded`
@@ -2602,7 +2603,11 @@ disposition naming the origin branch and commit. Run rows use Scope `desktop-leg
 Held row (path, branch, head SHA, origin tip, reason) is the evidence, and removal stays the caller-filed path.
 Ignored files go through the CARD-0665 gate. A refused system release whose command removed nothing reopens a
 new attempt on its next due tick (60 min doubling to 24 h, at most `MaxRefusedAttempts` = 5); a caller-filed
-release keeps the one-command rule. A busy repository lease defers without counting. A runner listed in
+release keeps the one-command rule. A busy repository lease defers without counting. Every pre-check counts
+against `MaxReleasesPerTick` whatever its outcome; a held tree is not pre-checked again until its backoff (60 min
+doubling to 24 h) has passed, a missing directory is recorded once and never re-checked, never-checked trees go
+first, and an unchanged Held or `over_cap` row is not rewritten (review 1dcb8d90 D-2). Unknown setting keys are
+refused like invalid values. A runner listed in
 `RunnerWorktreeRetention:Runners` keeps its mirror (CARD-1677 owns it, row reason
 `runner_mirror_owned_by_retention`); the desktop half is still retired.
 

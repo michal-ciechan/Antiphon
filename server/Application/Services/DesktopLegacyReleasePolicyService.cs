@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -26,6 +28,14 @@ namespace Antiphon.Server.Application.Services;
 /// origin tip, reason) is the evidence. A refused task backs off (60 min doubling to 24 h) and stops after
 /// <c>MaxRefusedAttempts</c>. Every evaluation is a run candidate row (<c>Scope = desktop-legacy-release</c>,
 /// Lane <c>DesktopLegacyPolicy</c>; no migration).
+///
+/// Review 1dcb8d90 D-2: every pre-check, whatever its outcome, counts against <c>MaxReleasesPerTick</c>. A task the
+/// pre-check (or the filing) held is remembered per task (a <c>desktop-legacy-check:&lt;id&gt;</c> cursor) and not
+/// pre-checked again until its backoff (the T-D-4 shape: <c>RefusedRecheckMinutes</c> doubling to
+/// <c>RefusedRecheckMaxHours</c>) has passed; a missing directory with no release is settled (recorded once, never
+/// re-checked) until the task's facts change. Never-checked tasks go first, oldest first, then the least recently
+/// checked, so a held backlog cannot starve a newer eligible tree. An unchanged Held or over-cap row is not rewritten,
+/// and the pause follows only a tick's real filing or removal.
 /// </summary>
 public sealed class DesktopLegacyReleasePolicyService
 {
@@ -107,6 +117,8 @@ public sealed class DesktopLegacyReleasePolicyService
 
     internal static string RowCursorKey(Guid taskId) => "desktop-legacy:" + taskId.ToString("N");
 
+    internal static string CheckCursorKey(Guid taskId) => "desktop-legacy-check:" + taskId.ToString("N");
+
     public async Task<TickResult> RunTickAsync(CancellationToken ct, bool preview = false)
     {
         var read = ReadSettings(_settings, _logger);
@@ -136,61 +148,84 @@ public sealed class DesktopLegacyReleasePolicyService
         var facts = await Facts.LoadAsync(_db, null, ct);
         var rowCursors = preview ? new Dictionary<string, WorktreeResidueCandidateCursor>(StringComparer.Ordinal)
             : await LoadCursorsAsync(candidates.Select(t => RowCursorKey(t.Id)).ToList(), ct);
-        var retryCursors = await LoadCursorsAsync(candidates.Select(t => RetryCursorKey(t.Id)).ToList(), ct);
+        // The retry (T-D-4) and pre-check (D-2) cursors of every candidate, in one load.
+        var taskCursors = await LoadCursorsAsync(candidates.SelectMany(t => new[] { RetryCursorKey(t.Id), CheckCursorKey(t.Id) }).ToList(), ct);
+        var released = await _db.TaskWorktreeRetirements.AsNoTracking().Where(r => r.Active)
+            .Select(r => new { r.TaskId, r.TaskAttempt }).ToListAsync(ct);
+        var activeRelease = released.Select(r => (r.TaskId, r.TaskAttempt)).ToHashSet();
 
         var eligible = new List<AgentTask>();
         foreach (var task in candidates)
         {
             var reason = Classify(task, facts, settings, root, Now());
             if (reason is null) eligible.Add(task);
-            else await HeldRowAsync(run, rowCursors, task, reason, preview, ct);
+            else await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, reason, preview, ct);
         }
 
-        // T-D-7: never-attempted first, then due retries by last attempt; backed-off and exhausted rows are Held
-        // and consume no cap (G-58).
+        // T-D-7: never-checked first (oldest first), then due retries and re-checks by last evaluation; backed-off,
+        // exhausted and settled rows are Held and consume no cap (G-58).
         var ordered = new List<AgentTask>();
-        var retries = new List<(AgentTask Task, DateTime Last)>();
+        var due = new List<(AgentTask Task, DateTime Last)>();
         var backedOff = 0;
         foreach (var task in eligible)
         {
-            var retry = RetryState.Parse(retryCursors.GetValueOrDefault(RetryCursorKey(task.Id)));
-            if (retry is null) { ordered.Add(task); continue; }
-            if (retry.Count >= settings.MaxRefusedAttempts)
-                await HeldRowAsync(run, rowCursors, task, "retry_exhausted", preview, ct);
-            else if (retry.NotBefore is { } notBefore && notBefore > Now())
+            var retry = RetryState.Parse(taskCursors.GetValueOrDefault(RetryCursorKey(task.Id)));
+            var check = CheckState.Parse(taskCursors.GetValueOrDefault(CheckCursorKey(task.Id)), Fingerprint(task));
+            if (retry is not null && retry.Count >= settings.MaxRefusedAttempts)
+                await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, "retry_exhausted", preview, ct);
+            else if (retry?.NotBefore is { } notBefore && notBefore > Now())
             {
                 backedOff++;
-                await HeldRowAsync(run, rowCursors, task, "refused_recheck_pending", preview, ct);
+                await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, "refused_recheck_pending", preview, ct);
             }
+            else if (check is { Kind: CheckState.Settled })
+                await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, check.Reason, preview, ct);
+            else if (check is { Kind: CheckState.Held, NotBefore: { } recheck } && recheck > Now())
+            {
+                backedOff++;
+                await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, check.Reason, preview, ct);
+            }
+            else if (!activeRelease.Contains((task.Id, task.Attempt)) && DirectoryMissing(task.WorktreePath!))
+            {
+                // D-2: one stat, no git and no cap. A filed release is never settled here: a tree its command set aside
+                // is finished by the guarded removal.
+                if (!preview) RecordCheck(taskCursors, task, "directory_absent", settled: true, settings);
+                await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, "directory_absent", preview, ct);
+            }
+            else if (retry is null && check is null)
+                ordered.Add(task);
             else
-                retries.Add((task, retry.Last));
+                due.Add((task, retry is null ? check!.Last : check is null ? retry.Last : Max(retry.Last, check.Last)));
         }
-        ordered.AddRange(retries.OrderBy(r => r.Last).ThenBy(r => r.Task.CompletedAt).Select(r => r.Task));
+        ordered.AddRange(due.OrderBy(r => r.Last).ThenBy(r => r.Task.CompletedAt).Select(r => r.Task));
 
-        var acted = 0;
+        var prechecks = 0;
+        var wrote = false;
         var filed = 0;
         var retired = 0;
         string? stopped = null;
         foreach (var candidate in ordered)
         {
-            // G-7/G-9: the cap applies before any per-candidate filesystem or git call.
-            if (acted >= settings.MaxReleasesPerTick)
+            // G-7/G-9 (D-2): the cap bounds the pre-checks, whatever their outcome, before any per-candidate git call.
+            if (prechecks >= settings.MaxReleasesPerTick)
             {
-                await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, "over_cap", candidate, null, ct);
+                await CursorRowAsync(run, rowCursors, candidate, WorktreeResidueCandidateOutcome.Deferred, "over_cap", preview, ct);
                 continue;
             }
+            // D-2: the pause follows only a real filing or removal; A-2: the switch is read after it.
+            if (wrote && settings.PauseBetweenSeconds > 0)
+                await Task.Delay(TimeSpan.FromSeconds(settings.PauseBetweenSeconds), _clock, ct);
             stopped = StopReason(preview, execute, tickStarted);
             if (stopped is not null)
             {
                 await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, ct);
-                _logger.LogWarning("Desktop legacy release stopped after {Acted} candidate(s): {Reason}", acted, stopped);
+                _logger.LogWarning("Desktop legacy release stopped after {Prechecks} pre-check(s): {Reason}", prechecks, stopped);
                 break;
             }
-            if (acted > 0 && settings.PauseBetweenSeconds > 0)
-                await Task.Delay(TimeSpan.FromSeconds(settings.PauseBetweenSeconds), _clock, ct);
 
-            var outcome = await ActAsync(run, candidate, settings, root, execute, rowCursors, retryCursors, preview, ct);
-            if (outcome.Acted) acted++;
+            prechecks++;
+            var outcome = await ActAsync(run, candidate, settings, root, execute, rowCursors, taskCursors, preview, ct);
+            wrote = outcome.Wrote;
             if (outcome.Filed) filed++;
             if (outcome.Retired) retired++;
         }
@@ -203,11 +238,12 @@ public sealed class DesktopLegacyReleasePolicyService
         return new TickResult(run.Id, candidates.Count, eligible.Count, filed, retired, backedOff, stopped);
     }
 
-    private sealed record ActOutcome(bool Acted, bool Filed, bool Retired);
+    /// <summary><c>Wrote</c>: the candidate filed a release or ran the guarded removal (the pause follows it).</summary>
+    private sealed record ActOutcome(bool Wrote, bool Filed, bool Retired);
 
     private async Task<ActOutcome> ActAsync(WorktreeResidueRun run, AgentTask candidate, WorktreeLegacyReleaseSettings settings,
         string root, bool execute, Dictionary<string, WorktreeResidueCandidateCursor> rowCursors,
-        Dictionary<string, WorktreeResidueCandidateCursor> retryCursors, bool preview, CancellationToken ct)
+        Dictionary<string, WorktreeResidueCandidateCursor> taskCursors, bool preview, CancellationToken ct)
     {
         var stage = "release_failed";
         try
@@ -218,12 +254,20 @@ public sealed class DesktopLegacyReleasePolicyService
                 : Classify(fresh, await Facts.LoadAsync(_db, fresh.Id, ct), settings, root, Now());
             if (recheck is not null || !string.Equals(fresh!.WorktreePath, candidate.WorktreePath, StringComparison.Ordinal))
             {
-                await HeldRowAsync(run, rowCursors, fresh ?? candidate, recheck ?? "path_changed", true, ct);
+                await CursorRowAsync(run, rowCursors, fresh ?? candidate, WorktreeResidueCandidateOutcome.Held,
+                    recheck ?? "path_changed", preview, ct);
                 return new(false, false, false);
             }
 
             var release = await _db.TaskWorktreeRetirements
                 .SingleOrDefaultAsync(r => r.TaskId == fresh.Id && r.TaskAttempt == fresh.Attempt && r.Active, ct);
+            // Review 1dcb8d90 A-3: a release someone else filed is theirs, in a dry run too (never would_release).
+            if (release is not null
+                && !string.Equals(release.CallerIdentity, TaskWorktreeRetirementService.SystemCallerIdentity, StringComparison.Ordinal))
+            {
+                await HoldAsync(run, rowCursors, taskCursors, fresh, "release_active_other", settled: false, settings, preview, ct);
+                return new(false, false, false);
+            }
             // A filed release whose command already started is re-proved by the guarded removal itself; a tree it
             // set aside or half removed must be finished, not held by a pre-check that no longer applies.
             Precheck? check = null;
@@ -235,15 +279,20 @@ public sealed class DesktopLegacyReleasePolicyService
                     _logger.LogInformation(
                         "Desktop legacy release held task {TaskId} path {Path} branch {Branch} head {Head} origin {Origin}: {Reason}",
                         fresh.Id, fresh.WorktreePath, fresh.WorktreeBranch, check.Head ?? "-", check.OriginTip ?? "-", check.Reason);
-                    await HeldRowAsync(run, rowCursors, fresh, check.Reason, true, ct);
+                    await HoldAsync(run, rowCursors, taskCursors, fresh, check.Reason,
+                        settled: check.Reason == "directory_absent" && release is null, settings, preview, ct);
                     return new(false, false, false);
                 }
+                // A dry run's pass moves the task behind the never-checked ones (its census reaches every tree); an
+                // executing pass only resets a held state it already has (no new cursor per filing).
+                if (!preview && (!execute || taskCursors.ContainsKey(CheckCursorKey(fresh.Id))))
+                    RecordCheck(taskCursors, fresh, execute ? "passed" : "would_release", settled: false, settings);
             }
 
             if (!execute)
             {
                 await RowAsync(run, WorktreeResidueCandidateOutcome.Preview, "would_release", fresh, release?.Id, ct);
-                return new(true, false, false);
+                return new(false, false, false);
             }
 
             var filedNow = false;
@@ -264,14 +313,9 @@ public sealed class DesktopLegacyReleasePolicyService
                 catch (ConflictException ex)
                 {
                     // Each server exclusion has one owner: the service's own code is recorded (masking rule).
-                    await HeldRowAsync(run, rowCursors, fresh, ex.Code ?? "release_refused", true, ct);
+                    await HoldAsync(run, rowCursors, taskCursors, fresh, ex.Code ?? "release_refused", settled: false, settings, preview, ct);
                     return new(false, false, false);
                 }
-            }
-            else if (!string.Equals(release.CallerIdentity, TaskWorktreeRetirementService.SystemCallerIdentity, StringComparison.Ordinal))
-            {
-                await HeldRowAsync(run, rowCursors, fresh, "release_active_other", true, ct);
-                return new(false, false, false);
             }
 
             stage = "retire_failed";
@@ -280,7 +324,7 @@ public sealed class DesktopLegacyReleasePolicyService
             {
                 // G-59: a busy repository is a deferral; no attempt is counted.
                 await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, "repository_lease_required", fresh, release.Id, ct);
-                return new(false, filedNow, false);
+                return new(filedNow, filedNow, false);
             }
             var row = new WorktreeResidueRunCandidate();
             if (removed.IsClean)
@@ -289,17 +333,17 @@ public sealed class DesktopLegacyReleasePolicyService
                     && TaskWorktreeRetirementService.MirrorOwnedByRetention(fresh.RunnerId, _retention);
                 row = await RowAsync(run, WorktreeResidueCandidateOutcome.Removed, owned ? MirrorOwnedReason : "removed",
                     fresh, release.Id, ct, save: false);
-                ClearRetry(retryCursors, fresh.Id);
+                ClearRetry(taskCursors, fresh.Id);
             }
             else if (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted)
             {
                 row = await RowAsync(run, WorktreeResidueCandidateOutcome.Partial, removed.Residue ?? "partial", fresh, release.Id, ct, save: false);
-                StampRetry(retryCursors, fresh.Id, removed.Residue ?? "partial", settings);
+                StampRetry(taskCursors, fresh.Id, removed.Residue ?? "partial", settings);
             }
             else
             {
                 row = await RowAsync(run, WorktreeResidueCandidateOutcome.Refused, removed.Residue ?? "refused", fresh, release.Id, ct, save: false);
-                StampRetry(retryCursors, fresh.Id, removed.Residue ?? "refused", settings);
+                StampRetry(taskCursors, fresh.Id, removed.Residue ?? "refused", settings);
             }
             row.DirectoryRemoved = removed.DirectoryGone;
             row.RegistrationRemoved = removed.Unregistered;
@@ -318,7 +362,7 @@ public sealed class DesktopLegacyReleasePolicyService
                 if (entry.State != EntityState.Unchanged && entry.Entity is not (WorktreeResidueRun
                         or WorktreeResidueRunCandidate or WorktreeResidueCandidateCursor))
                     entry.State = EntityState.Detached;
-            StampRetry(retryCursors, candidate.Id, stage, settings);
+            StampRetry(taskCursors, candidate.Id, stage, settings);
             await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, stage, candidate, null, ct);
             return new(false, false, false);
         }
@@ -435,11 +479,14 @@ public sealed class DesktopLegacyReleasePolicyService
         // G-19: the system never sets MissingReportReviewed.
         if (string.IsNullOrWhiteSpace(task.Result))
             return "report_missing";
-        // G-20/G-21 (T-D-5): deleting the local branch could break a dependent's worktree creation.
+        // G-20/G-21 (T-D-5): deleting the local branch could break a dependent's worktree creation. Review 1dcb8d90 D-1:
+        // a queued task names its base only in WorktreeBaseRequestedRef (delegate.ps1 -StartRef) or
+        // RequestedWorktreeBaseTaskId until it is provisioned.
         var branch = BranchName(task.WorktreeBranch);
         if (facts.OpenTasks.Any(t => t.Id != task.Id
-                && (t.ParentTaskId == task.Id
-                    || (branch.Length > 0 && string.Equals(BranchName(t.WorktreeBaseRef), branch, StringComparison.Ordinal)))))
+                && (t.ParentTaskId == task.Id || t.RequestedWorktreeBaseTaskId == task.Id
+                    || (branch.Length > 0 && (string.Equals(BranchName(t.WorktreeBaseRef), branch, StringComparison.Ordinal)
+                        || string.Equals(BranchName(t.WorktreeBaseRequestedRef), branch, StringComparison.Ordinal))))))
             return "dependent_open";
         return null;
     }
@@ -456,36 +503,124 @@ public sealed class DesktopLegacyReleasePolicyService
         return Now() - tickStarted >= TimeSpan.FromMinutes(minutes) ? "tick_budget_exhausted" : null;
     }
 
-    private async Task HeldRowAsync(WorktreeResidueRun run, Dictionary<string, WorktreeResidueCandidateCursor> cursors,
-        AgentTask task, string reason, bool writeAll, CancellationToken ct)
+    /// <summary>
+    /// The CARD-1446 cursor rule for a Held or over-cap row: an unchanged one is not rewritten (nor its cursor touched,
+    /// review 1dcb8d90 D-2) on a scheduled tick. A preview writes every row and reads no row cursor.
+    /// </summary>
+    private async Task CursorRowAsync(WorktreeResidueRun run, Dictionary<string, WorktreeResidueCandidateCursor> cursors,
+        AgentTask task, WorktreeResidueCandidateOutcome outcome, string reason, bool writeAll, CancellationToken ct)
     {
-        run.Held++;
-        // The CARD-1446 cursor rule: an unchanged Held row is not rewritten every scheduled tick.
         if (!writeAll)
         {
             var key = RowCursorKey(task.Id);
-            if (!cursors.TryGetValue(key, out var cursor))
+            var outcomeKey = Lane + "|" + outcome + "|" + reason;
+            cursors.TryGetValue(key, out var cursor);
+            if (string.Equals(cursor?.LastOutcomeKey, outcomeKey, StringComparison.Ordinal))
+            {
+                run.Candidates++;
+                if (outcome == WorktreeResidueCandidateOutcome.Held) run.Held++;
+                else if (outcome == WorktreeResidueCandidateOutcome.Deferred) run.Deferred++;
+                return;
+            }
+            if (cursor is null)
             {
                 cursor = new WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key, LastEvaluatedAt = Now() };
                 _db.WorktreeResidueCandidateCursors.Add(cursor);
                 cursors[key] = cursor;
             }
-            var outcomeKey = Lane + "|" + nameof(WorktreeResidueCandidateOutcome.Held) + "|" + reason;
-            var unchanged = string.Equals(cursor.LastOutcomeKey, outcomeKey, StringComparison.Ordinal);
             cursor.LastOutcomeKey = outcomeKey;
             cursor.LastEvaluatedAt = Now();
-            if (unchanged)
-            {
-                run.Candidates++;
-                await _db.SaveChangesAsync(ct);
-                return;
-            }
         }
-        await RowAsync(run, WorktreeResidueCandidateOutcome.Held, reason, task, null, ct, countHeld: false);
+        await RowAsync(run, outcome, reason, task, null, ct);
     }
 
+    /// <summary>D-2: a pre-check or filing hold; remembered (backoff or settled) on a scheduled tick, never by a preview.</summary>
+    private async Task HoldAsync(WorktreeResidueRun run, Dictionary<string, WorktreeResidueCandidateCursor> rowCursors,
+        Dictionary<string, WorktreeResidueCandidateCursor> taskCursors, AgentTask task, string reason, bool settled,
+        WorktreeLegacyReleaseSettings settings, bool preview, CancellationToken ct)
+    {
+        if (!preview) RecordCheck(taskCursors, task, reason, settled, settings);
+        await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, reason, preview, ct);
+    }
+
+    /// <summary>
+    /// D-2: <c>check|&lt;kind&gt;|&lt;repeats&gt;|&lt;fingerprint&gt;|&lt;reason&gt;</c>. A hold backs off
+    /// <c>RefusedRecheckMinutes x 2^(repeats - 1)</c>, at most <c>RefusedRecheckMaxHours</c>; a settled hold (a missing
+    /// directory) has no recheck time; a passed or dry check only moves the task behind the never-checked ones.
+    /// The fingerprint voids the state when the task's facts change.
+    /// </summary>
+    private void RecordCheck(Dictionary<string, WorktreeResidueCandidateCursor> cursors, AgentTask task, string reason,
+        bool settled, WorktreeLegacyReleaseSettings settings)
+    {
+        var key = CheckCursorKey(task.Id);
+        if (!cursors.TryGetValue(key, out var cursor))
+        {
+            cursor = new WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key, LastEvaluatedAt = Now() };
+            _db.WorktreeResidueCandidateCursors.Add(cursor);
+            cursors[key] = cursor;
+        }
+        var fingerprint = Fingerprint(task);
+        var bounded = reason.Length <= 80 ? reason : reason[..80];
+        var held = reason is not ("passed" or "would_release");
+        var previous = CheckState.Parse(cursor, fingerprint);
+        var repeats = !held || settled ? 0 : previous is { Kind: CheckState.Held } ? Math.Min(previous.Repeats + 1, 30) : 1;
+        var kind = settled ? CheckState.Settled : held ? CheckState.Held : CheckState.Checked;
+        cursor.LastOutcomeKey = string.Join('|', "check", kind,
+            repeats.ToString(System.Globalization.CultureInfo.InvariantCulture), fingerprint, bounded);
+        cursor.LastEvaluatedAt = Now();
+        cursor.NotBefore = kind == CheckState.Held
+            ? Now().AddMinutes(Math.Min(settings.RefusedRecheckMinutes * Math.Pow(2, repeats - 1), settings.RefusedRecheckMaxHours * 60.0))
+            : null;
+    }
+
+    private sealed record CheckState(string Kind, int Repeats, string Reason, DateTime Last, DateTime? NotBefore)
+    {
+        public const string Held = "held";
+        public const string Settled = "settled";
+        public const string Checked = "checked";
+
+        /// <summary>Null when there is no state or it was recorded for other task facts.</summary>
+        public static CheckState? Parse(WorktreeResidueCandidateCursor? cursor, string fingerprint)
+        {
+            var parts = cursor?.LastOutcomeKey?.Split('|', 5);
+            if (parts is not { Length: 5 } || parts[0] != "check" || parts[3] != fingerprint
+                || parts[1] is not (Held or Settled or Checked)
+                || !int.TryParse(parts[2], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var repeats))
+                return null;
+            return new CheckState(parts[1], repeats, parts[4], cursor!.LastEvaluatedAt, cursor.NotBefore);
+        }
+    }
+
+    /// <summary>The task facts a pre-check answer was given for (the CARD-1677 send fingerprint shape).</summary>
+    private static string Fingerprint(AgentTask task)
+    {
+        var facts = string.Join("\n", task.Status, task.Attempt, task.CompletedAt?.ToString("O") ?? "-",
+            task.WorktreePath ?? "-", task.WorktreeBranch ?? "-");
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)))[..16].ToLowerInvariant();
+    }
+
+    private static bool DirectoryMissing(string path)
+    {
+        try
+        {
+            File.GetAttributes(path);
+            return false;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Unreadable is not missing: the budgeted pre-check decides.
+            return false;
+        }
+    }
+
+    private static DateTime Max(DateTime left, DateTime right) => left > right ? left : right;
+
     private async Task<WorktreeResidueRunCandidate> RowAsync(WorktreeResidueRun run, WorktreeResidueCandidateOutcome outcome,
-        string reason, AgentTask? task, Guid? retirementId, CancellationToken ct, bool save = true, bool countHeld = true)
+        string reason, AgentTask? task, Guid? retirementId, CancellationToken ct, bool save = true)
     {
         var row = new WorktreeResidueRunCandidate
         {
@@ -496,7 +631,7 @@ public sealed class DesktopLegacyReleasePolicyService
         run.Candidates++;
         switch (outcome)
         {
-            case WorktreeResidueCandidateOutcome.Held when countHeld: run.Held++; break;
+            case WorktreeResidueCandidateOutcome.Held: run.Held++; break;
             case WorktreeResidueCandidateOutcome.Removed: run.Removed++; run.ActionsAccepted++; break;
             case WorktreeResidueCandidateOutcome.Refused: run.Refused++; run.ActionsAccepted++; break;
             case WorktreeResidueCandidateOutcome.Partial: run.Partial++; run.ActionsAccepted++; break;
@@ -571,7 +706,8 @@ public sealed class DesktopLegacyReleasePolicyService
             var debt = await db.AgentTaskSyncDebts.AsNoTracking()
                 .Where(d => OpenDebt.Contains(d.State) && (taskId == null || d.TaskId == taskId)).Select(d => d.TaskId).ToListAsync(ct);
             var open = await db.AgentTasks.AsNoTracking().Where(t => Open.Contains(t.Status))
-                .Select(t => new OpenTask(t.Id, t.WorktreePath, t.ParentTaskId, t.WorktreeBaseRef)).ToListAsync(ct);
+                .Select(t => new OpenTask(t.Id, t.WorktreePath, t.ParentTaskId, t.WorktreeBaseRef, t.WorktreeBaseRequestedRef,
+                    t.RequestedWorktreeBaseTaskId)).ToListAsync(ct);
             var live = await db.AgentSessions.AsNoTracking().Where(s => LiveSession.Contains(s.Status)).Select(s => s.Id).ToListAsync(ct);
             var liveTasks = live.Count == 0 ? [] : await db.AgentTaskEvents.AsNoTracking()
                 .Where(e => e.AgentSessionId != null && live.Contains(e.AgentSessionId.Value) && (taskId == null || e.AgentTaskId == taskId))
@@ -580,7 +716,8 @@ public sealed class DesktopLegacyReleasePolicyService
         }
     }
 
-    private sealed record OpenTask(Guid Id, string? WorktreePath, Guid? ParentTaskId, string? WorktreeBaseRef);
+    private sealed record OpenTask(Guid Id, string? WorktreePath, Guid? ParentTaskId, string? WorktreeBaseRef,
+        string? WorktreeBaseRequestedRef, Guid? RequestedWorktreeBaseTaskId);
 
     private static bool Normalized(string path)
     {

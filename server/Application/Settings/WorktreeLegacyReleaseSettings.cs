@@ -125,8 +125,10 @@ public static class WorktreeLegacyReleaseSettingsRegistration
         services.AddOptions<WorktreeLegacyReleaseSettings>()
             .Configure(options =>
             {
-                // A value the binder cannot convert throws before validation; it is recorded and refused instead.
-                try { configuration.GetSection(WorktreeLegacyReleaseSettings.SectionName).Bind(options); }
+                // A value the binder cannot convert, or a key it does not know (review 1dcb8d90 A-4: a misspelled kill
+                // switch must not leave the shipped-on default running), throws before validation; it is recorded and
+                // refused instead.
+                try { configuration.GetSection(WorktreeLegacyReleaseSettings.SectionName).Bind(options, o => o.ErrorOnUnknownConfiguration = true); }
                 catch (InvalidOperationException ex) { options.BindError = ex.Message; }
             })
             .ValidateOnStart();
