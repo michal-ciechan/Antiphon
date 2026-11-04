@@ -390,8 +390,12 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
             AgentSessionId = h.SessionId, WorkingDirectory = h.TempRoot, CreatedAt = now, Result = "useful",
         });
         await db.SaveChangesAsync();
+        // The hold is timed from the note's before-enqueue boundary, the step just before the lock wait,
+        // so a slow first publish cannot spend it before the wait begins.
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var boundary = new ScanSignal { BeforeEnqueue = _ => waiting.TrySetResult() };
         var publisher = new LegacyCheckNotePublicationService(db, TimeProvider.System,
-            new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System));
+            new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System, boundary));
         var subject = await db.AgentTasks.SingleAsync(t => t.Id == checkedId);
 
         var queueLock = h.Queue.GetLock(h.SessionId);
@@ -401,6 +405,9 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
         {
             var publish = publisher.TryPublishAsync(
                 subject, 1, "Check note behind a held lock", "event", runId, false, null, CancellationToken.None, episodeId);
+            var reached = waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            (await Task.WhenAny(publish, reached) == reached).ShouldBeTrue("the publish reaches the note's enqueue while the lock is held");
+            await reached;
             // Longer than the scan's bound: a producer given that bound returns busy before this.
             var held = TimeSpan.FromMilliseconds(ScanQueueLockWaitMs + 500);
             (await Task.WhenAny(publish, Task.Delay(held)) == publish)
