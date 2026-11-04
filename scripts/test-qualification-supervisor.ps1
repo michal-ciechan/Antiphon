@@ -350,7 +350,7 @@ try {
     $owned.Add($shareTemp)
     Write-OwnedJson $sharePath ([ordered]@{ runId = 'c1667share' })
     $script:shareReplace = 'not-run'
-    $replaceUnder = { param($p) try { [IO.File]::WriteAllText($shareTemp, '{"runId":"c1667next"}'); [IO.File]::Replace($shareTemp, $p, $null); $script:shareReplace = 'replaced' } catch { $script:shareReplace = $_.Exception.Message } }
+    $replaceUnder = { param($p) try { [IO.File]::WriteAllText($shareTemp, '{"runId":"c1667next"}'); [IO.File]::Replace($shareTemp, $p, [NullString]::Value); $script:shareReplace = 'replaced' } catch { $script:shareReplace = $_.Exception.Message } }
     [void](Read-RcQualificationRecord -Path $sharePath -AfterRead $replaceUnder)
     if ($script:shareReplace -cne 'replaced') { $shareProblems.Add("Read-RcQualificationRecord blocked File.Replace: $($script:shareReplace)") }
     $script:shareReplace = 'not-run'
