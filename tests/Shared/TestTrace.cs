@@ -14,11 +14,13 @@ namespace Antiphon.Tests.TestHelpers;
 /// <item>With <see cref="FileVariable"/> set, every completed span from every source (this one,
 /// TUnit, Npgsql, HttpClient, ASP.NET Core) is appended to that file as one JSON object per line,
 /// with no cap. <c>scripts/summarize-test-trace.ps1</c> turns it into per-test and per-span totals.</item>
+/// <item>In assemblies that compile <c>TestTraceOtlp.cs</c>, with <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
+/// set, every span is also exported over OTLP (a collector, Jaeger or the Aspire dashboard).</item>
 /// </list>
 /// With no listener, <see cref="Span"/> returns null and costs nothing. Span names and tag values
 /// are code-supplied labels; never pass payloads, prompts, paths with secrets or credentials.
 /// </summary>
-public static class TestTrace
+public static partial class TestTrace
 {
     public const string SourceName = "Antiphon.Tests";
     public const string FileVariable = "ANTIPHON_TEST_TRACE_FILE";
@@ -71,7 +73,16 @@ public static class TestTrace
     /// Postgres container, schema cache and other assembly setup are traced too.
     /// </summary>
     [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void InstallAtLoad() => EnsureFileExporter();
+    internal static void InstallAtLoad()
+    {
+        EnsureFileExporter();
+        InstallOtlp();
+    }
+
+    /// <summary>Implemented in TestTraceOtlp.cs where the OTLP exporter package is referenced; erased elsewhere.</summary>
+    static partial void InstallOtlp();
+
+    static partial void FlushOtlp();
 
     /// <summary>
     /// Installs the JSONL exporter once when <see cref="FileVariable"/> names a file. Unset or blank
@@ -113,7 +124,11 @@ public static class TestTrace
     }
 
     /// <summary>Flushes buffered spans; called after the last test in the assembly.</summary>
-    public static void Flush() => _sink?.Flush();
+    public static void Flush()
+    {
+        _sink?.Flush();
+        FlushOtlp();
+    }
 
     private sealed class FileSink
     {

@@ -14,6 +14,7 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.5.0" />
     <PackageReference Include="System.IO.Abstractions.TestingHelpers" Version="22.1.0" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.15.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
     <PackageReference Include="TUnit" Version="1.44.0" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
@@ -55,6 +56,7 @@
              Link="TestHelpers\PhoneHomeTestWebSocket.cs" />
     <Compile Include="..\Shared\TestTiming.cs" Link="TestHelpers\TestTiming.cs" />
     <Compile Include="..\Shared\TestTrace.cs" Link="TestHelpers\TestTrace.cs" />
+    <Compile Include="..\Shared\TestTraceOtlp.cs" Link="TestHelpers\TestTraceOtlp.cs" />
     <Compile Include="..\Shared\TestTimingAttribute.cs" Link="TestHelpers\TestTimingAttribute.cs" />
     <Compile Include="..\Shared\TestTimingRegistration.cs" Link="TestHelpers\TestTimingRegistration.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs" Link="TestHelpers\CompletedCardRunnerFixture.cs" />
