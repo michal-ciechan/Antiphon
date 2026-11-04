@@ -545,9 +545,12 @@ function Get-C1323LineStates([string]$Text) {
     # now lexed (code with balanced braces and plain string and char literals). A hole the walk cannot lex (a comment or
     # a nested verbatim, raw or interpolated string) stops the string at its {, and a raw interpolated string whose
     # closing quote run lies inside a hole is detected; either way LostFrom names the first line whose state is unknown.
+    # CARD-1711 D-1: hole code may hold no bare backslash. The walk does not know format clauses, and in a regular
+    # interpolated string the \" of $"{x:\"}" is an escaped quote that the walk would read as a string opener, flipping
+    # its string parity; a hole with a backslash outside its string and char literals is unlexable instead.
     # CARD-1711 A-3: every $ run is anchored at its first $ and consumed atomically. An atomic group alone still retried
     # the run from each of its positions (64k: 9.5 s); the lookbehind makes the walk linear.
-    $hole = '\{(?>(?:[^{}"''/@$]|/(?![/*])|"(?:[^"\\\n]|\\[^\n])*"|''(?:[^''\\\n]|\\[^\n])+''|(?<d>\{)|(?<-d>\}))*)(?(d)(?!))\}'
+    $hole = '\{(?>(?:[^{}"''/@$\\]|/(?![/*])|"(?:[^"\\\n]|\\[^\n])*"|''(?:[^''\\\n]|\\[^\n])+''|(?<d>\{)|(?<-d>\}))*)(?(d)(?!))\}'
     $tokens = '//[^\n]*|(?<block>/\*[\s\S]*?(?:\*/|\z))|(?<str>(?:\$@|@\$)"(?>(?:[^"{]|""|\{\{|' + $hole + ')*)(?:"|\z|(?<lost>))' +
         '|@"(?:[^"]|"")*(?:"|\z)|(?<!\$)(?<raw>(?>\$*))(?<q>"{3,})[\s\S]*?(?:\k<q>|\z)' +
         '|(?<!\$)(?>\$+)"(?>(?:[^"\\\n{]|\\[^\n]|\{\{|' + $hole + ')*)(?:"|(?<lost>(?=\{))|))|"(?:[^"\\\n]|\\[^\n])*"?|''(?:[^''\\\n]|\\[^\n])*''?'
