@@ -1274,13 +1274,12 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         async Task<double> HeldAsync(string when)
         {
             w.ClearTrace();
-            var tick = await w.TickAsync();
+            await w.TickAsync();
             w.Prechecked(a).ShouldBeTrue($"{when}: the due tree is pre-checked");
-            var row = await w.RowAsync(tick.RunId, a);
-            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held), when);
-            row.ReasonCode.ShouldBe("source_dirty", when);
+            // A repeated Held row with the same reason is not rewritten; the check cursor carries the hold.
             var cursor = (await w.CheckCursorAsync(a)).ShouldNotBeNull();
             cursor.LastOutcomeKey.ShouldStartWith("check|held|", Case.Sensitive, when);
+            cursor.LastOutcomeKey.ShouldEndWith("|source_dirty", Case.Sensitive, when);
             return Math.Round((cursor.NotBefore!.Value - w.Now).TotalMinutes);
         }
 
