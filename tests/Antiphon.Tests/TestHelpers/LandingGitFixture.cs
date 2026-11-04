@@ -33,7 +33,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         Directory.CreateDirectory(Repository);
         Directory.CreateDirectory(Remote);
         Directory.CreateDirectory(Path.Combine(Root, "home"));
-        Git = new FixtureGit(Path.Combine(Root, "home"), TaskId);
+        Git = new FixtureGit(Path.Combine(Root, "home"), TaskId, new GitObserverRelay());
     }
 
     public async Task InitializeAsync()
@@ -53,6 +53,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         await RequiredAsync(Root, "clone", "--no-hardlinks", "--branch", "master", "--", Remote, Observer);
         Git.Trace.Clear();
         Git.Commands.Clear();
+        Git.Channels.Clear();
+        Git.Started.Clear();
     }
 
     /// <summary>CARD-0711: an independent clone commits <paramref name="name"/>.txt and pushes it to <c>master</c>.</summary>
@@ -157,9 +159,15 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         Directory.Delete(full, true);
     }
 
-    internal class FixtureGit(string home, Guid taskId) : LandingGit
+    internal class FixtureGit(string home, Guid taskId, GitObserverRelay? relay = null) : LandingGit(observer: relay)
     {
         public List<string[]> Trace { get; } = [];
+        /// <summary>CARD-1704: the observer relay this git reports to (null for the independent readers).</summary>
+        public GitObserverRelay? Relay { get; } = relay;
+        /// <summary>CARD-1704 S-3: every git process this instance started (directory and argv).</summary>
+        public List<(string Directory, string[] Arguments)> Started { get; } = [];
+        /// <summary>CARD-1704 S-5: the channel of each <see cref="Commands"/> entry: run, owned or stdin.</summary>
+        public List<string> Channels { get; } = [];
         public string? HooksPathOverride { get; set; }
         /// <summary>CARD-0688: every command with the directory it ran in.</summary>
         public List<(string Directory, string[] Arguments)> Commands { get; } = [];
@@ -182,6 +190,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
                 : string.IsNullOrEmpty(start.Arguments) ? 0 : null;
             var exe = string.IsNullOrEmpty(start.FileName) ? "omitted" : Path.GetFileName(start.FileName);
             using var spawn = TestTiming.BeginProcess(exe, argc, "process");
+            lock (Started) Started.Add((start.WorkingDirectory, start.ArgumentList.ToArray()));
             var child = base.StartProcess(start);
             if (child is not null) _children.TryAdd(child.Id, 0);
             return child;
@@ -227,6 +236,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             using var wait = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "wait");
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
+            Channels.Add("run");
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
@@ -241,6 +251,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         {
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
+            Channels.Add("stdin");
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected)
                 return (injected.ExitCode, System.Text.Encoding.UTF8.GetBytes(injected.Output));
             var result = await base.RunGitInputBytesAsync(repository, arguments, input, ct);
@@ -288,6 +299,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         {
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
+            Channels.Add("owned");
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "owned_git_start", new { repository, arguments });

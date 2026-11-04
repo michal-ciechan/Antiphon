@@ -1,0 +1,223 @@
+run|source|rev-parse HEAD
+run|canonical|rev-parse --path-format=absolute --git-common-dir
+run|canonical|rev-parse --path-format=absolute --git-common-dir
+run|source|rev-parse --path-format=absolute --git-path index.lock
+run|canonical|rev-parse --path-format=absolute --git-common-dir
+run|canonical|rev-parse --path-format=absolute --git-path index.lock
+run|canonical|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/source-observed/probe
+run|canonical|remote get-url --push --all origin
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/source-observed/<guid>
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/feat/card-task-<guid>:refs/antiphon/land/<guid>/<guid>/source-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/source-observed/<guid>^{commit}
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|rev-parse --verify refs/heads/master^{commit}
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/remote-observed
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/master
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/master:refs/antiphon/land/<guid>/<guid>/remote-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/remote-observed/<guid>^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|source|rev-parse --absolute-git-dir
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/source
+run|canonical|rev-parse --verify <oid>^{commit}
+run|canonical|update-ref refs/antiphon/land/<guid>/<guid>/source <oid> <oid>
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/target-before
+run|canonical|rev-parse --verify <oid>^{commit}
+run|canonical|update-ref refs/antiphon/land/<guid>/<guid>/target-before <oid> <oid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/heads/feat/card-task-<guid>
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/heads/feat/card-task-<guid>
+owned|canonical|worktree add --detach --force --force <root>/trees/land/<id> <oid>
+run|land|rev-parse --verify HEAD^{commit}
+run|land|symbolic-ref -q HEAD
+run|land|status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none
+run|canonical|worktree lock --reason antiphon-land <root>/trees/land/<id>
+run|land|rev-parse --path-format=absolute --git-path index.lock
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/heads/feat/card-task-<guid>
+owned|land|-c rebase.autoStash=false -c rebase.updateRefs=false rebase <oid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/heads/feat/card-task-<guid>
+run|land|rev-parse --verify HEAD^{commit}
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/prepared
+run|canonical|rev-parse --verify <oid>^{commit}
+run|canonical|update-ref refs/antiphon/land/<guid>/<guid>/prepared <oid> <oid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|diff-tree --no-commit-id --raw -r -z --no-abbrev --no-ext-diff --no-textconv --find-renames <oid> <oid> --
+run|land|rev-parse --verify HEAD^{commit}
+run|land|status --porcelain=v1 -z --untracked-files=no
+run|land|rev-parse --absolute-git-dir
+run|canonical|rev-parse --path-format=absolute --git-common-dir
+run|canonical|worktree list --porcelain -z
+run|canonical|rev-parse --path-format=absolute --git-common-dir
+run|canonical|rev-parse --path-format=absolute --git-common-dir
+run|land|rev-parse --absolute-git-dir
+run|canonical|worktree list --porcelain -z
+run|land|rev-parse --path-format=absolute --git-common-dir
+run|land|rev-parse --path-format=absolute --git-path index.lock
+run|land|rev-parse --absolute-git-dir
+run|land|status --porcelain=v1 -z --untracked-files=no
+run|source|rev-parse --path-format=absolute --git-path index.lock
+run|source|rev-parse --absolute-git-dir
+run|source|status --porcelain=v1 -z --untracked-files=no
+run|land|rev-parse --verify HEAD^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/remote-observed
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/master
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/master:refs/antiphon/land/<guid>/<guid>/remote-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/remote-observed/<guid>^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify refs/antiphon/land/<guid>/<guid>/source refs/antiphon/land/<guid>/<guid>/target-before refs/antiphon/land/<guid>/<guid>/prepared refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+owned|canonical|push <root>/remote.git <oid>:refs/heads/master
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/remote-observed
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/master
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/master:refs/antiphon/land/<guid>/<guid>/remote-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/remote-observed/<guid>^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|rev-parse --path-format=absolute --git-path index.lock
+run|canonical|rev-parse --absolute-git-dir
+run|canonical|status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none
+run|canonical|rev-parse --verify HEAD^{commit}
+run|canonical|merge-base --is-ancestor <oid> <oid>
+owned|canonical|-c merge.autoStash=false merge --ff-only <oid>
+run|canonical|rev-parse --verify HEAD^{commit}
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/source
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/target-before
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/prepared
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/cleanup-observed
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/master
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/master:refs/antiphon/land/<guid>/<guid>/cleanup-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/cleanup-observed/<guid>^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|worktree list --porcelain -z
+run|canonical|check-ref-format refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/heads/master
+run|source|rev-parse --path-format=absolute --git-common-dir
+run|canonical|worktree list --porcelain -z
+run|source|symbolic-ref -q HEAD
+run|source|show-ref --exists refs/heads/feat/card-task-<guid>
+run|source|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|source|rev-parse --verify HEAD^{commit}
+run|source|rev-parse --verify refs/heads/feat/card-task-<guid>^{commit}
+run|source|rev-parse --absolute-git-dir
+run|source|status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none
+run|source|ls-files --others --ignored --exclude-standard -z
+run|canonical|worktree list --porcelain -z
+run|source|symbolic-ref -q HEAD
+run|source|show-ref --exists refs/heads/feat/card-task-<guid>
+run|source|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|source|rev-parse --verify HEAD^{commit}
+run|source|rev-parse --verify refs/heads/feat/card-task-<guid>^{commit}
+run|source|rev-parse --absolute-git-dir
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/source
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/target-before
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/prepared
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/cleanup-observed
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/master
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/master:refs/antiphon/land/<guid>/<guid>/cleanup-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/cleanup-observed/<guid>^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|check-ref-format refs/heads/feat/card-task-<guid>
+run|canonical|check-ref-format refs/heads/master
+run|canonical|worktree list --porcelain -z
+run|source|symbolic-ref -q HEAD
+run|source|show-ref --exists refs/heads/feat/card-task-<guid>
+run|source|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|source|rev-parse --verify HEAD^{commit}
+run|source|rev-parse --verify refs/heads/feat/card-task-<guid>^{commit}
+run|source|rev-parse --absolute-git-dir
+run|source|status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none
+run|source|ls-files --others --ignored --exclude-standard -z
+run|canonical|worktree list --porcelain -z
+run|source|symbolic-ref -q HEAD
+run|source|show-ref --exists refs/heads/feat/card-task-<guid>
+run|source|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|source|rev-parse --verify HEAD^{commit}
+run|source|rev-parse --verify refs/heads/feat/card-task-<guid>^{commit}
+run|source|rev-parse --absolute-git-dir
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/source
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/target-before
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/prepared
+run|canonical|worktree list --porcelain -z
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/source
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/target-before
+run|canonical|show-ref --verify --hash refs/antiphon/land/<guid>/<guid>/prepared
+run|canonical|check-ref-format refs/antiphon/land/<guid>/<guid>/cleanup-observed
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|ls-remote --refs --exit-code <root>/remote.git refs/heads/master
+run|canonical|fetch --no-tags --no-write-fetch-head <root>/remote.git refs/heads/master:refs/antiphon/land/<guid>/<guid>/cleanup-observed/<guid>
+run|canonical|rev-parse --verify refs/antiphon/land/<guid>/<guid>/cleanup-observed/<guid>^{commit}
+run|canonical|check-ref-format refs/heads/master
+run|canonical|symbolic-ref -q refs/heads/master
+run|canonical|remote get-url --push --all origin
+run|canonical|merge-base --is-ancestor <oid> <oid>
+run|canonical|worktree list --porcelain -z
+run|canonical|show-ref --exists refs/heads/feat/card-task-<guid>
+run|canonical|show-ref --verify --hash refs/heads/feat/card-task-<guid>
+run|canonical|update-ref --no-deref -d refs/heads/feat/card-task-<guid> <oid>
+run|canonical|show-ref --exists refs/heads/feat/card-task-<guid>
+run|canonical|for-each-ref --format=%(refname) %(objectname) refs/antiphon/land/<guid>/ refs/antiphon/progress/<guid>/
+stdin|canonical|update-ref --stdin

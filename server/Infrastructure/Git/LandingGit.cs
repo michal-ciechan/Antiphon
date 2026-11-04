@@ -6,6 +6,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -25,8 +26,41 @@ public class LandingGit : ILandingGit
     internal static readonly TimeSpan AbandonedRootExitBound = TimeSpan.FromSeconds(30);
 
     private readonly CardFileBoardLookup? _cardFiles;
+    private readonly IGitOperationObserver _observer;
+    private readonly LandGitBackend? _backend;
 
-    public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
+    /// <summary>CARD-1704 S1 (D-7): no <paramref name="backend"/> means <c>Cli</c>, so a test double never opts in.</summary>
+    public LandingGit(CardFileBoardLookup? cardFiles = null, IGitOperationObserver? observer = null, LandGitBackend? backend = null)
+    {
+        _cardFiles = cardFiles;
+        _observer = observer ?? NoGitOperationObserver.Instance;
+        _backend = backend;
+    }
+
+    /// <summary>CARD-1704 S1 test hook (T-D-9): when set, an outer operation scope attaches this session whatever
+    /// the backend. Production never sets it, so no scope carries a session in S1.</summary>
+    internal Func<IGitSession>? SessionFactory { get; set; }
+
+    /// <summary>The live outer scope's session, or null outside a scope and whenever none is attached.</summary>
+    internal IGitSession? CurrentSession => null;
+
+    /// <summary>The backend the live outer scope resolved (read once per scope), or null outside a scope.</summary>
+    internal string? ScopeBackend => null;
+
+    // CARD-1704 S1: typed reads (red-first stubs).
+    public Task<GitCommitRead> ReadCommitAsync(string repository, string revision, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitAncestryRead> ReadAncestryAsync(string repository, string ancestor, string descendant, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitRefRead> ReadRefAsync(string repository, string fullRef, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitSymbolicRefRead> ReadSymbolicRefAsync(string repository, string name, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitDirectoryRead> ReadGitDirectoryAsync(string repository, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitConfigRead> ReadConfigAsync(string repository, string key, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitListingRead> ReadTreeZAsync(string repository, string treeish, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitListingRead> ReadDiffTreeZAsync(string repository, string from, string to, CancellationToken ct) => throw new NotImplementedException();
+    public Task<GitListingRead> ReadWorktreeStatusAsync(string repository, bool untracked, CancellationToken ct) => throw new NotImplementedException();
+
+    /// <summary>Observer exceptions swallowed so far (they never fail git).</summary>
+    internal long ObserverFailures => Interlocked.Read(ref _observerFailures);
+    private long _observerFailures;
 
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 

@@ -24,6 +24,29 @@ public interface ILandingGit
         => RunAsync(repository, arguments, ct);
     Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
+
+    // CARD-1704 S1: typed reads. Each default issues exactly today's call-site argv (GitReadArguments) through
+    // the three-argument RunAsync, so every fake keeps matching the commands it matched before. The 'Read'
+    // prefix keeps them clear of existing members (TaskProgressGit.IsAncestorAsync).
+    Task<GitCommitRead> ReadCommitAsync(string repository, string revision, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitAncestryRead> ReadAncestryAsync(string repository, string ancestor, string descendant, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitRefRead> ReadRefAsync(string repository, string fullRef, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitSymbolicRefRead> ReadSymbolicRefAsync(string repository, string name, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitDirectoryRead> ReadGitDirectoryAsync(string repository, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitConfigRead> ReadConfigAsync(string repository, string key, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitListingRead> ReadTreeZAsync(string repository, string treeish, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitListingRead> ReadDiffTreeZAsync(string repository, string from, string to, CancellationToken ct)
+        => throw new NotImplementedException();
+    Task<GitListingRead> ReadWorktreeStatusAsync(string repository, bool untracked, CancellationToken ct)
+        => throw new NotImplementedException();
+
     Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct);
     Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct);
     Task<string> CommonDirectoryAsync(string repository, CancellationToken ct);
