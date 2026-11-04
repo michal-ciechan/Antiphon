@@ -179,6 +179,7 @@ public sealed class VolumeRetirementContentTests
             mkdir -p -- {{VolumeRetirementFixture.Quote(sessions)}}
             head -c 111 /dev/zero | tr '\0' x > {{VolumeRetirementFixture.Quote(key)}}
             head -c 256 /dev/zero | tr '\0' y > {{VolumeRetirementFixture.Quote(Path.Combine(sessions, "1." + SessionHash + ".key"))}}
+            head -c 7 /dev/zero | tr '\0' z > {{VolumeRetirementFixture.Quote(Path.Combine(sessions, "1234567890." + SessionHash + ".key"))}}
             """);
         planted.Exit.ShouldBe(0, "c1609-r4: plant session keys; " + planted.Output);
         var ok = await VolumeRetirementFixture.Preview(fixture);
@@ -187,6 +188,7 @@ public sealed class VolumeRetirementContentTests
         okText.ShouldContain(VolumeRetirementFixture.ReadyMarker);
         okText.ShouldContain("disposable-fixture classifier=claude-session-key-v1 path=claude/sessions/4151." + SessionHash + ".key size=111");
         okText.ShouldContain("disposable-fixture classifier=claude-session-key-v1 path=claude/sessions/1." + SessionHash + ".key size=256");
+        okText.ShouldContain("disposable-fixture classifier=claude-session-key-v1 path=claude/sessions/1234567890." + SessionHash + ".key size=7");
         okText.ShouldNotContain("reason=state-credential");
         fixture.Removed.ShouldBeEmpty();
 
@@ -200,6 +202,7 @@ public sealed class VolumeRetirementContentTests
             ("file", Path.Combine("claude", "sessions", "2." + SessionHash + ".key\n.key")),
             ("file", Path.Combine("claude", "sessions", "\n2." + SessionHash + ".key")),
             ("file", Path.Combine("claude", "sessions", "0." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "sessions", "12345678901." + SessionHash + ".key")),
             ("file", Path.Combine("claude", "sessions", "x." + SessionHash + ".key")),
             ("file", Path.Combine("claude", "sessions", "nested", "2." + SessionHash + ".key")),
             ("file", Path.Combine("claude-1654", "sessions", "2." + SessionHash + ".key")),
