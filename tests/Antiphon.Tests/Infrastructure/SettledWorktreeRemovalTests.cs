@@ -208,7 +208,7 @@ public sealed class SettledWorktreeRemovalTests
             var seen = 0;
             h.Host.Fixture.Git.BeforeCommand = async (_, args) =>
             {
-                if (args[0] == "status" && ++seen == 1)
+                if (GitSubcommand.Of(args) == "status" && ++seen == 1)
                     await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "lock", h.Host.Fixture.Source);
                 return null;
             };
@@ -417,7 +417,7 @@ public sealed class SettledWorktreeRemovalTests
         var statuses = 0;
         h.Host.Fixture.Git.BeforeCommand = async (_, args) =>
         {
-            if (args[0] == "status" && ++statuses == 2)
+            if (GitSubcommand.Of(args) == "status" && ++statuses == 2)
             {
                 await using var db = h.Host.CreateContext();
                 var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == h.RetirementId);
@@ -458,7 +458,7 @@ public sealed class SettledWorktreeRemovalTests
 
         h.Host.Fixture.Git.BeforeCommand = async (repo, args) =>
         {
-            if (repo != h.Host.Fixture.Source || args[0] != "status") return null;
+            if (repo != h.Host.Fixture.Source || GitSubcommand.Of(args) != "status") return null;
             if (change != "sequencer") await ApplyDirtyAsync(h, change);
             if (change == "unreadable") return new LandingGitResult(128, "", "status_failed");
             return null;
@@ -482,7 +482,7 @@ public sealed class SettledWorktreeRemovalTests
         var seen = 0;
         h.Host.Fixture.Git.BeforeCommand = async (repo, args) =>
         {
-            if (repo != h.Host.Fixture.Source || args[0] != "status" || ++seen != 2) return null;
+            if (repo != h.Host.Fixture.Source || GitSubcommand.Of(args) != "status" || ++seen != 2) return null;
             await ApplyDirtyAsync(h, change);
             return null;
         };
@@ -531,7 +531,7 @@ public sealed class SettledWorktreeRemovalTests
         var seen = 0;
         h.Host.Fixture.Git.BeforeCommand = async (repo, args) =>
         {
-            if (repo != h.Host.Fixture.Source || args[0] != "status" || ++seen != 2) return null;
+            if (repo != h.Host.Fixture.Source || GitSubcommand.Of(args) != "status" || ++seen != 2) return null;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, "late private bytes");
             return null;
@@ -686,7 +686,7 @@ public sealed class SettledWorktreeRemovalTests
         var seenStatus = 0;
         h.Host.Fixture.Git.BeforeCommand = async (repo, args) =>
         {
-            if (repo == h.Host.Fixture.Source && args[0] == "status" && ++seenStatus == 2)
+            if (repo == h.Host.Fixture.Source && GitSubcommand.Of(args) == "status" && ++seenStatus == 2)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
                 await File.WriteAllTextAsync(sentinel, "owned ignored");
@@ -699,6 +699,95 @@ public sealed class SettledWorktreeRemovalTests
         h.ForceOrRecursiveDeleteCalls.ShouldBe(0);
         result.IsClean.ShouldBeFalse();
         Directory.Exists(h.Host.Fixture.Source).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// CARD-1714 item 1: the removal's own re-check refuses a clean status that warned on stderr (git could not open
+    /// part of the tree). A release whose command already started skips the S4a pre-check, so this is its guard.
+    /// </summary>
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task C1714_Removal_refuses_a_status_that_could_not_read_the_whole_tree(int reading)
+    {
+        await using var h = await SettledRemovalHarness.CreateAsync();
+        var seen = 0;
+        h.Host.Fixture.Git.BeforeCommand = (repo, args) => Task.FromResult<LandingGitResult?>(
+            repo == h.Host.Fixture.Source && GitSubcommand.Of(args) == "status" && ++seen == reading
+                ? new LandingGitResult(0, "", "") { WroteStandardError = true } : null);
+        var before = Snapshot(h.Host.Fixture.Source);
+        h.Host.Fixture.Git.Trace.Clear();
+
+        var result = await h.RemoveAsync();
+
+        result.Residue.ShouldBe("status_untrusted");
+        await AssertNothingMovedAsync(h, result, before);
+    }
+
+    /// <summary>
+    /// CARD-1714 item 2: an entry the no-follow delete cannot open refuses BEFORE the move-aside. The length is
+    /// measured under the set-aside name, which is longer than the tree's own: an entry that fits before the move but
+    /// reaches the limit once set aside refuses too. One character shorter proceeds as before.
+    /// </summary>
+    [Test]
+    [Arguments("over-once-set-aside")]
+    [Arguments("under")]
+    public async Task C1714_Path_past_the_delete_limit_refuses_before_the_move(string shape)
+    {
+        const int limit = 400;
+        await using var h = await SettledRemovalHarness.CreateAsync(configure: s => s.AddSingleton(new WorktreePathLimit(limit)));
+        var source = h.Host.Fixture.Source;
+        var growth = WorktreeSetAside.SetAsidePath(source).Length - source.Length;
+        growth.ShouldBeGreaterThan(0);
+        // Ignored build output under obj/: git status sees nothing, only the length guard can stop the delete.
+        var file = PathOfLength(source, (shape == "under" ? limit - 1 : limit) - growth);
+        file.Length.ShouldBeLessThan(limit, "the entry fits before the move");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, "disposable\n");
+        var before = Snapshot(source);
+        h.Host.Fixture.Git.Trace.Clear();
+
+        var result = await h.RemoveAsync();
+
+        if (shape == "under")
+        {
+            result.IsClean.ShouldBeTrue(result.Residue);
+            Directory.Exists(source).ShouldBeFalse();
+            return;
+        }
+        result.Residue.ShouldBe("worktree_path_too_long");
+        await AssertNothingMovedAsync(h, result, before);
+    }
+
+    private static string PathOfLength(string root, int length)
+    {
+        var path = Path.Combine(root, "obj");
+        while (length - path.Length - 1 > 120) path = Path.Combine(path, new string('s', 100));
+        var name = length - path.Length - 1;
+        name.ShouldBeGreaterThan(0);
+        return Path.Combine(path, new string('f', name));
+    }
+
+    private static string Snapshot(string root) => string.Join('\n', Directory
+        .EnumerateFiles(root, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 })
+        .Order(StringComparer.Ordinal)
+        .Select(f => Path.GetRelativePath(root, f) + ":" + Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f)))));
+
+    private static async Task AssertNothingMovedAsync(SettledRemovalHarness h, WorktreeRemoval result, string before)
+    {
+        var source = h.Host.Fixture.Source;
+        result.IsClean.ShouldBeFalse();
+        result.DirectoryGone.ShouldBeFalse();
+        result.Unregistered.ShouldBeFalse();
+        result.BranchDeleted.ShouldBeFalse();
+        h.RemoveCalls.ShouldBe(0);
+        Directory.Exists(WorktreeSetAside.SetAsidePath(source)).ShouldBeFalse("nothing was set aside");
+        Snapshot(source).ShouldBe(before, "the tree is byte-intact");
+        var listed = await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "worktree", "list", "--porcelain");
+        listed.ShouldContain("worktree " + source.Replace('\\', '/'), Case.Sensitive, "the registration is intact");
+        (await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "rev-parse", "--verify", h.Host.Fixture.SourceRef))
+            .Trim().ShouldBe(h.SourceSha, "the branch is kept");
     }
 
     [Test]

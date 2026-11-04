@@ -212,6 +212,60 @@ public sealed class LandingGitTests
         await fixture.AssertRemoteSourceAsync();
     }
 
+    /// <summary>
+    /// CARD-1714 item 1 (Debug 52410842): git status exits 0 with nothing listed under a directory it cannot open
+    /// (past MAX_PATH without core.longpaths, unreadable) and only warns on stderr. The inspection serves lands
+    /// (IdentityAndStatus) and the guarded removal's re-check (Full); neither may take that listing as clean, and
+    /// the status runs with core.longpaths so Git for Windows sees a deep path at all.
+    /// </summary>
+    [Test]
+    [Arguments(LandInspectionScope.IdentityAndStatus)]
+    [Arguments(LandInspectionScope.Full)]
+    public async Task C1714_Clean_status_that_wrote_stderr_is_untrusted(LandInspectionScope scope)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var statuses = new List<string[]>();
+        fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (GitSubcommand.Of(args) != "status") return Task.FromResult<LandingGitResult?>(null);
+            statuses.Add(args.ToArray());
+            return Task.FromResult<LandingGitResult?>(new LandingGitResult(0, "", "") { WroteStandardError = true });
+        };
+
+        var result = await fixture.Git.InspectAsync(fixture.Coordinates, scope, CancellationToken.None);
+
+        result.Accepted.ShouldBeFalse();
+        result.Reason.ShouldBe("status_untrusted");
+        result.Snapshot.ShouldBeNull();
+        statuses.ShouldNotBeEmpty();
+        statuses.ShouldAllBe(a => a.Take(2).SequenceEqual(new[] { "-c", "core.longpaths=true" }),
+            "git for Windows sees a path past MAX_PATH only with core.longpaths");
+        (await File.ReadAllTextAsync(Path.Combine(fixture.Source, "keep.txt"))).ShouldBe("seed\n");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    /// <summary>CARD-1714 item 1, the real shape on Linux: an unreadable untracked directory (git warns, exits 0).</summary>
+    [Test]
+    public async Task C1714_Status_that_cannot_open_a_directory_is_untrusted()
+    {
+        if (OperatingSystem.IsWindows()) Skip.Test("POSIX permissions; the Windows long-path shape is CP-25");
+        if (Environment.UserName == "root") Skip.Test("root reads a mode-000 directory");
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var hidden = Path.Combine(fixture.Source, "src", "hidden");
+        Directory.CreateDirectory(hidden);
+        await File.WriteAllTextAsync(Path.Combine(hidden, "unsaved.txt"), "unsaved\n");
+        File.SetUnixFileMode(hidden, UnixFileMode.None);
+        LandSourceInspection result;
+        try { result = await fixture.Git.InspectAsync(fixture.Coordinates, LandInspectionScope.IdentityAndStatus, CancellationToken.None); }
+        finally { File.SetUnixFileMode(hidden, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+
+        result.Accepted.ShouldBeFalse();
+        result.Reason.ShouldBe("status_untrusted");
+        (await File.ReadAllTextAsync(Path.Combine(hidden, "unsaved.txt"))).ShouldBe("unsaved\n");
+    }
+
     [Test]
     [Arguments("status", 0)]
     [Arguments("status", 1)]
@@ -233,7 +287,7 @@ public sealed class LandingGitTests
             return;
         }
         fixture.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(
-            args[0] == command ? new LandingGitResult(exit, "", "synthetic-secret-marker") : null);
+            GitSubcommand.Of(args) == command ? new LandingGitResult(exit, "", "synthetic-secret-marker") : null);
         var result = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
         result.Accepted.ShouldBeFalse();
         result.Reason.ShouldBe(command == "status" ? "status_error" : "ignored_status_error");
@@ -475,7 +529,7 @@ public sealed class LandingGitTests
         light.Accepted.ShouldBeTrue(light.Reason);
         light.Snapshot!.IgnoredPaths.ShouldBeEmpty();
         fixture.Git.Trace.ShouldNotContain(a => a[0] == "ls-files");
-        fixture.Git.Trace.ShouldContain(a => a[0] == "status", "the dirty check is unchanged by the scope");
+        fixture.Git.Trace.ShouldContain(a => GitSubcommand.Of(a) == "status", "the dirty check is unchanged by the scope");
         fixture.Git.Trace.Clear();
         var full = await fixture.Git.InspectAsync(fixture.Coordinates, LandInspectionScope.Full, CancellationToken.None);
         full.Accepted.ShouldBeTrue(full.Reason);

@@ -72,7 +72,7 @@ public sealed class LandingRegistrationFreshnessTests
         var injections = 0;
         fixture.Git.AfterCommand = async (directory, arguments, result) =>
         {
-            if (LandingGit.PathsEqual(directory, fixture.Source) && arguments[0] == "status" && injections == 0)
+            if (LandingGit.PathsEqual(directory, fixture.Source) && GitSubcommand.Of(arguments) == "status" && injections == 0)
             {
                 result.Succeeded.ShouldBeTrue();
                 WorktreeLists(fixture).ShouldBe(1, "the first identity sample succeeded before status");

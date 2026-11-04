@@ -9,10 +9,13 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// <summary>One deletion path. Unknown authority, identity, content or I/O preserves residue.</summary>
 public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationLease leases,
     IWorktreeRemovalEvidence evidence, WorktreeGuardedCleanup? cleanup = null,
-    WorktreeIgnoredContentGate? ignored = null)
+    WorktreeIgnoredContentGate? ignored = null, WorktreePathLimit? pathLimit = null)
 {
     /// <summary>The set-aside renames and delete; a test injects a Windows sharing violation here.</summary>
     internal WorktreeRenames Renames { get; init; } = WorktreeRenames.System;
+
+    /// <summary>CARD-1714: the longest path the no-follow delete can open; a test lowers it.</summary>
+    internal WorktreePathLimit PathLimit { get; init; } = pathLimit ?? WorktreePathLimit.System;
 
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
