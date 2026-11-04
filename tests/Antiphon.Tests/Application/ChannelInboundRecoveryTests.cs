@@ -28,7 +28,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
-public sealed class ChannelInboundRecoveryTests
+public sealed partial class ChannelInboundRecoveryTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
 
