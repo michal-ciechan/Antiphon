@@ -283,10 +283,10 @@ public sealed class DesktopLegacyReleasePolicyService
                         settled: check.Reason == "directory_absent" && release is null, settings, preview, ct);
                     return new(false, false, false);
                 }
-                // A dry run's pass moves the task behind the never-checked ones (its census reaches every tree); an
-                // executing pass only resets a held state it already has (no new cursor per filing).
-                if (!preview && (!execute || taskCursors.ContainsKey(CheckCursorKey(fresh.Id))))
-                    RecordCheck(taskCursors, fresh, execute ? "passed" : "would_release", settled: false, settings);
+                // A dry run's pass moves the task behind the never-checked ones (its census reaches every tree). An
+                // executing pass resets a held state only once its filing stands (below).
+                if (!preview && !execute)
+                    RecordCheck(taskCursors, fresh, "would_release", settled: false, settings);
             }
 
             if (!execute)
@@ -312,11 +312,16 @@ public sealed class DesktopLegacyReleasePolicyService
                 }
                 catch (ConflictException ex)
                 {
-                    // Each server exclusion has one owner: the service's own code is recorded (masking rule).
+                    // Each server exclusion has one owner: the service's own code is recorded (masking rule). Review
+                    // 4ed13efe A-1: the held state the pre-check found is still current here, so a refused filing backs
+                    // off like a pre-check hold (60 min doubling to 24 h) instead of being re-checked every hour.
                     await HoldAsync(run, rowCursors, taskCursors, fresh, ex.Code ?? "release_refused", settled: false, settings, preview, ct);
                     return new(false, false, false);
                 }
             }
+            // An executing pass resets a held state it already has (no new cursor per filing), once a release stands.
+            if (check is not null && taskCursors.ContainsKey(CheckCursorKey(fresh.Id)))
+                RecordCheck(taskCursors, fresh, "passed", settled: false, settings);
 
             stage = "retire_failed";
             var removed = await _retirement.TryRetireAsync(release, run.Id, ct);
@@ -482,11 +487,11 @@ public sealed class DesktopLegacyReleasePolicyService
         // G-20/G-21 (T-D-5): deleting the local branch could break a dependent's worktree creation. Review 1dcb8d90 D-1:
         // a queued task names its base only in WorktreeBaseRequestedRef (delegate.ps1 -StartRef) or
         // RequestedWorktreeBaseTaskId until it is provisioned.
+        // Review 4ed13efe A-3: both base fields go through the one normaliser, which holds on every reading git could give.
         var branch = BranchName(task.WorktreeBranch);
         if (facts.OpenTasks.Any(t => t.Id != task.Id
                 && (t.ParentTaskId == task.Id || t.RequestedWorktreeBaseTaskId == task.Id
-                    || (branch.Length > 0 && (string.Equals(BranchName(t.WorktreeBaseRef), branch, StringComparison.Ordinal)
-                        || string.Equals(BranchName(t.WorktreeBaseRequestedRef), branch, StringComparison.Ordinal))))))
+                    || (branch.Length > 0 && (NamesBranch(t.WorktreeBaseRef, branch) || NamesBranch(t.WorktreeBaseRequestedRef, branch))))))
             return "dependent_open";
         return null;
     }
@@ -773,13 +778,37 @@ public sealed class DesktopLegacyReleasePolicyService
     private static string FullRef(string? value) => string.IsNullOrWhiteSpace(value) ? "refs/heads/master"
         : value.StartsWith("refs/", StringComparison.Ordinal) ? value : "refs/heads/" + value;
 
-    /// <summary>A start/base ref in any of its recorded spellings, as a local branch name.</summary>
+    private static readonly string[] BranchPrefixes = ["refs/heads/", "heads/", "refs/remotes/origin/", "remotes/origin/", "origin/"];
+
+    /// <summary>The task's own branch as a local branch name.</summary>
     private static string BranchName(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "";
-        foreach (var prefix in new[] { "refs/heads/", "refs/remotes/origin/", "origin/" })
-            if (value.StartsWith(prefix, StringComparison.Ordinal)) return value[prefix.Length..];
-        return value;
+        return value.StartsWith("refs/heads/", StringComparison.Ordinal) ? value["refs/heads/".Length..] : value;
+    }
+
+    /// <summary>
+    /// Review 4ed13efe A-3 (CARD-1701): whether a recorded start or base ref, in any spelling git resolves, may name the
+    /// local <paramref name="branch"/>. A branch name never holds <c>^</c>, <c>~</c>, <c>:</c> or <c>@{</c>
+    /// (check-ref-format), so each starts a revision suffix (<c>^{commit}</c>, <c>^0</c>, <c>~0</c>, <c>@{u}</c>) and is cut
+    /// off. The rest matches with or without one leading <c>refs/heads/</c>, <c>heads/</c> or (conservatively, as before)
+    /// an origin remote-tracking prefix, ignoring case: a Windows loose-ref store resolves a ref case-insensitively.
+    /// Every doubtful reading holds the tree, so a dependent can never lose its local base branch.
+    /// </summary>
+    private static bool NamesBranch(string? value, string branch)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var name = value.Trim();
+        var cut = name.IndexOfAny(['^', '~', ':']);
+        var reflog = name.IndexOf("@{", StringComparison.Ordinal);
+        if (reflog >= 0 && (cut < 0 || reflog < cut)) cut = reflog;
+        if (cut >= 0) name = name[..cut];
+        if (string.Equals(name, branch, StringComparison.OrdinalIgnoreCase)) return true;
+        foreach (var prefix in BranchPrefixes)
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(name[prefix.Length..], branch, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
     private DateTime Now() => _clock.GetUtcNow().UtcDateTime;

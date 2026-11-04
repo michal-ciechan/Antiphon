@@ -2592,7 +2592,9 @@ most `WorktreeLegacyRelease:MaxReleasesPerTick` (25) per tick, oldest `Completed
 always dry, runs while disabled). Settings are scalars only: a shape validator refuses an array, object or null.
 A candidate is terminal for at least `MinTerminalHours` (48), and has no land, sync debt, shared path, live
 session, open dependent (a child task, a task started from its branch, or a queued task whose requested start
-ref or base task names it) or leased runner slot, and a
+ref or base task names it; a start or base ref names the branch in any spelling git resolves, such as
+`heads/<branch>`, `refs/heads/<branch>`, `<branch>^{commit}` or `<branch>~0`, an origin remote-tracking
+spelling, and in any letter case, CARD-1701) or leased runner slot, and a
 `Result`. Its leaf matches `^card-task-<id8>\z` under `Git:WorktreeBasePath`, and it is a clean linked worktree
 whose HEAD is on its branch and contained in its OWN origin branch (else the merge target). The release
 deletes only the local branch; the origin branch keeps the work. A task with a next stage gets a `Superseded`
@@ -2608,8 +2610,14 @@ new attempt on its next due tick (60 min doubling to 24 h, at most `MaxRefusedAt
 release keeps the one-command rule. A busy repository lease defers without counting. Every pre-check counts
 against `MaxReleasesPerTick` whatever its outcome; a held tree is not pre-checked again until its backoff (60 min
 doubling to 24 h) has passed, a missing directory is recorded once and never re-checked, never-checked trees go
-first, and an unchanged Held or `over_cap` row is not rewritten (review 1dcb8d90 D-2). Unknown setting keys are
-refused like invalid values. A runner listed in
+first, and an unchanged Held or `over_cap` row is not rewritten (review 1dcb8d90 D-2). A tree whose pre-check
+passes but whose filing the retirement service refuses (for example `mutation_excluded`) backs off the same way
+(60 min doubling to 24 h); a change of the task's status, attempt, completion time, path or branch resets that
+backoff (CARD-1701). **An unknown key under `WorktreeLegacyRelease` (a misspelling such as `Enabeld`) stops
+server startup**: the binder refuses unknown keys and `ValidateOnStart` fails with an
+`OptionsValidationException` naming the section, like an out-of-range value or an array. A hot reload that adds
+one makes the settings invalid, which the policy treats as disabled (Warning `settings_invalid`, no tick) until
+the key is fixed; it never falls back to the shipped-on defaults. A runner listed in
 `RunnerWorktreeRetention:Runners` keeps its mirror (CARD-1677 owns it, row reason
 `runner_mirror_owned_by_retention`); the desktop half is still retired.
 
