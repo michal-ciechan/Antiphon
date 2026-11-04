@@ -899,8 +899,24 @@ function Test-C1686_LinuxOnlyCensus {
         'verbatim-multi-line-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int V = @`"a `"`" b`n/* c`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:7"))
         'verbatim-string-marker-line' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string V = @`"`n    [NativeLinuxOnly(`"`"x`"`")]`n    public void M() { }`";`n}`n", @("marker-noncanonical:${z}:6"))
         'raw-string-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string R = `"`"`"`n        /* not a comment`n        `"`"`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
-        # CARD-1707: an interpolation hole is not lexed, so its /* reads as an opener mid-line; the marker then fails closed.
-        'interpolation-hole-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static string S(string x) => `$`"{x ?? `"/*`"}`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        # CARD-1711: an interpolation hole is lexed, so the /* in its string literal opens nothing and the marker counts
+        # (CARD-1707 read it as an opener mid-line and failed the marker closed).
+        'interpolation-hole-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static string S(string x) => `$`"{x ?? `"/*`"}`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
+        # CARD-1711 A-1: interpolation holes are lexed, so a quoted key inside a multi-line verbatim hole leaves the string
+        # open and the next line's /* opens nothing; a hole the walk cannot lex (a nested verbatim, raw or interpolated
+        # string, or a comment) marks every later line unknown, and a raw string whose closing quotes fall inside a hole
+        # does too. An unknown line that names the token fails closed, even a canonical marker.
+        'verbatim-interpolation-hole-quote' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int V = `$@`"{D[`"k`"]}`n/* c`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:7"))
+        'interpolation-hole-unlexable' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int V = `$@`"{D[@`"k`"]}`n/* c`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n    [NativeLinuxOnly(`"x`")]`n    public void N() { }`n}`n", @("marker-noncanonical:${z}:7", "marker-noncanonical:${z}:8"))
+        'raw-interpolation-hole-close' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int R = `$`"`"`"{G(`"`"`"`n/* c`n`"`"`")}`"`"`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:8"))
+        'interpolation-hole-quotes-in-sync' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static string S(bool b) => `$`"{(b ? `"a`" : `"b`")}`" + `$@`"{(b ? `"c`" : `"d`")}`";`n    static string T(string x) => `$`$`"`"`"{{string.Join(`" `", x)}} {`"`"`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
+        # CARD-1711 A-2: C# ends a line (and a // comment) at CR, U+2028, U+2029 and U+0085 as well as LF, so the census
+        # reads those as line ends: a marker after one on a // line counts, and a string opened after one is lexed.
+        'line-comment-ends-at-u2028' = @($z, "namespace Fixture;`n`n// note`u{2028}[NativeLinuxOnly(`"x`")]`npublic sealed class ZetaTests { }`n", @('marker-without-row:antiphon|ZetaTests|'))
+        'line-comment-ends-at-u2029' = @($z, "namespace Fixture;`n`n// note`u{2029}[NativeLinuxOnly(`"x`")]`npublic sealed class ZetaTests { }`n", @('marker-without-row:antiphon|ZetaTests|'))
+        'line-comment-ends-at-u0085' = @($z, "namespace Fixture;`n`n// note`u{0085}[NativeLinuxOnly(`"x`")]`npublic sealed class ZetaTests { }`n", @('marker-without-row:antiphon|ZetaTests|'))
+        'line-comment-ends-at-lone-cr' = @($z, "namespace Fixture;`n`n// note`r[NativeLinuxOnly(`"x`")]`npublic sealed class ZetaTests { }`n", @('marker-without-row:antiphon|ZetaTests|'))
+        'line-separator-opens-string' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    // note`u{2028}const string S = @`"`n/* in string`n`";`n    static int Y = 2`n        * 3; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:10"))
         'inactive-if' = @($z, "namespace Fixture;`n`n#if false`n[NativeLinuxOnly(`"inactive`")]`npublic sealed class ZetaTests { }`n#endif`n", @('marker-without-row:antiphon|ZetaTests|'))
         # CARD-1694 D-1: a line that starts as a comment but closes it before the token is code, not a comment line.
         'block-comment-prefix' = @($z, "namespace Fixture;`n`n/* x */ [NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3"))
@@ -925,6 +941,18 @@ function Test-C1686_LinuxOnlyCensus {
         $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root "fail-closed-$name" $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
         Assert-C1323 (Same-C1323Set $r.Problems $expected) "c1686-fail-closed-$name" ($r.Problems -join '; ')
     }
+
+    # CARD-1711 A-3: a long run of $ outside a string is walked in linear time. A 64k run took 12.9 s when every
+    # position retried the run (measured at base on server2), so this 128k run takes about four times that; the fixed
+    # walk takes milliseconds, so 5 s is generous.
+    $extra = [ordered]@{} + $files
+    $extra[$z] = "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    " + ('$' * 131072) + "`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n"
+    $root = New-C1686Root 'dollar-run' $extra
+    $policy = New-C1686Policy $rows
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $r = Get-C1323LinuxOnlyCensus -Root $root -Policy $policy -Catalog $catalog
+    $clock.Stop()
+    Assert-C1323 ((Same-C1323Set $r.Problems @('marker-without-row:antiphon|ZetaTests|M')) -and $clock.Elapsed.TotalSeconds -lt 5) 'c1686-dollar-run-is-linear' ("seconds=$([Math]::Round($clock.Elapsed.TotalSeconds, 2)); " + ($r.Problems -join '; '))
 
     $extra = [ordered]@{} + $files
     $extra['tests/Antiphon.Tests/PortableTests.cs'] = "public sealed class PortableTests`n{`n    /*`n     * [NativeLinuxOnly(`"block comment`")]`n    /* [Test, NativeLinuxOnly(`"block comment`")] */`n    // [ NativeLinuxOnly(`"line comment`")]`n    /// <see cref=`"NativeLinuxOnlyAttribute`"/> is not a marker.`n    [Test]`n    public void Runs() { }`n}`n"

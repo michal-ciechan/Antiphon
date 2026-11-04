@@ -43,7 +43,7 @@ public sealed class ReleaseGatePlatformTests
     // and any use of the name outside a canonical marker line, a comment line or an exempt file's reference forms.
     [Test]
     public Task C1686_LinuxOnlyCensus() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 49,
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 59,
             "C1323 c1686-consistent-census-passes", "C1323 c1686-class-marker-without-row-fails",
             "C1323 c1686-method-marker-without-row-fails", "C1323 c1686-row-without-marker-fails",
             "C1323 c1686-row-attribution-fails", "C1323 c1686-marker-outside-suite-fails",
@@ -69,7 +69,12 @@ public sealed class ReleaseGatePlatformTests
             "C1323 c1686-fail-closed-exempt-file-attribute-list-line", "C1323 c1686-fail-closed-exempt-file-block-comment-prefix",
             "C1323 c1686-fail-closed-exempt-file-string-before-marker",
             "C1323 c1686-fail-closed-reflection-outside-exempt-file", "C1323 c1686-comments-are-not-markers",
-            "C1323 c1686-exempt-file-references-pass");
+            "C1323 c1686-exempt-file-references-pass", "C1323 c1686-fail-closed-verbatim-interpolation-hole-quote",
+            "C1323 c1686-fail-closed-interpolation-hole-unlexable", "C1323 c1686-fail-closed-raw-interpolation-hole-close",
+            "C1323 c1686-fail-closed-interpolation-hole-quotes-in-sync", "C1323 c1686-fail-closed-line-comment-ends-at-u2028",
+            "C1323 c1686-fail-closed-line-comment-ends-at-u2029", "C1323 c1686-fail-closed-line-comment-ends-at-u0085",
+            "C1323 c1686-fail-closed-line-comment-ends-at-lone-cr", "C1323 c1686-fail-closed-line-separator-opens-string",
+            "C1323 c1686-dollar-run-is-linear");
 
     // S-A census contract: compiled S/T/O identities, minus the Windows confinement sibling, stay required.
     [Test]
