@@ -1063,7 +1063,7 @@ public sealed partial class AgentTaskReplyService
         return (facts, lastSequence);
     }
 
-    private static void StampInterrupt(
+    internal static void StampInterrupt(
         AgentTaskEvent refined, string interruptWritten, string? refinementDelivered, Guid requestId)
     {
         var stamp = MidTurnInterruptStamp.Format(interruptWritten, refinementDelivered, requestId);
@@ -5506,7 +5506,7 @@ public sealed partial class AgentTaskReplyService
         return commits;
     }
 
-    private static AgentTaskEvent NewEvent(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
+    internal static AgentTaskEvent NewEvent(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
         new()
         {
             Id = Guid.NewGuid(),
