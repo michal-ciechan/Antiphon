@@ -372,48 +372,48 @@ public sealed class WorkspaceParkPublicationTests
     // CARD-1702 A-1: the checkout admitted by the ownership check is the one Git runs in. A checkout that stops
     // resolving or resolves elsewhere afterwards is refused, never handed to Git as a null or foreign directory.
     [Test]
-    [Arguments("control")]
-    [Arguments("null")]
-    [Arguments("changed")]
-    public async Task C1702_SessionCheckoutGitRunsInTheAdmittedTarget(string resolve)
+    [Arguments("verify", "control")]
+    [Arguments("verify", "null")]
+    [Arguments("verify", "changed")]
+    [Arguments("identity", "control")]
+    [Arguments("identity", "null")]
+    [Arguments("identity", "changed")]
+    public async Task C1702_SessionCheckoutGitRunsInTheAdmittedTarget(string operation, string resolve)
     {
-        foreach (var operation in new[] { "verify", "identity" })
+        using var world = await World.CreateAsync();
+        await world.CommitAsync("work.txt", "published tip");
+        var published = await world.Publisher().PrepareAsync(world.Request, CancellationToken.None);
+        published.Outcome.ShouldBe(WorkspaceParkOutcome.Published, "fixture receipt: " + published.Reason);
+        var mirror = RunnerWorkspaceService.TryResolveFinal(world.Mirror).ShouldNotBeNull();
+        bool InMirror(string directory) => directory.Length > 0 && RunnerWorkspaceService.PathsEqual(directory, mirror);
+        var directories = new List<string>();
+        world.BeforeStart = psi =>
         {
-            using var world = await World.CreateAsync();
-            await world.CommitAsync("work.txt", "published tip");
-            var published = await world.Publisher().PrepareAsync(world.Request, CancellationToken.None);
-            published.Outcome.ShouldBe(WorkspaceParkOutcome.Published, "fixture receipt: " + published.Reason);
-            var mirror = RunnerWorkspaceService.TryResolveFinal(world.Mirror).ShouldNotBeNull();
-            bool InMirror(string directory) => directory.Length > 0 && RunnerWorkspaceService.PathsEqual(directory, mirror);
-            var directories = new List<string>();
-            world.BeforeStart = psi =>
-            {
-                directories.Add(psi.WorkingDirectory);
-                // Never let a stray Git touch the runner's own directory or a foreign repository.
-                if (!InMirror(psi.WorkingDirectory)) ReplaceCommand(psi, "--version");
-            };
-            var calls = 0;
-            var service = world.Publisher(resolveFinal: path => ++calls == 1 || resolve == "control"
-                ? RunnerWorkspaceService.TryResolveFinal(path)
-                : resolve == "null" ? null : RunnerWorkspaceService.TryResolveFinal(world.Repo));
-            var guard = "C1702 " + operation + " " + resolve;
-            if (operation == "verify")
-            {
-                var result = await service.VerifySessionCheckoutAsync(published.Receipt!, world.Mirror, CancellationToken.None);
-                if (resolve == "control") result.Outcome.ShouldBe(WorkspaceParkOutcome.Published, guard + ": " + result.Reason);
-                else AssertHeld(result, "park_path_unowned", guard);
-            }
-            else
-            {
-                var result = await service.ReadIdentityAsync(new(Guid.NewGuid(), world.Mirror, Guid.NewGuid(), DateTime.UtcNow),
-                    world.Mirror, CancellationToken.None);
-                result.Outcome.ShouldBe(resolve == "control" ? WorkspaceRepositoryIdentityOutcome.Read
-                    : WorkspaceRepositoryIdentityOutcome.Held, guard + ": " + result.Reason);
-                if (resolve != "control") result.Reason.ShouldBe("identity_path_unowned", guard);
-            }
-            directories.ShouldNotBeEmpty(guard + ": Git ran for the admitted checkout");
-            directories.Where(d => !InMirror(d)).ShouldBeEmpty(guard + ": Git only in the admitted checkout");
+            directories.Add(psi.WorkingDirectory);
+            // Never let a stray Git touch the runner's own directory or a foreign repository.
+            if (!InMirror(psi.WorkingDirectory)) ReplaceCommand(psi, "--version");
+        };
+        var calls = 0;
+        var service = world.Publisher(resolveFinal: path => ++calls == 1 || resolve == "control"
+            ? RunnerWorkspaceService.TryResolveFinal(path)
+            : resolve == "null" ? null : RunnerWorkspaceService.TryResolveFinal(world.Repo));
+        var guard = "C1702 " + operation + " " + resolve;
+        if (operation == "verify")
+        {
+            var result = await service.VerifySessionCheckoutAsync(published.Receipt!, world.Mirror, CancellationToken.None);
+            if (resolve == "control") result.Outcome.ShouldBe(WorkspaceParkOutcome.Published, guard + ": " + result.Reason);
+            else AssertHeld(result, "park_path_unowned", guard);
         }
+        else
+        {
+            var result = await service.ReadIdentityAsync(new(Guid.NewGuid(), world.Mirror, Guid.NewGuid(), DateTime.UtcNow),
+                world.Mirror, CancellationToken.None);
+            result.Outcome.ShouldBe(resolve == "control" ? WorkspaceRepositoryIdentityOutcome.Read
+                : WorkspaceRepositoryIdentityOutcome.Held, guard + ": " + result.Reason);
+            if (resolve != "control") result.Reason.ShouldBe("identity_path_unowned", guard);
+        }
+        directories.ShouldNotBeEmpty(guard + ": Git ran for the admitted checkout");
+        directories.Where(d => !InMirror(d)).ShouldBeEmpty(guard + ": Git only in the admitted checkout");
     }
 
     private static void AssertHeld(WorkspaceParkResult result, string reason, string guard)
