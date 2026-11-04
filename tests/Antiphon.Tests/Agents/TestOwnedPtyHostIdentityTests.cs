@@ -206,7 +206,8 @@ public class TestOwnedPtyHostPolicyTests
         var expectedReads = persistent ? 6 : 3;
         fixture.Reads.Count.ShouldBe(expectedReads, "bounded-retries");
         pauses.Count.ShouldBe(persistent ? 4 : 1, "bounded-retries");
-        pauses.ShouldAllBe(x => x == TimeSpan.FromMilliseconds(10), "bounded-retries");
+        var retryDelay = TimeSpan.FromMilliseconds(10);
+        pauses.ShouldAllBe(x => x == retryDelay, "bounded-retries");
         fixture.Events.Contains("manifest-unreadable-exited").ShouldBe(scenario.EndsWith("persistent-exited"), "fallback recorded");
     }
 
