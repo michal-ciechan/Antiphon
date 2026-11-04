@@ -10,14 +10,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1710: the shared-checkout settlement Warning joined every dirty path, so a reported
-/// directory full of long Unicode names reached the 4000-char Detail cut, which split an emoji
-/// and failed the strict UTF-8 save. The list is now the CARD-1637 D-1 bounded summary.
+/// CARD-1710: the git-facts Warning for a task outside commit-on-settle (ReadOnly here) joined
+/// every dirty path, so a reported directory of long Unicode names reached the 4000-char Detail
+/// cut, which split an emoji. The list is now the CARD-1637 D-1 bounded summary.
 /// </summary>
 public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
-    public async Task C1710_a_shared_report_naming_a_directory_of_long_unicode_names_writes_a_bounded_valid_warning()
+    public async Task C1710_a_read_only_report_naming_a_directory_of_long_unicode_names_writes_a_bounded_valid_warning()
     {
         using var repo = new ScratchGitRepo("antiphon-reply-c1710-unicode");
         const string emoji = "\U0001F600";
@@ -36,7 +36,7 @@ public partial class AgentTaskReplyIntegrationTests
         var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
         {
             t.RepoPath = repo.Path;
-            t.Workspace = WorkspaceMode.Shared;
+            t.Workspace = WorkspaceMode.ReadOnly;
         });
 
         await SeedTurnAsync(
