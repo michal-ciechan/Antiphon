@@ -37,6 +37,22 @@ internal static class ColumnText
         return string.Concat(text.AsSpan(0, cut), "…");
     }
 
+    /// <summary>
+    /// Cuts to at most <paramref name="max"/> CHARS with no marker, for text whose length is a
+    /// column bound rather than a report (an event Detail, a summarised list). Gives up one char
+    /// rather than end on half a surrogate pair, for the reason <see cref="Clip"/> gives
+    /// (CARD-1637 D-1 r2, CARD-1710).
+    /// </summary>
+    public static string Cut(string text, int max)
+    {
+        if (text.Length <= max)
+            return text;
+        if (max <= 0)
+            return string.Empty;
+
+        return text[..(char.IsHighSurrogate(text[max - 1]) ? max - 1 : max)];
+    }
+
     /// <summary>Null in, null out — an absent detail is not the same as an empty one.</summary>
     public static string? ClipOrNull(string? text, int max) =>
         text is null ? null : Clip(text, max);

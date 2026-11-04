@@ -49,6 +49,20 @@ public class ColumnTextTests
         clipped.ShouldBe("aa😀…");
     }
 
+    /// <summary>CARD-1710: the marker-free cut used for event Details gives up the high half too.</summary>
+    [Test]
+    public void Cut_never_splits_a_surrogate_pair_and_adds_no_marker()
+    {
+        var text = "aa" + string.Concat(Enumerable.Repeat("😀", 4));
+
+        ColumnText.Cut(text, 5).ShouldBe("aa😀", "index 4 is a high surrogate, so the cut stops before it");
+        ColumnText.Cut(text, 6).ShouldBe("aa😀😀");
+        ColumnText.Cut(text, text.Length).ShouldBeSameAs(text);
+        ColumnText.Cut(new string('x', 5_000), 4_000).ShouldBe(new string('x', 4_000));
+        ColumnText.Cut("anything", 0).ShouldBe(string.Empty);
+        ColumnText.Cut("", 0).ShouldBe(string.Empty);
+    }
+
     [Test]
     public void A_zero_budget_yields_nothing_rather_than_throwing()
     {

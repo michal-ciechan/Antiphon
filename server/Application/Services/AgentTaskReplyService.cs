@@ -1071,7 +1071,7 @@ public sealed partial class AgentTaskReplyService
         if (human.StartsWith("[card-0491 ", StringComparison.Ordinal))
             return;
         var combined = stamp + "\n" + human;
-        refined.Detail = combined.Length <= 4000 ? combined : combined[..4000];
+        refined.Detail = ColumnText.Cut(combined, 4000);
     }
 
     /// <summary>
@@ -5015,8 +5015,12 @@ public sealed partial class AgentTaskReplyService
             e.Entity.AgentTaskId == task.Id && e.Entity.Type == AgentTaskEventType.Committed))
             return;
         db.AgentTaskEvents.Add(NewEvent(
-            task.Id, AgentTaskEventType.Committed, $"{sha7} {string.Join(", ", files)}", now));
+            task.Id, AgentTaskEventType.Committed, CommittedDetail(sha7, files), now));
     }
+
+    // CARD-1710: a settlement commit can carry any number of files; the list is the bounded summary.
+    internal static string CommittedDetail(string sha7, IReadOnlyList<string> files) =>
+        $"{sha7} {AgentTaskLandingProtocol.ConflictFileSummary(files)}";
 
     private async Task<CommitOnSettleNote?> SpawnCommitChildAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, IReadOnlyList<string> dirtyPaths,
@@ -5156,8 +5160,9 @@ public sealed partial class AgentTaskReplyService
                 if (dirtyPaths.Count == 0)
                     return ("landed", null);
 
+                // CARD-1710: a reported directory can name any number of dirty paths.
                 var detail = $"Report names {dirtyPaths.Count} file(s) still uncommitted in the shared checkout: "
-                    + string.Join(", ", dirtyPaths) + ".";
+                    + AgentTaskLandingProtocol.ConflictFileSummary(dirtyPaths) + ".";
                 var sharedWarning =
                     $"The report names {dirtyPaths.Count} file(s) that are still uncommitted in the shared checkout "
                     + "— the work has not landed. Commit before building on it.";
@@ -5512,7 +5517,8 @@ public sealed partial class AgentTaskReplyService
             Id = Guid.NewGuid(),
             AgentTaskId = taskId,
             Type = type,
-            Detail = detail.Length <= 4000 ? detail : detail[..4000],
+            // CARD-1710: never half a surrogate pair, which fails Npgsql's strict UTF-8 write.
+            Detail = ColumnText.Cut(detail, 4000),
             At = at,
         };
 
