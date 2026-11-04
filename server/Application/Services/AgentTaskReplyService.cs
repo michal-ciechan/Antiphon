@@ -2558,14 +2558,15 @@ public sealed partial class AgentTaskReplyService
                 task.Status = AgentTaskStatus.Blocked;
                 task.FailureReason =
                     $"Rebase onto {task.MergeTargetRef} conflicted in {outcome.ConflictFiles.Count} file(s).";
+                // CARD-1706: the CARD-1637 D-1 summary, not every name; the Merge task's goal keeps the full list.
+                var conflictSummary = AgentTaskLandingProtocol.ConflictFileSummary(outcome.ConflictFiles);
                 db.AgentTaskEvents.Add(NewEvent(
-                    task.Id, AgentTaskEventType.Conflicted,
-                    $"Conflicts: {string.Join(", ", outcome.ConflictFiles)}", now));
+                    task.Id, AgentTaskEventType.Conflicted, $"Conflicts: {conflictSummary}", now));
 
                 var merge = await services.GetRequiredService<AgentTaskService>()
                     .CreateMergeTaskAsync(task, outcome.ConflictFiles, ct);
                 return merge is null
-                    ? $"MERGE CONFLICT in {string.Join(", ", outcome.ConflictFiles)} — run at task cap, resolve by hand"
+                    ? $"MERGE CONFLICT in {conflictSummary} — run at task cap, resolve by hand"
                     : $"merge conflict → task {DelegationReportFormatter.Short(merge.Id)} is resolving it";
 
             default:
