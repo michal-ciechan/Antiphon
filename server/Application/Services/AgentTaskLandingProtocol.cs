@@ -278,6 +278,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     Require(abort.Succeeded, "rebase_abort_failed");
                     await RecheckSourceAsync(op, ct);
                     var files = conflicts.Succeeded ? conflicts.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
+                    // CARD-1637: a plain -Land flattens merge commits by policy. When that conflicts, a
+                    // rebase resolver would redo what the merge already resolved; name the Merge-role path.
+                    if (files.Length > 0 && await HasMergeCommitsAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct))
+                    {
+                        var contained = await IsAncestorAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct);
+                        op.LastReason = "merge_branch_needs_merge_role";
+                        _state.Transition(op, LandPhase.Refused, Now());
+                        return new(op, op.LastReason, []) { Detail = MergeRoleDetail(op, contained, files) };
+                    }
                     op.LastReason = files.Length > 0 ? "rebase_conflict" : "rebase_failed";
                     _state.Transition(op, LandPhase.Refused, Now());
                     return new(op, op.LastReason, files);
@@ -948,6 +957,28 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var result = await git.RunAsync(repository, ["merge-base", "--is-ancestor", source, target], ct);
         Require(result.ExitCode is 0 or 1, "ancestry_error");
         return result.ExitCode == 0;
+    }
+
+    private async Task<bool> HasMergeCommitsAsync(string repository, string target, string source, CancellationToken ct)
+    {
+        var result = await git.RunAsync(repository, ["rev-list", "--min-parents=2", "--max-count=1", $"{target}..{source}"], ct);
+        Require(result.Succeeded, "merge_scan_failed");
+        return result.Output.Trim().Length > 0;
+    }
+
+    private static string MergeRoleDetail(AgentTaskLanding op, bool containsTarget, IReadOnlyList<string> files)
+    {
+        var source = InputSha(op);
+        var target = op.TargetFullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
+            ? op.TargetFullRef["refs/heads/".Length..] : op.TargetFullRef;
+        var path = containsTarget
+            ? $"The branch already contains {target} {op.TargetBeforeSha}, so a Merge-role task can publish the reviewed commit "
+                + $"unchanged as a fast-forward: git push origin {source}:refs/heads/{target}."
+            : $"Integrate it through a Merge-role task dispatched with -StartRef {op.TargetBeforeSha} that runs git merge {source} "
+                + $"and pushes HEAD:refs/heads/{target} (docs/release-gates.md, Merge role).";
+        return $"{op.SourceFullRef} carries merge commits; a plain -Land rebases and flattens them, and that rebase conflicted in "
+            + $"{string.Join(", ", files)}. {path} A rebased linear successor is a new SHA and needs a new Review before -Land. "
+            + "No rebase resolver was spawned.";
     }
 
     private async Task TransitionAsync(AgentTaskLanding op, LandPhase next, CancellationToken ct)
