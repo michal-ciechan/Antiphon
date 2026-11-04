@@ -257,6 +257,9 @@ public class CapacityObsoleteStandingTests
             detail.LiveSession.ShouldNotBeNull();
             ids.Add(wait.Id);
         }
+        // A launch still writing a replacement session row makes cleanup NOWAIT busy,
+        // which would defer that candidate past the first bounded pass.
+        await fx.Harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
 
         if (arm == "provider-busy")
         {
@@ -313,6 +316,9 @@ public class CapacityObsoleteStandingTests
         var detail = await fx.Harness.Control.StartAsync(agent.Id,
             new StartAgentRequest(Fresh: true, IgnoreSubscriptionQuota: true), CancellationToken.None);
         detail.LiveSession.ShouldNotBeNull();
+        // Reconciling while the launch still writes the replacement session row is the
+        // busy deferral: cleanup rolls back before the before-finish boundary is reached.
+        await fx.Harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
         boundary.OnReached = async (name, waitId, _, ct) =>
         {
             if (name != "capacity-obsolete-before-finish" || waitId != wait.Id)
