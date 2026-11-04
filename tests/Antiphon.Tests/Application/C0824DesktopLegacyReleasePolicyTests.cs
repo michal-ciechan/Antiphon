@@ -1727,7 +1727,11 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         WorktreeSetAside.Read(common, a.Path).ShouldBeNull("nothing was moved aside");
         File.Delete(dirt);
         w.Clock.Advance(TimeSpan.FromHours(2));
-        var second = await service.TryRetireAsync(release, null, CancellationToken.None);
+        // A later pass is a new request: a fresh scope that reads the spent attempt's command intent from the database.
+        await using var retry = w.Host.Services.CreateAsyncScope();
+        var retryDb = retry.ServiceProvider.GetRequiredService<AppDbContext>();
+        var second = await retry.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>().TryRetireAsync(
+            await retryDb.TaskWorktreeRetirements.SingleAsync(r => r.Id == dto.Id), null, CancellationToken.None);
 
         second.Residue.ShouldBe("cleanup_command_slot_spent");
         (await w.AttemptsAsync(a)).Count.ShouldBe(1, "no attempt 2");
