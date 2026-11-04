@@ -1973,7 +1973,13 @@ function Test-C1584_E2EExpandedBudget {
             }
         }
         $expected = @(Get-Content (Join-Path $here 'fixtures/nightly/c1584-e2e-source-roster.txt') | Where-Object { $_ -and -not $_.StartsWith('#') } | Sort-Object)
-        if (($expected -join "`n") -cne (@($roster | Sort-Object) -join "`n")) { throw 'expanded-source-roster-changed' }
+        $actual = @($roster | Sort-Object)
+        if (($expected -join "`n") -cne ($actual -join "`n")) {
+            # Name the drift so a qualification failure says which identities to refresh.
+            $added = @($actual | Where-Object { $_ -cnotin $expected })
+            $removed = @($expected | Where-Object { $_ -cnotin $actual })
+            throw ('expanded-source-roster-changed: added=' + ($added -join ';') + ' removed=' + ($removed -join ';'))
+        }
         $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
         $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'e2e' -Platform 'windows')
         $required = @($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded $_ $exclusions -ProfileAware) })
