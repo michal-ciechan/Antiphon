@@ -971,6 +971,13 @@
           "owner": "CARD-1619"
         },
         {
+          "suite": "agents-pty",
+          "class": "Card1681PtyHangupRunnerTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the Linux pty master hangup (EIO) is classified from the root's /proc/<pid>/stat. The case remains required on Linux.",
+          "owner": "CARD-1681"
+        },
+        {
           "suite": "pty-host",
           "class": "Card1619LinuxHostExitTests",
           "platform": "windows",
