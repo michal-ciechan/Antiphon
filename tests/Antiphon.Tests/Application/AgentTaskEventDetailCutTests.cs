@@ -42,6 +42,29 @@ public class AgentTaskEventDetailCutTests
     }
 
     [Test]
+    public void Committed_detail_keeps_a_short_file_list_as_the_plain_join()
+    {
+        AgentTaskReplyService.CommittedDetail("abc1234", ["a.cs", "docs/b.md"]).ShouldBe("abc1234 a.cs, docs/b.md");
+        var twenty = Enumerable.Range(0, 20).Select(i => $"src/File{i:D2}.cs").ToList();
+        AgentTaskReplyService.CommittedDetail("abc1234", twenty).ShouldBe("abc1234 " + string.Join(", ", twenty));
+    }
+
+    [Test]
+    public void Committed_detail_bounds_many_long_unicode_names()
+    {
+        var files = Enumerable.Range(0, 300)
+            .Select(i => $"u/{i:D3}" + string.Concat(Enumerable.Repeat(Emoji, 150)) + ".md").ToList();
+        string.Join(", ", files).Length.ShouldBeGreaterThan(4000);
+
+        var detail = AgentTaskReplyService.CommittedDetail("abc1234", files);
+
+        detail.Length.ShouldBeLessThanOrEqualTo("abc1234 ".Length + AgentTaskLandingProtocol.ConflictListMaxLength);
+        Should.NotThrow(() => Strict.GetBytes(detail));
+        detail.ShouldStartWith("abc1234 u/000");
+        detail.ShouldMatch(@"\.\.\. and \d+ more$");
+    }
+
+    [Test]
     public void Interrupt_stamp_cut_keeps_an_emoji_across_the_boundary_whole()
     {
         var requestId = Guid.NewGuid();
