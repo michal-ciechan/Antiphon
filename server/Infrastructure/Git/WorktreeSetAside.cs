@@ -36,7 +36,9 @@ internal static class WorktreeSetAside
             JsonSerializer.Serialize(stream, record);
             stream.Flush(flushToDisk: true);
         }
-        (renames ?? WorktreeRenames.System).ReplaceFile(temporary, path);
+        // A scanner may hold the fresh temporary file or the record for a moment.
+        var r = renames ?? WorktreeRenames.System;
+        r.Retrying(r.ReplaceFile, temporary, path);
     }
 
     /// <summary>Null when nothing is recorded; an unreadable record is an I/O error, never absence.</summary>
