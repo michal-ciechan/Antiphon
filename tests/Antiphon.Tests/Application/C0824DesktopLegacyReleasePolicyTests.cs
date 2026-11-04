@@ -179,7 +179,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             db.AgentSessions.Add(new AgentSession
             {
                 Id = sessionId, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
-                Cwd = w.Root, Cols = 80, Rows = 24, CreatedAt = w.Now, StartedAt = w.Now, LastSeenAt = w.Now,
+                Cwd = Path.Combine(w.Fixture.Root, "elsewhere"), Cols = 80, Rows = 24, CreatedAt = w.Now, StartedAt = w.Now, LastSeenAt = w.Now,
             });
             await db.SaveChangesAsync();
         }
@@ -612,7 +612,8 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 Directory.CreateSymbolicLink(Path.Combine(a.Path, "obj", "link"), target);
                 break;
             default:
-                a = await w.AddTaskAsync(id: id);
+                // Older than the control, so the cut fires on this task's release save.
+                a = await w.AddTaskAsync(id: id, ageHours: 70);
                 break;
         }
         var swapped = false;
@@ -1127,7 +1128,8 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     public async Task Caller_filed_release_keeps_one_command()
     {
         await using var w = await DesktopLegacyWorld.CreateAsync();
-        var a = await w.AddTaskAsync();
+        // Contained in the merge target, the operator release's destination.
+        var a = await w.AddTaskAsync(shape: "base-only");
         var failed = false;
         w.Fixture.Git.BeforeCommand = (_, args) =>
         {
