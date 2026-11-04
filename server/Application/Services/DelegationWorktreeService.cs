@@ -195,7 +195,12 @@ public sealed class DelegationWorktreeService
         if (!merges.Ok) return new(CommitContainment.Unknown, "merge_inspection_error");
         if (!string.IsNullOrWhiteSpace(merges.StdOut))
             return new(CommitContainment.Unknown, "merge_range");
-        var result = await GitAsync(repo, ct, "cherry", baseRef, branch);
+        // Git for Windows' `git cherry` refuses a long branch name ("unknown commit") once the ref
+        // path passes ~260 characters, even with core.longpaths and packed refs, while rev-parse,
+        // rev-list and merge-base resolve it. cherry compares the same commits given the tip's id.
+        var tip = await GitAsync(repo, ct, "rev-parse", "--verify", branch + "^{commit}");
+        if (!tip.Ok || tip.StdOut.Trim() is not { Length: 40 or 64 } tipSha) return new(CommitContainment.Unknown, "branch_resolution_error");
+        var result = await GitAsync(repo, ct, "cherry", baseRef, tipSha);
         if (!result.Ok) return new(CommitContainment.Unknown, "cherry_error");
         var lines = result.StdOut.Replace("\r\n", "\n", StringComparison.Ordinal)
             .Split('\n', StringSplitOptions.RemoveEmptyEntries);
