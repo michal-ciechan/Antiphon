@@ -223,7 +223,7 @@ public sealed class VolumeRetirementContentTests
             var target = Path.Combine(root, "variant", "target");
             Directory.CreateDirectory(Path.Combine(root, "claude", "sessions"));
             await File.WriteAllTextAsync(Path.Combine(root, "claude", "sessions", "4151." + SessionHash + ".key"), new string('x', 111));
-            var planted = await VolumeRetirementFixture.Bash($$"""
+            var shaped = await VolumeRetirementFixture.Bash($$"""
                 set -euo pipefail
                 mkdir -p -- {{VolumeRetirementFixture.Quote(Path.GetDirectoryName(path)!)}} {{VolumeRetirementFixture.Quote(Path.GetDirectoryName(target)!)}}
                 case {{kind}} in
@@ -234,7 +234,7 @@ public sealed class VolumeRetirementContentTests
                     hardlink) printf x > {{VolumeRetirementFixture.Quote(target)}}; ln {{VolumeRetirementFixture.Quote(target)}} {{VolumeRetirementFixture.Quote(path)}} ;;
                 esac
                 """);
-            planted.Exit.ShouldBe(0, "c1609-r4: plant " + kind + " at " + relative + "; " + planted.Output);
+            shaped.Exit.ShouldBe(0, "c1609-r4: plant " + kind + " at " + relative + "; " + shaped.Output);
             var refused = await VolumeRetirementFixture.Preview(variant);
             var text = refused.Output + await VolumeRetirementFixture.AuditText(variant);
             refused.Exit.ShouldBe(2, "c1609-r4: " + kind + " at " + relative.Replace("\n", "\\n") + " refuses; " + VolumeRetirementFixture.Truncate(text));
