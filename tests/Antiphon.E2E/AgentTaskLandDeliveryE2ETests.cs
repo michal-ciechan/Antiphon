@@ -285,14 +285,19 @@ public class AgentTaskLandDeliveryE2ETests
         var attention = await f.AttentionAsync();
         var owed = await f.PollingAttentionAsync(attention, requestId);
         owed.Severity.ShouldBe(AlertSeverity.Error);
-        owed.Headline.ShouldContain(state == "busy" ? "busy" : "attempted");
+        // The feed shows the newest Aged notice (CARD-1085). While the attempted Outcome holds the
+        // caller's queue lock before typing, that notice cannot be enqueued; busy enqueues it.
+        owed.Headline.ShouldContain(state == "busy" ? "busy" : "Land Aged notification: Queued; not yet enqueued");
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
             note.RequestId.ShouldBe(requestId);
             note.ConfirmedAt.ShouldBeNull();
+            var outcomeRow = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+            if (state == "attempt") outcomeRow.DeliveryAttempts.ShouldBe(1);
             var aged = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged).ToListAsync();
             aged.Count.ShouldBe(2);
+            if (state == "attempt") aged.ShouldAllBe(n => n.QueueMessageId == null);
             new[] { note.Id }.Concat(aged.Select(n => n.Id)).ShouldContain(owed.LandNotificationId!.Value);
             foreach (var warning in aged)
             {
