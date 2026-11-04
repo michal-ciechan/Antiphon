@@ -74,7 +74,14 @@ internal static class InProcessGitReads
     private static bool HasPackedReplaceRefs(string common)
     {
         var packed = Path.Combine(common, "packed-refs");
-        return File.Exists(packed) && File.ReadLines(packed).Any(l => l.Contains(" refs/replace/", StringComparison.Ordinal));
+        if (!File.Exists(packed)) return false;
+        // Shared for delete/replace: git rewrites packed-refs by renaming over it, and a reader
+        // without FileShare.Delete makes a concurrent `git branch -D` or pack-refs fail on Windows.
+        using var stream = new FileStream(packed, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
+            if (line.Contains(" refs/replace/", StringComparison.Ordinal)) return true;
+        return false;
     }
 
     /// <summary>The common dir for a git dir, per gitrepository-layout(5): its commondir file, else itself.</summary>
@@ -83,7 +90,9 @@ internal static class InProcessGitReads
         var file = Path.Combine(gitDir, "commondir");
         if (!File.Exists(file)) return gitDir;
         var lines = File.ReadAllText(file).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.TrimEnd('\r')).ToArray();
-        return lines.Length == 1 && lines[0].Length != 0 ? Path.GetFullPath(lines[0], gitDir) : null;
+        // Any other surrounding whitespace is git's to judge (it refuses "../.. "); GetFullPath would trim it.
+        if (lines.Length != 1 || lines[0].Length == 0 || lines[0] != lines[0].Trim()) return null;
+        return Path.GetFullPath(lines[0], gitDir);
     }
 
     private static LandingGitResult? Answer(Repository repo, IReadOnlyList<string> a)
