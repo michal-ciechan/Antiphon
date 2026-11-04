@@ -910,6 +910,18 @@
           "owner": "CARD-1677"
         },
         {
+          "suite": "antiphon",
+          "class": "C1677RetentionServerTests",
+          "methods": [
+            "Busy_runner_retain_is_serialised",
+            "Retain_recovery_at_each_handoff",
+            "Retain_round_trip_real_runner"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the V-39 transport world runs the real runner retention engine, whose holder scan reads /proc; off Linux the scan is incomplete and retention keeps the tree (holder_scan_unknown). The case remains required on Linux.",
+          "owner": "CARD-1677"
+        },
+        {
           "suite": "session-runner",
           "class": "C0824WorkspaceSlotNativeRehomeTests",
           "platform": "windows",
