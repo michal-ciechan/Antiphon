@@ -728,6 +728,200 @@ public sealed class LandingRemovalPolicyControlTests
         WorktreeRenames.System.Windows.ShouldBe(OperatingSystem.IsWindows());
     }
 
+    // C448 V36 (Windows qualification b19a9880, 'verified-sha' baseline): the move aside succeeded and
+    // the set-aside tree's delete was refused at once, in 49 ms. A scanner or indexer holding a fresh
+    // entry refuses it with a raw Win32 code (the no-follow walk) or a 0x8007xxxx HResult (.NET's own
+    // I/O); the whole walk is retried, bounded, and only on Windows. The seam throws what Windows would.
+    private static Exception DeleteRefusal(string kind) => kind switch
+    {
+        "dir-not-empty" => new IOException("no_follow_delete_failed: directory not empty", 145),
+        "denied" => new IOException("no_follow_delete_failed: access denied", 5),
+        "sharing" => new IOException("no_follow_open_failed: sharing violation", 32),
+        "lock" => new IOException("no_follow_open_failed: lock violation", 33),
+        "denied-hresult" => new UnauthorizedAccessException("access to the path is denied"),
+        "sharing-hresult" => new IOException("being used by another process", unchecked((int)0x80070020)),
+        "not-empty-hresult" => new IOException("directory not empty", unchecked((int)0x80070091)),
+        "disk-full" => new IOException("no_follow_delete_failed: disk full", 112),
+        "disk-full-hresult" => new IOException("disk full", unchecked((int)0x80070070)),
+        "not-found" => new DirectoryNotFoundException("path not found"),
+        _ => new IOException("no_follow_delete_failed: invalid name", 123),
+    };
+
+    [Test]
+    [Arguments("dir-not-empty")]
+    [Arguments("denied")]
+    [Arguments("sharing")]
+    [Arguments("lock")]
+    [Arguments("denied-hresult")]
+    [Arguments("sharing-hresult")]
+    [Arguments("not-empty-hresult")]
+    public async Task C448_V36_TransientRefusalOfSetAsideDeleteIsRetriedToAClean(string kind)
+    {
+        using var f = new RemovalFixture();
+        f.FailDelete(_ => DeleteRefusal(kind), failures: 1);
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeTrue($"{kind}: {result.Residue} {result.Detail}");
+        f.DeleteCalls.ShouldBe(2, "one refused delete, then the retried walk");
+        f.Pauses.ShouldBe([WorktreeRenames.SharingPause]);
+        f.Mutations.Count.ShouldBe(2);
+        Directory.Exists(f.Source).ShouldBeFalse();
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+        f.BranchPresent.ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("dir-not-empty", 145)]
+    [Arguments("sharing", 32)]
+    [Arguments("lock", 33)]
+    [Arguments("denied-hresult", 5)]
+    public async Task C448_V36_LastingRefusalOfSetAsideDeleteKeepsTheRecordForTheNextPass(string kind, int code)
+    {
+        using var f = new RemovalFixture();
+        f.FailDelete(_ => DeleteRefusal(kind));
+        var first = await f.RemoveAsync();
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem("the set-aside tree is kept for the next pass");
+        first.Residue.ShouldBe("worktree_removal_incomplete");
+        first.Detail.ShouldBe($"set-aside: {aside}; delete_error_{code}", "the refusal names its Win32 code");
+        f.DeleteCalls.ShouldBe(WorktreeRenames.SharingAttempts, "the retry is bounded");
+        f.Pauses.Count.ShouldBe(WorktreeRenames.SharingAttempts - 1);
+        f.Pauses.ShouldAllBe(p => p == WorktreeRenames.SharingPause);
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work", "nothing is forced");
+        WorktreeSetAside.Read(f.Root, f.Source).ShouldNotBeNull().SetAsidePath.ShouldBe(aside);
+        f.Mutations.ShouldHaveSingleItem().ShouldBe(f.UnregisterVector);
+        f.Registered.ShouldBeFalse();
+        f.BranchPresent.ShouldBeTrue("the branch waits for the directory");
+
+        // The product's resume path: a later pass finishes the recorded tree.
+        f.HealDelete();
+        var second = await f.RemoveAsync();
+        second.IsClean.ShouldBeTrue($"{second.Residue} {second.Detail}");
+        f.DeleteCalls.ShouldBe(WorktreeRenames.SharingAttempts + 1, "the resumed delete runs once");
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+        f.Mutations.Count.ShouldBe(2);
+        f.BranchPresent.ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("disk-full", 112)]
+    [Arguments("disk-full-hresult", 112)]
+    [Arguments("not-found", 3)]
+    [Arguments("invalid-name", 123)]
+    public async Task C448_V36_LastingDeleteErrorIsNeverRetried(string kind, int code)
+    {
+        using var f = new RemovalFixture();
+        f.FailDelete(_ => DeleteRefusal(kind));
+        var pass = await f.RemoveDirectoryAsync();
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        pass.Result.Residue.ShouldBe("worktree_removal_incomplete");
+        pass.Result.Detail.ShouldBe($"set-aside: {aside}; delete_error_{code}");
+        f.DeleteCalls.ShouldBe(1, "a non-transient error is the refusal");
+        f.Pauses.ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
+        f.SetAsideRecords().ShouldHaveSingleItem();
+    }
+
+    [Test]
+    [Arguments("dir-not-empty", 145)]
+    [Arguments("sharing", 32)]
+    [Arguments("denied-hresult", 5)]
+    public async Task C448_V36_DeleteRefusalIsOnlyTransientOnWindows(string kind, int code)
+    {
+        // Off Windows an HResult carries errno, and access denied is a lasting permission.
+        using var f = new RemovalFixture { Windows = false };
+        f.FailDelete(_ => DeleteRefusal(kind), failures: 1);
+        var pass = await f.RemoveDirectoryAsync();
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        pass.Result.Residue.ShouldBe("worktree_removal_incomplete");
+        pass.Result.Detail.ShouldBe($"set-aside: {aside}; delete_error_{code}");
+        f.DeleteCalls.ShouldBe(1);
+        f.Pauses.ShouldBeEmpty();
+    }
+
+    // A delete that returns can leave the name visible: with the classic disposition an entry stays
+    // delete-pending while another handle (a scanner, a directory watcher) is open on it.
+    [Test]
+    public async Task C448_V36_SetAsideTreeStillVisibleAfterDeleteIsWaitedOut()
+    {
+        using var f = new RemovalFixture();
+        f.FailDelete(_ => null, failures: 1);
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeTrue($"{result.Residue} {result.Detail}");
+        f.DeleteCalls.ShouldBe(2);
+        f.Pauses.ShouldBe([WorktreeRenames.SharingPause]);
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+        f.Mutations.Count.ShouldBe(2);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C448_V36_SetAsideTreeLastingVisibleAfterDeleteStillRefuses(bool windows)
+    {
+        using var f = new RemovalFixture { Windows = windows };
+        f.FailDelete(_ => null);
+        var pass = await f.RemoveDirectoryAsync();
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        pass.Result.Residue.ShouldBe("worktree_removal_incomplete");
+        pass.Result.Detail.ShouldBe("set-aside: " + aside, "the delete raised nothing, so no code is named");
+        f.DeleteCalls.ShouldBe(windows ? WorktreeRenames.SharingAttempts : 1, "the wait is bounded and Windows-only");
+        f.Pauses.Count.ShouldBe(windows ? WorktreeRenames.SharingAttempts - 1 : 0);
+        f.Pauses.ShouldAllBe(p => p == WorktreeRenames.SharingPause);
+        f.SetAsideRecords().ShouldHaveSingleItem();
+    }
+
+    // The resume of a recorded set-aside tree is the second delete site; it retries the same way.
+    [Test]
+    [Arguments(1)]
+    [Arguments(int.MaxValue)]
+    public async Task C448_V36_ResumedSetAsideDeleteIsRetriedToo(int failures)
+    {
+        using var f = new RemovalFixture();
+        f.FailDelete(_ => DeleteRefusal("dir-not-empty"));
+        (await f.RemoveAsync()).Residue.ShouldBe("worktree_removal_incomplete");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        f.FailDelete(_ => DeleteRefusal("sharing"), failures);
+        var second = await f.RemoveAsync();
+        if (failures == 1)
+        {
+            second.IsClean.ShouldBeTrue($"{second.Residue} {second.Detail}");
+            f.DeleteCalls.ShouldBe(2);
+            f.Pauses.ShouldBe([WorktreeRenames.SharingPause]);
+            f.SetAsideTrees().ShouldBeEmpty();
+            f.SetAsideRecords().ShouldBeEmpty();
+            f.BranchPresent.ShouldBeFalse();
+        }
+        else
+        {
+            second.Residue.ShouldBe("worktree_removal_incomplete");
+            second.Detail.ShouldBe($"set-aside: {aside}; delete_error_32");
+            f.DeleteCalls.ShouldBe(WorktreeRenames.SharingAttempts);
+            f.Pauses.Count.ShouldBe(WorktreeRenames.SharingAttempts - 1);
+            File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
+            f.SetAsideRecords().ShouldHaveSingleItem();
+            f.BranchPresent.ShouldBeTrue();
+        }
+    }
+
+    // A nested repository is preserved on purpose: it is never a transient refusal.
+    [Test]
+    public async Task C448_V36_PreservedNestedRepositoryIsNeverRetried()
+    {
+        using var f = new RemovalFixture();
+        Directory.CreateDirectory(Path.Combine(f.Source, "vendor", "lib"));
+        File.WriteAllText(Path.Combine(f.Source, "vendor", "lib", ".git"), "gitdir: elsewhere\n");
+        f.HealDelete();
+        var pass = await f.RemoveDirectoryAsync();
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        pass.Result.Residue.ShouldBe("ignored_content_preserved");
+        f.DeleteCalls.ShouldBe(1);
+        f.Pauses.ShouldBeEmpty();
+        File.Exists(Path.Combine(aside, "vendor", "lib", ".git")).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
+    }
+
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
     {
         public List<(int Evidence, int AtInspection)> Calls { get; } = [];
@@ -793,11 +987,31 @@ public sealed class LandingRemovalPolicyControlTests
             if (renameFault is { } f && f.Rename == rename && call <= f.Failures) throw f.Fault(call);
             real();
         }
-        // Without an injected fault the fixture renames exactly as production does.
-        private WorktreeRenames Renames => renameFault is null ? WorktreeRenames.System : new(
+        public int DeleteCalls { get; private set; }
+        private (Func<int, Exception?> Fault, int Failures)? deleteFault;
+        /// <summary>
+        /// The set-aside delete throws <paramref name="fault"/> for its first <paramref name="failures"/>
+        /// calls; a null fault returns without deleting, as a delete-pending name stays visible on Windows.
+        /// </summary>
+        public void FailDelete(Func<int, Exception?> fault, int failures = int.MaxValue)
+        { deleteFault = (fault, failures); DeleteCalls = 0; Pauses.Clear(); }
+        /// <summary>Counts the deletes without a fault; the counters keep running.</summary>
+        public void HealDelete() => deleteFault = (_ => null, 0);
+        private void Delete(string path, bool preserveNestedRepositories)
+        {
+            var call = ++DeleteCalls;
+            if (deleteFault is { } f && call <= f.Failures)
+            {
+                if (f.Fault(call) is { } fault) throw fault;
+                return;
+            }
+            WorktreeNoFollowDelete.Delete(path, preserveNestedRepositories);
+        }
+        // Without an injected fault the fixture renames and deletes exactly as production does.
+        private WorktreeRenames Renames => renameFault is null && deleteFault is null ? WorktreeRenames.System : new(
             (s, d) => Rename("move", () => Directory.Move(s, d)),
             (s, d) => Rename("record", () => File.Move(s, d, overwrite: true)),
-            Pauses.Add, Windows);
+            Pauses.Add, Windows) { DeleteTree = Delete };
         public RemovalFixture()
         {
             Retention = new(this);

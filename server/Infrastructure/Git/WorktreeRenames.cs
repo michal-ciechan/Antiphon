@@ -15,6 +15,9 @@ internal sealed record WorktreeRenames(Action<string, string> MoveDirectory, Act
     public static WorktreeRenames System { get; } = new(Directory.Move,
         (source, destination) => File.Move(source, destination, overwrite: true), Thread.Sleep, OperatingSystem.IsWindows());
 
+    /// <summary>The set-aside tree's no-follow delete; a test injects the refusal Windows gives while a scanner holds an entry.</summary>
+    public Action<string, bool> DeleteTree { get; init; } = WorktreeNoFollowDelete.Delete;
+
     /// <summary>
     /// Runs one rename, retrying only a Windows sharing conflict, at most <see cref="SharingAttempts"/>
     /// times. Any other error, or the conflict at the last attempt, is the refusal: nothing is forced.
