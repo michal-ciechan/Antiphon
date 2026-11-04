@@ -17,11 +17,16 @@ public abstract record BuildSlotOutcome
 /// memory under one lock. A grant goes only to a waiter within the free-slot window at the head of
 /// the queue, so a long waiter is never overtaken; a waiter that stops re-polling is dropped. The
 /// sweep (timer and every acquire) reaps a lease whose holder pid is gone or recycled, or that is
-/// past its TTL. The memory floor is checked at grant time only; a held lease is never revoked and
-/// nothing is killed.
+/// past its TTL. CARD-0851: in pid mode a lease past its TTL is kept while its holder pid still
+/// answers with the start time recorded at grant (within <see cref="SameHolderStartTolerance"/>),
+/// so a driver that runs longer than the TTL keeps its slot; renew mode keeps the TTL. The memory
+/// floor is checked at grant time only; a held lease is never revoked and nothing is killed.
 /// </summary>
 public sealed class BuildSlotBroker
 {
+    /// <summary>CARD-0851: past the TTL the holder must be the process that took the lease, to the second.</summary>
+    internal static readonly TimeSpan SameHolderStartTolerance = TimeSpan.FromSeconds(1);
+
     private readonly BuildSlotSettings _settings;
     private readonly IProcessLivenessProbe _liveness;
     private readonly IHostMemoryProbe _memory;
@@ -194,7 +199,17 @@ public sealed class BuildSlotBroker
         {
             string? reason = null;
             if (now >= lease.ExpiresAtUtc)
-                reason = $"ttl {_settings.LeaseTtlMinutes}m expired";
+            {
+                if (!SameHolderStillRunning(lease))
+                    reason = $"ttl {_settings.LeaseTtlMinutes}m expired";
+                else if (!lease.KeptPastTtl)
+                {
+                    lease.KeptPastTtl = true;
+                    _logger.LogInformation(
+                        "Build slot lease {LeaseId} held by {Label} (pid {Pid}) kept past its ttl {TtlMinutes}m: the holder still runs with its recorded start",
+                        lease.Id, lease.Label, lease.Pid, _settings.LeaseTtlMinutes);
+                }
+            }
             else if (!HolderAlive(lease, now))
                 reason = _settings.HolderLiveness == "renew"
                     ? $"renew silent for {_settings.RenewGraceSeconds}s"
@@ -228,12 +243,19 @@ public sealed class BuildSlotBroker
             ? now - lease.LastRenewedAtUtc < TimeSpan.FromSeconds(_settings.RenewGraceSeconds)
             : _liveness.IsAlive(lease.Pid, lease.ProcessStartUtc);
 
+    // CARD-0851: pid mode only. An unreadable start time (gone, or access denied) is not the same holder.
+    private bool SameHolderStillRunning(Lease lease) =>
+        _settings.HolderLiveness == "pid"
+        && _liveness.TryGetStartTimeUtc(lease.Pid) is { } started
+        && (started.ToUniversalTime() - lease.ProcessStartUtc).Duration() <= SameHolderStartTolerance;
+
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
     private sealed record Lease(Guid Id, int Pid, DateTime ProcessStartUtc, string Label, string? SessionId, string? TaskId,
         DateTime GrantedAtUtc, DateTime ExpiresAtUtc)
     {
         public DateTime LastRenewedAtUtc { get; set; }
+        public bool KeptPastTtl { get; set; }
     }
 
     private sealed class Waiter(int pid, DateTime processStartUtc, string label, DateTime sinceUtc)
