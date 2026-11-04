@@ -429,6 +429,54 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim().ShouldBe(head);
     }
 
+    /// <summary>
+    /// Debug 52410842 (the N-2b Windows red): git status exits 0 with an empty listing when it cannot open a
+    /// directory (past MAX_PATH without core.longpaths, or unreadable) and only warns on stderr. The clean proof
+    /// must not take that as clean: the tree is held and nothing is removed. The real Linux shape is an unreadable
+    /// untracked directory; the Windows long-path shape is CP-25's N-2b, whose status this pins to core.longpaths.
+    /// </summary>
+    [Test]
+    [Arguments("unreadable-directory")]
+    [Arguments("long-path-config")]
+    public async Task Status_that_cannot_read_the_whole_tree_holds_it(string shape)
+    {
+        if (shape == "unreadable-directory" && OperatingSystem.IsWindows())
+            Skip.Test("POSIX permissions; the Windows long-path shape is the native N-2b case");
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        var hidden = Path.Combine("src", "hidden");
+        Directory.CreateDirectory(Path.Combine(a.Path, hidden));
+        await File.WriteAllTextAsync(Path.Combine(a.Path, hidden, "unsaved.txt"), "unsaved\n");
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+        var locked = new[] { Path.Combine(a.Path, hidden), Path.Combine(WorktreeSetAside.SetAsidePath(a.Path), hidden) };
+        if (shape == "unreadable-directory")
+            File.SetUnixFileMode(locked[0], UnixFileMode.None);
+
+        DesktopLegacyReleasePolicyService.TickResult tick;
+        try { tick = await w.TickAsync(); }
+        finally
+        {
+            if (shape == "unreadable-directory" && !OperatingSystem.IsWindows())
+                foreach (var dir in locked.Where(Directory.Exists))
+                    File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        await w.AssertRetiredAsync(control, origin);
+        var status = w.Fixture.Git.Commands.Where(c => LandingGit.PathsEqual(c.Directory, a.Path)
+            && DesktopLegacyWorld.Subcommand(c.Arguments) == "status").ToList();
+        status.ShouldNotBeEmpty("the pre-check read the tree's status");
+        status.ShouldAllBe(c => c.Arguments.Take(2).SequenceEqual(new[] { "-c", "core.longpaths=true" }),
+            "git for Windows sees a path past MAX_PATH only with core.longpaths");
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe(shape == "unreadable-directory" ? "status_untrusted" : "source_dirty");
+        await w.AssertIntactAsync(a, before);
+        File.Exists(Path.Combine(a.Path, hidden, "unsaved.txt")).ShouldBeTrue("the untracked file is kept");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is kept");
+    }
+
     /// <summary>V-11/G-33/G-34: ignored files go through the CARD-0665 gate (evidence retained, protected refused).</summary>
     [Test]
     [Arguments("evidence-allowlisted")]
@@ -952,7 +1000,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             foreach (var t in all) (await w.SnapshotAsync(t.Path)).ShouldBe(snapshots[t.Id]);
             string[] allowed = ["status", "rev-parse", "show-ref", "ls-remote", "merge-base"];
             foreach (var command in w.Fixture.Git.Trace)
-                (allowed.Contains(command[0]) || (command.Length > 1 && command[0] == "worktree" && command[1] == "list"))
+                (allowed.Contains(DesktopLegacyWorld.Subcommand(command) ?? "") || (command.Length > 1 && command[0] == "worktree" && command[1] == "list"))
                     .ShouldBeTrue("only read-only git: " + string.Join(' ', command));
             var rows = await w.RowsAsync(tick.RunId);
             rows.Where(r => r.Outcome == nameof(WorktreeResidueCandidateOutcome.Preview)).Select(r => r.TaskId)
@@ -1603,7 +1651,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             w.ClearTrace();
             var result = await w.TickAsync();
             var rows = await w.RowsAsync(result.RunId);
-            var prechecked = dirty.Where(d => w.Fixture.Git.Commands.Any(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+            var prechecked = dirty.Where(d => w.Fixture.Git.Commands.Any(c => DesktopLegacyWorld.Subcommand(c.Arguments) == "status"
                 && LandingGit.PathsEqual(c.Directory, d.Path))).ToList();
             prechecked.Count.ShouldBeLessThanOrEqualTo(2, $"tick {tick}: at most the cap in pre-checks");
             if (tick <= 3)
@@ -1626,7 +1674,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         w.Settings.Value.MaxReleasesPerTick = 25;
         w.ClearTrace();
         var late = await w.TickAsync();
-        dirty.Where(d => w.Fixture.Git.Commands.Any(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+        dirty.Where(d => w.Fixture.Git.Commands.Any(c => DesktopLegacyWorld.Subcommand(c.Arguments) == "status"
                 && LandingGit.PathsEqual(c.Directory, d.Path))).ToList()
             .ShouldBe(dirty.Skip(1).ToList(), "a held tree inside its backoff is not pre-checked");
         var lateRows = await w.RowsAsync(late.RunId);
@@ -1866,7 +1914,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
 
         await w.AssertRetiredAsync(a, origin);
         (await w.RowAsync(t3.RunId, b)).ReasonCode.ShouldBe("over_cap");
-        w.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+        w.Fixture.Git.Commands.ShouldNotContain(c => DesktopLegacyWorld.Subcommand(c.Arguments) == "status"
             && LandingGit.PathsEqual(c.Directory, b.Path), "B, checked more recently, waits");
         (await w.SnapshotAsync(b.Path)).ShouldBe(bBefore);
     }

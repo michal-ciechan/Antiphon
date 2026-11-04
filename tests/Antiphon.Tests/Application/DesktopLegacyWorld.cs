@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -165,8 +166,15 @@ internal sealed class DesktopLegacyWorld : IAsyncDisposable
     }
 
     /// <summary>Whether this trace's commands include the policy's pre-check <c>status</c> in the task's tree.</summary>
-    public bool Prechecked(Handle handle) => Fixture.Git.Commands.Any(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+    public bool Prechecked(Handle handle) => Fixture.Git.Commands.Any(c => Subcommand(c.Arguments) == "status"
         && LandingGit.PathsEqual(c.Directory, handle.Path));
+
+    /// <summary>The git subcommand after leading global options (the pre-check runs <c>-c core.longpaths=true status</c>).</summary>
+    public static string? Subcommand(IReadOnlyList<string> arguments)
+    {
+        var index = LandingGitProfile.SubcommandIndex(arguments);
+        return index < arguments.Count ? arguments[index] : null;
+    }
 
     public async Task<bool> RegisteredAsync(string path)
     {
