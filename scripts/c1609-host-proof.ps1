@@ -221,8 +221,14 @@ function Invoke-C1609HostOriginProofAttempt {
             $reuse=($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
         }
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
+        # CARD-1693: Git reads and writes a bundle only inside the short scratch directory. The desktop
+        # proof directory is 194 characters, so <name>.bundle is 266 and its .lock 271: past MAX_PATH for
+        # Git for Windows without core.longpaths. .NET moves the bytes and is long-path safe.
+        $staged=Join-Path $scratch 'c1609-proof.bundle'
         if($reuse){
-            [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','unbundle',($PreviousProofFile+'.bundle'))) -TimeoutMs $cap -WorkingDirectory $scratch)
+            [IO.File]::Copy($PreviousProofFile+'.bundle',$staged,$false)
+            if((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant() -cne $old[7].Substring(7)){throw 'previous-proof'}
+            [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','unbundle',$staged)) -TimeoutMs $cap -WorkingDirectory $scratch)
             $updates=@($before|Where-Object{-not $_.EndsWith('^{}')}|ForEach-Object{'create '+$_.Substring(41)+' '+$_.Substring(0,40)})
             [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('update-ref','--stdin')) -TimeoutMs $cap -WorkingDirectory $scratch -InputText (($updates -join [char]10)+[char]10))
         } else {
@@ -236,8 +242,8 @@ function Invoke-C1609HostOriginProofAttempt {
         Assert-C1609RequiredObjects -RequiredObjects $RequiredObjects -Advertisement $before -Scratch $scratch -Repo $RepoRelative -TimeoutMs $cap
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         $bundleCreated=$true
-        if($reuse){[IO.File]::Copy($PreviousProofFile+'.bundle',$bundle,$false)}
-        else {[void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','create',$bundle,'--all')) -TimeoutMs $cap -WorkingDirectory $scratch)}
+        if(-not $reuse){[void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','create',$staged,'--all')) -TimeoutMs $cap -WorkingDirectory $scratch)}
+        [IO.File]::Move($staged,$bundle)
         $cap=[Math]::Min(30000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         $after=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('ls-remote','--heads','--tags',$OriginUrl)) -TimeoutMs $cap -WorkingDirectory $scratch))
         if(($before -join [char]10) -cne ($after -join [char]10)){throw 'snapshot'}
