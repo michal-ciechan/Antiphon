@@ -631,7 +631,7 @@ are the plan's measured figures.
   run get their own phase. P-6/P-14 print `started=`, `profileProcesses=` and the elapsed land wall so every run
   records process count against time. Slot wait is reported separately.
 - No run reaches 30 minutes (R1). The largest is B1 at about 27 min including its build; S1 and B1b are split
-  into two runs each (24 + 22 and 21 + 18 min) for that reason.
+  into two runs each (24 + 22 and 21 + 15 min) for that reason.
 
 ### Checkpoints
 
@@ -657,7 +657,7 @@ trailing `*` and an escaped pipe.
 | CP-10 | B1 | CP-7 | portable-land-regression-b1 | /*/*/(PostLandMutationDeliveryTests*)\|(LandWorkspaceTests*)\|(AgentTaskLandIdentityMatrixTests*)/* | R-6, R-7, R-11 | 3 existing classes, 0 failed/skipped | 47 | 8 | true |
 | CP-11 | B1b | tests/Antiphon.Tests -> bin-c1704-b1b/ | portable-c1704-identity-batch-b1b | /*/*/(C1704IdentityBatchTests*)\|(C1704ProcessReductionTests*)/* | P-1..P-14 | 2 classes, 0 failed/skipped | 14 | 9 | true |
 | CP-12 | B1b | CP-11 | portable-identity-roster-b1b | /*/*/(AgentTaskLandIdentityMatrixTests*)\|(LandSourceIdentityTests*)\|(AgentTaskLandApprovalRecoveryTests*)\|(LandingGitBatchingTests*)/* | R-6, R-10 | 4 existing classes, 0 failed/skipped | 82 | 12 | true |
-| CP-13 | B1b2 | tests/Antiphon.Tests -> bin-c1704-b1b2/ | portable-cleanup-roster-b1b | /*/*/(PostLandMutationCleanupTests*)\|(AgentTaskLandCleanupSafetyTests*)\|(AgentTaskLandRemovalMatrixTests*)\|(PostLandMutationDeliveryTests*)/* | R-7, R-10 | 4 existing classes, 0 failed/skipped | 87 | 18 | true |
+| CP-13 | B1b2 | tests/Antiphon.Tests -> bin-c1704-b1b2/ | portable-cleanup-roster-b1b | /*/*/(PostLandMutationCleanupTests*)\|(AgentTaskLandCleanupSafetyTests*)\|(AgentTaskLandRemovalMatrixTests*)\|(PostLandMutationDeliveryTests*)/* | R-7, R-10 | 4 existing classes, 0 failed/skipped | 87 | 15 | true |
 | CP-14 | S1w | tests/Antiphon.Tests -> bin-c1704-s1w/ | windows-land-regression-s1 | /*/*/(LandWorkspaceTests*)\|(AgentTaskLandHalfResetWindowsTests*)\|(AgentTaskLandRegistrationSafetyWindowsTests*)/* | R-12 | 3 existing classes, 0 failed/skipped | 13 | 20 | true |
 | CP-15 | S1we | tests/Antiphon.E2E -> bin-c1704-s1we/ | windows-e2e-land-receipt-s1 | /*/*/AgentTaskLandDeliveryE2ETests/C467_V29_RealOutcomeProducerMatrix_Batch2 | delivery step 3 (recipient) | method, 2 cases, 0 failed/skipped | 2 | 25 | true |
 | CP-16 | B1w | tests/Antiphon.Tests -> bin-c1704-b1w/ | windows-process-reduction-b1 | /*/*/(C1704ProcessReductionTests*)\|(AgentTaskLandIndexLockTests*)/* | P-1..P-9 on NTFS, R-5 | 2 classes, 0 failed/skipped | 22 | 20 | true |
@@ -684,9 +684,9 @@ Labels: estimated unless stated. Slot wait is reported separately.
     Antiphon.Tests build p50 326 s / p95 579 s on loaded server2, measured n=117, inside CP-1 and CP-4; the E2E
     build about 5 min inside CP-6).
   - B1a portable: CP-7 7 + CP-8 6 + CP-9 6 + CP-10 8 = **27 min**.
-  - B1b portable: run B1b = CP-11 9 + CP-12 12 = 21; run B1b2 = CP-13 18; **39 min**.
+  - B1b portable: run B1b = CP-11 9 + CP-12 12 = 21; run B1b2 = CP-13 15 (build p50 5.4 min plus about 9 min of 87 land methods); **36 min**.
   - Windows (later): CP-14 20 + CP-15 25 + CP-16 20 = **65 min** (provisional: the Windows build is unmeasured).
-  - Total portable **112 min**; with Windows **177 min**.
+  - Total portable **109 min**; with Windows **174 min**.
 - **Positive-control floor (Mutation)**, method-scoped, one incremental build per mutant and per restore:
   - Antiphon.Tests PCs (47 of 49: all but the E2E-file PC-10/PC-11): an incremental build of about 90 s twice
     plus two method runs (10-50 s): about **4 min each, 188 min serial**.
@@ -698,7 +698,7 @@ Labels: estimated unless stated. Slot wait is reported separately.
   - Setup: one cold build per project: about 10 + 5 = **15 min**.
   - PC floor ≈ 188 + 14 + 8 - 28 = **182 min serial**; with two detached shards (UNSOURCED sharding, independent
     files) about **100 min wall**.
-- **Total** = setup 15 + V/R 112 (portable) + PC 182 = **about 309 min estimated** (65 min Windows V/R separately,
+- **Total** = setup 15 + V/R 109 (portable) + PC 182 = **about 306 min estimated** (65 min Windows V/R separately,
   later). Savings against the plan's rows: CP-6 moves off server2's impossible E2E land method (it would fail, not
   run) to a 7 min portable recorder row plus the Windows CP-15; T-D-2 removes the B1a test churn the plan's P-9 and
   B2 test-churn note expected (no re-keyed injections in B1a: 0 extra rows).
@@ -739,4 +739,16 @@ Labels: estimated unless stated. Slot wait is reported separately.
 
 ## Import verdict (measured)
 
-Filled in below from the run in this task.
+Measured on server2, 2026-11-04, one build-slot lease each (waited 0 s and 16 s, held 6 s and 8 s):
+`dotnet run --project tools/Antiphon.Checkpoints -p:UseAppHost=false -- import --plan
+docs/superpowers/plans/2026-11-04-card-1704-s1-b1-test-design.md --out .antiphon/c1704-td-manifest[-r2].yaml`.
+
+- First import (draft at `04252b78f`): exit 0, `imported 16 rows`, four advisory warnings (derived row timeout above
+  45 minutes for CP-13, CP-14, CP-15 and CP-16).
+- After the CP-13 estimate was corrected to 15 min (18 counted the build twice): exit 0, `imported 16 rows`, three
+  advisory warnings, all Windows rows: CP-14 (60 min derived), CP-15 (75 min) and CP-16 (60 min). They stay: the
+  Windows build is unmeasured (the plan's provisional 15 min), and CP-15 runs two C467 cases with a 600 s cap each
+  (CARD-1584). The Windows run re-estimates them from its first measured build; none is a portable row.
+- The manifest has nine builds (`bin-c1704-s1`, `-s1b`, `-s1e`, `-b1`, `-b1b`, `-b1b2`, `-s1w`, `-s1we`, `-b1w`), one
+  per project per After group, and every `minExecuted` equals the `Min` column. No `.antiphon/checkpoints.yaml` was
+  left; both manifests were deleted by exact path after the run.
