@@ -364,6 +364,105 @@ public sealed class VolumeRetirementHostProofTests
         finally { DeleteOwned(root, prefix); }
     }
 
+    // After the MAX_PATH repair the 2026-11-04 01:19Z preview (run c72743c9) still refused:
+    // host-proof.log read attempt=1..3 reason=snapshot. Every attempt re-cloned the whole
+    // 5081-ref origin into a fresh scratch, so each attempt's ls-remote..ls-remote window held
+    // a full clone, and the standing fleet pushed or deleted a branch inside every one. The seam
+    // lands one fleet push and one land-time branch delete on origin during each full clone and
+    // none during an incremental fetch; a retry must then prove the moved origin exactly.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1693_Snapshot_retry_proves_an_origin_that_moved_during_the_full_clone()
+    {
+        const string prefix = "c1693-churn-";
+        var root = Directory.CreateTempSubdirectory(prefix).FullName;
+        try
+        {
+            var run = await ChurningProof(root, churnEveryFetch: false);
+            run.Result.Exit.ShouldBe(0, "C1693 a retry proves the origin the fleet moved; " + run.Result.Output);
+            run.Log.ShouldStartWith("repo=" + Repo + " attempt=1 reason=snapshot\n", customMessage: "C1693 the first attempt saw the move");
+            run.Log.ShouldContain("repo=" + Repo + " refs=", Case.Sensitive, "C1693 a retry completed the proof");
+            run.FullClones.ShouldBe(1, "C1693 a retry fetches into the attempt-1 scratch instead of re-cloning");
+            var body = await File.ReadAllTextAsync(run.ProofFile);
+            body.ShouldContain("\trefs/heads/fleet-1\n", Case.Sensitive, "C1693 the proof holds the pushed branch");
+            body.ShouldNotContain("refs/heads/landed", Case.Sensitive, "C1693 the retry pruned the branch origin deleted");
+            var origin = await Git(root, "ls-remote", "--heads", "--tags", Path.Combine(root, "origin.git"));
+            origin.Exit.ShouldBe(0, origin.Output);
+            var advertised = origin.Output.Replace("\r", "", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Order(StringComparer.Ordinal).ToArray();
+            var lines = body.Split('\n');
+            lines.Skip(11).Where(l => l.Length > 0).ShouldBe(advertised, "C1693 the proof advertisement is origin's current one");
+            var check = Path.Combine(root, "check.bundle");
+            File.Copy(run.ProofFile + ".bundle", check);
+            var heads = await Git(root, "bundle", "list-heads", check);
+            heads.Exit.ShouldBe(0, heads.Output);
+            heads.Output.Replace(' ', '\t').Replace("\r", "", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Order(StringComparer.Ordinal).ShouldBe(advertised.Where(l => !l.EndsWith("^{}", StringComparison.Ordinal)),
+                    "C1693 the bundle holds exactly the advertised refs, no pruned leftover");
+        }
+        finally { DeleteOwned(root, prefix); }
+    }
+
+    // The guard is unchanged: an origin that moves inside every attempt never proves.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1693_Origin_that_moves_in_every_attempt_still_refuses()
+    {
+        const string prefix = "c1693-moving-";
+        var root = Directory.CreateTempSubdirectory(prefix).FullName;
+        try
+        {
+            var run = await ChurningProof(root, churnEveryFetch: true);
+            run.Result.Exit.ShouldNotBe(0, "C1693 a moving origin must refuse; " + run.Result.Output);
+            run.Result.Output.ShouldContain("RecycleGitAuditUnknown");
+            var attempts = run.Log.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            attempts.ShouldNotBeEmpty();
+            attempts.ShouldAllBe(l => l.EndsWith(" reason=snapshot", StringComparison.Ordinal), run.Log);
+            Directory.GetFiles(Path.GetDirectoryName(run.ProofFile)!).Where(p => !p.EndsWith("host-proof.log", StringComparison.Ordinal))
+                .ShouldBeEmpty("C1693 a refused proof leaves no proof file and no bundle");
+        }
+        finally { DeleteOwned(root, prefix); }
+    }
+
+    private static async Task<((int Exit, string Output) Result, string Log, string ProofFile, int FullClones)> ChurningProof(
+        string root, bool churnEveryFetch)
+    {
+        var origin = Path.Combine(root, "origin.git");
+        var work = Path.Combine(root, "work");
+        (await Git(root, "init", "-q", "--bare", origin)).Exit.ShouldBe(0);
+        (await Git(root, "init", "-q", "-b", "main", work)).Exit.ShouldBe(0);
+        await File.WriteAllTextAsync(Path.Combine(work, "published"), "published\n");
+        (await Git(work, "add", "published")).Exit.ShouldBe(0);
+        (await Git(work, "commit", "-qm", "published")).Exit.ShouldBe(0);
+        (await Git(work, "tag", "-a", "v1", "-m", "published")).Exit.ShouldBe(0);
+        (await Git(work, "push", "-q", origin, "main", "--tags")).Exit.ShouldBe(0);
+        (await Git(work, "push", "-q", origin, "main:refs/heads/landed")).Exit.ShouldBe(0);
+        var proof = Path.Combine(root, "proof");
+        Directory.CreateDirectory(proof);
+        var log = Path.Combine(proof, "host-proof.log");
+        var clones = Path.Combine(root, "full-clones.txt");
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
+        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
+            "$original=${function:Invoke-C1609HostGit}; " +
+            "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='', $InputText=$null, [string]$OutputFile='') " +
+            "$fetch=$GitArgs.Count -gt 2 -and $GitArgs[0] -ceq '--git-dir' -and $GitArgs[2] -ceq 'fetch'; $full=$false; " +
+            "if($fetch){$full=-not (& git --git-dir $GitArgs[1] for-each-ref --count=1); if($full){[IO.File]::AppendAllText($env:C1693_CLONES,'full'+[char]10)}}; " +
+            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
+            "$io=@{};if($null -ne $InputText){$io.InputText=$InputText};if($OutputFile){$io.OutputFile=$OutputFile}; " +
+            "$out=& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory @io; " +
+            "if($fetch -and ($full -or $env:C1693_EVERY -eq '1')){$script:churn++; $main=(& git --git-dir $env:C1609_BARE rev-parse refs/heads/main); " +
+            "& git --git-dir $env:C1609_BARE update-ref ('refs/heads/fleet-'+$script:churn) $main; & git --git-dir $env:C1609_BARE update-ref -d refs/heads/landed}; " +
+            "return $out }; " +
+            "Write-C1008HostOriginProof -OriginUrl 'https://fixture.invalid/proof.git' -RepoRelative '" + Repo + "' -OperationId '" + Operation +
+            "' -ProofVersion 2 -PhaseNonce ('b'*32) -InventoryDigest ('c'*64) -ApprovedOrigins @('https://fixture.invalid/proof.git') " +
+            "-ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG";
+        var result = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", proof), ("C1609_LOG", log),
+            ("C1693_CLONES", clones), ("C1693_EVERY", churnEveryFetch ? "1" : "0") });
+        var name = Sha(Repo + "\nhttps://fixture.invalid/proof.git");
+        return (result, File.Exists(log) ? (await File.ReadAllTextAsync(log)).Replace("\r", "", StringComparison.Ordinal) : "",
+            Path.Combine(proof, name), File.Exists(clones) ? File.ReadAllLines(clones).Length : 0);
+    }
+
     [Test]
     public void Cleanup_clears_read_only_git_objects_before_windows_shaped_delete()
     {
