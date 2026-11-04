@@ -715,6 +715,142 @@ public sealed class VolumeRetirementContentTests
         fixture.Removed.ShouldBeEmpty();
     }
 
+    // Claude Code keeps a bash-edit-diff snapshot Git directory per Bash call under
+    // /tmp/claude-<uid>/bash-edit-diff/<n>-<n>-<hex16>: one synthetic parentless
+    // "snapshot" commit on refs/heads/main, objects borrowed through alternates, no
+    // logs, hooks or other refs. Only that exact shape in the tmp volume is
+    // disposable tool scratch; every variant keeps the evidence-name refusal.
+    // The dirty/reflog tmp scratch repo and the no-index seed-shaped work clone are
+    // listed but do not block (the retire-temp r3 preview's remaining classes).
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Claude_bash_edit_diff_snapshots_are_disposable_tool_scratch()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var (_, outer) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+        var (_, seeded) = await VolumeRetirementFixture.SeedPublishedOuter(fixture, "seeded");
+        var tmp = VolumeRetirementFixture.TmpMount(fixture);
+        var snapshots = Path.Combine(tmp, "claude-1654", "bash-edit-diff");
+        var scratch = Path.Combine(tmp, "claude-1654", "-work-task", "scratchpad", "repository with spaces");
+        var planted = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            {{SnapshotFunction}}
+            snapshot {{VolumeRetirementFixture.Quote(Path.Combine(snapshots, "10132844646867334109-4770532842197759895-8745e6346e434d17"))}} exact
+            snapshot {{VolumeRetirementFixture.Quote(Path.Combine(snapshots, "1041258303595891311-12499127780866753949-ef910dbe4c97b2e6"))}} exact
+            mkdir -p {{VolumeRetirementFixture.Quote(Path.Combine(snapshots, "10132844646867334109-9543953992008861987-7382766fd60483a6"))}}
+            git init -q -b main {{VolumeRetirementFixture.Quote(scratch)}}
+            git -C {{VolumeRetirementFixture.Quote(scratch)}} config user.name Fixture
+            git -C {{VolumeRetirementFixture.Quote(scratch)}} config user.email fixture@example.invalid
+            printf 'tmp\n' > {{VolumeRetirementFixture.Quote(scratch)}}/note.txt
+            git -C {{VolumeRetirementFixture.Quote(scratch)}} add note.txt
+            git -C {{VolumeRetirementFixture.Quote(scratch)}} -c commit.gpgsign=false commit -qm scratch
+            printf 'edited\n' > {{VolumeRetirementFixture.Quote(scratch)}}/note.txt
+            rm -f -- {{VolumeRetirementFixture.Quote(Path.Combine(seeded, ".git", "index"))}} {{VolumeRetirementFixture.Quote(Path.Combine(seeded, ".gitignore"))}} {{VolumeRetirementFixture.Quote(Path.Combine(seeded, "readme.txt"))}}
+            """);
+        planted.Exit.ShouldBe(0, "c1609-r3: plant snapshots; " + planted.Output);
+        var ok = await VolumeRetirementFixture.Preview(fixture);
+        var okText = ok.Output + await VolumeRetirementFixture.AuditText(fixture);
+        ok.Exit.ShouldBe(0, "c1609-r3: exact snapshots are tool scratch; " + VolumeRetirementFixture.Truncate(okText));
+        okText.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        okText.ShouldContain("disposable-fixture classifier=bash-edit-diff-v1 path=/tmp/claude-1654/bash-edit-diff/10132844646867334109-4770532842197759895-8745e6346e434d17 commit=");
+        okText.ShouldContain("disposable-fixture classifier=bash-edit-diff-v1 path=/tmp/claude-1654/bash-edit-diff/1041258303595891311-12499127780866753949-ef910dbe4c97b2e6 commit=");
+        okText.ShouldNotContain("reason=evidence-name");
+        okText.ShouldContain("\"kind\":\"dirty\"");
+        okText.ShouldContain("\"kind\":\"reflog\"");
+        okText.ShouldContain("repos/seeded");
+        fixture.Removed.ShouldBeEmpty();
+
+        var variants = new (string Kind, string Path)[]
+        {
+            ("extra-ref", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("stash", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("foreign-commit", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("parent", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("logs", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("packed-refs", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("hooks", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("remote", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("detached", Path.Combine(snapshots, "1-2-0123456789abcdef")),
+            ("exact", Path.Combine(snapshots, "1-2-0123456789abcdef", "nested")),
+            ("exact", Path.Combine(snapshots, "1-2-0123456789ABCDEF")),
+            ("exact", Path.Combine(tmp, "claude-1654", "other-tool", "1-2-0123456789abcdef")),
+            ("exact", Path.Combine(tmp, "bash-edit-diff", "1-2-0123456789abcdef")),
+        };
+        foreach (var (kind, path) in variants)
+        {
+            var variant = await VolumeRetirementFixture.Bash($$"""
+                set -euo pipefail
+                rm -rf -- {{VolumeRetirementFixture.Quote(Path.Combine(snapshots, "1-2-0123456789abcdef"))}} {{VolumeRetirementFixture.Quote(Path.Combine(snapshots, "1-2-0123456789ABCDEF"))}} {{VolumeRetirementFixture.Quote(Path.Combine(tmp, "claude-1654", "other-tool"))}} {{VolumeRetirementFixture.Quote(Path.Combine(tmp, "bash-edit-diff"))}}
+                {{SnapshotFunction}}
+                snapshot {{VolumeRetirementFixture.Quote(path)}} {{kind}}
+                """);
+            variant.Exit.ShouldBe(0, "c1609-r3: plant " + kind + " at " + path + "; " + variant.Output);
+            var refused = await VolumeRetirementFixture.Preview(fixture);
+            var text = refused.Output + await VolumeRetirementFixture.AuditText(fixture);
+            refused.Exit.ShouldBe(2, "c1609-r3: " + kind + " at " + path + " refuses; " + VolumeRetirementFixture.Truncate(text));
+            text.ShouldContain("reason=evidence-name");
+            text.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            fixture.Removed.ShouldBeEmpty();
+        }
+
+        // The same exact shape in the work volume is never tool scratch.
+        var work = Path.Combine(VolumeRetirementFixture.WorkMount(fixture), "claude-1654", "bash-edit-diff", "1-2-0123456789abcdef");
+        var moved = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            rm -rf -- {{VolumeRetirementFixture.Quote(Path.Combine(tmp, "bash-edit-diff"))}}
+            {{SnapshotFunction}}
+            snapshot {{VolumeRetirementFixture.Quote(work)}} exact
+            """);
+        moved.Exit.ShouldBe(0, "c1609-r3: plant work snapshot; " + moved.Output);
+        var workRun = await VolumeRetirementFixture.Preview(fixture);
+        var workText = workRun.Output + await VolumeRetirementFixture.AuditText(fixture);
+        workRun.Exit.ShouldBe(2, "c1609-r3: work-volume snapshot refuses; " + VolumeRetirementFixture.Truncate(workText));
+        workText.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        workText.ShouldNotContain("disposable-fixture classifier=bash-edit-diff-v1 path=claude-1654");
+        fixture.Removed.ShouldBeEmpty();
+        _ = outer;
+    }
+
+    // snapshot <dir> <kind>: the Claude Code bash-edit-diff layout, optionally varied.
+    private const string SnapshotFunction = """
+        snapshot() {
+            local dir="$1" kind="$2" tree oid author msg parent=''
+            mkdir -p -- "$dir/objects/info" "$dir/refs/heads" "$dir/refs/tags" "$dir/info"
+            printf 'ref: refs/heads/main\n' > "$dir/HEAD"
+            git config --file "$dir/config" core.repositoryformatversion 0
+            git config --file "$dir/config" core.bare false
+            git config --file "$dir/config" core.logallrefupdates false
+            git config --file "$dir/config" core.untrackedcache true
+            : > "$dir/config.global"
+            printf '# exclude\n' > "$dir/info/exclude"
+            printf '* -filter -working-tree-encoding -text -eol -ident !diff\n' > "$dir/info/attributes"
+            printf '/work/repos/antiphon/.git/objects\n' > "$dir/objects/info/alternates"
+            printf 'snapshot bytes\n' > "$dir/objects/blob.txt"
+            tree="$(printf '100644 blob %s\tfile.txt\n' "$(git --git-dir="$dir" hash-object -w "$dir/objects/blob.txt")" | git --git-dir="$dir" mktree)"
+            rm -f -- "$dir/objects/blob.txt"
+            author='bash-edit-diff <bash-edit-diff@localhost> 1000000000 +0000'
+            msg='snapshot'
+            [ "$kind" != foreign-commit ] || msg='real work'
+            if [ "$kind" = parent ]; then
+                parent="$(printf 'tree %s\nauthor %s\ncommitter %s\n\nsnapshot\n' "$tree" "$author" "$author" | git --git-dir="$dir" hash-object -w -t commit --stdin)"
+                parent="parent $parent"$'\n'
+            fi
+            oid="$(printf 'tree %s\n%sauthor %s\ncommitter %s\n\n%s\n' "$tree" "$parent" "$author" "$author" "$msg" | git --git-dir="$dir" hash-object -w -t commit --stdin)"
+            printf '%s\n' "$oid" > "$dir/refs/heads/main"
+            GIT_INDEX_FILE="$dir/index" git --git-dir="$dir" read-tree "$oid"
+            case "$kind" in
+                extra-ref) printf '%s\n' "$oid" > "$dir/refs/heads/other" ;;
+                stash) printf '%s\n' "$oid" > "$dir/refs/stash" ;;
+                logs) mkdir -p -- "$dir/logs"; printf '%s %s x <x@x> 1 +0000\tx\n' 0000000000000000000000000000000000000000 "$oid" > "$dir/logs/HEAD" ;;
+                packed-refs) printf '%s refs/heads/kept\n' "$oid" > "$dir/packed-refs" ;;
+                hooks) mkdir -p -- "$dir/hooks"; printf '#!/bin/sh\n' > "$dir/hooks/post-checkout"; chmod +x "$dir/hooks/post-checkout" ;;
+                remote) git config --file "$dir/config" remote.origin.url https://fixture.invalid/x.git ;;
+                detached) printf '%s\n' "$oid" > "$dir/HEAD" ;;
+            esac
+        }
+        """;
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Gone_tracking_retains_original_commit_protection()
