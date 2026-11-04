@@ -2518,9 +2518,10 @@ public sealed class RollingVolumeRecycleScriptTests
                 C1008_TASK_ERROR=''
                 c1008_tasks > "$root/snapshot.json" || status=$?
                 if [ "$expect" = pass ] && [ "$status" = 0 ]; then
-                    # CARD-1697: off-runner rows and lands are outside the bound-only compared closure and stay receipted.
+                    # CARD-1697: off-runner rows and lands are outside the bound-only compared closure and stay receipted
+                    # (a later land-closure read of the same id replaces its receipt row).
                     jq -e '.open.tasks=={} and .open.land=={} and .open.scopes=={} and .land.tasks=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
-                    jq -e --arg id "$appeared" '(.tasks[$id]|has("landRequest")) and .tasks[$id].landRequest==null' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
+                    jq -e --arg id "$appeared" '.tasks|has($id)' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
                 fi
                 if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
                     printf 'PASS host-%s\n' "$name"
