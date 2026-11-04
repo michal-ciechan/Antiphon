@@ -155,6 +155,11 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("startref-open", "dependent_open")]
     [Arguments("startref-queued", "dependent_open")]
     [Arguments("startref-queued-origin", "dependent_open")]
+    [Arguments("startref-queued-heads", "dependent_open")]
+    [Arguments("startref-queued-peeled", "dependent_open")]
+    [Arguments("startref-queued-remotes", "dependent_open")]
+    [Arguments("startref-queued-case", "dependent_open")]
+    [Arguments("baseref-heads-peeled", "dependent_open")]
     [Arguments("basetask-queued", "dependent_open")]
     [Arguments("mutation", "mutation_excluded")]
     [Arguments("source-landing", "source_landing_excluded")]
@@ -230,13 +235,31 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                     // WorktreeBaseRef is the base a provisioned task was cut from (CARD-0508).
                     db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.Branch; }));
                     break;
-                case "startref-queued" or "startref-queued-origin":
+                case "startref-queued" or "startref-queued-origin" or "startref-queued-heads" or "startref-queued-peeled"
+                    or "startref-queued-remotes" or "startref-queued-case":
                     // Review 1dcb8d90 D-1: a queued delegate.ps1 -StartRef holds only WorktreeBaseRequestedRef until it is
-                    // provisioned, and a branch-name start ref must still resolve locally then (CARD-0613).
+                    // provisioned, and a branch-name start ref must still resolve locally then (CARD-0613). Review 4ed13efe
+                    // A-3 (CARD-1701): every spelling git resolves to that branch names it; refs are case-insensitive in a
+                    // Windows loose-ref store.
                     db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t =>
                     {
                         t.Status = AgentTaskStatus.Queued;
-                        t.WorktreeBaseRequestedRef = predicate == "startref-queued" ? a.Branch : "origin/" + a.Branch;
+                        t.WorktreeBaseRequestedRef = predicate switch
+                        {
+                            "startref-queued" => a.Branch,
+                            "startref-queued-origin" => "origin/" + a.Branch,
+                            "startref-queued-heads" => "heads/" + a.Branch,
+                            "startref-queued-peeled" => a.Branch + "^{commit}",
+                            "startref-queued-remotes" => "remotes/origin/" + a.Branch,
+                            _ => a.Branch.ToUpperInvariant(),
+                        };
+                    }));
+                    break;
+                case "baseref-heads-peeled":
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t =>
+                    {
+                        t.Status = AgentTaskStatus.Dispatched;
+                        t.WorktreeBaseRef = "heads/" + a.Branch + "^0";
                     }));
                     break;
                 case "basetask-queued":
@@ -1085,6 +1108,106 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// Review 4ed13efe A-1 (CARD-1701): a tree whose pre-check passes but whose FILING the service refuses (here
+    /// <c>mutation_excluded</c>) backs off like a pre-check hold, 60 min doubling to 24 h, and is not pre-checked inside
+    /// its backoff. A change of the task's facts resets the backoff to 60 min. Before the fix the pre-check's 'passed'
+    /// record reset the repeat count, so the tree was pre-checked and refused every 60 min forever.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Refused_filing_backs_off_and_resets_when_the_facts_change()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync(t => t.Role = AgentTaskRole.Mutation, ageHours: 70);
+        var origin = await w.OriginRefsAsync();
+        var snapshot = await w.SnapshotAsync(a.Path);
+
+        async Task<double> RefusedAsync(string when)
+        {
+            w.ClearTrace();
+            await w.TickAsync();
+            w.Prechecked(a).ShouldBeTrue($"{when}: the due tree is pre-checked");
+            var cursor = (await w.CheckCursorAsync(a)).ShouldNotBeNull();
+            cursor.LastOutcomeKey.ShouldStartWith("check|held|", Case.Sensitive, when);
+            cursor.LastOutcomeKey.ShouldEndWith("|mutation_excluded", Case.Sensitive, when);
+            return Math.Round((cursor.NotBefore!.Value - w.Now).TotalMinutes);
+        }
+
+        var deltas = new List<double>();
+        for (var i = 0; i < 7; i++)
+        {
+            deltas.Add(await RefusedAsync($"refusal {i + 1}"));
+            if (i == 0) await w.AssertRetiredAsync(control, origin);
+            // One minute before the backoff ends the tree is neither pre-checked nor filed.
+            w.Clock.Advance(TimeSpan.FromMinutes(deltas[^1] - 1));
+            w.ClearTrace();
+            await w.TickAsync();
+            w.AssertNoGit(a);
+            w.Clock.Advance(TimeSpan.FromMinutes(2));
+        }
+        deltas.ShouldBe([60, 120, 240, 480, 960, 1440, 1440]);
+
+        // Inside the 24 h backoff the task's facts change: the stale state is void and the backoff restarts at 60 min.
+        w.Clock.Advance(TimeSpan.FromHours(1));
+        w.ClearTrace();
+        await w.TickAsync();
+        w.AssertNoGit(a);
+        await using (var db = w.Db())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == a.Id);
+            task.CompletedAt = task.CompletedAt!.Value.AddHours(-1);
+            await db.SaveChangesAsync();
+        }
+        (await RefusedAsync("after the facts changed")).ShouldBe(60);
+
+        (await w.ReleasesAsync(a)).ShouldBeEmpty("a refused filing files nothing");
+        (await w.SnapshotAsync(a.Path)).ShouldBe(snapshot, "the tree is byte-intact");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Review 4ed13efe A-2/M7c (CARD-1701): a missing directory is recorded once as settled and never re-checked while the
+    /// task's facts stand, even when a clean pushed tree later appears at the path. "stat": the tick's own stat finds
+    /// the path absent; "precheck": a non-directory stands at the path and the budgeted pre-check settles it. Dropping
+    /// only the settled record would pre-check and release the tree that appeared.
+    /// </summary>
+    [Test]
+    [Arguments("stat")]
+    [Arguments("precheck")]
+    public async Task Settled_missing_directory_is_never_re_checked(string where)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync(shape: "none", ageHours: 70);
+        if (where == "precheck") await File.WriteAllTextAsync(a.Path, "not a directory\n");
+        var origin = await w.OriginRefsAsync();
+
+        w.ClearTrace();
+        var first = await w.TickAsync();
+        var row = await w.RowAsync(first.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("directory_absent");
+        w.Prechecked(a).ShouldBeFalse("a missing directory or a file has no status pre-check");
+        (await w.CheckCursorAsync(a)).ShouldNotBeNull().LastOutcomeKey.ShouldStartWith("check|settled|0|");
+        await w.AssertRetiredAsync(control, origin);
+
+        // A clean tree pushed to its own origin branch now stands at the recorded path.
+        if (where == "precheck") File.Delete(a.Path);
+        await w.CreateTreeAsync(a, "pushed");
+        var snapshot = await w.SnapshotAsync(a.Path);
+        for (var tick = 2; tick <= 3; tick++)
+        {
+            w.Clock.Advance(TimeSpan.FromHours(25));
+            w.ClearTrace();
+            var later = await w.TickAsync();
+            w.AssertNoGit(a);
+            (await w.RowsAsync(later.RunId)).ShouldNotContain(r => r.TaskId == a.Id, $"tick {tick}: the settled row is not rewritten");
+        }
+        await w.AssertIntactAsync(a, snapshot);
     }
 
     /// <summary>
