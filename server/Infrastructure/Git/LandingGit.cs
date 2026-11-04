@@ -281,7 +281,8 @@ public class LandingGit : ILandingGit
                 if (head.Succeeded) rebaseHead = head.Output.Trim();
             }
             return new(process.ExitCode, await output,
-                process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
+                process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}")
+            { RebaseHeadSha = rebaseHead, WroteStandardError = (await error).Length != 0 };
         }
         finally
         {
