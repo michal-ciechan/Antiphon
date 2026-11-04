@@ -42,31 +42,48 @@ public static class TestSessionTeardown
     public static async Task KillAndAwaitHostExitAsync(
         SessionRunnerRuntime runtime, Guid sessionId, int? hostPid, DateTime? hostStartedAtUtc = null)
     {
+        // CARD-1696: the pid is only the host while its start time is the host's. Without one from
+        // the caller it is read before the kill below can let the host exit and the pid be reused.
+        var hostStart = hostStartedAtUtc ?? (hostPid is int known ? TryGetStartTimeUtc(known) : null);
+
         var killed = false;
         try { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None); killed = true; }
         catch { /* A partially started session still needs the caller's pid fallback. */ }
 
-        if (hostPid is not int pid)
+        if (hostPid is not int pid || hostStart is not DateTime start)
             return;
 
         // CARD-1682: a session this runtime never owned (a failed adoption) was sent no kill, so
         // its host is killed at once. Waiting here outlasts a 10 s class timeout, which then hides
         // the failing assertion and leaves the host running.
         var until = DateTime.UtcNow + (killed ? TimeSpan.FromSeconds(15) : TimeSpan.Zero);
-        while (DateTime.UtcNow < until && IsAlive(pid))
+        while (DateTime.UtcNow < until && IsHost(pid, start))
             await Task.Delay(100);
 
-        if (IsAlive(pid))
+        try
         {
-            try { using var process = Process.GetProcessById(pid); process.Kill(entireProcessTree: true); process.WaitForExit(5_000); }
-            catch { /* Already gone. */ }
+            using var process = Process.GetProcessById(pid);
+            if (!process.HasExited && IsHostStart(process.StartTime.ToUniversalTime(), start))
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5_000);
+            }
         }
+        catch { /* Already gone. */ }
     }
 
-    private static bool IsAlive(int pid)
+    private static bool IsHost(int pid, DateTime hostStart) =>
+        TryGetStartTimeUtc(pid) is DateTime start && IsHostStart(start, hostStart);
+
+    // Linux derives a start time from boot time read at each call, so two reads of one process
+    // differ by milliseconds; a reused pid starts later than the host by far more.
+    private static bool IsHostStart(DateTime start, DateTime hostStart) =>
+        (start - hostStart).Duration() <= TimeSpan.FromSeconds(1);
+
+    private static DateTime? TryGetStartTimeUtc(int pid)
     {
-        try { using var process = Process.GetProcessById(pid); return !process.HasExited; }
-        catch { return false; }
+        try { using var process = Process.GetProcessById(pid); return process.HasExited ? null : process.StartTime.ToUniversalTime(); }
+        catch { return null; }
     }
 }
 
