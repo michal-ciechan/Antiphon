@@ -75,15 +75,7 @@ internal sealed class DesktopLegacyWorld : IAsyncDisposable
         var id8 = taskId.ToString("N")[..8];
         var handle = new Handle(taskId, id8, path ?? System.IO.Path.Combine(Root, "card-task-" + id8), branch ?? "feat/card-task-" + id8);
         if (shape != "none")
-        {
-            await Fixture.RequiredAsync(Fixture.Repository, "worktree", "add", "-b", handle.Branch, handle.Path, "master");
-            if (shape is "pushed" or "unpushed" or "pushed-then-commit")
-                await CommitAsync(handle, id8 + ".txt");
-            if (shape is "pushed" or "pushed-then-commit")
-                await Fixture.RequiredAsync(Fixture.Repository, "push", "origin", handle.FullRef);
-            if (shape == "pushed-then-commit")
-                await CommitAsync(handle, id8 + "-local.txt");
-        }
+            await CreateTreeAsync(handle, shape);
 
         await using var db = Host.CreateContext();
         var task = new AgentTask
@@ -99,6 +91,18 @@ internal sealed class DesktopLegacyWorld : IAsyncDisposable
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return handle;
+    }
+
+    /// <summary>The worktree of an <see cref="AddTaskAsync"/> shape other than <c>none</c>; also used to make a tree appear later.</summary>
+    public async Task CreateTreeAsync(Handle handle, string shape)
+    {
+        await Fixture.RequiredAsync(Fixture.Repository, "worktree", "add", "-b", handle.Branch, handle.Path, "master");
+        if (shape is "pushed" or "unpushed" or "pushed-then-commit")
+            await CommitAsync(handle, handle.Id8 + ".txt");
+        if (shape is "pushed" or "pushed-then-commit")
+            await Fixture.RequiredAsync(Fixture.Repository, "push", "origin", handle.FullRef);
+        if (shape == "pushed-then-commit")
+            await CommitAsync(handle, handle.Id8 + "-local.txt");
     }
 
     public async Task CommitAsync(Handle handle, string file, string? content = null)
@@ -151,6 +155,18 @@ internal sealed class DesktopLegacyWorld : IAsyncDisposable
         var key = DesktopLegacyReleasePolicyService.RetryCursorKey(handle.Id);
         return await db.WorktreeResidueCandidateCursors.AsNoTracking().SingleOrDefaultAsync(c => c.CandidateKey == key);
     }
+
+    /// <summary>The D-2 pre-check cursor (<c>check|kind|repeats|fingerprint|reason</c>).</summary>
+    public async Task<WorktreeResidueCandidateCursor?> CheckCursorAsync(Handle handle)
+    {
+        await using var db = Db();
+        var key = DesktopLegacyReleasePolicyService.CheckCursorKey(handle.Id);
+        return await db.WorktreeResidueCandidateCursors.AsNoTracking().SingleOrDefaultAsync(c => c.CandidateKey == key);
+    }
+
+    /// <summary>Whether this trace's commands include the policy's pre-check <c>status</c> in the task's tree.</summary>
+    public bool Prechecked(Handle handle) => Fixture.Git.Commands.Any(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+        && LandingGit.PathsEqual(c.Directory, handle.Path));
 
     public async Task<bool> RegisteredAsync(string path)
     {
