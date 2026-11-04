@@ -908,6 +908,27 @@ public sealed class LandingRemovalPolicyControlTests
         }
     }
 
+    // A delete-pending tree can finish going during the pause. Walking it again would open a missing
+    // root (Win32 code 3, not transient) and refuse a removal that is already done.
+    [Test]
+    [Arguments("sharing")]
+    [Arguments("visible")]
+    public async Task C448_V36_SetAsideTreeGoneAfterThePauseIsClean(string first)
+    {
+        using var f = new RemovalFixture();
+        f.FailDelete(call => call == 1 && first == "sharing" ? DeleteRefusal("sharing")
+            : call == 1 ? null : DeleteRefusal("not-found"));
+        f.OnPause = () => Directory.Delete(f.SetAsideTrees().ShouldHaveSingleItem(), recursive: true);
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeTrue($"{first}: {result.Residue} {result.Detail}");
+        f.DeleteCalls.ShouldBe(1, "a tree gone after the pause is not walked again");
+        f.Pauses.ShouldBe([WorktreeRenames.SharingPause]);
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+        f.Mutations.Count.ShouldBe(2);
+        f.BranchPresent.ShouldBeFalse();
+    }
+
     // A nested repository is preserved on purpose: it is never a transient refusal. It appears in the
     // set-aside tree after the last reading, so only the delete's own census finds it.
     [Test]
@@ -983,6 +1004,8 @@ public sealed class LandingRemovalPolicyControlTests
         /// <summary>Whether an injected rename fault carries Windows HResults (production reads the OS).</summary>
         public bool Windows { get; init; } = true;
         public List<TimeSpan> Pauses { get; } = [];
+        /// <summary>Runs inside each pause, after it is recorded.</summary>
+        public Action? OnPause { get; set; }
         private readonly Dictionary<string, int> renameCalls = new() { ["move"] = 0, ["record"] = 0 };
         private (string Rename, Func<int, Exception> Fault, int Failures)? renameFault;
         public int RenameCalls(string rename) => renameCalls[rename];
@@ -1019,7 +1042,7 @@ public sealed class LandingRemovalPolicyControlTests
         private WorktreeRenames Renames => renameFault is null && deleteFault is null ? WorktreeRenames.System : new(
             (s, d) => Rename("move", () => Directory.Move(s, d)),
             (s, d) => Rename("record", () => File.Move(s, d, overwrite: true)),
-            Pauses.Add, Windows) { DeleteTree = Delete };
+            p => { Pauses.Add(p); OnPause?.Invoke(); }, Windows) { DeleteTree = Delete };
         public RemovalFixture()
         {
             Retention = new(this);
