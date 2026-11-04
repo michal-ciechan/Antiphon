@@ -25,10 +25,21 @@ namespace Antiphon.Tests.Application;
 /// CARD-0824 S4a test design, class LP: the desktop legacy release policy over real git, a real origin remote
 /// and an isolated schema. Recipient evidence is the filesystem and git (directory, registration, local branch,
 /// origin refs), never a DB flag alone, and every refusal case keeps one eligible control task that must retire.
+/// <para>
+/// Timeouts (R5, docs/test-performance-standards.md: budget near 2x measured p95; tracking card CARD-0824). S4a is a
+/// desktop feature, so these cases run on Windows, where a git process costs about 115-140 ms under qualification load
+/// against about 4 ms on server2 (Investigate 36b3dc05, docs/investigations/2026-11-04-s4a-windows-timeouts.md). The
+/// rc/2026-11-05 Windows run 766e3df5 group 77 (the older cut file, more git processes per removal than master):
+/// 620 rows, 611 passed, class median 0.9 s, p90 30 s; seven class-default cases failed at the old 45 s bound
+/// (46.0-46.2 s), and the 180 s cases passed in 64-122 s (Failures_back_off backoff-doubles 122.4 s, Held_backlog
+/// 98.6 s). So the class default is 90 s (the heaviest default case est. 33 s on master, 46+ s on the cut), the
+/// tick-heavy cases are cut in work or given 240 s, and each budget below names its basis. Phases print as
+/// C0824_V25 TRX lines (R4).
+/// </para>
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
-[Timeout(45_000)]
+[Timeout(90_000)]
 public sealed class C0824DesktopLegacyReleasePolicyTests
 {
     private const string SystemIdentity = TaskWorktreeRetirementService.SystemCallerIdentity;
@@ -856,15 +867,25 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         w.Fixture.Git.Trace.ShouldBeEmpty("zero git commands");
     }
 
-    /// <summary>V-20/G-7/G-8/G-10: the count cap (oldest first) and the time budget bound a tick.</summary>
+    /// <summary>
+    /// V-20/G-7/G-8/G-10: the count cap (oldest first) and the time budget bound a tick. The count case runs cap
+    /// <see cref="TickCap"/> over <see cref="TickCountTrees"/> trees, not the default 25 over 30: the bound (oldest
+    /// first, the cap binds, the trees over it cost no git, the next tick retires them) holds for any cap smaller than
+    /// the trees, and 30 trees took about 2536 git processes (15.9 s on server2, est. 355 s on Windows; the cut run
+    /// 766e3df5 timed it out at 181 s). Five trees are about 470 processes, est. 66 s on Windows, so 180 s keeps 2x.
+    /// </summary>
     [Test]
     [Timeout(180_000)]
     [Arguments("count")]
     [Arguments("time")]
     public async Task Tick_is_bounded(string bound)
     {
-        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.MaxTickMinutes = 20);
-        var count = bound == "count" ? 30 : 4;
+        await using var w = await DesktopLegacyWorld.CreateAsync(s =>
+        {
+            s.MaxTickMinutes = 20;
+            if (bound == "count") s.MaxReleasesPerTick = TickCap;
+        });
+        var count = bound == "count" ? TickCountTrees : 4;
         var tasks = new List<DesktopLegacyWorld.Handle>();
         // Distinct CompletedAt; added newest first so the insert order is not the age order.
         for (var i = 0; i < count; i++) tasks.Add(await w.AddTaskAsync(ageHours: 49 + i));
@@ -883,18 +904,22 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
 
         w.ClearTrace();
         var first = await w.TickAsync();
-        foreach (var t in oldest.Take(25)) await w.AssertRetiredAsync(t, origin);
-        foreach (var t in oldest.Skip(25))
+        foreach (var t in oldest.Take(TickCap)) await w.AssertRetiredAsync(t, origin);
+        foreach (var t in oldest.Skip(TickCap))
         {
-            (await w.ReleasesAsync(t)).ShouldBeEmpty("the 5 newest are untouched");
+            (await w.ReleasesAsync(t)).ShouldBeEmpty($"the {TickCountTrees - TickCap} newest are untouched");
             Directory.Exists(t.Path).ShouldBeTrue();
             w.AssertNoGit(t);
         }
-        first.Retired.ShouldBe(25);
+        first.Retired.ShouldBe(TickCap);
         var second = await w.TickAsync();
-        second.Retired.ShouldBe(5);
-        foreach (var t in oldest.Skip(25)) await w.AssertRetiredAsync(t, origin);
+        second.Retired.ShouldBe(TickCountTrees - TickCap);
+        foreach (var t in oldest.Skip(TickCap)) await w.AssertRetiredAsync(t, origin);
     }
+
+    /// <summary>V-20 count case: the cap and the trees it is tested against (two over the cap).</summary>
+    private const int TickCap = 3;
+    private const int TickCountTrees = 5;
 
     /// <summary>V-21/G-4..G-6 (+ M-8): the preview and a dry-run tick file nothing and run only read-only git.</summary>
     [Test]
@@ -1050,9 +1075,12 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         attempts.Count(x => x.CommandIntentId is not null).ShouldBe(attempts.Count);
     }
 
-    /// <summary>V-24/G-54..G-59: a failing task backs off per task and never starves the others.</summary>
+    /// <summary>
+    /// V-24/G-54..G-59: a failing task backs off per task and never starves the others. Timeout (R5): the Windows cut
+    /// run 766e3df5 passed these in 64-122 s (backoff-doubles 122.4 s, on the cut's heavier file); 240 s keeps 2x.
+    /// </summary>
     [Test]
-    [Timeout(180_000)]
+    [Timeout(240_000)]
     [Arguments("retry-succeeds")]
     [Arguments("backoff-doubles")]
     [Arguments("exhausted")]
@@ -1386,11 +1414,12 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// The cap is <see cref="BacklogCap"/>, not the default 25: every pre-check under the cap is a real removal, so the
     /// tick costs in proportion to the cap, while the bound itself (the cap binds, the two trees over it and the 293
     /// missing directories cost no git) holds for any cap smaller than the real trees. The backlog stays 300 rows.
-    /// Timeout (R5): whole-test max 28.5 s (execute, 5 class runs on server2, 2026-11-04); 90 s, not 60, because the
-    /// fixture alone took 13.2 s at load average 120 (0.4-1.6 s in the class runs).
+    /// Timeout (R5): whole-test max 28.5 s (execute, 5 class runs on server2, 2026-11-04); on Windows the execute case
+    /// is est. 93-98 s (627 git processes at about 140 ms, Investigate 36b3dc05; the cut's cap-25 body timed out at
+    /// 181 s and preview-first passed in 80.2 s in run 766e3df5), p95 about 118 s, so 240 s.
     /// </summary>
     [Test]
-    [Timeout(90_000)]
+    [Timeout(240_000)]
     [Arguments("preview-first")]
     [Arguments("execute")]
     public async Task First_enable_on_a_large_backlog_is_bounded(string mode)
@@ -1466,8 +1495,15 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// average 120) and 61.4 s in the rc/2026-11-05 cut run (load 34-70), past the old 60 s bound. At cap 5, five
     /// class runs on server2 (load 15-60, 2026-11-04, commit bd49924a) measured tick-1 at 8.5, 11.3, 11.7, 13.2 and
     /// 16.9 s (p95 = max 16.9 s), so 35 s. Provisional (n=5): each run prints its phases as C0824_V25 TRX lines.
+    /// Windows: tick-1 is about 305 git processes at about 140 ms each under qualification load plus 3-7 s DB, est.
+    /// 46-50 s (Investigate 36b3dc05; run 766e3df5 measured 115-140 ms a process against about 4 ms on server2), so
+    /// <see cref="WindowsBacklogTickSeconds"/>.
     /// </summary>
-    private static readonly TimeSpan BacklogTickBudget = TimeSpan.FromSeconds(35);
+    private static readonly TimeSpan BacklogTickBudget =
+        TimeSpan.FromSeconds(OperatingSystem.IsWindows() ? WindowsBacklogTickSeconds : LinuxBacklogTickSeconds);
+
+    private const int LinuxBacklogTickSeconds = 35;
+    private const int WindowsBacklogTickSeconds = 100;
 
     /// <summary>
     /// V-25 phase record (R4): each phase is a <see cref="TestTiming"/> span and one <c>C0824_V25</c> StdOut line in
@@ -1532,9 +1568,11 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// next tick pre-checks the next never-checked trees, so an eligible tree behind six held ones (cap 2) is reached
     /// on tick 4 and no tick writes more than two rows per cap. The pause follows only the one real removal, and once
     /// the cap no longer binds, a tree inside its doubled backoff is still not pre-checked.
+    /// Timeout (R5): 53.7 s serial on server2 (Investigate 36b3dc05); the Windows cut run 766e3df5 passed it in
+    /// 98.6 s, so 240 s keeps 2x.
     /// </summary>
     [Test]
-    [Timeout(180_000)]
+    [Timeout(240_000)]
     public async Task Held_backlog_is_bounded_per_tick_and_reaches_every_candidate()
     {
         var hook = new PauseHook(TimeSpan.FromSeconds(5));
