@@ -158,9 +158,10 @@ internal sealed partial class HerdrPaneChild : ISessionChild
         }
 
         var occupant = inspected.Occupant;
+        // An unresolvable side is never the admitted workspace: two nulls do not match.
         if (RequiredWorkspacePath is { } expectedWorkspace
-            && (occupant.Cwd is null || RunnerWorkspaceUseGate.Normalize(occupant.Cwd)
-                != RunnerWorkspaceUseGate.Normalize(expectedWorkspace)))
+            && (occupant.Cwd is null || RunnerWorkspaceUseGate.Normalize(occupant.Cwd) is not { } occupantWorkspace
+                || occupantWorkspace != RunnerWorkspaceUseGate.Normalize(expectedWorkspace)))
             throw new PhoneHomeAdmissionException("workspace_owner_changed", "Attached workspace changed after admission.", 409);
         if (occupant.Pid != request.ExpectedChildPid)
         {

@@ -50,8 +50,8 @@ public sealed class RunnerWorkspaceParkService
         WorkspaceRepositoryIdentityResult UnknownIdentity() => new(WorkspaceRepositoryIdentityOutcome.Unknown, "identity_inspection_unavailable");
         try
         {
-            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is null) return HeldIdentity("identity_path_unowned");
-            var path = ResolveFinal(checkout!)!;
+            // Git runs only in the checkout this check admitted; it is never re-resolved in between.
+            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is not { } path) return HeldIdentity("identity_path_unowned");
             var read = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
             if (read.ExitCode != 0 || RunnerWorkspaceService.TryResolveFinal(read.Stdout.Trim()) is not { } common)
                 return UnknownIdentity();
@@ -89,8 +89,7 @@ public sealed class RunnerWorkspaceParkService
             if (!ValidBinding(binding, requireEndpoint: receipt.SourceMode == WorkspaceParkSourceMode.Published)
                 || !IsObjectId(binding.BaselineSha) || !IsObjectId(receipt.SourceSha)
                 || !binding.FullRef.StartsWith("refs/heads/", StringComparison.Ordinal)) return Held("park_invalid_binding");
-            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is null) return Held("park_path_unowned");
-            var path = ResolveFinal(checkout!)!;
+            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is not { } path) return Held("park_path_unowned");
             var ownership = await InspectRepositoryAsync(path, binding.RepositoryIdentity, ct, requireOwned: false);
             if (ownership.Failure is { } failure) return failure;
             var before = await InspectSourceAsync(path, binding, ct);
