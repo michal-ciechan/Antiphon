@@ -1205,12 +1205,27 @@ public class LandingGit : ILandingGit
     }
 
     public async Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct)
+        => (await ReadDestinationAsync(repository, targetFullRef, ct)).Destination;
+
+    private async Task<(LandingDestination Destination, string Endpoint)> ReadDestinationAsync(
+        string repository, string targetFullRef, CancellationToken ct)
     {
         await ValidateBranchAsync(repository, targetFullRef, ct);
         var symbolic = await RunAsync(repository, ["symbolic-ref", "-q", targetFullRef], ct);
         if (symbolic.ExitCode != 1) throw new IOException("symbolic_destination");
         var endpoint = await EndpointAsync(repository, ct);
-        return new("origin", targetFullRef, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint))));
+        return (new("origin", targetFullRef, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)))), endpoint);
+    }
+
+    /// <summary>
+    /// The destination re-check that precedes a remote command, returning the push endpoint it just
+    /// read (null when the destination changed). The command then uses that endpoint instead of a
+    /// second <c>remote get-url</c> immediately after the first: same check, one process fewer.
+    /// </summary>
+    private async Task<string?> ConfirmedEndpointAsync(string repository, LandingDestination destination, CancellationToken ct)
+    {
+        var (current, endpoint) = await ReadDestinationAsync(repository, destination.FullRef, ct);
+        return current == destination ? endpoint : null;
     }
 
     private async Task<string> EndpointAsync(string repository, CancellationToken ct)
@@ -1236,9 +1251,8 @@ public class LandingGit : ILandingGit
         if (!check.Succeeded) return new(null, false, "invalid_observation_ref");
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            if (await DestinationAsync(repository, destination.FullRef, ct) != destination)
+            if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
                 return new(null, false, "remote_configuration_changed");
-            var endpoint = await EndpointAsync(repository, ct);
             var read = await RunAsync(repository, ["ls-remote", "--refs", "--exit-code", endpoint, destination.FullRef], ct);
             if (!read.Succeeded) return new(null, false, "remote_read_failed");
             var lines = read.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -1482,9 +1496,8 @@ public class LandingGit : ILandingGit
     public async Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct)
     {
         if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
-        if (await DestinationAsync(repository, destination.FullRef, ct) != destination)
+        if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
-        var endpoint = await EndpointAsync(repository, ct);
         return await RunAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], ct);
     }
 
@@ -1492,9 +1505,8 @@ public class LandingGit : ILandingGit
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
     {
         if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
-        if (await DestinationAsync(repository, destination.FullRef, ct) != destination)
+        if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
-        var endpoint = await EndpointAsync(repository, ct);
         return await RunOwnedAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], started, ct);
     }
 
@@ -1505,10 +1517,9 @@ public class LandingGit : ILandingGit
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha)
             || expectedRemoteSha is not null && !IsOid(expectedRemoteSha))
             return new(1, "", "invalid_source_push_identity");
-        var destination = await DestinationAsync(repository, sourceFullRef, ct);
+        var (destination, endpoint) = await ReadDestinationAsync(repository, sourceFullRef, ct);
         if (destination.Fingerprint != expectedFingerprint)
             return new(1, "", "source_remote_endpoint_changed");
-        var endpoint = await EndpointAsync(repository, ct);
         return await RunOwnedAsync(repository,
             ["push", endpoint, $"--force-with-lease={sourceFullRef}:{expectedRemoteSha ?? ""}",
                 $"{sha}:{sourceFullRef}"], started, ct);
