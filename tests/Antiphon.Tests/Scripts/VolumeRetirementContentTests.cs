@@ -160,6 +160,207 @@ public sealed class VolumeRetirementContentTests
         elevation.Removed.ShouldBeEmpty();
     }
 
+    // Claude Code's per-process UDS messaging key: claude/sessions/<pid>.<sha256 of the
+    // socket path>.key, a 0600 JSON peer token that dies with its pid. Only that exact
+    // shape in the state volume is disposable; every other credential name refuses.
+    private static readonly string SessionHash = string.Concat(Enumerable.Repeat("0123456789abcdef", 4));
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Claude_session_keys_are_disposable_state_bound_into_the_inventory()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var state = VolumeRetirementFixture.StateMount(fixture);
+        var sessions = Path.Combine(state, "claude", "sessions");
+        var key = Path.Combine(sessions, "4151." + SessionHash + ".key");
+        var planted = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            mkdir -p -- {{VolumeRetirementFixture.Quote(sessions)}}
+            head -c 111 /dev/zero | tr '\0' x > {{VolumeRetirementFixture.Quote(key)}}
+            head -c 256 /dev/zero | tr '\0' y > {{VolumeRetirementFixture.Quote(Path.Combine(sessions, "1." + SessionHash + ".key"))}}
+            """);
+        planted.Exit.ShouldBe(0, "c1609-r4: plant session keys; " + planted.Output);
+        var ok = await VolumeRetirementFixture.Preview(fixture);
+        var okText = ok.Output + await VolumeRetirementFixture.AuditText(fixture);
+        ok.Exit.ShouldBe(0, "c1609-r4: exact Claude session keys are disposable state; " + VolumeRetirementFixture.Truncate(okText));
+        okText.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        okText.ShouldContain("disposable-fixture classifier=claude-session-key-v1 path=claude/sessions/4151." + SessionHash + ".key size=111");
+        okText.ShouldContain("disposable-fixture classifier=claude-session-key-v1 path=claude/sessions/1." + SessionHash + ".key size=256");
+        okText.ShouldNotContain("reason=state-credential");
+        fixture.Removed.ShouldBeEmpty();
+
+        var upper = string.Concat(Enumerable.Repeat("0123456789ABCDEF", 4));
+        var variants = new (string Kind, string Path)[]
+        {
+            ("size", Path.Combine("claude", "sessions", "2." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "sessions", "2." + upper + ".key")),
+            ("file", Path.Combine("claude", "sessions", "2." + SessionHash[..63] + ".key")),
+            ("file", Path.Combine("claude", "sessions", "2." + SessionHash + "0.key")),
+            ("file", Path.Combine("claude", "sessions", "2." + SessionHash + ".key\n")),
+            ("file", Path.Combine("claude", "sessions", "\n2." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "sessions", "0." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "sessions", "x." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "sessions", "nested", "2." + SessionHash + ".key")),
+            ("file", Path.Combine("claude-1654", "sessions", "2." + SessionHash + ".key")),
+            ("file", Path.Combine("sessions", "2." + SessionHash + ".key")),
+            ("file", Path.Combine("other", "claude", "sessions", "2." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "2." + SessionHash + ".key")),
+            ("file", Path.Combine("claude", "tls.key")),
+            ("file", Path.Combine("claude", "sessions", "2." + SessionHash + ".pem")),
+            ("file", Path.Combine("claude", "sessions", "auth.json")),
+            ("file", Path.Combine("claude", "auth.json")),
+            ("file", Path.Combine("claude", ".credentials.json")),
+            ("symlink", Path.Combine("claude", "sessions", "2." + SessionHash + ".key")),
+            ("dir", Path.Combine("claude", "sessions", "2." + SessionHash + ".key")),
+            ("hardlink", Path.Combine("claude", "sessions", "2." + SessionHash + ".key")),
+        };
+        foreach (var (kind, relative) in variants)
+        {
+            using var variant = new C1008HostFixture(main: false);
+            var root = VolumeRetirementFixture.StateMount(variant);
+            var path = Path.Combine(root, relative);
+            var target = Path.Combine(root, "variant", "target");
+            Directory.CreateDirectory(Path.Combine(root, "claude", "sessions"));
+            await File.WriteAllTextAsync(Path.Combine(root, "claude", "sessions", "4151." + SessionHash + ".key"), new string('x', 111));
+            var planted = await VolumeRetirementFixture.Bash($$"""
+                set -euo pipefail
+                mkdir -p -- {{VolumeRetirementFixture.Quote(Path.GetDirectoryName(path)!)}} {{VolumeRetirementFixture.Quote(Path.GetDirectoryName(target)!)}}
+                case {{kind}} in
+                    file) printf x > {{VolumeRetirementFixture.Quote(path)}} ;;
+                    size) head -c 257 /dev/zero | tr '\0' x > {{VolumeRetirementFixture.Quote(path)}} ;;
+                    symlink) printf x > {{VolumeRetirementFixture.Quote(target)}}; ln -s ../../variant/target {{VolumeRetirementFixture.Quote(path)}} ;;
+                    dir) mkdir -p -- {{VolumeRetirementFixture.Quote(path)}} ;;
+                    hardlink) printf x > {{VolumeRetirementFixture.Quote(target)}}; ln {{VolumeRetirementFixture.Quote(target)}} {{VolumeRetirementFixture.Quote(path)}} ;;
+                esac
+                """);
+            planted.Exit.ShouldBe(0, "c1609-r4: plant " + kind + " at " + relative + "; " + planted.Output);
+            var refused = await VolumeRetirementFixture.Preview(variant);
+            var text = refused.Output + await VolumeRetirementFixture.AuditText(variant);
+            refused.Exit.ShouldBe(2, "c1609-r4: " + kind + " at " + relative.Replace("\n", "\\n") + " refuses; " + VolumeRetirementFixture.Truncate(text));
+            text.ShouldContain("reason=state-credential");
+            text.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            variant.Removed.ShouldBeEmpty();
+        }
+
+        // The accepted shape is bound into the preview inventory: the same set applies,
+        // a session key added after the Ready preview invalidates it with zero removes.
+        using var applied = new C1008HostFixture(main: false);
+        var appliedKey = Path.Combine(VolumeRetirementFixture.StateMount(applied), "claude", "sessions", "4151." + SessionHash + ".key");
+        Directory.CreateDirectory(Path.GetDirectoryName(appliedKey)!);
+        await File.WriteAllTextAsync(appliedKey, new string('x', 111));
+        await VolumeRetirementFixture.ReadyPreview(applied);
+        var deleted = await applied.Run("retire-temp-runner");
+        deleted.Exit.ShouldBe(0, "c1609-r4: the previewed session-key set applies; " + VolumeRetirementFixture.Truncate(deleted.Output));
+        applied.Removed.ShouldContain("antiphon-runner-temp_runner-state");
+
+        using var drifted = new C1008HostFixture(main: false);
+        var driftSessions = Path.Combine(VolumeRetirementFixture.StateMount(drifted), "claude", "sessions");
+        Directory.CreateDirectory(driftSessions);
+        await File.WriteAllTextAsync(Path.Combine(driftSessions, "4151." + SessionHash + ".key"), new string('x', 111));
+        await VolumeRetirementFixture.ReadyPreview(drifted);
+        await File.WriteAllTextAsync(Path.Combine(driftSessions, "4152." + SessionHash + ".key"), new string('x', 111));
+        var stale = await drifted.Run("retire-temp-runner");
+        stale.Exit.ShouldBe(2, "c1609-r4: a changed session-key set invalidates the Ready preview; " + VolumeRetirementFixture.Truncate(stale.Output));
+        stale.Output.ShouldContain("reason=preview-required");
+        drifted.Removed.ShouldBeEmpty();
+    }
+
+    private static readonly string InnerVolume = string.Concat(Enumerable.Repeat("ded26e61", 8));
+
+    // An inner dockerd's own data-root bookkeeping. Accepted only with no inner user
+    // data: containers/ empty, volumes/ holding docker's files and empty anonymous
+    // volumes, engine-id a 36-byte file. Everything else stays dind-unknown.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Pristine_inner_docker_layout_is_disposable_and_bound_into_the_inventory()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var dind = VolumeRetirementFixture.DindMount(fixture);
+        await PlantPristineDind(dind);
+        var ok = await VolumeRetirementFixture.Preview(fixture);
+        var okText = ok.Output + await VolumeRetirementFixture.AuditText(fixture);
+        ok.Exit.ShouldBe(0, "c1609-r4: a pristine inner docker layout is disposable; " + VolumeRetirementFixture.Truncate(okText));
+        okText.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        okText.ShouldContain("disposable-fixture classifier=dind-engine-id-v1 path=engine-id size=36");
+        okText.ShouldContain("disposable-fixture classifier=dind-containers-empty-v1 path=containers");
+        okText.ShouldContain("disposable-fixture classifier=dind-volumes-v1 path=volumes/metadata.db type=f");
+        okText.ShouldContain("disposable-fixture classifier=dind-volumes-v1 path=volumes/backingFsBlockDev type=f");
+        okText.ShouldContain("disposable-fixture classifier=dind-volumes-v1 path=volumes/" + InnerVolume + " type=d");
+        okText.ShouldContain("disposable-fixture classifier=dind-volumes-v1 path=volumes/" + InnerVolume + "/_data type=d");
+        okText.ShouldNotContain("reason=dind-unknown");
+        fixture.Removed.ShouldBeEmpty();
+
+        var upper = InnerVolume.ToUpperInvariant();
+        var variants = new (string Name, string Script)[]
+        {
+            ("engine-id-35", "printf '%035d' 0 > engine-id"),
+            ("engine-id-37", "printf '%037d' 0 > engine-id"),
+            ("engine-id-symlink", "mv engine-id real-id && ln -s real-id engine-id"),
+            ("engine-id-dir", "rm -f engine-id && mkdir engine-id"),
+            ("containers-entry", "mkdir containers/" + InnerVolume),
+            ("containers-file", "printf x > containers/config.v2.json"),
+            ("containers-symlink", "rmdir containers && mkdir -p elsewhere && ln -s elsewhere containers"),
+            ("containers-file-type", "rmdir containers && printf x > containers"),
+            ("volume-data", "printf 'row\\n' > volumes/" + InnerVolume + "/_data/PG_VERSION"),
+            ("volume-data-dir", "mkdir volumes/" + InnerVolume + "/_data/base"),
+            ("volume-opts", "printf '{}' > volumes/" + InnerVolume + "/opts.json"),
+            ("volume-data-symlink", "rmdir volumes/" + InnerVolume + "/_data && ln -s /tmp volumes/" + InnerVolume + "/_data"),
+            ("volume-data-file", "rmdir volumes/" + InnerVolume + "/_data && printf x > volumes/" + InnerVolume + "/_data"),
+            ("volume-upper", "mkdir -p volumes/" + upper + "/_data"),
+            ("volume-short", "mkdir -p volumes/" + InnerVolume[..63] + "/_data"),
+            ("volume-named", "mkdir -p volumes/pgdata/_data"),
+            ("volume-newline", "mkdir -p \"volumes/" + InnerVolume + "\n\"/_data"),
+            ("volume-symlink", "ln -s " + InnerVolume + " volumes/" + InnerVolume[..63] + "f"),
+            ("volume-file", "printf x > volumes/" + InnerVolume[..63] + "f"),
+            ("volume-other-file", "printf x > volumes/notes.txt"),
+            ("backing-data", "printf x > volumes/backingFsBlockDev"),
+            ("backing-symlink", "rm -f volumes/backingFsBlockDev && ln -s metadata.db volumes/backingFsBlockDev"),
+            ("metadata-symlink", "mv volumes/metadata.db real.db && ln -s ../real.db volumes/metadata.db"),
+            ("metadata-dir", "rm -f volumes/metadata.db && mkdir volumes/metadata.db"),
+            ("volumes-symlink", "mv volumes real-volumes && ln -s real-volumes volumes"),
+        };
+        foreach (var (name, script) in variants)
+        {
+            using var variant = new C1008HostFixture(main: false);
+            var root = VolumeRetirementFixture.DindMount(variant);
+            await PlantPristineDind(root);
+            var changed = await VolumeRetirementFixture.Bash("set -euo pipefail\ncd " + VolumeRetirementFixture.Quote(root) + "\n" + script);
+            changed.Exit.ShouldBe(0, "c1609-r4: plant " + name + "; " + changed.Output);
+            var refused = await VolumeRetirementFixture.Preview(variant);
+            var text = refused.Output + await VolumeRetirementFixture.AuditText(variant);
+            refused.Exit.ShouldBe(2, "c1609-r4: " + name + " refuses; " + VolumeRetirementFixture.Truncate(text));
+            text.ShouldContain("reason=dind-unknown");
+            text.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            variant.Removed.ShouldBeEmpty();
+        }
+
+        // A second anonymous volume after the Ready preview changes the bound inventory.
+        using var drifted = new C1008HostFixture(main: false);
+        var driftRoot = VolumeRetirementFixture.DindMount(drifted);
+        await PlantPristineDind(driftRoot);
+        await VolumeRetirementFixture.ReadyPreview(drifted);
+        Directory.CreateDirectory(Path.Combine(driftRoot, "volumes", string.Concat(Enumerable.Repeat("abcdef01", 8)), "_data"));
+        var stale = await drifted.Run("retire-temp-runner");
+        stale.Exit.ShouldBe(2, "c1609-r4: a changed inner volume set invalidates the Ready preview; " + VolumeRetirementFixture.Truncate(stale.Output));
+        stale.Output.ShouldContain("reason=preview-required");
+        drifted.Removed.ShouldBeEmpty();
+    }
+
+    private static async Task PlantPristineDind(string root)
+    {
+        var planted = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            cd {{VolumeRetirementFixture.Quote(root)}}
+            mkdir -p containers overlay2 image buildkit network plugins runtimes swarm tmp volumes/{{InnerVolume}}/_data
+            printf '6f1c2d3e-0000-4000-8000-0123456789ab' > engine-id
+            : > volumes/backingFsBlockDev
+            head -c 32768 /dev/zero > volumes/metadata.db
+            """);
+        planted.Exit.ShouldBe(0, "c1609-r4: plant pristine dind; " + planted.Output);
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Private_origin_advanced_head_uses_real_host_proof()
