@@ -198,7 +198,7 @@ public sealed class WorktreeGuardedCleanupTests
         // CARD-0665: bin-* is disposable now, so the ignored boundary uses a protected path.
         var path = Path.Combine(h.H.Fixture.Source, ignored ? Path.Combine(".claude", "settings.local.json") : "feature.txt");
         h.OtherCommand = async (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && (retry ? h.Removes == 1 : h.Removes == 0) && ++reads == read)
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && (retry ? h.Removes == 1 : h.Removes == 0) && ++reads == read)
             { reached = true; Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllTextAsync(path, "new owner bytes"); }
             return null;
         };
@@ -217,7 +217,7 @@ public sealed class WorktreeGuardedCleanupTests
         var reads = 0;
         var path = Path.Combine(h.H.Fixture.Source, "bin-private", "keep.txt");
         h.OtherCommand = async (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0 && ++reads == 2)
             { Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllTextAsync(path, "build output"); }
             return null;
         };
@@ -233,7 +233,7 @@ public sealed class WorktreeGuardedCleanupTests
         var reads = 0;
         var path = Path.Combine(h.H.Fixture.Source, ".antiphon", "task-0123abcd.md");
         h.OtherCommand = async (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0 && ++reads == 2)
             { Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllTextAsync(path, "late report"); }
             return null;
         };
@@ -249,7 +249,7 @@ public sealed class WorktreeGuardedCleanupTests
         var reads = 0;
         var path = Path.Combine(h.H.Fixture.Source, "bin-private", "appsettings.Development.json");
         h.OtherCommand = async (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0 && ++reads == 2)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 await File.WriteAllTextAsync(path, "{\"secret\":1}");
@@ -280,7 +280,7 @@ public sealed class WorktreeGuardedCleanupTests
         if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
         var reads = 0;
         h.OtherCommand = (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0 && ++reads == 2)
             { Directory.Delete(directory, recursive: true); link.MoveTo(directory); }
             return Task.FromResult<LandingGitResult?>(null);
         };
@@ -300,7 +300,7 @@ public sealed class WorktreeGuardedCleanupTests
         var directory = Path.Combine(h.H.Fixture.Source, "bin-private");
         var path = Path.Combine(directory, ".antiphon", "report.md");
         h.OtherCommand = async (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0 && ++reads == 2)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 await File.WriteAllTextAsync(path, "nested spill");
@@ -332,7 +332,7 @@ public sealed class WorktreeGuardedCleanupTests
         if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
         var reads = 0; var swapped = false;
         h.OtherCommand = (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0) reads++;
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0) reads++;
             // The recovery-pin reads of the last authority check follow the second reading.
             if (!swapped && reads == 2 && args[0] == "show-ref" && args[^1].StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
             { swapped = true; Directory.Delete(directory, recursive: true); link.MoveTo(directory); }
@@ -365,7 +365,7 @@ public sealed class WorktreeGuardedCleanupTests
         }
         var reads = 0; var written = false;
         h.OtherCommand = async (repo, args) => {
-            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0) reads++;
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0) reads++;
             if (!written && reads == 2 && args[0] == "show-ref" && args[^1].StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
             { written = true; await File.WriteAllTextAsync(Path.Combine(outside, "late.txt"), "outside owner bytes"); }
             return null;

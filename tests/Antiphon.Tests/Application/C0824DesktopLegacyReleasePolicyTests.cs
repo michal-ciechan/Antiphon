@@ -477,6 +477,41 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             "git for Windows sees a path past MAX_PATH only with core.longpaths");
     }
 
+    /// <summary>
+    /// CARD-1714 item 2 (Debug 52410842, N-2): a tree with an entry the no-follow delete cannot open (past MAX_PATH
+    /// on Windows) is HELD with nothing moved, never set aside, unregistered and then stuck Partial. The limit is
+    /// lowered through the seam so Linux runs the real walk; the native case is CP-25's
+    /// Long_path_ignored_tree_is_held_not_partial. The control, every path under the limit, retires as before.
+    /// </summary>
+    [Test]
+    public async Task Path_past_the_delete_limit_holds_the_tree_not_partial()
+    {
+        const int limit = 400;
+        await using var w = await DesktopLegacyWorld.CreateAsync(configure: s => s.AddSingleton(new WorktreePathLimit(limit)));
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        // Ignored build output: status sees nothing, so only the length guard stands between it and the delete.
+        var deep = Path.Combine(a.Path, "obj");
+        while (deep.Length < limit + 40) deep = Path.Combine(deep, "segment-" + new string('d', 40));
+        Directory.CreateDirectory(deep);
+        await File.WriteAllTextAsync(Path.Combine(deep, "build.out"), "disposable\n");
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+
+        var tick = await w.TickAsync();
+
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("worktree_path_too_long");
+        (await w.SnapshotAsync(a.Path)).ShouldBe(before, "the tree is byte-intact");
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue("the registration is intact");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is kept");
+        Directory.Exists(WorktreeSetAside.SetAsidePath(a.Path)).ShouldBeFalse("nothing was set aside");
+        (await w.RetryCursorAsync(a))!.NotBefore.ShouldNotBeNull("the hold backs off");
+        w.Fixture.Git.Trace.ShouldNotContain(x => x.Contains("--force"));
+    }
+
     /// <summary>V-11/G-33/G-34: ignored files go through the CARD-0665 gate (evidence retained, protected refused).</summary>
     [Test]
     [Arguments("evidence-allowlisted")]

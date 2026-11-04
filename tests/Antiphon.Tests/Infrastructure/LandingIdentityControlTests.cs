@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -115,7 +116,7 @@ public sealed class LandingIdentityControlTests
             else if (args[0] == "show-ref") result = Ok(Change == "ref-result-head" ? Other : Sha);
             else if (args.Contains("--absolute-git-dir")) result = Ok(fixture.Admin);
             else if (args[0] == "rev-parse") result = Ok(Change == "branch-head" && args.Contains(fixture.Coordinates.SourceFullRef + "^{commit}") || Change == "second-reading" && StatusRead ? Other : Sha);
-            else if (args[0] == "status") { StatusRead = true; result = Change == "status-error" ? new(1, "", "status error") : Ok(Status); }
+            else if (GitSubcommand.Of(args) == "status") { StatusRead = true; result = Change == "status-error" ? new(1, "", "status error") : Ok(Status); }
             else if (args[0] == "ls-files") result = Change == "ignored-error" ? new(1, "", "ignored error") : Ok();
             else throw new InvalidOperationException("Unexpected command in read-only identity fixture: " + args[0]);
             return Task.FromResult(result);

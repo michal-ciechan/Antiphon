@@ -72,7 +72,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
         var retainedSha = source;
         h.Fixture.Git.BeforeCommand = async (repo, command) =>
         {
-            if (repo != h.Fixture.Source || command[0] != "status" || ++seen != reading) return null;
+            if (repo != h.Fixture.Source || GitSubcommand.Of(command) != "status" || ++seen != reading) return null;
             fired = true;
             switch (change)
             {

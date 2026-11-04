@@ -170,7 +170,7 @@ internal sealed class SettledRemovalHarness : IAsyncDisposable
     public int RemoveCalls => Host.Fixture.Git.Trace.Count(a => a.Contains("worktree") && a.Contains("remove"));
     public int BranchDeleteCalls => Host.Fixture.Git.Trace.Count(a =>
         a.Length > 0 && a[0] == "update-ref" && a.Contains("-d") && a.Any(x => x.Contains("feat/card-task", StringComparison.Ordinal)));
-    public int InspectionCalls => Host.Fixture.Git.Trace.Count(a => a.Length > 0 && a[0] == "status");
+    public int InspectionCalls => Host.Fixture.Git.Trace.Count(a => a.Length > 0 && GitSubcommand.Of(a) == "status");
     public int ForceOrRecursiveDeleteCalls => Host.Fixture.Git.Trace.Count(a =>
         a.Contains("--force") || a.Contains("-f") || a.Contains("rm") && a.Contains("-rf"));
 
