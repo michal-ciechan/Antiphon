@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -17,6 +18,16 @@ public sealed class CompletionNoteWorkHostedService(
     TimeProvider clock, ILogger<CompletionNoteWorkHostedService> logger) : BackgroundService
 {
     private const int PageSize = 128;
+
+    /// <summary>
+    /// CARD-1709: how long one recovery pass waits for a caller's queue lock before leaving that
+    /// caller's completion notes for the next pass.
+    /// </summary>
+    internal static readonly TimeSpan ScanQueueLockWait = TimeSpan.FromSeconds(1);
+
+    /// <summary>CARD-1709: a pass that left a busy session's work behind runs again this soon, not at the backstop.</summary>
+    internal static readonly TimeSpan BusyRetryDelay = TimeSpan.FromSeconds(5);
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
         RecoverAsync(stoppingToken), FlushAsync(stoppingToken), FlushAsync(stoppingToken),
         FlushAsync(stoppingToken), FlushAsync(stoppingToken), IncidentsAsync(stoppingToken));
@@ -33,16 +44,22 @@ public sealed class CompletionNoteWorkHostedService(
             {
                 await using var scope = scopes.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                // CARD-1709: sessions whose queue lock stayed held this pass; their work waits for the next.
+                var busySessions = new HashSet<Guid>();
                 if (work.Sweep || clock.GetUtcNow().UtcDateTime >= nextSweep)
                 {
-                    await SweepAsync(scope.ServiceProvider, db, ct);
+                    await SweepAsync(scope.ServiceProvider, db, ct, busySessions);
                     nextSweep = clock.GetUtcNow().UtcDateTime.AddMinutes(15);
                 }
                 else
                 {
                     foreach (var task in work.Tasks)
-                        await RecoverMissingAsync(scope.ServiceProvider, db, task, ct);
+                        await RecoverMissingAsync(scope.ServiceProvider, db, task, ct, busySessions);
                 }
+                // Skipped work is unchanged and not a failure. The retry pass is a sweep, so it
+                // finds it whichever task or sweep pass skipped it.
+                if (busySessions.Count > 0)
+                    nextSweep = Min(nextSweep, clock.GetUtcNow().UtcDateTime.Add(BusyRetryDelay));
                 failuresInARow = 0;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -58,10 +75,12 @@ public sealed class CompletionNoteWorkHostedService(
         }
     }
 
-    private async Task SweepAsync(IServiceProvider services, AppDbContext db, CancellationToken ct)
+    private static DateTime Min(DateTime a, DateTime b) => a < b ? a : b;
+
+    private async Task SweepAsync(IServiceProvider services, AppDbContext db, CancellationToken ct, ISet<Guid> busySessions)
     {
         Exception? recoveryFailure = null;
-        try { await RecoverMissingAsync(services, db, null, ct); }
+        try { await RecoverMissingAsync(services, db, null, ct, busySessions); }
         catch (Exception ex) when (!ct.IsCancellationRequested) { recoveryFailure = ex; }
         Guid? cursor = null;
         while (true)
@@ -90,8 +109,15 @@ public sealed class CompletionNoteWorkHostedService(
     /// stamping shrinks the partial index, and already-stamped history is never materialized.
     /// The existing root receipt checks and atomic queue+stamp write remain authoritative.
     /// </summary>
-    private async Task RecoverMissingAsync(IServiceProvider services, AppDbContext db, Guid? taskId, CancellationToken ct)
+    /// <param name="busySessions">
+    /// CARD-1709: the pass's busy set, shared by the supervision and completion-note phases. An enqueue
+    /// waits at most <see cref="ScanQueueLockWait"/> for a session's queue lock; a session whose lock is
+    /// still held joins the set, and its remaining items in this pass are skipped unchanged, in order.
+    /// </param>
+    private async Task RecoverMissingAsync(IServiceProvider services, AppDbContext db, Guid? taskId, CancellationToken ct,
+        ISet<Guid>? busySessions = null)
     {
+        busySessions ??= new HashSet<Guid>();
         Exception? failed = null;
         try
         {
@@ -99,7 +125,7 @@ public sealed class CompletionNoteWorkHostedService(
             // its independent recovery pass. Preserve the failure for the next sweep afterward.
             await using var supervisionScope = services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
             await new TaskSupervisionNoticeService(supervisionScope.ServiceProvider.GetRequiredService<AppDbContext>(),
-                supervisionScope.ServiceProvider.GetRequiredService<SessionMessageQueueService>(), clock).RecoverAsync(taskId, ct);
+                supervisionScope.ServiceProvider.GetRequiredService<SessionMessageQueueService>(), clock).RecoverAsync(taskId, ct, busySessions);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -130,6 +156,7 @@ public sealed class CompletionNoteWorkHostedService(
                 {
                     var parent = task.ParentSessionId!.Value;
                     if (await AgentTaskCheckService.HasCompletionNoteAsync(db, parent, task.RootTaskId, ct)) continue;
+                    if (busySessions.Contains(parent)) continue;
                     if (services.GetService<LandDeliveryBoundary>() is { } boundary)
                         await boundary.ReachedAsync("completion-scan", task.Id, parent, ct);
                     var report = task.Result!;
@@ -137,8 +164,14 @@ public sealed class CompletionNoteWorkHostedService(
                         task, settings, report, land: await LandCompletionFacts.LoadAsync(db, task, ct));
                     await queue.EnqueueAsync(parent, note.Body, MessageSendMode.WhenIdle, ct,
                         QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
-                        task.Id, DelegationNoteDigest.Compute(report), note.Header, deliverIfIdle: false);
+                        task.Id, DelegationNoteDigest.Compute(report), note.Header, deliverIfIdle: false,
+                        lockWait: ScanQueueLockWait);
                     flushes.TryEnqueue(parent);
+                }
+                catch (SessionQueueBusyException busy)
+                {
+                    // Nothing was written under the lock. Not a failed attempt: the task stays owed, unstamped.
+                    busySessions.Add(busy.SessionId);
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {

@@ -129,11 +129,11 @@ public sealed partial class SessionMessageQueueService
     internal void SupervisionChanged(Guid taskId) => _completionNotes?.Recovery.Check(taskId);
 
     internal Task<SessionQueueDto> EnqueueSupervisionNoticeAsync(TaskSupervisionNotice notice,
-        Action<Guid> onCreated, CancellationToken ct) =>
+        Action<Guid> onCreated, CancellationToken ct, TimeSpan? lockWait = null) =>
         EnqueueCoreAsync(notice.RecipientSessionId!.Value, notice.Body, MessageSendMode.WhenIdle,
             origin: QueuedMessageOrigin.Supervision, conversationKey: $"task-supervision:{notice.Id:N}",
             sourceTaskId: notice.TaskId, contentDigest: notice.Digest, onCreated: onCreated,
-            sourceTaskSupervisionNoticeId: notice.Id, ct: ct);
+            sourceTaskSupervisionNoticeId: notice.Id, lockWait: lockWait, ct: ct);
 
     internal void CompletionDeliveryFailed() => _completionNotes?.Recovery.RequestSweep();
 

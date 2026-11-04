@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -17,7 +18,18 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 && n.SessionStartedAt != null && n.State != TaskSupervisionNoticeState.Superseded
                 && n.ReasonCode != "report_attribution_superseded");
 
-    internal async Task RecoverAsync(Guid? taskId, CancellationToken ct)
+    /// <summary>
+    /// CARD-1709: how long one recovery pass waits for a recipient's queue lock before leaving that
+    /// recipient's notices for the next pass.
+    /// </summary>
+    internal static readonly TimeSpan ScanQueueLockWait = TimeSpan.FromSeconds(1);
+
+    /// <param name="busySessions">
+    /// CARD-1709: set by the completion recovery pass only. Its enqueue waits at most <see cref="ScanQueueLockWait"/>
+    /// for the recipient's queue lock; a recipient whose lock is still held joins this set, and its notices
+    /// in the same pass are skipped unchanged, so they keep their order and retry on the next pass.
+    /// </param>
+    internal async Task RecoverAsync(Guid? taskId, CancellationToken ct, ISet<Guid>? busySessions = null)
     {
         var now = clock.GetUtcNow().UtcDateTime;
         var errors = new List<Exception>();
@@ -107,12 +119,24 @@ internal sealed class TaskSupervisionNoticeService(AppDbContext db, SessionMessa
                 // Unknown/gone recipients must yield the bounded batch to newer delivery debt.
                 notice.NextAttemptAt = now.AddMinutes(1);
                 if (!await CanSendAsync(db, notice, ct)) return;
+                if (busySessions?.Contains(notice.RecipientSessionId!.Value) == true)
+                {
+                    db.ChangeTracker.Clear();
+                    return;
+                }
                 try
                 {
-                    await queue.EnqueueSupervisionNoticeAsync(notice, message => notice.QueueMessageId = message, ct);
+                    await queue.EnqueueSupervisionNoticeAsync(notice, message => notice.QueueMessageId = message, ct,
+                        lockWait: busySessions is null ? null : ScanQueueLockWait);
                     await db.SaveChangesAsync(ct);
                     await ConfirmAsync(notice, ct);
                     notice.NextAttemptAt = now.AddMinutes(1);
+                }
+                catch (SessionQueueBusyException busy) when (busySessions is not null)
+                {
+                    // Nothing was written under the lock. Not a failed attempt: no bookkeeping, no backoff.
+                    db.ChangeTracker.Clear();
+                    busySessions.Add(busy.SessionId);
                 }
                 catch (Exception) when (!ct.IsCancellationRequested)
                 {
