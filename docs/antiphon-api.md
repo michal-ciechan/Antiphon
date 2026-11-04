@@ -1129,6 +1129,7 @@ list/detail never include the raw token; issue/rotate return it once for `script
 ```
 GET    /api/channels/consumer                effective inbound consumer identity (group/topic/enabled/broker host-port allowlist)
 GET    /api/channels                         the catalog (rows appear on first inbound message)
+GET    /api/channels/wake-worker             CARD-1716 heartbeat: the inbound wake worker's last completed pass (completedAt, rowsSeen, rowsQueued, sessionsSkippedBusy, elapsed); null until one completes
 GET    /api/channels/outbound-profiles       configured profile previews (project, worker, trigger, prompt revision, timeout)
 POST   /api/channels/outbound-deliveries/{id}/retry  explicit uncertain-publication retry; body {"acknowledgePossibleDuplicate":true}
 POST   /api/channels/outbound-deliveries/{id}/resume explicit Held retry after original channel binding is repaired
