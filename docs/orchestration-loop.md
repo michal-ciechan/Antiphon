@@ -2603,7 +2603,11 @@ disposition naming the origin branch and commit. Run rows use Scope `desktop-leg
 `leaf_mismatch`, `outside_root`, `slot_leased`, `land_pending`, `sync_debt`, `path_shared`, `live_session`,
 `report_missing`, `dependent_open`, `release_active_other`, `directory_absent`, `reparse_point`,
 `main_worktree`, `source_dirty`, `status_untrusted` (git status warned, e.g. a directory past MAX_PATH or unreadable), `source_changed`, `unpushed`, `remote_unverified`, `refused_recheck_pending`,
-`retry_exhausted`, plus the retirement service's own codes. **Dirty or unpushed trees are never removed**: the
+`retry_exhausted`, `worktree_path_too_long` (CARD-1714: the guarded removal refused before the move-aside because an entry, named as it
+will be once set aside, reaches MAX_PATH, which the no-follow delete cannot open on Windows; nothing moved), plus the
+retirement service's own codes. The guarded removal's own re-check (`LandingGit.InspectAsync`, also every land's
+source inspection) runs the same `-c core.longpaths=true` status and refuses a clean listing that warned on stderr as
+`status_untrusted` (CARD-1714). **Dirty or unpushed trees are never removed**: the
 Held row (path, branch, head SHA, origin tip, reason) is the evidence, and removal stays the caller-filed path.
 Ignored files go through the CARD-0665 gate. A refused system release whose command removed nothing reopens a
 new attempt on its next due tick (60 min doubling to 24 h, at most `MaxRefusedAttempts` = 5); a caller-filed

@@ -141,6 +141,11 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     return Finish("ignored_reparse_point", WorktreeIgnoredContentGate.ReparseDetail(finalLinks));
                 // Disposable churn is allowed; evidence must be exactly what was retained.
                 if (!second.Evidence.SequenceEqual(first.Evidence, StringComparer.Ordinal)) return Finish("ignored_content_changed");
+                // CARD-1714: the no-follow delete cannot open an entry past the platform limit, so a deeper tree would
+                // be set aside, unregistered and then stuck half deleted on every retry. Refuse while nothing has
+                // moved, measuring each entry under its set-aside name (longer than its own).
+                if (PathLimit.FirstTooLong(source.WorktreePath, aside) is { } tooLong)
+                    return Finish("worktree_path_too_long", WorktreeCleanupPresentation.Clip("path: " + tooLong, 400));
                 if (consumeSlot is not null && !await consumeSlot(ct)) return Finish("cleanup_command_slot_spent");
                 // The final status/identity read can race a task-coordinate or receipt revision.
                 // Revalidate durable authority immediately before deletion without reusing a tracked row.

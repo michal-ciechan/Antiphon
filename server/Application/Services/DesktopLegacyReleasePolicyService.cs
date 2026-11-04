@@ -43,6 +43,8 @@ public sealed class DesktopLegacyReleasePolicyService
     public const string Lane = "DesktopLegacyPolicy";
     public const string ReleaseReason = "CARD-0824 S4a terminal>=48h";
     public const string MirrorOwnedReason = "runner_mirror_owned_by_retention";
+    /// <summary>CARD-1714: the guarded removal refused before the move: a path the no-follow delete cannot open.</summary>
+    public const string PathTooLong = "worktree_path_too_long";
 
     // \z, never $: in .NET $ also matches just before a final newline (CARD-1677 review d0b57b9c A-3).
     private static readonly Regex LeafPattern = new(@"^card-task-(?<id>[0-9a-f]{8})\z",
@@ -339,6 +341,13 @@ public sealed class DesktopLegacyReleasePolicyService
                 row = await RowAsync(run, WorktreeResidueCandidateOutcome.Removed, owned ? MirrorOwnedReason : "removed",
                     fresh, release.Id, ct, save: false);
                 ClearRetry(taskCursors, fresh.Id);
+            }
+            else if (removed.Residue == PathTooLong && !removed.DirectoryGone && !removed.Unregistered && !removed.BranchDeleted)
+            {
+                // CARD-1714: the guarded removal refused before the move-aside because the no-follow delete cannot
+                // open a path that long. Nothing moved; the tree is held (backing off) rather than ending Partial.
+                row = await RowAsync(run, WorktreeResidueCandidateOutcome.Held, PathTooLong, fresh, release.Id, ct, save: false);
+                StampRetry(taskCursors, fresh.Id, PathTooLong, settings);
             }
             else if (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted)
             {
