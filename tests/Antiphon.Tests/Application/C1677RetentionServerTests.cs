@@ -9,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using Rig = Antiphon.Tests.Application.RemoteWorkspacePreparerTests.Rig;
@@ -770,6 +771,7 @@ public sealed class C1677RetentionServerTests
         row.Branch.ShouldNotBeNull().ShouldStartWith("owner_hint:" + leaf + ":");
     }
 
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
     public async Task Retain_round_trip_real_runner(CancellationToken ct)
     {
@@ -783,6 +785,7 @@ public sealed class C1677RetentionServerTests
         (await world.Server.RowsAsync(id)).ShouldHaveSingleItem().Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Removed));
     }
 
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
     public async Task Busy_runner_retain_is_serialised(CancellationToken ct)
     {
@@ -803,6 +806,7 @@ public sealed class C1677RetentionServerTests
         world.Moves(path).ShouldBe(1);
     }
 
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
     [Arguments("reply-lost")]
     [Arguments("crash-between-phases")]
