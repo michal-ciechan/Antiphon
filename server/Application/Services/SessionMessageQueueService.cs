@@ -1895,18 +1895,27 @@ public sealed partial class SessionMessageQueueService
     /// refuses to type into a Starting session — without this nudge a fresh delegate's brief
     /// would wait for the stranded-queue watchdog's next sweep.
     /// </summary>
-    public Task FlushSessionAsync(Guid sessionId, CancellationToken ct) =>
-        FlushSessionReportingDeliveryAsync(sessionId, ct);
+    /// <param name="lockWait">
+    /// CARD-1716: null waits for the session's queue lock however long a delivery holds it. The channel
+    /// wake worker passes a bound: if the lock is still held when it expires, nothing is done and
+    /// <see cref="SessionQueueBusyException"/> is thrown.
+    /// </param>
+    public Task FlushSessionAsync(Guid sessionId, CancellationToken ct, TimeSpan? lockWait = null) =>
+        FlushSessionReportingDeliveryAsync(sessionId, ct, lockWait);
 
     /// <summary>
     /// <see cref="FlushSessionAsync"/>, reporting whether this flush completed a delivery
     /// (CARD-1150 F10/F11, <see cref="CompletedInput"/>). After a completed delivery the recipient
     /// may be Working, so the resumed launch treats its later bookkeeping as best-effort.
     /// </summary>
-    internal async Task<bool> FlushSessionReportingDeliveryAsync(Guid sessionId, CancellationToken ct)
+    internal async Task<bool> FlushSessionReportingDeliveryAsync(Guid sessionId, CancellationToken ct, TimeSpan? lockWait = null)
     {
         var sem = GetLock(sessionId);
-        await sem.WaitAsync(ct);
+        if (lockWait is { } bound)
+        {
+            if (!await sem.WaitAsync(bound, ct)) throw new SessionQueueBusyException(sessionId);
+        }
+        else await sem.WaitAsync(ct);
         FlushResult result;
         try
         {

@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -104,6 +105,12 @@ public sealed partial class ChannelInboundRecoveryTests
             drain = bridge.DrainPendingAsync(Ct);
             await drain.WaitAsync(C1716PassBound);
             Volatile.Read(ref released).ShouldBe(1, "A1 met the held lock and A's lock freed mid-pass");
+            var firstPass = await (Task<ChannelWakeWorkerPass>)drain;
+            firstPass.SessionsSkippedBusy.ShouldBe(1);
+            firstPass.RowsSeen.ShouldBe(3);
+            firstPass.RowsQueued.ShouldBe(1, "only B is queued while A is busy");
+            ChannelBridgeService.NextWakeDelay(firstPass).ShouldBe(ChannelBridgeService.BusyRetryDelay,
+                "skipped busy work retries soon, not at the idle tick");
             await AssertCompleteHealthyReceiptAsync(h, healthy);
             await using (var first = Db(schema.ConnectionString))
             {
@@ -115,7 +122,10 @@ public sealed partial class ChannelInboundRecoveryTests
             await AssertC1716NoFailureAsync(schema.ConnectionString, h.AgentId);
 
             // The next pass retries the skipped session, oldest row first.
-            await bridge.DrainPendingAsync(Ct).WaitAsync(C1716PassBound);
+            var secondPass = await bridge.DrainPendingAsync(Ct).WaitAsync(C1716PassBound);
+            secondPass.SessionsSkippedBusy.ShouldBe(0);
+            secondPass.RowsQueued.ShouldBe(2);
+            ChannelBridgeService.NextWakeDelay(secondPass).ShouldBe(TimeSpan.FromSeconds(10));
             await using var second = Db(schema.ConnectionString);
             var owner1 = (await second.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == a1)).QueueMessageId;
             var owner2 = (await second.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == a2)).QueueMessageId;
@@ -134,8 +144,53 @@ public sealed partial class ChannelInboundRecoveryTests
         }
     }
 
+    [Test]
+    public async Task C1716_StalledWakeWorker_RaisesOneChannelIncidentPerStall()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await CreateHarnessAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(), PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero));
+        var bridge = Bridge(h, clock);
+        await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-stalled-{Guid.NewGuid():N}", "stalled body",
+            clock.GetUtcNow().UtcDateTime);
+
+        // The worker has completed no pass since it started, but not yet for the stall age.
+        clock.Advance(ChannelBridgeService.WakeWorkerStallAge - TimeSpan.FromMilliseconds(1));
+        (await bridge.CheckWakeWorkerStallAsync(Ct)).ShouldBeFalse();
+        (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(0);
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        (await bridge.CheckWakeWorkerStallAsync(Ct)).ShouldBeTrue("an accepted row waited 5 min while no pass completed");
+        (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(1);
+        clock.Advance(TimeSpan.FromMinutes(3));
+        (await bridge.CheckWakeWorkerStallAsync(Ct)).ShouldBeFalse("one incident per stall");
+        (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(1);
+
+        // A completed pass is the heartbeat: it is published and re-arms the check.
+        await bridge.DrainPendingAsync(Ct);
+        h.Provider.GetRequiredService<ChannelInboundWakeSignal>().LastPass!.CompletedAt.ShouldBe(clock.GetUtcNow());
+        await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-stalled-again-{Guid.NewGuid():N}", "stalled again",
+            clock.GetUtcNow().UtcDateTime.AddMinutes(-10));
+        (await bridge.CheckWakeWorkerStallAsync(Ct)).ShouldBeFalse("the worker completed a pass just now");
+        clock.Advance(ChannelBridgeService.WakeWorkerStallAge);
+        (await bridge.CheckWakeWorkerStallAsync(Ct)).ShouldBeTrue("a new stall after a completed pass raises again");
+        (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(2);
+    }
+
+    private static async Task<int> C1716StallIncidentsAsync(string connectionString, Guid agentId)
+    {
+        await using var db = Db(connectionString);
+        return await db.AgentIncidents.CountAsync(i => i.AgentId == agentId
+            && i.Kind == AgentIncidentKind.ChannelReplyLost && i.FailureReason == "ChannelWakeWorkerStalled"
+            && i.Severity == AlertSeverity.Critical);
+    }
+
     private static async Task<Guid> SeedC1716InboundAsync(BridgeQueueHarness h, Guid agentId, string chat,
-        string native, string body)
+        string native, string body, DateTime? acceptedAt = null)
     {
         await using var seed = Db(h.ConnectionString);
         var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat).Select(c => c.Id).SingleAsync();
@@ -144,7 +199,7 @@ public sealed partial class ChannelInboundRecoveryTests
             Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
             NativeMessageId = native, AgentId = agentId, ChatChannelId = channelId,
             EnvelopeJson = JsonSerializer.Serialize(Message(chat, native, body), MessagingJson.Options),
-            AcceptedAt = h.Now,
+            AcceptedAt = acceptedAt ?? h.Now,
         };
         seed.ChannelInbounds.Add(inbound);
         await seed.SaveChangesAsync();
