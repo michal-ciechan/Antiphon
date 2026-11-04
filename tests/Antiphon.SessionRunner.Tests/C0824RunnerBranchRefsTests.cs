@@ -152,8 +152,10 @@ public sealed class C0824RunnerBranchRefsTests
         var missing = Path.Combine(s.Root, "unmounted", "repo");
         var service = new RunnerWorkspaceService(missing, s.Work, s.Origin, psi => Process.Start(psi));
         // Without the existence check git cannot start in the missing directory and the op throws instead of refusing.
-        var result = await Should.NotThrowAsync(() => service.DeleteBranchRefsAsync(new(Branch, s.Sha), ct),
+        PhoneHomeWorkspaceBranchRefsDeleteResponse? answer = null;
+        await Should.NotThrowAsync(async () => answer = await service.DeleteBranchRefsAsync(new(Branch, s.Sha), ct),
             "missing-repository-refused");
+        var result = answer.ShouldNotBeNull("missing-repository-refused");
         result.Outcome.ShouldBe(WorkspaceBranchRefsCodes.Refused, "missing-repository-refused");
         result.Code.ShouldBe(WorkspaceBranchRefsCodes.RepositoryUnavailable, "missing-repository-refused");
         result.Succeeded.ShouldBeFalse();
