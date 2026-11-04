@@ -142,20 +142,22 @@ public class Card1653SocketDirTests
             File.WriteAllText(world.ManifestPipeName, "not a socket");
         if (shape == "symlink")
             File.CreateSymbolicLink(world.ManifestPipeName, PtyHostProtocol.PipeNameFor(world.SessionId));
-        if (shape == "foreign-owner")
-            PtyHostPeerPolicy.FileProbeOverride.Value = new OverridingProbe(PtyHostSocketDirectory.DefaultProbe,
+        var probe = new CountingProbe(shape == "foreign-owner"
+            ? new OverridingProbe(PtyHostSocketDirectory.DefaultProbe,
                 new Dictionary<string, UnixFileFacts?>
                 {
                     [world.ManifestPipeName] = new(UnixFileKind.Socket, PtyHostStrangerWorld.Euid() + 1, 0xC000 | 0b111_101_101),
-                });
+                })
+            : PtyHostSocketDirectory.DefaultProbe, world.ManifestPipeName);
+        PtyHostPeerPolicy.FileProbeOverride.Value = probe;
         PtyHostPeerPolicy.PeerReaderOverride.Value = world.ProvenPeer();
 
-        var elapsed = Stopwatch.StartNew();
         var adopted = await world.AdoptAsync();
-        elapsed.Stop();
 
         adopted.ShouldBe(0, "an unsafe socket file is not adopted");
-        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1), "a refusal is not retried for the 5 s connect budget");
+        // CARD-1696: each connect attempt stats the socket file once, so one stat is one attempt.
+        // A wall-clock bound here flaked under load; the stat count is the refusal itself.
+        probe.Stats.ShouldBe(1, "a refusal is not retried for the 5 s connect budget");
         world.Connections.ShouldBe(0, "the socket file is refused before connect");
         world.Frames.ShouldBeEmpty();
         AssertHeld(world, "adoption");
@@ -609,6 +611,22 @@ public class Card1653SocketDirTests
         "nul" => "c1653\0sock",
         _ => throw new ArgumentOutOfRangeException(nameof(shape)),
     };
+
+    /// <summary>Counts the stats of <paramref name="path"/>; every answer comes from <paramref name="inner"/>.</summary>
+    private sealed class CountingProbe(IUnixFileProbe inner, string path) : IUnixFileProbe
+    {
+        private int _stats;
+
+        public int Stats => Volatile.Read(ref _stats);
+
+        public UnixFileFacts? Lstat(string candidate)
+        {
+            if (candidate == path) Interlocked.Increment(ref _stats);
+            return inner.Lstat(candidate);
+        }
+
+        public uint Euid() => inner.Euid();
+    }
 
     /// <summary>The real probe, except that a stat of <paramref name="path"/> throws as a missing entry point would.</summary>
     private sealed class ThrowingProbe(IUnixFileProbe real, string path) : IUnixFileProbe
