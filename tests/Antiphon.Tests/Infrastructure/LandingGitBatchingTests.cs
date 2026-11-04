@@ -35,8 +35,11 @@ public sealed class LandingGitBatchingTests
         {
             read = await git.ReadRefsAsync(fixture.Repository, refs, CancellationToken.None);
             var histogram = scope.Profile.Histogram;
-            histogram.GetValueOrDefault("show-ref --verify").ShouldBe(1, "one recheck is one show-ref --verify, not one per pin plus one for the branch");
-            scope.Profile.Processes.ShouldBe(1, "a recheck read spawns exactly one git process");
+            // One read: a single show-ref --verify process, or the same read answered in process by
+            // libgit2 (InProcessGitReads). Never one per pin plus one for the branch.
+            (histogram.GetValueOrDefault("show-ref --verify") + scope.Profile.InProcessHits)
+                .ShouldBe(1, "one recheck is one show-ref --verify, not one per pin plus one for the branch");
+            (scope.Profile.Processes + scope.Profile.InProcessHits).ShouldBe(1, "a recheck read is exactly one git read");
         }
         fixture.Git.Trace.Count(a => a[0] == "show-ref").ShouldBe(1);
         read.Count.ShouldBe(4);

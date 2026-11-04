@@ -439,7 +439,7 @@ public sealed class LandingGitTests
         scope.Profile.CanonicalHits.ShouldBeGreaterThan(0);
         // Every traced call is a process except check-ref-format verdicts served from the memo.
         scope.Profile.RefFormatHits.ShouldBe(2, "the second inspection's source and target branch checks come from the memo");
-        scope.Profile.Processes.ShouldBe(fixture.Git.Trace.Count - scope.Profile.RefFormatHits);
+        scope.Profile.Processes.ShouldBe(fixture.Git.Trace.Count - scope.Profile.RefFormatHits - scope.Profile.InProcessHits);
     }
 
     [Test]
