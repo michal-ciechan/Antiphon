@@ -28,6 +28,9 @@ internal sealed class LandVerifierEvidence(string root, ILandingVerifier inner, 
     /// </summary>
     public static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(300);
 
+    // Orders records whose write times tie on a coarse file clock (CARD-1703 A-2).
+    private static long _sequence;
+
     private readonly TimeSpan _heartbeat = heartbeat ?? DefaultHeartbeat;
     private readonly TimeSpan _budget = budget ?? DefaultBudget;
 
@@ -68,7 +71,8 @@ internal sealed class LandVerifierEvidence(string root, ILandingVerifier inner, 
         {
             var path = Path.Combine(root, $"protocol-verify-{Guid.NewGuid():N}.json");
             await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(new {
-                phase, operationId = correlation?.OperationId, requestId = correlation?.RequestId,
+                phase, sequence = Interlocked.Increment(ref _sequence),
+                operationId = correlation?.OperationId, requestId = correlation?.RequestId,
                 elapsedSeconds = Math.Round(elapsed.Elapsed.TotalSeconds, 1), passed, at = DateTime.UtcNow,
                 pid = Environment.ProcessId }));
             File.Move(path + ".tmp", path);
