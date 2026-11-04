@@ -49,8 +49,9 @@ internal static class InProcessGitReads
         {
             // Opened through the working directory itself, never a discovered git dir: libgit2 opened
             // at a linked worktree's <common>/worktrees/<name> skips the common config. Only a
-            // checkout root or a .git directory opens; a subdirectory is git's to answer.
-            if (!Repository.IsValid(repository)) return null;
+            // checkout root or a .git directory opens (git_repository_open does not search upward);
+            // anything else throws RepositoryNotFoundException, caught below, and git answers. One
+            // open per call: a separate Repository.IsValid probe would open the repository twice.
             using var repo = new Repository(repository);
             if (Unusual(repo)) return null;
             return Answer(repo, arguments);

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using Antiphon.Tests.Application;
 using Npgsql;
@@ -175,7 +176,9 @@ internal static class PostLandWorldSnapshot
     }
 
     /// <summary>Copies the tree, replacing the template token (same length) in every file but git's
-    /// object store and index; read-only attributes are kept.</summary>
+    /// object store and index; read-only attributes are kept. Object files (loose objects and packs)
+    /// are hard-linked where the platform allows, as <c>git clone --local</c> does: git writes a new
+    /// object file and renames it into place, and never edits one in place.</summary>
     private static void CopyTree(string from, string to, byte[] oldToken, byte[] newToken)
     {
         foreach (var dir in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories).Prepend(from))
@@ -188,7 +191,8 @@ internal static class PostLandWorldSnapshot
             var binary = parts.Contains("objects") || Path.GetFileName(file) == "index";
             if (binary)
             {
-                File.Copy(file, target);
+                if (!(IsImmutableObject(parts) && TryHardLink(file, target)))
+                    File.Copy(file, target);
                 continue;
             }
             var bytes = File.ReadAllBytes(file);
@@ -201,6 +205,26 @@ internal static class PostLandWorldSnapshot
             else File.Copy(file, target);
         }
     }
+
+    /// <summary>objects/&lt;2 hex&gt;/&lt;38 hex&gt; or objects/pack/pack-*.{pack,idx,rev}; never objects/info.</summary>
+    private static bool IsImmutableObject(string[] parts)
+    {
+        var at = Array.LastIndexOf(parts, "objects");
+        if (at < 0 || at + 3 != parts.Length) return false;
+        var (dir, name) = (parts[at + 1], parts[at + 2]);
+        if (dir == "pack")
+            return name.StartsWith("pack-", StringComparison.Ordinal)
+                && (name.EndsWith(".pack", StringComparison.Ordinal) || name.EndsWith(".idx", StringComparison.Ordinal)
+                    || name.EndsWith(".rev", StringComparison.Ordinal));
+        return dir.Length == 2 && dir.All(Uri.IsHexDigit) && name.Length == 38 && name.All(Uri.IsHexDigit);
+    }
+
+    private static bool TryHardLink(string existing, string link) =>
+        OperatingSystem.IsWindows() && CreateHardLinkW(link, existing, IntPtr.Zero);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string newFileName, string existingFileName, IntPtr securityAttributes);
 
     /// <summary>In-place same-length replacement, ignoring ASCII case of hex letters.</summary>
     private static bool ReplaceAll(byte[] bytes, byte[] from, byte[] to)
