@@ -30,6 +30,7 @@ internal sealed class TestOwnedPtyHost
         public Action<ProcessIdentity> Kill { get; set; } = p => p.Handle!.Kill(entireProcessTree: true);
         public Func<ProcessIdentity, TimeSpan, CancellationToken, Task>? Wait { get; set; }
         public Action<ProcessIdentity> Release { get; set; } = p => p.Handle?.Dispose();
+        public Action<TimeSpan> Pause { get; set; } = Thread.Sleep;
         public Action<string, Owned?> Record { get; set; } = (operation, owned) => Console.WriteLine($"C1020 cleanup operation={operation} session={owned?.SessionId} pid={owned?.Process.Pid} generation={owned?.Process.Generation} at={DateTime.UtcNow:O}");
         public bool VerifyHostCommand { get; init; } = true;
     }

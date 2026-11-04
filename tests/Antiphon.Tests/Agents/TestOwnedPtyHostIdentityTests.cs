@@ -140,6 +140,75 @@ public class TestOwnedPtyHostPolicyTests
         fixture.Reads.ShouldAllBe(x => x == PtyHostManifest.PathFor(Path.Combine(fixture.Root, "manifests"), fixture.SessionId));
     }
 
+    // Group-79 (rc 766e3df5): the killed host deletes its manifest after the runner's ack, so the
+    // disposal supplement's read can overlap that delete; Windows reports a sharing violation or a
+    // delete-pending denial. Every retained process is confirmed dead: that read is not an unknown.
+    [Test]
+    [Arguments("io-once")]
+    [Arguments("denied-once")]
+    [Arguments("io-persistent-exited")]
+    [Arguments("denied-persistent-exited")]
+    [Arguments("io-persistent-host-alive")]
+    [Arguments("denied-persistent-host-alive")]
+    [Arguments("io-persistent-child-alive")]
+    [Arguments("io-persistent-uncaptured")]
+    public async Task Capture_tolerates_a_manifest_read_during_host_exit(string scenario)
+    {
+        using var fixture = new OwnedPolicyFixture();
+        if (scenario != "io-persistent-uncaptured")
+        {
+            fixture.Manifest = fixture.NewManifest(10);
+            fixture.Manager.Capture(fixture.SessionId, SessionBackends.PtyHost, false);
+            fixture.Manager.Captured.Count.ShouldBe(1, "launch-capture");
+        }
+        if (scenario == "io-persistent-child-alive")
+            fixture.Manager.Retain(fixture.Record(11) with { Host = false }, fixture.SessionId).ShouldBeTrue();
+        if (!scenario.EndsWith("host-alive")) fixture.Dead.Add(10); // KillAsync returned; the host is exiting.
+        Exception fault = scenario.StartsWith("denied")
+            ? new UnauthorizedAccessException("delete pending")
+            : new IOException("sharing violation", unchecked((int)0x80070020));
+        var persistent = scenario.Contains("persistent");
+        var faults = 0;
+        var pauses = new List<TimeSpan>();
+        fixture.Io.Pause = pauses.Add;
+        fixture.Reads.Clear();
+        fixture.Io.ReadManifest = path =>
+        {
+            fixture.Reads.Add(path);
+            if (persistent || faults == 0) { faults++; throw fault; }
+            return null; // The delete completed.
+        };
+        var observed = new RunnerSessionDto(fixture.SessionId, null, DateTime.UtcNow, "Exited", 0, "test", 0);
+        var pending = new RunnerLaunchRequest(fixture.SessionId, "owned", [], new Dictionary<string, string>(), fixture.Root, 80, 24);
+        Exception? error = null;
+        try
+        {
+            await fixture.Manager.DisposeAsync(true, () => fixture.Manager.CaptureTracked([observed], [pending]),
+                _ => Task.CompletedTask, () => Task.CompletedTask);
+        }
+        catch (Exception ex) { error = ex; }
+        var tolerated = scenario is "io-once" or "denied-once" || scenario.EndsWith("persistent-exited");
+        if (tolerated)
+        {
+            error.ShouldBeNull("exited-host manifest read is not an unresolved disposal");
+            fixture.Killed.ShouldBeEmpty("dead processes are not killed");
+        }
+        else
+        {
+            error.ShouldBeOfType<AggregateException>("live-or-uncaptured unreadable manifest fails closed");
+            error.Message.ShouldContain("test-owned disposal unresolved");
+            error.ToString().ShouldContain($"capture session={fixture.SessionId:D}");
+            Contains(error, fault).ShouldBeTrue("original read failure retained");
+            if (scenario.EndsWith("host-alive")) fixture.Killed.ShouldContain(10, "kill path unchanged");
+            if (scenario.EndsWith("child-alive")) fixture.Killed.ShouldBe(new[] { 11 }, "kill path unchanged");
+        }
+        // About three attempts per Capture call, 10 ms apart; the supplement captures twice.
+        var expectedReads = persistent ? 6 : 3;
+        fixture.Reads.Count.ShouldBe(expectedReads, "bounded-retries");
+        pauses.ShouldBe(Enumerable.Repeat(TimeSpan.FromMilliseconds(10), persistent ? 4 : 1).ToArray(), "bounded-retries");
+        fixture.Events.Contains("manifest-unreadable-exited").ShouldBe(scenario.EndsWith("persistent-exited"), "fallback recorded");
+    }
+
     [Test]
     [Arguments("normal-grace")]
     [Arguments("post-kill-wait")]
