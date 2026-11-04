@@ -508,6 +508,32 @@ function Test-LinuxSessionRunnerAdmission {
     Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
 }
 
+function Get-C1323LineStates([string]$Text) {
+    # CARD-1707: the C# lexical state at the start of each line, so a line that starts with * is a comment only inside an
+    # open block comment. Comments, strings and char literals are consumed in source order so a /* inside a literal opens
+    # nothing; verbatim and raw strings may span lines. Interpolation holes are not lexed: a /* inside one reads as an
+    # opener in the middle of its line, which the census only ever fails closed on. Returns 'code', 'string' or 'block'
+    # per line, and whether the open block comment's /* was the first text on its line.
+    $tokens = '//[^\n]*|(?<block>/\*[\s\S]*?(?:\*/|\z))|(?<str>(?:\$@|@\$|@)"(?:[^"]|"")*(?:"|\z)|\$*(?<q>"{3,})[\s\S]*?(?:\k<q>|\z))|\$*"(?:[^"\\\n]|\\[^\n])*"?|''(?:[^''\\\n]|\\[^\n])*''?'
+    $starts = [Collections.Generic.List[int]]::new()
+    $starts.Add(0)
+    for ($k = $Text.IndexOf([char]10); $k -ge 0; $k = $Text.IndexOf([char]10, $k + 1)) { $starts.Add($k + 1) }
+    $modes = [string[]]::new($starts.Count)
+    $atStart = [bool[]]::new($starts.Count)
+    for ($k = 0; $k -lt $modes.Length; $k++) { $modes[$k] = 'code' }
+    $line = 0
+    foreach ($m in [regex]::Matches($Text, $tokens)) {
+        $end = $m.Index + $m.Length
+        if ($Text.IndexOf([char]10, $m.Index, $m.Length) -lt 0) { continue }
+        $mode = if ($m.Groups['block'].Success) { 'block' } elseif ($m.Groups['str'].Success) { 'string' } else { continue }
+        $lead = $Text.LastIndexOf([char]10, [Math]::Max(0, $m.Index - 1)) + 1
+        $first = $m.Index -eq $lead -or $Text.Substring($lead, $m.Index - $lead).Trim().Length -eq 0
+        while ($line -lt $starts.Count -and $starts[$line] -le $m.Index) { $line++ }
+        while ($line -lt $starts.Count -and $starts[$line] -lt $end) { $modes[$line] = $mode; $atStart[$line] = $first; $line++ }
+    }
+    return [pscustomobject]@{ Modes = $modes; AtStart = $atStart }
+}
+
 function Get-C1323LinuxOnlyCensus {
     # CARD-1686: the policy rows are the only list. Each prefixed row needs a [NativeLinuxOnly] marker under
     # its suite's project directory, and each marker needs a row. A marker file that a selection rule names
@@ -560,25 +586,39 @@ function Get-C1323LinuxOnlyCensus {
         if (-not $text.Contains('NativeLinuxOnly')) { continue }
         $rel = [IO.Path]::GetFullPath($file).Substring($rootPrefix).Replace('\', '/')
         if (@($FixtureProjects | Where-Object { $rel.StartsWith($_, [StringComparison]::Ordinal) }).Count) { continue }
-        # Line-based and fail closed: C# strings and comments are never lexed. A line whose trimmed text starts with
-        # [NativeLinuxOnly( is a canonical marker; a line that starts with // is a comment line, and so is one that starts
-        # with /* or * unless a */ precedes the token (the comment closed and code follows). Any other line (and any
-        # second use on a marker line) that names the whole-word token fails closed; an exempt file strips its
-        # reference forms first.
+        # Line-based and fail closed. A line whose trimmed text starts with [NativeLinuxOnly( is a canonical marker; a line
+        # that starts with // is a comment line, and so is one that starts with /* unless a */ precedes the token (the
+        # comment closed and code follows). CARD-1707: the block-comment state is carried across lines (strings and char
+        # literals skipped), so a line that starts with * is a comment line only inside a block comment that opened at
+        # the start of its line; any other line inside an open block comment, or inside a multi-line string, that names
+        # the token fails closed instead of counting. Any other line (and any second use on a marker line) that names
+        # the whole-word token fails closed; an exempt file strips its reference forms first.
         $lines = $text.Replace("`r`n", "`n").Split("`n")
         $exempt = $ExemptFiles -ccontains $rel
         $token = 'NativeLinuxOnly(?:Attribute)?'
         $qualified = '(?:global::)?(?:\w+\.)*' + $token
         $references = '\btypeof\(\s*' + $qualified + '\s*\)|\bnew\s+' + $qualified + '\s*\(|\bclass\s+' + $token + '\b|\bpublic\s+' + $token + '\s*\(|"[^"\\()\[\],/*]*\b' + $token + '\b[^"\\()\[\],/*]*"'
         $hits = @()
+        $states = Get-C1323LineStates ($lines -join "`n")
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $trimmed = $lines[$i].Trim()
             $scan = $lines[$i]
-            if ($trimmed.StartsWith('[NativeLinuxOnly(', [StringComparison]::Ordinal)) {
+            if ($states.Modes[$i] -ceq 'block') {
+                $close = $lines[$i].IndexOf('*/', [StringComparison]::Ordinal)
+                if ($close -lt 0 -or -not [regex]::IsMatch($lines[$i].Substring($close + 2), '\b' + $token + '\b')) {
+                    if ([regex]::IsMatch($lines[$i], '\b' + $token + '\b') -and -not ($states.AtStart[$i] -and ($trimmed.StartsWith('*') -or $trimmed.StartsWith('/*')))) {
+                        $problems.Add("marker-noncanonical:${rel}:$($i + 1)")
+                    }
+                    continue
+                }
+                if ($exempt) { $scan = [regex]::Replace($lines[$i], $references, '') }
+            } elseif ($states.Modes[$i] -cne 'code') {
+                if ($exempt) { $scan = [regex]::Replace($lines[$i], $references, '') }
+            } elseif ($trimmed.StartsWith('[NativeLinuxOnly(', [StringComparison]::Ordinal)) {
                 $hits += $i
                 $scan = [regex]::Replace($lines[$i], '^\s*\[NativeLinuxOnly\((?:"(?:[^"\\]|\\.)*"|[^)"])*\)\]', '')
                 if ($scan -ceq $lines[$i]) { $scan = $trimmed.Substring('[NativeLinuxOnly'.Length) }
-            } elseif ($trimmed.StartsWith('//') -or (($trimmed.StartsWith('/*') -or $trimmed.StartsWith('*')) -and -not [regex]::IsMatch($trimmed, '\*/.*\b' + $token + '\b'))) {
+            } elseif ($trimmed.StartsWith('//') -or ($trimmed.StartsWith('/*') -and -not [regex]::IsMatch($trimmed, '\*/.*\b' + $token + '\b'))) {
                 continue
             } elseif ($exempt) {
                 $scan = [regex]::Replace($lines[$i], $references, '')
