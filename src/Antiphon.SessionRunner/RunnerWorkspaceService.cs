@@ -907,9 +907,10 @@ public sealed partial class RunnerWorkspaceService
                     break;
                 }
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // A file/directory mismatch throws. The other shape may still resolve the same link.
+                // A file/directory mismatch throws. The other shape may still resolve the same link. Windows
+                // denies the final open of a file link to a directory: unresolved, so the caller refuses.
             }
         }
 
