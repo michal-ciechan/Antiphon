@@ -89,4 +89,72 @@ public class LandConflictFileSummaryTests
         AgentTaskLandingProtocol.MergeRoleDetail(op, true, Names(80, 72)).Length
             .ShouldBeLessThanOrEqualTo(AgentTaskLandingProtocol.MergeRoleDetailMaxLength);
     }
+
+    // CARD-1637 D-1 r2: Npgsql writes Detail with strict UTF-8, so half a surrogate pair left by a
+    // cut throws EncoderFallbackException at save and the land request stays Running.
+    private const string Emoji = "\U0001F600";
+
+    private static void ShouldBeWholeUtf16(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) { i++; continue; }
+            char.IsSurrogate(text[i]).ShouldBeFalse($"lone surrogate 0x{(int)text[i]:X4} at index {i} of {text.Length}");
+        }
+        Should.NotThrow(() => new System.Text.UTF8Encoding(false, true).GetBytes(text));
+    }
+
+    [Test]
+    public void A_clipped_name_never_splits_a_surrogate_pair()
+    {
+        // The high surrogate sits at index 196, the last character the 197-character cut keeps.
+        var name = "long/".PadRight(AgentTaskLandingProtocol.ConflictNameMaxLength - 4, 'x') + Emoji;
+        name = name.PadRight(300, 'y');
+        char.IsHighSurrogate(name[AgentTaskLandingProtocol.ConflictNameMaxLength - 4]).ShouldBeTrue();
+
+        var summary = AgentTaskLandingProtocol.ConflictFileSummary([name]);
+
+        ShouldBeWholeUtf16(summary);
+        summary.ShouldEndWith("...");
+        summary.Length.ShouldBeLessThanOrEqualTo(AgentTaskLandingProtocol.ConflictNameMaxLength);
+        summary.ShouldStartWith(name[..(AgentTaskLandingProtocol.ConflictNameMaxLength - 4)]);
+    }
+
+    [Test]
+    public void The_list_cap_never_splits_a_surrogate_pair()
+    {
+        // Emoji-bearing names packed against the 2000-character list budget at every offset.
+        for (var pad = 0; pad < 8; pad++)
+        {
+            var names = Enumerable.Range(0, 20)
+                .Select(i => ($"e/{i:D2}-" + new string('x', pad + i % 3)).PadRight(95, 'z') + Emoji).ToList();
+
+            var summary = AgentTaskLandingProtocol.ConflictFileSummary(names);
+
+            ShouldBeWholeUtf16(summary);
+            summary.Length.ShouldBeLessThanOrEqualTo(AgentTaskLandingProtocol.ConflictListMaxLength);
+            ShouldBeWholeUtf16(AgentTaskLandingProtocol.ConflictFileSummary(names, 1000 + pad));
+        }
+    }
+
+    [Test]
+    public void The_merge_role_hard_cut_never_splits_a_surrogate_pair()
+    {
+        // "refs/heads/" + 3388 characters puts the high surrogate at index 3399, the last kept one.
+        var op = new AgentTaskLanding
+        {
+            SourceFullRef = "refs/heads/" + new string('s', AgentTaskLandingProtocol.MergeRoleDetailMaxLength - 12) + Emoji
+                + new string('s', 2000),
+            TargetFullRef = "refs/heads/master",
+            OriginalSourceSha = new string('a', 64),
+            TargetBeforeSha = new string('b', 64),
+        };
+        char.IsHighSurrogate(op.SourceFullRef[AgentTaskLandingProtocol.MergeRoleDetailMaxLength - 1]).ShouldBeTrue();
+
+        var detail = AgentTaskLandingProtocol.MergeRoleDetail(op, true, [Emoji + "/a.cs"]);
+
+        ShouldBeWholeUtf16(detail);
+        detail.Length.ShouldBeLessThanOrEqualTo(AgentTaskLandingProtocol.MergeRoleDetailMaxLength);
+        detail.Length.ShouldBe(AgentTaskLandingProtocol.MergeRoleDetailMaxLength - 1, "one char is given up rather than a lone surrogate");
+    }
 }
