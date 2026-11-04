@@ -799,8 +799,11 @@ public class LandingGit : ILandingGit
             var snapshot = before.Snapshot!;
             if (HasSequencerAt(snapshot.GitDirectory)) return new(null, "active_sequencer");
             if (scope == LandInspectionScope.IdentityOnly) return before;
+            // CARD-1714 (Debug 52410842): git status exits 0 with nothing listed under a directory it cannot open
+            // (past MAX_PATH, unreadable) and only warns, so the listing proves clean only with core.longpaths (Git
+            // for Windows) and a silent stderr. Lands and the guarded removal's re-check both read this.
             var statusArgs = new[] { "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none" };
-            var status = await RunAsync(snapshot.RegisteredPath, statusArgs, ct);
+            var status = await RunAsync(snapshot.RegisteredPath, ["-c", "core.longpaths=true", .. statusArgs], ct);
             if (!status.Succeeded)
                 return new(null, "status_error", LandFailureDiagnostic.FromCommand(statusArgs, status.ExitCode));
             var ignoredArgs = new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" };
@@ -815,6 +818,8 @@ public class LandingGit : ILandingGit
             var after = await IdentityAsync(coordinates, ct);
             if (after.Reason is not null || after.Snapshot != snapshot) return new(null, "source_changed");
             if (status.Output.Length != 0) return new(null, "source_dirty");
+            if (status.WroteStandardError)
+                return new(null, "status_untrusted", LandFailureDiagnostic.FromCommand(statusArgs, status.ExitCode));
             return new(snapshot with { Status = status.Output, IgnoredPaths = ignoredPaths }, null);
         }
         catch (LandingGitCommandException ex)
