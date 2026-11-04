@@ -276,7 +276,15 @@ public class AgentTaskLandDeliveryE2ETests
             return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null)
                 && (state == "busy" || File.Exists(Path.Combine(f.Root, "queue-before-typing.barrier.json")));
         }, "unreceived outcome held at actual queue");
-        await f.AdvanceLandClockAsync(301); await f.StatusAsync();
+        // rc b19a9880: the 5 s monitor sweep writes the Warning notice only if it runs while the clock
+        // reads 301. A sweep that first runs at 901 writes Warning and Error together, both too fresh
+        // to be listed, and the feed falls back to the Outcome. Wait for the Warning before 901.
+        await f.AdvanceLandClockAsync(301);
+        await LandDeliveryFixture.UntilAsync(async () => {
+            await using var db = f.CreateContext();
+            return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged) == 1;
+        }, "outcome warning obligation");
+        await f.StatusAsync();
         await f.AdvanceLandClockAsync(901); await f.StatusAsync();
         await LandDeliveryFixture.UntilAsync(async () => {
             await using var db = f.CreateContext();
@@ -285,8 +293,9 @@ public class AgentTaskLandDeliveryE2ETests
         var attention = await f.AttentionAsync();
         var owed = await f.PollingAttentionAsync(attention, requestId);
         owed.Severity.ShouldBe(AlertSeverity.Error);
-        // The feed shows the newest Aged notice (CARD-1085). While the attempted Outcome holds the
-        // caller's queue lock before typing, that notice cannot be enqueued; busy enqueues it.
+        // The feed shows the newest listed receipt (CARD-1085): the Warning notice, 600 s old; the
+        // Error notice is not yet listed. While the attempted Outcome holds the caller's queue lock
+        // before typing, the Warning cannot be enqueued; busy enqueues it.
         owed.Headline.ShouldContain(state == "busy" ? "busy" : "Land Aged notification: Queued; not yet enqueued");
         await using (var db = f.CreateContext())
         {
@@ -298,7 +307,7 @@ public class AgentTaskLandDeliveryE2ETests
             var aged = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged).ToListAsync();
             aged.Count.ShouldBe(2);
             if (state == "attempt") aged.ShouldAllBe(n => n.QueueMessageId == null);
-            new[] { note.Id }.Concat(aged.Select(n => n.Id)).ShouldContain(owed.LandNotificationId!.Value);
+            owed.LandNotificationId.ShouldBe(aged.OrderBy(n => n.CreatedAt).First().Id, "the Warning notice is the newest listed receipt");
             foreach (var warning in aged)
             {
                 warning.Body.ShouldContain("\npublication=Landed; cleanup=Complete\n");
