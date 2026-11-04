@@ -31,10 +31,17 @@ public sealed class RunnerWorkspaceParkService
     public Task<WorkspaceParkResult> VerifyAsync(WorkspaceParkReceipt receipt, CancellationToken ct) =>
         ExecuteAsync(receipt.Request, receipt, ct);
 
+    // Final-target resolution; a test stands in for a checkout that changes or stops resolving between checks.
+    internal Func<string, string?> ResolveFinal { get; init; } = RunnerWorkspaceService.TryResolveFinal;
+
     internal static bool IsSessionCheckout(string path, string? checkout) =>
+        SessionCheckoutTarget(path, checkout, RunnerWorkspaceService.TryResolveFinal) is not null;
+
+    /// <summary>The resolved session checkout, or null when <paramref name="path"/> is not it.</summary>
+    internal static string? SessionCheckoutTarget(string path, string? checkout, Func<string, string?> resolveFinal) =>
         !string.IsNullOrWhiteSpace(checkout)
-        && RunnerWorkspaceService.TryResolveFinal(path) is { } target
-        && Directory.Exists(target) && RunnerWorkspaceService.PathsEqual(target, checkout);
+        && resolveFinal(path) is { } target
+        && Directory.Exists(target) && RunnerWorkspaceService.PathsEqual(target, checkout) ? target : null;
 
     internal async Task<WorkspaceRepositoryIdentityResult> ReadIdentityAsync(
         WorkspaceRepositoryIdentityRequest request, string? checkout, CancellationToken ct)
@@ -43,8 +50,8 @@ public sealed class RunnerWorkspaceParkService
         WorkspaceRepositoryIdentityResult UnknownIdentity() => new(WorkspaceRepositoryIdentityOutcome.Unknown, "identity_inspection_unavailable");
         try
         {
-            if (!IsSessionCheckout(request.Path, checkout)) return HeldIdentity("identity_path_unowned");
-            var path = RunnerWorkspaceService.TryResolveFinal(checkout!)!;
+            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is null) return HeldIdentity("identity_path_unowned");
+            var path = ResolveFinal(checkout!)!;
             var read = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
             if (read.ExitCode != 0 || RunnerWorkspaceService.TryResolveFinal(read.Stdout.Trim()) is not { } common)
                 return UnknownIdentity();
@@ -58,7 +65,7 @@ public sealed class RunnerWorkspaceParkService
                 || endpoint.Failure is not null
                 || !RepositoryCloneSource.TryNormalize(endpoint.Url, out var endpointRepository)) return UnknownIdentity();
             if (!RunnerWorkspaceService.PathsEqual(top.Stdout.Trim(), path)
-                || !IsSessionCheckout(request.Path, checkout)) return HeldIdentity("identity_path_unowned");
+                || SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is null) return HeldIdentity("identity_path_unowned");
             await AtBoundaryAsync(WorkspaceParkBoundary.AfterIdentityRead, ct);
             return new(WorkspaceRepositoryIdentityOutcome.Read, "identity_read", new(
                 RepositoryIdentity(common), Fingerprint(endpoint.Url!), endpointRepository,
@@ -82,8 +89,8 @@ public sealed class RunnerWorkspaceParkService
             if (!ValidBinding(binding, requireEndpoint: receipt.SourceMode == WorkspaceParkSourceMode.Published)
                 || !IsObjectId(binding.BaselineSha) || !IsObjectId(receipt.SourceSha)
                 || !binding.FullRef.StartsWith("refs/heads/", StringComparison.Ordinal)) return Held("park_invalid_binding");
-            if (!IsSessionCheckout(request.Path, checkout)) return Held("park_path_unowned");
-            var path = RunnerWorkspaceService.TryResolveFinal(checkout!)!;
+            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is null) return Held("park_path_unowned");
+            var path = ResolveFinal(checkout!)!;
             var ownership = await InspectRepositoryAsync(path, binding.RepositoryIdentity, ct, requireOwned: false);
             if (ownership.Failure is { } failure) return failure;
             var before = await InspectSourceAsync(path, binding, ct);
@@ -107,7 +114,7 @@ public sealed class RunnerWorkspaceParkService
                 var finalEndpoint = await ReadEndpointAsync(path, binding.EndpointFingerprint, ct);
                 if (finalEndpoint.Failure is { } finalEndpointFailure) return finalEndpointFailure;
             }
-            if (!IsSessionCheckout(request.Path, checkout)) return Held("park_path_unowned");
+            if (SessionCheckoutTarget(request.Path, checkout, ResolveFinal) is null) return Held("park_path_unowned");
             var finalOwnership = await InspectRepositoryAsync(path, binding.RepositoryIdentity, ct, requireOwned: false);
             if (finalOwnership.Failure is { } changedOwnership) return changedOwnership;
             var after = await InspectSourceAsync(path, binding, ct);
