@@ -197,7 +197,7 @@ public sealed class VolumeRetirementContentTests
             ("file", Path.Combine("claude", "sessions", "2." + upper + ".key")),
             ("file", Path.Combine("claude", "sessions", "2." + SessionHash[..63] + ".key")),
             ("file", Path.Combine("claude", "sessions", "2." + SessionHash + "0.key")),
-            ("file", Path.Combine("claude", "sessions", "2." + SessionHash + ".key\n")),
+            ("file", Path.Combine("claude", "sessions", "2." + SessionHash + ".key\n.key")),
             ("file", Path.Combine("claude", "sessions", "\n2." + SessionHash + ".key")),
             ("file", Path.Combine("claude", "sessions", "0." + SessionHash + ".key")),
             ("file", Path.Combine("claude", "sessions", "x." + SessionHash + ".key")),
@@ -297,11 +297,11 @@ public sealed class VolumeRetirementContentTests
         {
             ("engine-id-35", "printf '%035d' 0 > engine-id"),
             ("engine-id-37", "printf '%037d' 0 > engine-id"),
-            ("engine-id-symlink", "mv engine-id real-id && ln -s real-id engine-id"),
+            ("engine-id-symlink", "mv engine-id tmp/real-id && ln -s tmp/real-id engine-id"),
             ("engine-id-dir", "rm -f engine-id && mkdir engine-id"),
             ("containers-entry", "mkdir containers/" + InnerVolume),
             ("containers-file", "printf x > containers/config.v2.json"),
-            ("containers-symlink", "rmdir containers && mkdir -p elsewhere && ln -s elsewhere containers"),
+            ("containers-symlink", "rmdir containers && ln -s tmp containers"),
             ("containers-file-type", "rmdir containers && printf x > containers"),
             ("volume-data", "printf 'row\\n' > volumes/" + InnerVolume + "/_data/PG_VERSION"),
             ("volume-data-dir", "mkdir volumes/" + InnerVolume + "/_data/base"),
@@ -317,9 +317,9 @@ public sealed class VolumeRetirementContentTests
             ("volume-other-file", "printf x > volumes/notes.txt"),
             ("backing-data", "printf x > volumes/backingFsBlockDev"),
             ("backing-symlink", "rm -f volumes/backingFsBlockDev && ln -s metadata.db volumes/backingFsBlockDev"),
-            ("metadata-symlink", "mv volumes/metadata.db real.db && ln -s ../real.db volumes/metadata.db"),
+            ("metadata-symlink", "mv volumes/metadata.db tmp/real.db && ln -s ../tmp/real.db volumes/metadata.db"),
             ("metadata-dir", "rm -f volumes/metadata.db && mkdir volumes/metadata.db"),
-            ("volumes-symlink", "mv volumes real-volumes && ln -s real-volumes volumes"),
+            ("volumes-symlink", "mv volumes tmp/real-volumes && ln -s tmp/real-volumes volumes"),
         };
         foreach (var (name, script) in variants)
         {
