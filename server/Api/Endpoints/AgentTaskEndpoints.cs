@@ -155,6 +155,20 @@ public static class AgentTaskEndpoints
             return Results.Ok(await retention.RunTickAsync(ct, previewRunner: runnerId));
         });
 
+        // CARD-0824 S4a T-D-8. One dry-run desktop legacy release tick (it runs even while disabled, so the operator
+        // can preview before switching it back on). It files nothing and runs no mutating git; rows land in a run.
+        tasks.MapPost("/worktree-residue/desktop-legacy-release/preview", async (
+            HttpContext http,
+            AgentTaskService service,
+            DesktopLegacyReleasePolicyService legacy,
+            CancellationToken ct) =>
+        {
+            var caller = await ResolveCallerAsync(http, service, ct);
+            if (caller.Task is not null)
+                throw new ForbiddenException("A child task token cannot preview desktop legacy release.", "caller_scope");
+            return Results.Ok(await legacy.RunTickAsync(ct, preview: true));
+        });
+
         tasks.MapGet("/worktree-residue/runs/{runId:guid}", async (
             Guid runId,
             int? page,

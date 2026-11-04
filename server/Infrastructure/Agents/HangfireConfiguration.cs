@@ -80,6 +80,17 @@ internal static class HangfireConfiguration
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
     }
 
+    /// <summary>CARD-0824 S4a. Registered only while WorktreeLegacyRelease:Enabled is true (the tick re-reads it).</summary>
+    public static void AddOrUpdateDesktopLegacyReleaseJob(
+        IRecurringJobManager manager, WorktreeLegacyReleaseSettings settings)
+    {
+        manager.AddOrUpdate<DesktopLegacyReleasePolicyJob>(
+            settings.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            settings.Cron,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+    }
+
     public static void AddOrUpdateExpectationWatchdogJob(IRecurringJobManager manager)
     {
         manager.AddOrUpdate<ExpectationWatchdogJob>(

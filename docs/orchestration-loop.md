@@ -2579,6 +2579,33 @@ unchanged. Failed-add
 rollback and stale-registration healing retain uncertain state for inspection. They no longer
 force-remove or recursively erase a directory. This increases residue intentionally.
 
+**Automatic desktop worktree release (CARD-0824 S4a, on by default).** The Hangfire job
+`antiphon:desktop-legacy-release` (`15 * * * *` UTC) runs `DesktopLegacyReleasePolicyService`, which files a
+SYSTEM release (`CallerIdentity = system:desktop-legacy-policy`, reason `CARD-0824 S4a terminal>=48h`) for a
+terminal desktop `card-task-<id8>` worktree and retires it through `TryRetireAsync` and the guarded removal, at
+most `WorktreeLegacyRelease:MaxReleasesPerTick` (25) per tick, oldest `CompletedAt` first. Operator Q-3
+(2026-11-03) ships it on: `Enabled=true`, `Execute=true`. Kill switch `WorktreeLegacyRelease:Enabled=false`
+(re-read before every row, so it also stops a running tick; an invalid hot reload counts as disabled); dry run
+`Execute=false`; preview `POST /api/agent-tasks/worktree-residue/desktop-legacy-release/preview` (operator only,
+always dry, runs while disabled). Settings are scalars only: a shape validator refuses an array, object or null.
+A candidate is terminal for at least `MinTerminalHours` (48), and has no land, sync debt, shared path, live
+session, open dependent (a child task or a task started from its branch) or leased runner slot, and a
+`Result`. Its leaf matches `^card-task-<id8>\z` under `Git:WorktreeBasePath`, and it is a clean linked worktree
+whose HEAD is on its branch and contained in its OWN origin branch (else the merge target). The release
+deletes only the local branch; the origin branch keeps the work. A task with a next stage gets a `Superseded`
+disposition naming the origin branch and commit. Run rows use Scope `desktop-legacy-release` and Lane
+`DesktopLegacyPolicy`. Held reasons: `live_owner`, `settling`, `name_control_character`, `slot_managed`,
+`leaf_mismatch`, `outside_root`, `slot_leased`, `land_pending`, `sync_debt`, `path_shared`, `live_session`,
+`report_missing`, `dependent_open`, `release_active_other`, `directory_absent`, `reparse_point`,
+`main_worktree`, `source_dirty`, `source_changed`, `unpushed`, `remote_unverified`, `refused_recheck_pending`,
+`retry_exhausted`, plus the retirement service's own codes. **Dirty or unpushed trees are never removed**: the
+Held row (path, branch, head SHA, origin tip, reason) is the evidence, and removal stays the caller-filed path.
+Ignored files go through the CARD-0665 gate. A refused system release whose command removed nothing reopens a
+new attempt on its next due tick (60 min doubling to 24 h, at most `MaxRefusedAttempts` = 5); a caller-filed
+release keeps the one-command rule. A busy repository lease defers without counting. A runner listed in
+`RunnerWorktreeRetention:Runners` keeps its mirror (CARD-1677 owns it, row reason
+`runner_mirror_owned_by_retention`); the desktop half is still retired.
+
 Repository mutation exclusion uses the canonical Git common directory. Mutating Git,
 worktree-creation and verifier children write an atomic standing journal under
 `<git-common-dir>/antiphon/children/` before launch. The owning invocation clears its exact
