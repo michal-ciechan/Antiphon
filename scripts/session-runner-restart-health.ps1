@@ -51,6 +51,13 @@ public class AntiphonRestartTcpOwner {
 }
 '@
     }
+    # CARD-1698: warn about a tool below its floor during read-only setup; never refuse.
+    try {
+        . (Join-Path $Root (Join-Path 'scripts' (Join-Path 'lib' 'toolchain-floor.ps1')))
+        Write-ToolchainFloorWarnings -RepoRoot $Root
+    } catch {
+        Write-Host ('WARNING: the toolchain floor check failed: ' + $_.Exception.Message) -ForegroundColor Yellow
+    }
     $logDir = Join-Path $Root 'logs'
     $clock = $CommandClock
     if (-not $clock) { $clock = [Diagnostics.Stopwatch]::StartNew() }

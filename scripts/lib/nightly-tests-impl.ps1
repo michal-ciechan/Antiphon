@@ -12,6 +12,24 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
 }
+# CARD-1698: toolchain versions, floors and warnings for summary.json preflight.toolchain.
+# The ToolchainVersions seam replaces the real git/dotnet probes in fixtures. Never throws.
+function Get-NightlyToolchainPreflight {
+    param([string]$RepoRoot)
+    $source = $null
+    if ($script:NightlySeams -and $script:NightlySeams.ToolchainVersions) { $source = $script:NightlySeams.ToolchainVersions }
+    try {
+        . (Join-Path $PSScriptRoot 'toolchain-floor.ps1')
+        $report = Get-ToolchainFloorReport -RepoRoot $RepoRoot -VersionSource $source
+        foreach ($w in @($report.warnings)) { Write-Host $w.message }
+        return [ordered]@{ tools = @($report.tools); warnings = @($report.warnings) }
+    } catch {
+        $message = ('WARNING: the toolchain floor check failed: ' + $_.Exception.Message)
+        Write-Host $message
+        return [ordered]@{ tools = @(); warnings = @([ordered]@{ tool = 'toolchain'; reason = 'check-failed'; message = $message }) }
+    }
+}
+
 # CARD-0599 D-6: kept as the pre-existing nightly inventory. Native ownership is now
 # decided from the suite definition itself (Test-NightlySuiteIsNative) so a profile can
 # add e2e without a second hard-coded list drifting out of step.
@@ -1557,6 +1575,8 @@ function Invoke-AntiphonNightlyTests {
         } else {
             $preflight.disk = [ordered]@{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB }
         }
+        # CARD-1698: record the toolchain versions and floor warnings; a warning never fails a run.
+        $preflight.toolchain = Get-NightlyToolchainPreflight -RepoRoot $RepoRoot
         if ([int]$preflight.disk.exitCode -ne 0) { $diskOk = $false; $overallFailed = $true; Set-NightlyOutcome PREFLIGHT; $coverageComplete = $false }
 
         if ($dockerOk -and $diskOk) {
