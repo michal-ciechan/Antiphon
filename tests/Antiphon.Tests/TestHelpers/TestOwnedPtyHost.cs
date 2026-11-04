@@ -35,6 +35,12 @@ internal sealed class TestOwnedPtyHost
         public bool VerifyHostCommand { get; init; } = true;
     }
 
+    // The killed host deletes its manifest after the runner acks it. On Windows a read that overlaps
+    // that delete sees a sharing violation (IOException) or a delete-pending denial
+    // (UnauthorizedAccessException) rather than file-not-found (group 79, rc run 766e3df5).
+    internal const int ManifestReadAttempts = 3;
+    internal static readonly TimeSpan ManifestReadRetryDelay = TimeSpan.FromMilliseconds(10);
+
     private readonly Operations _io;
     private readonly List<Owned> _owned = [];
     private readonly List<Exception> _errors = [];
@@ -96,8 +102,9 @@ internal sealed class TestOwnedPtyHost
         var path = PtyHostManifest.PathFor(Path.Combine(Root, "manifests"), sessionId);
         try
         {
-            if (!Under(path, Root)) throw new IOException("manifest escaped owned root");
-            var manifest = _io.ReadManifest(path);
+            if (!ReadManifestFile(sessionId, () => Under(path, Root), out var under)) return;
+            if (!under) throw new IOException("manifest escaped owned root");
+            if (!ReadManifestFile(sessionId, () => _io.ReadManifest(path), out var manifest)) return;
             if (manifest is null || manifest.VerificationBinding is not null) return;
             if (manifest.SessionId != sessionId) throw new IOException("foreign session manifest");
             ProcessIdentity host;
@@ -115,6 +122,26 @@ internal sealed class TestOwnedPtyHost
             }
         }
         catch (Exception ex) { _errors.Add(new IOException($"capture session={sessionId:D} manifest={path}", ex)); }
+    }
+
+    // False only when the manifest stays unreadable after every attempt while this session's captured
+    // host and every other retained process of it are confirmed dead: the exiting host is deleting it.
+    // Any live, unknown or uncaptured process keeps the failure, so the capture still fails closed.
+    private bool ReadManifestFile<T>(Guid sessionId, Func<T> read, out T value)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { value = read(); return true; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt < ManifestReadAttempts) { _io.Pause(ManifestReadRetryDelay); continue; }
+                var session = _owned.Where(x => x.SessionId == sessionId).ToArray();
+                if (!session.Any(x => x.Host) || session.Any(x => Observe(x.Process).State != State.Dead)) throw;
+                _io.Record("manifest-unreadable-exited", session.First(x => x.Host));
+                value = default!;
+                return false;
+            }
+        }
     }
 
     internal Task DisposeAsync(bool kill, Action supplement, Func<CancellationToken, Task> stop,
