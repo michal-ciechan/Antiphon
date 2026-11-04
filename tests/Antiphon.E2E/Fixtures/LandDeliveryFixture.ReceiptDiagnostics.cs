@@ -128,7 +128,7 @@ public sealed partial class LandDeliveryFixture
     private string LastVerifierEvidence()
     {
         var path = Directory.GetFiles(Root, "protocol-verify-*.json")
-            .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+            .OrderByDescending(File.GetLastWriteTimeUtc).ThenByDescending(VerifierSequence).FirstOrDefault();
         if (path is null) return "lastProtocolVerify=none";
         using var json = JsonDocument.Parse(File.ReadAllText(path));
         var data = json.RootElement;
@@ -139,6 +139,17 @@ public sealed partial class LandDeliveryFixture
         return $"lastProtocolVerify={path} phase={phase}"
             + $" elapsedSeconds={data.GetProperty("elapsedSeconds").GetDouble().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}"
             + $" passed={passed} at={data.GetProperty("at").GetDateTime():O} pid={data.GetProperty("pid").GetInt32()}";
+    }
+
+    /// <summary>The record's write order; a record without one (or unreadable) sorts first.</summary>
+    private static long VerifierSequence(string path)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(File.ReadAllText(path));
+            return json.RootElement.TryGetProperty("sequence", out var sequence) && sequence.TryGetInt64(out var value) ? value : -1;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return -1; }
     }
 
     private static string SafeLogTail(string path)
