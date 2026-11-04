@@ -401,10 +401,15 @@ public sealed class DesktopLegacyReleasePolicyService
             if (index <= 0)
                 return new(index == 0 ? "main_worktree" : "unregistered");
 
-            // G-25/G-26: tracked and untracked changes both count.
-            var status = await _git.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+            // G-25/G-26: tracked and untracked changes both count. Debug 52410842: git status exits 0 with nothing
+            // listed under a directory it cannot open (past MAX_PATH, unreadable) and only warns, so the listing
+            // proves clean only with core.longpaths (Git for Windows) and a silent stderr; a warning holds the tree.
+            var status = await _git.RunAsync(path,
+                ["-c", "core.longpaths=true", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
             if (!status.Succeeded || status.Output.Length != 0)
                 return new("source_dirty");
+            if (status.WroteStandardError)
+                return new("status_untrusted");
             var head = await _git.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
             var source = FullRef(task.WorktreeBranch);
             var branch = await _git.RunAsync(task.RepoPath!, ["rev-parse", "--verify", source + "^{commit}"], ct);

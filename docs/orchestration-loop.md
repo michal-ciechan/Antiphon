@@ -2602,7 +2602,7 @@ disposition naming the origin branch and commit. Run rows use Scope `desktop-leg
 `DesktopLegacyPolicy`. Held reasons: `live_owner`, `settling`, `name_control_character`, `slot_managed`,
 `leaf_mismatch`, `outside_root`, `slot_leased`, `land_pending`, `sync_debt`, `path_shared`, `live_session`,
 `report_missing`, `dependent_open`, `release_active_other`, `directory_absent`, `reparse_point`,
-`main_worktree`, `source_dirty`, `source_changed`, `unpushed`, `remote_unverified`, `refused_recheck_pending`,
+`main_worktree`, `source_dirty`, `status_untrusted` (git status warned, e.g. a directory past MAX_PATH or unreadable), `source_changed`, `unpushed`, `remote_unverified`, `refused_recheck_pending`,
 `retry_exhausted`, plus the retirement service's own codes. **Dirty or unpushed trees are never removed**: the
 Held row (path, branch, head SHA, origin tip, reason) is the evidence, and removal stays the caller-filed path.
 Ignored files go through the CARD-0665 gate. A refused system release whose command removed nothing reopens a
