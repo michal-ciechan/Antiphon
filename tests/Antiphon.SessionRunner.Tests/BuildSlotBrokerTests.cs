@@ -135,11 +135,14 @@ public sealed class BuildSlotBrokerTests
         g.Broker.List().Leases.Single().HolderAlive.ShouldBeTrue();
     }
 
+    // CARD-0851: a live holder keeps its lease past the TTL only while its start time can be read and
+    // matches; a holder the probe answers alive but cannot read (access denied) is reaped at the TTL.
     [Test]
     public void A_lease_past_its_ttl_is_reaped()
     {
         var f = new Fixture(maxConcurrent: 1, ttlMinutes: 90);
         f.Granted(f.Request(101, "long"));
+        f.Liveness.HideStartTime(101);
 
         f.Time.Advance(TimeSpan.FromMinutes(89));
         f.Broker.Sweep().ShouldBe(0);
@@ -225,6 +228,99 @@ public sealed class BuildSlotBrokerTests
         f.Broker.Sweep().ShouldBe(0);
     }
 
+    // CARD-0851 V-1: a pid-mode holder that still runs as the same process (start time within 1 s of
+    // the one recorded at grant) keeps its lease past the TTL, so a 17-30 h qualification run or a
+    // 4.5 h full-suite row stays leased; the slot stays occupied for admission until it exits.
+    [Test]
+    public void A_live_pid_holder_with_its_recorded_start_keeps_its_lease_past_the_ttl()
+    {
+        var f = new Fixture(maxConcurrent: 1, ttlMinutes: 90);
+        f.Granted(f.Request(101, "qualification"));
+
+        f.Time.Advance(TimeSpan.FromMinutes(91));
+        f.Broker.Sweep().ShouldBe(0);
+        f.Busy(f.Request(102, "next")).Occupied.ShouldBe(1);
+
+        f.Time.Advance(TimeSpan.FromHours(30));
+        f.Broker.Sweep().ShouldBe(0);
+        var listing = f.Broker.List();
+        listing.Occupied.ShouldBe(1);
+        listing.Leases.Single().ShouldSatisfyAllConditions(
+            l => l.Label.ShouldBe("qualification"),
+            l => l.HolderAlive.ShouldBeTrue());
+        f.Busy(f.Request(102, "next")).Occupied.ShouldBe(1);
+        f.Messages.Count(m => m.Contains("qualification") && m.Contains("kept past its ttl")).ShouldBe(1);
+
+        // Once the holder exits, the next sweep reaps the lease and the waiter is admitted.
+        f.Liveness.Kill(101);
+        f.Granted(f.Request(102, "next")).Occupied.ShouldBe(1);
+        f.Broker.List().Leases.Select(l => l.Label).ShouldBe(["next"]);
+        f.Messages.ShouldContain(m => m.Contains("qualification") && m.Contains("reaped"));
+    }
+
+    // CARD-0851 V-2: a holder found dead at the first sweep past the TTL is reaped then, as before.
+    [Test]
+    public void A_pid_holder_dead_at_the_ttl_is_reaped()
+    {
+        var f = new Fixture(maxConcurrent: 1, ttlMinutes: 90);
+        f.Granted(f.Request(101, "crashed"));
+        f.Time.Advance(TimeSpan.FromMinutes(89));
+        f.Broker.Sweep().ShouldBe(0);
+
+        f.Liveness.Kill(101);
+        f.Time.Advance(TimeSpan.FromMinutes(1));
+        f.Broker.Sweep().ShouldBe(1);
+        f.Broker.List().Leases.ShouldBeEmpty();
+        f.Granted(f.Request(102, "next")).Occupied.ShouldBe(1);
+    }
+
+    // CARD-0851 V-3: past the TTL the holder must be the same process to the second: a pid recycled
+    // to a process started more than 1 s from the recorded start is reaped, even inside the probe's
+    // 2-minute PID-reuse tolerance that keeps it alive before the TTL.
+    [Test]
+    public void A_recycled_pid_past_the_ttl_is_reaped_and_a_start_within_one_second_is_kept()
+    {
+        var f = new Fixture(maxConcurrent: 1, ttlMinutes: 90);
+        f.Granted(f.Request(101, "recycled"));
+        f.Liveness.Start(101, T0.AddSeconds(30));
+        f.Time.Advance(TimeSpan.FromMinutes(89));
+        f.Broker.Sweep().ShouldBe(0);
+        f.Broker.List().Leases.Single().HolderAlive.ShouldBeTrue();
+
+        f.Time.Advance(TimeSpan.FromMinutes(1));
+        f.Broker.Sweep().ShouldBe(1);
+        f.Broker.List().Leases.ShouldBeEmpty();
+        f.Messages.ShouldContain(m => m.Contains("recycled") && m.Contains("ttl"));
+
+        var g = new Fixture(maxConcurrent: 1, ttlMinutes: 90);
+        g.Granted(g.Request(101, "same"));
+        g.Liveness.Start(101, T0.AddMilliseconds(900));
+        g.Time.Advance(TimeSpan.FromMinutes(91));
+        g.Broker.Sweep().ShouldBe(0);
+        g.Liveness.Start(101, T0.AddMilliseconds(-1100));
+        g.Broker.Sweep().ShouldBe(1);
+    }
+
+    // CARD-0851 V-4: renew mode keeps its TTL: a lease renewed inside the grace whose pid also
+    // answers with its recorded start is still reaped at the TTL.
+    [Test]
+    public void Renew_mode_reaps_at_the_ttl_even_while_renewed_and_its_pid_lives()
+    {
+        var f = new Fixture(maxConcurrent: 1, ttlMinutes: 90, holderLiveness: "renew", renewGraceSeconds: 90);
+        var grant = f.Granted(f.Request(101, "remote"));
+        for (var i = 0; i < 89 * 3; i++)
+        {
+            f.Time.Advance(TimeSpan.FromSeconds(20));
+            f.Broker.Renew(grant.LeaseId!.Value).ShouldBeTrue();
+        }
+        f.Broker.Sweep().ShouldBe(0);
+
+        f.Time.Advance(TimeSpan.FromMinutes(1));
+        f.Broker.Sweep().ShouldBe(1);
+        f.Broker.Renew(grant.LeaseId!.Value).ShouldBeFalse();
+        f.Messages.ShouldContain(m => m.Contains("remote") && m.Contains("ttl"));
+    }
+
     internal sealed class Fixture
     {
         public FakeTimeProvider Time { get; } = new(T0);
@@ -271,13 +367,17 @@ public sealed class BuildSlotBrokerTests
     internal sealed class FakeLiveness : IProcessLivenessProbe
     {
         private readonly Dictionary<int, DateTime> _started = new();
+        private readonly HashSet<int> _hidden = new();
         public void Start(int pid, DateTime startUtc) => _started[pid] = startUtc;
         public void Kill(int pid) => _started.Remove(pid);
         public bool Knows(int pid) => _started.ContainsKey(pid);
+        /// <summary>The process stays alive but its start time is unreadable, as when access is denied.</summary>
+        public void HideStartTime(int pid) => _hidden.Add(pid);
         public bool IsAlive(int pid, DateTime startedAt) =>
             _started.TryGetValue(pid, out var actual) && actual <= startedAt + TimeSpan.FromMinutes(2);
         public string? TryGetProcessName(int pid) => _started.ContainsKey(pid) ? "pwsh" : null;
-        public DateTime? TryGetStartTimeUtc(int pid) => _started.TryGetValue(pid, out var actual) ? actual : null;
+        public DateTime? TryGetStartTimeUtc(int pid) =>
+            !_hidden.Contains(pid) && _started.TryGetValue(pid, out var actual) ? actual : null;
     }
 
     internal sealed class FakeMemory : IHostMemoryProbe
