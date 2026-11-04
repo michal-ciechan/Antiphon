@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 
 namespace Antiphon.Tests.Checkpoints;
@@ -23,6 +24,9 @@ internal static class CheckpointFixtureProcess
     public static Output Run(ProcessStartInfo start, int timeoutMs, CancellationToken cancellationToken)
     {
         var name = start.FileName;
+        // CARD-1620: one process record per fixture child (git, dotnet, pwsh) so a slow row
+        // attributes its spawn-to-drain time instead of leaving it as unassigned remainder.
+        using var process = TestTiming.BeginProcess(Path.GetFileName(name), start.ArgumentList.Count, "checkpoint-fixture");
         try
         {
             var result = CheckpointProcessRunner.Run(start, timeoutMs, git: false, cancellationToken);

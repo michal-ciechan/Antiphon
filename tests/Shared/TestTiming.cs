@@ -767,13 +767,33 @@ public sealed class TestTimingSession : IDisposable
         catch (InvalidOperationException) { return null; }
     }
 
-    private static string BoundOperation(string? operation) => operation switch
+    // Static call-site labels only; anything else is "omitted" so no command text, path or
+    // secret becomes a label. CARD-1620: TestTimingOperationLabelTests scans every
+    // BeginPhase/BeginFixturePhase literal under tests/ and fails when one is missing here.
+    private static readonly HashSet<string> OperationLabels = new(StringComparer.Ordinal)
     {
-        "clone" or "migrate" or "restore" or "dump" or "create-tree" or "copy-tree"
-            or "delete-tree" or "queue" or "start" or "stop" or "drop" or "spawn"
-            or "wait" or "before" or "after" or "child" or "span" => operation,
-        _ => "omitted",
+        "clone", "migrate", "restore", "dump", "create-tree", "copy-tree",
+        "delete-tree", "queue", "start", "stop", "drop", "spawn",
+        "wait", "before", "after", "child", "span",
+        "seed", "prepare", "run", "pool", "cleanup",
+        "checkpoint-tool", "checkpoint-scope",
+        "shape-git", "shape-judge", "shape-links", "shape-pwsh", "shape-receipt",
+        "shape-repository", "shape-tool-checkpoint", "shape-user-inputs",
+        "pty-host-stranger-adoption-sweep",
+        "card1619-detached-exit-and-manifest", "card1619-host-launch-and-readiness",
+        "card1619-native-host-readiness", "card1619-native-owned-join",
+        "card1619-native-signal-and-exit-envelope", "card1619-nullable-upgrade",
+        "card1619-owned-process-join", "card1619-runner-stop-owned-join",
+        "card1619-runner-stop-readiness",
+        "c1653-d1-blank-setting-launch", "c1653-d1-legacy-host-launch",
+        "c1653-d1-unusable-setting-adoption", "c1653-foreign-peer-launch",
+        "c1653-legacy-real-host-adoption", "c1653-legacy-real-host-launch",
+        "c1653-owned-real-host-adoption", "c1653-owned-real-host-launch",
+        "c1653-unsafe-dir-launch",
     };
+
+    private static string BoundOperation(string? operation) =>
+        operation is not null && OperationLabels.Contains(operation) ? operation : "omitted";
 
     private static string BoundName(string? value)
     {

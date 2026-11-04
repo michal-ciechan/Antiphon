@@ -219,6 +219,8 @@ public abstract partial class CheckpointTestBase
         if (_scope is not null)
         {
             CaptureDiagnostics(_scope.Roots);
+            // CARD-1620: the whole base cleanup hook (work joins, child checks, root deletion).
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "checkpoint-scope");
             await _scope.DisposeAsync();
         }
     }
