@@ -91,12 +91,9 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
         await w.TickAsync();
         await AssertNoOrphanAsync(w, a);
 
-        // Expected Complete; a worktree_removal_incomplete with a set-aside record is recorded by Code for a card.
-        var release = (await w.ReleasesAsync(a)).Single();
-        if (release.State == WorktreeRetirementState.Complete)
-            await w.AssertRetiredAsync(a, origin);
-        else
-            release.LastReason.ShouldBe("worktree_removal_incomplete");
+        // CARD-1714: the no-follow delete cannot open a path past MAX_PATH, so the removal refuses before the move.
+        (await w.ReleasesAsync(a)).Single().LastReason.ShouldBe("worktree_path_too_long");
+        Directory.Exists(a.Path).ShouldBeTrue("nothing was moved");
     }
 
     /// <summary>
@@ -128,6 +125,37 @@ public sealed class C0824DesktopLegacyReleaseNativeTests
         await w.AssertIntactAsync(a, before);
         File.Exists(file).ShouldBeTrue("the untracked file is kept");
         (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is kept");
+    }
+
+    /// <summary>
+    /// CARD-1714 (N-2 shape): a deep IGNORED tree past MAX_PATH. git status cannot see it (ignored), so only the
+    /// guarded removal's length guard stops it: the row is Held worktree_path_too_long with nothing moved, never a
+    /// set-aside, unregistered tree stuck Partial at the no-follow delete.
+    /// </summary>
+    [Test]
+    public async Task Long_path_ignored_tree_is_held_not_partial()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("Windows MAX_PATH semantics");
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        var deep = Path.Combine(a.Path, "obj");
+        while (deep.Length < 300) deep = Path.Combine(deep, "segment-" + new string('d', 24));
+        Directory.CreateDirectory(@"\\?\" + deep);
+        await File.WriteAllTextAsync(@"\\?\" + Path.Combine(deep, "build.out"), "disposable\n");
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+
+        var tick = await w.TickAsync();
+
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("worktree_path_too_long");
+        (await w.SnapshotAsync(a.Path)).ShouldBe(before, "the tree is byte-intact");
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue("the registration is intact");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is kept");
+        Directory.Exists(Antiphon.Server.Infrastructure.Git.WorktreeSetAside.SetAsidePath(a.Path)).ShouldBeFalse("nothing was set aside");
     }
 
     /// <summary>N-3/G-68: a junction leaf, an ignored junction inside the tree and an 8.3 alias are refused.</summary>

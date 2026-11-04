@@ -17,7 +17,7 @@ internal sealed class CompletedCardRemovalFixture(CompletedCardCleanupFixture ca
     public string Tree => Card.Tree;
     public string Ref => "refs/heads/feat/card-task-" + Card.TaskId.ToString("N")[..8];
     public TaskWorktreeRetirement Retirement { get; private set; } = null!;
-    public int FullInspections => Git.Git.Commands.Count(c => c.Directory == Tree && c.Arguments[0] == "status");
+    public int FullInspections => Git.Git.Commands.Count(c => c.Directory == Tree && GitSubcommand.Of(c.Arguments) == "status");
     public int RemovalCalls => Git.Git.Trace.Count(a => a.Contains("--registration-only"));
 
     public static async Task<CompletedCardRemovalFixture> CreateAsync()
@@ -85,7 +85,7 @@ internal sealed class CompletedCardRemovalFixture(CompletedCardCleanupFixture ca
         var seen = 0;
         Git.Git.BeforeCommand = async (repo, args) =>
         {
-            if (repo == Tree && args[0] == "status" && ++seen == ordinal) await action();
+            if (repo == Tree && GitSubcommand.Of(args) == "status" && ++seen == ordinal) await action();
             return null;
         };
     }

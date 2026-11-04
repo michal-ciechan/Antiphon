@@ -21,7 +21,7 @@ public sealed class LandSourceIdentityTests
             await fixture.RequiredAsync(fixture.Repository, "update-ref", "-d", fixture.SourceRef, fixture.SeedSha);
         fixture.Git.BeforeCommand = (_, args) => Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
             variant == "ref_error" && args[0] == "show-ref" && args.Contains("--exists")
-                || variant == "status_error" && args[0] == "status"
+                || variant == "status_error" && GitSubcommand.Of(args) == "status"
                 ? new(1, "", "injected_error") : null);
         var coordinates = variant == "wrong_repo"
             ? fixture.Coordinates with { RepositoryPath = fixture.Remote } : fixture.Coordinates;
@@ -119,7 +119,7 @@ public sealed class LandSourceIdentityTests
         var reached = false;
         fixture.Git.BeforeCommand = async (path, args) =>
         {
-            if (args[0] == "status" && !reached)
+            if (GitSubcommand.Of(args) == "status" && !reached)
             {
                 reached = true;
                 await fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "race");

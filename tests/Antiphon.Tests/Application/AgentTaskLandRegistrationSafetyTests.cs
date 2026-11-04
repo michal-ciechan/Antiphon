@@ -137,7 +137,7 @@ public sealed class AgentTaskLandRegistrationSafetyTests
         };
         h.Fixture.Git.AfterCommand = async (directory, args, result) =>
         {
-            if (cleanupStarted == 0 || !LandingGit.PathsEqual(directory, h.Fixture.Source) || args[0] != "status") return;
+            if (cleanupStarted == 0 || !LandingGit.PathsEqual(directory, h.Fixture.Source) || GitSubcommand.Of(args) != "status") return;
             cleanupStatuses++;
             if (cleanupStatuses != 2) return; // Status in the final Full removal inspection.
             result.Succeeded.ShouldBeTrue();
