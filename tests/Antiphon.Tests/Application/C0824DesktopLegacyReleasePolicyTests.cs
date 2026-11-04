@@ -1221,18 +1221,24 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("execute")]
     public async Task First_enable_on_a_large_backlog_is_bounded(string mode)
     {
-        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var phases = new BacklogPhases(mode);
+        DesktopLegacyWorld w;
+        using (phases.Begin(TestPhaseKind.FixtureSetup, "world")) w = await DesktopLegacyWorld.CreateAsync();
+        await using var _ = w;
         var real = new List<DesktopLegacyWorld.Handle>();
-        for (var i = 0; i < 27; i++) real.Add(await w.AddTaskAsync(ageHours: 24 * 30 + 27 - i));
+        using (phases.Begin(TestPhaseKind.FixtureSetup, "seed-real"))
+            for (var i = 0; i < 27; i++) real.Add(await w.AddTaskAsync(ageHours: 24 * 30 + 27 - i));
         var absent = new List<DesktopLegacyWorld.Handle>();
-        for (var i = 0; i < 273; i++) absent.Add(await w.AddTaskAsync(shape: "none", ageHours: 24 * 3 + i));
+        using (phases.Begin(TestPhaseKind.FixtureSetup, "seed-absent"))
+            for (var i = 0; i < 273; i++) absent.Add(await w.AddTaskAsync(shape: "none", ageHours: 24 * 3 + i));
         var oldest = real.Take(25).ToList();
         var origin = await w.OriginRefsAsync();
         w.ClearTrace();
 
         if (mode == "preview-first")
         {
-            var preview = await w.TickAsync(preview: true);
+            DesktopLegacyReleasePolicyService.TickResult preview;
+            using (phases.Begin(TestPhaseKind.OurCode, "preview-tick")) preview = await w.TickAsync(preview: true);
             var rows = await w.RowsAsync(preview.RunId);
             rows.Count.ShouldBe(300);
             rows.Where(r => r.ReasonCode == "would_release").Select(r => r.TaskId).ShouldBe(oldest.Select(t => (Guid?)t.Id), ignoreOrder: true);
@@ -1256,13 +1262,15 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
 
         var clock = Stopwatch.StartNew();
-        var first = await w.TickAsync();
+        DesktopLegacyReleasePolicyService.TickResult first;
+        using (phases.Begin(TestPhaseKind.OurCode, "tick-1")) first = await w.TickAsync();
         clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60), "the bounded tick's wall time");
         first.Retired.ShouldBe(25);
         foreach (var t in oldest) await w.AssertRetiredAsync(t, origin);
         foreach (var t in real.Skip(25).Concat(absent)) w.AssertNoGit(t);
         (await w.RowsAsync(first.RunId)).Count(r => r.ReasonCode == "directory_absent").ShouldBe(273);
-        var second = await w.TickAsync();
+        DesktopLegacyReleasePolicyService.TickResult second;
+        using (phases.Begin(TestPhaseKind.OurCode, "tick-2")) second = await w.TickAsync();
         second.Retired.ShouldBe(2);
         foreach (var t in real.Skip(25)) await w.AssertRetiredAsync(t, origin);
         var rows2 = await w.RowsAsync(second.RunId);
@@ -1272,6 +1280,26 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         {
             var ids = absent.Select(t => t.Id).ToList();
             (await db.TaskWorktreeRetirements.CountAsync(r => ids.Contains(r.TaskId))).ShouldBe(0, "never a release for an absent path");
+        }
+    }
+
+    /// <summary>
+    /// V-25 phase record (R4): each phase is a <see cref="TestTiming"/> span and one <c>C0824_V25</c> StdOut line in
+    /// the TRX, so a slow run names the phase that cost it.
+    /// </summary>
+    private sealed class BacklogPhases(string mode)
+    {
+        public IDisposable Begin(TestPhaseKind kind, string operation) => new Phase(mode, operation, TestTiming.BeginPhase(kind, operation));
+
+        private sealed class Phase(string mode, string operation, IDisposable span) : IDisposable
+        {
+            private readonly Stopwatch _clock = Stopwatch.StartNew();
+
+            public void Dispose()
+            {
+                span.Dispose();
+                Console.WriteLine($"C0824_V25 mode={mode} phase={operation} ms={_clock.ElapsedMilliseconds}");
+            }
         }
     }
 
