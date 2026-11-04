@@ -699,6 +699,17 @@ function Invoke-AntiphonNightlyRunCore {
             return [pscustomobject]$result
         }
 
+        # CARD-1698: warn about a tool below its floor before the tests hop; never refuse,
+        # never change the exit code. nightly-tests records the versions in summary.json.
+        $toolchainSource = $null
+        if ($script:NightlySeams -and $script:NightlySeams.ToolchainVersions) { $toolchainSource = $script:NightlySeams.ToolchainVersions }
+        try {
+            . (Join-Path $PSScriptRoot 'toolchain-floor.ps1')
+            foreach ($floorWarning in @(Get-ToolchainFloorWarnings -RepoRoot $CheckoutRoot -VersionSource $toolchainSource)) { Write-NightlyRunLine $floorWarning.message }
+        } catch {
+            Write-NightlyRunLine ('WARNING: the toolchain floor check failed: ' + $_.Exception.Message)
+        }
+
         $testsScript = Join-Path $CheckoutRoot (Join-Path 'scripts' 'nightly-tests.ps1')
         if (-not (Test-Path -LiteralPath $testsScript)) {
             $testsScript = Join-Path $PSScriptRoot '..\nightly-tests.ps1'

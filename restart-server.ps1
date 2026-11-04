@@ -7,6 +7,14 @@ $RepoRoot = $PSScriptRoot
 $AspireCommand = "D:\src\Mikeys.Tools\Mikey.AspireCommand"
 $ServerProject = "$RepoRoot\server\Antiphon.Server.csproj"
 
+# CARD-1698: warn about a tool below its floor; never refuse, never change the exit code.
+try {
+    . (Join-Path $RepoRoot (Join-Path "scripts" (Join-Path "lib" "toolchain-floor.ps1")))
+    Write-ToolchainFloorWarnings -RepoRoot $RepoRoot
+} catch {
+    Write-Host ("WARNING: the toolchain floor check failed: " + $_.Exception.Message) -ForegroundColor Yellow
+}
+
 Write-Host "Stopping server..." -ForegroundColor Yellow
 dotnet run --project $AspireCommand -- antiphon-server stop --endpoint $Endpoint
 if ($LASTEXITCODE -ne 0) {
