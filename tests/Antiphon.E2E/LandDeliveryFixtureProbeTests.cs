@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.TestSupport;
 using System.Reflection;
@@ -148,6 +149,102 @@ public class LandDeliveryFixtureProbeTests
             f.ProtocolProgress().ShouldBe(2);
         }
         finally { Directory.Delete(f.Root, recursive: true); }
+    }
+
+    /// <summary>
+    /// rc 0b05506b e2e-all-split-2: after the land worktree's last <c>git status</c> the land runs its
+    /// verifier (a build slot, then a real <c>dotnet build</c>), which spawns no protocol Git. A
+    /// committed verifier record is land progress; a partial one is not.
+    /// </summary>
+    [Test]
+    public async Task ProtocolProgress_counts_committed_protocol_verify_records()
+    {
+        await using var f = new LandDeliveryFixture();
+        Directory.CreateDirectory(f.Root);
+        try
+        {
+            f.ProtocolProgress().ShouldBe(0);
+            await File.WriteAllTextAsync(Path.Combine(f.Root, $"protocol-verify-{Guid.NewGuid():N}.json"), "{}");
+            await File.WriteAllTextAsync(Path.Combine(f.Root, $"protocol-verify-{Guid.NewGuid():N}.json.tmp"), "{}");
+            f.ProtocolProgress().ShouldBe(1, "a committed land-verifier record is land progress; a partial one is not");
+            await File.WriteAllTextAsync(Path.Combine(f.Root, $"protocol-git-{Guid.NewGuid():N}.json"), "{}");
+            f.ProtocolProgress().ShouldBe(2, "verifier and Git records both count");
+        }
+        finally { Directory.Delete(f.Root, recursive: true); }
+    }
+
+    /// <summary>
+    /// The verifier evidence records start, a running heartbeat while the inner verification is in
+    /// flight, no heartbeat past its budget (a stalled verifier still ends one quiet window later),
+    /// and end with the verdict.
+    /// </summary>
+    [Test]
+    public async Task Verifier_evidence_heartbeats_in_flight_stops_at_its_budget_and_records_the_end()
+    {
+        await using var f = new LandDeliveryFixture();
+        Directory.CreateDirectory(f.Root);
+        var inner = new HeldVerifier();
+        var verifier = new LandVerifierEvidence(f.Root, inner,
+            heartbeat: TimeSpan.FromMilliseconds(50), budget: TimeSpan.FromMilliseconds(400));
+        var correlation = new LandingVerificationCorrelation(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var run = verifier.VerifyAsync(Path.Combine(f.Root, "land"), null, correlation, CancellationToken.None);
+        try
+        {
+            string[] Phase(string phase) => Directory.GetFiles(f.Root, "protocol-verify-*.json")
+                .Where(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement.GetProperty("phase").GetString() == phase)
+                .ToArray();
+            var wall = Stopwatch.StartNew();
+            while (Phase("running").Length < 2 && wall.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(20);
+            Phase("start").ShouldHaveSingleItem("the verification start is recorded");
+            Phase("running").Length.ShouldBeGreaterThanOrEqualTo(2, "an in-flight verification heartbeats");
+            run.IsCompleted.ShouldBeFalse();
+            await Task.Delay(TimeSpan.FromMilliseconds(700));
+            var settled = Phase("running").Length;
+            await Task.Delay(TimeSpan.FromMilliseconds(300));
+            Phase("running").Length.ShouldBe(settled, "no heartbeat past the budget");
+            Phase("end").ShouldBeEmpty();
+            inner.Complete(new LandingVerification(true, "build OK"));
+            (await run).Passed.ShouldBeTrue();
+            var end = JsonDocument.Parse(File.ReadAllText(Phase("end").ShouldHaveSingleItem())).RootElement;
+            end.GetProperty("passed").GetBoolean().ShouldBeTrue();
+            end.GetProperty("operationId").GetGuid().ShouldBe(correlation.OperationId);
+            end.GetProperty("requestId").GetGuid().ShouldBe(correlation.RequestId!.Value);
+            f.ProtocolProgress().ShouldBe(Directory.GetFiles(f.Root, "protocol-verify-*.json").Length);
+        }
+        finally
+        {
+            inner.Complete(new LandingVerification(false, "witness ended"));
+            await run;
+            Directory.Delete(f.Root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Stalled_receipt_names_the_last_verifier_phase()
+    {
+        await using var f = new LandDeliveryFixture();
+        Directory.CreateDirectory(f.Root);
+        var verify = Path.Combine(f.Root, $"protocol-verify-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(verify, JsonSerializer.Serialize(new {
+            phase = "running", operationId = Guid.NewGuid(), requestId = Guid.NewGuid(), elapsedSeconds = 61.5,
+            passed = (bool?)null, at = DateTime.UtcNow, pid = Environment.ProcessId }));
+        try
+        {
+            var original = await Should.ThrowAsync<TimeoutException>(() => f.UntilProtocolAsync(
+                () => Task.FromResult(false), "complete native Land receipt", quietSeconds: 1));
+            var error = await f.ReceiptTimeoutAsync(original, LandNotificationKind.Outcome, null, null,
+                _ => Task.FromResult("operation=Prepared"));
+            error.Message.ShouldContain("lastProtocolVerify=" + verify);
+            error.Message.ShouldContain("phase=running elapsedSeconds=61.5");
+        }
+        finally { Directory.Delete(f.Root, recursive: true); }
+    }
+
+    private sealed class HeldVerifier : ILandingVerifier
+    {
+        private readonly TaskCompletionSource<LandingVerification> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Complete(LandingVerification result) => _result.TrySetResult(result);
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct) => _result.Task;
     }
 
     [Test]
