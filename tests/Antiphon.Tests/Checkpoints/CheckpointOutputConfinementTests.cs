@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 // project-XML scan does not see, then requires the tracked Lib bytes to survive and
 // the build output to land under App/bin-confined/ (tool) or App/bin-script-confined/ (script).
 [Category("Unit")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 {
@@ -181,6 +182,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 
     private async Task<(int Exit, string Output)> RunToolAsync(string root, string name, CancellationToken cancellationToken)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "checkpoint-tool");
         var output = new StringWriter();
         var exit = await Antiphon.Checkpoints.Program.RunAsync(
         [

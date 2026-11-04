@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Checkpoints;
 // Detect only: the build's resulting bytes and index must survive both entry points.
 // Each row guards against automatic restore/delete or a false preservation claim.
 [Category("Unit")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 {

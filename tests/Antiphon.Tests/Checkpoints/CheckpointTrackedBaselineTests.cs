@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 // Real builds must detect changes and preserve resulting user bytes and index.
 [Category("Unit")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 {
@@ -523,6 +524,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     private async Task<RunResult> RunToolAsync(string root, string name, string filter, string minExecuted, CancellationToken cancellationToken)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "checkpoint-tool");
         var output = new StringWriter();
         var exit = await Antiphon.Checkpoints.Program.RunAsync(
         [
