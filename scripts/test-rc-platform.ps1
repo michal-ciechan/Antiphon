@@ -832,6 +832,15 @@ function Test-C1686_LinuxOnlyCensus {
         'second-use-on-marker-line' = @($z, "namespace Fixture;`n`n[NativeLinuxOnly(`"x`")] [Category(`"Unit`"), NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3", 'marker-without-row:antiphon|ZetaTests|'))
         'block-comment-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n}`n", @('marker-without-row:antiphon|ZetaTests|Old', "marker-noncanonical:${z}:8"))
         'inactive-if' = @($z, "namespace Fixture;`n`n#if false`n[NativeLinuxOnly(`"inactive`")]`npublic sealed class ZetaTests { }`n#endif`n", @('marker-without-row:antiphon|ZetaTests|'))
+        # CARD-1694 D-1: a line that starts as a comment but closes it before the token is code, not a comment line.
+        'block-comment-prefix' = @($z, "namespace Fixture;`n`n/* x */ [NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3"))
+        'empty-block-comment-prefix' = @($z, "namespace Fixture;`n`n/**/[NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:3"))
+        'block-comment-close-prefix' = @($z, "namespace Fixture;`n`n/*`n * old`n */ [NativeLinuxOnly(`"y`")]`npublic sealed class ZetaTests { }`n", @("marker-noncanonical:${z}:5"))
+        'indented-block-comment-prefix' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /* c */ [NativeLinuxOnly(`"y`")]`n    [Test]`n    public void Runs() { }`n}`n", @("marker-noncanonical:${z}:5"))
+        # CARD-1694 D-2: an exempt file is exempt only for its known reference forms; an applied attribute still fails.
+        'exempt-file-stacked-marker' = @('tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs', "namespace Fixture;`n`npublic sealed class WindowsUnitPlatformAdmissionTests`n{`n    [Test, NativeLinuxOnly(`"y`")]`n    public void Runs() { }`n}`n", @('marker-noncanonical:tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs:5'))
+        'exempt-file-attribute-list-line' = @('tests/Shared/NativeLinuxPolicyWitness.cs', "namespace Fixture;`n`npublic sealed class WitnessTests`n{`n    [`n        Test,`n        NativeLinuxOnly(`"y`")`n    ]`n    public void Runs() { }`n}`n", @('marker-noncanonical:tests/Shared/NativeLinuxPolicyWitness.cs:7'))
+        'exempt-file-block-comment-prefix' = @('tests/Shared/NativeLinuxPolicyWitnessTests.cs', "namespace Fixture;`n`npublic sealed class WitnessTests`n{`n    /* c */ [Test, NativeLinuxOnly(`"y`")]`n    public void Runs() { }`n}`n", @('marker-noncanonical:tests/Shared/NativeLinuxPolicyWitnessTests.cs:5'))
         'reflection-outside-exempt-file' = @('tests/Shared/OtherWitness.cs', "internal static class OtherWitness`n{`n    internal static object Pin() => new Antiphon.TestSupport.NativeLinuxOnlyAttribute(`"pin`");`n    internal static Type Kind => typeof(NativeLinuxOnlyAttribute);`n}`n", @('marker-noncanonical:tests/Shared/OtherWitness.cs:3', 'marker-noncanonical:tests/Shared/OtherWitness.cs:4'))
     }
     foreach ($name in $failClosed.Keys) {
@@ -846,6 +855,12 @@ function Test-C1686_LinuxOnlyCensus {
     $extra['tests/Antiphon.Tests/PortableTests.cs'] = "public sealed class PortableTests`n{`n    /*`n     * [NativeLinuxOnly(`"block comment`")]`n    /* [Test, NativeLinuxOnly(`"block comment`")] */`n    // [ NativeLinuxOnly(`"line comment`")]`n    /// <see cref=`"NativeLinuxOnlyAttribute`"/> is not a marker.`n    [Test]`n    public void Runs() { }`n}`n"
     $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'comments' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
     Assert-C1323 ($r.Ok -and (Same-C1323Set $r.MarkerKeys $good.MarkerKeys)) 'c1686-comments-are-not-markers' (($r.Problems + $r.MarkerKeys) -join '; ')
+
+    # CARD-1694 D-2: the reference forms an exempt file needs (declaration, constructor, typeof, new, a plain string) pass.
+    $extra = [ordered]@{} + $files
+    $extra['tests/Shared/NativeLinuxPolicyWitness.cs'] = "internal static class NativeLinuxPolicyWitness`n{`n    public const string AttributeResourceName = `"Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs`";`n    static Type A => typeof(NativeLinuxOnlyAttribute);`n    static bool B(Type t) => t.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;`n    static object C() => new NativeLinuxOnlyAttribute(`"pin`");`n    static void D() => throw new ArgumentException(`"A NativeLinuxOnly reason must be nonempty.`", nameof(D));`n}`n"
+    $r = Get-C1323LinuxOnlyCensus -Root (New-C1686Root 'exempt-references' $extra) -Policy (New-C1686Policy $rows) -Catalog $catalog
+    Assert-C1323 ($r.Ok -and (Same-C1323Set $r.MarkerKeys $good.MarkerKeys)) 'c1686-exempt-file-references-pass' (($r.Problems + $r.MarkerKeys) -join '; ')
 }
 
 function Test-C1199_WindowsRequiredRoster {
