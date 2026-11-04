@@ -1,5 +1,8 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
@@ -298,6 +301,45 @@ public sealed class AttentionFeedNoiseTests
         secondRow.Evidence.ShouldBe(
             "Historical routing/receipt is unknown; no new message is inferred or replayed. receipts=2.\n"
             + "second-receipt");
+    }
+
+    /// <summary>
+    /// rc 766e3df5 C467_V32(attempt): an Aged notice waiting behind the caller's in-flight delivery
+    /// has no queue row yet. Its headline names that, and only a linked row that is gone is missing.
+    /// </summary>
+    [Test]
+    public async Task C467_V32_Unenqueued_notice_is_not_reported_as_a_missing_queue_row()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var created = DateTime.UtcNow.AddMinutes(-10);
+        var waiting = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 60);
+        var lost = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 60);
+        var attempted = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 60);
+        var waitingNote = await scenario.AddUnconfirmedLandNoteAsync(waiting, session, created, LandNotificationKind.Aged);
+        var lostNote = await scenario.AddUnconfirmedLandNoteAsync(lost, session, created, LandNotificationKind.Aged);
+        var attemptedNote = await scenario.AddUnconfirmedLandNoteAsync(attempted, session, created);
+        var row = await scenario.AddQueuedMessageAsync(session, "outcome receipt", attempts: 1);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        {
+            var notes = await db.AgentTaskLandNotifications
+                .Where(n => n.Id == waitingNote || n.Id == lostNote || n.Id == attemptedNote).ToListAsync();
+            var queued = notes.Single(n => n.Id == waitingNote);
+            queued.State = LandNotificationState.Queued;
+            queued.QueueMessageId = null;
+            notes.Single(n => n.Id == lostNote).QueueMessageId = Guid.NewGuid();
+            notes.Single(n => n.Id == attemptedNote).QueueMessageId = row;
+            await db.SaveChangesAsync();
+        }
+
+        var items = await ReadOwnedAsync(scenario);
+
+        items.Single(i => i.LandNotificationId == waitingNote).Headline
+            .ShouldBe("Land Aged notification: Queued; not yet enqueued");
+        items.Single(i => i.LandNotificationId == lostNote).Headline
+            .ShouldBe("Land Aged notification: AwaitingReceipt; missing queue row");
+        items.Single(i => i.LandNotificationId == attemptedNote).Headline
+            .ShouldBe("Land Outcome notification: AwaitingReceipt; attempted; receipt unconfirmed");
     }
 
     private static List<AttentionItemDto> LegacyRows(List<AttentionItemDto> items, Guid taskId) =>
