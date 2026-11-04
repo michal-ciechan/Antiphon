@@ -1211,7 +1211,7 @@ public partial class DelegationWorktreeTests
         public Task<int> PruneStaleAsync(CancellationToken ct) => inner.PruneStaleAsync(ct);
     }
 
-    private static AgentTask NewTask(string repoPath, string? mergeTarget) => new()
+    internal static AgentTask NewTask(string repoPath, string? mergeTarget) => new()
     {
         Id = Guid.NewGuid(),
         RootTaskId = Guid.NewGuid(),
@@ -1224,8 +1224,8 @@ public partial class DelegationWorktreeTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
-        AppDbContext db, ScratchGitRepo repo)
+    internal static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
+        AppDbContext db, ScratchGitRepo repo, ILandingGit? protocolGit = null)
     {
         var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
         var worktrees = graph.Worktrees;
@@ -1247,20 +1247,20 @@ public partial class DelegationWorktreeTests
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance,
-            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal,
+            new AgentTaskLandingProtocol(db, protocolGit ?? graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal,
                 gitSettings: Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot })),
             graph.Leases, graph.Git);
         return (land, worktrees);
     }
 
-    private static async Task<string> RequiredGitAsync(string path, params string[] args)
+    internal static async Task<string> RequiredGitAsync(string path, params string[] args)
     {
         var result = await ScratchGitRepo.GitInAsync(path, args);
         result.Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed: {result.StdErr}");
         return result.StdOut;
     }
 
-    private static async Task<(LandRequestResult Request, string SourceSha, string SourcePath, string SourceBranch, string SourceFullRef)>
+    internal static async Task<(LandRequestResult Request, string SourceSha, string SourcePath, string SourceBranch, string SourceFullRef)>
         PublishAndRequestAsync(AgentTaskLandService land, AgentTask task)
     {
         var sourcePath = task.WorktreePath!;
@@ -1274,7 +1274,7 @@ public partial class DelegationWorktreeTests
         return (request, sourceSha, sourcePath, sourceBranch, sourceFullRef);
     }
 
-    private static async Task<AgentTaskLandRequest> AssertRequestAsync(AppDbContext db, Guid taskId,
+    internal static async Task<AgentTaskLandRequest> AssertRequestAsync(AppDbContext db, Guid taskId,
         Guid requestId, string sourceSha, string sourceFullRef)
     {
         var request = await db.AgentTaskLandRequests.AsNoTracking()
@@ -1285,7 +1285,7 @@ public partial class DelegationWorktreeTests
         return request;
     }
 
-    private static async Task<AgentTaskLanding> AssertBoundOperationAsync(AppDbContext db, Guid taskId,
+    internal static async Task<AgentTaskLanding> AssertBoundOperationAsync(AppDbContext db, Guid taskId,
         Guid requestId, string sourceSha, string sourceFullRef)
     {
         var request = await AssertRequestAsync(db, taskId, requestId, sourceSha, sourceFullRef);
@@ -1301,7 +1301,7 @@ public partial class DelegationWorktreeTests
         return operation;
     }
 
-    private static async Task<AgentTaskEvent> AssertTerminalAsync(AppDbContext db, Guid taskId,
+    internal static async Task<AgentTaskEvent> AssertTerminalAsync(AppDbContext db, Guid taskId,
         Guid requestId, Guid? operationId, AgentTaskEventType type)
     {
         var request = await db.AgentTaskLandRequests.AsNoTracking()
@@ -1328,7 +1328,7 @@ public partial class DelegationWorktreeTests
         (await RebaseStateDirectoryAsync(sourcePath)).ShouldBeNull();
     }
 
-    private static async Task WriteExecutableHookAsync(string path, string script)
+    internal static async Task WriteExecutableHookAsync(string path, string script)
     {
         await File.WriteAllTextAsync(path, script);
         if (!OperatingSystem.IsWindows())
@@ -1351,7 +1351,7 @@ public partial class DelegationWorktreeTests
         return (graph.Worktrees, graph.Manager);
     }
 
-    private sealed class TemporaryDirectory : IDisposable
+    internal sealed class TemporaryDirectory : IDisposable
     {
         public string Path { get; } = Directory.CreateTempSubdirectory().FullName;
 
@@ -1369,7 +1369,7 @@ public partial class DelegationWorktreeTests
         }
     }
 
-    private static async Task<string?> RebaseStateDirectoryAsync(string worktree)
+    internal static async Task<string?> RebaseStateDirectoryAsync(string worktree)
     {
         foreach (var name in new[] { "rebase-merge", "rebase-apply" })
         {
