@@ -49,6 +49,36 @@ internal static class WorktreeNoFollowDelete
         else DeletePortable(full, protectedRoot);
     }
 
+    /// <summary>
+    /// The set-aside tree's delete. On Windows a scanner or indexer holding an entry refuses the walk,
+    /// or leaves a deleted name visible while its handle stays open; the whole walk is re-run, which
+    /// re-checks every guard, at most <see cref="WorktreeRenames.SharingAttempts"/> times. A preserved
+    /// nested repository and any other error are the refusal at once. After the last attempt the
+    /// refusal stands: nothing is forced, and the caller keeps the record so a later pass resumes.
+    /// </summary>
+    public static void DeleteSettled(string path, bool preserveNestedRepositories, WorktreeRenames? renames = null)
+    {
+        var r = renames ?? WorktreeRenames.System;
+        for (var attempt = 1; ; attempt++)
+        {
+            if (attempt > 1)
+            {
+                r.Pause(WorktreeRenames.SharingPause);
+                if (IsAbsent(path)) return;
+            }
+            try { r.DeleteTree(path, preserveNestedRepositories); }
+            catch (Exception ex) when (attempt < WorktreeRenames.SharingAttempts && r.IsTransientDelete(ex)) { continue; }
+            if (!r.Windows || attempt == WorktreeRenames.SharingAttempts || IsAbsent(path)) return;
+        }
+    }
+
+    private static bool IsAbsent(string path)
+    {
+        try { _ = File.GetAttributes(path); return false; }
+        catch (FileNotFoundException) { return true; }
+        catch (DirectoryNotFoundException) { return true; }
+    }
+
     private static void DeleteWindows(string path, string? protectedRoot)
     {
         using var handle = OpenNoFollow(path);

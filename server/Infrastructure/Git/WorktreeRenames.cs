@@ -1,9 +1,10 @@
 namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>
-/// The renames guarded removal performs before it deletes anything: the set-aside record's
-/// replace and the tree's move aside. Production uses <see cref="System"/>; a test injects a
-/// rename that fails the way Windows does, because a sharing violation cannot be raised on Linux.
+/// The renames guarded removal performs before it deletes anything (the set-aside record's
+/// replace and the tree's move aside) and the set-aside tree's delete. Production uses
+/// <see cref="System"/>; a test injects a rename or delete that fails the way Windows does,
+/// because a sharing violation cannot be raised on Linux.
 /// </summary>
 internal sealed record WorktreeRenames(Action<string, string> MoveDirectory, Action<string, string> ReplaceFile,
     Action<TimeSpan> Pause, bool Windows)
@@ -38,4 +39,17 @@ internal sealed record WorktreeRenames(Action<string, string> MoveDirectory, Act
     /// </summary>
     public bool IsSharingConflict(Exception ex) => Windows && ex is IOException or UnauthorizedAccessException
         && ex.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021) or unchecked((int)0x80070005);
+
+    /// <summary>
+    /// A Windows refusal of the set-aside delete that a scanner or indexer holding an entry gives:
+    /// access denied, sharing or lock violation, or a directory whose deleted child is still visible
+    /// (ERROR_DIR_NOT_EMPTY). The no-follow walk raises the raw Win32 code and .NET's own I/O the
+    /// 0x8007xxxx form, so both are read. A preserved nested repository is never transient.
+    /// </summary>
+    public bool IsTransientDelete(Exception ex) => Windows && ex is not NestedRepositoryPreservedException
+        && ex is IOException or UnauthorizedAccessException && Win32Code(ex) is 5 or 32 or 33 or 145;
+
+    /// <summary>The Win32 code an exception carries, from either a raw code or its 0x8007xxxx HResult.</summary>
+    public static int Win32Code(Exception ex) =>
+        (ex.HResult & unchecked((int)0xFFFF0000)) == unchecked((int)0x80070000) ? ex.HResult & 0xFFFF : ex.HResult;
 }

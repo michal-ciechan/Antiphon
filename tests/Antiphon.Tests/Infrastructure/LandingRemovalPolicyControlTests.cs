@@ -183,7 +183,8 @@ public sealed class LandingRemovalPolicyControlTests
         if (change != "valid")
         {
             // The residue names the refusing step: on a loaded Windows host a scanner briefly holding the
-            // fixture's fresh files can refuse the set-aside rename or record write (fail closed).
+            // fixture's fresh files can refuse the set-aside rename, record write or delete (fail closed;
+            // each is retried, bounded, and a lasting delete refusal names its Win32 code).
             using var safe = new RemovalFixture();
             var baseline = await safe.RemoveAsync();
             baseline.IsClean.ShouldBeTrue($"the unchanged command path must be reachable: {baseline.Residue} {baseline.Detail}");
@@ -461,7 +462,9 @@ public sealed class LandingRemovalPolicyControlTests
         }
         finally { held?.Dispose(); }
         first.Residue.ShouldBe("worktree_removal_incomplete");
-        first.Detail.ShouldBe("set-aside: " + aside);
+        // C448 V36: the lasting sharing violation at the held file's no-follow open (ERROR_SHARING_VIOLATION)
+        // outlives the bounded retry and is named in the residue.
+        first.Detail.ShouldBe("set-aside: " + aside + "; delete_error_32");
         Directory.Exists(f.Source).ShouldBeFalse();
         f.Registered.ShouldBeFalse();
         f.BranchPresent.ShouldBeTrue("the branch waits for the directory");

@@ -88,12 +88,12 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 else
                 {
-                    try { Renames.DeleteTree(aside, true); }
+                    try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                     catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                         failedAt = clock.GetTimestamp();
-                        return Finish("worktree_removal_incomplete", "set-aside: " + aside);
+                        return Finish("worktree_removal_incomplete", DeleteFailedDetail(aside, ex));
                     }
                     if (!IsAbsent(aside)) return Finish("worktree_removal_incomplete", "set-aside: " + aside);
                     WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
@@ -182,14 +182,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
                 }
-                try { Renames.DeleteTree(aside, true); }
+                try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                 catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // The record stays, so a later pass resumes this deletion.
                     failedAt = clock.GetTimestamp();
                     directoryGone = IsAbsent(source.WorktreePath);
-                    return Finish("worktree_removal_incomplete", "set-aside: " + aside);
+                    return Finish("worktree_removal_incomplete", DeleteFailedDetail(aside, ex));
                 }
                 directoryGone = IsAbsent(source.WorktreePath);
                 if (!directoryGone || !IsAbsent(aside))
@@ -443,6 +443,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         try { _ = File.GetAttributes(Path.Combine(gitDirectory, "gitdir")); return true; }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
     }
+
+    // C448 V36: the refusal names its Win32 code; the residue is otherwise unchanged.
+    private static string DeleteFailedDetail(string aside, Exception ex) =>
+        "set-aside: " + aside + "; delete_error_" + WorktreeRenames.Win32Code(ex);
 
     private static bool IsAbsent(string path)
     {

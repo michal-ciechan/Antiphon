@@ -404,7 +404,9 @@ public sealed class WorktreeGuardedCleanupTests
         }
         finally { held?.Dispose(); }
         first.Residue.ShouldBe("worktree_removal_incomplete");
-        first.Detail.ShouldBe("set-aside: " + aside);
+        // C448 V36: the lasting sharing violation at the held file's no-follow open (ERROR_SHARING_VIOLATION)
+        // outlives the bounded retry and is named in the residue.
+        first.Detail.ShouldBe("set-aside: " + aside + "; delete_error_32");
         first.Unregistered.ShouldBeTrue(); first.BranchDeleted.ShouldBeFalse();
         Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
 
