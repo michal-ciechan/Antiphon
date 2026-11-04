@@ -966,7 +966,35 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         return result.Output.Trim().Length > 0;
     }
 
-    private static string MergeRoleDetail(AgentTaskLanding op, bool containsTarget, IReadOnlyList<string> files)
+    // CARD-1637 D-1: conflicted paths go into AgentTaskEvents.Detail (varchar 4000) through the
+    // refusal, warning and Conflicted events, so a long list is cut to its first names.
+    internal const int ConflictListMaxNames = 20;
+    internal const int ConflictListMaxLength = 2000;
+    internal const int ConflictNameMaxLength = 200;
+    internal const int MergeRoleDetailMaxLength = 3400;
+    private const int ConflictListSuffixReserve = 32;
+
+    /// <summary>At most <see cref="ConflictListMaxNames"/> names, then "... and N more"; never longer than <paramref name="maxLength"/>.</summary>
+    internal static string ConflictFileSummary(IReadOnlyList<string> files, int maxLength = ConflictListMaxLength)
+    {
+        var shown = new List<string>();
+        var length = 0;
+        foreach (var file in files)
+        {
+            if (shown.Count == ConflictListMaxNames) break;
+            var name = file.Length <= ConflictNameMaxLength ? file : file[..(ConflictNameMaxLength - 3)] + "...";
+            var next = length + (shown.Count > 0 ? 2 : 0) + name.Length;
+            if (next > maxLength - ConflictListSuffixReserve) break;
+            shown.Add(name);
+            length = next;
+        }
+        var rest = files.Count - shown.Count;
+        var text = string.Join(", ", shown);
+        if (rest > 0) text += (shown.Count > 0 ? ", " : "") + $"... and {rest} more";
+        return text.Length <= maxLength ? text : text[..Math.Max(0, maxLength)];
+    }
+
+    internal static string MergeRoleDetail(AgentTaskLanding op, bool containsTarget, IReadOnlyList<string> files)
     {
         var source = InputSha(op);
         var target = op.TargetFullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
@@ -976,9 +1004,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 + $"unchanged as a fast-forward: git push origin {source}:refs/heads/{target}."
             : $"Integrate it through a Merge-role task dispatched with -StartRef {op.TargetBeforeSha} that runs git merge {source} "
                 + $"and pushes HEAD:refs/heads/{target} (docs/release-gates.md, Merge role).";
-        return $"{op.SourceFullRef} carries merge commits; a plain -Land rebases and flattens them, and that rebase conflicted in "
-            + $"{string.Join(", ", files)}. {path} A rebased linear successor is a new SHA and needs a new Review before -Land. "
+        string Text(string list) =>
+            $"{op.SourceFullRef} carries merge commits; a plain -Land rebases and flattens them, and that rebase conflicted in "
+            + $"{list}. {path} A rebased linear successor is a new SHA and needs a new Review before -Land. "
             + "No rebase resolver was spawned.";
+        var budget = Math.Min(ConflictListMaxLength, MergeRoleDetailMaxLength - Text("").Length);
+        var detail = Text(ConflictFileSummary(files, Math.Max(budget, ConflictListSuffixReserve)));
+        return detail.Length <= MergeRoleDetailMaxLength ? detail : detail[..MergeRoleDetailMaxLength];
     }
 
     private async Task TransitionAsync(AgentTaskLanding op, LandPhase next, CancellationToken ct)

@@ -762,9 +762,10 @@ public sealed class AgentTaskLandService
             var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct,
                 task.MergeTargetRef ?? "master", result.Operation?.SourceRemoteSha);
             Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, DurationSeconds(result.Operation, OrchestrationStage.Rebase),
-                string.Join(", ", result.Conflicts), helper is null ? "merge task cap reached" : DelegationReportFormatter.Short(helper.Id));
+                AgentTaskLandingProtocol.ConflictFileSummary(result.Conflicts, StageOutcome.DetailMaxLength),
+                helper is null ? "merge task cap reached" : DelegationReportFormatter.Short(helper.Id));
             var conflictEvent = Event(task.Id, AgentTaskEventType.Conflicted,
-                string.Join(", ", result.Conflicts), _clock.GetUtcNow().UtcDateTime);
+                AgentTaskLandingProtocol.ConflictFileSummary(result.Conflicts), _clock.GetUtcNow().UtcDateTime);
             SetLandingEvidence(conflictEvent, result.Operation);
             conflictEvent.LandRequestId = request.Id;
             request.State = LandRequestState.NeedsResolution;
