@@ -1884,7 +1884,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 c1008_tasks > "$root/snapshot.json" || status=$?
                 if [ "$mode" = pass ]; then
                     if [ "$status" = 0 ] \
-                        && jq -e --arg id "$id" '.open.land|has($id) and .[$id]==null' "$root/snapshot.json" >/dev/null \
+                        && jq -e '.open.tasks=={} and .open.land=={}' "$root/snapshot.json" >/dev/null \
                         && jq -e --arg id "$id" '.tasks[$id].landRequest==null' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null \
                         && grep -F -q "/api/agent-tasks/$id" "$root/http-trace"; then
                         printf 'PASS host-%s\n' "$name"
@@ -2007,9 +2007,12 @@ public sealed class RollingVolumeRecycleScriptTests
         return "FAIL wrapper-" + mode + " exit=" + run.Exit + "\n" + run.Output + "\n";
     }
 
+    // CARD-1697: the wrapper check-census probes use rows bound to server2. The compared closure is
+    // bound-only, and report mode reads a bound row without refusing, so the settled, appearance and
+    // land-timestamp rules still decide the server2 report; the server2-temp report sees off-runner rows.
     private static JsonObject C1319Row(string id, string status) => new()
     {
-        ["id"] = id, ["status"] = status, ["runnerId"] = "desktop", ["projectId"] = null,
+        ["id"] = id, ["status"] = status, ["runnerId"] = "server2", ["projectId"] = null,
         ["scopeSource"] = "None", ["landRequestedAt"] = null, ["landStartedAt"] = null
     };
 
@@ -2112,12 +2115,13 @@ public sealed class RollingVolumeRecycleScriptTests
                 C1008_TASK_ERROR=''
                 c1008_tasks > "$root/snapshot.json" || status=$?
                 if [ "$expect" = pass ] && [ "$status" = 0 ]; then
-                    if [ "$mode" = settled-vanish ]; then
-                        jq -e '.open.tasks=={} and .open.land=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
-                    elif [ "$mode" = settled-companion ]; then
-                        jq -e --arg a "$settled" --arg b "$companion" '(.open.tasks|has($a)|not) and (.open.tasks|has($b)) and (.open.land|has($a)|not) and (.open.land[$b]==null)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    # CARD-1697: off-runner rows are outside the bound-only compared closure and stay receipted.
+                    jq -e '.open.tasks=={} and .open.land=={} and .open.scopes=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    jq -e --arg a "$settled" '.tasks|has($a)' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
+                    if [ "$mode" = settled-companion ]; then
+                        jq -e --arg b "$companion" '.tasks[$b].landRequest==null and .tasks[$b].status=="Blocked"' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
                     elif [ "$mode" = settled-appear ]; then
-                        jq -e --arg a "$settled" --arg c "$appeared" '(.open.tasks|has($a)|not) and (.open.tasks|has($c)) and (.open.land|has($a)|not) and (.open.land|has($c)) and (.open.land[$c]==null) and ((.land.tasks|has($c))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                        jq -e --arg c "$appeared" '(.tasks[$c]|has("landRequest")) and .tasks[$c].landRequest==null' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
                     fi
                 fi
                 if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
@@ -2130,7 +2134,8 @@ public sealed class RollingVolumeRecycleScriptTests
             }
             probe settled-vanish settled-vanish pass
             probe settled-companion settled-companion pass
-            probe open-vanish open-vanish unstable
+            # CARD-1697: an off-runner open row vanishing between the passes is outside the compared closure.
+            probe open-vanish open-vanish pass
             probe settled-appear settled-appear pass
             printf 'HOST_DONE\n'
             """;
@@ -2296,7 +2301,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 local name="$1" mode="$2" expect="$3" status=0 extra=ok
                 local appeared=33333333-3333-3333-3333-333333333333
                 local changed=11111111-1111-1111-1111-111111111111
-                local fresh before after
+                local fresh before after touched="$appeared"
                 fresh="$(row_of "$appeared" Working)"
                 before="$(row_of "$changed" Queued)"
                 after="$(row_of "$changed" Working)"
@@ -2319,6 +2324,7 @@ public sealed class RollingVolumeRecycleScriptTests
                         detail_mode=omit
                         ;;
                     changed-row)
+                        touched="$changed"
                         after="$(printf '%s' "$after" | jq -c '.runnerId="other"')"
                         open_first="$(envelope "$before")"
                         open_later="$(envelope "$after")"
@@ -2332,7 +2338,9 @@ public sealed class RollingVolumeRecycleScriptTests
                 C1008_TASK_ERROR=''
                 c1008_tasks > "$root/snapshot.json" || status=$?
                 if [ "$expect" = pass ] && [ "$status" = 0 ]; then
-                    jq -e --arg id "$appeared" '(.open.tasks|has($id)) and (.open.land|has($id)) and (.open.land[$id]==null) and ((.land.tasks|has($id))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    # CARD-1697: off-runner rows are outside the bound-only compared closure and stay receipted.
+                    jq -e '.open.tasks=={} and .open.land=={} and .open.scopes=={} and .land.tasks=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    jq -e --arg id "$touched" '.tasks|has($id)' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
                 fi
                 if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
                     printf 'PASS host-%s\n' "$name"
@@ -2344,10 +2352,11 @@ public sealed class RollingVolumeRecycleScriptTests
                     printf 'FAIL host-%s status=%s extra=%s error=%s\n' "$name" "$status" "$extra" "$C1008_TASK_ERROR"
                 fi
             }
+            # CARD-1697: off-runner appearances and runner changes are outside the compared closure.
             probe appears-no-land appears-no-land pass
-            probe appears-with-landRequest appears-with-landRequest unstable
+            probe appears-with-landRequest appears-with-landRequest pass
             probe appears-with-unknown-detail appears-with-unknown-detail land-unknown
-            probe changed-row changed-row unstable
+            probe changed-row changed-row pass
             printf 'HOST_DONE\n'
             """;
     }
@@ -2356,8 +2365,9 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance()
     {
-        // CARD-1353 D-2/D-6: the compared land closure keeps bound rows only. An appearing open row
-        // with a land timestamp is still Unstable for every runner; a land-closure appearance is
+        // CARD-1353 D-2/D-6: the compared land closure keeps bound rows only. CARD-1697: so does the open
+        // closure. An appearing bound open row with a land timestamp is Unstable in the report census and
+        // RecycleLandInFlight on the host; an off-runner one passes. A land-closure appearance is
         // Unstable only for a row bound to the recycled runner and passes for an off-runner row.
         var report = RemoteScriptContractTests.LinuxShell(C1326HostCensusScript());
         report += await C1326WrapperProbe("appears-with-land-timestamp", "unstable");
@@ -2372,6 +2382,7 @@ public sealed class RollingVolumeRecycleScriptTests
             "host-appears-with-land-timestamp", "host-appears-in-land-closure-bound", "host-appears-in-land-closure-other",
             "wrapper-appears-with-land-timestamp", "wrapper-appears-in-land-closure-bound", "wrapper-appears-in-land-closure-other"
             , "host-appears-with-land-started", "wrapper-appears-with-land-started"
+            , "host-appears-with-land-timestamp-bound", "host-appears-with-land-started-bound"
         })
             report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
     }
@@ -2507,7 +2518,9 @@ public sealed class RollingVolumeRecycleScriptTests
                 C1008_TASK_ERROR=''
                 c1008_tasks > "$root/snapshot.json" || status=$?
                 if [ "$expect" = pass ] && [ "$status" = 0 ]; then
-                    jq -e --arg id "$appeared" '(.open.tasks|has($id)) and (.open.land|has($id)) and (.open.land[$id]==null) and ((.land.tasks|has($id))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    # CARD-1697: off-runner rows and lands are outside the bound-only compared closure and stay receipted.
+                    jq -e '.open.tasks=={} and .open.land=={} and .open.scopes=={} and .land.tasks=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    jq -e --arg id "$appeared" '(.tasks[$id]|has("landRequest")) and .tasks[$id].landRequest==null' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null || extra=receipt
                 fi
                 if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
                     printf 'PASS host-%s\n' "$name"
@@ -2519,8 +2532,12 @@ public sealed class RollingVolumeRecycleScriptTests
                     printf 'FAIL host-%s status=%s extra=%s error=%s\n' "$name" "$status" "$extra" "$C1008_TASK_ERROR"
                 fi
             }
-            probe appears-with-land-timestamp appears-with-land-timestamp unstable desktop
-            probe appears-with-land-started appears-with-land-started unstable desktop
+            # CARD-1697: an off-runner row with a land timestamp is outside the compared closure; a bound one
+            # still refuses RecycleLandInFlight on sight.
+            probe appears-with-land-timestamp appears-with-land-timestamp pass desktop
+            probe appears-with-land-started appears-with-land-started pass desktop
+            probe appears-with-land-timestamp-bound appears-with-land-timestamp land-in-flight server2
+            probe appears-with-land-started-bound appears-with-land-started land-in-flight server2
             probe appears-in-land-closure-bound appears-in-land-closure land-in-flight server2
             probe appears-in-land-closure-other appears-in-land-closure pass desktop
             printf 'HOST_DONE\n'
@@ -2640,7 +2657,9 @@ public sealed class RollingVolumeRecycleScriptTests
             details="$(jq -nc --arg id "$id" --argjson row "$blocked" '{($id):{summary:$row,landRequest:{state:"Running",terminalEventId:null}}}')"
             c1008_tasks > "$root/snapshot.json" || status=$?
             [ "$status" = 0 ] || ok=status
-            [ "$ok" != ok ] || jq -e --arg id "$id" '.open.land[$id] == {state:"Running",terminalEventId:null}' "$root/snapshot.json" >/dev/null || ok=proof
+            # CARD-1697: the compared open closure is bound-only, so the proof is checked in the receipt.
+            [ "$ok" != ok ] || jq -e '.open.tasks == {} and .open.land == {}' "$root/snapshot.json" >/dev/null || ok=snapshot
+            [ "$ok" != ok ] || jq -e --arg id "$id" '.tasks[$id].landRequest == {state:"Running",terminalEventId:null}' "$receipt" >/dev/null || ok=proof
             verdict off-runner-in-flight-detail "$ok" "$status"
 
             # match-record-ignores-off-runner-land: a containersRemoved record with no lands matches a

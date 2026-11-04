@@ -3824,6 +3824,10 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1105. After phase recreating, a journal task may finish and another runner may open
     // work. One flip from the matching recreating journal per row. Preflight keeps the byte compare.
+    // CARD-1697: the journaled open closure is bound-only, so the server2-temp task is not journaled and
+    // its rebinding elsewhere or off-runner churn passes; a journal row (injected bound to server2) that
+    // finishes still passes after removal and still refuses the preflight byte compare, and a task bound
+    // to server2 or rebinding to it still refuses.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
     [Arguments("matching", 0, "", Categories = ["c1105-matching"])]
@@ -3831,7 +3835,8 @@ public sealed class RemoteScriptContractTests
     [Arguments("new-temp", 0, "", Categories = ["c1105-new-temp"])]
     [Arguments("new-desktop", 0, "", Categories = ["c1105-new-desktop"])]
     [Arguments("new-server2", 2, "RecycleBoundTasks 44444444-4444-4444-4444-444444444444 status=Blocked runner=server2", Categories = ["c1105-new-server2"])]
-    [Arguments("rebound", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-rebound"])]
+    [Arguments("rebound", 0, "", Categories = ["c1105-rebound"])]
+    [Arguments("rebound-server2", 2, "RecycleBoundTasks 22222222-2222-2222-2222-222222222222 status=Dispatched runner=server2", Categories = ["c1105-rebound-server2"])]
     [Arguments("preflight", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-preflight"])]
     [Arguments("missing-phase", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-missing-phase"])]
     [Arguments("bad-tasks", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-bad-tasks"])]
@@ -3840,13 +3845,14 @@ public sealed class RemoteScriptContractTests
     // recycled runner (server2 here). A server2-temp land finishing during the recycle passes.
     [Arguments("land", 2, "RecycleLandInFlight 44444444-4444-4444-4444-444444444444", Categories = ["c1105-land"])]
     [Arguments("land-other", 0, "", Categories = ["c1105-land-other"])]
-    [Arguments("unstable", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-unstable"])]
+    [Arguments("off-runner-churn", 0, "", Categories = ["c1105-off-runner-churn"])]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_post_removal_census_tracks_open_work(string flip, int expect, string token)
     {
         C1008HostFixture.RequireNativeLinux();
         const string kept = "22222222-2222-2222-2222-222222222222";
         const string added = "44444444-4444-4444-4444-444444444444";
+        const string journaled = "55555555-5555-5555-5555-555555555555";
         using var fixture = new C1008HostFixture();
         C1105AddOpenTask(fixture, kept, "server2-temp");
         var saved = await fixture.Run(extra: C1105RecreatingSaveTail);
@@ -3855,7 +3861,8 @@ public sealed class RemoteScriptContractTests
         var journalPath = C1105Journal(fixture);
         var record = JsonNode.Parse(File.ReadAllText(journalPath))!.AsObject();
         record["phase"]!.GetValue<string>().ShouldBe("recreating", saved.Output);
-        record["tasks"]!["open"]!["tasks"]![kept]!["runnerId"]!.GetValue<string>().ShouldBe("server2-temp");
+        record["tasks"]!["open"]!["tasks"]!.AsObject().ContainsKey(kept).ShouldBeFalse("CARD-1697: the journaled open closure is bound-only; " + record.ToJsonString());
+        record["tasks"]!["open"]!["land"]!.AsObject().ContainsKey(kept).ShouldBeFalse("CARD-1697: no off-runner land proof is journaled");
         fixture.ReloadDocker();
         var removed = fixture.Removed.Length;
         if (flip == "terminal" || flip == "preflight" || flip == "verified")
@@ -3868,17 +3875,30 @@ public sealed class RemoteScriptContractTests
             C1105AddOpenTask(fixture, added, "server2", "Blocked");
         else if (flip == "rebound")
             C1105SetRunner(fixture, kept, "desktop");
+        else if (flip == "rebound-server2")
+            C1105SetRunner(fixture, kept, "server2");
         else if (flip is "land" or "land-other")
             C1105AddOpenTask(fixture, added, flip == "land" ? "server2" : "server2-temp", "Succeeded", requested: "2020-01-01T00:00:00Z");
+        if (flip is "terminal" or "preflight" or "verified")
+        {
+            // A journaled bound row the live census no longer lists (it finished after removal).
+            var finished = new JsonObject
+            {
+                ["id"] = journaled, ["status"] = "Dispatched", ["runnerId"] = "server2", ["projectId"] = C994TaskVectors.Project,
+                ["scopeSource"] = "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null
+            };
+            record["tasks"]!["open"]!["tasks"]![journaled] = finished;
+            record["tasks"]!["open"]!["land"]![journaled] = null;
+        }
         if (flip == "preflight") record["phase"] = "preflight";
         else if (flip == "verified") record["phase"] = "verified";
         else if (flip == "missing-phase") record.Remove("phase");
         else if (flip == "bad-tasks") record["tasks"] = new JsonArray();
-        if (flip is "preflight" or "verified" or "missing-phase" or "bad-tasks")
+        if (flip is "terminal" or "preflight" or "verified" or "missing-phase" or "bad-tasks")
             File.WriteAllText(journalPath, record.ToJsonString());
         var before = File.ReadAllText(journalPath);
         var extra = "C1008_RESUME=1\n" + C1105RecreatingResumeTail;
-        if (flip == "unstable")
+        if (flip == "off-runner-churn")
         {
             C1105WriteDrift(fixture, added);
             extra += "\n" + C1105UnstableHttp;

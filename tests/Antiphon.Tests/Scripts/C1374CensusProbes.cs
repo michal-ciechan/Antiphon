@@ -157,9 +157,13 @@ internal static class C1374CensusProbes
             // Compare the exact path/count map, independently of dictionary insertion order.
             paths.GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderBy(p => p.Key, StringComparer.Ordinal)
                 .ShouldBe(expectedCounts.OrderBy(p => p.Key, StringComparer.Ordinal), v.Name + " exactly two passes, retry only failed GET");
-            receipt["snapshot"]!["open"]!["tasks"]![Id]!["status"]!.GetValue<string>().ShouldBe("Blocked", v.Name);
-            receipt["snapshot"]!["open"]!["land"]!.AsObject().ContainsKey(Id).ShouldBeTrue(v.Name);
-            receipt["snapshot"]!["open"]!["land"]![Id].ShouldBeNull(v.Name);
+            // CARD-1697: the compared open closure is bound-only; the receipt keeps the walked row and its proof.
+            receipt["snapshot"]!["open"]!["tasks"]!.AsObject().Count.ShouldBe(0, v.Name + " bound-only compared closure");
+            var tasks = receipt["tasks"]!;
+            var recorded = (tasks is JsonArray list ? list.Single(t => t!["id"]!.GetValue<string>() == Id) : tasks[Id])!.AsObject();
+            recorded["status"]!.GetValue<string>().ShouldBe("Blocked", v.Name);
+            recorded.ContainsKey("landRequest").ShouldBeTrue(v.Name);
+            recorded["landRequest"].ShouldBeNull(v.Name);
         }
         else
         {
