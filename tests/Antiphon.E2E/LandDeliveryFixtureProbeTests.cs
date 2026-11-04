@@ -7,6 +7,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.TestSupport;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -209,6 +210,7 @@ public class LandDeliveryFixtureProbeTests
             end.GetProperty("passed").GetBoolean().ShouldBeTrue();
             end.GetProperty("operationId").GetGuid().ShouldBe(correlation.OperationId);
             end.GetProperty("requestId").GetGuid().ShouldBe(correlation.RequestId!.Value);
+            inner.Correlation.ShouldBe(correlation, "the decorator forwards the land's correlation");
             f.ProtocolProgress().ShouldBe(Directory.GetFiles(f.Root, "protocol-verify-*.json").Length);
         }
         finally
@@ -240,11 +242,121 @@ public class LandDeliveryFixtureProbeTests
         finally { Directory.Delete(f.Root, recursive: true); }
     }
 
-    private sealed class HeldVerifier : ILandingVerifier
+    /// <summary>
+    /// CARD-1703 A-1: the fixture registers the evidence decorator over the real verifier and forwards
+    /// the land's correlation (task, operation, request, artifacts, common directory, window) to it.
+    /// Linux-runnable: only the C467 E2E boots the server, and it is Windows-only.
+    /// </summary>
+    [Test]
+    public async Task Fixture_wraps_the_registered_verifier_and_forwards_its_correlation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1703-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var services = new ServiceCollection();
+        // Program.cs registers the verifier by implementation type.
+        services.AddSingleton<VerifierCalls>();
+        services.AddSingleton<ILandingVerifier, RecordingVerifier>();
+        new LandDeliveryOptions(root).ConfigureServices(services);
+        await using var provider = services.BuildServiceProvider();
+        try
+        {
+            var verifier = provider.GetRequiredService<ILandingVerifier>();
+            verifier.ShouldBeOfType<LandVerifierEvidence>("the land verifier is recorded as receipt-wait progress");
+            var calls = provider.GetRequiredService<VerifierCalls>();
+            var correlation = new LandingVerificationCorrelation(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                Path.Combine(root, "artifacts"), Path.Combine(root, "common"), Guid.NewGuid());
+            (await verifier.VerifyAsync(Path.Combine(root, "land"), "filter", correlation, CancellationToken.None))
+                .Passed.ShouldBeTrue();
+            calls.Correlations.ShouldHaveSingleItem().ShouldBe(correlation, "the whole correlation reaches the real verifier");
+            calls.Plain.ShouldBe(0);
+            string[] Records() => Directory.GetFiles(root, "protocol-verify-*.json");
+            var records = Records().Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement).ToArray();
+            records.Select(r => r.GetProperty("phase").GetString()).Order().ShouldBe(["end", "start"]);
+            foreach (var record in records)
+            {
+                record.GetProperty("operationId").GetGuid().ShouldBe(correlation.OperationId);
+                record.GetProperty("requestId").GetGuid().ShouldBe(correlation.RequestId!.Value);
+            }
+            (await verifier.VerifyAsync(Path.Combine(root, "land"), null, CancellationToken.None)).Passed.ShouldBeTrue();
+            calls.Plain.ShouldBe(1, "an uncorrelated verification stays uncorrelated");
+            calls.Correlations.Count.ShouldBe(1);
+            Records().Length.ShouldBe(4);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>
+    /// CARD-1703 A-2: on a coarse file clock the last records of one verification share a write
+    /// time. The diagnostic names the last record written, whichever order the directory lists them.
+    /// </summary>
+    [Test]
+    public async Task Stalled_receipt_names_the_last_verifier_record_when_write_times_tie()
+    {
+        await using var f = new LandDeliveryFixture();
+        Directory.CreateDirectory(f.Root);
+        try
+        {
+            var verifier = new LandVerifierEvidence(f.Root, new HeldVerifier(new LandingVerification(true, "build OK")));
+            var correlation = new LandingVerificationCorrelation(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+            (await verifier.VerifyAsync(Path.Combine(f.Root, "land"), null, correlation, CancellationToken.None)).Passed.ShouldBeTrue();
+            var paths = Directory.GetFiles(f.Root, "protocol-verify-*.json");
+            paths.Length.ShouldBe(2, "start and end; the inner verification completed before any heartbeat");
+            var tie = new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc);
+            var contents = paths.Select(File.ReadAllBytes).ToArray();
+            // Both assignments of the two records to the same two directory entries: one of them lists
+            // the start record first.
+            foreach (var swap in new[] { false, true })
+            {
+                for (var i = 0; i < paths.Length; i++)
+                {
+                    File.WriteAllBytes(paths[i], contents[swap ? paths.Length - 1 - i : i]);
+                    File.SetLastWriteTimeUtc(paths[i], tie);
+                }
+                var end = paths.Single(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement
+                    .GetProperty("phase").GetString() == "end");
+                var error = await f.ReceiptTimeoutAsync(new TimeoutException("quiet 60s"), LandNotificationKind.Outcome,
+                    correlation.RequestId, null, _ => Task.FromResult("operation=Prepared"));
+                error.Message.ShouldContain("lastProtocolVerify=" + end + " phase=end", customMessage: "swap=" + swap);
+            }
+        }
+        finally { Directory.Delete(f.Root, recursive: true); }
+    }
+
+    private sealed class HeldVerifier(LandingVerification? completed = null) : ILandingVerifier
     {
         private readonly TaskCompletionSource<LandingVerification> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public LandingVerificationCorrelation? Correlation { get; private set; }
         public void Complete(LandingVerification result) => _result.TrySetResult(result);
-        public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct) => _result.Task;
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
+            => completed is { } result ? Task.FromResult(result) : _result.Task;
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter,
+            LandingVerificationCorrelation correlation, CancellationToken ct)
+        {
+            Correlation = correlation;
+            return VerifyAsync(worktree, filter, ct);
+        }
+    }
+
+    private sealed class VerifierCalls
+    {
+        public List<LandingVerificationCorrelation> Correlations { get; } = [];
+        public int Plain;
+    }
+
+    private sealed class RecordingVerifier(VerifierCalls calls) : ILandingVerifier
+    {
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
+        {
+            calls.Plain++;
+            return Task.FromResult(new LandingVerification(true, "build OK"));
+        }
+
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter,
+            LandingVerificationCorrelation correlation, CancellationToken ct)
+        {
+            calls.Correlations.Add(correlation);
+            return Task.FromResult(new LandingVerification(true, "build OK"));
+        }
     }
 
     [Test]
