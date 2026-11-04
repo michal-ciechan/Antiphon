@@ -905,13 +905,18 @@ public sealed class LandingRemovalPolicyControlTests
         }
     }
 
-    // A nested repository is preserved on purpose: it is never a transient refusal.
+    // A nested repository is preserved on purpose: it is never a transient refusal. It appears in the
+    // set-aside tree after the last reading, so only the delete's own census finds it.
     [Test]
     public async Task C448_V36_PreservedNestedRepositoryIsNeverRetried()
     {
         using var f = new RemovalFixture();
-        Directory.CreateDirectory(Path.Combine(f.Source, "vendor", "lib"));
-        File.WriteAllText(Path.Combine(f.Source, "vendor", "lib", ".git"), "gitdir: elsewhere\n");
+        f.BeforeUnregister = () =>
+        {
+            var nested = Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "vendor", "lib");
+            Directory.CreateDirectory(nested);
+            File.WriteAllText(Path.Combine(nested, ".git"), "gitdir: elsewhere\n");
+        };
         f.HealDelete();
         var pass = await f.RemoveDirectoryAsync();
         var aside = f.SetAsideTrees().ShouldHaveSingleItem();
