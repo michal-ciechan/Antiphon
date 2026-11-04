@@ -342,6 +342,49 @@ public sealed class AttentionFeedNoiseTests
             .ShouldBe("Land Outcome notification: AwaitingReceipt; attempted; receipt unconfirmed");
     }
 
+    /// <summary>
+    /// rc b19a9880 C467_V32(attempt): an Aged notice is itself an unconfirmed receipt and is listed
+    /// only once it is LandWarningSeconds old. When the monitor writes the Warning and Error notices
+    /// in one sweep both are fresh, so the collapsed row is the attempted Outcome; when the Warning
+    /// notice is older than the threshold it is the newest listed receipt and its headline wins.
+    /// </summary>
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C467_V32_Collapsed_headline_is_the_newest_listed_receipt(bool warningAged)
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 60);
+        var outcome = await scenario.AddUnconfirmedLandNoteAsync(task, session, DateTime.UtcNow.AddMinutes(-16));
+        var warning = await scenario.AddUnconfirmedLandNoteAsync(task, session,
+            warningAged ? DateTime.UtcNow.AddMinutes(-10) : DateTime.UtcNow.AddSeconds(-2), LandNotificationKind.Aged);
+        var error = await scenario.AddUnconfirmedLandNoteAsync(task, session, DateTime.UtcNow.AddSeconds(-1), LandNotificationKind.Aged);
+        var row = await scenario.AddQueuedMessageAsync(session, "outcome receipt", attempts: 1);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        {
+            var notes = await db.AgentTaskLandNotifications
+                .Where(n => n.Id == outcome || n.Id == warning || n.Id == error).ToListAsync();
+            notes.Single(n => n.Id == outcome).QueueMessageId = row;
+            foreach (var aged in notes.Where(n => n.Id != outcome))
+            {
+                aged.State = LandNotificationState.Queued;
+                aged.QueueMessageId = null;
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var items = await ReadOwnedAsync(scenario);
+
+        var owed = items.Where(i => i.TaskId == task && i.Kind == AttentionKind.LandOutcomeUnconfirmed).ShouldHaveSingleItem();
+        owed.Severity.ShouldBe(AlertSeverity.Error);
+        owed.LandNotificationId.ShouldBe(warningAged ? warning : outcome);
+        owed.Headline.ShouldBe(warningAged
+            ? "Land Aged notification: Queued; not yet enqueued"
+            : "Land Outcome notification: AwaitingReceipt; attempted; receipt unconfirmed");
+        owed.Evidence.ShouldStartWith(warningAged ? "receipts=2\n" : "receipts=1\n");
+    }
+
     private static List<AttentionItemDto> LegacyRows(List<AttentionItemDto> items, Guid taskId) =>
         items.Where(i => i.TaskId == taskId && i.Kind == AttentionKind.LandLegacyUnverified).ToList();
 
