@@ -464,17 +464,17 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
 
         await w.AssertRetiredAsync(control, origin);
-        var status = w.Fixture.Git.Commands.Where(c => LandingGit.PathsEqual(c.Directory, a.Path)
-            && DesktopLegacyWorld.Subcommand(c.Arguments) == "status").ToList();
-        status.ShouldNotBeEmpty("the pre-check read the tree's status");
-        status.ShouldAllBe(c => c.Arguments.Take(2).SequenceEqual(new[] { "-c", "core.longpaths=true" }),
-            "git for Windows sees a path past MAX_PATH only with core.longpaths");
         var row = await w.RowAsync(tick.RunId, a);
         row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
         row.ReasonCode.ShouldBe(shape == "unreadable-directory" ? "status_untrusted" : "source_dirty");
         await w.AssertIntactAsync(a, before);
         File.Exists(Path.Combine(a.Path, hidden, "unsaved.txt")).ShouldBeTrue("the untracked file is kept");
         (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is kept");
+        var status = w.Fixture.Git.Commands.Where(c => LandingGit.PathsEqual(c.Directory, a.Path)
+            && DesktopLegacyWorld.Subcommand(c.Arguments) == "status").ToList();
+        status.ShouldNotBeEmpty("the pre-check read the tree's status");
+        status.ShouldAllBe(c => c.Arguments.Take(2).SequenceEqual(new[] { "-c", "core.longpaths=true" }),
+            "git for Windows sees a path past MAX_PATH only with core.longpaths");
     }
 
     /// <summary>V-11/G-33/G-34: ignored files go through the CARD-0665 gate (evidence retained, protected refused).</summary>
