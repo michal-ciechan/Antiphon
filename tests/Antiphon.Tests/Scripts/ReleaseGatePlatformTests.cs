@@ -43,7 +43,7 @@ public sealed class ReleaseGatePlatformTests
     // and any use of the name outside a canonical marker line, a comment line or an exempt file's reference forms.
     [Test]
     public Task C1686_LinuxOnlyCensus() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 33,
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1686_LinuxOnlyCensus", 34,
             "C1323 c1686-consistent-census-passes", "C1323 c1686-class-marker-without-row-fails",
             "C1323 c1686-method-marker-without-row-fails", "C1323 c1686-row-without-marker-fails",
             "C1323 c1686-row-attribution-fails", "C1323 c1686-marker-outside-suite-fails",
@@ -59,6 +59,7 @@ public sealed class ReleaseGatePlatformTests
             "C1323 c1686-fail-closed-empty-block-comment-prefix", "C1323 c1686-fail-closed-block-comment-close-prefix",
             "C1323 c1686-fail-closed-indented-block-comment-prefix", "C1323 c1686-fail-closed-exempt-file-stacked-marker",
             "C1323 c1686-fail-closed-exempt-file-attribute-list-line", "C1323 c1686-fail-closed-exempt-file-block-comment-prefix",
+            "C1323 c1686-fail-closed-exempt-file-string-before-marker",
             "C1323 c1686-fail-closed-reflection-outside-exempt-file", "C1323 c1686-comments-are-not-markers",
             "C1323 c1686-exempt-file-references-pass");
 
