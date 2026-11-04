@@ -87,9 +87,12 @@ Continuing the plan's numbering would collide with the S2 test design, so these 
   floor is dropped. On the 705G volume, 85 percent used leaves 106G free, which is already stricter.
   Rejected: a second kind or condition, which would be two alarms for one fact.
 - **A-D-3 S1c: canary and soft rollback through a hot-reloaded role allow-list.** The setting is
-  `Delegation:WorkspaceSlotRoles` (string array, read through `IOptionsMonitor` at lease time).
-  - `null` (the default) means every role, which keeps S1's semantics.
-  - `[]` means no new leases. The reconciler is unaffected and keeps releasing.
+  `Delegation:WorkspaceSlotRoles`, one string read through `IOptionsMonitor` at lease time (corrected by
+  the S1c test design, 2026-11-03, T-D-1..T-D-6).
+  - `"*"` (the default) means every role except Mutation, which keeps S1's semantics.
+  - `"none"` means no new leases (the soft rollback). The reconciler is unaffected and keeps releasing.
+  - Otherwise a comma-separated list of exact-case role names (`"Plan,Docs"`).
+  - An array value is refused: `[]` binds to `null`, which would widen the canary to every role.
   - Mutation and SourceLanding never lease, whatever the list says (plan D-8).
 
   Rejected alternatives:
@@ -341,8 +344,8 @@ Server: `tests/Antiphon.Tests/Application/C0824SlotAttentionTests.cs`.
 ### 4.1 S1c: role allow-list (server only, before the canary)
 
 **Files.**
-- `server/Application/Settings/DelegationSettings.cs` (`WorkspaceSlotRoles`, `string[]?`, default
-  `null`).
+- `server/Application/Settings/DelegationSettings.cs` (`WorkspaceSlotRoles`, `string`, default
+  `"*"`; the S1c test design T-D-1 grammar).
 - `server/Application/Services/RemoteWorkspaceService.cs`: read `IOptionsMonitor<DelegationSettings>`
   at `MirrorAsync`, and add the role term to `:218`.
 - `server/Program.cs` (the monitor is already registered with options).
@@ -355,17 +358,18 @@ Server: `tests/Antiphon.Tests/Application/C0824SlotAttentionTests.cs`.
 
 **Tests**: `tests/Antiphon.Tests/Application/C0824WorkspaceSlotRoleGateTests.cs`, using the existing
 `C0824SlotTransportWorld`.
-- R-1 with `null`, every role on a slot-capable runner sends `Slot=true` (S1 unchanged) [treat null
-  as empty].
-- R-2 `["Plan"]`: a Plan task sends `Slot=true`, while a Code task sends the legacy request shape,
+- R-1 with `"*"`, every role except Mutation on a slot-capable runner sends `Slot=true` (S1
+  unchanged) [treat `*` as none].
+- R-2 `"Plan"`: a Plan task sends `Slot=true`, while a Code task sends the legacy request shape,
   byte-equal to the flag-off request (CP-5's comparer) [ignore the list].
-- R-3 `[]`: no lease is requested, and the reconciler still releases an already-leased slot [gate the
+- R-3 `"none"`: no lease is requested, and the reconciler still releases an already-leased slot [gate the
   reconciler on the list].
 - R-4 a changed monitor value applies to the next `MirrorAsync` with no restart [read once in the
   constructor].
 - R-5 Mutation with SourceLanding never leases, even when listed [list overrides D-8].
-- R-6 role names are matched by enum name, case-insensitively. An unknown name is a startup warning
-  and matches nothing [ordinal or throw].
+- R-6 role names are matched by enum name, ordinally in canonical case. Other case, an unknown name,
+  `Mutation`, an empty entry or an array value is refused by validation, and an invalid reload leases
+  nothing [case-insensitive, or an unknown name read as all].
 
 Regression: `C0824WorkspaceSlotServerTests` (14 methods).
 
@@ -458,7 +462,7 @@ Regression: `C0824WorkspaceSlotServerTests` (14 methods).
 ### 4.6 Widening
 
 1. After a clean canary: add Review and Code (Q-4 wave 2) for 48 h.
-2. Then remove the list (`null`, all roles).
+2. Then set `WorkspaceSlotRoles="*"` (the default: every role except Mutation).
 3. Before step 2, land S4b, so that quarantines reach the attention feed rather than a 12-hourly read.
 4. **CARD-1677 interaction while widening.**
    - The legacy population stops growing on server2 once all roles lease. Retention then drains the
