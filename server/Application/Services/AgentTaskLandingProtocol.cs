@@ -982,7 +982,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         foreach (var file in files)
         {
             if (shown.Count == ConflictListMaxNames) break;
-            var name = file.Length <= ConflictNameMaxLength ? file : file[..(ConflictNameMaxLength - 3)] + "...";
+            var name = file.Length <= ConflictNameMaxLength ? file : Clip(file, ConflictNameMaxLength - 3) + "...";
             var next = length + (shown.Count > 0 ? 2 : 0) + name.Length;
             if (next > maxLength - ConflictListSuffixReserve) break;
             shown.Add(name);
@@ -991,7 +991,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var rest = files.Count - shown.Count;
         var text = string.Join(", ", shown);
         if (rest > 0) text += (shown.Count > 0 ? ", " : "") + $"... and {rest} more";
-        return text.Length <= maxLength ? text : text[..Math.Max(0, maxLength)];
+        return Clip(text, Math.Max(0, maxLength));
+    }
+
+    // CARD-1637 D-1 r2: half a surrogate pair is not valid UTF-8, and Npgsql then throws at save.
+    private static string Clip(string text, int length)
+    {
+        if (text.Length <= length) return text;
+        return text[..(length > 0 && char.IsHighSurrogate(text[length - 1]) ? length - 1 : length)];
     }
 
     internal static string MergeRoleDetail(AgentTaskLanding op, bool containsTarget, IReadOnlyList<string> files)
@@ -1010,7 +1017,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             + "No rebase resolver was spawned.";
         var budget = Math.Min(ConflictListMaxLength, MergeRoleDetailMaxLength - Text("").Length);
         var detail = Text(ConflictFileSummary(files, Math.Max(budget, ConflictListSuffixReserve)));
-        return detail.Length <= MergeRoleDetailMaxLength ? detail : detail[..MergeRoleDetailMaxLength];
+        return Clip(detail, MergeRoleDetailMaxLength);
     }
 
     private async Task TransitionAsync(AgentTaskLanding op, LandPhase next, CancellationToken ct)
