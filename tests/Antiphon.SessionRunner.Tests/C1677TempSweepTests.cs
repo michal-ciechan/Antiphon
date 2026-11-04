@@ -25,6 +25,8 @@ public sealed class C1677TempSweepTests
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "c1677-tmp-" + Guid.NewGuid().ToString("N"));
         public string Tmp => Root + "/tmp";
         public FakeHolderScan Holders { get; } = new();
+        /// <summary>The scripted owner uid, always called with '/' separators: on Windows the engine walks
+        /// <see cref="FileSystemInfo.FullName"/>, which normalises every separator to a backslash (run 766e3df5 group 1).</summary>
         public Func<string, int?> Owner { get; set; } = _ => Uid;
         public HashSet<string> Present { get; } = new(StringComparer.Ordinal);
         public List<string> Probed { get; } = [];
@@ -34,7 +36,7 @@ public sealed class C1677TempSweepTests
 
         public RunnerTempSweep Sweep(TempSweepLimits? limits = null, IReadOnlyList<TempFamily>? families = null,
             IWorkspaceHolderScan? holders = null) =>
-            new(Tmp, families ?? RunnerTempSweep.RegisteredFamilies, holders ?? Holders, path => Owner(path), Uid, Clock,
+            new(Tmp, families ?? RunnerTempSweep.RegisteredFamilies, holders ?? Holders, path => Owner(path.Replace('\\', '/')), Uid, Clock,
                 limits ?? new TempSweepLimits(), path =>
                 {
                     Probed.Add(path);
@@ -216,6 +218,25 @@ public sealed class C1677TempSweepTests
         s.Owner = p => p.EndsWith("/deep/theirs.txt", StringComparison.Ordinal) ? Uid + 1 : Uid;
         var response = await s.Sweep().SweepAsync(Request(), ct);
         KeptIntact(response, name, TempSweepCodes.ForeignOwner, path, files: 4);
+    }
+
+    [Test]
+    [Arguments("entry")]
+    [Arguments("descendant")]
+    public async Task Undeterminable_owner_keeps_the_entry(string where, CancellationToken ct)
+    {
+        // Fail closed: an owner the platform cannot read (null, as off Linux) never counts as the runner's.
+        using var s = new Scratch();
+        var name = "antiphon-land-verify-" + Hex32();
+        var path = s.Entry(name, TimeSpan.FromHours(49));
+        Directory.CreateDirectory(path + "/deep");
+        File.WriteAllText(path + "/deep/unknown.txt", "x");
+        s.Age(path, TimeSpan.FromHours(49));
+        s.Owner = where == "entry"
+            ? p => p == path.Replace('\\', '/') ? null : Uid
+            : p => p.EndsWith("/deep/unknown.txt", StringComparison.Ordinal) ? null : Uid;
+        var response = await s.Sweep().SweepAsync(Request(), ct);
+        KeptIntact(response, name, TempSweepCodes.OwnerUnknown, path, files: 4);
     }
 
     [Test]
