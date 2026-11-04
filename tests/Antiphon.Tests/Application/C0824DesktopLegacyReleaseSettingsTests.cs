@@ -175,6 +175,24 @@ public sealed class C0824DesktopLegacyReleaseSettingsTests
         await Task.CompletedTask;
     }
 
+    /// <summary>
+    /// CARD-0824 S4a survivor X-18 (T-D-6): an unreadable RunnerWorktreeRetention setting counts as listed, so the
+    /// mirror is left (the runner decides); only a readable list that omits the runner lets the desktop remove it.
+    /// </summary>
+    [Test]
+    [Arguments("listed", true)]
+    [Arguments("unlisted", false)]
+    [Arguments("unreadable", true)]
+    public async Task Unreadable_retention_setting_counts_as_listed(string shape, bool owned)
+    {
+        var retention = new MutableMonitor<RunnerWorktreeRetentionSettings>(new RunnerWorktreeRetentionSettings());
+        if (shape == "listed") retention.Value.Runners.Add("runner-c0824");
+        if (shape == "unreadable")
+            retention.Fault = new OptionsValidationException("", typeof(RunnerWorktreeRetentionSettings), ["c0824 invalid retention"]);
+        TaskWorktreeRetirementService.MirrorOwnedByRetention("runner-c0824", retention).ShouldBe(owned);
+        await Task.CompletedTask;
+    }
+
     private static ServiceProvider Provider(IConfiguration configuration)
     {
         var services = new ServiceCollection();

@@ -86,17 +86,26 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         tick.Retired.ShouldBe(1);
     }
 
-    /// <summary>V-7/G-11/G-12: CompletedAt at least 48 h old; a null CompletedAt is settling.</summary>
+    /// <summary>
+    /// V-7/G-11/G-12: CompletedAt at least 48 h old (exactly 48 h is eligible); a null CompletedAt is settling. CARD-0824
+    /// S4a survivor PC-11: CompletedAt round-trips Postgres at microsecond precision, so the clock starts on a whole
+    /// second and the "48h" case is exact; one microsecond inside the window is still settling.
+    /// </summary>
     [Test]
     [Arguments("47h59m")]
     [Arguments("48h")]
+    [Arguments("48h-minus-1us")]
     [Arguments("null")]
     public async Task Age_floor_is_48_hours(string age)
     {
         await using var w = await DesktopLegacyWorld.CreateAsync();
+        w.Clock.Advance(TimeSpan.FromTicks(TimeSpan.TicksPerSecond - w.Now.Ticks % TimeSpan.TicksPerSecond));
         var control = await w.AddTaskAsync(ageHours: 60);
-        var a = await w.AddTaskAsync(t => { if (age == "null") t.CompletedAt = null; },
-            ageHours: age == "47h59m" ? 47 + 59 / 60.0 : 48);
+        var a = await w.AddTaskAsync(t =>
+        {
+            if (age == "null") t.CompletedAt = null;
+            if (age == "48h-minus-1us") t.CompletedAt = w.Now.AddHours(-48).AddTicks(10);
+        }, ageHours: age == "47h59m" ? 47 + 59 / 60.0 : 48);
         var origin = await w.OriginRefsAsync();
         var before = await w.SnapshotAsync(a.Path);
         w.ClearTrace();
@@ -150,11 +159,14 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("sync-Held", "sync_debt")]
     [Arguments("path-shared", "path_shared")]
     [Arguments("live-session", "live_session")]
+    [Arguments("live-session-event-linked", "live_session")]
     [Arguments("result-null", "report_missing")]
     [Arguments("child-open", "dependent_open")]
     [Arguments("startref-open", "dependent_open")]
     [Arguments("startref-queued", "dependent_open")]
     [Arguments("startref-queued-origin", "dependent_open")]
+    [Arguments("startref-queued-refs-heads", "dependent_open")]
+    [Arguments("startref-open-refs-heads", "dependent_open")]
     [Arguments("basetask-queued", "dependent_open")]
     [Arguments("mutation", "mutation_excluded")]
     [Arguments("source-landing", "source_landing_excluded")]
@@ -176,7 +188,7 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             db.AgentTaskLandings.Add(Landing(landingId.Value, owner, w.Now, active: false));
             await db.SaveChangesAsync();
         }
-        if (predicate == "live-session")
+        if (predicate is "live-session" or "live-session-event-linked")
         {
             await using var db = w.Db();
             db.AgentSessions.Add(new AgentSession
@@ -229,6 +241,22 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 case "startref-open":
                     // WorktreeBaseRef is the base a provisioned task was cut from (CARD-0508).
                     db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.Branch; }));
+                    break;
+                case "live-session-event-linked":
+                    // CARD-0824 S4a survivor X-13b: the task row names no session; only an event links the Running one.
+                    db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(), AgentTaskId = a.Id, AgentSessionId = sessionId, Type = AgentTaskEventType.Dispatched,
+                        Detail = "c0824 event-linked session", At = w.Now,
+                    });
+                    break;
+                case "startref-open-refs-heads":
+                    // CARD-0824 S4a survivor PC-21e: the full-ref spelling of a provisioned base.
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.FullRef; }));
+                    break;
+                case "startref-queued-refs-heads":
+                    // CARD-0824 S4a survivor PC-21e: DelegationWorktreeService accepts a start ref spelled refs/heads/<branch>.
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Queued; t.WorktreeBaseRequestedRef = a.FullRef; }));
                     break;
                 case "startref-queued" or "startref-queued-origin":
                     // Review 1dcb8d90 D-1: a queued delegate.ps1 -StartRef holds only WorktreeBaseRequestedRef until it is
@@ -498,6 +526,8 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("master-branch", "outside_scope")]
     [Arguments("rc-branch", "outside_scope")]
     [Arguments("rc-candidate-dir", "outside_root")]
+    [Arguments("nested-under-root", "outside_root")]
+    [Arguments("outside-root-normalized", "outside_root")]
     public async Task Only_ordinary_card_task_leaves_are_candidates(string shape, string reason)
     {
         await using var w = await DesktopLegacyWorld.CreateAsync();
@@ -530,6 +560,13 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             case "rc-branch":
                 await w.Fixture.RequiredAsync(w.Fixture.Repository, "branch", "rc/2026-11-04", "master");
                 a = await w.AddTaskAsync(t => t.WorktreeBranch = "rc/2026-11-04", id: id, shape: "base-only");
+                break;
+            case "nested-under-root":
+                // CARD-0824 S4a survivor X-11: normalized, absolute, the right leaf, but not a direct child of the root.
+                a = await w.AddTaskAsync(id: id, path: Path.Combine(w.Root, "nested", "card-task-" + id8));
+                break;
+            case "outside-root-normalized":
+                a = await w.AddTaskAsync(id: id, path: Path.Combine(w.Fixture.Root, "elsewhere", "card-task-" + id8));
                 break;
             default:
                 a = await w.AddTaskAsync(id: id, shape: "none",
@@ -1327,6 +1364,251 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         row.ReasonCode.ShouldBe("release_active_other");
         (await w.ReleasesAsync(a)).Single().State.ShouldBe(WorktreeRetirementState.Released);
         Directory.Exists(a.Path).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a survivor X-26: a clean, pushed tree whose HEAD is detached at its branch tip passes the policy
+    /// pre-check (which never reads symbolic-ref), so the guarded removal's identity check is its only guard. Before or
+    /// after filing, the removal refuses <c>detached_head</c> and the tree, registration and branch stay.
+    /// </summary>
+    [Test]
+    [Arguments("before-filing")]
+    [Arguments("after-filing")]
+    public async Task Detached_head_tree_is_never_released(string when)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var control = await w.AddTaskAsync(ageHours: 50);
+        var origin = await w.OriginRefsAsync();
+        var head = (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim();
+        var fired = false;
+        if (when == "before-filing")
+            await w.Fixture.RequiredAsync(a.Path, "checkout", "--detach");
+        else
+        {
+            w.Host.RetirementCut.Cut = "release-after";
+            w.Host.RetirementCut.Pause = async () =>
+            {
+                if (fired) return;
+                fired = true;
+                w.Host.RetirementCut.Cut = null;
+                await w.Fixture.RequiredAsync(a.Path, "checkout", "--detach");
+            };
+        }
+
+        var tick = await w.TickAsync();
+
+        if (when == "after-filing") fired.ShouldBeTrue("the cut fired on the detached task's release save");
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Refused));
+        row.ReasonCode.ShouldBe("detached_head");
+        Directory.Exists(a.Path).ShouldBeTrue("the directory is present");
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue("the registration is present");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the branch is present");
+        (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim().ShouldBe(head);
+        (await w.ReadAsync(a.Path, "rev-parse", "--abbrev-ref", "HEAD")).Trim().ShouldBe("HEAD", "HEAD is still detached");
+        (await w.ReleasesAsync(a)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a survivor M-2 (I-8): a server fact that appears after the tick's selection, before the candidate's
+    /// action, holds the tree. Of these facts only the pre-act re-read sees them (the service re-checks none at filing).
+    /// </summary>
+    [Test]
+    [Arguments("late-sync-debt", "sync_debt")]
+    [Arguments("late-dependent", "dependent_open")]
+    [Arguments("late-path-shared", "path_shared")]
+    [Arguments("late-slot-lease", "slot_leased")]
+    public async Task Fact_that_appears_after_selection_holds_the_tree(string fact, string reason)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        // The control is older, so it acts first; its row is the moment between a's selection and a's action.
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync(ageHours: 49);
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+        var seeded = false;
+
+        var tick = await w.TickAsync(onRow: id =>
+        {
+            if (seeded || id != control.Id) return;
+            seeded = true;
+            using var db = w.Db();
+            switch (fact)
+            {
+                case "late-sync-debt":
+                    db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+                    {
+                        Id = Guid.NewGuid(), TaskId = a.Id, Attempt = 1, SettlementEventId = Guid.NewGuid(),
+                        State = AgentTaskSyncDebtState.Pending, ReasonCode = "runner_sync_lease_busy", CreatedAt = w.Now, UpdatedAt = w.Now,
+                    });
+                    break;
+                case "late-dependent":
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Queued; t.WorktreeBaseRequestedRef = a.Branch; }));
+                    break;
+                case "late-path-shared":
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Working; t.WorktreePath = a.Path; }));
+                    break;
+                default:
+                    var task = db.AgentTasks.Single(t => t.Id == a.Id);
+                    task.RemoteWorkspaceSlotId = "ws-03";
+                    task.RemoteWorkspaceSlotGeneration = 1;
+                    break;
+            }
+            db.SaveChanges();
+        });
+
+        seeded.ShouldBeTrue("the fact was seeded after the control's row");
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe(reason);
+        await w.AssertIntactAsync(a, before);
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a survivor PC-58 (G-58): backed-off rows consume no cap. Two held trees back off on tick 1 (cap 2);
+    /// on tick 2, still inside their backoff, the eligible tree behind them is pre-checked and removed.
+    /// </summary>
+    [Test]
+    public async Task Backed_off_rows_ahead_of_an_eligible_tree_consume_no_cap()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.MaxReleasesPerTick = 2);
+        var dirty = new List<DesktopLegacyWorld.Handle>();
+        for (var i = 0; i < 2; i++)
+        {
+            var d = await w.AddTaskAsync(ageHours: 70 - i);
+            await File.WriteAllTextAsync(Path.Combine(d.Path, "dirty.txt"), "dirty\n");
+            dirty.Add(d);
+        }
+        var eligible = await w.AddTaskAsync(ageHours: 49);
+        var origin = await w.OriginRefsAsync();
+
+        var first = await w.TickAsync();
+        foreach (var d in dirty) (await w.RowAsync(first.RunId, d)).ReasonCode.ShouldBe("source_dirty");
+        (await w.RowAsync(first.RunId, eligible)).ReasonCode.ShouldBe("over_cap");
+        Directory.Exists(eligible.Path).ShouldBeTrue();
+
+        w.Clock.Advance(TimeSpan.FromMinutes(5));
+        var second = await w.TickAsync();
+
+        second.BackedOff.ShouldBe(2, "as many backed-off rows as the cap");
+        await w.AssertRetiredAsync(eligible, origin);
+        (await w.RowsAsync(second.RunId)).ShouldNotContain(r => r.ReasonCode == "over_cap");
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a survivor M-5 (T-D-7): due re-checks go least recently checked first. With cap 1, A is checked on
+    /// tick 1 and B on tick 2; on tick 3 both are due and A, checked longest ago (and now clean), goes first.
+    /// </summary>
+    [Test]
+    public async Task Due_rechecks_go_least_recently_checked_first()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.MaxReleasesPerTick = 1);
+        var a = await w.AddTaskAsync(ageHours: 70);
+        var b = await w.AddTaskAsync(ageHours: 60);
+        foreach (var d in new[] { a, b }) await File.WriteAllTextAsync(Path.Combine(d.Path, "dirty.txt"), "dirty\n");
+        var origin = await w.OriginRefsAsync();
+
+        var t1 = await w.TickAsync();
+        (await w.RowAsync(t1.RunId, a)).ReasonCode.ShouldBe("source_dirty");
+        (await w.RowAsync(t1.RunId, b)).ReasonCode.ShouldBe("over_cap");
+        w.Clock.Advance(TimeSpan.FromMinutes(10));
+        var t2 = await w.TickAsync();
+        (await w.RowAsync(t2.RunId, b)).ReasonCode.ShouldBe("source_dirty", "tick 2 checks B (A is backed off)");
+
+        File.Delete(Path.Combine(a.Path, "dirty.txt"));
+        var bBefore = await w.SnapshotAsync(b.Path);
+        w.Clock.Advance(TimeSpan.FromMinutes(61));
+        w.ClearTrace();
+        var t3 = await w.TickAsync();
+
+        await w.AssertRetiredAsync(a, origin);
+        (await w.RowAsync(t3.RunId, b)).ReasonCode.ShouldBe("over_cap");
+        w.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+            && LandingGit.PathsEqual(c.Directory, b.Path), "B, checked more recently, waits");
+        (await w.SnapshotAsync(b.Path)).ShouldBe(bBefore);
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a survivor PC-52 (R-3/G-52): a caller-filed release whose command removed nothing (dirty at removal,
+    /// no set-aside marker) is still never reopened: the second pass is cleanup_command_slot_spent with one attempt.
+    /// </summary>
+    [Test]
+    public async Task Caller_filed_release_refused_with_nothing_moved_is_not_reopened()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(shape: "base-only");
+        await using var scope = w.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == a.Id);
+        var dto = await service.ReleaseAsync(a.Id, new ReleaseWorktreeRetirementRequest(task.ConcurrencyToken,
+            (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim(), null, true, "reviewed no further use"), Operator, CancellationToken.None);
+        var release = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == dto.Id);
+        release.CallerIdentity.ShouldBe("operator");
+        var dirt = Path.Combine(a.Path, "dirty.txt");
+        await File.WriteAllTextAsync(dirt, "dirty\n");
+
+        var first = await service.TryRetireAsync(release, null, CancellationToken.None);
+        first.Residue.ShouldBe("source_dirty");
+        var common = await w.Fixture.Git.CommonDirectoryAsync(w.Fixture.Repository, CancellationToken.None);
+        WorktreeSetAside.Read(common, a.Path).ShouldBeNull("nothing was moved aside");
+        File.Delete(dirt);
+        w.Clock.Advance(TimeSpan.FromHours(2));
+        var second = await service.TryRetireAsync(release, null, CancellationToken.None);
+
+        second.Residue.ShouldBe("cleanup_command_slot_spent");
+        (await w.AttemptsAsync(a)).Count.ShouldBe(1, "no attempt 2");
+        Directory.Exists(a.Path).ShouldBeTrue();
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue();
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a T-D-4 retry: a reopened attempt skips the policy pre-check and relies on the guarded removal alone.
+    /// Attempt 1 is refused (a tracked change after filing); the change is undone and the tree dirtied again with an
+    /// untracked file; the due retry is Refused source_dirty by the removal, and the tree, registration and branch stay.
+    /// </summary>
+    [Test]
+    public async Task Reopened_attempt_re_proves_a_tree_dirtied_after_the_refusal()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var origin = await w.OriginRefsAsync();
+        var tracked = a.Id8 + ".txt";
+        var fired = false;
+        w.Host.RetirementCut.Cut = "release-after";
+        w.Host.RetirementCut.Pause = async () =>
+        {
+            if (fired) return;
+            fired = true;
+            w.Host.RetirementCut.Cut = null;
+            await File.WriteAllTextAsync(Path.Combine(a.Path, tracked), "changed\n");
+        };
+
+        var t1 = await w.TickAsync();
+        fired.ShouldBeTrue();
+        var row1 = await w.RowAsync(t1.RunId, a);
+        row1.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Refused));
+        row1.ReasonCode.ShouldBe("source_dirty");
+
+        await w.Fixture.RequiredAsync(a.Path, "checkout", "--", tracked);
+        await File.WriteAllTextAsync(Path.Combine(a.Path, "later.txt"), "later\n");
+        var before = await w.SnapshotAsync(a.Path);
+        w.Clock.Advance(TimeSpan.FromMinutes(61));
+        var t2 = await w.TickAsync();
+
+        var row2 = await w.RowAsync(t2.RunId, a);
+        row2.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Refused), "the reopened attempt reached the guarded removal");
+        row2.ReasonCode.ShouldBe("source_dirty");
+        (await w.AttemptsAsync(a)).Count.ShouldBe(2, "the retry reopened the attempt");
+        (await w.SnapshotAsync(a.Path)).ShouldBe(before, "the tree is byte-intact");
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue();
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+        (await w.OriginRefsAsync()).ShouldBe(origin);
     }
 
     /// <summary>A-2: the 5 s pause flips the settings at the moment it starts and then elapses at once.</summary>
