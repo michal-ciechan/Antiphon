@@ -47,6 +47,17 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         await SeedAsync();
     }
 
+    /// <summary>
+    /// Attaches to a fixture tree and database that already hold a seeded (and possibly landed)
+    /// state, instead of creating them: a copy of a post-land world snapshot (PostLandWorldSnapshot).
+    /// </summary>
+    public void Attach(IsolatedTestSchema schema, string seedSha)
+    {
+        Schema = schema;
+        Fixture.SeedSha = seedSha;
+        BuildServices();
+    }
+
     private void BuildServices()
     {
         Fixture.Git.BeforeObservedCommand = async arguments =>
@@ -434,7 +445,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     {
         public Func<Task>? Barrier { get; set; }
         public bool Passed { get; set; } = true;
-        public int Calls { get; private set; }
+        public int Calls { get; internal set; }
         public List<(string Worktree, string? Filter)> Invocations { get; } = [];
         public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         {

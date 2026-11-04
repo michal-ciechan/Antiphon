@@ -765,7 +765,7 @@ public sealed class PostLandMutationCustodyTests
 
 internal sealed class PostLandMutationWorld : IAsyncDisposable
     {
-        public LandingSafetyHarness Host { get; } = new();
+        public LandingSafetyHarness Host { get; private init; } = new();
         public ISessionRunnerClient Runner { get; private set; } = null!;
         public Guid TaskId { get; private set; }
         public Guid Operation { get; private set; }
@@ -785,25 +785,63 @@ internal sealed class PostLandMutationWorld : IAsyncDisposable
                 sourceLanding: services.GetRequiredService<SourceLandingAdmission>());
         }
 
-        public static async Task<PostLandMutationWorld> CreateAsync(bool native = false, bool provision = true,
-            bool custodySupport = true)
+        /// <summary>
+        /// The default world (fake runner, provisioned, custody support) is a copy of one built per
+        /// test process (<see cref="PostLandWorldSnapshot"/>): the setup land is ~110 git processes.
+        /// Other shapes, and ANTIPHON_TEST_WORLD_SNAPSHOT=off, build their own.
+        /// </summary>
+        public static Task<PostLandMutationWorld> CreateAsync(bool native = false, bool provision = true,
+            bool custodySupport = true) =>
+            !native && provision && custodySupport && PostLandWorldSnapshot.Enabled
+                ? PostLandWorldSnapshot.CopyAsync(() => BuildAsync(false, true, true))
+                : BuildAsync(native, provision, custodySupport);
+
+        private void Wire()
+        {
+            Host.ConfigureServices = services =>
+            {
+                services.AddSingleton(Runner);
+                // CARD-0604 D-19: custody support, custody reads and verification removal now
+                // resolve through the TASK's runner id, so the world needs a directory, not a
+                // bare client. This one has a single runner and everything resolves to it.
+                services.AddSingleton<ISessionRunnerDirectory>(new SingleRunnerDirectory(Runner));
+                services.AddScoped<SourceLandingAdmission>();
+                services.AddScoped<VerificationExecutionService>();
+                services.AddScoped<VerificationCleanupService>();
+            };
+        }
+
+        /// <summary>The identities a snapshot copy restores; paths are rewritten by the caller.</summary>
+        internal PostLandWorldSnapshot.WorldState Capture() => new(Host.Fixture.TaskId, Host.Fixture.SeedSha,
+            TaskId, Operation, Original, Companion, OtherCompanion,
+            (Runner as FakeSessionRunnerClient)?.VerificationStoreId, Host.Verifier.Calls, [.. Host.Verifier.Invocations]);
+
+        internal static PostLandMutationWorld FromSnapshot(string root, PostLandWorldSnapshot.WorldState state,
+            IsolatedTestSchema schema, Func<string, string> rewrite)
+        {
+            var world = new PostLandMutationWorld
+            {
+                Host = new LandingSafetyHarness(root, state.HostTaskId),
+                Runner = new FakeSessionRunnerClient { VerificationStoreId = state.VerificationStoreId },
+                TaskId = state.TaskId, Operation = state.Operation, Original = state.Original,
+                Companion = state.Companion, OtherCompanion = state.OtherCompanion,
+            };
+            world.Wire();
+            world.Host.Attach(schema, state.SeedSha);
+            world.Host.Verifier.Calls = state.VerifierCalls;
+            foreach (var (worktree, filter) in state.VerifierInvocations)
+                world.Host.Verifier.Invocations.Add((rewrite(worktree), filter));
+            return world;
+        }
+
+        private static async Task<PostLandMutationWorld> BuildAsync(bool native, bool provision, bool custodySupport)
         {
             var world = new PostLandMutationWorld();
             world.Runner = native
                 ? new DirectSessionRunnerClient(Path.Combine(world.Host.Fixture.Root, "runner"), "modern")
                     { AdvertiseVerificationCustody = custodySupport }
                 : new FakeSessionRunnerClient { VerificationStoreId = custodySupport ? Guid.NewGuid() : null };
-            world.Host.ConfigureServices = services =>
-            {
-                services.AddSingleton(world.Runner);
-                // CARD-0604 D-19: custody support, custody reads and verification removal now
-                // resolve through the TASK's runner id, so the world needs a directory, not a
-                // bare client. This one has a single runner and everything resolves to it.
-                services.AddSingleton<ISessionRunnerDirectory>(new SingleRunnerDirectory(world.Runner));
-                services.AddScoped<SourceLandingAdmission>();
-                services.AddScoped<VerificationExecutionService>();
-                services.AddScoped<VerificationCleanupService>();
-            };
+            world.Wire();
             await world.Host.InitializeAsync();
             try
             {

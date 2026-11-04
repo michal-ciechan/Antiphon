@@ -20,7 +20,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     public string TargetRef => "refs/heads/master";
     public Guid TaskId { get; }
     public FixtureGit Git { get; }
-    public string SeedSha { get; private set; } = "";
+    public string SeedSha { get; internal set; } = "";
     public LandSourceCoordinates Coordinates => new(TaskId, Repository, Source, SourceRef, TargetRef);
     public string ObservationRef => $"refs/antiphon/land/{TaskId:N}/{Guid.NewGuid():N}/remote-observed";
 
@@ -40,6 +40,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     {
         await RequiredAsync(Repository, "init", "-b", "master");
         await RequiredAsync(Remote, "init", "--bare");
+        // The bare remote stands in for a hosted one: no `git maintenance run --auto` after every
+        // receive (three extra processes per land; a real host does its own housekeeping).
+        await RequiredAsync(Remote, "config", "receive.autogc", "false");
         await File.WriteAllTextAsync(Path.Combine(Repository, "keep.txt"), "seed\n");
         await File.WriteAllTextAsync(Path.Combine(Repository, "fixture-owner.txt"), TaskId.ToString("N") + "\n");
         await File.WriteAllTextAsync(Path.Combine(Repository, ".gitignore"), ".antiphon/\n.claude/\nbin-*/\nobj/\n");
