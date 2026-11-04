@@ -153,6 +153,9 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     [Arguments("result-null", "report_missing")]
     [Arguments("child-open", "dependent_open")]
     [Arguments("startref-open", "dependent_open")]
+    [Arguments("startref-queued", "dependent_open")]
+    [Arguments("startref-queued-origin", "dependent_open")]
+    [Arguments("basetask-queued", "dependent_open")]
     [Arguments("mutation", "mutation_excluded")]
     [Arguments("source-landing", "source_landing_excluded")]
     [Arguments("operator-release-active", "release_active_other")]
@@ -224,8 +227,25 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                     db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Queued; t.ParentTaskId = a.Id; }));
                     break;
                 case "startref-open":
-                    // AgentTask.WorktreeBaseRef is the persisted dispatch start ref (CARD-0613: delegate.ps1 -StartRef).
+                    // WorktreeBaseRef is the base a provisioned task was cut from (CARD-0508).
                     db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t => { t.Status = AgentTaskStatus.Dispatched; t.WorktreeBaseRef = a.Branch; }));
+                    break;
+                case "startref-queued" or "startref-queued-origin":
+                    // Review 1dcb8d90 D-1: a queued delegate.ps1 -StartRef holds only WorktreeBaseRequestedRef until it is
+                    // provisioned, and a branch-name start ref must still resolve locally then (CARD-0613).
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t =>
+                    {
+                        t.Status = AgentTaskStatus.Queued;
+                        t.WorktreeBaseRequestedRef = predicate == "startref-queued" ? a.Branch : "origin/" + a.Branch;
+                    }));
+                    break;
+                case "basetask-queued":
+                    db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t =>
+                    {
+                        t.Status = AgentTaskStatus.Queued;
+                        t.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Task;
+                        t.RequestedWorktreeBaseTaskId = a.Id;
+                    }));
                     break;
             }
             await db.SaveChangesAsync();
@@ -945,7 +965,9 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     {
         await using var w = await DesktopLegacyWorld.CreateAsync(s =>
         {
-            s.MaxReleasesPerTick = 2;
+            // Review 1dcb8d90 D-2: every pre-check counts against the cap whatever its outcome, so the two cases that need
+            // A, B and C all reached in one tick run with a cap of 3.
+            s.MaxReleasesPerTick = failure is "throws" or "lease-busy" ? 3 : 2;
             s.MaxRefusedAttempts = failure == "exhausted" ? 3 : failure == "backoff-doubles" ? 10 : 5;
         });
         var a = await w.AddTaskAsync(ageHours: 70);
@@ -1065,7 +1087,10 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
     }
 
-    /// <summary>V-25/G-9: a first enable over a large backlog costs at most the cap in pre-checks.</summary>
+    /// <summary>
+    /// V-25/G-9: a first enable over a large backlog costs at most the cap in pre-checks. Review 1dcb8d90 D-2: a missing
+    /// directory is settled on the first tick (one Held row, no git, no cap) and never re-checked.
+    /// </summary>
     [Test]
     [Timeout(180_000)]
     [Arguments("preview-first")]
@@ -1087,7 +1112,8 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             var rows = await w.RowsAsync(preview.RunId);
             rows.Count.ShouldBe(300);
             rows.Where(r => r.ReasonCode == "would_release").Select(r => r.TaskId).ShouldBe(oldest.Select(t => (Guid?)t.Id), ignoreOrder: true);
-            rows.Count(r => r.Outcome == nameof(WorktreeResidueCandidateOutcome.Deferred) && r.ReasonCode == "over_cap").ShouldBe(275);
+            rows.Count(r => r.Outcome == nameof(WorktreeResidueCandidateOutcome.Deferred) && r.ReasonCode == "over_cap").ShouldBe(2);
+            rows.Where(r => r.ReasonCode == "directory_absent").Select(r => r.TaskId).ShouldBe(absent.Select(t => (Guid?)t.Id), ignoreOrder: true);
             await using (var scope = w.Host.Services.CreateAsyncScope())
             {
                 var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
@@ -1111,11 +1137,13 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         first.Retired.ShouldBe(25);
         foreach (var t in oldest) await w.AssertRetiredAsync(t, origin);
         foreach (var t in real.Skip(25).Concat(absent)) w.AssertNoGit(t);
+        (await w.RowsAsync(first.RunId)).Count(r => r.ReasonCode == "directory_absent").ShouldBe(273);
         var second = await w.TickAsync();
         second.Retired.ShouldBe(2);
         foreach (var t in real.Skip(25)) await w.AssertRetiredAsync(t, origin);
         var rows2 = await w.RowsAsync(second.RunId);
-        rows2.Count(r => r.ReasonCode == "directory_absent").ShouldBe(273);
+        rows2.ShouldNotContain(r => r.ReasonCode == "directory_absent", "a settled missing directory is not rewritten");
+        rows2.Count.ShouldBe(2, "the second tick writes only its two removals");
         await using (var db = w.Db())
         {
             var ids = absent.Select(t => t.Id).ToList();
@@ -1158,6 +1186,139 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         second.Residue.ShouldBe("cleanup_command_slot_spent");
         (await w.AttemptsAsync(a)).Count.ShouldBe(1, "no attempt 2");
         Directory.Exists(a.Path).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Review 1dcb8d90 D-2 (T-D-7/G-9/G-58): a held backlog costs at most the cap in pre-checks per tick. A missing
+    /// directory is settled once (one row, no git, never re-checked). A held tree backs off (60 min doubling) and the
+    /// next tick pre-checks the next never-checked trees, so an eligible tree behind six held ones (cap 2) is reached
+    /// on tick 4 and no tick writes more than two rows per cap.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Held_backlog_is_bounded_per_tick_and_reaches_every_candidate()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.MaxReleasesPerTick = 2);
+        var absent = new List<DesktopLegacyWorld.Handle>();
+        for (var i = 0; i < 1000; i++) absent.Add(await w.AddTaskAsync(shape: "none", ageHours: 24 * 30 + i));
+        var absentIds = absent.Select(t => (Guid?)t.Id).ToHashSet();
+        // dirty[0] is the oldest held tree; the eligible tree is the newest candidate of all.
+        var dirty = new List<DesktopLegacyWorld.Handle>();
+        for (var i = 0; i < 6; i++)
+        {
+            var d = await w.AddTaskAsync(ageHours: 24 * 10 - i);
+            await File.WriteAllTextAsync(Path.Combine(d.Path, "dirty.txt"), "dirty\n");
+            dirty.Add(d);
+        }
+        var eligible = await w.AddTaskAsync(ageHours: 49);
+        var origin = await w.OriginRefsAsync();
+        var snapshots = new Dictionary<Guid, string>();
+        foreach (var d in dirty) snapshots[d.Id] = await w.SnapshotAsync(d.Path);
+        var reached = 0;
+
+        for (var tick = 1; tick <= 4; tick++)
+        {
+            w.ClearTrace();
+            var result = await w.TickAsync();
+            var rows = await w.RowsAsync(result.RunId);
+            var prechecked = dirty.Where(d => w.Fixture.Git.Commands.Any(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+                && LandingGit.PathsEqual(c.Directory, d.Path))).ToList();
+            prechecked.Count.ShouldBeLessThanOrEqualTo(2, $"tick {tick}: at most the cap in pre-checks");
+            if (tick <= 3)
+                prechecked.ShouldBe(dirty.Skip(2 * (tick - 1)).Take(2).ToList(), $"tick {tick} continues where the last one stopped");
+            else
+                prechecked.ShouldBe([dirty[0]], "tick 4: the eligible tree first, then the least recently checked held tree");
+            foreach (var t in absent) w.AssertNoGit(t);
+            rows.Count(r => absentIds.Contains(r.TaskId)).ShouldBe(tick == 1 ? 1000 : 0, $"tick {tick}: a missing directory is recorded once");
+            rows.Where(r => absentIds.Contains(r.TaskId)).ShouldAllBe(r => r.ReasonCode == "directory_absent");
+            if (tick > 1) rows.Count.ShouldBeLessThanOrEqualTo(4, $"tick {tick}: no unbounded row growth (2 x cap)");
+            if (reached == 0 && !Directory.Exists(eligible.Path)) reached = tick;
+            w.Clock.Advance(TimeSpan.FromMinutes(61));
+        }
+
+        reached.ShouldBe(4, "ceil(6 held / cap 2) + 1 ticks");
+        await w.AssertRetiredAsync(eligible, origin);
+        foreach (var d in dirty) await w.AssertIntactAsync(d, snapshots[d.Id]);
+    }
+
+    /// <summary>Review 1dcb8d90 A-2 (G-2): the kill switch flipped during the pause stops the tick before the next row.</summary>
+    [Test]
+    public async Task Switch_off_during_the_pause_stops_before_the_next_row()
+    {
+        var hook = new PauseHook(TimeSpan.FromSeconds(5));
+        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.PauseBetweenSeconds = 5,
+            services => services.AddSingleton<TimeProvider>(hook));
+        hook.Inner = w.Clock;
+        var tasks = new List<DesktopLegacyWorld.Handle>();
+        for (var i = 0; i < 3; i++) tasks.Add(await w.AddTaskAsync(ageHours: 60 - i));
+        var origin = await w.OriginRefsAsync();
+        var snapshots = new Dictionary<Guid, string>();
+        foreach (var t in tasks) snapshots[t.Id] = await w.SnapshotAsync(t.Path);
+        var paused = 0;
+        hook.OnPause = () =>
+        {
+            paused++;
+            w.Settings.Value = new WorktreeLegacyReleaseSettings
+            {
+                Enabled = false, Execute = true, PauseBetweenSeconds = 5, MinTerminalHours = 48, MaxReleasesPerTick = 25,
+            };
+        };
+
+        var tick = await w.TickAsync();
+
+        paused.ShouldBe(1, "one pause, after the first removal");
+        await w.AssertRetiredAsync(tasks[0], origin);
+        foreach (var t in tasks.Skip(1)) await w.AssertIntactAsync(t, snapshots[t.Id]);
+        var rows = await w.RowsAsync(tick.RunId);
+        rows.Single(r => r.Outcome == nameof(WorktreeResidueCandidateOutcome.Deferred)).ReasonCode.ShouldBe("tick_stopped_disabled");
+        tick.Stopped.ShouldBe("tick_stopped_disabled");
+    }
+
+    /// <summary>Review 1dcb8d90 A-3 (V-21): a dry run reports a caller-filed release as held, never would_release.</summary>
+    [Test]
+    [Arguments("preview")]
+    [Arguments("execute-false")]
+    public async Task Dry_run_holds_a_caller_filed_release(string mode)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.Execute = mode != "execute-false");
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        await using (var scope = w.Host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == a.Id);
+            await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>().ReleaseAsync(a.Id,
+                new ReleaseWorktreeRetirementRequest(task.ConcurrencyToken, (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim(),
+                    null, true, "reviewed no further use"), Operator, CancellationToken.None);
+        }
+
+        var tick = await w.TickAsync(preview: mode == "preview");
+
+        var rows = await w.RowsAsync(tick.RunId);
+        rows.Single(r => r.TaskId == control.Id).ReasonCode.ShouldBe("would_release");
+        var row = rows.Single(r => r.TaskId == a.Id);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("release_active_other");
+        (await w.ReleasesAsync(a)).Single().State.ShouldBe(WorktreeRetirementState.Released);
+        Directory.Exists(a.Path).ShouldBeTrue();
+    }
+
+    /// <summary>A-2: the 5 s pause flips the settings at the moment it starts and then elapses at once.</summary>
+    private sealed class PauseHook(TimeSpan pause) : TimeProvider
+    {
+        public TimeProvider Inner { get; set; } = TimeProvider.System;
+        public Action? OnPause { get; set; }
+        public override DateTimeOffset GetUtcNow() => Inner.GetUtcNow();
+        public override long GetTimestamp() => Inner.GetTimestamp();
+        public override long TimestampFrequency => Inner.TimestampFrequency;
+        public override TimeZoneInfo LocalTimeZone => Inner.LocalTimeZone;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime != pause || OnPause is null) return Inner.CreateTimer(callback, state, dueTime, period);
+            OnPause();
+            return TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, period);
+        }
     }
 
     private static AgentTask Bare(Guid id, DateTime now, Action<AgentTask>? seed = null)

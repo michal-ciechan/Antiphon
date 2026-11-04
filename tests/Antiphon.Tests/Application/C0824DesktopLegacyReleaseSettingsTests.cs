@@ -77,6 +77,8 @@ public sealed class C0824DesktopLegacyReleaseSettingsTests
     /// <summary>
     /// V-3/G-61/G-62: through the production registration, an array, object or null in a scalar (or the section as
     /// an array) is refused naming the key, because binding would otherwise keep the default true (S1c, measured).
+    /// Review 1dcb8d90 A-1: a scalar the binder cannot convert ("no", "0") reaches only the BindError refusal. A-4: a
+    /// misspelled key is refused, so a mistyped kill switch never leaves the shipped-on default running.
     /// </summary>
     [Test]
     [Arguments("{\"WorktreeLegacyRelease\": {\"Enabled\": []}}", "WorktreeLegacyRelease:Enabled", null)]
@@ -85,6 +87,9 @@ public sealed class C0824DesktopLegacyReleaseSettingsTests
     [Arguments("{\"WorktreeLegacyRelease\": {\"MaxReleasesPerTick\": [25]}}", "WorktreeLegacyRelease:MaxReleasesPerTick", null)]
     [Arguments("{\"WorktreeLegacyRelease\": {\"Enabled\": null}}", "WorktreeLegacyRelease:Enabled", null)]
     [Arguments("{\"WorktreeLegacyRelease\": []}", "WorktreeLegacyRelease", null)]
+    [Arguments("{\"WorktreeLegacyRelease\": {\"Enabled\": \"no\"}}", "WorktreeLegacyRelease:Enabled", null)]
+    [Arguments("{\"WorktreeLegacyRelease\": {\"Execute\": \"0\"}}", "WorktreeLegacyRelease:Execute", null)]
+    [Arguments("{\"WorktreeLegacyRelease\": {\"Enabeld\": false}}", "Enabeld", null)]
     [Arguments("{\"WorktreeLegacyRelease\": {\"Enabled\": false}}", null, false)]
     [Arguments("{\"WorktreeLegacyRelease\": {\"Enabled\": \"false\"}}", null, false)]
     public async Task Non_scalar_values_are_refused(string json, string? refusedKey, bool? enabled)
