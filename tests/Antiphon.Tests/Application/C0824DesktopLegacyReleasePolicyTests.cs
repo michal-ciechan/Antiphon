@@ -1192,13 +1192,19 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// Review 1dcb8d90 D-2 (T-D-7/G-9/G-58): a held backlog costs at most the cap in pre-checks per tick. A missing
     /// directory is settled once (one row, no git, never re-checked). A held tree backs off (60 min doubling) and the
     /// next tick pre-checks the next never-checked trees, so an eligible tree behind six held ones (cap 2) is reached
-    /// on tick 4 and no tick writes more than two rows per cap.
+    /// on tick 4 and no tick writes more than two rows per cap. The pause follows only the one real removal, and once
+    /// the cap no longer binds, a tree inside its doubled backoff is still not pre-checked.
     /// </summary>
     [Test]
     [Timeout(180_000)]
     public async Task Held_backlog_is_bounded_per_tick_and_reaches_every_candidate()
     {
-        await using var w = await DesktopLegacyWorld.CreateAsync(s => s.MaxReleasesPerTick = 2);
+        var hook = new PauseHook(TimeSpan.FromSeconds(5));
+        await using var w = await DesktopLegacyWorld.CreateAsync(s => { s.MaxReleasesPerTick = 2; s.PauseBetweenSeconds = 5; },
+            services => services.AddSingleton<TimeProvider>(hook));
+        hook.Inner = w.Clock;
+        var pauses = 0;
+        hook.OnPause = () => pauses++;
         var absent = new List<DesktopLegacyWorld.Handle>();
         for (var i = 0; i < 1000; i++) absent.Add(await w.AddTaskAsync(shape: "none", ageHours: 24 * 30 + i));
         var absentIds = absent.Select(t => (Guid?)t.Id).ToHashSet();
@@ -1237,6 +1243,26 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
         }
 
         reached.ShouldBe(4, "ceil(6 held / cap 2) + 1 ticks");
+        pauses.ShouldBe(1, "one pause: after the removal on tick 4, never after a hold");
+
+        // Tick 5, 61 min after tick 4, cap no longer binding: dirty[0] (held again on tick 4) is inside its doubled
+        // 120 min backoff; the other five are due and pre-checked once each.
+        w.Settings.Value.MaxReleasesPerTick = 25;
+        w.ClearTrace();
+        var late = await w.TickAsync();
+        dirty.Where(d => w.Fixture.Git.Commands.Any(c => c.Arguments.Length > 0 && c.Arguments[0] == "status"
+                && LandingGit.PathsEqual(c.Directory, d.Path))).ToList()
+            .ShouldBe(dirty.Skip(1).ToList(), "a held tree inside its backoff is not pre-checked");
+        var lateRows = await w.RowsAsync(late.RunId);
+        lateRows.ShouldNotContain(r => r.TaskId == dirty[0].Id, "an unchanged Held row is not rewritten");
+        lateRows.Where(r => dirty.Skip(1).Select(d => (Guid?)d.Id).Contains(r.TaskId)).Select(r => r.ReasonCode)
+            .ShouldBe(Enumerable.Repeat("source_dirty", 5));
+        await using (var db = w.Db())
+        {
+            var key = DesktopLegacyReleasePolicyService.CheckCursorKey(dirty[0].Id);
+            var cursor = await db.WorktreeResidueCandidateCursors.AsNoTracking().SingleAsync(c => c.CandidateKey == key);
+            (cursor.NotBefore!.Value - cursor.LastEvaluatedAt).ShouldBe(TimeSpan.FromMinutes(120), "the second hold doubles 60 min");
+        }
         await w.AssertRetiredAsync(eligible, origin);
         foreach (var d in dirty) await w.AssertIntactAsync(d, snapshots[d.Id]);
     }
