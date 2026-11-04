@@ -200,12 +200,13 @@ public class TestOwnedPtyHostPolicyTests
             error.ToString().ShouldContain($"capture session={fixture.SessionId:D}");
             Contains(error, fault).ShouldBeTrue("original read failure retained");
             if (scenario.EndsWith("host-alive")) fixture.Killed.ShouldContain(10, "kill path unchanged");
-            if (scenario.EndsWith("child-alive")) fixture.Killed.ShouldBe(new[] { 11 }, "kill path unchanged");
+            if (scenario.EndsWith("child-alive")) fixture.Killed.SequenceEqual(new[] { 11 }).ShouldBeTrue("kill path unchanged");
         }
         // About three attempts per Capture call, 10 ms apart; the supplement captures twice.
         var expectedReads = persistent ? 6 : 3;
         fixture.Reads.Count.ShouldBe(expectedReads, "bounded-retries");
-        pauses.ShouldBe(Enumerable.Repeat(TimeSpan.FromMilliseconds(10), persistent ? 4 : 1).ToArray(), "bounded-retries");
+        pauses.Count.ShouldBe(persistent ? 4 : 1, "bounded-retries");
+        pauses.ShouldAllBe(x => x == TimeSpan.FromMilliseconds(10), "bounded-retries");
         fixture.Events.Contains("manifest-unreadable-exited").ShouldBe(scenario.EndsWith("persistent-exited"), "fallback recorded");
     }
 
