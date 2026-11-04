@@ -67,7 +67,46 @@ public class LandingGit : ILandingGit
         { return Task.FromResult<bool?>(null); }
     }
 
+    /// <summary>
+    /// <c>git check-ref-format &lt;ref&gt;</c> reads no repository: its verdict depends on the ref string
+    /// and on git being able to start and read its configuration (a broken global config is exit 128).
+    /// Valid (0) and invalid (1) verdicts for branch refs (<c>refs/heads/…</c>) are memoised per
+    /// instance, so one land no longer re-validates the same destination 13 times; 128 and every other
+    /// failure are asked again. Per-land refs (pins, observation refs) carry a GUID and are never
+    /// repeated, so they are not kept: the memo stays a small set of branch names. Per instance
+    /// because a subclass may give its children another environment (<see cref="ConfigureProcess"/>).
+    /// The virtual <see cref="RunAsync(string, IReadOnlyList{string}, CancellationToken)"/> still
+    /// sees every call, so test seams that trace or fault the command are unaffected.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, LandingGitResult> RefFormatVerdicts =
+        new(StringComparer.Ordinal);
+
+    private const int RefFormatVerdictLimit = 4096;
+
+    private static bool IsRefFormatCheck(IReadOnlyList<string> arguments) =>
+        arguments.Count == 2 && arguments[0] == "check-ref-format"
+        && arguments[1].StartsWith("refs/heads/", StringComparison.Ordinal);
+
     private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
+    {
+        if (started is null && IsRefFormatCheck(arguments))
+        {
+            if (RefFormatVerdicts.TryGetValue(arguments[1], out var verdict))
+            {
+                ct.ThrowIfCancellationRequested();
+                Scope?.Profile.RefFormatHit();
+                return verdict;
+            }
+            var checkedFormat = await ExecuteScopedAsync(repository, arguments, started, options, ct);
+            if (checkedFormat.ExitCode is 0 or 1 && RefFormatVerdicts.Count < RefFormatVerdictLimit)
+                RefFormatVerdicts.TryAdd(arguments[1], checkedFormat);
+            return checkedFormat;
+        }
+        return await ExecuteScopedAsync(repository, arguments, started, options, ct);
+    }
+
+    private async Task<LandingGitResult> ExecuteScopedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
         var scope = Scope;

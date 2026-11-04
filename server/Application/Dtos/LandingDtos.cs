@@ -99,7 +99,7 @@ public enum LandInspectionScope { Full, IdentityAndStatus, IdentityOnly }
 /// <summary>CARD-0642 D-7: git I/O spent inside one land operation scope. Thread-safe.</summary>
 public sealed class LandingGitProfile
 {
-    private long _processes, _worktreeLists, _registrationHits, _canonicalHits, _inspections, _remote, _gitTicks;
+    private long _processes, _worktreeLists, _registrationHits, _canonicalHits, _refFormatHits, _inspections, _remote, _gitTicks;
     // CARD-1432 S4 (R4): processes per `subcommand[ sub-argument]`.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _histogram = new(StringComparer.Ordinal);
     private const int HistogramEntries = 40;
@@ -108,6 +108,8 @@ public sealed class LandingGitProfile
     public long WorktreeLists => Interlocked.Read(ref _worktreeLists);
     public long RegistrationHits => Interlocked.Read(ref _registrationHits);
     public long CanonicalHits => Interlocked.Read(ref _canonicalHits);
+    /// <summary><c>check-ref-format</c> verdicts served from the instance memo: a call, not a process.</summary>
+    public long RefFormatHits => Interlocked.Read(ref _refFormatHits);
     public long Inspections => Interlocked.Read(ref _inspections);
     public long RemoteRoundTrips => Interlocked.Read(ref _remote);
     public double GitSeconds => TimeSpan.FromTicks(Interlocked.Read(ref _gitTicks)).TotalSeconds;
@@ -117,6 +119,7 @@ public sealed class LandingGitProfile
         Interlocked.Add(ref _worktreeLists, other.WorktreeLists);
         Interlocked.Add(ref _registrationHits, other.RegistrationHits);
         Interlocked.Add(ref _canonicalHits, other.CanonicalHits);
+        Interlocked.Add(ref _refFormatHits, other.RefFormatHits);
         Interlocked.Add(ref _inspections, other.Inspections);
         Interlocked.Add(ref _remote, other.RemoteRoundTrips);
         Interlocked.Add(ref _gitTicks, Interlocked.Read(ref other._gitTicks));
@@ -146,6 +149,7 @@ public sealed class LandingGitProfile
 
     public void RegistrationHit() => Interlocked.Increment(ref _registrationHits);
     public void CanonicalHit() => Interlocked.Increment(ref _canonicalHits);
+    public void RefFormatHit() => Interlocked.Increment(ref _refFormatHits);
     public void Inspection() => Interlocked.Increment(ref _inspections);
 
     public IReadOnlyDictionary<string, long> Histogram => new Dictionary<string, long>(_histogram, StringComparer.Ordinal);

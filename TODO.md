@@ -102,3 +102,56 @@ it costs a re-run every time.
 ### `ClaudeAdapterLocalShellTests.Send_prompt_clears_live_buffer_before_send` is PTY-timing flaky
 Fails under full parallel load, passes 4/4 in isolation. Documented in CLAUDE.md as a known class of
 flake for PTY tests; worth making deterministic rather than living with it.
+
+## Test speed
+
+- [ ] **Land tests fail on a machine with git older than 2.43.** `LandingGit.IdentityAsync` (and
+  `LandOperationFactory`, `GuardedWorktreeRemoval`, `GuardedVerificationRemoval`) run
+  `git show-ref --exists`, added in git 2.43. On the laptop (2.42.0) every land inspection is
+  `source_ref_error`, so ~277 of 819 land tests in 34 classes failed on master; the desktop has 2.50.
+  Laptop upgraded to 2.56.0 on 2026-11-03. Checking the floors on every host and entry point (not
+  only in the Docker images) is CARD-1698.
+
+From rc run `0b05506b` (rc-2026-11-04-f32aed42e58a, desktop, 2026-11-03). Chunk times match
+earlier runs, so these are standing costs, not a regression. Logs:
+`C:\Antiphon\releases\candidates\rc-2026-11-04-f32aed42e58a\logs\2026-11-03-1636-0b05506b\`.
+
+- [x] **all-group-11, 1,484 s: `PostLandMutationDeliveryTests` (67 tests).** Done 2026-11-03:
+  the class is on the git lane, the two cuts that start a worker child are in
+  `PostLandMutationDeliveryWorkerTests` on the 1-wide process lane, and the 11 tests that repeated
+  matrix rows are gone (a comment maps the CARD-0478 plan's PC-134..148 guards to their rows).
+  `LandingGit` resolves the common dir from the `.git` entry instead of starting git (each mutating
+  command's child journal did that) and memoises `check-ref-format` verdicts per instance. Laptop:
+  56 tests in 107 s wall instead of ~9.6 min serially; a land-path test starts 152 git processes
+  instead of 174. Left over:
+  - Most of the remaining git calls are deliberate re-checks: `DestinationAsync` re-reads
+    `remote get-url --push --all origin` and `symbolic-ref -q <target>` at every boundary (25 and
+    12 per land). Batching them would need a decision on what may be read once per land.
+  - The desktop is ~2.5× slower per test than the laptop for the same git-bound work
+    (21 s vs 8.6 s). Check per-process spawn cost there (Defender exclusions on the rc checkout
+    and temp roots).
+- [ ] **Chunk timing shows `testCount: 0` for all-group-11.** Its `.timing.json` says
+  `why: timing-read-refused`, although the TRX has 67 passed tests. Find out why the phase-timing
+  read was refused, so slow chunks report their tests.
+- [ ] **all-group-124, 1,126 s, 381 tests.** Looked into 2026-11-03: fully serial (sum of test
+  time 1,130 s = wall). 29 of its 30 classes sit on the 1-wide `ProcessSpawnLimit` lane, but their
+  only children are `pwsh` and git, not the ConPTY/fake-agent/session-runtime hazards that lane is
+  for (CARD-0050). Only the ownership/timeout classes (ScriptHarnessCancellation,
+  ScriptHarnessProcess, ScriptHarnessWindowsOwnership, NightlyNativeOwnership,
+  ProcessSpawnTimeoutPolicy, ~169 s) need it. Fixes, largest first:
+  - A 3–4 wide "pwsh script" lane like `GitProcessSpawnLimit` for the pwsh+git classes: est.
+    ~1,120 s → ~350–450 s. `ScriptHarnessProcessContractTests.New_spawning_classes_take_process_limiter`
+    accepts any `ParallelLimiter`.
+  - `ReleaseGateFollowupTests.C1336_NightlyCandidateIdentity` is one 25-row test (147 s, 13% of the
+    chunk): ~20 sequential `nightly-run.ps1` calls, five of them real runs at 13–16 s. Split it so it
+    does not cap the parallel lane (~60–100 s more).
+  - Its refusal/derived-id and master-isolation rows repeat `test-release-gate.ps1`'s
+    `Test-C599_ParameterHops` and `Test-C599_MasterStateIsolation` (~40–60 s).
+  - Every child pwsh reloads the nightly libraries; `test-phase-evidence.ps1` alone is ~0.85 s.
+- [ ] **all-group-20, 1,088 s, 63 tests** (history 1,050–1,192 s). Not looked into yet.
+- [ ] **all-group-126, 921 s, 115 tests.** Includes `ActualLoopFollowsSchedule` at 313 s.
+- [ ] **all-group-125, 920 s, 213 tests.** Not looked into yet.
+- [ ] **all-group-22, 830 s, 38 tests.** Includes `C1065_ClaimAndReplyInvalidateLegacyCandidate` at
+  200 s.
+- [ ] **`C1065_ReportPublicationPrecedesPhysicalRelease`, 427 s** (all-group-27), the slowest single
+  test in the run.

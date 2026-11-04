@@ -437,7 +437,9 @@ public sealed class LandingGitTests
         scope.Profile.WorktreeLists.ShouldBe(4);
         scope.Profile.RegistrationHits.ShouldBe(0);
         scope.Profile.CanonicalHits.ShouldBeGreaterThan(0);
-        scope.Profile.Processes.ShouldBe(fixture.Git.Trace.Count);
+        // Every traced call is a process except check-ref-format verdicts served from the memo.
+        scope.Profile.RefFormatHits.ShouldBe(2, "the second inspection's source and target branch checks come from the memo");
+        scope.Profile.Processes.ShouldBe(fixture.Git.Trace.Count - scope.Profile.RefFormatHits);
     }
 
     [Test]

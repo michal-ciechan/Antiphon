@@ -21,8 +21,14 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+/// <summary>
+/// CARD-0478 post-land delivery. These tests only start git, so they share the 2–4 wide git lane;
+/// the two land-crash cuts that start a <see cref="PostLandMutationDeliveryWorker"/> child are in
+/// <see cref="PostLandMutationDeliveryWorkerTests"/> on the 1-wide process lane. (One at a time,
+/// this class took 1,484 s of the rc-2026-11-04 run as all-group-11.)
+/// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed partial class PostLandMutationDeliveryTests
 {
     [Test]
@@ -151,8 +157,7 @@ public sealed partial class PostLandMutationDeliveryTests
     [Arguments("receipt-before-save", false)]
     [Arguments("after-receipt", true)]
     [Arguments("after-receipt", false)]
-    [Arguments("publication-commit", false)]
-    [Arguments("post-submit-process", false)]
+    // publication-commit and post-submit-process start a worker child: PostLandMutationDeliveryWorkerTests.
     public async Task C478_V09a_LandCrashMatrix(string cut, bool busy) =>
         await LandCrashAsync(cut, busy);
 
@@ -176,21 +181,23 @@ public sealed partial class PostLandMutationDeliveryTests
     public async Task C478_V09c_SettlementCrashMatrix(string cut, bool busy) =>
         await SettlementCrashAsync(cut, busy);
 
-    [Test] public Task C478_G134_LandAtomic() => LandCrashAsync("queue-inserted", false);
-    [Test] public Task C478_G135_LandEnqueue() => LandCrashAsync("before-enqueue", false);
-    [Test] public Task C478_G136_LandQueueKey() => LandCrashAsync("queue-inserted", true);
-    [Test] public Task C478_G137_LandWakeup() => LandCrashAsync("lost-wakeup", false);
-    [Test] public Task C478_G138_LandBusy() => LandCrashAsync("lost-wakeup", true);
-    [Test] public Task C478_G139_LandReceipt() => LandCrashAsync("after-receipt", false);
+    // The CARD-0478 plan's mutation guards PC-134..PC-139, PC-144 and PC-145..PC-148 named separate
+    // tests that ran exactly the matrix rows above, twice over. They are those rows now:
+    //   PC-134 LandAtomic       = C478_V09a_LandCrashMatrix(queue-inserted, False)
+    //   PC-135 LandEnqueue      = C478_V09a_LandCrashMatrix(before-enqueue, False)
+    //   PC-136 LandQueueKey     = C478_V09a_LandCrashMatrix(queue-inserted, True)
+    //   PC-137 LandWakeup       = C478_V09a_LandCrashMatrix(lost-wakeup, False)
+    //   PC-138 LandBusy         = C478_V09a_LandCrashMatrix(lost-wakeup, True)
+    //   PC-139 LandReceipt      = C478_V09a_LandCrashMatrix(after-receipt, False)
+    //   PC-144 LandReceiptSave  = C478_V09a_LandCrashMatrix(receipt-before-save, False)
+    //   PC-145 LaunchPersist    = C478_V09b_WorkerCrashMatrix(before-submit, False)
+    //   PC-146 LaunchRecovery   = C478_V09b_WorkerCrashMatrix(before-submit, True)
+    //   PC-147 LaunchReceipt    = C478_V09b_WorkerCrashMatrix(after-prompt, False)
+    //   PC-148 LaunchGeneration = C478_V09b_WorkerCrashMatrix(after-receipt, True)
     [Test] public Task C478_G140_LandDestination() => LandWrongSessionAsync();
     [Test] public Task C478_G141_LandIdentity() => LandWrongIdentityAsync();
     [Test] public Task C478_G142_LandCompleteness() => LandPartialPromptAsync();
     [Test] public Task C478_G143_LandFreshness() => LandStalePromptAsync();
-    [Test] public Task C478_G144_LandReceiptSave() => LandCrashAsync("receipt-before-save", false);
-    [Test] public Task C478_G145_LaunchPersist() => WorkerCrashAsync("before-submit", false);
-    [Test] public Task C478_G146_LaunchRecovery() => WorkerCrashAsync("before-submit", true);
-    [Test] public Task C478_G147_LaunchReceipt() => WorkerCrashAsync("after-prompt", false);
-    [Test] public Task C478_G148_LaunchGeneration() => WorkerCrashAsync("after-receipt", true);
     [Test] public Task C478_G155_CompletionIdentity() => CompletionWrongIdentityAsync();
     [Test] public Task C478_G157_LandNotReport() => LandDoesNotSatisfyCompletionNoteAsync();
     [Test] public Task C478_G160_CompletionSession() => CompletionWrongSessionAsync();
@@ -671,7 +678,7 @@ public sealed partial class PostLandMutationDeliveryTests
         (await File.ReadAllTextAsync(task.ResultFilePath)).ShouldBe(task.Result);
     }
 
-    private static async Task LandCrashAsync(string cut, bool busy)
+    internal static async Task LandCrashAsync(string cut, bool busy)
     {
         if (cut == "publication-commit")
         {

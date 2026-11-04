@@ -34,7 +34,9 @@ internal sealed class RepositoryChildJournal
     internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag,
         Action<string> deleteRecord, Action<string, string> replaceRecord, CancellationToken ct)
     {
-        var common = await new LandingGit().CommonDirectoryAsync(repository, ct);
+        // git's own answer, reused while the checkout's .git layout is unchanged (GitCommonDirectory).
+        var common = await GitCommonDirectory.ResolveAsync(repository,
+            () => new LandingGit().CommonDirectoryAsync(repository, ct));
         var directory = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(directory);
         var journal = new RepositoryChildJournal(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"),
