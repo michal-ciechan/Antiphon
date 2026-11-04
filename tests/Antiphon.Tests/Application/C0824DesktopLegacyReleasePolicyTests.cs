@@ -1217,9 +1217,11 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// The cap is <see cref="BacklogCap"/>, not the default 25: every pre-check under the cap is a real removal, so the
     /// tick costs in proportion to the cap, while the bound itself (the cap binds, the two trees over it and the 293
     /// missing directories cost no git) holds for any cap smaller than the real trees. The backlog stays 300 rows.
+    /// Timeout (R5): whole-test max 28.5 s (execute, 5 class runs on server2, 2026-11-04); 90 s, not 60, because the
+    /// fixture alone took 13.2 s at load average 120 (0.4-1.6 s in the class runs).
     /// </summary>
     [Test]
-    [Timeout(180_000)]
+    [Timeout(90_000)]
     [Arguments("preview-first")]
     [Arguments("execute")]
     public async Task First_enable_on_a_large_backlog_is_bounded(string mode)
@@ -1291,9 +1293,12 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     private const int BacklogAbsent = 300 - (BacklogCap + 2);
 
     /// <summary>
-    /// V-25 tick-1 wall-time budget (R5, about 2x measured p95): MEASUREMENT PENDING.
+    /// V-25 tick-1 wall-time budget (R5, about 2x measured p95). At cap 25 the tick took 19.6 s alone (server2, load
+    /// average 120) and 61.4 s in the rc/2026-11-05 cut run (load 34-70), past the old 60 s bound. At cap 5, five
+    /// class runs on server2 (load 15-60, 2026-11-04, commit bd49924a) measured tick-1 at 8.5, 11.3, 11.7, 13.2 and
+    /// 16.9 s (p95 = max 16.9 s), so 35 s. Provisional (n=5): each run prints its phases as C0824_V25 TRX lines.
     /// </summary>
-    private static readonly TimeSpan BacklogTickBudget = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan BacklogTickBudget = TimeSpan.FromSeconds(35);
 
     /// <summary>
     /// V-25 phase record (R4): each phase is a <see cref="TestTiming"/> span and one <c>C0824_V25</c> StdOut line in
