@@ -42,6 +42,11 @@ public sealed class RemoteScriptContractTests
         => await C1361CensusProbes.Status(host: true, passes: true);
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1697_Host_standing_census_compares_only_rows_bound_to_server2()
+        => await C1361CensusProbes.StandingScope(host: true);
+
+    [Test]
     [Arguments("host", "CacheDonorPackagesEmpty")]
     [Arguments("metadata", "CacheDonorPackagesEmpty")]
     [Arguments("reference", "CacheDonorPackagesEmpty")]

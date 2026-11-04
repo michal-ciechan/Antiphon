@@ -2701,6 +2701,11 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1697_Wrapper_standing_census_compares_only_rows_bound_to_server2()
+        => await C1361CensusProbes.StandingScope(host: false);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts()
         => await C1361CensusProbes.Counts();
 
