@@ -666,6 +666,20 @@
         },
         {
           "suite": "antiphon",
+          "class": "C0824BranchRefsDeliveryTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CP-18 op-48 delivery runs in the CARD-1032 phone-home join world (Linux FIFOs and Unix file modes). The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824BranchDeletionRecycleAuditTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CP-17 runs the real CARD-1008 recycle audit (bash, flock, real Git and POSIX mounts). The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
           "class": "UnixDelegateLaunchArgvTests",
           "platform": "windows",
           "reason": "Linux-only by construction: Unix PTY argv witness. The case remains required on Linux.",
