@@ -1584,7 +1584,9 @@ public sealed partial class AttentionService
             if (age < _delegation.LandWarningSeconds && note.LastErrorCode is null && !parked) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == note.TaskId, ct);
             var busy = note.ParentSessionId is Guid destination && await SessionMessageQueueService.IsWorkingAsync(_db, destination, ct);
-            var state = row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? (busy ? "queued; caller busy" : "queued; caller idle") : "attempted; receipt unconfirmed";
+            // A note waiting to be enqueued (e.g. behind the caller's in-flight delivery) has no row
+            // yet; only a linked row that is gone is missing.
+            var state = note.QueueMessageId is null ? "not yet enqueued" : row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? (busy ? "queued; caller busy" : "queued; caller idle") : "attempted; receipt unconfirmed";
             var providerInput = note.Kind == LandNotificationKind.ProviderInputWait;
             var dispatch = note.Kind == LandNotificationKind.DispatchBase;
             var completion = note.Kind == LandNotificationKind.TaskCompletion;
