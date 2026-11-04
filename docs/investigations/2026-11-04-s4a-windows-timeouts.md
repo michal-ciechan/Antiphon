@@ -146,7 +146,7 @@ first Windows run of the next cut will fail `First_enable(execute)` on the 35 s 
 - `GuardedWorktreeRemoval.RemoveDirectoryAsync` at the cut (`server/Infrastructure/Git/GuardedWorktreeRemoval.cs`,
   read at 1470340559) has no wait, poll, retry or delay.
   - A handle inside the tree makes `WorktreeNoFollowDelete.MoveAside` throw. That is caught at once as
-    `worktree_remove_failed` (lines ~160-170 of the cut file).
+    `worktree_remove_failed` (cut file lines 153-162).
   - A failed delete is caught at once as `worktree_removal_incomplete` (lines 182-190).
   - Either outcome fails a test on an assertion, not by a timeout.
 - The only time limit is the per-git-command budget of 5 min (`LandingGit.DefaultBudget`,
