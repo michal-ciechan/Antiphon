@@ -18,10 +18,15 @@ internal static class WorktreeNoFollowDelete
     /// <summary>
     /// Renames the tree to its recorded sibling (<see cref="WorktreeSetAside.SetAsidePath"/>) so the
     /// registration of an absent directory can be dropped while the bytes can still be put back.
-    /// Nothing is followed: a rename moves the entry itself, and it refuses a taken destination.
+    /// Nothing is followed: a rename moves the entry itself, and it refuses a taken destination. A
+    /// scanner holding an entry for a moment is waited out as the no-follow open waits; a lasting
+    /// hold still refuses.
     /// </summary>
-    public static void MoveAside(string path, string aside, WorktreeRenames? renames = null) =>
-        (renames ?? WorktreeRenames.System).MoveDirectory(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), aside);
+    public static void MoveAside(string path, string aside, WorktreeRenames? renames = null)
+    {
+        var r = renames ?? WorktreeRenames.System;
+        r.Retrying(r.MoveDirectory, Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), aside);
+    }
 
     /// <summary>Puts a set-aside tree back; false when its path has been taken or the move fails.</summary>
     public static bool Restore(string aside, string path)
@@ -75,8 +80,8 @@ internal static class WorktreeNoFollowDelete
             if (!handle.IsInvalid) return handle;
             var error = Marshal.GetLastPInvokeError();
             handle.Dispose();
-            if (error != 32 || attempt == 5) throw Failure("open", path, error);
-            Thread.Sleep(100);
+            if (error != 32 || attempt == WorktreeRenames.SharingAttempts) throw Failure("open", path, error);
+            Thread.Sleep(WorktreeRenames.SharingPause);
         }
     }
 
