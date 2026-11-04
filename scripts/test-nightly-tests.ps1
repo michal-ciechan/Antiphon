@@ -1987,9 +1987,9 @@ function Test-C1584_E2EExpandedBudget {
         # Exact census of the committed roster. The added identity is
         # C467_RetainedEvidenceCompletesCleanup, the portable stalled-receipt
         # diagnostic, two polling-attention witnesses, two C459 queued-outcome
-        # witnesses and three rc-0b05506b land-verifier progress probes; Windows
-        # rc still excludes seven.
-        if ($nodes.Count -ne 186 -or $required.Count -ne 179) { $reasons.Add('source-census') }
+        # witnesses, three rc-0b05506b land-verifier progress probes and two
+        # CARD-1703 verifier wiring/tie probes; Windows rc still excludes seven.
+        if ($nodes.Count -ne 188 -or $required.Count -ne 181) { $reasons.Add('source-census') }
         # Independent conservative per-expanded-case bounds. 600 s is 1.72x
         # the slowest supplied Windows observation (348.1 s), not a p95.
         $bounds = @{}
