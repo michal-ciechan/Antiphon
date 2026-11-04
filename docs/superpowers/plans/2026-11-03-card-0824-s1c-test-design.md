@@ -152,8 +152,11 @@ providers, the binder, `AddOptions().Bind()`, `IValidateOptions` and `IOptionsMo
   The rule:
   - The first decision for a preparation is persisted before its first send, and reused for every
     resend of that preparation.
-  - A **definitive runner refusal** of that send clears it, so the next send decides again. A
-    definitive refusal is an Error frame with `StatusCode 409`; a 409 never leaves a Leased record.
+  - A **runner refusal** of that send clears it, so the next send decides again. A refusal is any
+    Error frame (the client raises `ConflictException` for a 409 and for every other refusal status),
+    or a `ConflictException` raised before the send, which sent nothing. Clearing on any refusal is
+    safe because a slot is set Leased only as the last step of `LeaseAsync`, so no refusal leaves a
+    Leased record (`RemoteWorkspacePreparer.cs`, the T-D-4 comment in the failure branch).
   - A transport failure, a timeout or a malformed Result frame keeps it.
 - **T-D-5 Persistence for T-D-4: one new event type, no migration.**
   - The new type is `AgentTaskEventType.WorkspaceSlotDecision = 41`, appended. Its `Detail` is
@@ -225,8 +228,8 @@ across a restart. That is S1's existing behaviour ("flag off still stops everyth
   `RemoteWorkspaceService.ResolveSlotDecisionAsync(db, task, expectation, ct)` after
   `BeginMirrorPreparationAsync` and before `MirrorAsync`. It returns the recorded decision for the
   preparation, or decides, saves the event and returns the new decision. `MirrorAsync` takes the
-  decision as a parameter. On a 409 Error reply the preparer writes the `cleared` event in its existing
-  failure branch.
+  decision as a parameter. On any runner refusal (a `ConflictException`: a 409 or any other Error
+  frame status) the preparer writes the `cleared` event in its existing failure branch.
 - **S-5** Test seams:
   - `C0824SlotTransportWorld.StartAsync(Action<DelegationSettings>? tweak = null,
     Action<IServiceCollection>? configure = null)` passes both to `Rig.StartAsync`, keeping the current
@@ -281,7 +284,7 @@ Each path is joined by its durable identity.
 - **Recovery:**
   - a server restart or retry resends the same preparation with the recorded decision;
   - a lost reply is replayed by `PreparationId`;
-  - a definitive 409 refusal clears the decision.
+  - a runner refusal (any Error frame, 409 or another status) clears the decision.
 - **Observable receipt:** the runner ledger, the on-disk `HEAD` and symbolic-ref (slot), or the
   `task-<id8>` tree (legacy), each agreeing with the server row.
 - **Producer-to-recipient tests through the real phone-home socket:**
@@ -555,7 +558,7 @@ ST = `C0824WorkspaceSlotRoleSettingsTests`. RG = `C0824WorkspaceSlotRoleGateTest
 | G-21 | S1 the runner must advertise `workspaceSlotV1` | PC-21 |
 | G-22 | T-D-4 a resend reuses a recorded `slot` decision | PC-22 |
 | G-23 | T-D-4 a resend reuses a recorded `legacy` decision | PC-23 |
-| G-24 | T-D-4 a definitive 409 refusal clears the decision | PC-24 |
+| G-24 | T-D-4 a runner refusal (witnessed with a 409 Error frame) clears the decision | PC-24 |
 | G-25 | T-D-4 a transport, timeout or malformed reply does not clear it | PC-25 |
 | G-26 | T-D-5 the decision is saved before the request is sent | PC-26 |
 | G-27 | T-D-5 no decision event unless flag, binding and feature all hold (flag-off byte identity) | PC-27 |
