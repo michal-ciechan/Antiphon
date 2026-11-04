@@ -270,8 +270,11 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
     /// consumes the 60 s receipt window before FakeGrok is even typed. Cache stable identity
     /// reads and collapse Inspect's paired IdentityAsync. Fetch of observation pins does not
     /// invalidate worktree identity. Production <see cref="LandingGit"/> stays uncached.
+    /// CARD-1704 S1: the protocol-git records come from <see cref="ProtocolGitRecorder"/>, the observer of every git
+    /// call that reaches <see cref="LandingGit"/> (process, stdin and in-process answers), so a cache hit here still
+    /// writes none and the stdin batches now renew the receipt window too.
     /// </summary>
-    private sealed class EvidenceGit(string root) : LandingGit
+    private sealed class EvidenceGit(string root) : LandingGit(observer: new ProtocolGitRecorder(root))
     {
         public void DropCachedReads()
         {
@@ -289,14 +292,6 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
             start.Environment["GIT_FLUSH"] = "0";
             start.ArgumentList.Add("-c");
             start.ArgumentList.Add("gc.auto=0");
-        }
-
-        private async Task RecordAsync(string repository, IReadOnlyList<string> arguments, LandingGitResult result)
-        {
-            var path = Path.Combine(root, $"protocol-git-{Guid.NewGuid():N}.json");
-            await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(new {
-                repository, arguments, result.ExitCode, at = DateTime.UtcNow, pid = Environment.ProcessId }));
-            File.Move(path + ".tmp", path);
         }
 
         private static string Key(string repository, IReadOnlyList<string> arguments)
@@ -344,7 +339,6 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
             }
 
             var result = await base.RunAsync(repository, arguments, ct);
-            await RecordAsync(repository, arguments, result);
             lock (_gate)
             {
                 if (InvalidatesVolatile(arguments))
@@ -365,7 +359,6 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
             Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         {
             var result = await base.RunOwnedAsync(repository, arguments, started, ct);
-            await RecordAsync(repository, arguments, result);
             lock (_gate)
             {
                 _volatile.Clear();

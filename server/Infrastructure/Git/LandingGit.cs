@@ -42,21 +42,66 @@ public class LandingGit : ILandingGit
     internal Func<IGitSession>? SessionFactory { get; set; }
 
     /// <summary>The live outer scope's session, or null outside a scope and whenever none is attached.</summary>
-    internal IGitSession? CurrentSession => null;
+    internal IGitSession? CurrentSession => Scope?.Session;
 
     /// <summary>The backend the live outer scope resolved (read once per scope), or null outside a scope.</summary>
-    internal string? ScopeBackend => null;
+    internal string? ScopeBackend => Scope?.Backend;
 
-    // CARD-1704 S1: typed reads (red-first stubs).
-    public Task<GitCommitRead> ReadCommitAsync(string repository, string revision, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitAncestryRead> ReadAncestryAsync(string repository, string ancestor, string descendant, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitRefRead> ReadRefAsync(string repository, string fullRef, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitSymbolicRefRead> ReadSymbolicRefAsync(string repository, string name, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitDirectoryRead> ReadGitDirectoryAsync(string repository, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitConfigRead> ReadConfigAsync(string repository, string key, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitListingRead> ReadTreeZAsync(string repository, string treeish, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitListingRead> ReadDiffTreeZAsync(string repository, string from, string to, CancellationToken ct) => throw new NotImplementedException();
-    public Task<GitListingRead> ReadWorktreeStatusAsync(string repository, bool untracked, CancellationToken ct) => throw new NotImplementedException();
+    // CARD-1704 S1: typed reads. Today's argv through the virtual RunAsync, so every subclass that traces or
+    // injects still sees each read. A scope's session may answer first (none is attached in S1 production).
+    public async Task<GitCommitRead> ReadCommitAsync(string repository, string revision, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.Commit(revision), s => s.ReadCommit(repository, revision), ct));
+    public async Task<GitAncestryRead> ReadAncestryAsync(string repository, string ancestor, string descendant, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.Ancestry(ancestor, descendant), s => s.ReadAncestry(repository, ancestor, descendant), ct));
+    public async Task<GitRefRead> ReadRefAsync(string repository, string fullRef, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.Ref(fullRef), s => s.ReadRef(repository, fullRef), ct));
+    public async Task<GitSymbolicRefRead> ReadSymbolicRefAsync(string repository, string name, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.SymbolicRef(name), s => s.ReadSymbolicRef(repository, name), ct));
+    public async Task<GitDirectoryRead> ReadGitDirectoryAsync(string repository, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.GitDirectory(), s => s.ReadGitDirectory(repository), ct));
+    public async Task<GitConfigRead> ReadConfigAsync(string repository, string key, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.Config(key), s => s.ReadConfig(repository, key), ct));
+    public async Task<GitListingRead> ReadTreeZAsync(string repository, string treeish, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.TreeZ(treeish), s => s.ReadTreeZ(repository, treeish), ct));
+    public async Task<GitListingRead> ReadDiffTreeZAsync(string repository, string from, string to, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.DiffTreeZ(from, to), s => s.ReadDiffTreeZ(repository, from, to), ct));
+    public async Task<GitListingRead> ReadWorktreeStatusAsync(string repository, bool untracked, CancellationToken ct)
+        => new(await ReadAsync(repository, GitReadArguments.WorktreeStatus(untracked), s => s.ReadWorktreeStatus(repository, untracked), ct));
+
+    /// <summary>The session's answer when it handles the read, otherwise today's command. A session that throws
+    /// has not handled it.</summary>
+    private async Task<LandingGitResult> ReadAsync(string repository, IReadOnlyList<string> arguments,
+        Func<IGitSession, GitAnswer<LandingGitResult>> ask, CancellationToken ct)
+    {
+        if (CurrentSession is { } session)
+        {
+            var clock = Stopwatch.StartNew();
+            GitAnswer<LandingGitResult> answer;
+            try { answer = ask(session); }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or OperationCanceledException))
+            { answer = GitAnswer<LandingGitResult>.NotHandled("session_exception"); }
+            if (answer is { Handled: true, Value: { } value })
+            {
+                ct.ThrowIfCancellationRequested();
+                Scope?.Profile.InProcessHit();
+                Observe(GitOperationKind.InProcess, repository, arguments, clock.Elapsed, value.ExitCode);
+                return value;
+            }
+        }
+        return await RunAsync(repository, arguments, ct);
+    }
+
+    /// <summary>Tells the observer about one completed git call; it never changes git.</summary>
+    private void Observe(GitOperationKind kind, string repository, IReadOnlyList<string> arguments, TimeSpan elapsed, int? exitCode)
+    {
+        if (ReferenceEquals(_observer, NoGitOperationObserver.Instance)) return;
+        try
+        {
+            _observer.Completed(new GitOperation(kind, repository, arguments.ToArray(),
+                Scope?.Backend ?? LandGitBackendNames.Cli, elapsed, exitCode));
+        }
+        catch (Exception) { Interlocked.Increment(ref _observerFailures); }
+    }
 
     /// <summary>Observer exceptions swallowed so far (they never fail git).</summary>
     internal long ObserverFailures => Interlocked.Read(ref _observerFailures);
@@ -128,6 +173,7 @@ public class LandingGit : ILandingGit
         {
             ct.ThrowIfCancellationRequested();
             Scope?.Profile.InProcessHit();
+            Observe(GitOperationKind.InProcess, repository, arguments, TimeSpan.Zero, inProcess.ExitCode);
             return inProcess;
         }
         if (started is null && IsRefFormatCheck(arguments))
@@ -136,6 +182,7 @@ public class LandingGit : ILandingGit
             {
                 ct.ThrowIfCancellationRequested();
                 Scope?.Profile.RefFormatHit();
+                Observe(GitOperationKind.InProcess, repository, arguments, TimeSpan.Zero, verdict.ExitCode);
                 return verdict;
             }
             var checkedFormat = await ExecuteScopedAsync(repository, arguments, started, options, ct);
@@ -221,6 +268,10 @@ public class LandingGit : ILandingGit
         var process = child ?? throw new IOException("git_start_failed");
         owned?.Attach(process, WriteChildLog);
         var disposeProcess = true;
+        // CARD-1704 S1: one observer call per started process, after its journal record is settled; a throw
+        // (timeout, kill, cancellation) is observed in the finally with no exit code.
+        var observed = false;
+        var observing = Stopwatch.StartNew();
         try
         {
             var output = process.StandardOutput.ReadToEndAsync();
@@ -272,6 +323,8 @@ public class LandingGit : ILandingGit
             // the drain above finishes, so a worker death while the pipes are open still fences.
             journal?.Exited(process);
             _cardFiles?.NoteServerGit(repository, arguments);
+            observed = true;
+            Observe(GitOperationKind.Process, repository, arguments, observing.Elapsed, process.ExitCode);
             string? rebaseHead = null;
             if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
             {
@@ -283,6 +336,7 @@ public class LandingGit : ILandingGit
         }
         finally
         {
+            if (!observed) Observe(GitOperationKind.Process, repository, arguments, observing.Elapsed, null);
             if (disposeProcess) process.Dispose();
         }
     }
@@ -711,7 +765,10 @@ public class LandingGit : ILandingGit
     public ILandingOperationScope BeginOperationScope()
     {
         if (Scope is { } live) return new BorrowedScope(live.Profile);
-        var scope = new OperationScope(this);
+        // CARD-1704 S1 (D-8, T-D-8): the backend is read once per outer scope and never changes a running one.
+        // S1 resolves every value to the CLI and attaches no session; only the test hook attaches one.
+        var backend = _backend?.Resolve() ?? LandGitBackendNames.Cli;
+        var scope = new OperationScope(this, backend, SessionFactory?.Invoke());
         _scope.Value = scope;
         return scope;
     }
@@ -721,11 +778,14 @@ public class LandingGit : ILandingGit
 
     private readonly record struct RegistrationStamp(DateTime WorktreesWriteUtc, int Entries);
 
-    private sealed class OperationScope(LandingGit owner) : ILandingOperationScope
+    private sealed class OperationScope(LandingGit owner, string backend, IGitSession? session) : ILandingOperationScope
     {
         private int _generation;
-        public LandingGitProfile Profile { get; } = new();
+        public LandingGitProfile Profile { get; } = new() { Backend = backend };
         public bool Disposed { get; private set; }
+        public string Backend { get; } = backend;
+        /// <summary>CARD-1704 D-6: owned by this outer scope and disposed with it (before the lease is released).</summary>
+        public IGitSession? Session { get; } = session;
         public int Generation => Volatile.Read(ref _generation);
         public ConcurrentDictionary<string, (RegistrationStamp Stamp, IReadOnlyList<LandingRegistration> Rows)> Registrations { get; }
             = new(StringComparer.Ordinal);
@@ -743,8 +803,10 @@ public class LandingGit : ILandingGit
 
         public void Dispose()
         {
+            var first = !Disposed;
             Disposed = true;
             if (ReferenceEquals(owner._scope.Value, this)) owner._scope.Value = null;
+            if (first) Session?.Dispose();
         }
     }
 
@@ -876,8 +938,7 @@ public class LandingGit : ILandingGit
                 return LandRecoveryCheckoutInspection.Refused("adopt_local_changed");
             var path = before.Snapshot.RegisteredPath;
             // Refuse filter-bearing checkouts before any diff can ask Git to clean worktree bytes.
-            var changedAttributes = await RunAsync(path,
-                ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", oldSha, expectedSha], ct);
+            var changedAttributes = (await ReadDiffTreeZAsync(path, oldSha, expectedSha, ct)).Result;
             if (!changedAttributes.Succeeded || changedAttributes.Output.Contains('\uFFFD')
                 || changedAttributes.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
                     .Any(x => x == ".gitattributes" || x.EndsWith("/.gitattributes", StringComparison.Ordinal)))
@@ -889,7 +950,7 @@ public class LandingGit : ILandingGit
             var reviewedParents = new HashSet<string>(reviewedPaths.Comparer);
             foreach (var sha in new[] { oldSha, expectedSha }.Distinct(StringComparer.Ordinal))
             {
-                var listed = await RunAsync(path, ["ls-tree", "-r", "-z", sha], ct);
+                var listed = (await ReadTreeZAsync(path, sha, ct)).Result;
                 if (!listed.Succeeded || listed.Output.Contains('\uFFFD'))
                     return LandRecoveryCheckoutInspection.Refused();
                 trees.Add(sha, listed.Output);
@@ -1017,7 +1078,7 @@ public class LandingGit : ILandingGit
                     return LandRecoveryCheckoutInspection.Refused();
             }
             var tree = trees[oldSha];
-            var auto = await RunAsync(path, ["config", "--get", "core.autocrlf"], ct);
+            var auto = (await ReadConfigAsync(path, "core.autocrlf", ct)).Result;
             if (auto.ExitCode is not (0 or 1)) return LandRecoveryCheckoutInspection.Refused();
             var autoCrlf = auto.Output.Trim() == "true";
             if (auto.ExitCode == 0 && !autoCrlf && auto.Output.Trim() is not ("false" or "input"))
@@ -1174,6 +1235,8 @@ public class LandingGit : ILandingGit
         }
         var child = started ?? throw new IOException("git_start_failed");
         owned?.Attach(child, WriteChildLog);
+        var observing = Stopwatch.StartNew();
+        int? observedExit = null;
         var output = new MemoryStream();
         var disposeChild = true;
         var disposeOutput = true;
@@ -1231,10 +1294,12 @@ public class LandingGit : ILandingGit
             // Both reads reached EOF and the root has exited, so the record is already gone.
             // A broken-pipe write still fails the call, as WhenAll(write, ...) did at the base.
             await write.WaitAsync(budget.Token);
+            observedExit = child.ExitCode;
             return (child.ExitCode, output.ToArray());
         }
         finally
         {
+            Observe(GitOperationKind.Stdin, path, arguments, observing.Elapsed, observedExit);
             if (disposeChild) child.Dispose();
             if (disposeOutput) output.Dispose();
         }

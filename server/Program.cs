@@ -508,6 +508,11 @@ try
     builder.Services.AddScoped<AgentTaskLandingProtocol>();
     // CARD-0589 S4: the land verifier holds a host build slot from the local session runner.
     builder.Services.Configure<LandingSettings>(builder.Configuration.GetSection("Landing"));
+    // CARD-1704 S1: Landing:GitBackend in its own options type (scalar shape and grammar refused at startup), resolved
+    // once per land operation scope, and the git-call observer (a no-op in production).
+    builder.Services.AddLandGitBackendSettings(builder.Configuration);
+    builder.Services.AddSingleton<LandGitBackend>();
+    builder.Services.AddSingleton<IGitOperationObserver>(NoGitOperationObserver.Instance);
     builder.Services.AddSingleton<IBuildSlotGate, SessionRunnerBuildSlotGate>();
     builder.Services.AddSingleton<ILandExecutionLease, LandExecutionLease>();
     builder.Services.AddSingleton<LandVerificationArtifacts>();

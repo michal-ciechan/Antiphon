@@ -100,6 +100,7 @@ public enum LandInspectionScope { Full, IdentityAndStatus, IdentityOnly }
 public sealed class LandingGitProfile
 {
     private long _processes, _worktreeLists, _registrationHits, _canonicalHits, _refFormatHits, _inProcessHits, _inspections, _remote, _gitTicks;
+    private long _fallbacks, _mismatches;
     // CARD-1432 S4 (R4): processes per `subcommand[ sub-argument]`.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _histogram = new(StringComparer.Ordinal);
     private const int HistogramEntries = 40;
@@ -113,6 +114,12 @@ public sealed class LandingGitProfile
     /// <summary>Read-only commands answered in process by libgit2 (InProcessGitReads): a call, not a process.</summary>
     public long InProcessHits => Interlocked.Read(ref _inProcessHits);
     public long Inspections => Interlocked.Read(ref _inspections);
+    /// <summary>CARD-1704 S1: the land git backend this scope resolved (<c>Landing:GitBackend</c>); always Cli in S1.</summary>
+    public string Backend { get; set; } = "Cli";
+    /// <summary>CARD-1704 S1: session reads that fell back to git (0 in S1: no session is attached).</summary>
+    public long Fallbacks => Interlocked.Read(ref _fallbacks);
+    /// <summary>CARD-1704 S1: Compare-mode answers that differed from git (0 in S1).</summary>
+    public long Mismatches => Interlocked.Read(ref _mismatches);
     public long RemoteRoundTrips => Interlocked.Read(ref _remote);
     public double GitSeconds => TimeSpan.FromTicks(Interlocked.Read(ref _gitTicks)).TotalSeconds;
     public void Add(LandingGitProfile other)
@@ -123,6 +130,9 @@ public sealed class LandingGitProfile
         Interlocked.Add(ref _canonicalHits, other.CanonicalHits);
         Interlocked.Add(ref _refFormatHits, other.RefFormatHits);
         Interlocked.Add(ref _inProcessHits, other.InProcessHits);
+        Interlocked.Add(ref _fallbacks, other.Fallbacks);
+        Interlocked.Add(ref _mismatches, other.Mismatches);
+        if (other.Backend != "Cli") Backend = other.Backend;
         Interlocked.Add(ref _inspections, other.Inspections);
         Interlocked.Add(ref _remote, other.RemoteRoundTrips);
         Interlocked.Add(ref _gitTicks, Interlocked.Read(ref other._gitTicks));

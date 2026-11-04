@@ -74,15 +74,15 @@ public sealed class GuardedVerificationRemoval(ILandingGit git, IRepositoryMutat
             if (!IsAbsent(source.WorktreePath)) return Refuse("source_recreated");
             if ((await git.RegistrationsAsync(source.RepositoryPath, ct)).Any(r => r.Branch == source.SourceFullRef))
                 return Refuse("source_checked_out");
-            if ((await git.RunAsync(source.RepositoryPath, ["symbolic-ref", "-q", source.SourceFullRef], ct)).ExitCode != 1)
+            if (!(await git.ReadSymbolicRefAsync(source.RepositoryPath, source.SourceFullRef, ct)).NotSymbolic)
                 return Refuse("source_ref_symbolic_or_unresolved");
-            if ((await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct)).ExitCode == 2)
+            if ((await git.ReadRefAsync(source.RepositoryPath, source.SourceFullRef, ct)).State == GitRefState.Missing)
                 return new(unregistered, directoryGone, true, null);
             if (await AuthorityAsync(request, ct) is null) return Refuse("verification_authority_changed");
             var deleted = await git.RunAsync(source.RepositoryPath,
                 ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
             if (!deleted.Succeeded) return Refuse("branch_delete_failed");
-            branchDeleted = (await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct)).ExitCode == 2;
+            branchDeleted = (await git.ReadRefAsync(source.RepositoryPath, source.SourceFullRef, ct)).State == GitRefState.Missing;
             return new(unregistered, directoryGone, branchDeleted, branchDeleted ? null : "branch_deletion_unconfirmed");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
@@ -106,12 +106,12 @@ public sealed class GuardedVerificationRemoval(ILandingGit git, IRepositoryMutat
         if (!LandingGit.PathsEqual(root, source.WorktreePath) || !LandingGit.PathsEqual(await git.CommonDirectoryAsync(root, ct), request.CommonDirectory)) return null;
         var registrations = (await git.RegistrationsAsync(source.RepositoryPath, ct)).Where(r => LandingGit.PathsEqual(r.Path, root)).ToList();
         if (registrations.Count != 1 || registrations[0].Locked || registrations[0].Prunable || registrations[0].Branch != source.SourceFullRef) return null;
-        var admin = await git.RunAsync(root, ["rev-parse", "--absolute-git-dir"], ct);
+        var admin = (await git.ReadGitDirectoryAsync(root, ct)).Result;
         if (!admin.Succeeded || !LandingGit.PathsEqual(await git.CanonicalDirectoryAsync(admin.Output.Trim(), ct), request.GitDirectory)
             || await git.HasActiveSequencerAsync(root, ct)) return null;
-        var head = await git.RunAsync(root, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
-        var symbolic = await git.RunAsync(root, ["symbolic-ref", "-q", "HEAD"], ct);
-        var dirty = await git.RunAsync(root, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"], ct);
+        var head = (await git.ReadCommitAsync(root, "HEAD", ct)).Result;
+        var symbolic = (await git.ReadSymbolicRefAsync(root, "HEAD", ct)).Result;
+        var dirty = (await git.ReadWorktreeStatusAsync(root, false, ct)).Result;
         var tracked = await git.RunAsync(root, ["ls-files", "-z"], ct);
         if (!head.Succeeded || head.Output.Trim() != request.ExpectedSourceSha || !symbolic.Succeeded || symbolic.Output.Trim() != source.SourceFullRef
             || !dirty.Succeeded || dirty.Output.Length != 0 || !tracked.Succeeded) return null;

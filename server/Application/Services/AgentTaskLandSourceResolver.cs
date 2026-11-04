@@ -305,8 +305,7 @@ public sealed class AgentTaskLandSourceResolver(
                 if (witness.Reason is not null)
                     return await RefuseAsync(task, request, baseline, witness.Reason,
                         expected, ownerObserved.Sha, expected, ct);
-                var ancestry = await git.RunAsync(repository,
-                    ["merge-base", "--is-ancestor", witness.LocalBeforeSha, expected], ct);
+                var ancestry = (await git.ReadAncestryAsync(repository, witness.LocalBeforeSha, expected, ct)).Result;
                 if (!ancestry.Succeeded)
                     return await RefuseAsync(task, request, baseline, "source_dirty",
                         expected, ownerObserved.Sha, expected, ct, detail: "recovery_checkout_unproven");
@@ -387,8 +386,7 @@ public sealed class AgentTaskLandSourceResolver(
             foreach (var candidate in candidates.Distinct(StringComparer.Ordinal))
             {
                 if (candidate == source.WorktreeBaseSha) { lineage = true; break; }
-                var ancestor = await git.RunAsync(repository,
-                    ["merge-base", "--is-ancestor", candidate, source.WorktreeBaseSha!], ct);
+                var ancestor = (await git.ReadAncestryAsync(repository, candidate, source.WorktreeBaseSha!, ct)).Result;
                 if (ancestor.ExitCode == 0) { lineage = true; break; }
                 if (ancestor.ExitCode != 1)
                     return await RefuseAsync(task, request, baseline, "adopt_source_lineage_unreadable",
@@ -550,8 +548,7 @@ public sealed class AgentTaskLandSourceResolver(
             request.RecoveryRelationship = "NewOwnerRef";
         else
         {
-            var ancestry = await git.RunAsync(repository,
-                ["merge-base", "--is-ancestor", beforeRemote, expected], ct);
+            var ancestry = (await git.ReadAncestryAsync(repository, beforeRemote, expected, ct)).Result;
             if (ancestry.ExitCode is not (0 or 1))
                 return await RefuseAsync(task, request, baseline, "adopt_source_ancestry_unreadable",
                     local, finalRemote.Sha, expected, ct);
@@ -611,10 +608,10 @@ public sealed class AgentTaskLandSourceResolver(
     private async Task<LandingSourceGraph> ClassifyAsync(string repository, string local, string remote, CancellationToken ct)
     {
         if (local == remote) return new(LandSourceRelationship.Equal, null);
-        var localIsAncestor = await git.RunAsync(repository, ["merge-base", "--is-ancestor", local, remote], ct);
+        var localIsAncestor = (await git.ReadAncestryAsync(repository, local, remote, ct)).Result;
         if (localIsAncestor.ExitCode is not 0 and not 1)
             return new(LandSourceRelationship.Unavailable, "source_remote_ancestry_error");
-        var remoteIsAncestor = await git.RunAsync(repository, ["merge-base", "--is-ancestor", remote, local], ct);
+        var remoteIsAncestor = (await git.ReadAncestryAsync(repository, remote, local, ct)).Result;
         if (remoteIsAncestor.ExitCode is not 0 and not 1)
             return new(LandSourceRelationship.Unavailable, "source_remote_ancestry_error");
         if (localIsAncestor.ExitCode == 0) return new(LandSourceRelationship.Behind, null);

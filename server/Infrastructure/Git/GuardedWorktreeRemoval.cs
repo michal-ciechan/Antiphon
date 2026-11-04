@@ -283,7 +283,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             if (!IsAbsent(source.WorktreePath)) return Refuse("source_recreated");
             var rows = await RegistrationsAsync(source.RepositoryPath, ct);
             if (rows.Any(r => r.Branch == source.SourceFullRef && LiveCheckout(r, request))) return Refuse("source_checked_out");
-            var exists = await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct);
+            var exists = (await git.ReadRefAsync(source.RepositoryPath, source.SourceFullRef, ct)).Result;
             if (exists.ExitCode == 2)
             {
                 if (request.Purpose != WorktreeRemovalPurpose.Publication) return Refuse("source_ref_missing");
@@ -299,7 +299,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var deleted = await git.RunAsync(source.RepositoryPath,
                     ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
                 if (!deleted.Succeeded) return Refuse("branch_delete_failed");
-                var absent = await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct);
+                var absent = (await git.ReadRefAsync(source.RepositoryPath, source.SourceFullRef, ct)).Result;
                 branchGone = absent.ExitCode == 2;
                 if (!branchGone) return Refuse("branch_deletion_unconfirmed");
             }
@@ -359,21 +359,18 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             if (checkout is not null)
             {
                 if (await git.HasActiveSequencerAsync(checkout, ct)) return "local_target_active_sequencer";
-                var symbolic = await git.RunAsync(checkout, ["symbolic-ref", "-q", "HEAD"], ct);
-                var head = await git.RunAsync(checkout, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
-                var status = await git.RunAsync(checkout, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+                var symbolic = (await git.ReadSymbolicRefAsync(checkout, "HEAD", ct)).Result;
+                var head = (await git.ReadCommitAsync(checkout, "HEAD", ct)).Result;
+                var status = (await git.ReadWorktreeStatusAsync(checkout, true, ct)).Result;
                 if (!symbolic.Succeeded || symbolic.Output.Trim() != source.TargetFullRef || !head.Succeeded
                     || head.Output.Trim() != request.ExpectedTargetSha || !status.Succeeded || status.Output.Length != 0)
                     return "local_target_dirty_or_changed";
             }
-            var targetSymbolic = await git.RunAsync(source.RepositoryPath,
-                ["symbolic-ref", "-q", source.TargetFullRef], ct);
+            var targetSymbolic = (await git.ReadSymbolicRefAsync(source.RepositoryPath, source.TargetFullRef, ct)).Result;
             if (targetSymbolic.ExitCode != 1) return "local_target_symbolic_or_unresolved";
-            var target = await git.RunAsync(source.RepositoryPath,
-                ["rev-parse", "--verify", source.TargetFullRef + "^{commit}"], ct);
+            var target = (await git.ReadCommitAsync(source.RepositoryPath, source.TargetFullRef, ct)).Result;
             if (!target.Succeeded || target.Output.Trim() != request.ExpectedTargetSha) return "local_target_changed";
-            var ancestry = await git.RunAsync(source.RepositoryPath,
-                ["merge-base", "--is-ancestor", request.ExpectedSourceSha, request.ExpectedTargetSha], ct);
+            var ancestry = (await git.ReadAncestryAsync(source.RepositoryPath, request.ExpectedSourceSha, request.ExpectedTargetSha, ct)).Result;
             return ancestry.ExitCode == 0 ? null : "local_merge_unconfirmed";
         }
         if (request.LandingId is not Guid id) return "publication_receipt_required";

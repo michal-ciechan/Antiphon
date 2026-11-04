@@ -545,8 +545,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (reason is not null || checkout is null) return (reason, checkout);
         if (await TryIndexLockRefusalAsync(checkout, ct) is not null) return ("canonical_index_lock", checkout);
         if (await git.HasActiveSequencerAsync(checkout, ct)) return ("canonical_active_sequencer", checkout);
-        var status = await git.RunAsync(checkout,
-            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+        var status = (await git.ReadWorktreeStatusAsync(checkout, true, ct)).Result;
         if (!status.Succeeded || status.Output.Length != 0) return ("canonical_checkout_dirty", checkout);
         return (null, checkout);
     }
@@ -591,7 +590,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var land = op.LandWorktreePath!;
         if (Directory.Exists(land))
         {
-            var head = await git.RunAsync(land, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+            var head = (await git.ReadCommitAsync(land, "HEAD", ct)).Result;
             var status = await git.RunAsync(land, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
             if (head.Succeeded && head.Output.Trim() == sha && status.Succeeded && status.Output.Length == 0) return land;
         }
@@ -601,7 +600,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task<(PreparedLandingVerification Ticket, IReadOnlyList<LandingRegistration> Registrations)> CaptureTicketAsync(
         AgentTaskLanding op, AgentTaskLandRequest request, CancellationToken ct)
     {
-        var admin = await git.RunAsync(op.LandWorktreePath!, ["rev-parse", "--absolute-git-dir"], ct);
+        var admin = (await git.ReadGitDirectoryAsync(op.LandWorktreePath!, ct)).Result;
         Require(admin.Succeeded, "land_worktree_identity_changed");
         var registrations = await git.LiveRegistrationsAsync(op.RepositoryPath, ct);
         return (new(new(op.TaskId, request.Id, request.Attempt, op.Id, op.RebasedSourceSha!, op.LandWorktreePath!,
@@ -669,7 +668,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     "Land {OperationId} task worktree {Path} holds {Residue} after the verification window; publication proceeds and guarded cleanup keeps the tree",
                     op.Id, ticket.Identity.SourcePath, residue); } catch (Exception) { }
         }
-        var head = await git.RunAsync(candidate, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+        var head = (await git.ReadCommitAsync(candidate, "HEAD", ct)).Result;
         Require(head.Succeeded && head.Output.Trim() == ticket.Identity.CandidateSha, "land_worktree_changed");
     }
 
@@ -937,7 +936,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     private async Task<string> CommitAsync(string repository, string revision, CancellationToken ct)
     {
-        var result = await git.RunAsync(repository, ["rev-parse", "--verify", revision + "^{commit}"], ct);
+        var result = (await git.ReadCommitAsync(repository, revision, ct)).Result;
         var sha = result.Output.Trim();
         Require(result.Succeeded && sha.Length is 40 or 64 && sha.All(char.IsAsciiHexDigit), "commit_lookup_failed");
         return sha;
@@ -945,7 +944,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     private async Task<bool> IsAncestorAsync(string repository, string source, string target, CancellationToken ct)
     {
-        var result = await git.RunAsync(repository, ["merge-base", "--is-ancestor", source, target], ct);
+        var result = (await git.ReadAncestryAsync(repository, source, target, ct)).Result;
         Require(result.ExitCode is 0 or 1, "ancestry_error");
         return result.ExitCode == 0;
     }

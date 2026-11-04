@@ -22,7 +22,7 @@ internal sealed class LandVerificationPolicy(ILandingGit git)
                 ["diff-tree", "--no-commit-id", "--raw", "-r", "-z", "--no-abbrev", "--no-ext-diff",
                     "--no-textconv", "--find-renames", targetSha, candidateSha!, "--"], ct);
             if (!diff.Succeeded || !OnlyDocumentation(diff.Output)) return new(false, "diff-requires-build");
-            var tree = await git.RunAsync(repository, ["ls-tree", "-r", "-z", candidateSha!], ct);
+            var tree = (await git.ReadTreeZAsync(repository, candidateSha!, ct)).Result;
             if (!tree.Succeeded || !MatchesAuditedGraph(tree.Output)) return new(false, "unrecognized-build-graph");
             return new(true, "non-code");
         }

@@ -81,10 +81,10 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
                     await mutate(path, [command, "--quit"], ct);
             }
             // A branch someone checked out here must never move with the reset: detach first.
-            var attached = await git.RunAsync(path, ["symbolic-ref", "-q", "HEAD"], ct);
+            var attached = (await git.ReadSymbolicRefAsync(path, "HEAD", ct)).Result;
             if (attached.ExitCode == 0)
             {
-                var head = await git.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+                var head = (await git.ReadCommitAsync(path, "HEAD", ct)).Result;
                 if (!head.Succeeded) return Refuse(UnreadyCode, "attached HEAD is unreadable");
                 var detach = await mutate(path, ["update-ref", "--no-deref", "HEAD", head.Output.Trim()], ct);
                 if (!detach.Succeeded) return Refuse(UnreadyCode, "could not detach HEAD");
@@ -96,11 +96,11 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
             if (HasSequencer(admin)) return Refuse(SequencerStuckCode, $"{admin} still holds sequencer state");
         }
 
-        var confirmed = await git.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+        var confirmed = (await git.ReadCommitAsync(path, "HEAD", ct)).Result;
         if (!confirmed.Succeeded || confirmed.Output.Trim() != sha) return Refuse(UnreadyCode, "HEAD is not the requested commit");
-        var symbolic = await git.RunAsync(path, ["symbolic-ref", "-q", "HEAD"], ct);
+        var symbolic = (await git.ReadSymbolicRefAsync(path, "HEAD", ct)).Result;
         if (symbolic.ExitCode != 1) return Refuse(UnreadyCode, "HEAD is not detached");
-        var status = await git.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+        var status = (await git.ReadWorktreeStatusAsync(path, true, ct)).Result;
         if (!status.Succeeded || status.Output.Length != 0) return Refuse(UnreadyCode, "the land worktree is not clean");
         if (!Exists(Path.Combine(admin, "locked")))
         {

@@ -47,7 +47,7 @@ internal static class LandOperationFactory
         if (remote.Reason is not null || remote.Sha is null) return new(null, remote.Reason ?? "remote_unknown");
         if (localTarget != remote.Sha)
         {
-            var ancestry = await git.RunAsync(coordinates.RepositoryPath, ["merge-base", "--is-ancestor", localTarget, remote.Sha], ct);
+            var ancestry = (await git.ReadAncestryAsync(coordinates.RepositoryPath, localTarget, remote.Sha, ct)).Result;
             if (ancestry.ExitCode is not (0 or 1)) return new(null, "ancestry_error");
             if (ancestry.ExitCode == 1)
             {
@@ -56,8 +56,7 @@ internal static class LandOperationFactory
                 var reviewedOnly = false;
                 if (localTarget == expected)
                 {
-                    var remoteToReviewed = await git.RunAsync(coordinates.RepositoryPath,
-                        ["merge-base", "--is-ancestor", remote.Sha, expected], ct);
+                    var remoteToReviewed = (await git.ReadAncestryAsync(coordinates.RepositoryPath, remote.Sha, expected, ct)).Result;
                     if (remoteToReviewed.ExitCode is not (0 or 1)) return new(null, "ancestry_error");
                     reviewedOnly = remoteToReviewed.ExitCode == 0;
                 }
@@ -71,7 +70,7 @@ internal static class LandOperationFactory
         if (Directory.Exists(coordinates.WorktreePath))
         {
             worktreePath = await git.CanonicalDirectoryAsync(coordinates.WorktreePath, ct);
-            var admin = await git.RunAsync(worktreePath, ["rev-parse", "--absolute-git-dir"], ct);
+            var admin = (await git.ReadGitDirectoryAsync(worktreePath, ct)).Result;
             if (!admin.Succeeded || admin.Output.Trim().Length == 0)
                 return new(null, "source_git_directory_unreadable", LandFailureDiagnostic.FromCommand(["rev-parse", "--absolute-git-dir"], admin.ExitCode));
             gitDirectory = await git.CanonicalDirectoryAsync(admin.Output.Trim(), ct);
@@ -145,7 +144,7 @@ internal static class LandOperationFactory
         var read = await git.RunAsync(repository, ["show-ref", "--verify", "--hash", fullRef], ct);
         var sha = read.Output.Trim();
         if (read.Succeeded && GitObjectId.IsFull(sha)) return (sha, null);
-        var exists = await git.RunAsync(repository, ["show-ref", "--exists", fullRef], ct);
+        var exists = (await git.ReadRefAsync(repository, fullRef, ct)).Result;
         return (null, exists.ExitCode == 2 ? "source_ref_missing" : "source_ref_error");
     }
 }
