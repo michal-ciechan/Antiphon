@@ -90,6 +90,8 @@ public class LandingGit : ILandingGit
     private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
+        if (started is null && GitPushUrlCache.IsCommand(arguments) && InProcessGitReads.Enabled && InProcessEligible())
+            return await PushUrlAsync(repository, arguments, options, ct);
         if (started is null && !IsMutating(arguments) && InProcessAnswer(repository, arguments) is { } inProcess)
         {
             ct.ThrowIfCancellationRequested();
@@ -112,6 +114,38 @@ public class LandingGit : ILandingGit
         return await ExecuteScopedAsync(repository, arguments, started, options, ct);
     }
 
+    private readonly GitPushUrlCache _pushUrls = new();
+
+    /// <summary>
+    /// <c>remote get-url --push --all origin</c>: git's last answer while the config files that decide
+    /// it are unchanged (<see cref="GitPushUrlCache"/>). A miss lists git's config origins (one extra,
+    /// unprofiled read), hashes those files, asks git, and keeps the answer only if the files did not
+    /// change meanwhile.
+    /// </summary>
+    private async Task<LandingGitResult> PushUrlAsync(string repository, IReadOnlyList<string> arguments,
+        LandingGitRunOptions options, CancellationToken ct)
+    {
+        if (_pushUrls.TryGet(repository) is { } cached)
+        {
+            ct.ThrowIfCancellationRequested();
+            Scope?.Profile.InProcessHit();
+            return cached;
+        }
+        (string Path, string Hash)[]? before = null;
+        try
+        {
+            var listing = await ExecuteProcessAsync(repository, GitPushUrlCache.Listing, null, new LandingGitRunOptions(), ct);
+            if (listing.Succeeded && _childEnvironment is { } env
+                && GitPushUrlCache.Files(repository, listing.Output, env) is { } files)
+                before = GitPushUrlCache.Stamp(files);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { before = null; }
+        var answer = await ExecuteScopedAsync(repository, arguments, null, options, ct);
+        if (before is not null) _pushUrls.Store(repository, answer, before);
+        return answer;
+    }
+
+    private IReadOnlyDictionary<string, string?>? _childEnvironment;
     private bool? _inProcessEligible;
 
     /// <summary>
@@ -130,6 +164,8 @@ public class LandingGit : ILandingGit
         try
         {
             ConfigureProcess(probe);
+            _childEnvironment = new Dictionary<string, string?>(probe.Environment,
+                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             string[] redirects = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
                 "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE"];

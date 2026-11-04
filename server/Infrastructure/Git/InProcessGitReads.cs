@@ -39,7 +39,12 @@ internal static class InProcessGitReads
     /// <summary>git's own result for <paramref name="arguments"/> run in <paramref name="repository"/>, or null to run git.</summary>
     public static LandingGitResult? TryAnswer(string repository, IReadOnlyList<string> arguments)
     {
-        if (!Enabled || arguments.Count < 2 || !Handled(arguments)) return null;
+        if (!Enabled || arguments.Count < 2) return null;
+        // check-ref-format of a land ref we built ourselves needs no repository: every name of
+        // this shape is valid under git-check-ref-format(1). Any other name is git's.
+        if (arguments.Count == 2 && arguments[0] == "check-ref-format")
+            return LandRefName.IsMatch(arguments[1]) ? Ok("") : null;
+        if (!Handled(arguments)) return null;
         try
         {
             // Opened through the working directory itself, never a discovered git dir: libgit2 opened
@@ -57,6 +62,16 @@ internal static class InProcessGitReads
     }
 
     private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base";
+
+    /// <summary>
+    /// The land's own refs: refs/antiphon/land/&lt;task&gt;/&lt;operation&gt; plus up to two segments, each a
+    /// lowercase hyphenated word or a 32-hex id (source, target-before, prepared, remote-observed,
+    /// source-observed/&lt;id&gt;, source-observed/probe, cleanup-observed, ...). No such name contains
+    /// "..", "//", "@{", a leading dot, a ".lock" suffix or a character git refuses.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex LandRefName = new(
+        "^refs/antiphon/land/[0-9a-f]{32}/[0-9a-f]{32}(/(?:[0-9a-f]{32}|[a-z]+(?:-[a-z]+)*)){0,2}$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>Layouts whose answers libgit2 does not compute the way git does.</summary>
     private static bool Unusual(Repository repo)
