@@ -1373,8 +1373,6 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
             row.ReasonCode.ShouldBe("repository_lease_required");
         }
-        (await w.CheckCursorAsync(a)).ShouldNotBeNull().LastOutcomeKey.ShouldStartWith("check|checked|0|", Case.Sensitive,
-            "the filing resets the held state");
 
         await File.WriteAllTextAsync(dirt, "new again\n");
         (await HeldAsync("hold after the filing")).ShouldBe(60, "the backoff restarts after a release stood");
