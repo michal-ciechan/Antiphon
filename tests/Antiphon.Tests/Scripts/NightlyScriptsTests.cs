@@ -32,6 +32,10 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "nightly-tests-impl.ps1"),
                      Path.Combine("lib", "nightly-health.ps1"),
                      Path.Combine("lib", "c487-harness.ps1"),
+                     // CARD-1698: the toolchain floor library and the restart entry points that load it.
+                     Path.Combine("lib", "toolchain-floor.ps1"),
+                     "session-runner-restart-health.ps1",
+                     Path.Combine("..", "restart-server.ps1"),
                  })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);

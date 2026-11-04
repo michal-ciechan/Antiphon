@@ -55,10 +55,13 @@ function Test-C1698_GitAtOrAboveFloor {
 }
 
 function Test-C1698_UnreadableVersion {
+    $gitEntry = @(Get-ToolchainFloorManifest | Where-Object { $_.tool -eq 'git' })[0]
+    $hostFix = $gitEntry.fixOther
+    if (Test-ToolchainFloorWindowsHost) { $hostFix = $gitEntry.fixWindows }
     $cases = @(
-        @{ Name = 'garbage'; Source = (New-C1698Source 'garbage') },
-        @{ Name = 'empty'; Source = (New-C1698Source '') },
-        @{ Name = 'throwing source'; Source = { param($tool) throw 'git: command not found' } }
+        @{ Name = 'garbage'; Source = (New-C1698Source 'garbage'); Raw = 'garbage' },
+        @{ Name = 'empty'; Source = (New-C1698Source ''); Raw = '' },
+        @{ Name = 'throwing source'; Source = { param($tool) throw 'git: command not found' }; Raw = 'git: command not found' }
     )
     foreach ($c in $cases) {
         $threw = $false
@@ -68,6 +71,13 @@ function Test-C1698_UnreadableVersion {
         $ok = (-not $threw) -and $git.Count -eq 1 -and $git[0].reason -eq 'version-unreadable' -and
             ([string]$git[0].message).StartsWith('WARNING: the git version could not be read') -and $git[0].floor -eq '2.43'
         Assert-C487 -Cond $ok -Name ('C1698 Unreadable warns, never throws: ' + $c.Name) -Detail ('threw=' + $threw + ' ' + (($w | ForEach-Object { $_.message }) -join ' | '))
+        # The whole message: the floor, what stops working and the host fix, as the below-floor
+        # message carries them (the impact and fix come from the manifest, not from the warning).
+        $m = ''
+        if ($git.Count -eq 1) { $m = [string]$git[0].message }
+        $expected = "WARNING: the git version could not be read ('" + $c.Raw + "'); the minimum is 2.43; if it is older, " + $gitEntry.impact + '. Fix: ' + $hostFix
+        $fields = $m.Contains('the minimum is 2.43') -and $m.Contains('lands will fail') -and $m.Contains($gitEntry.impact) -and $m.EndsWith('. Fix: ' + $hostFix)
+        Assert-C487 -Cond ($fields -and $m -eq $expected) -Name ('C1698 Unreadable message carries floor, impact and fix: ' + $c.Name) -Detail $m
     }
 }
 
@@ -190,6 +200,133 @@ function Test-C1698_RestartRunnerUnchanged {
     }
     Assert-C487 -Cond ($same -and $rb.outcome -eq 'action-failed' -and $rb.operation -eq 'validate-arguments') -Name 'C1698 RestartRunner same result with a warning' -Detail ($below.Output + ' || ' + $at.Output)
     Assert-C487 -Cond ($below.Exit -eq 1 -and $at.Exit -eq 1) -Name 'C1698 RestartRunner same exit code with a warning' -Detail ('below=' + $below.Exit + ' at=' + $at.Exit)
+}
+
+# A library that fails to load: a script-terminating throw, or a file PowerShell cannot parse
+# (an unparsable dot-source is non-terminating unwrapped, so only the caller's wrapper prints the
+# check-failed line). Only this reaches the entry wrappers: the shipped lib catches everything else.
+function Get-C1698BrokenLibraries {
+    return @(
+        @{ Name = 'throws'; Text = "throw 'C1698 toolchain lib load failure'" },
+        @{ Name = 'unparsable'; Text = "function Get-C1698Broken {`n    `$x = 1`n" }
+    )
+}
+
+function Set-C1698BrokenLibrary([string]$Root, [string]$Text) {
+    Set-Content -LiteralPath (Join-Path $Root 'scripts/lib/toolchain-floor.ps1') -Value $Text -Encoding ASCII
+}
+
+function Test-C1698_RestartServerLibraryLoadFailure {
+    $normal = New-C1698ScriptRoot
+    Copy-Item -LiteralPath (Join-Path $repo 'restart-server.ps1') -Destination (Join-Path $normal 'restart-server.ps1')
+    Set-Content -LiteralPath (Join-Path $normal 'assert-dev-ports-clear.ps1') -Value "param([int[]]`$Ports, [switch]`$StopPortOwners)`nexit 0" -Encoding ASCII
+    $at = Invoke-C1698Entry $normal 'restart-server.ps1' '2.43.0' 0 @()
+    foreach ($b in (Get-C1698BrokenLibraries)) {
+        $root = New-C1698ScriptRoot
+        Copy-Item -LiteralPath (Join-Path $repo 'restart-server.ps1') -Destination (Join-Path $root 'restart-server.ps1')
+        Set-Content -LiteralPath (Join-Path $root 'assert-dev-ports-clear.ps1') -Value "param([int[]]`$Ports, [switch]`$StopPortOwners)`nexit 0" -Encoding ASCII
+        Set-C1698BrokenLibrary $root $b.Text
+        $r = Invoke-C1698Entry $root 'restart-server.ps1' '2.43.0' 0 @()
+        # The calls carry the private root in the server project path; the rest is identical.
+        $lines = @($r.Calls.Replace($root, '<root>') -split "`r?`n")
+        $shape = $lines.Count -eq 3 -and $lines[0] -like 'run --project * antiphon-server stop --endpoint https://localhost:22025' -and
+            $lines[1] -like 'build *' -and $lines[2] -like 'run --project * antiphon-server start --endpoint https://localhost:22025'
+        $ok = $r.Exit -eq 0 -and $r.Output.Contains('Server restarted.') -and $r.Output.Contains('WARNING: the toolchain floor check failed') -and
+            $shape -and $r.Calls.Replace($root, '<root>') -eq $at.Calls.Replace($normal, '<root>')
+        Assert-C487 -Cond $ok -Name ('C1698 RestartServer survives a library that fails to load: ' + $b.Name) -Detail ('exit=' + $r.Exit + ' calls=' + $r.Calls + ' || ' + $at.Calls + ' || ' + $r.Output)
+    }
+}
+
+function Test-C1698_RestartRunnerLibraryLoadFailure {
+    $normal = New-C1698ScriptRoot
+    foreach ($f in @('restart-session-runner.ps1', 'session-runner-restart-health.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $here $f) -Destination (Join-Path $normal (Join-Path 'scripts' $f))
+    }
+    $at = Invoke-C1698Entry $normal 'scripts/restart-session-runner.ps1' '2.43.0' 0 @('-WaitOnly', '-Hard')
+    $ra = Get-C1698RunnerResult $at.Output
+    foreach ($b in (Get-C1698BrokenLibraries)) {
+        $root = New-C1698ScriptRoot
+        foreach ($f in @('restart-session-runner.ps1', 'session-runner-restart-health.ps1')) {
+            Copy-Item -LiteralPath (Join-Path $here $f) -Destination (Join-Path $root (Join-Path 'scripts' $f))
+        }
+        Set-C1698BrokenLibrary $root $b.Text
+        $r = Invoke-C1698Entry $root 'scripts/restart-session-runner.ps1' '2.43.0' 0 @('-WaitOnly', '-Hard')
+        $rb = Get-C1698RunnerResult $r.Output
+        $same = $null -ne $rb -and $null -ne $ra -and $rb.outcome -eq 'action-failed' -and $rb.operation -eq 'validate-arguments'
+        if ($same) {
+            foreach ($k in @('outcome', 'mode', 'exitCode', 'operation', 'error', 'errorCode', 'supervisor', 'wrapper', 'runner')) {
+                if ([string]$rb.$k -ne [string]$ra.$k) { $same = $false }
+            }
+        }
+        $ok = $same -and $r.Exit -eq $at.Exit -and $r.Exit -eq 1 -and $r.Output.Contains('WARNING: the toolchain floor check failed')
+        Assert-C487 -Cond $ok -Name ('C1698 RestartRunner survives a library that fails to load: ' + $b.Name) -Detail ('exit=' + $r.Exit + '/' + $at.Exit + ' || ' + $r.Output)
+    }
+}
+
+# Windows PowerShell 5.1 is the fallback host for the restart and nightly entry points and the
+# library they dot-source; pwsh 7 accepts syntax 5.1 cannot parse, so every harness here passes
+# with it. This scan refuses the pwsh 7 operators by token kind (ternary ?:, ??, ??=, ?., ?[,
+# pipeline chains && and ||) and ForEach-Object -Parallel by syntax tree. It is a guard, not a
+# 5.1 parse: a real powershell.exe parse on Windows is the full proof.
+function Get-C1698Pwsh7Syntax([System.Management.Automation.Language.Ast]$Ast, $Tokens) {
+    $found = @()
+    $kinds = @('QuestionMark', 'QuestionQuestion', 'QuestionQuestionEquals', 'QuestionDot', 'QuestionLBracket', 'AndAnd', 'OrOr')
+    foreach ($t in @($Tokens)) {
+        if ($kinds -contains $t.Kind.ToString()) { $found += ($t.Kind.ToString() + ' at line ' + $t.Extent.StartLineNumber) }
+    }
+    $parallel = $Ast.FindAll({
+            param($n)
+            if ($n -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+            if (@('ForEach-Object', '%', 'foreach') -notcontains [string]$n.GetCommandName()) { return $false }
+            foreach ($e in $n.CommandElements) {
+                if ($e -is [System.Management.Automation.Language.CommandParameterAst] -and $e.ParameterName.Length -ge 2 -and
+                    'parallel'.StartsWith($e.ParameterName.ToLowerInvariant())) { return $true }
+            }
+            return $false
+        }, $true)
+    foreach ($p in @($parallel)) { $found += ('ForEach-Object -Parallel at line ' + $p.Extent.StartLineNumber) }
+    return @($found)
+}
+
+function Get-C1698Pwsh7SyntaxInText([string]$Text) {
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errors)
+    return @(Get-C1698Pwsh7Syntax $ast $tokens)
+}
+
+function Test-C1698_WindowsPowerShellSyntax {
+    # Controls: the scan must flag each construct and must not flag the 5.1 spellings.
+    $flag = @(
+        @{ Name = 'ternary'; Text = '$fix = $windows ? $a : $b' },
+        @{ Name = 'null-coalescing'; Text = '$v = (Get-Thing) ?? ''''' },
+        @{ Name = 'null-coalescing assignment'; Text = '$v ??= 1' },
+        @{ Name = 'null-conditional member'; Text = '$n = ${x}?.Name' },
+        @{ Name = 'null-conditional index'; Text = '$n = ${x}?[0]' },
+        @{ Name = 'pipeline chain and'; Text = 'git fetch && git status' },
+        @{ Name = 'pipeline chain or'; Text = 'git fetch || exit 1' },
+        @{ Name = 'ForEach-Object -Parallel'; Text = '1..3 | ForEach-Object -Parallel { $_ }' },
+        @{ Name = 'percent -Para'; Text = '1..3 | % -Para { $_ } -ThrottleLimit 2' }
+    )
+    foreach ($c in $flag) {
+        $hits = @(Get-C1698Pwsh7SyntaxInText $c.Text)
+        Assert-C487 -Cond ($hits.Count -ge 1) -Name ('C1698 Syntax scan flags ' + $c.Name) -Detail ($c.Text + ' -> ' + ($hits -join '; '))
+    }
+    $clean = 'if ($windows) { $fix = $a } else { $fix = $b }' + "`n" + '$v = @(1, 2) | ? { $_ -gt 1 } | ForEach-Object -Process { $_ }' + "`n" +
+        'if ($null -eq $v) { $v = '''' }' + "`n" + 'git fetch; if ($LASTEXITCODE -eq 0 -and $ok -or $x) { $n = $x.Name }'
+    $none = @(Get-C1698Pwsh7SyntaxInText $clean)
+    Assert-C487 -Cond ($none.Count -eq 0) -Name 'C1698 Syntax scan passes the 5.1 spellings' -Detail ($none -join '; ')
+
+    $files = @('scripts/lib/toolchain-floor.ps1', 'restart-server.ps1', 'scripts/restart-session-runner.ps1',
+        'scripts/session-runner-restart-health.ps1', 'scripts/nightly-run.ps1', 'scripts/lib/nightly-run-impl.ps1',
+        'scripts/nightly-tests.ps1', 'scripts/lib/nightly-tests-impl.ps1')
+    foreach ($f in $files) {
+        $path = Join-Path $repo $f
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        $hits = @(Get-C1698Pwsh7Syntax $ast $tokens)
+        $ok = (Test-Path -LiteralPath $path -PathType Leaf) -and @($errors).Count -eq 0 -and $hits.Count -eq 0
+        Assert-C487 -Cond $ok -Name ('C1698 Windows PowerShell 5.1 syntax: ' + $f) -Detail ('parse errors=' + @($errors).Count + ' pwsh 7 only: ' + ($hits -join '; '))
+    }
 }
 
 $cases = Get-C487CaseFunctions -Prefix 'C1698_'

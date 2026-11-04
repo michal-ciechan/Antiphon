@@ -38,11 +38,14 @@ public sealed class ToolchainFloorWarningTests
     [Test]
     public Task C1698_UnreadableVersion() =>
         ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
-            nameof(C1698_UnreadableVersion), 3,
+            nameof(C1698_UnreadableVersion), 6,
             [
                 "C1698 Unreadable warns, never throws: garbage",
                 "C1698 Unreadable warns, never throws: empty",
-                "C1698 Unreadable warns, never throws: throwing source"
+                "C1698 Unreadable warns, never throws: throwing source",
+                "C1698 Unreadable message carries floor, impact and fix: garbage",
+                "C1698 Unreadable message carries floor, impact and fix: empty",
+                "C1698 Unreadable message carries floor, impact and fix: throwing source"
             ]);
 
     [Test]
@@ -86,6 +89,47 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 RestartRunner same exit code with a warning"
             ]);
 
+    /// <summary>A toolchain library that throws or cannot be parsed when dot-sourced (the only failure
+    /// that reaches the entry wrapper) leaves restart-server at exit 0 with the same calls.</summary>
+    [Test]
+    public Task C1698_RestartServerLibraryLoadFailure() =>
+        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
+            nameof(C1698_RestartServerLibraryLoadFailure), 2,
+            [
+                "C1698 RestartServer survives a library that fails to load: throws",
+                "C1698 RestartServer survives a library that fails to load: unparsable"
+            ]);
+
+    [Test]
+    public Task C1698_RestartRunnerLibraryLoadFailure() =>
+        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
+            nameof(C1698_RestartRunnerLibraryLoadFailure), 2,
+            [
+                "C1698 RestartRunner survives a library that fails to load: throws",
+                "C1698 RestartRunner survives a library that fails to load: unparsable"
+            ]);
+
+    /// <summary>A pwsh 7 only construct (ternary, ??, ?., pipeline chains, -Parallel) in the library
+    /// or its entry callers; the controls prove the scan flags each one. A real powershell.exe 5.1
+    /// parse on Windows is the fuller proof.</summary>
+    [Test]
+    public Task C1698_WindowsPowerShellSyntax() =>
+        ScriptHarness.RunHarnessCaseAsync("test-toolchain-floor.ps1", "C1698",
+            nameof(C1698_WindowsPowerShellSyntax), 18,
+            [
+                "C1698 Syntax scan flags ternary",
+                "C1698 Syntax scan flags null-coalescing",
+                "C1698 Syntax scan flags null-conditional member",
+                "C1698 Syntax scan flags pipeline chain and",
+                "C1698 Syntax scan flags ForEach-Object -Parallel",
+                "C1698 Syntax scan passes the 5.1 spellings",
+                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/toolchain-floor.ps1",
+                "C1698 Windows PowerShell 5.1 syntax: restart-server.ps1",
+                "C1698 Windows PowerShell 5.1 syntax: scripts/session-runner-restart-health.ps1",
+                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/nightly-run-impl.ps1",
+                "C1698 Windows PowerShell 5.1 syntax: scripts/lib/nightly-tests-impl.ps1"
+            ]);
+
     [Test]
     public Task C1698_RunPrintsToolchainWarning() =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1698",
@@ -106,5 +150,24 @@ public sealed class ToolchainFloorWarningTests
                 "C1698 Summary records the SDK version",
                 "C1698 Summary records the warning",
                 "C1698 Summary preflight block records the toolchain"
+            ]);
+
+    [Test]
+    public Task C1698_RunLibraryLoadFailure() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1698",
+            nameof(C1698_RunLibraryLoadFailure), 2,
+            [
+                "C1698 Run survives a library that fails to load: throws",
+                "C1698 Run survives a library that fails to load: unparsable"
+            ]);
+
+    /// <summary>summary.json as a real Invoke-AntiphonNightlyTests run writes it to disk.</summary>
+    [Test]
+    public Task C1698_SummaryJsonRecordsToolchain() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "C1698",
+            nameof(C1698_SummaryJsonRecordsToolchain), 2,
+            [
+                "C1698 Summary json on disk records the versions and floors",
+                "C1698 Summary json on disk records the warning"
             ]);
 }
