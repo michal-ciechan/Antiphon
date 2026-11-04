@@ -26,7 +26,7 @@ internal static class WorktreeSetAside
     public static string RetiredAdminPath(string commonDirectory, string worktreePath) =>
         Path.Combine(RecordDirectory(commonDirectory), Key(Normalize(worktreePath)) + ".admin");
 
-    public static void Record(string commonDirectory, WorktreeSetAsideRecord record)
+    public static void Record(string commonDirectory, WorktreeSetAsideRecord record, WorktreeRenames? renames = null)
     {
         var path = RecordPath(commonDirectory, record.WorktreePath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -36,7 +36,7 @@ internal static class WorktreeSetAside
             JsonSerializer.Serialize(stream, record);
             stream.Flush(flushToDisk: true);
         }
-        File.Move(temporary, path, overwrite: true);
+        (renames ?? WorktreeRenames.System).ReplaceFile(temporary, path);
     }
 
     /// <summary>Null when nothing is recorded; an unreadable record is an I/O error, never absence.</summary>

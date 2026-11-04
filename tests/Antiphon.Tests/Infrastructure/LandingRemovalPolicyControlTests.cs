@@ -623,6 +623,111 @@ public sealed class LandingRemovalPolicyControlTests
         f.SetAsideRecords().ShouldBeEmpty();
     }
 
+    // A scanner or indexer that briefly holds a fresh file refuses the set-aside renames at once on
+    // Windows (rc run 766e3df5, V36 'operation' baseline). Linux cannot raise a sharing violation, so
+    // the rename seam throws the exception Windows would.
+    private static Exception Transient(string kind) => kind switch
+    {
+        "sharing" => new IOException("held by a scanner", unchecked((int)0x80070020)),
+        "lock" => new IOException("range locked", unchecked((int)0x80070021)),
+        "denied-io" => new IOException("directory rename denied", unchecked((int)0x80070005)),
+        _ => new UnauthorizedAccessException("file replace denied"),
+    };
+
+    private static Exception Lasting(string kind) => kind switch
+    {
+        "not-found" => new DirectoryNotFoundException("path not found"),
+        "not-empty" => new IOException("directory not empty", unchecked((int)0x80070091)),
+        "exists" => new IOException("destination exists", unchecked((int)0x800700B7)),
+        _ => new IOException("not a directory", unchecked((int)0x8007010B)),
+    };
+
+    [Test]
+    [Arguments("move", "sharing")]
+    [Arguments("move", "lock")]
+    [Arguments("move", "denied-io")]
+    [Arguments("move", "denied")]
+    [Arguments("record", "sharing")]
+    [Arguments("record", "lock")]
+    [Arguments("record", "denied-io")]
+    [Arguments("record", "denied")]
+    public async Task C448_V36_TransientSharingOnSetAsideRenameIsRetriedToAClean(string rename, string kind)
+    {
+        using var f = new RemovalFixture();
+        f.FailRename(rename, _ => Transient(kind), failures: 1);
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeTrue($"{rename}/{kind}: {result.Residue} {result.Detail}");
+        f.RenameCalls(rename).ShouldBe(2, "one refused rename, then the retried one");
+        f.Pauses.ShouldBe([WorktreeRenames.SharingPause]);
+        f.Mutations.Count.ShouldBe(2);
+        Directory.Exists(f.Source).ShouldBeFalse();
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("move", "worktree_remove_failed")]
+    [Arguments("record", "cleanup_inspection_error")]
+    public async Task C448_V36_LastingSharingOnSetAsideRenameStillRefuses(string rename, string residue)
+    {
+        using var f = new RemovalFixture();
+        f.FailRename(rename, _ => Transient("sharing"));
+        var pass = await f.RemoveDirectoryAsync();
+        pass.Result.Residue.ShouldBe(residue);
+        pass.Result.Detail.ShouldBeNull();
+        if (rename == "move") pass.Outcome.ShouldNotBeNull().GeneratedCode.ShouldBe("move_error_32");
+        else pass.Outcome.ShouldBeNull();
+        f.RenameCalls(rename).ShouldBe(WorktreeRenames.SharingAttempts, "the retry is bounded");
+        f.Pauses.Count.ShouldBe(WorktreeRenames.SharingAttempts - 1);
+        f.Pauses.ShouldAllBe(p => p == WorktreeRenames.SharingPause);
+        f.RenameCalls(rename == "move" ? "record" : "move").ShouldBe(rename == "move" ? 1 : 0);
+        f.Mutations.ShouldBeEmpty("a refused rename never reaches a destructive request");
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
+        f.SetAsideTrees().ShouldBeEmpty();
+        WorktreeSetAside.Read(f.Root, f.Source).ShouldBeNull("nothing moved, so no record survives");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("move", "not-found", "move_error_3")]
+    [Arguments("move", "not-empty", "move_error_145")]
+    [Arguments("move", "exists", "move_error_183")]
+    [Arguments("move", "not-directory", "move_error_267")]
+    [Arguments("record", "not-found", null)]
+    [Arguments("record", "not-empty", null)]
+    [Arguments("record", "exists", null)]
+    [Arguments("record", "not-directory", null)]
+    public async Task C448_V36_LastingRenameErrorIsNeverRetried(string rename, string kind, string? code)
+    {
+        using var f = new RemovalFixture();
+        f.FailRename(rename, _ => Lasting(kind));
+        var pass = await f.RemoveDirectoryAsync();
+        pass.Result.Residue.ShouldBe(rename == "move" ? "worktree_remove_failed" : "cleanup_inspection_error");
+        pass.Outcome?.GeneratedCode.ShouldBe(code);
+        f.RenameCalls(rename).ShouldBe(1, "a non-transient error is the refusal");
+        f.Pauses.ShouldBeEmpty();
+        f.Mutations.ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
+    }
+
+    [Test]
+    [Arguments("move", "sharing")]
+    [Arguments("move", "denied")]
+    [Arguments("record", "sharing")]
+    [Arguments("record", "denied")]
+    public async Task C448_V36_SharingCodesAreOnlyTransientOnWindows(string rename, string kind)
+    {
+        // Off Windows an HResult carries errno, and access denied is a lasting permission.
+        using var f = new RemovalFixture { Windows = false };
+        f.FailRename(rename, _ => Transient(kind), failures: 1);
+        var pass = await f.RemoveDirectoryAsync();
+        pass.Result.Residue.ShouldBe(rename == "move" ? "worktree_remove_failed" : "cleanup_inspection_error");
+        f.RenameCalls(rename).ShouldBe(1);
+        f.Pauses.ShouldBeEmpty();
+        f.Mutations.ShouldBeEmpty();
+        WorktreeRenames.System.Windows.ShouldBe(OperatingSystem.IsWindows());
+    }
+
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
     {
         public List<(int Evidence, int AtInspection)> Calls { get; } = [];
@@ -673,6 +778,26 @@ public sealed class LandingRemovalPolicyControlTests
             return Directory.Exists(records) ? Directory.GetFileSystemEntries(records) : [];
         }
         public RecordingRetention Retention { get; }
+        /// <summary>Whether an injected rename fault carries Windows HResults (production reads the OS).</summary>
+        public bool Windows { get; init; } = true;
+        public List<TimeSpan> Pauses { get; } = [];
+        private readonly Dictionary<string, int> renameCalls = new() { ["move"] = 0, ["record"] = 0 };
+        private (string Rename, Func<int, Exception> Fault, int Failures)? renameFault;
+        public int RenameCalls(string rename) => renameCalls[rename];
+        /// <summary>The rename throws <paramref name="fault"/> for its first <paramref name="failures"/> calls.</summary>
+        public void FailRename(string rename, Func<int, Exception> fault, int failures = int.MaxValue) =>
+            renameFault = (rename, fault, failures);
+        private void Rename(string rename, Action real)
+        {
+            var call = ++renameCalls[rename];
+            if (renameFault is { } f && f.Rename == rename && call <= f.Failures) throw f.Fault(call);
+            real();
+        }
+        // Without an injected fault the fixture renames exactly as production does.
+        private WorktreeRenames Renames => renameFault is null ? WorktreeRenames.System : new(
+            (s, d) => Rename("move", () => Directory.Move(s, d)),
+            (s, d) => Rename("record", () => File.Move(s, d, overwrite: true)),
+            Pauses.Add, Windows);
         public RemovalFixture()
         {
             Retention = new(this);
@@ -693,8 +818,10 @@ public sealed class LandingRemovalPolicyControlTests
         }
         public Task<WorktreeRemoval> RemoveAsync(bool gate = false) => (gate
             ? new GuardedWorktreeRemoval(this, this, this, null, new WorktreeIgnoredContentGate(
-                new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings())), Retention, this))
-            : new GuardedWorktreeRemoval(this, this, this)).RemoveAsync(Request, default);
+                new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings())), Retention, this)) { Renames = Renames }
+            : new GuardedWorktreeRemoval(this, this, this) { Renames = Renames }).RemoveAsync(Request, default);
+        internal Task<WorktreeDirectoryPass> RemoveDirectoryAsync() => new GuardedWorktreeRemoval(this, this, this)
+            { Renames = Renames }.RemoveDirectoryAsync(Request, null, TimeProvider.System, default);
         public Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct) =>
             Task.FromResult<AgentTask?>(new AgentTask { Id = taskId });
         public Task<AgentTaskLanding?> ReadAsync(Guid id, CancellationToken ct) => Task.FromResult<AgentTaskLanding?>(Operation);

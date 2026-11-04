@@ -20,8 +20,8 @@ internal static class WorktreeNoFollowDelete
     /// registration of an absent directory can be dropped while the bytes can still be put back.
     /// Nothing is followed: a rename moves the entry itself, and it refuses a taken destination.
     /// </summary>
-    public static void MoveAside(string path, string aside) =>
-        Directory.Move(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), aside);
+    public static void MoveAside(string path, string aside, WorktreeRenames? renames = null) =>
+        (renames ?? WorktreeRenames.System).MoveDirectory(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), aside);
 
     /// <summary>Puts a set-aside tree back; false when its path has been taken or the move fails.</summary>
     public static bool Restore(string aside, string path)

@@ -11,6 +11,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     IWorktreeRemovalEvidence evidence, WorktreeGuardedCleanup? cleanup = null,
     WorktreeIgnoredContentGate? ignored = null)
 {
+    /// <summary>The set-aside renames; a test injects a Windows sharing violation here.</summary>
+    internal WorktreeRenames Renames { get; init; } = WorktreeRenames.System;
+
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
         if (request.Purpose == WorktreeRemovalPurpose.Verification)
@@ -149,8 +152,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // finish it, and Git is never handed the path, which is free once the tree moved.
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
                 WorktreeSetAside.Record(request.CommonDirectory, new(source.WorktreePath, aside, request.GitDirectory,
-                    clock.GetUtcNow().UtcDateTime));
-                try { WorktreeNoFollowDelete.MoveAside(source.WorktreePath, aside); }
+                    clock.GetUtcNow().UtcDateTime), Renames);
+                try { WorktreeNoFollowDelete.MoveAside(source.WorktreePath, aside, Renames); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // A handle or working directory inside the tree refuses the rename; nothing moved.
