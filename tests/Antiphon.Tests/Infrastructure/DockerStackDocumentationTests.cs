@@ -22,6 +22,23 @@ public sealed class DockerStackDocumentationTests
             text.ShouldContain(pin);
     }
 
+    // CARD-1697: the standing server2 census is scoped to bound rows like server2-temp (CARD-1693); the
+    // gate 6 row and the census paragraph say so, and the retired CARD-1326 nested-scope edge is gone.
+    [Test]
+    public void C1697_Standing_census_scope_is_documented()
+    {
+        var text = Read("docs/docker-stack.md");
+        var gate = text[text.IndexOf("| 6. Upgrade old |", StringComparison.Ordinal)..];
+        gate = gate[..gate.IndexOf("| 7. Smoke upgraded old |", StringComparison.Ordinal)];
+        gate.ShouldContain("compare only rows bound to `server2` across the two passes (CARD-1697)", Case.Sensitive);
+        gate.ShouldContain("still refuses `RecycleBoundTasks` or `RecycleLandInFlight` before any comparison", Case.Sensitive);
+        var census = text.IndexOf("The wrapper and host census each walk two server-filtered closures", StringComparison.Ordinal);
+        var paragraph = text[census..text.IndexOf("Always retire `server2-temp`", census, StringComparison.Ordinal)];
+        paragraph.ShouldContain("the standing `server2` in", Case.Sensitive);
+        paragraph.ShouldContain("it holds only rows bound to the recycled runner", Case.Sensitive);
+        paragraph.ShouldNotContain("still ends `RecycleTaskCensusUnknown cause=Unstable`", Case.Sensitive);
+    }
+
     // CARD-1353 D-8/D-10. Lands are desktop work; the docs drop the rollout land freeze, state the
     // runner-bound census rule with its bounded wait, keep the AppHost pull wait, and the CARD-1008
     // plan rows that pinned the old rule carry an in-place superseded note.

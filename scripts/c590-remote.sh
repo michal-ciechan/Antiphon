@@ -6711,14 +6711,13 @@ def open_status_move($before;$after;$detail;$runner):
         # CARD-1353 D-2: the compared land closure keeps bound rows only and no scopes entry, so an
         # off-runner land requested between the passes or between the proofs cannot end Unstable.
         # C1008_CENSUS_TASKS (the receipt) and the per-scope count reconciliation above stay complete.
-        # CARD-1693: for the temp runner the compared open closure keeps bound rows only and no scopes
-        # entry, like the land closure, so standing-runner work moving between the passes cannot end
+        # CARD-1693 / CARD-1697: for either runner the compared open closure keeps bound rows only and no
+        # scopes entry, like the land closure, so off-runner work moving between the passes cannot end
         # Unstable. Every row is still read and receipted; a bound open row or land refuses above.
         snapshot="$(printf '%s' "$snapshot" | jq -Sc --arg kind "$kind" --arg runner "$C1008_RUNNER" --argjson rows "$rows" --argjson land "$land" \
-            'if $kind=="open" and $runner=="server2-temp" then
+            'if $kind=="open" then
                  {scopes:{},tasks:($rows | with_entries(select(.value.runnerId==$runner))),
                   land:($land | with_entries(select(.key as $id | $rows[$id].runnerId==$runner)))}
-             elif $kind=="open" then {scopes:.,tasks:$rows,land:$land}
              else {tasks:($rows | with_entries(select(.value.runnerId==$runner)))} end')" || return 2
         closures="$(printf '%s' "$closures" | jq -Sc --arg kind "$kind" --argjson snapshot "$snapshot" '.[$kind]=$snapshot')" || return 2
         C1008_TASKS="$closures"

@@ -65,6 +65,9 @@ internal static class C1361CensusProbes
     internal static async Task Status(bool host, bool passes)
     {
         var unsafeError = passes ? "RecycleTaskCensusUnknown cause=Unstable" : "RecycleLandUnknown";
+        // CARD-1697: the compared closure is bound-only, so an off-runner row whose non-status facts or land
+        // proof change between the passes passes and stays receipted. List/detail disagreement still refuses.
+        var detailError = passes ? "" : unsafeError;
         // First independent red witness: no helper-extraction or fixture failure can masquerade as red.
         var primary = StatusVector("primary", passes, Row(), Row("Dispatched"));
         await Check(host, primary);
@@ -89,7 +92,7 @@ internal static class C1361CensusProbes
                 "scopeSource" => "Card", _ => "2020-01-01T00:00:00Z" };
             if (key == "projectId") b["scopeSource"] = "Task";
             if (key == "scopeSource") { a["scopeSource"] = "Task"; a["projectId"] = Project; b["projectId"] = Project; }
-            vectors.Add(StatusVector("field/" + key, passes, a, b, error: unsafeError));
+            vectors.Add(StatusVector("field/" + key, passes, a, b, error: detailError));
         }
         foreach (var key in new[] { "id", "status", "runnerId", "projectId", "scopeSource", "landRequestedAt", "landStartedAt" })
         {
@@ -98,7 +101,7 @@ internal static class C1361CensusProbes
                 error: "RecycleLandUnknown", detailOverride: d));
         }
         foreach (var state in new[] { "Queued", "Held", "Running", "NeedsResolution" })
-            vectors.Add(StatusVector("pending/" + state, passes, Row(), Row("Dispatched"), Proof(state, null), unsafeError));
+            vectors.Add(StatusVector("pending/" + state, passes, Row(), Row("Dispatched"), Proof(state, null), detailError));
         foreach (var variant in new[] { "unknown", "missing", "missing-event", "null-event", "invalid-event" })
         {
             var d = Detail(Row("Dispatched"), Proof());
@@ -117,19 +120,38 @@ internal static class C1361CensusProbes
         {
             vectors.Add(StatusVector("bound/report-drift", passes, bound, boundAfter, error: unsafeError, report: true));
             vectors.Add(StatusVector("bound/report-stable", passes, bound, bound, report: true));
+            // CARD-1697: a bound row stays in the compared closure, so any change to it still refuses.
+            foreach (var key in new[] { "id", "runnerId", "projectId", "scopeSource", "landRequestedAt", "landStartedAt" })
+            {
+                var a = bound.DeepClone().AsObject(); var b = bound.DeepClone().AsObject();
+                b[key] = key switch { "id" => Event, "runnerId" => "other", "projectId" => Project,
+                    "scopeSource" => "Card", _ => "2020-01-01T00:00:00Z" };
+                if (key == "projectId") b["scopeSource"] = "Task";
+                if (key == "scopeSource") { a["scopeSource"] = "Task"; a["projectId"] = Project; b["projectId"] = Project; }
+                vectors.Add(StatusVector("bound/report-field/" + key, passes, a, b, error: unsafeError, report: true));
+            }
         }
         if (passes)
         {
-            vectors.Add(StatusVector("proof-change/event", true, Row(), Row("Dispatched"), Proof(), unsafeError,
+            vectors.Add(StatusVector("proof-change/event", true, Row(), Row("Dispatched"), Proof(), detailError,
                 laterProof: Proof(terminal: "55555555-5555-5555-5555-555555555555"), changeProof: true));
-            vectors.Add(StatusVector("proof-change/null-terminal", true, Row(), Row("Dispatched"), error: unsafeError,
+            vectors.Add(StatusVector("proof-change/null-terminal", true, Row(), Row("Dispatched"), error: detailError,
                 laterProof: Proof(), changeProof: true));
-            vectors.Add(StatusVector("proof-change/terminal-null", true, Row(), Row("Dispatched"), Proof(), unsafeError,
+            vectors.Add(StatusVector("proof-change/terminal-null", true, Row(), Row("Dispatched"), Proof(), detailError,
                 changeProof: true));
+            if (!host)
+            {
+                // CARD-1697: the same proof changes on a bound row (report mode reads it) still refuse.
+                var boundDispatched = bound.DeepClone().AsObject(); boundDispatched["status"] = "Dispatched";
+                vectors.Add(StatusVector("bound/report-proof-change/event", true, bound, bound, Proof(), unsafeError,
+                    laterProof: Proof(terminal: "55555555-5555-5555-5555-555555555555"), changeProof: true, report: true));
+                vectors.Add(StatusVector("bound/report-proof-change/null-terminal", true, bound, bound, error: unsafeError,
+                    laterProof: Proof(), changeProof: true, report: true));
+            }
             foreach (var variant in new[] { "settled", "appeared", "runner", "scope", "land", "off-runner-land" })
             {
                 var v = StatusVector("companion/" + variant, true, Row(), Row("Dispatched"),
-                    error: variant is "settled" or "appeared" or "off-runner-land" ? "" : unsafeError, report: variant == "land");
+                    error: variant is "land" ? unsafeError : "", report: variant == "land");
                 var other = Row(); other["id"] = Event;
                 var lists = v.Requests[PathFor(Project)]!.AsArray();
                 if (variant != "appeared") lists[0]!["items"]!.AsArray().Add(other.DeepClone());
@@ -202,6 +224,12 @@ internal static class C1361CensusProbes
         vectors.Add(new Vector("off-runner/appears-with-land-timestamp", stamp, Receipted: [Id]));
 
         var bound = Row(); bound["runnerId"] = "server2";
+        var boundScoped = scoped.DeepClone().AsObject(); boundScoped["status"] = "Queued"; boundScoped["runnerId"] = "server2";
+        var boundNested = Open([], []);
+        Exclude(boundNested[PathFor(Project)]![1]!.AsObject(), (OtherProject, 1));
+        boundNested[PathFor(OtherProject)] = new JsonArray(Envelope(OtherProject, boundScoped));
+        vectors.Add(new Vector("bound/appears-nested-scope", boundNested, "RecycleBoundTasks " + Scoped + " status=Queued runner=server2"));
+
         var appears = Open([], [bound]);
         appears["/api/agent-tasks/" + Id] = new JsonArray(Detail(bound));
         vectors.Add(new Vector("bound/appears", appears, "RecycleBoundTasks " + Id + " status=Queued runner=server2"));
@@ -332,7 +360,8 @@ internal static class C1361CensusProbes
                 removed.Error.ShouldNotContain("Malformed");
                 if (host)
                 {
-                    removed.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "walked rows are kept");
+                    removed.Receipt!.AsObject().Count.ShouldBe(7, "walked rows are kept");
+                    removed.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(0, "CARD-1697: the compared closure is bound-only");
 
                     // Each removal marker has to be enough on its own. phase=stopped is not.
                     var ownedOnly = await Probe(true, IncidentRequests(), removed: true,
@@ -340,14 +369,16 @@ internal static class C1361CensusProbes
                     ownedOnly.Error.ShouldBe("", "ownedRemoved alone must keep rows, not " + ownedOnly.Error);
                     ownedOnly.Code.ShouldBe(0);
                     ownedOnly.Sleeps.ShouldBe(2, "ownedRemoved alone still retries before acceptance");
-                    ownedOnly.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "ownedRemoved alone keeps walked rows");
+                    ownedOnly.Receipt!.AsObject().Count.ShouldBe(7, "ownedRemoved alone keeps walked rows");
+                    ownedOnly.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(0, "CARD-1697: the compared closure is bound-only");
 
                     var phaseOnly = await Probe(true, IncidentRequests(), removed: true,
                         record: """{"phase":"volumesRemoved","ownedRemoved":false}""");
                     phaseOnly.Error.ShouldBe("", "volumesRemoved alone must keep rows, not " + phaseOnly.Error);
                     phaseOnly.Code.ShouldBe(0);
                     phaseOnly.Sleeps.ShouldBe(2, "volumesRemoved alone still retries before acceptance");
-                    phaseOnly.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "volumesRemoved alone keeps walked rows");
+                    phaseOnly.Receipt!.AsObject().Count.ShouldBe(7, "volumesRemoved alone keeps walked rows");
+                    phaseOnly.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(0, "CARD-1697: the compared closure is bound-only");
 
                     var stopped = await Probe(true, IncidentRequests(), removed: true,
                         record: """{"phase":"stopped","ownedRemoved":false}""");
@@ -408,7 +439,7 @@ internal static class C1361CensusProbes
         return requests;
     }
 
-    private static async Task<(string Error, int Code, int Sleeps, JsonNode? Snapshot)> Probe(
+    private static async Task<(string Error, int Code, int Sleeps, JsonNode? Snapshot, JsonNode? Receipt)> Probe(
         bool host, JsonObject requests, bool removed, bool wait = true, string? record = null)
     {
         using var scratch = new Scratch();
@@ -424,8 +455,9 @@ internal static class C1361CensusProbes
         var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
         run.Exit.ShouldBe(0, "fixture: " + run.Output);
         var result = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "result.json")))!;
+        var receipt = host ? JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "census-probe-server2.json")))!["tasks"] : null;
         return (result["error"]!.GetValue<string>(), result["code"]!.GetValue<int>(),
-            result["sleeps"]!.GetValue<int>(), result["snapshot"]);
+            result["sleeps"]!.GetValue<int>(), result["snapshot"], receipt);
     }
 
     private static async Task Check(bool host, Vector vector)
@@ -451,26 +483,30 @@ internal static class C1361CensusProbes
             error.ShouldBe("", vector.Name + ": " + run.Output);
             result["code"]!.GetValue<int>().ShouldBe(0, vector.Name);
             if (vector.Name == "bound/report-stable") result["report"]!["boundOpen"]!.GetValue<int>().ShouldBe(1);
-            if (vector.Receipted is not null)
-            {
-                // CARD-1697: every walked row stays receipted; the compared open closure is bound-only.
-                var tasks = (host
-                    ? JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "census-probe-server2.json")))!["tasks"]
-                    : result["tasks"])!.AsObject();
-                foreach (var id in vector.Receipted) tasks.ContainsKey(id).ShouldBeTrue(vector.Name + " receipts " + id + ": " + tasks.ToJsonString());
-                var open = result["snapshot"]!["open"]!;
-                open["scopes"]!.AsObject().Count.ShouldBe(0, vector.Name + " compares no per-scope id lists: " + open.ToJsonString());
-                open["tasks"]!.AsObject().All(x => x.Value!["runnerId"]?.GetValue<string>() == "server2")
-                    .ShouldBeTrue(vector.Name + " compares bound rows only: " + open.ToJsonString());
-                open["land"]!.AsObject().All(x => open["tasks"]!.AsObject().ContainsKey(x.Key))
-                    .ShouldBeTrue(vector.Name + " compares bound land proofs only: " + open.ToJsonString());
-            }
+            // CARD-1697: every walked row stays receipted; the compared open closure is bound-only.
+            var tasks = (host
+                ? JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "census-probe-server2.json")))!["tasks"]
+                : result["tasks"])!.AsObject();
+            foreach (var id in vector.Receipted ?? []) tasks.ContainsKey(id).ShouldBeTrue(vector.Name + " receipts " + id + ": " + tasks.ToJsonString());
+            var open = result["snapshot"]!["open"]!;
+            open["scopes"]!.AsObject().Count.ShouldBe(0, vector.Name + " compares no per-scope id lists: " + open.ToJsonString());
+            open["tasks"]!.AsObject().All(x => x.Value!["runnerId"]?.GetValue<string>() == "server2")
+                .ShouldBeTrue(vector.Name + " compares bound rows only: " + open.ToJsonString());
+            open["land"]!.AsObject().All(x => open["tasks"]!.AsObject().ContainsKey(x.Key))
+                .ShouldBeTrue(vector.Name + " compares bound land proofs only: " + open.ToJsonString());
             if (vector.Expected is not null)
             {
                 var snapshot = result["snapshot"]!;
-                JsonNode.DeepEquals(snapshot["open"]!["tasks"]![Id], vector.Expected).ShouldBeTrue(vector.Name + " exact observed facts: " + snapshot);
-                snapshot["open"]!["land"]!.AsObject().ContainsKey(Id).ShouldBeTrue(vector.Name + " explicit proof");
-                JsonNode.DeepEquals(snapshot["open"]!["land"]![Id], vector.Proof).ShouldBeTrue(vector.Name + " proof identity");
+                // The receipt keeps the last list facts and land proof of every walked row, bound or not.
+                var expectedId = vector.Expected["id"]!.GetValue<string>();
+                tasks.ContainsKey(expectedId).ShouldBeTrue(vector.Name + " receipted row: " + tasks.ToJsonString());
+                var recorded = tasks[expectedId]!.AsObject();
+                foreach (var (key, value) in vector.Expected)
+                    JsonNode.DeepEquals(recorded[key], value).ShouldBeTrue(vector.Name + " exact observed facts " + key + ": " + recorded.ToJsonString());
+                recorded.ContainsKey("landRequest").ShouldBeTrue(vector.Name + " explicit proof");
+                JsonNode.DeepEquals(recorded["landRequest"], vector.Proof).ShouldBeTrue(vector.Name + " proof identity: " + recorded.ToJsonString());
+                if (vector.Expected["runnerId"]?.GetValue<string>() == "server2")
+                    JsonNode.DeepEquals(open["tasks"]![expectedId], vector.Expected).ShouldBeTrue(vector.Name + " bound row compared: " + snapshot);
                 if (!host && !vector.Report)
                     JsonNode.DeepEquals(result["returned"], snapshot).ShouldBeTrue(vector.Name + " returned original second snapshot");
                 result["reads"]!.AsArray().Any(x => x!.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeTrue(vector.Name + " detail read");
@@ -644,15 +680,19 @@ internal static class C1361CensusProbes
             var run = await fixture.Run("check-census");
             run.Trace.All(x => x["kind"]?.GetValue<string>() != "case").ShouldBeTrue(variant + " offline wrapper has no host action");
             run.Trace.Any(x => x["path"]?.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeTrue(variant + " actual detail read");
-            if (variant == "primary")
+            // CARD-1697: an off-runner runner or pending-proof change between the passes is outside the
+            // bound-only compared closure; list/detail disagreement and a changed bound row still refuse.
+            if (variant == "primary" || (passes && variant is "pending" or "runner"))
             {
-                run.Exit.ShouldBe(0, run.Output);
+                run.Exit.ShouldBe(0, variant + ": " + run.Output);
                 var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
                 var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!;
-                JsonNode.DeepEquals(receipt["snapshot"]!["open"]!["tasks"]![Id], v.Expected).ShouldBeTrue("wrapper actual second list facts");
+                receipt["snapshot"]!["open"]!["tasks"]!.AsObject().Count.ShouldBe(0, variant + " bound-only compared closure");
                 var recorded = receipt["tasks"]!.AsArray().Single()!;
-                recorded["status"]!.GetValue<string>().ShouldBe(passes ? "Dispatched" : "Queued");
-                recorded.AsObject().ContainsKey("landRequest").ShouldBeTrue(); recorded["landRequest"].ShouldBeNull();
+                foreach (var (key, value) in v.Expected!)
+                    JsonNode.DeepEquals(recorded[key], value).ShouldBeTrue(variant + " wrapper actual second list facts " + key + ": " + recorded.ToJsonString());
+                recorded.AsObject().ContainsKey("landRequest").ShouldBeTrue();
+                JsonNode.DeepEquals(recorded["landRequest"], v.Proof).ShouldBeTrue(variant + " receipted proof: " + recorded.ToJsonString());
             }
             else
             {
@@ -743,13 +783,15 @@ internal static class C1361CensusProbes
         if (host)
         {
             var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
-            // CARD-1693: the server2-temp open branch sits in front of the standing open/land branches.
+            // CARD-1693 / CARD-1697: one open branch, bound-only for either runner, then the land branch.
             var expressions = Regex.Matches(source,
-                @"(?s)'(?<body>if \$kind==""open"" and \$runner==""server2-temp"" then.*?elif \$kind==""open"" then \{scopes:\.,tasks:\$rows,land:\$land\}\s+else .*? end)'");
+                @"(?s)'(?<body>if \$kind==""open"" then\s+\{scopes:\{\},tasks:.*?\s+else .*? end)'");
             expressions.Count.ShouldBe(1, "real land projection");
             body = "jq -n --arg kind land --arg runner server2 --argjson land '{}' --slurpfile input '" + scratch.Root +
                 "/rows.json' '$input[0] as $rows | {} | " + expressions[0].Groups["body"].Value +
-                "' > '" + scratch.Root + "/projection.json' || exit 1\n" + TempOpenProjection(scratch.Root, expressions[0].Groups["body"].Value);
+                "' > '" + scratch.Root + "/projection.json' || exit 1\n" +
+                OpenProjection(scratch.Root, "server2-temp", "server2", expressions[0].Groups["body"].Value) +
+                OpenProjection(scratch.Root, "server2", "server2-temp", expressions[0].Groups["body"].Value);
         }
         else
         {
@@ -763,6 +805,10 @@ internal static class C1361CensusProbes
                 $kind='land'; $RunnerId='server2'; $taskSnapshot=[ordered]@{}
                 Invoke-Expression $blocks[0].Extent.Text
                 @{tasks=$taskSnapshot}|ConvertTo-Json -Depth 20|Set-Content '{{scratch.Root}}/projection.json'
+                # CARD-1697: the open closure is bound-only for the standing runner as well.
+                $kind='open'; $RunnerId='server2'; $taskSnapshot=[ordered]@{}
+                Invoke-Expression $blocks[0].Extent.Text
+                @{tasks=$taskSnapshot}|ConvertTo-Json -Depth 20|Set-Content '{{scratch.Root}}/open-projection.json'
                 """;
         }
         var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
@@ -772,36 +818,46 @@ internal static class C1361CensusProbes
         JsonNode.DeepEquals(actual[Id], bound).ShouldBeTrue("all bound land facts retained");
         if (host)
         {
-            var temp = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "temp-open.json")))!.AsObject();
-            var expected = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "temp-expected.json")))!;
-            JsonNode.DeepEquals(temp, expected).ShouldBeTrue("server2-temp open closure keeps bound rows and their lands only: " + temp.ToJsonString());
-            Console.WriteLine("LAND_PROJECTION server2-temp open bound-only PASS");
+            foreach (var runner in new[] { "server2-temp", "server2" })
+            {
+                var open = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, runner + "-open.json")))!.AsObject();
+                var expected = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, runner + "-expected.json")))!;
+                JsonNode.DeepEquals(open, expected).ShouldBeTrue(runner + " open closure keeps bound rows and their lands only: " + open.ToJsonString());
+                Console.WriteLine("LAND_PROJECTION " + runner + " open bound-only PASS");
+            }
+        }
+        else
+        {
+            var open = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "open-projection.json")))!["tasks"]!.AsObject();
+            open.Count.ShouldBe(1, "bound-only standing open projection: " + open.ToJsonString());
+            JsonNode.DeepEquals(open[Id], bound).ShouldBeTrue("all bound open facts retained");
+            Console.WriteLine("LAND_PROJECTION server2 open bound-only PASS");
         }
         Console.WriteLine("LAND_PROJECTION bound-only PASS");
     }
 
-    // CARD-1693: the temp runner's compared open closure keeps rows bound to server2-temp and their lands
-    // only, with no scopes entry; a standing-runner row and its land drop out.
-    private static string TempOpenProjection(string root, string expression)
+    // CARD-1693 / CARD-1697: either runner's compared open closure keeps rows bound to it and their lands
+    // only, with no scopes entry; the other runner's row and its land drop out.
+    private static string OpenProjection(string root, string runner, string otherRunner, string expression)
     {
-        var bound = Row("Running"); bound["runnerId"] = "server2-temp";
-        var standing = Row("Dispatched"); standing["id"] = Event; standing["runnerId"] = "server2";
+        var bound = Row("Running"); bound["runnerId"] = runner;
+        var standing = Row("Dispatched"); standing["id"] = Event; standing["runnerId"] = otherRunner;
         var land = new JsonObject
         {
             [Id] = new JsonObject { ["state"] = "Pending", ["terminalEventId"] = null },
             [Event] = new JsonObject { ["state"] = "Pending", ["terminalEventId"] = null },
         };
-        File.WriteAllText(Path.Combine(root, "temp-rows.json"), new JsonObject { [Id] = bound, [Event] = standing }.ToJsonString());
-        File.WriteAllText(Path.Combine(root, "temp-land.json"), land.ToJsonString());
-        File.WriteAllText(Path.Combine(root, "temp-expected.json"), new JsonObject
+        File.WriteAllText(Path.Combine(root, runner + "-rows.json"), new JsonObject { [Id] = bound, [Event] = standing }.ToJsonString());
+        File.WriteAllText(Path.Combine(root, runner + "-land.json"), land.ToJsonString());
+        File.WriteAllText(Path.Combine(root, runner + "-expected.json"), new JsonObject
         {
             ["scopes"] = new JsonObject(),
             ["tasks"] = new JsonObject { [Id] = bound.DeepClone() },
             ["land"] = new JsonObject { [Id] = land[Id]!.DeepClone() },
         }.ToJsonString());
-        return "jq -n --arg kind open --arg runner server2-temp --slurpfile input '" + root + "/temp-rows.json' --slurpfile lands '" + root +
-            "/temp-land.json' '$input[0] as $rows | $lands[0] as $land | {\"project-a\":2} | " + expression +
-            "' > '" + root + "/temp-open.json' || exit 1\n";
+        return "jq -n --arg kind open --arg runner " + runner + " --slurpfile input '" + root + "/" + runner + "-rows.json' --slurpfile lands '" + root +
+            "/" + runner + "-land.json' '$input[0] as $rows | $lands[0] as $land | {\"project-a\":2} | " + expression +
+            "' > '" + root + "/" + runner + "-open.json' || exit 1\n";
     }
 
     private static async Task TotalBoundary(bool host)
@@ -859,7 +915,7 @@ internal static class C1361CensusProbes
         var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!;
         receipt["tasks"]!.AsArray().Count.ShouldBe(7, "all collected scoped rows retained");
         receipt["reads"]!.AsArray().Any(x => x!["outcome"]?.GetValue<string>() == "Malformed").ShouldBeFalse("valid drift is never marked malformed");
-        receipt["snapshot"]!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "complete recovered closure");
+        receipt["snapshot"]!["open"]!["tasks"]!.AsObject().Count.ShouldBe(0, "CARD-1697: the compared recovered closure is bound-only");
         run.Trace.Count(x => x["path"]?.GetValue<string>() == PathFor(OtherProject)).ShouldBe(5, "retry plus two successful passes for each report target");
         run.Trace.All(x => x["kind"]?.GetValue<string>() != "case").ShouldBeTrue("no host actions");
         Console.WriteLine("COUNT_RECOVERY_RECEIPT PASS");
