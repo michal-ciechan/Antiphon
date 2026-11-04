@@ -883,13 +883,19 @@ function Test-C1686_LinuxOnlyCensus {
         # it) but still fails closed, so a misread comment state can never hide a marker or count a commented-out one.
         'block-comment-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n    [NativeLinuxOnly(`"block comment`")]`n    public void Old() { }`n    [Test, NativeLinuxOnly(`"block comment`")] */`n}`n", @("marker-noncanonical:${z}:6", "marker-noncanonical:${z}:8"))
         'block-comment-star-interior' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n     * [NativeLinuxOnly(`"block comment`")]`n     */`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
-        'block-comment-mid-line-open' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    int a = 1; /* note`n     * [NativeLinuxOnly(`"y`")]`n     */`n}`n", @("marker-noncanonical:${z}:6"))
+        # CARD-1707: a block comment's closing line reads its own state. A starred closing line is a comment line (an
+        # empty expectation: no problem); a canonical-looking closing line is inside the comment, so it fails closed.
+        'block-comment-star-close' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n     * [NativeLinuxOnly(`"old`")] */`n    public void M() { }`n}`n", @())
+        'block-comment-canonical-close' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /*`n    [NativeLinuxOnly(`"old`")] */`n    public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        'block-comment-mid-line-open' =@($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    int a = 1; /* note`n     * [NativeLinuxOnly(`"y`")]`n     */`n}`n", @("marker-noncanonical:${z}:6"))
         # CARD-1707: a line that starts with * outside a block comment is code (a multiplication split across lines).
         'split-multiplication' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    int x = 2`n        * 3; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
         'nested-block-comment' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    /* outer /* inner */`n     * [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
-        # CARD-1707: a /* inside a string or char literal opens no comment.
-        'string-literal-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int Y = `"/*`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
-        'char-literal-quote' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int Y = '`"' + `"/*`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:6"))
+        # CARD-1707: a /* inside a string or char literal opens no comment. The canonical marker on the next line counts;
+        # a misread literal would open a comment that hides it.
+        'string-literal-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int Y = `"/*`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void N() { }`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @("marker-noncanonical:${z}:6", 'marker-without-row:antiphon|ZetaTests|M'))
+        'char-literal-quote' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int Y = '`"' + `"/*`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void N() { }`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @("marker-noncanonical:${z}:6", 'marker-without-row:antiphon|ZetaTests|M'))
+        'char-literal-quote-before-string' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static readonly char Q = '`"'; static readonly string S = `"/*`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
         'verbatim-multi-line-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    static int V = @`"a `"`" b`n/* c`".Length`n        * 2; [NativeLinuxOnly(`"y`")] public void M() { }`n}`n", @("marker-noncanonical:${z}:7"))
         'verbatim-string-marker-line' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string V = @`"`n    [NativeLinuxOnly(`"`"x`"`")]`n    public void M() { }`";`n}`n", @("marker-noncanonical:${z}:6"))
         'raw-string-opener' = @($z, "namespace Fixture;`n`npublic sealed class ZetaTests`n{`n    const string R = `"`"`"`n        /* not a comment`n        `"`"`";`n    [NativeLinuxOnly(`"x`")]`n    public void M() { }`n}`n", @('marker-without-row:antiphon|ZetaTests|M'))
@@ -906,7 +912,11 @@ function Test-C1686_LinuxOnlyCensus {
         'exempt-file-attribute-list-line' = @('tests/Shared/NativeLinuxPolicyWitness.cs', "namespace Fixture;`n`npublic sealed class WitnessTests`n{`n    [`n        Test,`n        NativeLinuxOnly(`"y`")`n    ]`n    public void Runs() { }`n}`n", @('marker-noncanonical:tests/Shared/NativeLinuxPolicyWitness.cs:7'))
         'exempt-file-string-before-marker' = @('tests/Shared/NativeLinuxOnlyAttribute.cs', "namespace Fixture;`n`npublic sealed class WitnessTests`n{`n    [Test(Description = `"a`"), NativeLinuxOnly(`"y`")]`n    public void Runs() { }`n}`n", @('marker-noncanonical:tests/Shared/NativeLinuxOnlyAttribute.cs:5'))
         'exempt-file-block-comment-prefix' = @('tests/Shared/NativeLinuxPolicyWitnessTests.cs', "namespace Fixture;`n`npublic sealed class WitnessTests`n{`n    /* c */ [Test, NativeLinuxOnly(`"y`")]`n    public void Runs() { }`n}`n", @('marker-noncanonical:tests/Shared/NativeLinuxPolicyWitnessTests.cs:5'))
-        'reflection-outside-exempt-file' = @('tests/Shared/OtherWitness.cs', "internal static class OtherWitness`n{`n    internal static object Pin() => new Antiphon.TestSupport.NativeLinuxOnlyAttribute(`"pin`");`n    internal static Type Kind => typeof(NativeLinuxOnlyAttribute);`n}`n", @('marker-noncanonical:tests/Shared/OtherWitness.cs:3', 'marker-noncanonical:tests/Shared/OtherWitness.cs:4'))
+        # CARD-1707: an exempt file strips its reference forms after a block comment closes on the line and inside a
+        # multi-line string too (empty expectation: no problem).
+        'exempt-file-block-close-reference' = @('tests/Shared/NativeLinuxPolicyWitness.cs', "internal static class NativeLinuxPolicyWitness`n{`n    /*`n     * doc`n     */ static Type A => typeof(NativeLinuxOnlyAttribute);`n}`n", @())
+        'exempt-file-multi-line-string-reference' = @('tests/Shared/NativeLinuxPolicyWitness.cs', "internal static class NativeLinuxPolicyWitness`n{`n    const string V = @`"first`n    typeof(NativeLinuxOnlyAttribute)`n    last`";`n}`n", @())
+        'reflection-outside-exempt-file' =@('tests/Shared/OtherWitness.cs', "internal static class OtherWitness`n{`n    internal static object Pin() => new Antiphon.TestSupport.NativeLinuxOnlyAttribute(`"pin`");`n    internal static Type Kind => typeof(NativeLinuxOnlyAttribute);`n}`n", @('marker-noncanonical:tests/Shared/OtherWitness.cs:3', 'marker-noncanonical:tests/Shared/OtherWitness.cs:4'))
     }
     foreach ($name in $failClosed.Keys) {
         $path, $text, $expected = $failClosed[$name]
