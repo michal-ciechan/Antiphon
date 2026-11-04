@@ -1214,6 +1214,9 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// <summary>
     /// V-25/G-9: a first enable over a large backlog costs at most the cap in pre-checks. Review 1dcb8d90 D-2: a missing
     /// directory is settled on the first tick (one Held row, no git, no cap) and never re-checked.
+    /// The cap is <see cref="BacklogCap"/>, not the default 25: every pre-check under the cap is a real removal, so the
+    /// tick costs in proportion to the cap, while the bound itself (the cap binds, the two trees over it and the 293
+    /// missing directories cost no git) holds for any cap smaller than the real trees. The backlog stays 300 rows.
     /// </summary>
     [Test]
     [Timeout(180_000)]
@@ -1223,15 +1226,15 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     {
         var phases = new BacklogPhases(mode);
         DesktopLegacyWorld w;
-        using (phases.Begin(TestPhaseKind.FixtureSetup, "world")) w = await DesktopLegacyWorld.CreateAsync();
+        using (phases.Begin(TestPhaseKind.FixtureSetup, "world")) w = await DesktopLegacyWorld.CreateAsync(s => s.MaxReleasesPerTick = BacklogCap);
         await using var _ = w;
         var real = new List<DesktopLegacyWorld.Handle>();
         using (phases.Begin(TestPhaseKind.FixtureSetup, "seed-real"))
-            for (var i = 0; i < 27; i++) real.Add(await w.AddTaskAsync(ageHours: 24 * 30 + 27 - i));
+            for (var i = 0; i < BacklogCap + 2; i++) real.Add(await w.AddTaskAsync(ageHours: 24 * 30 + BacklogCap + 2 - i));
         var absent = new List<DesktopLegacyWorld.Handle>();
         using (phases.Begin(TestPhaseKind.FixtureSetup, "seed-absent"))
-            for (var i = 0; i < 273; i++) absent.Add(await w.AddTaskAsync(shape: "none", ageHours: 24 * 3 + i));
-        var oldest = real.Take(25).ToList();
+            for (var i = 0; i < BacklogAbsent; i++) absent.Add(await w.AddTaskAsync(shape: "none", ageHours: 24 * 3 + i));
+        var oldest = real.Take(BacklogCap).ToList();
         var origin = await w.OriginRefsAsync();
         w.ClearTrace();
 
@@ -1257,22 +1260,22 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
                 paged.ShouldBe(300);
             }
             await using (var db = w.Db()) (await db.TaskWorktreeRetirements.CountAsync()).ShouldBe(0);
-            foreach (var t in real.Skip(25).Concat(absent)) w.AssertNoGit(t);
+            foreach (var t in real.Skip(BacklogCap).Concat(absent)) w.AssertNoGit(t);
             return;
         }
 
         var clock = Stopwatch.StartNew();
         DesktopLegacyReleasePolicyService.TickResult first;
         using (phases.Begin(TestPhaseKind.OurCode, "tick-1")) first = await w.TickAsync();
-        clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60), "the bounded tick's wall time");
-        first.Retired.ShouldBe(25);
+        clock.Elapsed.ShouldBeLessThan(BacklogTickBudget, "the bounded tick's wall time");
+        first.Retired.ShouldBe(BacklogCap);
         foreach (var t in oldest) await w.AssertRetiredAsync(t, origin);
-        foreach (var t in real.Skip(25).Concat(absent)) w.AssertNoGit(t);
-        (await w.RowsAsync(first.RunId)).Count(r => r.ReasonCode == "directory_absent").ShouldBe(273);
+        foreach (var t in real.Skip(BacklogCap).Concat(absent)) w.AssertNoGit(t);
+        (await w.RowsAsync(first.RunId)).Count(r => r.ReasonCode == "directory_absent").ShouldBe(BacklogAbsent);
         DesktopLegacyReleasePolicyService.TickResult second;
         using (phases.Begin(TestPhaseKind.OurCode, "tick-2")) second = await w.TickAsync();
         second.Retired.ShouldBe(2);
-        foreach (var t in real.Skip(25)) await w.AssertRetiredAsync(t, origin);
+        foreach (var t in real.Skip(BacklogCap)) await w.AssertRetiredAsync(t, origin);
         var rows2 = await w.RowsAsync(second.RunId);
         rows2.ShouldNotContain(r => r.ReasonCode == "directory_absent", "a settled missing directory is not rewritten");
         rows2.Count.ShouldBe(2, "the second tick writes only its two removals");
@@ -1282,6 +1285,15 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
             (await db.TaskWorktreeRetirements.CountAsync(r => ids.Contains(r.TaskId))).ShouldBe(0, "never a release for an absent path");
         }
     }
+
+    /// <summary>V-25: the cap and the 300-row backlog it is tested against (cap + 2 real trees, the rest missing).</summary>
+    private const int BacklogCap = 5;
+    private const int BacklogAbsent = 300 - (BacklogCap + 2);
+
+    /// <summary>
+    /// V-25 tick-1 wall-time budget (R5, about 2x measured p95): MEASUREMENT PENDING.
+    /// </summary>
+    private static readonly TimeSpan BacklogTickBudget = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// V-25 phase record (R4): each phase is a <see cref="TestTiming"/> span and one <c>C0824_V25</c> StdOut line in
