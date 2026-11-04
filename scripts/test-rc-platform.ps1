@@ -516,6 +516,7 @@ function Get-C1323LinuxOnlyCensus {
         [string[]]$FixtureProjects = @('tests/Antiphon.NativeLinuxPolicy.Probe/'),
         # These files name the type without marking a test: the definition (class and constructor declarations, an
         # error string) and the witnesses that read, reflect over or construct it (typeof, new, a resource-name string).
+        # Only those reference forms are exempt; any other use in these files fails closed like anywhere else.
         [string[]]$ExemptFiles = @(
             'tests/Shared/NativeLinuxOnlyAttribute.cs'
             'tests/Shared/NativeLinuxPolicyWitness.cs'
@@ -560,10 +561,15 @@ function Get-C1323LinuxOnlyCensus {
         $rel = [IO.Path]::GetFullPath($file).Substring($rootPrefix).Replace('\', '/')
         if (@($FixtureProjects | Where-Object { $rel.StartsWith($_, [StringComparison]::Ordinal) }).Count) { continue }
         # Line-based and fail closed: C# strings and comments are never lexed. A line whose trimmed text starts with
-        # [NativeLinuxOnly( is a canonical marker; a line that starts with //, /* or * is a comment line. Any other line
-        # (and any second use on a marker line) that names the whole-word token fails closed, outside an exempt file.
+        # [NativeLinuxOnly( is a canonical marker; a line that starts with // is a comment line, and so is one that starts
+        # with /* or * unless a */ precedes the token (the comment closed and code follows). Any other line (and any
+        # second use on a marker line) that names the whole-word token fails closed; an exempt file strips its
+        # reference forms first.
         $lines = $text.Replace("`r`n", "`n").Split("`n")
         $exempt = $ExemptFiles -ccontains $rel
+        $token = 'NativeLinuxOnly(?:Attribute)?'
+        $qualified = '(?:global::)?(?:\w+\.)*' + $token
+        $references = '\btypeof\(\s*' + $qualified + '\s*\)|\bnew\s+' + $qualified + '\s*\(|\bclass\s+' + $token + '\b|\bpublic\s+' + $token + '\s*\(|"[^"\\()\[\],/*]*\b' + $token + '\b[^"\\()\[\],/*]*"'
         $hits = @()
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $trimmed = $lines[$i].Trim()
@@ -572,8 +578,10 @@ function Get-C1323LinuxOnlyCensus {
                 $hits += $i
                 $scan = [regex]::Replace($lines[$i], '^\s*\[NativeLinuxOnly\((?:"(?:[^"\\]|\\.)*"|[^)"])*\)\]', '')
                 if ($scan -ceq $lines[$i]) { $scan = $trimmed.Substring('[NativeLinuxOnly'.Length) }
-            } elseif ($exempt -or $trimmed.StartsWith('//') -or $trimmed.StartsWith('/*') -or $trimmed.StartsWith('*')) {
+            } elseif ($trimmed.StartsWith('//') -or (($trimmed.StartsWith('/*') -or $trimmed.StartsWith('*')) -and -not [regex]::IsMatch($trimmed, '\*/.*\b' + $token + '\b'))) {
                 continue
+            } elseif ($exempt) {
+                $scan = [regex]::Replace($lines[$i], $references, '')
             }
             if ([regex]::IsMatch($scan, '\bNativeLinuxOnly(?:Attribute)?\b')) { $problems.Add("marker-noncanonical:${rel}:$($i + 1)") }
         }
