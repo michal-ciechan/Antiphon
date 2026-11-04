@@ -508,30 +508,69 @@ function Test-LinuxSessionRunnerAdmission {
     Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
 }
 
+function Test-C1323RawHoleLost([string]$Token, [int]$Dollars, [int]$Quotes, [regex]$Literal) {
+    # CARD-1711: the census ends a raw interpolated string at its first closing quote run, which is the real end unless
+    # that run lies inside a hole (a nested raw string). True when it does, or when a hole holds a comment, a nested
+    # verbatim or raw string, or a literal $Literal cannot skip, so that the brace count cannot be trusted.
+    $depth = -1
+    $skip = $Dollars + $Quotes
+    foreach ($e in [regex]::Matches($Token, '\{+|\}+|\$*@\$*"|\$+"{3,}|\$+"|"+|''|/[/*]')) {
+        if ($e.Index -lt $skip) { continue }
+        $v = $e.Value
+        if ($v[0] -ceq '{') {
+            if ($depth -ge 0) { $depth += $v.Length } elseif ($v.Length -ge $Dollars) { $depth = 0 }
+        } elseif ($v[0] -ceq '}') {
+            if ($depth -ge 0) { $depth = if ($v.Length -le $depth) { $depth - $v.Length } else { -1 } }
+        } elseif ($depth -lt 0 -or $v -ceq '""') {
+            continue
+        } elseif ($v -cmatch '^\$*"$' -or $v -ceq "'") {
+            $m = $Literal.Match($Token, $e.Index)
+            if (-not $m.Success) { return $true }
+            $skip = $e.Index + $m.Length
+        } else {
+            return $true
+        }
+    }
+    return $depth -ge 0
+}
+
 function Get-C1323LineStates([string]$Text) {
     # CARD-1707: the C# lexical state at the start of each line, so a line that starts with * is a comment only inside an
     # open block comment. Comments, strings and char literals are consumed in source order so a /* inside a literal opens
-    # nothing; verbatim and raw strings may span lines. Interpolation holes are not lexed: a /* inside one reads as an
-    # opener in the middle of its line, which the census only ever fails closed on. Returns 'code', 'string' or 'block'
-    # per line, and whether the open block comment's /* was the first text on its line.
-    $tokens = '//[^\n]*|(?<block>/\*[\s\S]*?(?:\*/|\z))|(?<str>(?:\$@|@\$|@)"(?:[^"]|"")*(?:"|\z)|\$*(?<q>"{3,})[\s\S]*?(?:\k<q>|\z))|\$*"(?:[^"\\\n]|\\[^\n])*"?|''(?:[^''\\\n]|\\[^\n])*''?'
+    # nothing; verbatim and raw strings may span lines. Returns 'code', 'string' or 'block' per line, and whether the open
+    # block comment's /* was the first text on its line. $Text has LF line ends only (the census folds the others).
+    # CARD-1711 A-1: a misread interpolation hole does not only fail closed: a quoted key in a multi-line verbatim hole
+    # ($@"{d["k"]}) ended the string early, a /* at the start of its next line opened a phantom comment, and a later
+    # *-led code line that named the token was skipped silently. Holes of regular and verbatim interpolated strings are
+    # now lexed (code with balanced braces and plain string and char literals). A hole the walk cannot lex (a comment or
+    # a nested verbatim, raw or interpolated string) stops the string at its {, and a raw interpolated string whose
+    # closing quote run lies inside a hole is detected; either way LostFrom names the first line whose state is unknown.
+    # CARD-1711 A-3: every $ run is anchored at its first $ and consumed atomically. An atomic group alone still retried
+    # the run from each of its positions (64k: 9.5 s); the lookbehind makes the walk linear.
+    $hole = '\{(?>(?:[^{}"''/@$]|/(?![/*])|"(?:[^"\\\n]|\\[^\n])*"|''(?:[^''\\\n]|\\[^\n])+''|(?<d>\{)|(?<-d>\}))*)(?(d)(?!))\}'
+    $tokens = '//[^\n]*|(?<block>/\*[\s\S]*?(?:\*/|\z))|(?<str>(?:\$@|@\$)"(?>(?:[^"{]|""|\{\{|' + $hole + ')*)(?:"|\z|(?<lost>))' +
+        '|@"(?:[^"]|"")*(?:"|\z)|(?<!\$)(?<raw>(?>\$*))(?<q>"{3,})[\s\S]*?(?:\k<q>|\z)' +
+        '|(?<!\$)(?>\$+)"(?>(?:[^"\\\n{]|\\[^\n]|\{\{|' + $hole + ')*)(?:"|(?<lost>(?=\{))|))|"(?:[^"\\\n]|\\[^\n])*"?|''(?:[^''\\\n]|\\[^\n])*''?'
+    $literal = [regex]('\G(?:(?>\$+)"(?>(?:[^"\\\n{]|\\[^\n]|\{\{|' + $hole + ')*)"|"(?:[^"\\\n]|\\[^\n])*"|''(?:[^''\\\n]|\\[^\n])+'')')
     $starts = [Collections.Generic.List[int]]::new()
     $starts.Add(0)
     for ($k = $Text.IndexOf([char]10); $k -ge 0; $k = $Text.IndexOf([char]10, $k + 1)) { $starts.Add($k + 1) }
     $modes = [string[]]::new($starts.Count)
     $atStart = [bool[]]::new($starts.Count)
     for ($k = 0; $k -lt $modes.Length; $k++) { $modes[$k] = 'code' }
+    $lost = -1
     $line = 0
     foreach ($m in [regex]::Matches($Text, $tokens)) {
         $end = $m.Index + $m.Length
+        while ($line -lt $starts.Count -and $starts[$line] -le $m.Index) { $line++ }
+        if ($lost -lt 0 -and ($m.Groups['lost'].Success -or ($m.Groups['raw'].Length -gt 0 -and (Test-C1323RawHoleLost $m.Value $m.Groups['raw'].Length $m.Groups['q'].Length $literal)))) { $lost = $line - 1 }
         if ($Text.IndexOf([char]10, $m.Index, $m.Length) -lt 0) { continue }
         $mode = if ($m.Groups['block'].Success) { 'block' } elseif ($m.Groups['str'].Success) { 'string' } else { continue }
         $lead = $Text.LastIndexOf([char]10, [Math]::Max(0, $m.Index - 1)) + 1
         $first = $m.Index -eq $lead -or $Text.Substring($lead, $m.Index - $lead).Trim().Length -eq 0
-        while ($line -lt $starts.Count -and $starts[$line] -le $m.Index) { $line++ }
         while ($line -lt $starts.Count -and $starts[$line] -lt $end) { $modes[$line] = $mode; $atStart[$line] = $first; $line++ }
     }
-    return [pscustomobject]@{ Modes = $modes; AtStart = $atStart }
+    return [pscustomobject]@{ Modes = $modes; AtStart = $atStart; LostFrom = $lost }
 }
 
 function Get-C1323LinuxOnlyCensus {
@@ -592,8 +631,10 @@ function Get-C1323LinuxOnlyCensus {
         # literals skipped), so a line that starts with * is a comment line only inside a block comment that opened at
         # the start of its line; any other line inside an open block comment, or inside a multi-line string, that names
         # the token fails closed instead of counting. Any other line (and any second use on a marker line) that names
-        # the whole-word token fails closed; an exempt file strips its reference forms first.
-        $lines = $text.Replace("`r`n", "`n").Split("`n")
+        # the whole-word token fails closed; an exempt file strips its reference forms first. CARD-1711 A-2: lines are C#
+        # lines, ended by CR LF, CR, LF, U+2028, U+2029 or U+0085 (line numbers count those ends too). A line from one whose
+        # lexical state the walk lost (an interpolation hole it cannot lex) that names the token fails closed.
+        $lines = [regex]::Split($text, "`r`n|[`r`n`u{2028}`u{2029}`u{0085}]")
         $exempt = $ExemptFiles -ccontains $rel
         $token = 'NativeLinuxOnly(?:Attribute)?'
         $qualified = '(?:global::)?(?:\w+\.)*' + $token
@@ -603,6 +644,10 @@ function Get-C1323LinuxOnlyCensus {
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $trimmed = $lines[$i].Trim()
             $scan = $lines[$i]
+            if ($states.LostFrom -ge 0 -and $i -ge $states.LostFrom) {
+                if ([regex]::IsMatch($lines[$i], '\b' + $token + '\b')) { $problems.Add("marker-noncanonical:${rel}:$($i + 1)") }
+                continue
+            }
             if ($states.Modes[$i] -ceq 'block') {
                 $close = $lines[$i].IndexOf('*/', [StringComparison]::Ordinal)
                 if ($close -lt 0 -or -not [regex]::IsMatch($lines[$i].Substring($close + 2), '\b' + $token + '\b')) {
