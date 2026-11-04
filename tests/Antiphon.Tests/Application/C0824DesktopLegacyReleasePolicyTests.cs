@@ -1286,6 +1286,104 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     }
 
     /// <summary>
+    /// CARD-1701 Mutation f303b3ec survivors D3/D5/D6 (Review 4ed13efe A-3): a queued dependent's start ref spelled with a
+    /// <c>~</c> revision suffix, an <c>@{u}</c> upstream or <c>@{0}</c> reflog suffix (each resolves only through the local
+    /// branch's ref, config or reflog), or the full remote-tracking ref, names the branch and keeps the tree before any git.
+    /// Kept apart from <see cref="Server_predicates_keep_the_tree"/> so the CARD-0824 S4a witness branch merges cleanly.
+    /// </summary>
+    [Test]
+    [Arguments("startref-queued-tilde")]
+    [Arguments("startref-queued-upstream")]
+    [Arguments("startref-queued-reflog")]
+    [Arguments("startref-queued-refs-remotes")]
+    public async Task Revision_suffixed_and_remote_tracking_start_refs_keep_the_tree(string predicate)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync(ageHours: 60);
+        var a = await w.AddTaskAsync();
+        await using (var db = w.Db())
+        {
+            db.AgentTasks.Add(Bare(Guid.NewGuid(), w.Now, t =>
+            {
+                t.Status = AgentTaskStatus.Queued;
+                t.WorktreeBaseRequestedRef = predicate switch
+                {
+                    "startref-queued-tilde" => a.Branch + "~0",
+                    "startref-queued-upstream" => a.Branch + "@{u}",
+                    "startref-queued-reflog" => a.Branch + "@{0}",
+                    _ => "refs/remotes/origin/" + a.Branch,
+                };
+            }));
+            await db.SaveChangesAsync();
+        }
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+        w.ClearTrace();
+
+        var tick = await w.TickAsync();
+
+        await w.AssertRetiredAsync(control, origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("dependent_open");
+        await w.AssertIntactAsync(a, before);
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+        (await w.ReleasesAsync(a)).ShouldBeEmpty();
+        w.AssertNoGit(a);
+    }
+
+    /// <summary>
+    /// CARD-1701 Mutation f303b3ec survivor D7: an executing pass that files a release resets the held state an earlier
+    /// pre-check recorded, even when the removal is deferred (the G-59 repository lease is busy). A tree held twice
+    /// (60, 120 min), then cleaned and filed, then dirtied again backs off 60 min, not 240.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Filed_release_resets_an_earlier_hold()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 70);
+        var dirt = Path.Combine(a.Path, "new.txt");
+
+        async Task<double> HeldAsync(string when)
+        {
+            w.ClearTrace();
+            var tick = await w.TickAsync();
+            w.Prechecked(a).ShouldBeTrue($"{when}: the due tree is pre-checked");
+            var row = await w.RowAsync(tick.RunId, a);
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held), when);
+            row.ReasonCode.ShouldBe("source_dirty", when);
+            var cursor = (await w.CheckCursorAsync(a)).ShouldNotBeNull();
+            cursor.LastOutcomeKey.ShouldStartWith("check|held|", Case.Sensitive, when);
+            return Math.Round((cursor.NotBefore!.Value - w.Now).TotalMinutes);
+        }
+
+        await File.WriteAllTextAsync(dirt, "new\n");
+        (await HeldAsync("hold 1")).ShouldBe(60);
+        w.Clock.Advance(TimeSpan.FromMinutes(61));
+        (await HeldAsync("hold 2")).ShouldBe(120);
+        w.Clock.Advance(TimeSpan.FromMinutes(121));
+
+        // Clean: the due tree is pre-checked and filed, and the removal is deferred under the busy repository lease.
+        File.Delete(dirt);
+        await using (await w.Harness.LeaseAsync())
+        {
+            var filed = await w.TickAsync();
+            filed.Filed.ShouldBe(1);
+            var row = await w.RowAsync(filed.RunId, a);
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+            row.ReasonCode.ShouldBe("repository_lease_required");
+        }
+        (await w.CheckCursorAsync(a)).ShouldNotBeNull().LastOutcomeKey.ShouldStartWith("check|checked|0|", Case.Sensitive,
+            "the filing resets the held state");
+
+        await File.WriteAllTextAsync(dirt, "new again\n");
+        (await HeldAsync("hold after the filing")).ShouldBe(60, "the backoff restarts after a release stood");
+        Directory.Exists(a.Path).ShouldBeTrue();
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+    }
+
+    /// <summary>
     /// V-25/G-9: a first enable over a large backlog costs at most the cap in pre-checks. Review 1dcb8d90 D-2: a missing
     /// directory is settled on the first tick (one Held row, no git, no cap) and never re-checked.
     /// The cap is <see cref="BacklogCap"/>, not the default 25: every pre-check under the cap is a real removal, so the
