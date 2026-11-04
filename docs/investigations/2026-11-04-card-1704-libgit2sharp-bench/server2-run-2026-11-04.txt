@@ -1,0 +1,50 @@
+BUILD SLOT granted lease=c5e2240e-f859-4711-99d0-30b44e98bbad waited=0s maxcpucount=6
+git: git version 2.47.3  libgit2: 0.32.0+libgit2-5853918.eaa698d078941fd5e3cc82b59b885cd35d8cc0f8 (x64 - Threads, Https, Ssh, NSec)  runtime: 9.0.22  os: Debian GNU/Linux 12 (bookworm)
+cli: git --version (process floor)               n= 100 median=    1.258 ms  p95=   12.426 ms  min=   0.895  max=   45.399
+lg2: new Repository + Dispose                    n= 100 median=    0.182 ms  p95=    0.242 ms  min=   0.143  max=    0.260
+lg2: open + Head.Tip.Sha + Dispose               n= 100 median=    0.960 ms  p95=    1.215 ms  min=   0.798  max=    1.247
+cli: rev-parse HEAD                              n= 100 median=    1.480 ms  p95=    2.786 ms  min=   1.085  max=    7.319
+lg2(shared): Head.Tip.Sha                        n= 100 median=    0.046 ms  p95=    0.073 ms  min=   0.037  max=    0.106
+cli: status --porcelain                          n= 100 median=   48.985 ms  p95=  135.665 ms  min=  26.369  max=  238.997
+lg2(shared): RetrieveStatus()                    n= 100 median=   61.210 ms  p95=  164.529 ms  min=  45.737  max=  199.466
+lg2: open + RetrieveStatus + Dispose             n= 100 median=   66.939 ms  p95=  154.732 ms  min=  61.057  max=  236.482
+rev-list --count HEAD~200..HEAD: cli=200 lg2=200 MATCH
+cli: rev-list --count HEAD~200..HEAD             n= 100 median=    2.528 ms  p95=    4.319 ms  min=   1.936  max=    5.392
+lg2(shared): Commits.QueryBy(..).Count()         n= 100 median=    1.067 ms  p95=    2.087 ms  min=   0.920  max=   26.149
+lg2(shared): CalculateHistoryDivergence          n= 100 median=    0.521 ms  p95=    0.861 ms  min=   0.505  max=    0.906
+merge-base: cli=86d21b50b6b3 lg2=86d21b50b6b3 MATCH
+cli: merge-base HEAD~200 HEAD                    n= 100 median=    4.074 ms  p95=    6.082 ms  min=   2.332  max=    6.987
+lg2(shared): FindMergeBase                       n= 100 median=    0.491 ms  p95=    0.769 ms  min=   0.478  max=    0.878
+refs: cli=5753 lg2=5753
+cli: for-each-ref (all, ~5.7k)                   n= 100 median=   11.940 ms  p95=   72.364 ms  min=   7.943  max=   78.984
+lg2(shared): enumerate Refs + TargetIdentifier   n= 100 median=   54.786 ms  p95=   95.037 ms  min=  50.382  max=  118.680
+cli: show-ref --verify one ref                   n= 100 median=    2.185 ms  p95=    3.375 ms  min=   1.430  max=    5.541
+lg2(shared): Refs[name]                          n= 100 median=    0.021 ms  p95=    0.034 ms  min=   0.018  max=    0.054
+cherry-pick tree: cli merge-tree=2a8aff18f9af lg2 CherryPickCommit=Succeeded 2a8aff18f9af MATCH
+cherry-pick commit: cli commit-tree=763ea3b723f1 lg2 CreateCommit=763ea3b723f1 MATCH (byte-identical)
+merge tree: cli merge-tree=4d421a1b8157 lg2 MergeCommits=Succeeded 4d421a1b8157 MATCH
+cli: merge-tree --write-tree + commit-tree       n= 100 median=   10.254 ms  p95=   13.793 ms  min=   9.515  max=  149.654
+lg2(shared): CherryPickCommit + CreateCommit     n= 100 median=   54.846 ms  p95=  102.914 ms  min=  40.515  max=  117.631
+cli: merge-tree --write-tree (true merge HEAD~10 HEAD) n= 100 median=    3.153 ms  p95=    6.261 ms  min=   2.353  max=    8.274
+lg2(shared): MergeCommits                        n= 100 median=   55.116 ms  p95=  130.232 ms  min=  38.846  max=  219.376
+cli: cherry-pick -x in worktree + reset --hard   n= 100 median=  109.992 ms  p95=  156.982 ms  min=  55.781  max=  172.846
+lg2(worktree handle): CherryPick + Reset(Hard)   n= 100 median=  389.403 ms  p95=  597.955 ms  min= 169.422  max=  676.467
+worktree cherry-pick commit: cli -x=cd28c56d66e8 lg2=732cb9c1ee4a (lg2 has no -x footer; trees MATCH)
+cli: ls-remote https://github.com/libgit2/libgit2sharp.git n=  20 median=  448.861 ms  p95=  557.227 ms  min= 356.686  max=  864.766
+lg2: Repository.ListRemoteReferences             n=  20 median=  187.214 ms  p95=  224.873 ms  min= 158.273  max=  299.852
+memory after shared-handle work: workingSet=249 MiB privateBytes=123 MiB managedHeap=0 MiB
+open .git file descriptors: before=1 while-undisposed-repo-held=1 after-Dispose=1
+BUILD SLOT released lease=c5e2240e-f859-4711-99d0-30b44e98bbad held=120s
+MergeCommits default                                       median=  68.375 ms p95= 212.651 ms
+MergeCommits FindRenames=false                             median=  81.697 ms p95= 144.545 ms
+MergeCommits FindRenames=false SkipReuc                    median=  88.680 ms p95= 178.779 ms
+CherryPickCommit FindRenames=false                         median=  85.125 ms p95= 211.978 ms
+Refs enumerate names only (CanonicalName)                  median= 147.934 ms p95= 355.011 ms
+Refs.FromGlob(refs/heads/*) + target                       median=   3.648 ms p95=   4.497 ms
+Branches enumerate + Tip.Sha                               median=  15.799 ms p95=  31.731 ms
+shared handle after work: mappedPackFiles=43 openGitFds=4
+after shared Dispose: mappedPackFiles=0 openGitFds=0
+undisposed second handle: mappedPackFiles=2 openGitFds=1
+after GC of undisposed handle (no Dispose): mappedPackFiles=2 openGitFds=1
+8 threads x 200 read ops on one handle: exceptions=0
+GlobalSettings.GetOwnerValidation=True features=Threads, Https, Ssh, NSec

@@ -1,0 +1,40 @@
+// CARD-1704 angle B probe 3: lease (compare-and-swap) push through the pre-push negotiation callback.
+using LibGit2Sharp;
+var (repoPath, bare) = (args[0], args[1]);
+using var repo = new Repository(repoPath);
+var remote = repo.Network.Remotes["bench"] ?? repo.Network.Remotes.Add("bench", bare);
+string Remote(string r) => Repository.ListRemoteReferences(bare).FirstOrDefault(x => x.CanonicalName == r)?.TargetIdentifier ?? "(none)";
+bool LeasePush(string refspec, string? expectedOld)
+{
+    var ok = true; string? err = null;
+    try
+    {
+        repo.Network.Push(remote, refspec, new PushOptions
+        {
+            OnNegotiationCompletedBeforePush = updates =>
+            {
+                foreach (var u in updates)
+                {
+                    var observed = u.SourceObjectId.Sha; // libgit2 git_push_update.src: the remote value advertised on this connection
+                    var expected = expectedOld ?? new string('0', 40);
+                    Console.WriteLine($"  negotiation: {u.DestinationRefName} remote={observed[..12]} expected={expected[..12]} new={u.DestinationObjectId.Sha[..12]}");
+                    if (observed != expected) ok = false;
+                }
+                return ok;
+            },
+            OnPushStatusError = e => { ok = false; err = e.Message; },
+        });
+    }
+    catch (Exception e) { ok = false; err = $"{e.GetType().Name}: {e.Message}"; }
+    Console.WriteLine($"  -> {(ok ? "pushed" : "refused")} {err}");
+    return ok;
+}
+var c1 = repo.Lookup<Commit>("HEAD~2").Sha; var c2 = repo.Lookup<Commit>("HEAD~1").Sha; var c3 = repo.Lookup<Commit>("HEAD~20").Sha;
+Console.WriteLine("create refs/heads/lease at HEAD~2 expecting absent:"); LeasePush($"{c1}:refs/heads/lease", null);
+Console.WriteLine("fast-forward to HEAD~1 expecting HEAD~2:"); LeasePush($"{c2}:refs/heads/lease", c1);
+Console.WriteLine("forced rewind to HEAD~20 with STALE expectation HEAD~2:"); LeasePush($"+{c3}:refs/heads/lease", c1);
+Console.WriteLine($"  remote now {Remote("refs/heads/lease")}");
+Console.WriteLine("forced rewind to HEAD~20 expecting HEAD~1:"); LeasePush($"+{c3}:refs/heads/lease", c2);
+Console.WriteLine($"  remote now {Remote("refs/heads/lease")}");
+Console.WriteLine("leased delete expecting HEAD~20:"); LeasePush($":refs/heads/lease", c3);
+Console.WriteLine($"  remote now {Remote("refs/heads/lease")}");

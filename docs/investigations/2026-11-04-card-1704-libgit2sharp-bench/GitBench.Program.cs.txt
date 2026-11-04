@@ -1,0 +1,132 @@
+// CARD-1704 angle B: git CLI (Process.Start) versus LibGit2Sharp, per-call cost.
+// usage: GitBench <repo> <worktree> <iterations> [lsRemoteUrl]
+using System.Diagnostics;
+using System.Text;
+using LibGit2Sharp;
+
+var repoPath = args[0]; var wtPath = args[1]; var n = int.Parse(args[2]);
+var lsUrl = args.Length > 3 ? args[3] : "https://github.com/libgit2/libgit2sharp.git";
+var results = new List<(string Name, double[] Ms)>();
+
+string Git(string cwd, params string[] a)
+{
+    var psi = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, CreateNoWindow = true,
+        RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8 };
+    psi.Environment["GIT_TERMINAL_PROMPT"] = "0"; psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+    psi.Environment["GIT_AUTHOR_DATE"] = "1700000000 +0000"; psi.Environment["GIT_COMMITTER_DATE"] = "1700000000 +0000";
+    psi.Environment["GIT_AUTHOR_NAME"] = "Bench"; psi.Environment["GIT_AUTHOR_EMAIL"] = "bench@example.invalid";
+    psi.Environment["GIT_COMMITTER_NAME"] = "Bench"; psi.Environment["GIT_COMMITTER_EMAIL"] = "bench@example.invalid";
+    foreach (var x in a) psi.ArgumentList.Add(x);
+    using var p = Process.Start(psi)!;
+    var err = p.StandardError.ReadToEndAsync(); var o = p.StandardOutput.ReadToEnd(); p.WaitForExit();
+    if (p.ExitCode != 0) throw new Exception($"git {string.Join(' ', a)} exit {p.ExitCode}: {err.Result}");
+    return o;
+}
+
+void Bench(string name, Action act, int iters)
+{
+    for (var i = 0; i < Math.Min(5, iters); i++) act();
+    var ms = new double[iters];
+    for (var i = 0; i < iters; i++) { var sw = Stopwatch.StartNew(); act(); ms[i] = sw.Elapsed.TotalMilliseconds; }
+    results.Add((name, ms));
+    Array.Sort(ms);
+    Console.WriteLine($"{name,-48} n={iters,4} median={ms[iters / 2],9:F3} ms  p95={ms[(int)Math.Ceiling(iters * 0.95) - 1],9:F3} ms  min={ms[0],8:F3}  max={ms[^1],9:F3}");
+}
+
+var head = Git(repoPath, "rev-parse", "HEAD").Trim();
+var base200 = Git(repoPath, "rev-parse", "HEAD~200").Trim();
+var onto = Git(repoPath, "rev-parse", "HEAD~10").Trim();
+var pickParent = Git(repoPath, "rev-parse", "HEAD~1").Trim();
+var sig = new Signature("Bench", "bench@example.invalid", DateTimeOffset.FromUnixTimeSeconds(1700000000));
+
+Console.WriteLine($"git: {Git(repoPath, "--version").Trim()}  libgit2: {GlobalSettings.Version}  runtime: {Environment.Version}  os: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+
+// ---- process floor ----
+Bench("cli: git --version (process floor)", () => Git(repoPath, "--version"), n);
+
+// ---- open cost ----
+Bench("lg2: new Repository + Dispose", () => { using var r = new Repository(repoPath); }, n);
+Bench("lg2: open + Head.Tip.Sha + Dispose", () => { using var r = new Repository(repoPath); _ = r.Head.Tip.Sha; }, n);
+
+using var repo = new Repository(repoPath);
+
+// ---- rev-parse HEAD ----
+Bench("cli: rev-parse HEAD", () => Git(repoPath, "rev-parse", "HEAD"), n);
+Bench("lg2(shared): Head.Tip.Sha", () => { if (repo.Head.Tip.Sha != head) throw new(); }, n);
+
+// ---- status ----
+Bench("cli: status --porcelain", () => Git(repoPath, "status", "--porcelain"), n);
+Bench("lg2(shared): RetrieveStatus()", () => { if (repo.RetrieveStatus(new StatusOptions()).IsDirty) throw new("dirty"); }, n);
+Bench("lg2: open + RetrieveStatus + Dispose", () => { using var r = new Repository(repoPath); _ = r.RetrieveStatus(new StatusOptions()).IsDirty; }, n);
+
+// ---- rev-list --count ----
+var cliCount = int.Parse(Git(repoPath, "rev-list", "--count", $"{base200}..{head}").Trim());
+var lgCount = repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = head, ExcludeReachableFrom = base200 }).Count();
+Console.WriteLine($"rev-list --count HEAD~200..HEAD: cli={cliCount} lg2={lgCount} {(cliCount == lgCount ? "MATCH" : "DIFFER")}");
+Bench("cli: rev-list --count HEAD~200..HEAD", () => Git(repoPath, "rev-list", "--count", $"{base200}..{head}"), n);
+Bench("lg2(shared): Commits.QueryBy(..).Count()", () => repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = head, ExcludeReachableFrom = base200 }).Count(), n);
+Bench("lg2(shared): CalculateHistoryDivergence", () => { var d = repo.ObjectDatabase.CalculateHistoryDivergence(repo.Lookup<Commit>(head), repo.Lookup<Commit>(base200)); _ = d.AheadBy; }, n);
+
+// ---- merge-base / is-ancestor ----
+var cliMb = Git(repoPath, "merge-base", base200, head).Trim();
+var lgMb = repo.ObjectDatabase.FindMergeBase(repo.Lookup<Commit>(base200), repo.Lookup<Commit>(head))!.Sha;
+Console.WriteLine($"merge-base: cli={cliMb[..12]} lg2={lgMb[..12]} {(cliMb == lgMb ? "MATCH" : "DIFFER")}");
+Bench("cli: merge-base HEAD~200 HEAD", () => Git(repoPath, "merge-base", base200, head), n);
+Bench("lg2(shared): FindMergeBase", () => repo.ObjectDatabase.FindMergeBase(repo.Lookup<Commit>(base200), repo.Lookup<Commit>(head)), n);
+
+// ---- refs ----
+var cliRefs = Git(repoPath, "for-each-ref", "--format=%(objectname) %(refname)").Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+var lgRefs = repo.Refs.Count();
+Console.WriteLine($"refs: cli={cliRefs} lg2={lgRefs}");
+Bench("cli: for-each-ref (all, ~5.7k)", () => Git(repoPath, "for-each-ref", "--format=%(objectname) %(refname)"), n);
+Bench("lg2(shared): enumerate Refs + TargetIdentifier", () => { foreach (var r in repo.Refs) _ = r.TargetIdentifier; }, n);
+Bench("cli: show-ref --verify one ref", () => Git(repoPath, "show-ref", "--verify", "refs/bench/r2500"), n);
+Bench("lg2(shared): Refs[name]", () => { if (repo.Refs["refs/bench/r2500"] is null) throw new(); }, n);
+
+// ---- in-memory cherry-pick (merge-tree analogue) ----
+var cliTree = Git(repoPath, "merge-tree", "--write-tree", $"--merge-base={pickParent}", onto, head).Split('\n')[0].Trim();
+var lgPick = repo.ObjectDatabase.CherryPickCommit(repo.Lookup<Commit>(head), repo.Lookup<Commit>(onto), 0, new MergeTreeOptions());
+Console.WriteLine($"cherry-pick tree: cli merge-tree={cliTree[..12]} lg2 CherryPickCommit={lgPick.Status} {lgPick.Tree?.Sha[..12]} {(lgPick.Tree?.Sha == cliTree ? "MATCH" : "DIFFER")}");
+var pickMsg = repo.Lookup<Commit>(head).Message.TrimEnd('\n') + $"\n\n(cherry picked from commit {head})\n";
+var cliCommit = Git(repoPath, "commit-tree", cliTree, "-p", onto, "-m", pickMsg.TrimEnd('\n')).Trim();
+var lgCommit = repo.ObjectDatabase.CreateCommit(sig, sig, pickMsg, lgPick.Tree!, new[] { repo.Lookup<Commit>(onto) }, prettifyMessage: false);
+Console.WriteLine($"cherry-pick commit: cli commit-tree={cliCommit[..12]} lg2 CreateCommit={lgCommit.Sha[..12]} {(cliCommit == lgCommit.Sha ? "MATCH (byte-identical)" : "DIFFER")}");
+var mergeMb = Git(repoPath, "merge-tree", "--write-tree", onto, head).Split('\n')[0].Trim();
+var lgMerge = repo.ObjectDatabase.MergeCommits(repo.Lookup<Commit>(onto), repo.Lookup<Commit>(head), new MergeTreeOptions());
+Console.WriteLine($"merge tree: cli merge-tree={mergeMb[..12]} lg2 MergeCommits={lgMerge.Status} {lgMerge.Tree?.Sha[..12]} {(lgMerge.Tree?.Sha == mergeMb ? "MATCH" : "DIFFER")}");
+Bench("cli: merge-tree --write-tree + commit-tree", () => { var t = Git(repoPath, "merge-tree", "--write-tree", $"--merge-base={pickParent}", onto, head).Split('\n')[0].Trim(); Git(repoPath, "commit-tree", t, "-p", onto, "-m", "x"); }, n);
+Bench("lg2(shared): CherryPickCommit + CreateCommit", () => { var m = repo.ObjectDatabase.CherryPickCommit(repo.Lookup<Commit>(head), repo.Lookup<Commit>(onto), 0, new MergeTreeOptions()); repo.ObjectDatabase.CreateCommit(sig, sig, "x", m.Tree, new[] { repo.Lookup<Commit>(onto) }, false); }, n);
+Bench("cli: merge-tree --write-tree (true merge HEAD~10 HEAD)", () => Git(repoPath, "merge-tree", "--write-tree", onto, head), n);
+Bench("lg2(shared): MergeCommits", () => repo.ObjectDatabase.MergeCommits(repo.Lookup<Commit>(onto), repo.Lookup<Commit>(head), new MergeTreeOptions()), n);
+
+// ---- worktree cherry-pick (writes index + files) ----
+using (var wt = new Repository(wtPath))
+{
+    Bench("cli: cherry-pick -x in worktree + reset --hard", () => { Git(wtPath, "cherry-pick", "-x", head); Git(wtPath, "reset", "-q", "--hard", onto); }, n);
+    var wtCli = Git(wtPath, "rev-parse", "HEAD").Trim();
+    Bench("lg2(worktree handle): CherryPick + Reset(Hard)", () => { var r = wt.CherryPick(wt.Lookup<Commit>(head), sig); if (r.Status != CherryPickStatus.CherryPicked) throw new($"{r.Status}"); wt.Reset(ResetMode.Hard, wt.Lookup<Commit>(onto)); }, n);
+    Git(wtPath, "cherry-pick", "-x", head); var cliWtCommit = Git(wtPath, "rev-parse", "HEAD").Trim(); Git(wtPath, "reset", "-q", "--hard", onto);
+    var lgWt = wt.CherryPick(wt.Lookup<Commit>(head), sig, new CherryPickOptions { CommitOnSuccess = true }); var lgWtCommit = lgWt.Commit.Sha; wt.Reset(ResetMode.Hard, wt.Lookup<Commit>(onto));
+    Console.WriteLine($"worktree cherry-pick commit: cli -x={cliWtCommit[..12]} lg2={lgWtCommit[..12]} (lg2 has no -x footer; trees {(repo.Lookup<Commit>(cliWtCommit).Tree.Sha == repo.Lookup<Commit>(lgWtCommit).Tree.Sha ? "MATCH" : "DIFFER")})");
+}
+
+// ---- ls-remote (network) ----
+var ln = Math.Max(10, n / 5);
+try
+{
+    Bench($"cli: ls-remote {lsUrl}", () => Git(repoPath, "ls-remote", lsUrl), ln);
+    Bench($"lg2: Repository.ListRemoteReferences", () => Repository.ListRemoteReferences(lsUrl).Count(), ln);
+}
+catch (Exception e) { Console.WriteLine($"ls-remote skipped: {e.GetType().Name}: {e.Message}"); }
+
+// ---- memory + handles ----
+GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+var proc = Process.GetCurrentProcess(); proc.Refresh();
+Console.WriteLine($"memory after shared-handle work: workingSet={proc.WorkingSet64 / 1048576} MiB privateBytes={proc.PrivateMemorySize64 / 1048576} MiB managedHeap={GC.GetTotalMemory(true) / 1048576} MiB");
+int Fds() => OperatingSystem.IsLinux() ? Directory.GetFiles("/proc/self/fd").Count(f => { try { return new FileInfo(f).LinkTarget?.Contains(".git") == true; } catch { return false; } }) : -1;
+var before = Fds();
+var leaked = new Repository(repoPath); _ = leaked.RetrieveStatus(new StatusOptions()); foreach (var r in leaked.Refs) _ = r.TargetIdentifier; _ = leaked.Lookup<Commit>(base200).Tree.Count;
+var held = Fds();
+leaked.Dispose();
+var after = Fds();
+Console.WriteLine($"open .git file descriptors: before={before} while-undisposed-repo-held={held} after-Dispose={after}");
