@@ -1303,6 +1303,39 @@ function Test-C1396_SharedReopenLogged {
     Reset-C1389HeldLock
 }
 
+# CARD-1698: the run core prints a toolchain floor warning before the tests hop and keeps the
+# same exit code; the version comes from the ToolchainVersions seam, never the real git.
+function Invoke-C1698ToolchainRun {
+    param([string]$GitVersion)
+    $fx = New-RunFx
+    New-Item -ItemType Directory -Path (Join-Path $fx.Clone 'docker') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path (Split-Path $here -Parent) 'docker/git-minimum-version.sh') -Destination (Join-Path $fx.Clone 'docker/git-minimum-version.sh')
+    Copy-Item -LiteralPath (Join-Path (Split-Path $here -Parent) 'global.json') -Destination (Join-Path $fx.Clone 'global.json')
+    $extra = [scriptblock]::Create("`$NightlySeams.ToolchainVersions = { param(`$tool) if (`$tool -eq 'git') { 'git version $GitVersion' } else { '10.0.204 [/fake/sdk]' } }")
+    Write-C487Seams -Path $fx.Seams -TracePath $fx.Trace -Extra $extra
+    $all = @(Invoke-FxRun -Fx $fx -Extra @{ NoSync = $true } 6>&1)
+    $lines = @($all | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { [string]$_.MessageData })
+    $result = @($all | Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] }) | Select-Object -Last 1
+    return [pscustomobject]@{ Lines = $lines; Result = $result }
+}
+
+function Test-C1698_RunPrintsToolchainWarning {
+    $below = Invoke-C1698ToolchainRun -GitVersion '2.42.0'
+    $at = Invoke-C1698ToolchainRun -GitVersion '2.43.0'
+    $warn = @($below.Lines | Where-Object { $_ -match 'WARNING: git 2\.42\.0 is below the minimum 2\.43; lands will fail' })
+    Assert-C487 -Cond ($warn.Count -eq 1) -Name 'C1698 Run prints the git floor warning' -Detail ($below.Lines -join ' | ')
+    $none = @($at.Lines | Where-Object { $_ -match 'WARNING:' })
+    Assert-C487 -Cond ($none.Count -eq 0) -Name 'C1698 Run prints none at the floor' -Detail ($at.Lines -join ' | ')
+    $hop = -1; $w = -1
+    for ($i = 0; $i -lt $below.Lines.Count; $i++) {
+        if ($w -lt 0 -and $below.Lines[$i] -match 'WARNING: git') { $w = $i }
+        if ($hop -lt 0 -and $below.Lines[$i] -match 'running .*nightly-tests\.ps1') { $hop = $i }
+    }
+    Assert-C487 -Cond ($w -ge 0 -and $hop -gt $w) -Name 'C1698 Run warns before the tests hop' -Detail ('warning=' + $w + ' hop=' + $hop)
+    $same = $null -ne $below.Result -and $null -ne $at.Result -and [int]$below.Result.ExitCode -eq [int]$at.Result.ExitCode -and [string]$below.Result.Phase -eq [string]$at.Result.Phase
+    Assert-C487 -Cond $same -Name 'C1698 Run exit code unchanged by the warning' -Detail ('below=' + $below.Result.ExitCode + '/' + $below.Result.Phase + ' at=' + $at.Result.ExitCode + '/' + $at.Result.Phase)
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue

@@ -2697,6 +2697,40 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
     Assert-C487 -Cond $siteOk -Name 'C1419 suite loop builds one discovery index before its launches' -Detail $siteDetail
 }
 
+# CARD-1698: summary.json records the toolchain versions, floors and warnings under
+# preflight.toolchain; the version comes from the ToolchainVersions seam, never the real git.
+# Invoke-E cannot reach the summary on Linux (fixture project universe), so the record is
+# proved on Get-NightlyToolchainPreflight and its call site in the preflight block.
+function Test-C1698_SummaryRecordsToolchain {
+    $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path (Join-Path $root 'docker') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'docker/git-minimum-version.sh') -Destination (Join-Path $root 'docker/git-minimum-version.sh')
+    Copy-Item -LiteralPath (Join-Path $repo 'global.json') -Destination (Join-Path $root 'global.json')
+    $saved = $script:NightlySeams
+    $script:NightlySeams = @{ ToolchainVersions = { param($tool) if ($tool -eq 'git') { 'git version 2.42.0' } else { '10.0.204 [/fake/sdk]' } } }
+    $tc = $null
+    try { $tc = Get-NightlyToolchainPreflight -RepoRoot $root 6>$null } catch { $tc = $null } finally { $script:NightlySeams = $saved }
+    $json = ''
+    if ($tc) { $json = ([ordered]@{ preflight = [ordered]@{ toolchain = $tc } } | ConvertTo-Json -Depth 8) }
+    $back = $null
+    if ($json) { $back = ($json | ConvertFrom-Json).preflight.toolchain }
+    $git = $null; $sdk = $null
+    if ($back) {
+        $git = @($back.tools | Where-Object { $_.tool -eq 'git' }) | Select-Object -First 1
+        $sdk = @($back.tools | Where-Object { $_.tool -eq 'dotnet-sdk' }) | Select-Object -First 1
+    }
+    Assert-C487 -Cond ($null -ne $git -and $git.found -eq '2.42.0' -and $git.floor -eq '2.43' -and $git.status -eq 'below-floor') -Name 'C1698 Summary records the git version and floor' -Detail $json
+    Assert-C487 -Cond ($null -ne $sdk -and $sdk.found -eq '10.0.204' -and $sdk.status -eq 'ok') -Name 'C1698 Summary records the SDK version' -Detail $json
+    $w = @()
+    if ($back) { $w = @($back.warnings) }
+    Assert-C487 -Cond ($w.Count -eq 1 -and ([string]$w[0].message).StartsWith('WARNING: git 2.42.0 is below the minimum 2.43')) -Name 'C1698 Summary records the warning' -Detail $json
+    $impl = [IO.File]::ReadAllText((Join-Path $repo 'scripts/lib/nightly-tests-impl.ps1'))
+    $call = $impl.IndexOf('$preflight.toolchain = Get-NightlyToolchainPreflight -RepoRoot $RepoRoot')
+    $disk = $impl.IndexOf('$preflight.disk = [ordered]@{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB }')
+    $write = $impl.IndexOf('preflight = $preflight')
+    Assert-C487 -Cond ($call -gt $disk -and $disk -gt 0 -and $write -gt $call) -Name 'C1698 Summary preflight block records the toolchain' -Detail ('disk=' + $disk + ' call=' + $call + ' write=' + $write)
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
