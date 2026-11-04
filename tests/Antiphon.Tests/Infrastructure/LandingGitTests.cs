@@ -46,15 +46,21 @@ public sealed class LandingGitTests
     {
         await using var fixture = new LandingGitFixture();
         await fixture.InitializeAsync();
+        // Remote-only tips: an advertised commit the land already holds is pinned without a fetch,
+        // so the read-then-fetch race needs a remote whose tips the land does not have.
+        await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.TargetRef, "remote-only start");
         var fetches = 0;
         fixture.Git.BeforeCommand = async (_, arguments) =>
         {
             if (arguments[0] == "fetch" && ++fetches <= movements)
-            {
-                await fixture.RequiredAsync(fixture.Repository, "commit", "--allow-empty", "-m", "remote movement");
-                await fixture.RequiredAsync(fixture.Repository, "push", "origin", fixture.TargetRef);
-            }
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.TargetRef, "remote movement");
             return null;
+        };
+        // A remote that keeps moving: the next advertisement is again a commit the land lacks.
+        fixture.Git.AfterCommand = async (_, arguments, _) =>
+        {
+            if (arguments[0] == "fetch" && fetches <= movements)
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.TargetRef, "remote movement after fetch");
         };
         var destination = await fixture.Git.DestinationAsync(fixture.Repository, fixture.TargetRef, CancellationToken.None);
         var observed = await fixture.Git.ObserveAsync(fixture.Repository, destination,
@@ -188,8 +194,12 @@ public sealed class LandingGitTests
         var observation = await fixture.Git.ObserveAsync(fixture.Repository, destination,
             fixture.SeedSha, fixture.ObservationRef, CancellationToken.None);
         observation.ContainsSource.ShouldBe(containing);
+        fixture.Git.Trace.ShouldContain(a => a[0] == "ls-remote", "the remote is read");
         fixture.Git.Trace.Where(a => a[0] == "ls-remote").ShouldAllBe(a => a.Contains(other));
+        // The pin is a fetch from the push endpoint, or a local update-ref when the commit is here;
+        // either way no command reads the fetch URL.
         fixture.Git.Trace.Where(a => a[0] == "fetch").ShouldAllBe(a => a.Contains(other));
+        if (containing) fixture.Git.Trace.ShouldContain(a => LandObservation.IsPinStep(a, null), "a containing remote is pinned");
         if (containing) observation.Sha.ShouldBe(fixture.SeedSha);
         await fixture.AssertRemoteSourceAsync();
     }

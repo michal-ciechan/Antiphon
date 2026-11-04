@@ -163,15 +163,19 @@ public sealed class LandingSourceFreshnessTests
     {
         await using var fixture = new LandingGitFixture();
         await fixture.InitializeAsync();
+        // Remote-only tips: a commit the land already holds is pinned without a fetch.
+        await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "remote-only start");
         var fetches = 0;
         fixture.Git.BeforeCommand = async (_, args) =>
         {
             if (args[0] == "fetch" && ++fetches == 1)
-            {
-                await fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "race B");
-                await fixture.RequiredAsync(fixture.Source, "push", "origin", $"HEAD:{fixture.SourceRef}");
-            }
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "race B");
             return null;
+        };
+        fixture.Git.AfterCommand = async (_, args, _) =>
+        {
+            if (args[0] == "fetch" && fetches == 1)
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "race C");
         };
         var prefix = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source-observed";
         var observed = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
@@ -185,16 +189,22 @@ public sealed class LandingSourceFreshnessTests
     {
         await using var fixture = new LandingGitFixture();
         await fixture.InitializeAsync();
+        await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "remote-only start");
         var fetches = 0;
         fixture.Git.BeforeCommand = async (_, args) =>
         {
             if (args[0] == "fetch")
             {
                 fetches++;
-                await fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "move " + fetches);
-                await fixture.RequiredAsync(fixture.Source, "push", "origin", $"HEAD:{fixture.SourceRef}");
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "move " + fetches);
             }
             return null;
+        };
+        // Every next advertisement is again a commit the land lacks, so every attempt fetches.
+        fixture.Git.AfterCommand = async (_, args, _) =>
+        {
+            if (args[0] == "fetch")
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "move after " + fetches);
         };
         var prefix = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source-observed";
         var observed = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
@@ -221,13 +231,55 @@ public sealed class LandingSourceFreshnessTests
         var fetches = 0;
         fixture.Git.AfterCommand = async (_, args, result) =>
         {
-            if (args[0] == "fetch" && result.Succeeded && ++fetches == 1)
+            if (LandObservation.IsPinStep(args, null) && result.Succeeded && ++fetches == 1)
                 await fixture.RequiredAsync(fixture.Repository, "remote", "set-url", "--push", "origin", other);
         };
         var prefix = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source-observed";
         var observed = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
         observed.Accepted.ShouldBeFalse();
         observed.Reason.ShouldBe("source_remote_endpoint_changed");
+    }
+
+    [Test]
+    public async Task Local_tip_is_pinned_without_a_fetch()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        fixture.Git.Trace.Clear();
+        var prefix = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source-observed";
+
+        var observed = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
+
+        observed.Accepted.ShouldBeTrue(observed.Reason);
+        fixture.Git.Trace.ShouldContain(a => a[0] == "ls-remote", "the remote is still read on every observation");
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "fetch", "the advertised commit is already local");
+        fixture.Git.Trace.ShouldContain(a => LandObservation.IsPinStep(a, fixture.SourceRef) && a[0] == "update-ref");
+        (await fixture.RequiredAsync(fixture.Repository, "rev-parse", observed.ObservationRef!)).Trim().ShouldBe(observed.Sha);
+        observed.Sha.ShouldBe((await fixture.RequiredAsync(fixture.Remote, "rev-parse", fixture.SourceRef)).Trim());
+    }
+
+    [Test]
+    public async Task A_remote_move_after_the_read_pins_the_advertised_commit()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var advertised = (await fixture.RequiredAsync(fixture.Remote, "rev-parse", fixture.SourceRef)).Trim();
+        fixture.Git.BeforeCommand = async (_, args) =>
+        {
+            if (LandObservation.IsPinStep(args, null) && args[0] == "update-ref")
+                await RemoteOnlyMovement.AdvanceAsync(fixture, fixture.SourceRef, "moved after the read");
+            return null;
+        };
+        var prefix = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source-observed";
+
+        var observed = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
+
+        // A point-in-time observation: the pin is exactly what ls-remote advertised, never a commit
+        // the remote did not show; later movement is for the next observation to see.
+        observed.Accepted.ShouldBeTrue(observed.Reason);
+        observed.Sha.ShouldBe(advertised);
+        (await fixture.RequiredAsync(fixture.Repository, "rev-parse", observed.ObservationRef!)).Trim().ShouldBe(advertised);
+        (await fixture.RequiredAsync(fixture.Remote, "rev-parse", fixture.SourceRef)).Trim().ShouldNotBe(advertised);
     }
 
     [Test]
@@ -255,8 +307,8 @@ public sealed class LandingSourceFreshnessTests
         var first = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
         first.Accepted.ShouldBeTrue();
         fixture.Git.BeforeCommand = (_, args) =>
-            args[0] == "fetch"
-                ? Task.FromResult<LandingGitResult?>(new(128, "", "fetch failed"))
+            LandObservation.IsPinStep(args, null)
+                ? Task.FromResult<LandingGitResult?>(new(128, "", "pin failed"))
                 : Task.FromResult<LandingGitResult?>(null);
         var second = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
         second.Accepted.ShouldBeFalse();
