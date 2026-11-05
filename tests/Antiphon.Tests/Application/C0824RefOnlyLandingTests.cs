@@ -100,6 +100,15 @@ public sealed partial class C0824RefOnlyLandingTests
             if (variant != variants[0]) await h.ResetDatabaseAsync();
             var binding = await RefOnlyWorkspaceTestSetup.BindAsync(h, removeAuthoring: variant == variants[0]);
             await h.RequestAsync(Filter, source);
+            var resumedIdentityChecks = 0;
+            var verifierReturned = false;
+            h.ConfigureProtocol = protocol => protocol.TaskIdentityCompared = id =>
+            {
+                if (id == h.Fixture.TaskId && verifierReturned) resumedIdentityChecks++;
+            };
+            // Reconstruct only the scoped graph before claiming the durable queued request.
+            await h.RestartServicesAsync();
+            await h.Services.GetRequiredService<AgentTaskLandService>().SweepAsync(default);
             if (variant.StartsWith("ticket-", StringComparison.Ordinal))
             {
                 var result = await ResumeWithChangedTicketAsync(h, variant);
@@ -111,7 +120,7 @@ public sealed partial class C0824RefOnlyLandingTests
                 var reached = false;
                 h.Verifier.Barrier = async () =>
                 {
-                    reached = true;
+                    reached = true; verifierReturned = true;
                     var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
                     await using (var gap = await leases.TryAcquirePreflightAsync(h.Fixture.Repository,
                                      RepositoryPreflight.Fetch(Guid.NewGuid(), source), new(null, "c0824-window-witness"), CancellationToken.None))
@@ -140,6 +149,7 @@ public sealed partial class C0824RefOnlyLandingTests
                 {
                     op.RemoteConfirmedAt.ShouldBeNull("resume-refused:" + variant);
                     op.LastReason.ShouldBe("task_coordinates_changed", "resume-refused:" + variant);
+                    resumedIdentityChecks.ShouldBe(0, "resume-refused:" + variant + ":identity-check-boundary");
                 }
             }
             if (variant != "valid")
@@ -161,7 +171,11 @@ public sealed partial class C0824RefOnlyLandingTests
             var foreign = Path.Combine(h.Fixture.Root, "foreign-source-" + variant);
             async Task AttachAsync() { await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", foreign, h.Fixture.SourceRef); }
             if (variant == "initial") await AttachAsync();
-            else h.Verifier.Barrier = AttachAsync;
+            else h.Verifier.Barrier = async () =>
+            {
+                await AttachAsync();
+                h.Fixture.Git.Trace.Clear(); h.Fixture.Git.Commands.Clear();
+            };
             await h.RequestAsync(Filter, source);
             h.Fixture.Git.Trace.Clear();
             await h.RunQueuedAsync();
@@ -173,7 +187,8 @@ public sealed partial class C0824RefOnlyLandingTests
                 .ShouldHaveSingleItem("source-registration-refused:" + variant);
             terminal.Detail.ShouldStartWith("land refused: ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
             (op?.RemoteConfirmedAt).ShouldBeNull();
-            h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove"));
+            h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove")
+                || a.Contains("fetch") || a.Contains("update-ref"), "source-registration-refused:" + variant + ":no-source-write");
             (await File.ReadAllTextAsync(Path.Combine(foreign, "feature.txt"))).ShouldBe("valuable feature\n");
             await AssertSourceRetainedAsync(h, source);
             await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", foreign);

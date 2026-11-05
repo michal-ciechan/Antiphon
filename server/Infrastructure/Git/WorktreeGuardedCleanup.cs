@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -12,6 +13,10 @@ public sealed class WorktreeGuardedCleanup(IWorktreeCleanupJournal journal, IWor
 {
     internal async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, GuardedWorktreeRemoval guarded, CancellationToken ct)
     {
+        if (request.Source.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return DesktopWorkspaceCleanup.NotRequired(request.Source.TaskRefWorkspaceBindingId);
+        if (request.Source.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || request.Source.TaskRefWorkspaceBindingId is not null)
+            return new(false, false, false, "desktop_workspace_binding_contradictory");
         var context = request.CleanupContext!;
         var result = new WorktreeRemoval(false, false, false, "cleanup_evidence_storage_unavailable");
         WorktreeCleanupReference? reference = null;

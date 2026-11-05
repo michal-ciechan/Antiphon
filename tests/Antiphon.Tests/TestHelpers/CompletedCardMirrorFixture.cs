@@ -334,6 +334,26 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         db.TaskWorktreeMirrorBindings.Add(row); await db.SaveChangesAsync(); return row.Id;
     }
 
+    public async Task PrepareNextMirrorAsync(MirrorPreparation preparation)
+    {
+        await Card.CreateNextTaskAsync();
+        var task = await TaskAsync();
+        var mirror = new PhoneHomeWorkspaceMirrorRequest(task.WorktreeBranch!, Card.Host.Fixture.SeedSha,
+            "task-" + task.Id.ToString("N")[..8],
+            Binding: new(task.Id, task.Attempt, Guid.NewGuid(), Wire.AllowedRunnerId, Binding.RunnerStoreId));
+        Task? holder = preparation == MirrorPreparation.Busy ? await HoldMutationTurnAsync() : null;
+        var prepared = Client.MirrorWorkspaceAsync(mirror, default);
+        if (holder is not null) await ReleaseWhenQueuedAsync(holder, prepared, PhoneHomeOperation.WorkspaceMirror);
+        Binding = (await prepared).Binding.ShouldNotBeNull("new attempt has a real recipient binding");
+        EndpointId = Guid.Empty;
+        await AddBindingAsync(Binding);
+        Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
+        await File.WriteAllTextAsync(Sentinel, "mirror evidence\n");
+        var report = await WriteReportAsync(await TaskAsync(), default);
+        await Card.ChangeTaskAsync(t => t.ResultFilePath = report);
+        SentOperationIds.Clear(); SentRequests.Clear(); AttemptedRequests.Clear(); EnteredRemovalOperationIds.Clear(); Order.Clear();
+    }
+
     public async Task DiscoverAsync()
     {
         await using var db = Card.Host.CreateContext();
@@ -368,13 +388,13 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     { await using var db = Card.Host.CreateContext(); return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Card.TaskId); }
     public async Task<CardWorktreeCleanupEndpoint> EndpointAsync()
     { await using var db = Card.Host.CreateContext(); return await db.CardWorktreeCleanupEndpoints.AsNoTracking().SingleAsync(e => e.Id == EndpointId); }
-    public async Task HeldAsync(string reason)
+    public async Task HeldAsync(string reason, int priorJournalEntries = 0)
     {
         var result = await TryAsync(); result.Complete.ShouldBeFalse(); result.Reason.ShouldBe(reason);
-        (await File.ReadAllTextAsync(Sentinel)).ShouldBe("mirror evidence\n"); Journal.Read()!.Count.ShouldBe(0);
+        (await File.ReadAllTextAsync(Sentinel)).ShouldBe("mirror evidence\n"); Journal.Read()!.Count.ShouldBe(priorJournalEntries);
     }
     public async Task RemovedAsync() => await AssertRemovedAsync(await TryAsync());
-    public async Task AssertRemovedAsync(CompletedCardWorkspaceRemovalResponse result)
+    public async Task AssertRemovedAsync(CompletedCardWorkspaceRemovalResponse result, int expectedJournalEntries = 1)
     {
         result.Complete.ShouldBeTrue(result.Reason);
         Directory.Exists(Mirror).ShouldBeFalse(); Directory.Exists(Binding.GitDirectory).ShouldBeFalse();
@@ -383,7 +403,8 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         var receipt = JsonSerializer.Deserialize<CompletedCardWorkspaceReceipt>(endpoint.ImportedReceipt!, PhoneHomeFraming.Json)!;
         receipt.TaskId.ShouldBe(Card.TaskId); receipt.DoneRevisionId.ShouldBe((await CommandAsync()).DoneRevisionId);
         receipt.RunnerStoreId.ShouldBe(Binding.RunnerStoreId);
-        Journal.Read()!.Single().Receipt.ShouldBe(receipt);
+        Journal.Read()!.Count.ShouldBe(expectedJournalEntries);
+        Journal.Read()!.Where(i => i.Command.OperationId == receipt.OperationId).ShouldHaveSingleItem().Receipt.ShouldBe(receipt);
     }
     public async Task<CompletedCardWorkspaceCommand> CommandAsync() =>
         JsonSerializer.Deserialize<CompletedCardWorkspaceCommand>((await EndpointAsync()).ImmutableRequest!, PhoneHomeFraming.Json)!;

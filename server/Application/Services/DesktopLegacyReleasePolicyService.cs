@@ -295,6 +295,12 @@ public sealed class DesktopLegacyReleasePolicyService
             }
 
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-action", fresh.Id, ct);
+            fresh = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == fresh.Id, ct);
+            if (DesktopWorkspaceCleanup.Reason(fresh) is { } desktopReason)
+            {
+                await HoldAsync(run, rowCursors, taskCursors, fresh, desktopReason, settled: false, settings, preview, ct);
+                return new(false, false, false);
+            }
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-action", fresh.Id, ct);
             if (!execute)
             {
@@ -396,6 +402,8 @@ public sealed class DesktopLegacyReleasePolicyService
     private async Task<Precheck> PrecheckAsync(AgentTask task, CancellationToken ct)
     {
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-precheck", task.Id, ct);
+        task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason) return new(desktopReason);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-precheck", task.Id, ct);
         var path = task.WorktreePath!;
         try
@@ -470,6 +478,7 @@ public sealed class DesktopLegacyReleasePolicyService
     /// <summary>The server facts, in reason order. Null means the task may be pre-checked.</summary>
     private static string? Classify(AgentTask task, Facts facts, WorktreeLegacyReleaseSettings settings, string root, DateTime now)
     {
+        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason) return desktopReason;
         // G-13: Blocked is not terminal (§8).
         if (!Terminal.Contains(task.Status))
             return "live_owner";
@@ -621,7 +630,7 @@ public sealed class DesktopLegacyReleasePolicyService
     private static string Fingerprint(AgentTask task)
     {
         var facts = string.Join("\n", task.Status, task.Attempt, task.CompletedAt?.ToString("O") ?? "-",
-            task.WorktreePath ?? "-", task.WorktreeBranch ?? "-");
+            task.WorktreePath ?? "-", task.WorktreeBranch ?? "-", task.DesktopWorkspaceKind, task.TaskRefWorkspaceBindingId);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)))[..16].ToLowerInvariant();
     }
 

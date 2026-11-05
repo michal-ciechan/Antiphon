@@ -19,6 +19,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
 
     public async Task<WorktreeRemoval> RemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
+        if (request.Source.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return DesktopWorkspaceCleanup.NotRequired(request.Source.TaskRefWorkspaceBindingId);
+        if (request.Source.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || request.Source.TaskRefWorkspaceBindingId is not null)
+            return new(false, false, false, "desktop_workspace_binding_contradictory");
+        var currentOwner = await evidence.ReadTaskAsync(request.Source.TaskId, ct);
+        if (currentOwner is not null && DesktopWorkspaceCleanup.Reason(currentOwner) is { } desktopReason)
+            return new(false, false, false, desktopReason);
         if (request.Purpose == WorktreeRemovalPurpose.Verification)
             return await new GuardedVerificationRemoval(git, leases, evidence).RemoveAsync(request, ct);
         if (request.Purpose == WorktreeRemovalPurpose.Publication && request.CleanupContext is not null)

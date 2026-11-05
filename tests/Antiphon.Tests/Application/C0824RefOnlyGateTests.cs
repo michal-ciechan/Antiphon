@@ -23,6 +23,12 @@ public sealed class C0824RefOnlyGateTests
         defaults.Enabled.ShouldBeFalse("default-disabled");
         defaults.RunnerIds.ShouldBeEmpty();
         defaults.Roles.ShouldBe("none");
+        var absent = new ConfigurationBuilder().Build();
+        absent.GetSection(RefOnlyDesktopSettings.SectionName).Exists().ShouldBeFalse("optional-section-absent");
+        var services = new ServiceCollection();
+        services.AddRefOnlyDesktopSettings(absent);
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IOptionsMonitor<RefOnlyDesktopSettings>>().CurrentValue.Enabled.ShouldBeFalse("absent-settings-disabled");
         foreach (var section in new[] { "{}", "{\"Enabled\":false,\"RunnerIds\":[\"fixture-runner\"],\"Roles\":\"Plan\"}",
                      "{\"Enabled\":true,\"RunnerIds\":[],\"Roles\":\"Plan\"}",
                      "{\"Enabled\":true,\"RunnerIds\":[\"fixture-runner\"],\"Roles\":\"none\"}" })

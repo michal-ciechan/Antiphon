@@ -157,6 +157,8 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
             || !WorkspaceReservationKey.PathsEqual(task.WorktreePath ?? "", endpoint.Target.WorktreePath)) return "task_snapshot_changed";
         if (task.SourceLandingOperationId is not null || task.RepairSourceTaskId is not null || task.Role == AgentTaskRole.Mutation
             || task.Workspace != WorkspaceMode.Worktree || endpoint.Target.ExclusionReason is not null) return "ordinary_owner_required";
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            && task.RemoteWorkspaceSlotId is not null && task.RemoteWorkspaceSlotReleasedAt is null) return "slot_managed";
         if (binding.BindingId == Guid.Empty || binding.PreparationId == Guid.Empty || binding.RunnerStoreId != endpoint.RunnerStoreId
             || binding.RunnerId != endpoint.RunnerId || binding.WorktreePath != endpoint.WorktreePath
             || binding.CommonDirectory != endpoint.CommonDirectory || binding.GitDirectory != endpoint.GitDirectory
@@ -198,6 +200,9 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
     {
         if (endpoint.RunnerStoreId != command.Binding.RunnerStoreId || endpoint.RunnerId != command.Binding.RunnerId
             || runners.GetLiveStoreId(command.Binding.RunnerId)?.ToString("D") != command.Binding.RunnerStoreId) return Hold("runner_store_mismatch");
+        var owner = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == command.Binding.TaskId, ct);
+        if (owner?.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            && owner.RemoteWorkspaceSlotId is not null && owner.RemoteWorkspaceSlotReleasedAt is null) return Hold("slot_managed");
         CompletedCardWorkspaceRemovalResponse response;
         endpoint.Attempts++;
         // A loss before or after send keeps the persisted operation and request bytes for replay

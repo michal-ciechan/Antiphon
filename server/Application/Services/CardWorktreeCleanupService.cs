@@ -22,6 +22,18 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
     {
         if (executor is null) return new(false, false, false, "cleanup_executor_unavailable");
         var target = await db.CardWorktreeCleanupTargets.Include(t => t.Endpoints).SingleAsync(t => t.Id == targetId, ct);
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == target.TaskId, ct);
+        if (await DesktopWorkspaceCleanup.DecideAsync(db, task, ct) is { } desktop)
+        {
+            if (desktop.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired)
+            {
+                target.DesktopWorkspaceKind = task.DesktopWorkspaceKind;
+                target.TaskRefWorkspaceBindingId = task.TaskRefWorkspaceBindingId;
+                target.DesktopCleanupDisposition = DesktopCleanupDisposition.NotRequired;
+                await db.SaveChangesAsync(ct);
+            }
+            return desktop;
+        }
         var endpoint = target.Endpoints.SingleOrDefault(e => e.EndpointIdentity == "local");
         if (endpoint is null)
         {
@@ -89,6 +101,7 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
             var path = WorkspaceReservationKey.NormalizePath(task.WorktreePath);
             var branch = WorkspaceReservationKey.NormalizeRef(task.WorktreeBranch);
             var identity = Digest(repository + "\n" + path + "\n" + branch);
+            var desktop = await DesktopWorkspaceCleanup.DecideAsync(db, task, ct);
             var target = existing.SingleOrDefault(t => t.TaskId == task.Id && t.TaskAttempt == task.Attempt && t.WorkspaceIdentity == identity);
             if (target is null)
             {
@@ -97,10 +110,12 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
                     Id = Guid.NewGuid(), CleanupId = cleanup.Id, TaskId = task.Id,
                     TaskAttempt = task.Attempt, WorkspaceIdentity = identity, RepositoryPath = repository,
                     WorktreePath = path, SourceFullRef = branch, CreatedAt = now,
-                    ExclusionReason = ClassifyOwnership(task, path, branch)
+                    DesktopWorkspaceKind = task.DesktopWorkspaceKind, TaskRefWorkspaceBindingId = task.TaskRefWorkspaceBindingId,
+                    DesktopCleanupDisposition = desktop?.DesktopCleanupDisposition ?? DesktopCleanupDisposition.Required,
+                    ExclusionReason = ClassifyOwnership(task, path, branch) ?? desktop?.Residue
                 };
                 db.CardWorktreeCleanupTargets.Add(target);
-                if (target.ExclusionReason is null)
+                if (target.ExclusionReason is null && desktop is null)
                     target.Endpoints.Add(new CardWorktreeCleanupEndpoint
                     {
                         Id = Guid.NewGuid(), TargetId = target.Id, EndpointIdentity = "local",
@@ -110,6 +125,10 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
                 // A historical remote path alone does not identify a runner store or task
                 // creation. Guarded mirror discovery must provide that independent binding.
             }
+            target.DesktopWorkspaceKind = task.DesktopWorkspaceKind;
+            target.TaskRefWorkspaceBindingId = task.TaskRefWorkspaceBindingId;
+            target.DesktopCleanupDisposition = desktop?.DesktopCleanupDisposition ?? DesktopCleanupDisposition.Required;
+            target.ExclusionReason = ClassifyOwnership(task, path, branch) ?? desktop?.Residue;
             current.Add(target.Id);
             // C1017_MultipleMirrorsRemainDistinct: binding rows, including historical stores,
             // own endpoint identity; local completion does not suppress their discovery.
@@ -127,7 +146,9 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
                             Id = Guid.NewGuid(), CleanupId = cleanup.Id, TaskId = task.Id,
                             TaskAttempt = binding.Attempt, WorkspaceIdentity = identity,
                             RepositoryPath = repository, WorktreePath = path, SourceFullRef = branch,
-                            CreatedAt = now, ExclusionReason = ClassifyOwnership(task, path, branch)
+                            CreatedAt = now, ExclusionReason = ClassifyOwnership(task, path, branch) ?? desktop?.Residue,
+                            DesktopWorkspaceKind = task.DesktopWorkspaceKind, TaskRefWorkspaceBindingId = task.TaskRefWorkspaceBindingId,
+                            DesktopCleanupDisposition = desktop?.DesktopCleanupDisposition ?? DesktopCleanupDisposition.Required
                         };
                         existing.Add(mirrorTarget);
                         db.CardWorktreeCleanupTargets.Add(mirrorTarget);
@@ -189,6 +210,10 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
         if (task.SourceLandingOperationId is not null) return "source_landing_excluded";
         if (task.Workspace != WorkspaceMode.Worktree) return "shared_or_borrowed_workspace";
         if (string.IsNullOrWhiteSpace(task.RepoPath) || string.IsNullOrWhiteSpace(path)) return "identity_unknown";
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return task.TaskRefWorkspaceBindingId is null || task.TaskRefWorkspaceBindingId == Guid.Empty
+                ? "ref_only_binding_required" : null;
+        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason) return desktopReason;
         var shortId = task.Id.ToString("N")[..8];
         if (Path.GetFileName(path) != "card-task-" + shortId || !DelegateBranchName.IsOwned(branch, task.Id))
             return "ordinary_owner_required";

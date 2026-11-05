@@ -874,6 +874,8 @@ public sealed class AgentTaskLandService
         + $"remote={op.ObservedRemoteTargetSha} confirmed at {op.RemoteConfirmedAt:O}; "
         + (op.PushStartedAt is null ? "no push attempted; " : $"push exit={op.PushExitCode?.ToString() ?? "unknown"}; ")
         + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}")
+        + (op.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired
+            ? $"; desktop=NotRequired workspace={op.SourceDesktopWorkspaceKind} binding={op.SourceTaskRefWorkspaceBindingId:D}" : "")
         + (op.RecoveryMode == LandRecoveryMode.None ? "" : $"; recovery={op.RecoveryMode} "
             + $"source-task={op.RecoverySourceTaskId:N} source-ref={op.RecoverySourceFullRef} "
             + $"owner-status={op.RecoveryOwnerStatus} local-before={op.RecoveryLocalBeforeSha} "
@@ -1512,14 +1514,21 @@ public sealed class AgentTaskLandService
         var terminal = Event(task.Id, type, outcome, now);
         if (op is not null && request.CleanupOnly)
         {
-            var endpoint = await _db.CardWorktreeCleanupEndpoints.SingleOrDefaultAsync(e =>
+            var endpoint = await _db.CardWorktreeCleanupEndpoints.Include(e => e.Target).SingleOrDefaultAsync(e =>
                 e.OperationId == request.Id && e.Target.LandingOperationId == op.Id && e.Target.TaskId == task.Id, ct);
             if (endpoint is not null)
             {
                 endpoint.DirectoryRemoved = op.DirectoryRemoved;
                 endpoint.RegistrationRemoved = op.RegistrationRemoved;
                 endpoint.BranchRemoved = op.BranchRemoved;
-                endpoint.State = op.Cleanup == LandCleanupStatus.Complete ? CardWorktreeCleanupEndpointState.Complete
+                if (op.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired)
+                {
+                    endpoint.Target.DesktopWorkspaceKind = op.SourceDesktopWorkspaceKind;
+                    endpoint.Target.TaskRefWorkspaceBindingId = op.SourceTaskRefWorkspaceBindingId;
+                    endpoint.Target.DesktopCleanupDisposition = DesktopCleanupDisposition.NotRequired;
+                }
+                endpoint.State = op.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired ? CardWorktreeCleanupEndpointState.NotRequired
+                    : op.Cleanup == LandCleanupStatus.Complete ? CardWorktreeCleanupEndpointState.Complete
                     : op.DirectoryRemoved || op.RegistrationRemoved || op.BranchRemoved ? CardWorktreeCleanupEndpointState.Partial
                     : CardWorktreeCleanupEndpointState.Refused;
                 endpoint.Reason = op.LastReason;

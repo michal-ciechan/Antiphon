@@ -165,7 +165,11 @@ public sealed partial class C0824RefOnlyLandingTests
         {
             AlwaysOn = false, ConnectionString = h.Schema.ConnectionString, TimeProvider = h.Clock,
             ConfigureDbContext = builder => builder.AddInterceptors(scan),
-            ConfigureServices = services => services.AddSingleton(flushes)
+            ConfigureServices = services =>
+            {
+                services.AddSingleton(flushes);
+                services.AddSingleton<LandDeliveryBoundary>(new QueueHintOnly());
+            }
         });
         await caller.InsertTurnAsync("prior wakeup input", "prior wakeup reply");
         if (recoveredBusy) await caller.MarkWorkingAsync(); else await caller.MarkIdleAsync();
@@ -239,6 +243,11 @@ public sealed partial class C0824RefOnlyLandingTests
             await Task.Delay(10);
         }
         return await observed();
+    }
+
+    private sealed class QueueHintOnly : LandDeliveryBoundary
+    {
+        public override bool DropWakeup(string boundary, Guid identity) => boundary == "completion-schedule";
     }
 
     private sealed class WarmScan : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
