@@ -1,8 +1,10 @@
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -36,7 +38,8 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
         Dictionary<string, string?> settings,
         IProcessLivenessProbe? liveness = null,
         IHostMemoryProbe? memory = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        Action<BuildSlotRequest>? observeRequest = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Test" });
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -48,6 +51,18 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
         builder.Services.AddBuildSlotBroker(builder.Configuration);
 
         var app = builder.Build();
+        if (observeRequest is not null)
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Method == "POST" && context.Request.Path == "/build-slots")
+                {
+                    context.Request.EnableBuffering();
+                    var request = await context.Request.ReadFromJsonAsync<BuildSlotRequest>(context.RequestAborted);
+                    context.Request.Body.Position = 0;
+                    if (request is not null) observeRequest(request);
+                }
+                await next();
+            });
         app.MapBuildSlotRoutes();
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!

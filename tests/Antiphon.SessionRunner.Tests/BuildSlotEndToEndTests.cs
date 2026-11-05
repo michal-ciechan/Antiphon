@@ -27,11 +27,12 @@ public sealed class BuildSlotEndToEndTests
     public async Task V5_Real_wrapper_identity_survives_ttl_and_is_reaped_at_absolute_bound()
     {
         var time = new FakeTimeProvider();
+        var received = new TaskCompletionSource<BuildSlotRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var host = await BuildSlotTestHost.StartAsync(new()
         {
             ["SessionRunner:BuildSlots:MaxConcurrent"] = "1",
             ["SessionRunner:BuildSlots:MinAvailableMemoryMb"] = "0",
-        }, time: time);
+        }, time: time, observeRequest: request => { received.TrySetResult(request); });
         host.Liveness.ShouldBeOfType<SystemProcessLivenessProbe>();
         using var dir = new TempDir();
         var marks = Path.Combine(dir.Path, "marks.txt");
@@ -43,10 +44,17 @@ public sealed class BuildSlotEndToEndTests
         lease.HolderAlive.ShouldBeTrue();
         host.Liveness.TryGetStartTimeUtc(wrapper.Pid).ShouldBe(wrapper.ProcessStartUtc);
 
-        // The wrapper serialized this exact real identity. Re-acquiring with it must return its
-        // original lease, proving the original JSON request carried the actual process start.
+        var transported = await received.Task.WaitAsync(Deadline);
+        transported.Pid.ShouldBe(wrapper.Pid);
+        transported.Label.ShouldBe("max-hold-real");
+        transported.ProcessStartUtc.ShouldNotBeNull();
+        (transported.ProcessStartUtc.Value - wrapper.ProcessStartUtc).Duration()
+            .ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(1));
+
+        // Replay the actual JSON identity, not another process's boot-time conversion. On Linux
+        // independent runtimes can report slightly different UTC values for the same process.
         using var response = await host.Http.PostAsJsonAsync("build-slots",
-            new BuildSlotRequest(wrapper.Pid, wrapper.ProcessStartUtc, "identity-check"));
+            transported with { Label = "identity-check" });
         response.EnsureSuccessStatusCode();
         var repeated = await response.Content.ReadFromJsonAsync<BuildSlotGrant>();
         repeated!.LeaseId.ShouldBe(lease.LeaseId);
