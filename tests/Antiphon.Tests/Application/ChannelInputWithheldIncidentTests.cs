@@ -31,7 +31,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
-public sealed class ChannelInputWithheldIncidentTests
+public sealed partial class ChannelInputWithheldIncidentTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
     private const string WithheldBody = "queued-channel-body-9f3a";
