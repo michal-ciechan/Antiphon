@@ -615,10 +615,11 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
         RepositoryChildJournal.BeforeReplaceForTests = async temporary =>
         {
             if (previousHook is not null) await previousHook(temporary);
-            if (!armed || fired != 0) return;
+            // The hook is process-wide: only this world's repository journal counts, and only its first write.
+            if (!armed || !temporary.StartsWith(w.Fixture.Root, StringComparison.Ordinal)
+                || Interlocked.CompareExchange(ref fired, 1, 0) != 0) return;
             File.Exists(temporary).ShouldBeTrue("the journal is flushed before the child starts");
             w.Settings.Value.Execute.ShouldBeTrue("the switch is on until the journal await");
-            fired++;
             Apply(w, "execute");
         };
         DesktopLegacyReleasePolicyService.TickResult tick;
