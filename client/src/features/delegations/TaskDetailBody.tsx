@@ -393,6 +393,11 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         {detail.landRequest ? <>
           <Text size="sm">Land: {detail.landRequest.state}; attempt {detail.landRequest.attempt}</Text>
           <Text size="xs">Requested {detail.landRequest.requestedAt}; no progress for {Math.floor(detail.landRequest.noProgressSeconds)}s</Text>
+          {detail.landRequest.sourceRefusalReason && <Text size="sm" c="red" data-testid="source-refusal">
+            Source refusal: {detail.landRequest.sourceRefusalReason}
+            {detail.landRequest.sourceRefusalReason === 'status_untrusted'
+              && ' — Git status wrote to stderr; worktree cleanliness could not be verified.'}
+          </Text>}
           {detail.landRequest.holdReasonCode && <Text size="sm">Reason: {detail.landRequest.holdReasonCode}; holder {detail.landRequest.holdingTaskId ?? 'unknown'} ({detail.landRequest.holdingTaskStatus ?? 'unknown'})</Text>}
           {detail.landRequest.holdDetail && <Text size="sm">{detail.landRequest.holdDetail}</Text>}
           {detail.landRequest.holdingTaskId && <Anchor component={Link} to={`/orchestrator?tab=delegations&task=${detail.landRequest.holdingTaskId}`}>Open holding task</Anchor>}
