@@ -16,6 +16,19 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointInheritedFileTests : CheckpointTestBase
 {
     [Test]
+    [Arguments("R3")]
+    [Arguments("R4")]
+    [Timeout(60_000)]
+    public async Task C1725_LargeAsciiCallers(string site, CancellationToken cancellationToken)
+    {
+        var (result, _) = await InvokeAsync(site, "large-ascii", cancellationToken);
+        result.Watchdog.ShouldBeFalse("ASCII scanning must not consume the unchanged 8 s probe budget");
+        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
+        result.Stdout.ShouldContain("PASS C585 AsciiOnly run-checkpoint.ps1 is ASCII-only");
+        result.Stdout.ShouldContain("PASS C585 AsciiOnly the harness is ASCII-only");
+    }
+
+    [Test]
     [Arguments("R1")]
     [Arguments("R2")]
     [Arguments("R3")]
@@ -161,7 +174,9 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
             if (site == "R3" && shape == "fifo")
                 CheckpointBoundedProbe.Fifo(runner);
             else
-                File.WriteAllBytes(runner, site == "R3" && shape == "non-ascii" ? [65, 255] : [65]);
+                File.WriteAllBytes(runner, site == "R3" && shape == "large-ascii"
+                    ? new byte[2 * 1024 * 1024]
+                    : site == "R3" && shape == "non-ascii" ? [65, 255] : [65]);
             // This fixture is sourced after PowerShell parses the real harness and before
             // it calls AsciiOnly, so R4 changes only the file read by that second check.
             File.WriteAllText(Path.Combine(scripts, "fixtures/c889-c578-observation.ps1"), """
@@ -171,6 +186,8 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
                         [IO.File]::Delete($target)
                         & mkfifo $target
                         if ($LASTEXITCODE -ne 0) { throw 'fixture mkfifo failed' }
+                    } elseif ($env:C1233_SHAPE -eq 'large-ascii') {
+                        [IO.File]::WriteAllBytes($target, [byte[]]::new(2 * 1024 * 1024))
                     } elseif ($env:C1233_SHAPE -eq 'non-ascii') {
                         [IO.File]::WriteAllBytes($target, [byte[]]@(65, 255))
                     }
@@ -195,6 +212,7 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         var childDone = Path.Combine(root, "child.done");
         start.Environment["C1233_CHILD_DONE"] = childDone;
         var result = await CheckpointBoundedProbe.RunAsync(start, nonce, RegisterCheckpointChild, cancellationToken);
+        Console.WriteLine($"C1725 site={site} shape={shape} elapsedMs={result.Milliseconds} watchdog={result.Watchdog} exit={result.Exit}");
         if (site is "R1" or "R2")
         {
             if (site == "R1" && shape == "fifo")
