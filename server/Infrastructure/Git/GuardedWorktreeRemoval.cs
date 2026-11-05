@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -87,7 +89,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 else if (!unregistered)
                 {
                     // The registration was never dropped, so nothing was deleted: put the tree back and
-                    // decide from a fresh reading of it.
+                    // decide from a fresh reading of it. A different directory at the set-aside path stays there.
+                    var hold = RestoreCustody(pending);
+                    if (hold is not null) return Finish(hold, "set-aside: " + aside);
                     if (!WorktreeNoFollowDelete.Restore(aside, source.WorktreePath))
                         return Finish("worktree_removal_incomplete", "set-aside: " + aside);
                     WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
@@ -101,8 +105,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     // CARD-1717 D-4: the receipt names a path. Delete only the directory inode and listing it recorded.
                     var custody = CustodyOf(pending);
                     if (custody is not null) return Finish(custody, "set-aside: " + aside);
-                    try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
+                    try { DeleteApproved(aside, pending); }
                     catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
+                    catch (ApprovedTreeRejectedException rejected) { return Finish(rejected.Reason, "set-aside: " + aside); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                         failedAt = clock.GetTimestamp();
@@ -153,7 +158,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     return Finish("ignored_reparse_point", WorktreeIgnoredContentGate.ReparseDetail(finalLinks));
                 // Disposable churn is allowed; evidence names, then the bytes retention already hashed, must match.
                 if (!second.Evidence.SequenceEqual(first.Evidence, StringComparer.Ordinal)) return Finish("ignored_content_changed");
-                if (!EvidenceBytesMatch(source.WorktreePath, retainedFiles)) return Finish("evidence_bytes_changed");
+                if (EvidenceProblem(source.WorktreePath, retainedFiles) is { } evidenceProblem) return Finish(evidenceProblem);
                 // CARD-1714: the no-follow delete cannot open an entry past the platform limit, so a deeper tree would
                 // be set aside, unregistered and then stuck half deleted on every retry. Refuse while nothing has
                 // moved, measuring each entry under its set-aside name (longer than its own).
@@ -175,11 +180,15 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // following a link. Until the registration is gone the tree can be put back unchanged.
                 // Review 0c0b9a4e: the set-aside name is recorded before the move so a later pass can
                 // finish it, and Git is never handed the path, which is free once the tree moved.
+                // CARD-1717 round 2: tracked bytes are bound to the index, and the receipt keeps
+                // content hashes plus the retained copies, before anything moves.
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
+                var bound = await BindContentAsync(source.WorktreePath, second, retainedFiles, ct);
+                if (bound.Reason is not null) return Finish(bound.Reason);
                 var identity = WorktreeNoFollowDelete.DirectoryIdentity(source.WorktreePath);
                 var seal = WorktreeSetAside.ListingSeal(source.WorktreePath);
                 var recorded = new WorktreeSetAsideRecord(source.WorktreePath, aside, request.GitDirectory,
-                    clock.GetUtcNow().UtcDateTime, identity, seal);
+                    clock.GetUtcNow().UtcDateTime, identity, seal, bound.Entries, bound.Evidence);
                 WorktreeSetAside.Record(request.CommonDirectory, recorded, Renames);
                 try { WorktreeNoFollowDelete.MoveAside(source.WorktreePath, aside, Renames); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -195,10 +204,11 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // The rename can admit a new file or a different directory before Git's entry is dropped.
                 var drifted = CustodyOf(recorded);
                 if (drifted is null) drifted = await LateUntrackedAsync(aside, final.Snapshot!, ct);
+                if (drifted is null) drifted = await TrackedBytesAsync(aside, ct);
                 if (drifted is not null)
                 {
                     var restored = await RestoreRegisteredTreeAsync();
-                    return restored ? Finish(drifted, "set-aside: " + aside) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
+                    return restored is null ? Finish(drifted, "set-aside: " + aside) : Finish(restored, "set-aside: " + aside);
                 }
                 string? failure;
                 setAsideDetail = "set-aside: " + aside;
@@ -216,7 +226,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 {
                     failedAt = clock.GetTimestamp();
                     var restored = await RestoreRegisteredTreeAsync();
-                    return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
+                    return restored is null ? Finish(failure) : Finish(restored, "set-aside: " + aside);
                 }
                 // CARD-1717 D-2/D-3: after the registration is gone the tree is held, not put back.
                 // A nested repository that appeared in this window still falls through to the delete.
@@ -226,9 +236,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     directoryGone = IsAbsent(source.WorktreePath);
                     return Finish(held, "set-aside: " + aside);
                 }
-                if (!EvidenceBytesMatch(aside, retainedFiles)) return Finish("evidence_bytes_changed", "set-aside: " + aside);
-                try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
+                try { DeleteApproved(aside, recorded); }
                 catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
+                catch (ApprovedTreeRejectedException rejected) { return Finish(rejected.Reason, "set-aside: " + aside); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // The record stays, so a later pass resumes this deletion.
@@ -241,7 +251,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 { failedAt = clock.GetTimestamp(); return Finish("worktree_removal_incomplete", "set-aside: " + aside); }
                 WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
 
-                async Task<bool> RestoreRegisteredTreeAsync()
+                async Task<string?> RestoreRegisteredTreeAsync()
                 {
                     directoryGone = IsAbsent(source.WorktreePath);
                     // The caller token is often already cancelled: that is the outage, not an
@@ -257,14 +267,17 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                         or TimeoutException or OperationCanceledException)
                     {
                         // A failed query is not evidence that the administrative move failed.
-                        return false;
+                        return "worktree_removal_incomplete";
                     }
-                    if (unregistered || !WorktreeNoFollowDelete.Restore(aside, source.WorktreePath)) return false;
+                    if (unregistered) return "worktree_removal_incomplete";
+                    var hold = RestoreCustody(recorded);
+                    if (hold is not null) return hold;
+                    if (!WorktreeNoFollowDelete.Restore(aside, source.WorktreePath)) return "worktree_removal_incomplete";
                     directoryGone = false;
                     setAsideDetail = null;
                     WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
                     await git.LiveRegistrationsAsync(source.RepositoryPath, observe);
-                    return true;
+                    return null;
                 }
             }
             else if (!unregistered)
@@ -534,36 +547,215 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     }
 
     /// <summary>
-    /// True when every retained file that is still present hashes to the digest retention recorded.
-    /// An absent path is skipped. A present non-file does not match.
+    /// Null when every retained copy is present and matches, and every source that is still present matches.
+    /// A missing retained copy is not success. An absent source was already removed.
     /// </summary>
-    private static bool EvidenceBytesMatch(string root, IReadOnlyList<RetainedWorktreeFile>? files)
+    private static string? EvidenceProblem(string root, IReadOnlyList<RetainedWorktreeFile>? files)
     {
-        if (files is null) return true;
+        if (files is null) return null;
         foreach (var file in files)
         {
+            if (!RetainedHashAgrees(file.RetainedPath, file.Sha256))
+            {
+                var retained = WorktreeNoFollowDelete.RegularFileHash(file.RetainedPath);
+                return retained is null || retained.Length == 0 ? "evidence_retained_missing" : "evidence_bytes_changed";
+            }
             var source = Path.Combine(root, file.Relative.Replace('/', Path.DirectorySeparatorChar));
-            if (!HashAgrees(source, file.Sha256)) return false;
-            if (!HashAgrees(file.RetainedPath, file.Sha256)) return false;
+            if (!SourceHashAgrees(source, file.Sha256)) return "evidence_bytes_changed";
         }
-        return true;
+        return null;
     }
 
-    private static bool HashAgrees(string path, string expected)
+    private static bool RetainedHashAgrees(string path, string expected)
+    {
+        var hash = WorktreeNoFollowDelete.RegularFileHash(path);
+        if (hash is null || hash.Length == 0) return false;
+        return hash.Equals(expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool SourceHashAgrees(string path, string expected)
     {
         var hash = WorktreeNoFollowDelete.RegularFileHash(path);
         if (hash is null) return true;
         return hash.Length != 0 && hash.Equals(expected, StringComparison.OrdinalIgnoreCase);
     }
 
+    private readonly record struct BoundContent(string? Reason, string? Entries, string? Evidence);
+
     /// <summary>
-    /// Null when the recorded tree may be deleted. An unsealed receipt or a different directory inode
-    /// refuses without walking that tree. A listing change refuses unless a nested repository appeared,
-    /// which the delete's own census still preserves.
+    /// Hashes the tree, compares tracked files with <c>git ls-files --stage</c>, and hashes again.
+    /// A write during that read makes the two manifests differ and refuses the move.
+    /// </summary>
+    private async Task<BoundContent> BindContentAsync(string root, WorktreeIgnoredContent content,
+        IReadOnlyList<RetainedWorktreeFile>? retained, CancellationToken ct)
+    {
+        if (EvidenceProblem(root, retained) is { } evidence) return new(evidence, null, null);
+        var names = await TrackedNamesAsync(root, ct);
+        if (names.Reason is not null) return new(names.Reason, null, null);
+        var disposable = NameSet(content.Disposable);
+        var evidenceNames = new HashSet<string>(StringComparer.Ordinal);
+        if (retained is not null)
+            foreach (var file in retained) evidenceNames.Add(file.Relative.Replace('\\', '/'));
+        string before, after;
+        try { before = EntryManifest(root, names.Names!, disposable, evidenceNames); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new("source_changed", null, null); }
+        if (await TrackedBytesAsync(root, ct) is { } tracked) return new(tracked, null, null);
+        try { after = EntryManifest(root, names.Names!, disposable, evidenceNames); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new("source_changed", null, null); }
+        if (!string.Equals(before, after, StringComparison.Ordinal)) return new("source_changed", null, null);
+        return new(null, after, EvidenceManifest(retained));
+    }
+
+    private async Task<(string? Reason, HashSet<string>? Names)> TrackedNamesAsync(string root, CancellationToken ct)
+    {
+        LandingGitResult listed;
+        try { listed = await git.RunAsync(root, ["ls-files", "-z"], ct); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+        { return ("source_changed", null); }
+        if (!listed.Succeeded || listed.WroteStandardError) return ("source_changed", null);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            names.Add(name.Replace('\\', '/'));
+        return (null, names);
+    }
+
+    /// <summary>
+    /// Null when every stage-0 blob matches the file. The git directory must still exist.
+    /// </summary>
+    private async Task<string?> TrackedBytesAsync(string root, CancellationToken ct)
+    {
+        LandingGitResult listed;
+        try { listed = await git.RunAsync(root, ["ls-files", "--stage", "-z"], ct); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+        { return "source_changed"; }
+        if (!listed.Succeeded || listed.WroteStandardError) return "source_changed";
+        var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        foreach (var entry in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = entry.IndexOf('\t');
+            if (tab < 0) return "source_changed";
+            var fields = entry[..tab].Split(' ');
+            if (fields.Length != 3 || fields[2] != "0") return "source_changed";
+            if (fields[0] is not ("100644" or "100755") || !IsGitOid(fields[1])) return "source_changed";
+            var relative = entry[(tab + 1)..].Replace('\\', '/');
+            var full = Path.GetFullPath(Path.Combine(root, relative));
+            if (!full.StartsWith(rootFull, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                return "source_changed";
+            var stamp = WorktreeNoFollowDelete.TryStamp(full);
+            if (stamp is null || stamp.Value.Kind != "file") return "tracked_bytes_changed";
+            if (!OperatingSystem.IsWindows()
+                && File.GetUnixFileMode(full).HasFlag(UnixFileMode.UserExecute) != (fields[0] == "100755"))
+                return "tracked_bytes_changed";
+            var oid = WorktreeNoFollowDelete.GitBlobSha1(full);
+            if (oid is null || oid.Length == 0 || !oid.Equals(fields[1], StringComparison.OrdinalIgnoreCase))
+                return "tracked_bytes_changed";
+        }
+        return null;
+    }
+
+    private static bool IsGitOid(string value) => value.Length == 40
+        && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
+
+    private static string EntryManifest(string root, HashSet<string> tracked, HashSet<string> disposable, HashSet<string> evidence)
+    {
+        var entries = new List<WorktreeApprovedEntry>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                var relative = Path.GetRelativePath(root, entry).Replace(Path.DirectorySeparatorChar, '/');
+                if (relative.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                    || relative.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var stamp = WorktreeNoFollowDelete.TryStamp(entry) ?? throw new IOException("manifest_entry_absent: " + relative);
+                string? hash = null;
+                if (stamp.Kind == "file" && BindsContent(relative, tracked, disposable, evidence))
+                {
+                    hash = WorktreeNoFollowDelete.RegularFileHash(entry);
+                    if (hash is null || hash.Length == 0) throw new IOException("manifest_entry_unreadable: " + relative);
+                }
+                entries.Add(new(relative, stamp.Kind, hash));
+                if (stamp.Kind == "dir") pending.Push(entry);
+            }
+        }
+        entries.Sort((left, right) => string.CompareOrdinal(left.Path, right.Path));
+        return JsonSerializer.Serialize(entries);
+    }
+
+    private static bool BindsContent(string relative, HashSet<string> tracked, HashSet<string> disposable, HashSet<string> evidence) =>
+        tracked.Contains(relative) || evidence.Contains(relative) || !disposable.Contains(relative);
+
+    private static string EvidenceManifest(IReadOnlyList<RetainedWorktreeFile>? files)
+    {
+        var pins = new List<EvidencePin>();
+        if (files is not null)
+            foreach (var file in files)
+                pins.Add(new(file.Relative.Replace('\\', '/'), file.RetainedPath, file.Sha256));
+        pins.Sort((left, right) => string.CompareOrdinal(left.Relative, right.Relative));
+        return JsonSerializer.Serialize(pins);
+    }
+
+    private static HashSet<string> NameSet(ImmutableArray<string> paths)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (!paths.IsDefault)
+            foreach (var path in paths) names.Add(path.Replace('\\', '/'));
+        return names;
+    }
+
+    private void DeleteApproved(string aside, WorktreeSetAsideRecord record)
+    {
+        if (string.IsNullOrEmpty(record.EntryManifest)) throw new ApprovedTreeRejectedException("set_aside_unsealed");
+        var listing = ApprovalListing(record.EntryManifest);
+        var previous = RemovalApproval.Current.Value;
+        RemovalApproval.Current.Value = listing;
+        try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
+        finally { RemovalApproval.Current.Value = previous; }
+    }
+
+    private static RemovalApproval.Listing ApprovalListing(string manifest)
+    {
+        WorktreeApprovedEntry[] entries;
+        try { entries = JsonSerializer.Deserialize<WorktreeApprovedEntry[]>(manifest) ?? []; }
+        catch (JsonException) { throw new ApprovedTreeRejectedException("set_aside_unsealed"); }
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var kinds = new Dictionary<string, string>(StringComparer.Ordinal);
+        var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            names.Add(entry.Path);
+            kinds[entry.Path] = entry.Kind;
+            if (entry.Hash is not null) hashes[entry.Path] = entry.Hash;
+        }
+        return new RemovalApproval.Listing { Names = names, Kinds = kinds, Hashes = hashes };
+    }
+
+    /// <summary>Null when this directory may be moved back. Identity is the only restore authority.</summary>
+    private static string? RestoreCustody(WorktreeSetAsideRecord record)
+    {
+        if (string.IsNullOrEmpty(record.DirectoryIdentity)) return "set_aside_unsealed";
+        try
+        {
+            var identity = WorktreeNoFollowDelete.DirectoryIdentity(record.SetAsidePath);
+            if (!string.Equals(identity, record.DirectoryIdentity, StringComparison.Ordinal))
+                return "set_aside_identity_mismatch";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        { return "set_aside_identity_mismatch"; }
+        return null;
+    }
+
+    /// <summary>
+    /// Null when the recorded tree may be deleted. Missing approved names are finished work.
+    /// A new or changed entry is refused. A nested repository, and nothing else unexpected, falls
+    /// through so the delete's own census can preserve it.
     /// </summary>
     private static string? CustodyOf(WorktreeSetAsideRecord record)
     {
-        if (string.IsNullOrEmpty(record.DirectoryIdentity) || string.IsNullOrEmpty(record.ContentSeal))
+        if (string.IsNullOrEmpty(record.DirectoryIdentity) || string.IsNullOrEmpty(record.EntryManifest)
+            || record.EvidenceManifest is null)
             return "set_aside_unsealed";
         string identity;
         try { identity = WorktreeNoFollowDelete.DirectoryIdentity(record.SetAsidePath); }
@@ -571,13 +763,73 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             { return "set_aside_identity_mismatch"; }
         if (!string.Equals(identity, record.DirectoryIdentity, StringComparison.Ordinal))
             return "set_aside_identity_mismatch";
-        string seal;
-        try { seal = WorktreeSetAside.ListingSeal(record.SetAsidePath); }
+        EvidencePin[] pins;
+        WorktreeApprovedEntry[] entries;
+        try
+        {
+            pins = JsonSerializer.Deserialize<EvidencePin[]>(record.EvidenceManifest) ?? [];
+            entries = JsonSerializer.Deserialize<WorktreeApprovedEntry[]>(record.EntryManifest) ?? [];
+        }
+        catch (JsonException) { return "set_aside_unsealed"; }
+        foreach (var pin in pins)
+        {
+            var retained = WorktreeNoFollowDelete.RegularFileHash(pin.RetainedPath);
+            if (retained is null || retained.Length == 0) return "evidence_retained_missing";
+            if (!retained.Equals(pin.Sha256, StringComparison.OrdinalIgnoreCase)) return "evidence_bytes_changed";
+            var source = Path.Combine(record.SetAsidePath, pin.Relative.Replace('/', Path.DirectorySeparatorChar));
+            var sourceHash = WorktreeNoFollowDelete.RegularFileHash(source);
+            if (sourceHash is null) continue;
+            if (sourceHash.Length == 0 || !sourceHash.Equals(pin.Sha256, StringComparison.OrdinalIgnoreCase))
+                return "evidence_bytes_changed";
+        }
+        var approved = new Dictionary<string, WorktreeApprovedEntry>(StringComparer.Ordinal);
+        foreach (var entry in entries) approved[entry.Path] = entry;
+        var nested = WorktreeNestedRepositories.Find(record.SetAsidePath);
+        try
+        {
+            var pending = new Stack<string>();
+            pending.Push(record.SetAsidePath);
+            while (pending.TryPop(out var directory))
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    var relative = Path.GetRelativePath(record.SetAsidePath, entry).Replace(Path.DirectorySeparatorChar, '/');
+                    if (relative.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                        || relative.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var stamp = WorktreeNoFollowDelete.TryStamp(entry);
+                    if (stamp is null) continue;
+                    if (!approved.TryGetValue(relative, out var expected))
+                    {
+                        if (!InsideNested(relative, nested)) return "set_aside_content_changed";
+                        if (stamp.Value.Kind == "dir") pending.Push(entry);
+                        continue;
+                    }
+                    if (expected.Kind != stamp.Value.Kind) return "set_aside_content_changed";
+                    if (expected.Hash is not null)
+                    {
+                        var hash = WorktreeNoFollowDelete.RegularFileHash(entry);
+                        if (hash is null || hash.Length == 0 || !hash.Equals(expected.Hash, StringComparison.OrdinalIgnoreCase))
+                            return "set_aside_content_changed";
+                    }
+                    if (stamp.Value.Kind == "dir") pending.Push(entry);
+                }
+            }
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { return "set_aside_content_changed"; }
-        if (string.Equals(seal, record.ContentSeal, StringComparison.Ordinal)) return null;
-        if (WorktreeNestedRepositories.Find(record.SetAsidePath).Length != 0) return null;
-        return "set_aside_content_changed";
+        { return "set_aside_content_changed"; }
+        return null;
+    }
+
+    private static bool InsideNested(string relative, ImmutableArray<string> repositories)
+    {
+        foreach (var repository in repositories)
+        {
+            var prefix = repository.TrimEnd('/');
+            if (relative == prefix || relative.StartsWith(prefix + "/", StringComparison.Ordinal)) return true;
+            if (prefix.StartsWith(relative + "/", StringComparison.Ordinal)) return true;
+        }
+        return false;
     }
 
     // C448 V36: the refusal names its Win32 code; the residue is otherwise unchanged.

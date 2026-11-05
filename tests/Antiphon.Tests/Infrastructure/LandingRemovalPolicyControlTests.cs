@@ -1176,7 +1176,8 @@ public sealed class LandingRemovalPolicyControlTests
         f.BeforeUnregister = () =>
         {
             var aside = f.SetAsideTrees().ShouldHaveSingleItem();
-            saved = aside + ".rescued";
+            // The set-aside search is ".source.removing-*", so a ".rescued" suffix is still a hit.
+            saved = Path.Combine(Path.GetDirectoryName(aside)!, "rescued-real-tree");
             Directory.Move(aside, saved);
             Directory.CreateDirectory(aside);
             File.WriteAllText(Path.Combine(aside, "foreign.txt"), "foreign-only-bytes");
@@ -1226,17 +1227,19 @@ public sealed class LandingRemovalPolicyControlTests
             Calls.Add((relativePaths.Length, fixture.InspectionCount));
             if (relativePaths.Length != 0) Paths.Add([.. relativePaths]);
             var root = Path.Combine(fixture.Root, "retained");
-            return Task.FromResult(Refusal is not null ? new WorktreeEvidenceRetentionResult(null, [], Refusal)
-                : new WorktreeEvidenceRetentionResult(root, [.. relativePaths.Select(p =>
-                    new RetainedWorktreeFile(p, Path.Combine(root, p), 1, SourceHash(worktreePath, p)))], null));
-        }
-
-        private static string SourceHash(string worktree, string relative)
-        {
-            var path = Path.Combine(worktree, relative.Replace('/', Path.DirectorySeparatorChar));
-            return File.Exists(path)
-                ? Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))
-                : new string('0', 64);
+            if (Refusal is not null) return Task.FromResult(new WorktreeEvidenceRetentionResult(null, [], Refusal));
+            var files = new List<RetainedWorktreeFile>();
+            foreach (var relative in relativePaths)
+            {
+                var source = Path.Combine(worktreePath, relative.Replace('/', Path.DirectorySeparatorChar));
+                var retained = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(retained)!);
+                var bytes = File.Exists(source) ? File.ReadAllBytes(source) : [];
+                File.WriteAllBytes(retained, bytes);
+                files.Add(new RetainedWorktreeFile(relative, retained, bytes.Length,
+                    Convert.ToHexStringLower(SHA256.HashData(bytes))));
+            }
+            return Task.FromResult(new WorktreeEvidenceRetentionResult(root, [.. files], null));
         }
     }
 
@@ -1259,6 +1262,11 @@ public sealed class LandingRemovalPolicyControlTests
         public List<string> IgnoredPaths { get; } = [];
         /// <summary>Stable <c>git ls-files -z</c> answer. Not a live listing of the fixture tree.</summary>
         public string TrackedListing { get; set; } = "keep.txt\0";
+        // Index blob of the original keep.txt. A later edit of that file must not refresh this oid.
+        private readonly Dictionary<string, string> stageBlobs = new(StringComparer.Ordinal)
+        {
+            ["keep.txt"] = GitBlob(System.Text.Encoding.UTF8.GetBytes("private work")),
+        };
         public int RemoveExitCode { get; set; }
         public bool Registered { get; set; } = true;
         /// <summary>Runs between the move-aside and the registration drop.</summary>
@@ -1406,6 +1414,7 @@ public sealed class LandingRemovalPolicyControlTests
             else if (args[0] == "status") result = new(LocalChange == "status-error" ? 128 : 0,
                 LocalChange == "dirty" ? " M keep.txt\0" : "", "");
             else if (args[0] == "merge-base") result = new(LocalChange == "ancestry" ? 1 : 0, "", "");
+            else if (args[0] == "ls-files" && args.Contains("--stage")) result = new(0, StageListing(), "");
             else if (args[0] == "ls-files" && !args.Contains("--ignored")) result = new(0, TrackedListing, "");
             else throw new InvalidOperationException("Unexpected cleanup command: " + args[0]);
             return Task.FromResult(result);
@@ -1423,6 +1432,30 @@ public sealed class LandingRemovalPolicyControlTests
             AfterUnregister?.Invoke();
             return Task.FromResult(new LandingGitResult(0, "", ""));
         }
+        private string StageListing()
+        {
+            var listing = new System.Text.StringBuilder();
+            foreach (var name in TrackedListing.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!stageBlobs.TryGetValue(name, out var oid))
+                {
+                    var path = Path.Combine(Source, name.Replace('/', Path.DirectorySeparatorChar));
+                    oid = GitBlob(File.ReadAllBytes(path));
+                    stageBlobs[name] = oid;
+                }
+                listing.Append("100644 ").Append(oid).Append(" 0\t").Append(name).Append('\0');
+            }
+            return listing.ToString();
+        }
+
+        private static string GitBlob(byte[] bytes)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+            hash.AppendData(System.Text.Encoding.ASCII.GetBytes($"blob {bytes.Length}\0"));
+            hash.AppendData(bytes);
+            return Convert.ToHexStringLower(hash.GetHashAndReset());
+        }
+
         private static void DeleteFollowingLinks(string directory)
         {
             foreach (var file in Directory.EnumerateFiles(directory)) { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); }
