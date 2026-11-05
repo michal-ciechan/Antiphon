@@ -30,11 +30,20 @@ public sealed class WorktreeCleanupSettings
     /// Secret or user-local names that refuse removal wherever they sit, including inside a
     /// disposable directory such as <c>server/bin-x/appsettings.Development.json</c>. They win over
     /// both other lists. Configuration can only add to these; it cannot remove one.
+    /// CARD-1718 A-D3: a secret-shaped name is on this floor, never the disposable allowlist, at any
+    /// depth. A match keeps the tree (<c>ignored_content_preserved</c>), the same hold as any other
+    /// default-deny path. It is not evidence: evidence is copied and then deleted with the tree.
+    /// The floor is <c>**/.env*</c> and <c>**/.env*/**</c> (a segment that starts with <c>.env</c>,
+    /// including <c>.env</c> and <c>.env.*</c>, and files under a directory of that name),
+    /// <c>**/*.pem</c>, <c>**/*.key</c>, <c>**/id_rsa*</c>, <c>**/*.pfx</c>, <c>**/credentials*</c>,
+    /// <c>**/.npmrc</c>, <c>**/.netrc</c>, and the existing <c>**/appsettings.*.json</c>.
     /// </summary>
     public static IReadOnlyList<string> DefaultProtectedIgnored { get; } =
     [
         "**/.claude/**", "**/appsettings.*.json", "**/*.user", "**/*.local.json",
         "**/.antiphon/report.md", "**/.antiphon/deliverables/**",
+        "**/.env*", "**/.env*/**", "**/*.pem", "**/*.key", "**/id_rsa*", "**/*.pfx",
+        "**/credentials*", "**/.npmrc", "**/.netrc",
         "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",
     ];
 
