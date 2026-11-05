@@ -11,10 +11,18 @@ public sealed class C0824TransportLimiterTests
     [Test]
     public void Scripted_rig_classes_share_bounded_admission()
     {
-        typeof(C0824WorkspaceSlotServerTests)
-            .GetCustomAttribute<ParallelLimiterAttribute<WorkspaceRigConcurrencyLimit>>().ShouldNotBeNull();
-        typeof(C1677RetentionServerTests)
-            .GetCustomAttribute<ParallelLimiterAttribute<WorkspaceRigConcurrencyLimit>>().ShouldNotBeNull();
+        foreach (var type in new[] { typeof(C0824WorkspaceSlotServerTests), typeof(C1677RetentionServerTests) })
+        {
+            type.GetCustomAttributes().Where(attribute => attribute.GetType().IsGenericType
+                && attribute.GetType().GetGenericTypeDefinition() == typeof(ParallelLimiterAttribute<>))
+                .ShouldBeEmpty("class limiters override the strict method lane in the pinned TUnit runtime");
+            foreach (var method in type.GetMethods().Where(method => method.IsDefined(typeof(TestAttribute))))
+            {
+                var strict = method.GetCustomAttribute<ParallelLimiterAttribute<ProcessSpawnLimit>>();
+                var scripted = method.GetCustomAttribute<ParallelLimiterAttribute<WorkspaceRigConcurrencyLimit>>();
+                ((strict is not null) ^ (scripted is not null)).ShouldBeTrue(method.Name + " must bind exactly one admission lane");
+            }
+        }
     }
 
     [Test]
