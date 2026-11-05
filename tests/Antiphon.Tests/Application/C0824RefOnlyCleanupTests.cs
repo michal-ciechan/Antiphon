@@ -171,6 +171,10 @@ public sealed class C0824RefOnlyCleanupTests
             var bound = await BindAsync(land, land.Fixture.TaskId, removeAuthoring: true);
             await land.RequestAsync("c0824-controlled-verifier", source); await land.RunQueuedAsync();
             var op = (await land.OperationAsync()).ShouldNotBeNull();
+            // Terminal retention owns superseded pins. Exercise cleanup against this real operation's retained source pin.
+            bound = bound with { Pin = op.RecoveryRefPrefix + "/source" };
+            (await land.Fixture.RequiredAsync(land.Fixture.Repository, "rev-parse", "--verify", bound.Pin))
+                .Trim().ShouldBe(source, "protocol-recovery-pin-retained");
             op.DesktopCleanupDisposition.ShouldBe(DesktopCleanupDisposition.NotRequired, "desktop-not-required:protocol-cleanup");
             op.SourceTaskRefWorkspaceBindingId.ShouldBe(bound.Id);
             op.DirectoryRemoved.ShouldBeFalse(); op.RegistrationRemoved.ShouldBeFalse(); op.BranchRemoved.ShouldBeFalse();

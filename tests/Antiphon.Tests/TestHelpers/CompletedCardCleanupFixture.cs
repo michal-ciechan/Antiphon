@@ -159,7 +159,13 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var id = Guid.NewGuid();
         var branch = "feat/card-task-" + id.ToString("N")[..8];
         var tree = Path.Combine(Host.Fixture.Root, "trees", "card-task-" + id.ToString("N")[..8]);
-        await Host.Fixture.RequiredAsync(Host.Fixture.Repository, "worktree", "add", "-b", branch, tree, Host.Fixture.SeedSha);
+        await using (var lease = await Host.Services.GetRequiredService<IRepositoryMutationLease>()
+                         .TryAcquireAsync(Host.Fixture.Repository, CancellationToken.None))
+        {
+            lease.ShouldNotBeNull();
+            await Host.Services.GetRequiredService<IWorktreeManager>().CreateVerificationAsync(
+                Host.Fixture.Repository, "task-" + id.ToString("N")[..8], Host.Fixture.SeedSha, lease!, CancellationToken.None);
+        }
         await Host.Fixture.RequiredAsync(Host.Fixture.Repository, "push", "origin", "refs/heads/" + branch);
         await using var db = Host.CreateContext();
         var prior = await db.AgentTasks.SingleAsync(t => t.Id == priorId);
@@ -339,7 +345,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var root = Path.GetFullPath(Host.Fixture.Root);
         if (Path.GetFileName(Path.GetDirectoryName(root)) != "c1017"
             || !Guid.TryParseExact(Path.GetFileName(root), "N", out _)
-            || (await File.ReadAllTextAsync(Path.Combine(Host.Fixture.Repository, "fixture-owner.txt"))).Trim() != TaskId.ToString("N"))
+            || (await File.ReadAllTextAsync(Path.Combine(Host.Fixture.Repository, "fixture-owner.txt"))).Trim() != Host.Fixture.TaskId.ToString("N"))
             throw new InvalidOperationException("C1017 fixture ownership changed");
         try
         {

@@ -6,7 +6,6 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,7 +16,8 @@ public sealed partial class C0824RefOnlyLandingTests
     [Test]
     public async Task Land_outcome_reaches_caller_via_queue_and_recovers_handoffs()
     {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        // Queue delivery owns real timers; a frozen fake clock strands its poll/settle delays.
+        var clock = new ScaledTimeProvider(1);
         await using var h = new LandingSafetyHarness { Clock = clock };
         await h.InitializeAsync();
         var source = await h.AddSourceAsync();
@@ -25,6 +25,7 @@ public sealed partial class C0824RefOnlyLandingTests
             "queue-committed-before-wakeup", "receipt-before-save", "recovery-refusal", "lost-land-wakeup" };
         foreach (var variant in variants)
         {
+            Console.WriteLine("C0824_RECEIPT variant=" + variant + " stage=start");
             if (variant != variants[0]) await h.ResetDatabaseAsync();
             await RefOnlyWorkspaceTestSetup.BindAsync(h, removeAuthoring: variant == variants[0]);
             var busy = Array.IndexOf(variants, variant) % 2 == 1;
@@ -64,6 +65,7 @@ public sealed partial class C0824RefOnlyLandingTests
                 await h.RunRequestAsync(requested.RequestId);
             }
             if (variant == "terminal-committed") boundary.Hit.ShouldBeTrue("cut-terminal-committed-reached");
+            Console.WriteLine("C0824_RECEIPT variant=" + variant + " stage=producer-terminal");
             h.Boundary = null;
             AgentTaskLandNotification note;
             await using (var db = h.CreateContext())
@@ -144,6 +146,7 @@ public sealed partial class C0824RefOnlyLandingTests
                 prompt.Timestamp.ShouldNotBeNull(); prompt.Timestamp!.Value.ShouldBeGreaterThanOrEqualTo(row.LastDeliveryStartedAt!.Value);
                 saved.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(saved.Body));
             }
+            Console.WriteLine("C0824_RECEIPT variant=" + variant + " stage=confirmed");
             async Task ReconcileAsync(LandDeliveryBoundary? cut)
             {
                 await using var db = h.CreateContext();
@@ -157,6 +160,7 @@ public sealed partial class C0824RefOnlyLandingTests
 
     private static async Task AutonomousWakeupAsync(LandingSafetyHarness h, string source, bool recoveredBusy)
     {
+        Console.WriteLine("C0824_RECEIPT autonomous=" + recoveredBusy + " stage=start");
         await h.ResetDatabaseAsync();
         await RefOnlyWorkspaceTestSetup.BindAsync(h, removeAuthoring: false);
         var flushes = new CompletionNoteFlushQueue();
@@ -201,7 +205,7 @@ public sealed partial class C0824RefOnlyLandingTests
                     pending.ConfirmedAt.ShouldBeNull(); caller.Adapter.SubmittedBodies.ShouldBeEmpty();
                 }
                 await caller.MarkIdleAsync();
-                ((FakeTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(6)); // Still before the warmed 15-minute backstop.
+                ((ScaledTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(6)); // Still before the warmed 15-minute backstop.
             }
             await ReconcileAsync(null);
             var label = recoveredBusy ? "busy-recovery" : "already-idle";
