@@ -9,6 +9,12 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ChangeAwareReleaseTests
 {
+    private readonly ScriptHarnessOptions _options;
+
+    public ChangeAwareReleaseTests() : this(ScriptHarnessOptions.Default) { }
+
+    internal ChangeAwareReleaseTests(ScriptHarnessOptions options) => _options = options;
+
     [Test]
     public Task C1313_ModeCredit() => Run("C1313_ModeCredit", 7, "unqualified-no-credit", "default-full", "explicit-full", "shadow-full", "unqualified-full", "qualification-root-unchanged", "selector-fallback-full");
 
@@ -115,10 +121,10 @@ public sealed class ChangeAwareReleaseTests
             CancellationToken.None, result => validate(result, root!));
     }
 
-    private static Task Run(string name, int rows, params string[] labels) =>
+    private Task Run(string name, int rows, params string[] labels) =>
         ScriptHarness.RunHarnessCaseAsync("test-change-aware-release.ps1", "C1313", name, rows,
             labels.Select(label => "C1313 " + label).ToArray(),
-            ScriptHarnessOptions.Default with
+            _options with
             {
                 AdditionalArguments = FilterHostArguments,
             }, CancellationToken.None);
