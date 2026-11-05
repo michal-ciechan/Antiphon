@@ -398,3 +398,6 @@ Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests
 
 # CARD-1637: real Git land runs over isolated PostgreSQL (DelegationWorktreeTests land graph); merge-branch mutation witnesses.
 Antiphon.Tests.Application.LandMergeBranchWitnessTests
+
+# CARD-1591: isolated PostgreSQL channel producer, incident, lock-contention and 340-row backlog witnesses.
+Antiphon.Tests.Application.ChannelInputWithheldIncidentTests

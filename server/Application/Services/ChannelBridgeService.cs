@@ -73,49 +73,57 @@ public sealed partial class ChannelBridgeService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Channel bridge started; consuming inbound channel messages");
-        using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        var worker = RunWakeWorkerAsync(workerCts.Token);
-        var withheld = RunWithheldIncidentLoopAsync(workerCts.Token);
+        using var workers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var wake = RunWakeWorkerAsync(workers.Token);
+        var withheld = RunWithheldIncidentLoopAsync(workers.Token);
+        var consume = ConsumeInboundLoopAsync(workers.Token);
         try
         {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    await foreach (var delivery in _consumer.ConsumeDeliveriesAsync(stoppingToken))
-                    {
-                        if (delivery.Message is not { } message)
-                        {
-                            _logger.LogWarning("Discarding malformed inbound broker record: {Diagnostic}", delivery.Diagnostic);
-                            await delivery.AcknowledgeAsync($"malformed:{delivery.Diagnostic}", stoppingToken);
-                            continue;
-                        }
-                        var accepted = await AcceptInboundAsync(message, stoppingToken);
-                        await delivery.AcknowledgeAsync(accepted is null ? "ignored" : "accepted", stoppingToken);
-                        if (accepted is Guid id)
-                            _wakeSignal.Signal(id);
-                    }
-
-                    return; // stream completed (only fakes do this).
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Channel bridge consume loop failed; retrying in {Backoff}s",
-                        ConsumeRetryBackoff.TotalSeconds);
-                    try { await Task.Delay(ConsumeRetryBackoff, _timeProvider, stoppingToken); }
-                    catch (OperationCanceledException) { return; }
-                }
-            }
+            var completed = await Task.WhenAny(wake, withheld, consume);
+            if (completed != consume && !stoppingToken.IsCancellationRequested)
+                _logger.LogError("Channel bridge sibling worker ended unexpectedly");
+            await completed;
         }
         finally
         {
-            await workerCts.CancelAsync();
-            await worker;
-            await withheld;
+            await workers.CancelAsync();
+            // Observe and join every sibling even when another sibling faults.
+            await Task.WhenAll(wake, withheld, consume);
+        }
+    }
+
+    private async Task ConsumeInboundLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (var delivery in _consumer.ConsumeDeliveriesAsync(stoppingToken))
+                {
+                    if (delivery.Message is not { } message)
+                    {
+                        _logger.LogWarning("Discarding malformed inbound broker record: {Diagnostic}", delivery.Diagnostic);
+                        await delivery.AcknowledgeAsync($"malformed:{delivery.Diagnostic}", stoppingToken);
+                        continue;
+                    }
+                    var accepted = await AcceptInboundAsync(message, stoppingToken);
+                    await delivery.AcknowledgeAsync(accepted is null ? "ignored" : "accepted", stoppingToken);
+                    if (accepted is Guid id)
+                        _wakeSignal.Signal(id);
+                }
+                return; // stream completed (only fakes do this).
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Channel bridge consume loop failed; retrying in {Backoff}s",
+                    ConsumeRetryBackoff.TotalSeconds);
+                try { await Task.Delay(ConsumeRetryBackoff, _timeProvider, stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            }
         }
     }
 

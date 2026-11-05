@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Npgsql;
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Messaging;
@@ -37,7 +38,8 @@ public sealed class ChannelInputWithheldIncidentTests
     private const string WithholdReason = "adopted session";
 
     [Test]
-    public async Task C1591_AgedWithheldChannelRowRaisesOneIncident()
+    [Timeout(120_000)]
+    public async Task C1591_AgedWithheldChannelRowRaisesOneIncident(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -45,7 +47,7 @@ public sealed class ChannelInputWithheldIncidentTests
         var now = clock.GetUtcNow().UtcDateTime;
         var seed = await SeedAsync(h, acceptedAt: now.AddHours(-2), firstWithheldAt: now.AddMinutes(-10),
             withholdCount: 1);
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h).ScanWithheldChannelIncidentsAsync(ct);
 
         await using var db = Db(schema.ConnectionString);
         var incidents = await db.AgentIncidents.AsNoTracking()
@@ -67,7 +69,8 @@ public sealed class ChannelInputWithheldIncidentTests
     }
 
     [Test]
-    public async Task C1591_RepeatScanStaysOneIncident()
+    [Timeout(120_000)]
+    public async Task C1591_RepeatScanStaysOneIncident(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -75,8 +78,9 @@ public sealed class ChannelInputWithheldIncidentTests
         var now = clock.GetUtcNow().UtcDateTime;
         await SeedAsync(h, acceptedAt: now.AddHours(-2), firstWithheldAt: now.AddMinutes(-10), withholdCount: 1);
         var bridge = Bridge(h);
-        await bridge.ScanWithheldChannelIncidentsAsync(Ct);
-        await bridge.ScanWithheldChannelIncidentsAsync(Ct);
+        await bridge.ScanWithheldChannelIncidentsAsync(ct);
+        await bridge.ScanWithheldChannelIncidentsAsync(ct);
+        await bridge.ScanWithheldChannelIncidentsAsync(ct); // Include the cursor wrap.
 
         await using var db = Db(schema.ConnectionString);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
@@ -86,7 +90,8 @@ public sealed class ChannelInputWithheldIncidentTests
     }
 
     [Test]
-    public async Task C1591_YoungWithholdStaysQuiet()
+    [Timeout(120_000)]
+    public async Task C1591_YoungWithholdStaysQuiet(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -94,7 +99,7 @@ public sealed class ChannelInputWithheldIncidentTests
         var now = clock.GetUtcNow().UtcDateTime;
         var seed = await SeedAsync(h, acceptedAt: now.AddHours(-2), firstWithheldAt: now.AddMinutes(-9),
             withholdCount: 1);
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h).ScanWithheldChannelIncidentsAsync(ct);
 
         await using var db = Db(schema.ConnectionString);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
@@ -104,7 +109,8 @@ public sealed class ChannelInputWithheldIncidentTests
     }
 
     [Test]
-    public async Task C1591_WorkingUnchargedRowStaysQuiet()
+    [Timeout(120_000)]
+    public async Task C1591_WorkingUnchargedRowStaysQuiet(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -112,7 +118,7 @@ public sealed class ChannelInputWithheldIncidentTests
         var now = clock.GetUtcNow().UtcDateTime;
         var seed = await SeedAsync(h, acceptedAt: now.AddMinutes(-30), firstWithheldAt: now.AddMinutes(-30),
             withholdCount: 0);
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h).ScanWithheldChannelIncidentsAsync(ct);
 
         await using var db = Db(schema.ConnectionString);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
@@ -122,7 +128,8 @@ public sealed class ChannelInputWithheldIncidentTests
     }
 
     [Test]
-    public async Task C1591_ScanWritesNoInput()
+    [Timeout(120_000)]
+    public async Task C1591_ScanWritesNoInput(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -133,7 +140,7 @@ public sealed class ChannelInputWithheldIncidentTests
         var bridge = Bridge(h);
         await bridge.RunWithheldIncidentLoopAsync(new CancellationToken(canceled: true));
         var gate = h.Queue.GetLock(h.SessionId);
-        await gate.WaitAsync(Ct);
+        await gate.WaitAsync(ct);
         try
         {
             using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -162,7 +169,8 @@ public sealed class ChannelInputWithheldIncidentTests
     }
 
     [Test]
-    public async Task C1591_WorkingSessionKeepsHistoricalWithholdQuiet()
+    [Timeout(120_000)]
+    public async Task C1591_WorkingSessionKeepsHistoricalWithholdQuiet(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -171,7 +179,7 @@ public sealed class ChannelInputWithheldIncidentTests
         await ProduceWithholdAsync(h, clock, "busy body");
         await h.MarkWorkingAsync();
         clock.Advance(TimeSpan.FromMinutes(10));
-        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(ct);
 
         await using var db = Db(schema.ConnectionString);
         (await WithheldIncidentsAsync(db, h.AgentId)).ShouldBe(0);
@@ -182,7 +190,9 @@ public sealed class ChannelInputWithheldIncidentTests
     [Arguments("continuity")]
     [Arguments("liveness")]
     [Arguments("compacting")]
-    public async Task C1591_CurrentHoldKeepsHistoricalWithholdQuiet(string hold)
+    [Arguments("legacy-liveness")]
+    [Timeout(120_000)]
+    public async Task C1591_CurrentHoldKeepsHistoricalWithholdQuiet(string hold, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -200,13 +210,14 @@ public sealed class ChannelInputWithheldIncidentTests
             var at = clock.GetUtcNow().UtcDateTime;
             state.Suspended = hold == "suspended";
             state.ContinuityHeldAt = hold == "continuity" ? at : null;
-            state.LivenessLatchedAt = hold == "liveness" ? at : null;
+            state.LivenessLatchedAt = hold == "legacy-liveness" ? at.AddYears(-1)
+                : hold == "liveness" ? at : null;
             state.ActiveCompactionRecoveryId = hold == "compacting" ? Guid.NewGuid() : null;
             state.UpdatedAt = at;
             await db.SaveChangesAsync();
         }
         clock.Advance(TimeSpan.FromMinutes(10));
-        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(ct);
 
         await using var verify = Db(schema.ConnectionString);
         (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(0);
@@ -216,7 +227,8 @@ public sealed class ChannelInputWithheldIncidentTests
     [Arguments("continuity")]
     [Arguments("suspension")]
     [Arguments("liveness")]
-    public async Task C1591_ExistingHoldStampSuppressesSecondIncident(string stamp)
+    [Timeout(120_000)]
+    public async Task C1591_ExistingHoldStampSuppressesSecondIncident(string stamp, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -232,7 +244,7 @@ public sealed class ChannelInputWithheldIncidentTests
                 .SetProperty(i => i.LivenessHoldIncidentAt, stamp == "liveness" ? at : null));
         }
         clock.Advance(TimeSpan.FromMinutes(10));
-        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(ct);
 
         await using var verify = Db(schema.ConnectionString);
         (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(0);
@@ -245,7 +257,7 @@ public sealed class ChannelInputWithheldIncidentTests
     [Arguments("cancel")]
     [Arguments("transfer")]
     [Timeout(60_000)]
-    public async Task C1591_OpenDispositionDoesNotIncident(string disposition)
+    public async Task C1591_OpenDispositionDoesNotIncident(string disposition, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -302,14 +314,14 @@ public sealed class ChannelInputWithheldIncidentTests
             }
 
             var started = Stopwatch.StartNew();
-            await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+            await Bridge(h).ScanWithheldChannelIncidentsAsync(ct);
             started.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
             await using (var mid = Db(schema.ConnectionString))
                 (await WithheldIncidentsAsync(mid, h.AgentId)).ShouldBe(0);
             await tx.CommitAsync();
         }
 
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h).ScanWithheldChannelIncidentsAsync(ct);
         await using var verify = Db(schema.ConnectionString);
         (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(0);
         (await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == seed.InboundId))
@@ -317,8 +329,8 @@ public sealed class ChannelInputWithheldIncidentTests
     }
 
     [Test]
-    [Timeout(180_000)]
-    public async Task C1591_BacklogPassIsBounded()
+    [Timeout(120_000)]
+    public async Task C1591_BacklogPassIsBounded(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -398,8 +410,34 @@ public sealed class ChannelInputWithheldIncidentTests
             await db.SaveChangesAsync();
         }
 
+        await using (var connection = new NpgsqlConnection(schema.ConnectionString))
+        {
+            await connection.OpenAsync(ct);
+            await using (var analyze = new NpgsqlCommand("ANALYZE \"SessionQueuedMessages\"; ANALYZE \"ChannelInbounds\"", connection))
+                await analyze.ExecuteNonQueryAsync(ct);
+            foreach (var indexProof in new[] { false, true })
+            {
+                if (indexProof)
+                {
+                    await using var preferIndex = new NpgsqlCommand("SET enable_seqscan = off", connection);
+                    await preferIndex.ExecuteNonQueryAsync(ct);
+                }
+                await using var explain = new NpgsqlCommand("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+                    + ChannelBridgeService.WithheldIncidentQueuePageSql + "\n"
+                    + ChannelBridgeService.WithheldIncidentQueuePageEndSql, connection);
+                explain.Parameters.AddWithValue("agedAt", now.AddMinutes(-10));
+                explain.Parameters.AddWithValue("pageSize", 64);
+                explain.CommandTimeout = 5;
+                var plan = (string)(await explain.ExecuteScalarAsync(ct))!;
+                Console.WriteLine($"C1591 backlog defaultPlanner={!indexProof}: {plan}");
+                if (indexProof)
+                    plan.ShouldContain("IX_SessionQueuedMessages_AgedChannelWithhold");
+            }
+        }
+
+        var bridge = Bridge(h);
         commands.Armed = true;
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+        await bridge.ScanWithheldChannelIncidentsAsync(ct);
         commands.Armed = false;
 
         await using var verify = Db(schema.ConnectionString);
@@ -421,11 +459,15 @@ public sealed class ChannelInputWithheldIncidentTests
         (index == 1 && commands.Count <= 16).ShouldBeTrue(
             $"index={index} commands={commands.Count} sql={string.Join(" | ", commands.Texts.Take(8))}");
         commands.Texts.ShouldNotContain(sql => sql.Contains("EnvelopeJson", StringComparison.Ordinal));
+        Console.WriteLine($"C1591 backlog first-pass commands={commands.Count}");
+        await bridge.ScanWithheldChannelIncidentsAsync(ct);
+        (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(128,
+            "the cursor must advance past the already stamped oldest page");
     }
 
     [Test]
-    [Timeout(180_000)]
-    public async Task C1591_ProducerPathPagesOneAgedWithhold()
+    [Timeout(120_000)]
+    public async Task C1591_ProducerPathPagesOneAgedWithhold(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -438,27 +480,53 @@ public sealed class ChannelInputWithheldIncidentTests
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.DigestEnabled, true));
         }
         const string body = "family aged withhold 9f3a";
-        var seed = await ProduceWithholdAsync(h, clock, body, chat);
-        clock.Advance(TimeSpan.FromMinutes(10));
-        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(Ct);
+        h.Adapter.DialogAdopted = true;
+        var native = Guid.NewGuid().ToString("N");
+        using var service = Bridge(h, clock);
+        await service.StartAsync(ct);
+        try
+        {
+            h.Messaging.InjectInbound(Message(chat, native, body));
+            await WaitForAsync(async () =>
+            {
+                await using var db = Db(schema.ConnectionString);
+                return await db.SessionQueuedMessages.AnyAsync(m => m.Origin == QueuedMessageOrigin.Channel
+                    && m.AgentSessionId == h.SessionId && m.WithholdCount > 0);
+            });
+            h.Messaging.AcknowledgedCount.ShouldBe(1);
+            clock.Advance(TimeSpan.FromMinutes(10));
+            await WaitForAsync(async () =>
+            {
+                clock.Advance(TimeSpan.FromSeconds(10));
+                await using var db = Db(schema.ConnectionString);
+                return await WithheldIncidentsAsync(db, h.AgentId) == 1;
+            });
+        }
+        finally
+        {
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await service.StopAsync(stop.Token);
+        }
+        h.Adapter.SentInput.ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
 
         await using var verify = Db(schema.ConnectionString);
         var incident = await verify.AgentIncidents.AsNoTracking().SingleAsync(i => i.AgentId == h.AgentId
             && i.FailureReason == "ChannelInputWithheld");
         incident.Kind.ShouldBe(AgentIncidentKind.ChannelReplyLost);
         incident.Severity.ShouldBe(AlertSeverity.Critical);
-        incident.Message.ShouldContain(seed.NativeMessageId);
+        incident.Message.ShouldContain(native);
         incident.Message.ShouldNotContain(body);
         var attention = new AttentionService(verify, h.Runner,
             h.Provider.GetRequiredService<IOptions<SupervisionSettings>>(),
             h.Provider.GetRequiredService<IOptions<DelegationSettings>>(),
             clock, NullLogger<AttentionService>.Instance);
-        var rows = (await attention.GetAsync(Ct, includeProgressProbe: false)).Items
+        var rows = (await attention.GetAsync(ct, includeProgressProbe: false)).Items
             .Where(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == h.AgentId
                 && i.Evidence.Contains("ChannelInputWithheld", StringComparison.Ordinal))
             .ToList();
         rows.Count.ShouldBe(1);
-        rows[0].Evidence.ShouldContain(seed.NativeMessageId);
+        rows[0].Evidence.ShouldContain(native);
 
         var digest = new DigestSettings
         {
@@ -470,16 +538,16 @@ public sealed class ChannelInputWithheldIncidentTests
         var notifier = new IncidentPageNotifier(pageDb,
             new ChatChannelService(pageDb, clock, h.Messaging), Options.Create(digest),
             clock, NullLogger<IncidentPageNotifier>.Instance);
-        await notifier.SweepAsync(Ct);
-        await notifier.SweepAsync(Ct);
+        await notifier.SweepAsync(ct);
+        await notifier.SweepAsync(ct);
         (await pageDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
             && i.FailureReason == "ChannelInputWithheld" && i.HumanNotifiedAt != null)).ShouldBe(1);
         h.Messaging.SentReplies.Count.ShouldBe(1);
     }
 
     [Test]
-    [Timeout(180_000)]
-    public async Task C1591_DeliveredUserPromptStaysQuiet()
+    [Timeout(120_000)]
+    public async Task C1591_DeliveredUserPromptStaysQuiet(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -502,12 +570,12 @@ public sealed class ChannelInputWithheldIncidentTests
                 Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
                 null, null, null, null, null);
             h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], sequence));
-            await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+            await h.Runtime.SyncTranscriptAsync(h.SessionId, ct);
             receipt.TrySetResult(submitted);
         };
         var chat = await h.BindChannelAsync();
         const string body = "delivered family body 9f3a";
-        await Bridge(h, clock).HandleInboundAsync(Message(chat, Guid.NewGuid().ToString("N"), body), Ct);
+        await Bridge(h, clock).HandleInboundAsync(Message(chat, Guid.NewGuid().ToString("N"), body), ct);
         var submitted = await receipt.Task.WaitAsync(TimeSpan.FromSeconds(20));
         await using (var db = Db(schema.ConnectionString))
         {
@@ -517,36 +585,47 @@ public sealed class ChannelInputWithheldIncidentTests
             prompt.Text.ShouldBe(submitted);
         }
         clock.Advance(TimeSpan.FromMinutes(10));
-        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(Ct);
+        await Bridge(h, clock).ScanWithheldChannelIncidentsAsync(ct);
         await using var verify = Db(schema.ConnectionString);
         (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(0);
     }
 
     [Test]
-    public async Task C1591_RestartAfterPruneDoesNotReraise()
+    [Timeout(120_000)]
+    public async Task C1591_RestartAfterPruneDoesNotReraise(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
-        await using var h = await OpenAsync(schema.ConnectionString, clock);
-        var now = clock.GetUtcNow().UtcDateTime;
-        var seed = await SeedAsync(h, acceptedAt: now.AddHours(-2), firstWithheldAt: now.AddMinutes(-10),
-            withholdCount: 1);
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
-        await using (var db = Db(schema.ConnectionString))
+        Guid agentId;
+        Guid sessionId;
+        SeedRow seed;
+        await using (var h = await OpenAsync(schema.ConnectionString, clock))
         {
-            (await WithheldIncidentsAsync(db, h.AgentId)).ShouldBe(1);
-            await db.AgentIncidents.Where(i => i.AgentId == h.AgentId).ExecuteDeleteAsync();
+            agentId = h.AgentId;
+            sessionId = h.SessionId;
+            var now = clock.GetUtcNow().UtcDateTime;
+            seed = await SeedAsync(h, now.AddHours(-2), now.AddMinutes(-10), 1);
+            await Bridge(h).ScanWithheldChannelIncidentsAsync(ct);
+            await using var db = Db(schema.ConnectionString);
+            (await WithheldIncidentsAsync(db, agentId)).ShouldBe(1);
+            await db.AgentIncidents.Where(i => i.AgentId == agentId).ExecuteDeleteAsync();
         }
-        await Bridge(h).ScanWithheldChannelIncidentsAsync(Ct);
+        await using var restarted = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, TimeProvider = clock,
+            PreserveDatabaseOnDispose = true, AttachAgentId = agentId, AttachSessionId = sessionId,
+            Bridge = new ChannelBridgeSettings { Enabled = true, AgedHoldIncidentMinutes = 10 },
+        });
+        await Bridge(restarted).ScanWithheldChannelIncidentsAsync(ct);
         await using var verify = Db(schema.ConnectionString);
-        (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(0);
+        (await WithheldIncidentsAsync(verify, agentId)).ShouldBe(0);
         (await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == seed.InboundId))
             .InputWithheldIncidentAt.ShouldNotBeNull();
     }
 
     [Test]
     [Timeout(60_000)]
-    public async Task C1591_NonShutdownCancellationContinues()
+    public async Task C1591_NonShutdownCancellationContinues(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -580,7 +659,7 @@ public sealed class ChannelInputWithheldIncidentTests
         {
             await loop.WaitAsync(TimeSpan.FromSeconds(5));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             loopError = ex;
         }
@@ -588,12 +667,13 @@ public sealed class ChannelInputWithheldIncidentTests
         (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(1);
         loopError.ShouldBeNull();
         logger.Lines.ShouldContain(line => line.Contains("retrying", StringComparison.OrdinalIgnoreCase));
+        logger.Lines.ShouldContain(line => line.Contains("Raised 1 withheld", StringComparison.Ordinal));
         cts.IsCancellationRequested.ShouldBeTrue();
     }
 
     [Test]
     [Timeout(120_000)]
-    public async Task C1591_FailedBatchRollsBackAndConcurrentHostsStayOnce()
+    public async Task C1591_FailedBatchRollsBackAndConcurrentHostsStayOnce(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
@@ -604,18 +684,29 @@ public sealed class ChannelInputWithheldIncidentTests
         commands.Fault = sql => sql.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal)
             ? new InvalidOperationException("injected incident persistence failure") : null;
         commands.Armed = true;
-        await Should.ThrowAsync<Exception>(() => Bridge(h).ScanWithheldChannelIncidentsAsync(Ct));
+        await Should.ThrowAsync<Exception>(() => Bridge(h).ScanWithheldChannelIncidentsAsync(ct));
         commands.Armed = false;
         await using (var db = Db(schema.ConnectionString))
         {
             (await WithheldIncidentsAsync(db, h.AgentId)).ShouldBe(0);
             (await db.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId)).InputWithheldIncidentAt.ShouldBeNull();
         }
-        await Task.WhenAll(Bridge(h).ScanWithheldChannelIncidentsAsync(Ct),
-            Bridge(h).ScanWithheldChannelIncidentsAsync(Ct));
+        await Task.WhenAll(Bridge(h).ScanWithheldChannelIncidentsAsync(ct),
+            Bridge(h).ScanWithheldChannelIncidentsAsync(ct));
         await using var verify = Db(schema.ConnectionString);
         (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(1);
         (await verify.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId)).InputWithheldIncidentAt.ShouldNotBeNull();
+    }
+
+    private static async Task WaitForAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition()) return;
+            await Task.Delay(25);
+        }
+        throw new TimeoutException("Hosted bridge did not reach the expected durable state");
     }
 
     private static FakeTimeProvider Clock() =>
