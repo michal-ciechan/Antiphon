@@ -151,7 +151,7 @@ internal static class WorktreeNoFollowDelete
     {
         var parentPath = Path.GetDirectoryName(path) ?? throw Failure("open", path);
         using var parent = OpenLinuxDirectory(parentPath);
-        DeleteLinuxName(parent, Path.GetFileName(path), "", protectedRoot);
+        DeleteLinuxName(parent, Path.GetFileName(path), "", protectedRoot, []);
     }
 
     /// <summary>Device and inode of the directory entry itself. A symlink is not followed.</summary>
@@ -230,7 +230,8 @@ internal static class WorktreeNoFollowDelete
     // again (kind, then the bytes of a content-bound file) just before its unlink. Only listed names are
     // unlinked; a name created after the listing is found when the emptied directory is listed again,
     // and the walk stops there with the remainder still in the set-aside.
-    private static void DeleteLinuxName(SafeFileHandle parent, string name, string relative, string? protectedRoot)
+    private static void DeleteLinuxName(SafeFileHandle parent, string name, string relative, string? protectedRoot,
+        List<(SafeFileHandle Directory, string Relative)> open)
     {
         if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var listed)) throw Failure("stat", name);
         var kind = listed.Mode & 0xF000;
@@ -268,16 +269,19 @@ internal static class WorktreeNoFollowDelete
             if (nested && children.Exists(IsRepositoryMarker))
                 throw new NestedRepositoryPreservedException([relative + "/"]);
             approval?.RejectUnapproved(relative, children);
-            foreach (var child in children)
+            if (nested) open.Add((dir, relative));
+            try
             {
-                // The marker check above ran once. A repository created after that listing must stop
-                // the walk before the next name is unlinked.
-                if (nested && LinuxDirectoryHasMarker(dir))
-                    throw new NestedRepositoryPreservedException([relative + "/"]);
-                DeleteLinuxName(dir, child, relative.Length == 0 ? child : relative + "/" + child, protectedRoot);
+                foreach (var child in children)
+                {
+                    // The marker check above ran once. A repository created after that listing, in this
+                    // directory or in any directory above it, must stop the walk before the next name is unlinked.
+                    ThrowIfMarked(open);
+                    DeleteLinuxName(dir, child, relative.Length == 0 ? child : relative + "/" + child, protectedRoot, open);
+                }
+                ThrowIfMarked(open);
             }
-            if (nested && LinuxDirectoryHasMarker(dir))
-                throw new NestedRepositoryPreservedException([relative + "/"]);
+            finally { if (nested) open.RemoveAt(open.Count - 1); }
             if (approval is not null && ListDir(dir).Count != 0)
                 throw new ApprovedTreeRejectedException("set_aside_content_changed");
             if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
@@ -324,6 +328,12 @@ internal static class WorktreeNoFollowDelete
 
     private static bool IsRepositoryMarker(string name) =>
         name.Equals(".git", StringComparison.OrdinalIgnoreCase) || name.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+
+    private static void ThrowIfMarked(List<(SafeFileHandle Directory, string Relative)> open)
+    {
+        foreach (var (directory, relative) in open)
+            if (LinuxDirectoryHasMarker(directory)) throw new NestedRepositoryPreservedException([relative + "/"]);
+    }
 
     private static bool LinuxDirectoryHasMarker(SafeFileHandle dir) =>
         TryStat(Fd(dir), ".git", AtSymlinkNoFollow, out _) || TryStat(Fd(dir), "HEAD", AtSymlinkNoFollow, out _);
