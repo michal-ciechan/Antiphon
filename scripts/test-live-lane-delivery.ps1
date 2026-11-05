@@ -41,7 +41,7 @@ if ($Controls) {
 $previousTemp = $env:TEMP
 try {
     $env:TEMP = '/tmp'
-    $started = & dotnet $tool start $manifestPath --rows ($rows -join ',') --expected-source-sha $source --serial --total-timeout 26m --hard-wall-timeout 29m --keep-outputs
+    $started = & dotnet $tool start $manifestPath --rows ($rows -join ',') --expected-source-sha $source --serial --total-timeout 26m --total-timeout-override-reason 'Bounded live-lane diagnostics retain the 26m execution and 29m wall caps, including controls' --hard-wall-timeout 29m --keep-outputs
     $started | Write-Output
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $match = [regex]::Match(($started -join "`n"),'RUN ([^ ]+) started')

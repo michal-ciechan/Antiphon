@@ -100,7 +100,7 @@ public static class ManifestValidator
                     "refused: checkpoint-total-below-derived: totalTimeoutMinutes must be a positive integer");
             if (manifest.Checkpoints.Any(row => row.EstimatedMinutes is > 0))
             {
-                var derived = RowTimeout.DeriveTotalMinutes(manifest.Checkpoints.Select(row => row.EstimatedMinutes ?? 0), null);
+                var derived = RowTimeout.DeriveMinimumTotalMinutes(manifest.Checkpoints.Select(row => row.EstimatedMinutes ?? 0));
                 if (explicitTotal < derived && string.IsNullOrWhiteSpace(manifest.Timeouts.TotalOverrideReason))
                     throw new ManifestValidationException("total-timeout",
                         $"refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes {explicitTotal} is below derived {derived}");

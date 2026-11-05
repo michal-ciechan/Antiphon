@@ -15,10 +15,16 @@ public static class RowTimeout
     {
         if (explicitTotal is > 0)
             return explicitTotal.Value;
+        return Math.Max(30, DeriveMinimumTotalMinutes(estimatedMinutes));
+    }
+
+    // The 30-minute floor is a default allowance, not a minimum for explicit totals.
+    public static int DeriveMinimumTotalMinutes(IEnumerable<int> estimatedMinutes)
+    {
         try
         {
             var sum = estimatedMinutes.Sum();
-            return Math.Max(30, checked(2 * sum + 10));
+            return checked(2 * sum + 10);
         }
         catch (OverflowException)
         { throw new ManifestValidationException("total-timeout", "derived execution budget overflows"); }

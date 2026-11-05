@@ -4,7 +4,9 @@ Original Code owner: c3ba1792 (resumes 64fb3f5d). Task base fbbb008824a8a168113e
 
 ## Implementation
 
-S1 retains the committed importer, YAML and CLI refusal of an explicit total below max(30, 2*sum(selected estimates)+10), with an explicit nonblank override reason. Preserve flushed TRX on scheduler cancellation. S2 caps the fake-clock pump's final advance at the owner deadline, then waits for the pending continuation on real time within the existing bound. Keep Narrower_parent_deadlines_win's seconds+2 assertion. A gated continuation with 200 ms and 700 ms steps observes the exact five-second boundary.
+S1 retains the committed importer, YAML and CLI refusal of an explicit total below 2*sum(selected estimates)+10, with an explicit nonblank override reason. Only the default total has the max(30, ...) floor. Preserve flushed TRX on scheduler cancellation. S2 caps the fake-clock pump's final advance at the owner deadline, then waits for the pending continuation on real time within the existing bound. Keep Narrower_parent_deadlines_win's seconds+2 assertion. A gated continuation with 200 ms and 700 ms steps observes the exact five-second boundary.
+
+Round 1 blockers and the caller's bounded repair verification are specified in [the repair plan](2026-11-05-card-1720-round1-repair.md). Its checkpoint table applies to repair e3c30656; the original whole-Unit V-4 gate below is not discharged by that repair scope.
 
 ## Performance budget
 
