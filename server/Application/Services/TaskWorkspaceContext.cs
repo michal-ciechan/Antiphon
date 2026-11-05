@@ -22,6 +22,22 @@ public sealed record TaskWorkspaceContext(DesktopWorkspaceKind Kind, Guid? Bindi
 
 public sealed class TaskWorkspaceContextResolver(AppDbContext db)
 {
+    /// <summary>Re-read the persisted owner after an I/O/lease gap; a caller's stale row is never authority.</summary>
+    public async Task<TaskWorkspaceContext> ResolveCurrentAsync(AgentTask task, CancellationToken ct)
+    {
+        var current = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == task.Id, ct);
+        if (current is null || current.DesktopWorkspaceKind != task.DesktopWorkspaceKind
+            || current.TaskRefWorkspaceBindingId != task.TaskRefWorkspaceBindingId
+            || current.RepoPath != task.RepoPath || current.WorktreePath != task.WorktreePath
+            || current.WorktreeBranch != task.WorktreeBranch || current.Attempt != task.Attempt
+            || current.WorktreeBaseSha != task.WorktreeBaseSha || current.WorktreeBaseRef != task.WorktreeBaseRef
+            || current.WorktreeBaseSource != task.WorktreeBaseSource || current.WorktreeBaseTaskId != task.WorktreeBaseTaskId
+            || current.ProgressBaselineJson != task.ProgressBaselineJson
+            || current.RunnerId != task.RunnerId || current.RemoteWorktreePath != task.RemoteWorktreePath)
+            throw Refuse("ref_only_binding_state_changed");
+        return await ResolveAsync(current, ct);
+    }
+
     public async Task<TaskWorkspaceContext> ResolveAsync(AgentTask task, CancellationToken ct)
     {
         if (!Enum.IsDefined(task.DesktopWorkspaceKind))

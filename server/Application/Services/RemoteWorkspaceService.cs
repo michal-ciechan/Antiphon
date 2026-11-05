@@ -18,17 +18,11 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-0604 D-15. The desktop half of the mirror-worktree design for remote ordinary tasks.
 ///
-/// The DESKTOP worktree stays canonical: it is created exactly as it is today, it is what
-/// <see cref="AgentTask.WorktreePath"/> names, and landing, retirement, residue and progress
-/// accounting all keep reading it. The branch on origin is the unit of exchange, and the runner
-/// holds a working copy of it. Nothing here is ever the only copy of anything:
-///
-///   create desktop worktree -> push branch -> mirror on runner -> session works and pushes
-///   -> settlement fast-forwards the desktop worktree from origin -> land as usual.
-///
-/// The sync is fast-forward ONLY. A diverged branch or a dirty desktop tree is a settlement
-/// warning and the task keeps its report; it is never a reset, because a reset would silently
-/// throw away whichever side the operator actually wanted.
+/// Checkout tasks retain their registered desktop checkout. Recorded RefOnly tasks own a durable
+/// repository/ref binding and an identity-only WorktreePath; no desktop checkout is created.
+/// Both strategies exchange exact commits through origin and use the same publication, ancestry,
+/// reservation and repository-lease engine. Checkout advances by clean FF; RefOnly advances by
+/// expected-old CAS. Neither strategy resets or overwrites divergent work.
 /// </summary>
 public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 {
@@ -43,7 +37,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly int _remotePrepPushBudgetMinutes;
     private readonly bool _workspaceSlots;
     private readonly WorkspaceSlotRoleGate _roleGate;
-    private readonly TaskWorkspaceContextResolver? _workspaceContexts;
+    private readonly RefOnlyDesktopWorkspaceService? _refWorkspaces;
     internal Action? BeforeRemoveMirrorCommand { get; set; }
     internal Func<string, CancellationToken, Task>? SyncBoundaryAsync { get; set; }
 
@@ -75,7 +69,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         _workspaceSlots = configured.WorkspaceSlotsEnabled;
         // CARD-0824 S1c S-3: the flag stays restart-only (IOptions); only the role list is read live, from the monitor.
         _roleGate = roleGate ?? new WorkspaceSlotRoleGate(monitor, NullLogger<WorkspaceSlotRoleGate>.Instance);
-        _workspaceContexts = workspaceContexts;
+        if (workspaceContexts is not null && progressGit is not null && leases is not null)
+            _refWorkspaces = new(workspaceContexts, git, progressGit, leases);
     }
 
     /// <summary>
@@ -528,13 +523,13 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         bool singleAttempt = false)
     {
         if (singleAttempt || _leaseWaiters is null)
-            return await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt);
+            return WithWorkspace(task, await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt));
         var waiting = false;
         try
         {
             var result = await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt);
             waiting = result.Reason == RemoteSettlementSyncReasons.LeaseWaiting;
-            return result;
+            return WithWorkspace(task, result);
         }
         finally
         {
@@ -557,13 +552,25 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (_progressGit is null || _leases is null)
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
 
-        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
+        var snapshot = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+        var baseline = snapshot?.Primary;
         if (baseline is null || !GitObjectId.IsFull(baseline.LocalSha)
             || baseline.Remote.EndpointFingerprint is not { Length: > 0 })
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.BaselineUnavailable, fullRef);
         if (!string.Equals(baseline.FullRef, fullRef, StringComparison.Ordinal))
             return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch, fullRef);
-        if ((baseline.OwnerTaskId is Guid owner && owner != task.Id)
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            if (snapshot!.SchemaVersion != 2 || baseline.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+                || baseline.TaskRefWorkspaceBindingId is null
+                || baseline.TaskRefWorkspaceBindingId != task.TaskRefWorkspaceBindingId)
+                return Outcome(RemoteSettlementSyncState.Refused, "ref_only_baseline_invalid", fullRef);
+            if (_refWorkspaces is null)
+                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
+        }
+        else if (task.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || task.TaskRefWorkspaceBindingId is not null)
+            return Outcome(RemoteSettlementSyncState.Refused, "desktop_workspace_binding_contradictory", fullRef);
+        else if ((baseline.OwnerTaskId is Guid owner && owner != task.Id)
             || string.IsNullOrWhiteSpace(task.WorktreePath)
             || string.IsNullOrWhiteSpace(baseline.RegisteredCheckout)
             || !PathsEqual(task.WorktreePath, baseline.RegisteredCheckout))
@@ -647,7 +654,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         var b = baseline.LocalSha;
         var fingerprint = baseline.Remote.EndpointFingerprint!;
 
-        var before = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        var before = await ValidateDesktopAsync(task, baseline, fullRef, null, ct);
         if (before.Refusal is { } refused)
             return refused with { FullRef = fullRef, BaselineSha = b };
         var l0 = before.Head!;
@@ -787,6 +794,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             }
         }
 
+        if (SyncBoundaryAsync is not null) await SyncBoundaryAsync("before-lease", ct);
         var (acquired, acquireSpent) = await WhileLeaseBusyAsync(
             task.Id, baseline.CanonicalCommonDirectory,
             () => _leases!.TryAcquireAsync(
@@ -799,7 +807,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 fullRef, b, s, l0, observationRef: observed.ObservationRef,
                 fingerprint: observed.EndpointFingerprint ?? fingerprint) with { SourceDescends = true });
 
-        var under = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            && !_leases!.Owns(lease, baseline.CanonicalCommonDirectory))
+            return Outcome(RemoteSettlementSyncState.Refused, "ref_only_repository_lease_required", fullRef, b, s);
+        if (SyncBoundaryAsync is not null) await SyncBoundaryAsync("under-lease", ct);
+        var under = await ValidateDesktopAsync(task, baseline, fullRef, before.Context, ct);
         if (under.Refusal is { } refusedUnder)
             return refusedUnder with { FullRef = fullRef, BaselineSha = b, RemoteSha = s };
         var l = under.Head!;
@@ -814,7 +826,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation, fullRef, b, s);
         }
         var pin = SettlementPin(task.Id);
-        var update = await _git.RunAsync(repo, ["update-ref", pin, s], ct);
+        var update = await _git.RunAsync(repo, task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? ["update-ref", "--no-deref", pin, s] : ["update-ref", pin, s], ct);
         if (!update.Succeeded)
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s);
 
@@ -850,16 +863,24 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                     fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
             }
 
-            var merge = await _git.RunAsync(task.WorktreePath!, ["-c", "merge.autoStash=false", "merge", "--ff-only", s], ct);
-            if (!merge.Succeeded)
-                return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.MergeFailed, fullRef, b, s, l);
+            if (under.Context is { } context)
+            {
+                if (!await _refWorkspaces!.AdvanceAsync(context, lease, l, s, ct))
+                    return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.ChangedDuringValidation, fullRef, b, s, l);
+            }
+            else
+            {
+                var merge = await _git.RunAsync(task.WorktreePath!, ["-c", "merge.autoStash=false", "merge", "--ff-only", s], ct);
+                if (!merge.Succeeded)
+                    return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.MergeFailed, fullRef, b, s, l);
+            }
         }
 
         // Postconditions: the same registered checkout, on the same branch, clean, at exactly S.
         ValidatedCheckout after;
         try
         {
-            after = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+            after = await ValidateDesktopAsync(task, baseline, fullRef, before.Context, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
         {
@@ -939,7 +960,30 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private static string LeaseReason(bool spent) =>
         spent ? RemoteSettlementSyncReasons.LeaseBusy : RemoteSettlementSyncReasons.LeaseWaiting;
 
-    private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head);
+    private sealed record ValidatedCheckout(RemoteSettlementSyncResult? Refusal, string? Head,
+        TaskWorkspaceContext? Context = null);
+
+    private async Task<ValidatedCheckout> ValidateDesktopAsync(AgentTask task, ProgressSourceBaseline baseline,
+        string fullRef, TaskWorkspaceContext? expected, CancellationToken ct)
+    {
+        if (task.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly)
+            return await ValidateCheckoutAsync(task, baseline, fullRef, ct);
+        try
+        {
+            var observed = await _refWorkspaces!.InspectAsync(task, baseline, expected, ct);
+            return new(null, observed.Sha, observed.Context);
+        }
+        catch (ConflictException ex)
+        {
+            return new(Outcome(RemoteSettlementSyncState.Refused, ex.Code), null);
+        }
+    }
+
+    private static RemoteSettlementSyncResult WithWorkspace(AgentTask task, RemoteSettlementSyncResult result) => result with
+    {
+        DesktopWorkspaceKind = task.DesktopWorkspaceKind,
+        TaskRefWorkspaceBindingId = task.TaskRefWorkspaceBindingId,
+    };
 
     /// <summary>
     /// CARD-0657 D-2/D-3. The recorded endpoint, repository, registration, symbolic HEAD, branch
