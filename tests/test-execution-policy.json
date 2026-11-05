@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "069d68cae5af52e9769ce11bdc27426a8f1910f63803f2d8bc183a0c8fe92d32",
+  "policyHash": "0686a97cccbec3d421b2298b47ff64aaa63d923d654252e2ea44bd3d1532487b",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -908,6 +908,16 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the workspace slot process scan reads /proc/*/cwd and /proc/*/fd of real children. The case remains required on Linux.",
           "owner": "CARD-0824"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1677RetentionEngineTests",
+          "methods": [
+            "Doubt_inside_collapsed_ignored_repository_keeps_the_tree"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Unix permissions, symbolic links and control-character filenames inside a scratch nested repository. The case remains required on Linux.",
+          "owner": "CARD-1718"
         },
         {
           "suite": "session-runner",
