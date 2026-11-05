@@ -141,10 +141,9 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
         Git(Clone, "worktree", "list", "--porcelain").Replace("\r\n", "\n").Split('\n').Contains("worktree " + path);
 
     /// <summary>
-    /// Commit ignore rules for <c>node_modules/</c> and <c>dist/</c>, push them, then plant ignored
-    /// <c>bin/.env</c>, <c>node_modules/.env</c> and <c>dist/credentials/token</c>. Status stays clean.
+    /// Publish ignore rules, then plant exactly one secret so another protected name cannot mask it.
     /// </summary>
-    public void PublishIgnoredSecrets(string path, string branch)
+    public void PublishIgnoredSecret(string path, string branch, string relative)
     {
         Git(path, "config", "user.email", "c1677@localhost");
         Git(path, "config", "user.name", "c1677");
@@ -154,9 +153,7 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
         Git(path, "push", "-q", OriginGit, "HEAD:refs/heads/" + branch);
         // The runner's unpushed check reads origin's remote-tracking ref, not the bare URL just pushed.
         Git(Clone, "fetch", "origin", "refs/heads/" + branch + ":refs/remotes/origin/" + branch);
-        WriteSecret(path, "bin/.env", "bin-env-secret\n");
-        WriteSecret(path, "node_modules/.env", "nm-env-secret\n");
-        WriteSecret(path, "dist/credentials/token", "dist-token-secret\n");
+        WriteSecret(path, relative, "preserve-secret\n");
         Git(path, "status", "--porcelain", "--untracked-files=all").Trim().ShouldBeEmpty();
     }
 

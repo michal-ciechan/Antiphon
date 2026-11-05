@@ -838,16 +838,22 @@ public sealed class C1677RetentionServerTests
 
     [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
-    public async Task Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay(CancellationToken ct)
+    [Arguments("bin/.env")]
+    [Arguments("node_modules/.env")]
+    [Arguments("dist/credentials/token")]
+    [Arguments("bin/tls.pem")]
+    [Arguments("bin/tls.pem/token")]
+    [Arguments("bin/id_ed25519")]
+    [Arguments("bin/.aws/credentials")]
+    [Arguments("bin/.docker/config.json")]
+    public async Task Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay(string relative, CancellationToken ct)
     {
         // CARD-1718 A-D3 round 2 (review 47d31366 B-1, B-2). Producer to the real runner retention
-        // path. Ignored bin/.env, node_modules/.env and dist/credentials/token survive the first
-        // pass and the replay after a lost reply. Nothing is moved or removed.
+        // path. Each secret is alone, and survives the first pass and a lost-reply replay.
         await using var world = await C1677RetentionTransportWorld.StartAsync();
         var (id, path) = await world.SeedMirroredTaskAsync();
-        world.PublishIgnoredSecrets(path, "feat/card-task-a1677001");
-        var secrets = new[] { "bin/.env", "node_modules/.env", "dist/credentials/token" };
-        var bytes = secrets.ToDictionary(secret => secret, secret => File.ReadAllBytes(Path.Combine(path, secret)));
+        world.PublishIgnoredSecret(path, "feat/card-task-a1677001", relative);
+        var bytes = File.ReadAllBytes(Path.Combine(path, relative));
         world.DropNextReply = true;
 
         await world.TickAsync(ct);
@@ -864,8 +870,7 @@ public sealed class C1677RetentionServerTests
         world.Moves(path).ShouldBe(0);
         world.Removes().ShouldBe(0);
         Directory.Exists(path).ShouldBeTrue();
-        foreach (var secret in secrets)
-            File.ReadAllBytes(Path.Combine(path, secret)).ShouldBe(bytes[secret]);
+        File.ReadAllBytes(Path.Combine(path, relative)).ShouldBe(bytes);
     }
 
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
