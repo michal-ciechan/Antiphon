@@ -105,6 +105,10 @@ public sealed record RemoteSyncEvidence(
     bool MirrorPushed = false,
     string? MirrorInspection = null)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
+
     public static RemoteSyncEvidence From(int attempt, RemoteSettlementSyncResult result) =>
         new(attempt, result.State, result.FullRef, result.RemoteSha,
             result.Confirmed ? result.DesktopAfterSha : null, result.Reason,

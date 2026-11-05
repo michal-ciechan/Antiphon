@@ -59,6 +59,27 @@ public sealed class C0824RefOnlySyncTests
             var progress = new TaskCompletionProgressService(w.Git, workspaceContexts: f.Contexts);
             var evaluation = await progress.EvaluateAsync(f.Task, "", result, default);
             evaluation.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved, "evaluation-progress-at-S");
+            var evidence = TaskProgressJson.TryReadEvidence(TaskProgressJson.SerializeEvidence(evaluation.Evidence))!.RemoteSync!;
+            var original = f.Task.ProgressBaselineJson;
+            var snapshot = TaskProgressJson.TryReadBaseline(original)!;
+            f.Task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(snapshot with { SchemaVersion = 999 });
+            await f.Db.SaveChangesAsync();
+            var unsupported = await progress.EvaluateAsync(f.Task, "", result, default);
+            f.Task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(snapshot with
+            {
+                Primary = snapshot.Primary with { LocalSha = source },
+            });
+            await f.Db.SaveChangesAsync();
+            var wrongBase = await progress.EvaluateAsync(f.Task, "", result, default);
+            f.Task.ProgressBaselineJson = original;
+            await f.Db.SaveChangesAsync();
+            var wrongRef = await progress.EvaluateAsync(f.Task, "", result with { FullRef = "refs/heads/foreign" }, default);
+            evaluation.ShouldSatisfyAllConditions(
+                _ => evidence.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly, "evaluation-mode-durable"),
+                _ => evidence.TaskRefWorkspaceBindingId.ShouldBe(f.Binding.Id, "evaluation-binding-durable"),
+                _ => unsupported.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate, "evaluation-baseline-version"),
+                _ => wrongBase.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate, "evaluation-baseline-base"),
+                _ => wrongRef.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate, "evaluation-prepared-ref"));
             await w.RunAsync(w.Desktop, "update-ref", w.FullRef, w.Baseline, source);
             (await progress.EvaluateAsync(f.Task, "", result, default)).Assessment
                 .ShouldBe(CompletionProgressAssessment.Indeterminate, "evaluation-reobserves-ref");
