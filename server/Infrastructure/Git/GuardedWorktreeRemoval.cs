@@ -102,7 +102,11 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 else
                 {
-                    // CARD-1717 D-4: the receipt names a path. Delete only the directory inode and listing it recorded.
+                    // CARD-1717 D-1: a resumed set-aside is a later pass. Re-read after the registration await,
+                    // then D-4: the receipt names a path. Delete only the directory inode and listing it recorded.
+                    // Nothing below awaits before the delete.
+                    var resumed = await LiveAuthorizationAsync(request, ct);
+                    if (resumed is not null) return Finish(resumed, "set-aside: " + aside);
                     var custody = CustodyOf(pending);
                     if (custody is not null) return Finish(custody, "set-aside: " + aside);
                     try { DeleteApproved(aside, pending); }
@@ -185,6 +189,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
                 var bound = await BindContentAsync(request, source.WorktreePath, second, retainedFiles, ct);
                 if (bound.Reason is not null) return Finish(bound.Reason);
+                // CARD-1717 D-1: the inspections and the content binding above are awaits. Re-read the switch
+                // last, before the receipt and the move-aside; nothing awaits between this read and the rename.
+                reason = await LiveAuthorizationAsync(request, ct);
+                if (reason is not null) return Finish(reason);
                 var identity = WorktreeNoFollowDelete.DirectoryIdentity(source.WorktreePath);
                 var seal = WorktreeSetAside.ListingSeal(source.WorktreePath);
                 var recorded = new WorktreeSetAsideRecord(source.WorktreePath, aside, request.GitDirectory,
@@ -205,6 +213,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var drifted = CustodyOf(recorded);
                 if (drifted is null) drifted = await LateUntrackedAsync(aside, final.Snapshot!, ct);
                 if (drifted is null) drifted = await TrackedBytesAsync(aside, request, ct);
+                // CARD-1717 D-1: those checks are awaits and the unregister drops Git's entry. A switch turned off
+                // here puts the tree back; nothing awaits between this read and the unregister command.
+                if (drifted is null) drifted = await LiveAuthorizationAsync(request, ct);
                 if (drifted is not null)
                 {
                     var restored = await RestoreRegisteredTreeAsync();
@@ -228,8 +239,15 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored is null ? Finish(failure) : Finish(restored, "set-aside: " + aside);
                 }
-                // CARD-1717 D-2/D-3: after the registration is gone the tree is held, not put back.
-                // A nested repository that appeared in this window still falls through to the delete.
+                // CARD-1717 D-1: unregister is an await. Re-read before the set-aside delete, then D-2/D-3:
+                // after the registration is gone the tree is held, not put back. A nested repository that
+                // appeared in this window still falls through to the delete. Nothing below awaits before it.
+                var stopped = await LiveAuthorizationAsync(request, ct);
+                if (stopped is not null)
+                {
+                    directoryGone = IsAbsent(source.WorktreePath);
+                    return Finish(stopped, "set-aside: " + aside);
+                }
                 var held = CustodyOf(recorded);
                 if (held is not null)
                 {
@@ -357,6 +375,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     ["show-ref", "--verify", "--hash", source.SourceFullRef], ct);
                 if (!current.Succeeded || current.Output.Trim() != request.ExpectedSourceSha)
                     return Refuse("source_changed");
+                // CARD-1717 D-1: the ref reads are awaits. Re-read before the local branch delete.
+                var live = await LiveAuthorizationAsync(request, ct);
+                if (live is not null) return Refuse(live);
                 var deleted = await git.RunAsync(source.RepositoryPath,
                     ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
                 if (!deleted.Succeeded) return Refuse("branch_delete_failed");
@@ -370,6 +391,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         {
             return Refuse("cleanup_inspection_error");
         }
+    }
+
+    /// <summary>CARD-1717 D-1. Null when this request has no live gate, or the gate still allows the step.</summary>
+    private static async Task<string?> LiveAuthorizationAsync(WorktreeRemovalRequest request, CancellationToken ct)
+    {
+        if (request.LiveAuthorization is null) return null;
+        return await request.LiveAuthorization(ct);
     }
 
     private async Task<string?> AuthorityAsync(WorktreeRemovalRequest request, CancellationToken ct, bool refreshRemote = true)
