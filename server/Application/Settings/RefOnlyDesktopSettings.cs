@@ -46,7 +46,7 @@ public static class RefOnlyDesktopSettingsRegistration
                     break;
                 case "runnerids":
                     var entries = child.GetChildren().ToArray();
-                    if (child.Value is not null && child.Value != "" || entries.Length == 0 && child.Value is null
+                    if (child.Value is not null
                         || entries.Where((entry, index) => entry.Key != index.ToString(System.Globalization.CultureInfo.InvariantCulture)
                             || entry.GetChildren().Any() || string.IsNullOrWhiteSpace(entry.Value)).Any())
                         options.ConfigurationErrors.Add(key + " must be an array of nonempty runner ids.");

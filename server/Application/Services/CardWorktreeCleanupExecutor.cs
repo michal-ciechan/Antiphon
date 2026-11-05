@@ -20,11 +20,15 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? BeforeOutcomeAsync { get; set; }
+    internal Func<string, Guid, CancellationToken, Task>? DesktopBoundaryAsync { get; set; }
 
     public async Task<WorktreeRemoval> TryAsync(Guid endpointId, Guid? runId, CancellationToken ct)
     {
         var endpoint = await db.CardWorktreeCleanupEndpoints.Include(e => e.Target).ThenInclude(t => t.Cleanup)
             .SingleAsync(e => e.Id == endpointId, ct);
+        var entry = endpoint.OperationId is null ? "card-admission" : "card-replay";
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:" + entry, endpoint.Target.TaskId, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:" + entry, endpoint.Target.TaskId, ct);
         if (endpoint.State == CardWorktreeCleanupEndpointState.Complete)
             return new(endpoint.RegistrationRemoved == true, endpoint.DirectoryRemoved == true, endpoint.BranchRemoved == true, null);
         // D-2: Execute, preview and cohort bind every destructive entry, including an already admitted replay.
@@ -71,6 +75,8 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         if (reason is not null) return await RefuseAsync(endpoint, reason, ct);
         var digest = CardDoneArtifactPreservation.Digest(task.Result);
         if (BeforeIntentAsync is not null) await BeforeIntentAsync(ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:card-intent", task.Id, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:card-intent", task.Id, ct);
 
         // All slow inspection finished above. This lock is shared with launch admission;
         // card writers serialize through the card row. There is no Git or network I/O here.

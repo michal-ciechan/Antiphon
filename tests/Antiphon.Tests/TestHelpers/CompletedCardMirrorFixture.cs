@@ -41,6 +41,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public Func<CancellationToken, Task>? BeforeIntent { get; set; }
     public Func<CancellationToken, Task>? AfterIntent { get; set; }
     public Func<CancellationToken, Task>? BeforeInspection { get; set; }
+    public Func<int, Guid?, Guid?>? LiveStoreOverride { get; set; }
     public bool FailReceiptImport { get; set; }
     // Returns a refusal instead of calling the inner client and asserts that reply has Complete=false.
     // RemovalRequests counts entries to this wrapper, including intercepted and
@@ -396,6 +397,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     private sealed class HttpFactory : IHttpClientFactory { public HttpClient CreateClient(string name) => new(); }
     private sealed class ClientDirectory(ISessionRunnerDirectory inner, CompletedCardMirrorFixture world) : ISessionRunnerDirectory
     {
+        private int _storeReads;
         public ISessionRunnerClient Local => inner.Local;
         public ISessionRunnerClient Resolve(string? id) => inner.Resolve(id);
         public ICompletedCardWorkspaceClient CompletedClient(string id) => new FaultClient(() => (ICompletedCardWorkspaceClient)inner.Resolve(id), world);
@@ -403,7 +405,11 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => inner.GetBindingAsync(id, ct);
         public Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct) => inner.GetInventoryAsync(id, ct);
         public IReadOnlyList<string> KnownRunnerIds => inner.KnownRunnerIds;
-        public Guid? GetLiveStoreId(string? id) => inner.GetLiveStoreId(id);
+        public Guid? GetLiveStoreId(string? id)
+        {
+            var actual = inner.GetLiveStoreId(id);
+            return world.LiveStoreOverride?.Invoke(++_storeReads, actual) ?? actual;
+        }
     }
     // Resolves the live client per call, so a disconnected runner fails at the call as in production.
     private sealed class FaultClient(Func<ICompletedCardWorkspaceClient> inner, CompletedCardMirrorFixture world) : ICompletedCardWorkspaceClient
