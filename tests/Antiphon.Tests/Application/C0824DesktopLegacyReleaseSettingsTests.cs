@@ -34,6 +34,7 @@ public sealed class C0824DesktopLegacyReleaseSettingsTests
         defaults.RefusedRecheckMinutes.ShouldBe(60);
         defaults.RefusedRecheckMaxHours.ShouldBe(24);
         defaults.MaxRefusedAttempts.ShouldBe(5);
+        defaults.SalvageRefRetentionDays.ShouldBe(30);
         defaults.RecurringJobId.ShouldBe("antiphon:desktop-legacy-release");
         defaults.Cron.ShouldBe("15 * * * *");
 
@@ -64,6 +65,8 @@ public sealed class C0824DesktopLegacyReleaseSettingsTests
     [Arguments("RefusedRecheckMinutes", "0", "60")]
     [Arguments("RefusedRecheckMaxHours", "0", "24")]
     [Arguments("MaxRefusedAttempts", "0", "5")]
+    [Arguments("SalvageRefRetentionDays", "0", "30")]
+    [Arguments("SalvageRefRetentionDays", "3651", "3650")]
     public async Task Out_of_range_values_are_refused(string key, string value, string valid)
     {
         var validator = new WorktreeLegacyReleaseSettingsValidator();

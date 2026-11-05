@@ -15,4 +15,7 @@ public sealed record WorktreeRemovalRequest(WorktreeRemovalPurpose Purpose,
     // CARD-1717 D-1. Re-read immediately before each irreversible step. Null skips the gate
     // (caller-filed, publication, local merge); a system:desktop-legacy-policy release without it is
     // refused (B-B-1). A reason preserves the bytes.
-    Func<CancellationToken, ValueTask<string?>>? LiveAuthorization = null);
+    Func<CancellationToken, ValueTask<string?>>? LiveAuthorization = null,
+    // CARD-1708. Set for a system:desktop-legacy-policy release: before anything moves, each commit only the tree's
+    // HEAD reflog or its branch reflog reaches gets refs/antiphon/salvage/<SalvageScope>/<sha>; a failure refuses.
+    string? SalvageScope = null);

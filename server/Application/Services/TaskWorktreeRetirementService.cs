@@ -469,7 +469,9 @@ public sealed class TaskWorktreeRetirementService
             HasDeletionIntent: true, CardDoneEndpointId: endpointId,
             LiveAuthorization: system
                 ? token => new ValueTask<string?>(LegacyReleaseAdmissionAsync(systemTaskId, pace: true, token))
-                : null);
+                : null,
+            // CARD-1708: only the automatic release salvages reflog-only commits before it removes the tree.
+            SalvageScope: system ? systemTaskId.ToString("D") : null);
         var removed = await _worktrees.TryRemoveAsync(request, ct);
         await _commands.RecordComponentAsync(attempt.Id, removed.DirectoryGone, null, null, removed.Residue, ct);
         await _commands.RecordComponentAsync(attempt.Id, null, removed.Unregistered, null, removed.Residue, ct);
