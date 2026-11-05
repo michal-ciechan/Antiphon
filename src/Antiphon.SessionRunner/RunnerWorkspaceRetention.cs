@@ -529,11 +529,68 @@ public sealed class RunnerWorkspaceRetention
             {
                 if (IgnoredSecretFloor.Matches(relative) && (secret is null || string.CompareOrdinal(relative, secret) < 0))
                     secret = relative;
+                // Git collapses an ignored nested repository to "dir/", hiding every file in it.
+                // Inspect its actual descendants rather than treating that directory name as clean.
+                if (relative.EndsWith('/'))
+                {
+                    var nested = ReadCollapsedIgnoredDirectory(path, relative, ct);
+                    if (nested.Doubt)
+                        return (true, null);
+                    if (nested.Secret is { } found && (secret is null || string.CompareOrdinal(found, secret) < 0))
+                        secret = found;
+                }
             }
             catch (RegexMatchTimeoutException)
             {
                 return (true, null);
             }
+        }
+        return (false, secret);
+    }
+
+    private static (bool Doubt, string? Secret) ReadCollapsedIgnoredDirectory(string root, string relative, CancellationToken ct)
+    {
+        string? secret = null;
+        var started = Stopwatch.GetTimestamp();
+        var options = new EnumerationOptions { IgnoreInaccessible = false, AttributesToSkip = 0 };
+        try
+        {
+            // Check every ancestor before entering the collapsed directory, including ignored parents.
+            var directory = root;
+            foreach (var segment in relative.TrimEnd('/').Split('/'))
+            {
+                directory = Path.Combine(directory, segment);
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    return (true, null);
+            }
+            var pending = new Stack<string>();
+            pending.Push(directory);
+            while (pending.TryPop(out directory))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(10))
+                    return (true, null);
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", options))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(10))
+                        return (true, null);
+                    var name = IgnoredSecretFloor.Normalize(Path.GetRelativePath(root, entry));
+                    if (WorkspaceRetentionNames.HasControlCharacter(name) || IgnoredSecretFloor.Escapes(name))
+                        return (true, null);
+                    var attributes = File.GetAttributes(entry);
+                    if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+                        return (true, null);
+                    if ((attributes & FileAttributes.Directory) != 0)
+                        pending.Push(entry);
+                    else if (IgnoredSecretFloor.Matches(name) && (secret is null || string.CompareOrdinal(name, secret) < 0))
+                        secret = name;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or RegexMatchTimeoutException)
+        {
+            return (true, null);
         }
         return (false, secret);
     }
