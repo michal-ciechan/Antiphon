@@ -73,4 +73,60 @@ public sealed class WorktreeNoFollowDeleteTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    // CARD-1717 B-3: a repository marker that appears after the walk has listed a directory must
+    // stop the walk. The Linux deleter used to check markers once, then unlink the rest.
+    [Test]
+    public void C1717_B3_LateRepositoryMarkerStopsTheWalk()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("The late-marker walk is the Linux no-follow deleter.");
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), "c1717-b3-marker-" + Guid.NewGuid().ToString("N"));
+        var tree = Path.Combine(root, "tree");
+        var child = Path.Combine(tree, "child");
+        Directory.CreateDirectory(child);
+        const int count = 20000;
+        for (var i = 0; i < count; i++)
+            File.WriteAllText(Path.Combine(child, "f" + i), "nested repository working bytes");
+        var observed = Directory.EnumerateFiles(child).First();
+        var remainingAtMarker = -1;
+        var wrote = false;
+        Exception? writerError = null;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var writer = new Thread(() =>
+        {
+            try
+            {
+                while (File.Exists(observed) && !stop.IsCancellationRequested) Thread.Yield();
+                if (stop.IsCancellationRequested) return;
+                File.WriteAllText(Path.Combine(child, ".git"), "gitdir: private-repo\n");
+                wrote = true;
+                remainingAtMarker = Directory.GetFiles(child, "f*").Length;
+            }
+            catch (Exception ex) { writerError = ex; }
+        });
+        writer.Start();
+        Exception? error = null;
+        try { WorktreeNoFollowDelete.Delete(tree, preserveNestedRepositories: true); }
+        catch (Exception ex) { error = ex; }
+        finally { stop.Cancel(); writer.Join(); }
+        try
+        {
+            writerError.ShouldBeNull(writerError?.ToString());
+            wrote.ShouldBeTrue("the marker writer never observed a deletion");
+            remainingAtMarker.ShouldBeGreaterThan(1000);
+            var remaining = Directory.Exists(child) ? Directory.GetFiles(child, "f*").Length : 0;
+            var lost = remainingAtMarker - remaining;
+            lost.ShouldBeLessThanOrEqualTo(8, $"deleted {lost} files after the marker appeared ({error})");
+            File.Exists(Path.Combine(child, ".git")).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
