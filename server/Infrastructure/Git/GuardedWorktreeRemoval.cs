@@ -223,7 +223,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 string? failure;
                 setAsideDetail = "set-aside: " + aside;
-                try { (failure, outcome) = await UnregisterAsync(source, request.GitDirectory, clock, ct); }
+                // CARD-0824 S4a round 3 Review B-1: unregister awaits its own reads before the entry's move; the
+                // switch is read again there, after them.
+                string? stoppedAtMove = null;
+                try
+                {
+                    using (LandingGit.GateDestructiveStep(async c => stoppedAtMove = await LiveAuthorizationAsync(request, c)))
+                        (failure, outcome) = await UnregisterAsync(source, request.GitDirectory, clock, ct);
+                }
                 catch
                 {
                     // The admin move may have completed before its acknowledgement or subsequent
@@ -233,9 +240,15 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     throw;
                 }
                 unregistered = failure is null;
+                if (stoppedAtMove is not null)
+                {
+                    // Nothing moved; this is a refusal, not a failed command.
+                    outcome = null;
+                    failure = stoppedAtMove;
+                }
+                else if (failure is not null) failedAt = clock.GetTimestamp();
                 if (failure is not null)
                 {
-                    failedAt = clock.GetTimestamp();
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored is null ? Finish(failure) : Finish(restored, "set-aside: " + aside);
                 }
@@ -378,8 +391,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // CARD-1717 D-1: the ref reads are awaits. Re-read before the local branch delete.
                 var live = await LiveAuthorizationAsync(request, ct);
                 if (live is not null) return Refuse(live);
-                var deleted = await git.RunAsync(source.RepositoryPath,
-                    ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
+                // CARD-0824 S4a round 3 Review B-1: the child journal is written (awaits) after that read; the switch
+                // is read again there, last before the git child starts.
+                string? stoppedAtStart = null;
+                LandingGitResult deleted;
+                using (LandingGit.GateDestructiveStep(async c => stoppedAtStart = await LiveAuthorizationAsync(request, c)))
+                    deleted = await git.RunAsync(source.RepositoryPath,
+                        ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
+                if (stoppedAtStart is not null) return Refuse(stoppedAtStart);
                 if (!deleted.Succeeded) return Refuse("branch_delete_failed");
                 var absent = await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct);
                 branchGone = absent.ExitCode == 2;

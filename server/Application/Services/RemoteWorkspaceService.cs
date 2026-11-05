@@ -1133,8 +1133,14 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             BeforeRemoveMirrorCommand?.Invoke();
             var response = await Remote(task.RunnerId).RemoveWorkspaceAsync(
                 new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath,
-                    PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct);
+                    PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct,
+                // CARD-0824 S4a round 3 Review B-2: a request queued behind the connection's send gate reads it again.
+                beforeSend: liveAuthorization);
             return response.Removed ? null : response.Residue ?? task.RemoteWorktreePath;
+        }
+        catch (PhoneHomeRequestRefusedException refused)
+        {
+            return task.RemoteWorktreePath + " (" + refused.Reason + ")";
         }
         catch (ConflictException ex) when (ex.Message == WorkspaceSlotCodes.SlotManaged)
         {

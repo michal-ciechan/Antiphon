@@ -349,7 +349,13 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _ => TimeSpan.FromSeconds(60),
     };
 
-    public async Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload, CancellationToken ct)
+    public Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload, CancellationToken ct)
+        => RequestAsync(operation, payload, beforeWrite: null, ct);
+
+    /// <param name="beforeWrite">CARD-0824 S4a round 3 Review B-2: read once the send gate is held, last before the
+    /// frame is written. A non-null answer writes nothing and throws <see cref="PhoneHomeRequestRefusedException"/>.</param>
+    public async Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload,
+        Func<CancellationToken, ValueTask<string?>>? beforeWrite, CancellationToken ct)
     {
         // CARD-0679 D-5: a request on a connection that already closed is a typed transport loss,
         // not a raw WebSocketException from the send. Every throw before the frame is written is
@@ -382,6 +388,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 await _send.WaitAsync(ct);
                 try
                 {
+                    if (beforeWrite is not null && await beforeWrite(ct) is { } refused)
+                        throw new PhoneHomeRequestRefusedException(operation, refused);
                     await PhoneHomeFraming.WriteFrameAsync(_socket, frame, _limits.MaxMessageUtf8Bytes, ct);
                     written = true;
                 }
@@ -759,4 +767,11 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             $"Phone-home connection to {RunnerId} (epoch {Epoch}) closed while {operation} was in flight: {reason}");
 
     private sealed record Waiter(PhoneHomeOperation Operation, TaskCompletionSource<PhoneHomeFrame> Reply);
+}
+
+/// <summary>CARD-0824 S4a round 3 Review B-2: the caller's gate refused a request still waiting to be written; nothing was sent.</summary>
+public sealed class PhoneHomeRequestRefusedException(PhoneHomeOperation operation, string reason)
+    : Exception($"{operation} was not sent: {reason}")
+{
+    public string Reason { get; } = reason;
 }
