@@ -144,7 +144,8 @@ public sealed partial class C0824RefOnlyLandingTests
                 prompt.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence!.Value);
                 saved.ConfirmingPromptSequence.ShouldBe(prompt.Sequence);
                 prompt.Timestamp.ShouldNotBeNull(); prompt.Timestamp!.Value.ShouldBeGreaterThanOrEqualTo(row.LastDeliveryStartedAt!.Value);
-                saved.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(saved.Body));
+                saved.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(
+                    "Session:" + caller.SessionId.ToString("N") + "\n" + note.Body), "destination-bound-note-digest");
             }
             Console.WriteLine("C0824_RECEIPT variant=" + variant + " stage=confirmed");
             async Task ReconcileAsync(LandDeliveryBoundary? cut)

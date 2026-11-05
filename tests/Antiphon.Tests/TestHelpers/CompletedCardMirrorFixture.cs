@@ -336,6 +336,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
 
     public async Task PrepareNextMirrorAsync(MirrorPreparation preparation)
     {
+        lock (Order) Order.Clear(); // Queue-entry assertions observe this task's setup, not the previous mirror's entry.
         await Card.CreateNextTaskAsync();
         var task = await TaskAsync();
         var mirror = new PhoneHomeWorkspaceMirrorRequest(task.WorktreeBranch!, Card.Host.Fixture.SeedSha,
