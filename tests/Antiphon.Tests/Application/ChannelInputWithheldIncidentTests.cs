@@ -591,6 +591,33 @@ public sealed class ChannelInputWithheldIncidentTests
         cts.IsCancellationRequested.ShouldBeTrue();
     }
 
+    [Test]
+    [Timeout(120_000)]
+    public async Task C1591_FailedBatchRollsBackAndConcurrentHostsStayOnce()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        var commands = new ScanCommands();
+        await using var h = await OpenAsync(schema.ConnectionString, clock, o => o.AddInterceptors(commands));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var seed = await SeedAsync(h, now.AddHours(-2), now.AddMinutes(-10), 1);
+        commands.Fault = sql => sql.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal)
+            ? new InvalidOperationException("injected incident persistence failure") : null;
+        commands.Armed = true;
+        await Should.ThrowAsync<Exception>(() => Bridge(h).ScanWithheldChannelIncidentsAsync(Ct));
+        commands.Armed = false;
+        await using (var db = Db(schema.ConnectionString))
+        {
+            (await WithheldIncidentsAsync(db, h.AgentId)).ShouldBe(0);
+            (await db.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId)).InputWithheldIncidentAt.ShouldBeNull();
+        }
+        await Task.WhenAll(Bridge(h).ScanWithheldChannelIncidentsAsync(Ct),
+            Bridge(h).ScanWithheldChannelIncidentsAsync(Ct));
+        await using var verify = Db(schema.ConnectionString);
+        (await WithheldIncidentsAsync(verify, h.AgentId)).ShouldBe(1);
+        (await verify.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId)).InputWithheldIncidentAt.ShouldNotBeNull();
+    }
+
     private static FakeTimeProvider Clock() =>
         new(new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero));
 
