@@ -42,6 +42,15 @@ public class TestDbFixture
 		if (!SharedStoreWarmup.SelectionNeedsSharedStore(context.AllTests))
 			return;
 		await Lifecycle.EnsureReadyAsync().ConfigureAwait(false);
+
+		// Image/cache hits can prepare PostgreSQL without constructing an EF context. Pay the
+		// process-wide provider/model cost once here, before concurrent timed bodies start.
+		using (TestTiming.BeginFixturePhase("db-runtime", TestPhaseKind.FixtureSetup, "runtime-model"))
+		using (var db = new AppDbContext(Lifecycle.CreateDbContextOptions()))
+		{
+			_ = db.Model;
+			_ = db.Database.ProviderName;
+		}
 	}
 
 	[After(Assembly)]
