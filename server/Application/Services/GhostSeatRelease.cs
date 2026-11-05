@@ -10,6 +10,7 @@ namespace Antiphon.Server.Application.Services;
 internal static class GhostSeatRelease
 {
     public const int IdleMinutes = 10;
+    public const int MaxReleaseAttemptsPerSweep = 5;
 
     public enum MirrorDisposition
     {

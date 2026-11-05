@@ -215,6 +215,7 @@ public sealed partial class AgentTaskDispatcher
         IReadOnlyDictionary<Guid, FailedTaskSessionOwnership.Binding> failedOwners,
         IReadOnlyDictionary<Guid, SessionStatus> sessionStatus,
         IReadOnlyDictionary<Guid, string?> sessionRunnerIds,
+        IReadOnlyDictionary<Guid, DateTime> sessionStartedAt,
         IReadOnlySet<Guid> uncertainSessionIds,
         IReadOnlySet<Guid> missingTurnBoundary,
         IReadOnlyDictionary<Guid, bool> workingSessions,
@@ -232,8 +233,11 @@ public sealed partial class AgentTaskDispatcher
             .Where(task => ownerIds.Contains(task.Id))
             .ToDictionaryAsync(task => task.Id, ct);
         var released = 0;
+        var attempts = 0;
         foreach (var row in parsed)
         {
+            if (attempts >= GhostSeatRelease.MaxReleaseAttemptsPerSweep)
+                break;
             if (row.SessionId is not Guid sessionId || !failedOwners.TryGetValue(sessionId, out var owner))
                 continue;
             if (!tasks.TryGetValue(owner.Id, out var task) || task.Status != AgentTaskStatus.Failed)
@@ -255,18 +259,79 @@ public sealed partial class AgentTaskDispatcher
                 TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)?.RemoteSync);
             if (disposition != GhostSeatRelease.MirrorDisposition.CleanEqual)
                 continue;
-            var since = task.CompletedAt ?? row.Agent.PoolIdleSince;
-            if (!GhostSeatRelease.IdleElapsed(since, now))
+            if (!GhostSeatRelease.IdleElapsed(task.CompletedAt ?? row.Agent.PoolIdleSince, now))
                 continue;
 
-            var runnerId = sessionRunnerIds.GetValueOrDefault(sessionId);
+            // The candidate snapshot is not release authority. Pull missed transcript activity,
+            // then re-read custody and activity before the final settlement-record read.
+            if (_runtime is not null)
+                await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+            var session = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is null || session.Status != SessionStatus.Running
+                || !SessionGeneration.Equal(session.StartedAt, sessionStartedAt.GetValueOrDefault(sessionId))
+                || session.RunnerId != sessionRunnerIds.GetValueOrDefault(sessionId)
+                || _runtime?.RemoteInventoryPending(session.RunnerId) == true)
+                continue;
+            var agent = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == row.Agent.Id, ct);
+            if (agent is null || !PoolDelegateRelease.CanRelease(agent)
+                || agent.Status != AgentStatus.Idle || agent.PoolIdleSince is null
+                || !Guid.TryParse(agent.PersistentSessionId, out var boundSession) || boundSession != sessionId
+                || await PoolDelegateRelease.Reservations(_db).AnyAsync(p => p.AgentId == agent.Id, ct))
+                continue;
+            if (await _db.AgentTasks.AsNoTracking().AnyAsync(t =>
+                (t.AgentId == agent.Id || t.AgentSessionId == sessionId)
+                && (t.SourceLandingOperationId != null || t.Status == AgentTaskStatus.Queued
+                    || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working
+                    || t.Status == AgentTaskStatus.Blocked), ct))
+                continue;
+            var currentOwners = await FailedTaskSessionOwnership.CurrentOwnersAsync(_db,
+                new Dictionary<Guid, (SessionStatus Status, DateTime StartedAt)>
+                {
+                    [sessionId] = (session.Status, session.StartedAt),
+                }, ct);
+            if (!currentOwners.TryGetValue(sessionId, out var currentOwner) || currentOwner.Id != task.Id)
+                continue;
+            var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, [sessionId], ct);
+            if (working.GetValueOrDefault(sessionId)
+                || (await SessionsWithoutTurnBoundaryAsync([sessionId], ct)).Contains(sessionId))
+                continue;
+            var activity = await _db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId && s.Status == SessionStatus.Running
+                    && s.StartedAt == session.StartedAt && s.RunnerId == session.RunnerId
+                    && s.RunnerStoreId == session.RunnerStoreId)
+                .Select(s => new
+                {
+                    s.LastSeenAt, s.CodexTokenCountAt,
+                    LastTranscript = _db.TranscriptEntries.Where(t => t.AgentSessionId == s.Id)
+                        .Max(t => (DateTime?)t.CreatedAt),
+                }).SingleOrDefaultAsync(ct);
+            if (activity?.LastTranscript is null)
+                continue;
+
+            var current = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == task.Id, ct);
+            if (current is null || current.Status != AgentTaskStatus.Failed || current.Attempt != task.Attempt
+                || current.AgentId != agent.Id || current.AgentSessionId != sessionId
+                || current.SourceLandingOperationId is not null
+                || _terminalSeatRelease?.OwnsAutomaticPath(current) == true
+                || GhostSeatRelease.Read(TaskProgressJson.TryReadEvidence(current.CompletionProgressEvidenceJson)?.RemoteSync)
+                    != GhostSeatRelease.MirrorDisposition.CleanEqual)
+                continue;
+            // PoolIdleSince is only the fallback for an absent completion. The protected TTL
+            // loop can refresh it, so taking max(completion, PoolIdleSince) would postpone forever.
+            var since = new DateTime?[] { current.CompletedAt ?? agent.PoolIdleSince,
+                activity.LastTranscript, activity.LastSeenAt, activity.CodexTokenCountAt }.Max();
+            if (!GhostSeatRelease.IdleElapsed(since, UtcNow()))
+                continue;
+
+            var runnerId = session.RunnerId;
             if (string.IsNullOrWhiteSpace(runnerId))
-                runnerId = task.RunnerId;
+                runnerId = current.RunnerId;
             if (string.IsNullOrWhiteSpace(runnerId))
                 continue;
 
             var reason =
                 $"Failed task {DelegationReportFormatter.Short(task.Id)} mirror clean and equal to origin, idle since {since:O}.";
+            attempts++; // Failed runner calls also consume the per-sweep API budget.
             try
             {
                 await RunnerSlotService.ReleaseAsync(_runners, _db, runnerId, sessionId, reason, ct);
