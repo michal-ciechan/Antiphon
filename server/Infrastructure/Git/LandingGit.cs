@@ -95,7 +95,7 @@ public class LandingGit : ILandingGit
         if (started is null && !IsMutating(arguments) && InProcessAnswer(repository, arguments) is { } inProcess)
         {
             ct.ThrowIfCancellationRequested();
-            Scope?.Profile.InProcessHit();
+            Scope?.Profile.InProcessHit(arguments);
             return inProcess;
         }
         if (started is null && IsRefFormatCheck(arguments))

@@ -160,6 +160,14 @@ public sealed class LandingGitProfile
     public void CanonicalHit() => Interlocked.Increment(ref _canonicalHits);
     public void RefFormatHit() => Interlocked.Increment(ref _refFormatHits);
     public void InProcessHit() => Interlocked.Increment(ref _inProcessHits);
+    /// <summary>An in-process answer; a <c>worktree list</c> answered this way is still a fresh registration listing.</summary>
+    public void InProcessHit(IReadOnlyList<string> arguments)
+    {
+        InProcessHit();
+        var index = SubcommandIndex(arguments);
+        if (index + 1 < arguments.Count && arguments[index] == "worktree" && arguments[index + 1] == "list")
+            Interlocked.Increment(ref _worktreeLists);
+    }
     public void Inspection() => Interlocked.Increment(ref _inspections);
 
     public IReadOnlyDictionary<string, long> Histogram => new Dictionary<string, long>(_histogram, StringComparer.Ordinal);

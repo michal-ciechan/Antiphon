@@ -62,7 +62,8 @@ internal static class InProcessGitReads
         }
     }
 
-    private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base";
+    private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base"
+        || a is ["worktree", "list", "--porcelain", "-z"];
 
     /// <summary>
     /// The land's own refs: refs/antiphon/land/&lt;task&gt;/&lt;operation&gt; plus up to two segments, each a
@@ -155,6 +156,10 @@ internal static class InProcessGitReads
                 return repo.Refs[symbolic.TargetIdentifier] is SymbolicReference ? null : Ok(symbolic.TargetIdentifier + "\n");
             }
 
+            // worktree list --porcelain -z: git's registration listing, from the files git reads.
+            case "worktree" when a is ["worktree", "list", "--porcelain", "-z"]:
+                return WorktreeList(repo);
+
             // merge-base --is-ancestor <oid> <oid>
             case "merge-base" when a.Count == 4 && a[1] == "--is-ancestor" && LandingGit.IsOid(a[2]) && LandingGit.IsOid(a[3]):
             {
@@ -167,6 +172,118 @@ internal static class InProcessGitReads
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// <c>git worktree list --porcelain -z</c> as git builds it (builtin/worktree.c, worktree.c): the
+    /// main worktree first (real path of the common dir without its "/.git"), then each linked
+    /// worktree from <c>worktrees/&lt;id&gt;/gitdir</c>, sorted by path; HEAD from each worktree's own
+    /// HEAD file; "locked [reason]" from <c>locked</c> (reason trimmed); "prunable" when the gitdir
+    /// file points at nothing (list never expires). Every shape git would read through config,
+    /// relative paths, unborn or chained HEADs, or a case-dependent order is left to git.
+    /// </summary>
+    private static LandingGitResult? WorktreeList(Repository repo)
+    {
+        var common = CommonDirectory(repo.Info.Path);
+        if (common is null || Path.GetFileName(Path.TrimEndingDirectorySeparator(common)) != ".git" || MovesOrBaresMain(common))
+            return null;
+        var commonReal = GitRealPath(common);
+        if (commonReal is null || !commonReal.EndsWith("/.git", StringComparison.Ordinal) || commonReal.Length <= "C:/.git".Length)
+            return null;
+        var output = new StringBuilder();
+        output.Append("worktree ").Append(commonReal[..^"/.git".Length]).Append('\0');
+        if (!AppendHead(output, repo, Path.Combine(common, "HEAD"))) return null;
+        output.Append('\0');
+
+        var linked = new List<(string Path, string Record)>();
+        var registry = Path.Combine(common, "worktrees");
+        if (Directory.Exists(registry))
+        {
+            if ((File.GetAttributes(registry) & FileAttributes.ReparsePoint) != 0) return null;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(registry))
+            {
+                // A stray file, link or unreadable entry is listed (or skipped) by rules this does not copy.
+                if (!Directory.Exists(entry) || (File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) return null;
+                var gitdirFile = Path.Combine(entry, "gitdir");
+                if (!File.Exists(gitdirFile)) return null;
+                var gitdir = File.ReadAllText(gitdirFile).TrimEnd(' ', '\t', '\n', '\r', '\v', '\f');
+                if (!gitdir.EndsWith("/.git", StringComparison.Ordinal) || !IsAbsoluteGitPath(gitdir)) return null;
+                var path = gitdir[..^"/.git".Length];
+                var record = new StringBuilder();
+                record.Append("worktree ").Append(path).Append('\0');
+                if (!AppendHead(record, repo, Path.Combine(entry, "HEAD"))) return null;
+                var lockFile = Path.Combine(entry, "locked");
+                if (File.Exists(lockFile))
+                {
+                    var reason = File.ReadAllText(lockFile).Trim(' ', '\t', '\n', '\r', '\v', '\f');
+                    if (reason.Any(c => c > 0x7e || (c < 0x20 && c != '\t'))) return null;
+                    record.Append(reason.Length == 0 ? "locked" : "locked " + reason).Append('\0');
+                }
+                else if (!File.Exists(gitdir) && !Directory.Exists(gitdir))
+                    record.Append("prunable gitdir file points to non-existent location").Append('\0');
+                record.Append('\0');
+                linked.Add((path, record.ToString()));
+            }
+        }
+        // git sorts by fspathcmp, which folds case when core.ignorecase is set. Answer only when the
+        // order is the same either way, and byte order equals UTF-16 order (ASCII paths).
+        if (linked.Count > 1)
+        {
+            if (linked.Any(l => l.Path.Any(c => c > 0x7e))) return null;
+            var ordinal = linked.OrderBy(l => l.Path, StringComparer.Ordinal).Select(l => l.Path).ToList();
+            var folded = linked.OrderBy(l => l.Path, StringComparer.OrdinalIgnoreCase).Select(l => l.Path).ToList();
+            if (!ordinal.SequenceEqual(folded) || folded.Distinct(StringComparer.OrdinalIgnoreCase).Count() != folded.Count) return null;
+        }
+        foreach (var (_, record) in linked.OrderBy(l => l.Path, StringComparer.Ordinal))
+            output.Append(record);
+        return Ok(output.ToString());
+    }
+
+    /// <summary>"HEAD &lt;oid&gt;" then "branch &lt;ref&gt;" or "detached", from a HEAD file; false for anything else.</summary>
+    private static bool AppendHead(StringBuilder output, Repository repo, string headFile)
+    {
+        if (!File.Exists(headFile)) return false;
+        var text = File.ReadAllText(headFile);
+        if (text.EndsWith('\n')) text = text[..^1];
+        if (text.Contains('\n') || text.Contains('\r')) return false;
+        if (LandingGit.IsOid(text))
+        {
+            if (repo.Lookup(text) is null) return false;
+            output.Append("HEAD ").Append(text).Append('\0').Append("detached").Append('\0');
+            return true;
+        }
+        if (!text.StartsWith("ref: refs/heads/", StringComparison.Ordinal)) return false;
+        var target = text["ref: ".Length..];
+        if (Direct(repo, target) is not { } sha) return false;   // unborn, symbolic or odd: git's
+        output.Append("HEAD ").Append(sha).Append('\0').Append("branch ").Append(target).Append('\0');
+        return true;
+    }
+
+    /// <summary>An absolute path in git's spelling: "X:/..." on Windows, "/..." elsewhere; no backslashes or controls.</summary>
+    private static bool IsAbsoluteGitPath(string path)
+    {
+        if (path.Any(c => c < 0x20 || c == '\\')) return false;
+        return OperatingSystem.IsWindows()
+            ? path.Length > 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '/'
+            : path.StartsWith('/');
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex MovedOrBare = new(
+        @"^\s*(worktree\s*=|bare\s*(=\s*(true|yes|on|1)\s*)?$)",
+        System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Config that would move or bare the main worktree, or that this text check cannot follow:
+    /// core.bare true, core.worktree, [include]/[includeIf], or per-worktree config.worktree.
+    /// </summary>
+    private static bool MovesOrBaresMain(string common)
+    {
+        if (File.Exists(Path.Combine(common, "config.worktree"))) return true;
+        var config = Path.Combine(common, "config");
+        if (!File.Exists(config)) return true;
+        var text = File.ReadAllText(config);
+        return text.Contains("[include", StringComparison.OrdinalIgnoreCase) || MovedOrBare.IsMatch(text);
     }
 
     /// <summary>

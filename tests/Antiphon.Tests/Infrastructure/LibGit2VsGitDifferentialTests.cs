@@ -184,7 +184,7 @@ public sealed class LibGit2VsGitDifferentialTests
             ["symbolic-ref", "-q", "refs/heads/no-such"],
             ["remote", "get-url", "--push", "--all", "origin"],          // config is never read in process
             ["status", "--porcelain=v1", "-z"],
-            ["worktree", "list", "--porcelain", "-z"],
+            ["worktree", "list", "--porcelain"],                          // only the -z listing is answered
         ];
         foreach (var args in fallbacks)
             await CompareAsync(fixture.Repository, Expect.Fallback, args);
