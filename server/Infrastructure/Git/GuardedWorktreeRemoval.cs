@@ -180,10 +180,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // following a link. Until the registration is gone the tree can be put back unchanged.
                 // Review 0c0b9a4e: the set-aside name is recorded before the move so a later pass can
                 // finish it, and Git is never handed the path, which is free once the tree moved.
-                // CARD-1717 round 2: tracked bytes are bound to the index, and the receipt keeps
+                // CARD-1717 round 2: tracked bytes are bound to the proven commit, and the receipt keeps
                 // content hashes plus the retained copies, before anything moves.
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
-                var bound = await BindContentAsync(source.WorktreePath, second, retainedFiles, ct);
+                var bound = await BindContentAsync(request, source.WorktreePath, second, retainedFiles, ct);
                 if (bound.Reason is not null) return Finish(bound.Reason);
                 var identity = WorktreeNoFollowDelete.DirectoryIdentity(source.WorktreePath);
                 var seal = WorktreeSetAside.ListingSeal(source.WorktreePath);
@@ -204,7 +204,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // The rename can admit a new file or a different directory before Git's entry is dropped.
                 var drifted = CustodyOf(recorded);
                 if (drifted is null) drifted = await LateUntrackedAsync(aside, final.Snapshot!, ct);
-                if (drifted is null) drifted = await TrackedBytesAsync(aside, ct);
+                if (drifted is null) drifted = await TrackedBytesAsync(aside, request, ct);
                 if (drifted is not null)
                 {
                     var restored = await RestoreRegisteredTreeAsync();
@@ -583,10 +583,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     private readonly record struct BoundContent(string? Reason, string? Entries, string? Evidence);
 
     /// <summary>
-    /// Hashes the tree, compares tracked files with <c>git ls-files --stage</c>, and hashes again.
+    /// Hashes the tree, compares tracked files with the proven commit through the index, and hashes again.
     /// A write during that read makes the two manifests differ and refuses the move.
     /// </summary>
-    private async Task<BoundContent> BindContentAsync(string root, WorktreeIgnoredContent content,
+    private async Task<BoundContent> BindContentAsync(WorktreeRemovalRequest request, string root, WorktreeIgnoredContent content,
         IReadOnlyList<RetainedWorktreeFile>? retained, CancellationToken ct)
     {
         if (EvidenceProblem(root, retained) is { } evidence) return new(evidence, null, null);
@@ -599,7 +599,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         string before, after;
         try { before = EntryManifest(root, names.Names!, disposable, evidenceNames); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new("source_changed", null, null); }
-        if (await TrackedBytesAsync(root, ct) is { } tracked) return new(tracked, null, null);
+        if (await TrackedBytesAsync(root, request, ct) is { } tracked) return new(tracked, null, null);
         try { after = EntryManifest(root, names.Names!, disposable, evidenceNames); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new("source_changed", null, null); }
         if (!string.Equals(before, after, StringComparison.Ordinal)) return new("source_changed", null, null);
@@ -620,37 +620,80 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     }
 
     /// <summary>
-    /// Null when every stage-0 blob matches the file. The git directory must still exist.
+    /// Null when the index is exactly the tree of the proven commit and every entry on disk has those
+    /// bytes. CARD-1717 B-3: the index is read after the clean status, so an entry staged since then is
+    /// not the pushed blob; the commit's own tree is the authority. A link entry is its target text, a
+    /// regular file holding that text where links are not checked out. A gitlink holds no bytes here
+    /// unless its directory is populated, and a populated one is a nested repository the census keeps.
     /// </summary>
-    private async Task<string?> TrackedBytesAsync(string root, CancellationToken ct)
+    private async Task<string?> TrackedBytesAsync(string root, WorktreeRemovalRequest request, CancellationToken ct)
     {
-        LandingGitResult listed;
-        try { listed = await git.RunAsync(root, ["ls-files", "--stage", "-z"], ct); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
-        { return "source_changed"; }
-        if (!listed.Succeeded || listed.WroteStandardError) return "source_changed";
+        var staged = await TreeEntriesAsync(root, ["ls-files", "--stage", "-z"], ct);
+        if (staged is null) return "source_changed";
+        var committed = await TreeEntriesAsync(request.Source.RepositoryPath,
+            ["ls-tree", "-r", "-z", "--full-tree", request.ExpectedSourceSha], ct);
+        if (committed is null) return "source_changed";
+        if (staged.Count != committed.Count) return "tracked_bytes_changed";
         var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
-        foreach (var entry in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var (relative, entry) in staged)
         {
-            var tab = entry.IndexOf('\t');
-            if (tab < 0) return "source_changed";
-            var fields = entry[..tab].Split(' ');
-            if (fields.Length != 3 || fields[2] != "0") return "source_changed";
-            if (fields[0] is not ("100644" or "100755") || !IsGitOid(fields[1])) return "source_changed";
-            var relative = entry[(tab + 1)..].Replace('\\', '/');
+            if (!committed.TryGetValue(relative, out var expected) || expected != entry) return "tracked_bytes_changed";
             var full = Path.GetFullPath(Path.Combine(root, relative));
             if (!full.StartsWith(rootFull, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
                 return "source_changed";
             var stamp = WorktreeNoFollowDelete.TryStamp(full);
-            if (stamp is null || stamp.Value.Kind != "file") return "tracked_bytes_changed";
-            if (!OperatingSystem.IsWindows()
-                && File.GetUnixFileMode(full).HasFlag(UnixFileMode.UserExecute) != (fields[0] == "100755"))
-                return "tracked_bytes_changed";
-            var oid = WorktreeNoFollowDelete.GitBlobSha1(full);
-            if (oid is null || oid.Length == 0 || !oid.Equals(fields[1], StringComparison.OrdinalIgnoreCase))
+            if (entry.Mode == "160000")
+            {
+                if (stamp is null) continue;
+                if (stamp.Value.Kind != "dir" || Directory.EnumerateFileSystemEntries(full).Any()) return "tracked_bytes_changed";
+                continue;
+            }
+            if (stamp is null) return "tracked_bytes_changed";
+            string? oid;
+            if (entry.Mode == "120000" && stamp.Value.Kind == "link")
+                oid = new FileInfo(full).LinkTarget is { } target
+                    ? WorktreeNoFollowDelete.GitBlobOf(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(target))) : null;
+            else if (stamp.Value.Kind != "file") return "tracked_bytes_changed";
+            else
+            {
+                if (entry.Mode != "120000" && !OperatingSystem.IsWindows()
+                    && File.GetUnixFileMode(full).HasFlag(UnixFileMode.UserExecute) != (entry.Mode == "100755"))
+                    return "tracked_bytes_changed";
+                oid = WorktreeNoFollowDelete.GitBlobSha1(full);
+            }
+            if (oid is null || oid.Length == 0 || !oid.Equals(entry.Oid, StringComparison.OrdinalIgnoreCase))
                 return "tracked_bytes_changed";
         }
         return null;
+    }
+
+    private readonly record struct TreeEntry(string Mode, string Oid);
+
+    /// <summary>
+    /// Parses <c>ls-files --stage -z</c> (mode oid stage) or <c>ls-tree -r -z</c> (mode type oid) rows by
+    /// path. Null on a failed command, a conflict stage, an unknown mode or a malformed row.
+    /// </summary>
+    private async Task<Dictionary<string, TreeEntry>?> TreeEntriesAsync(string directory, string[] arguments, CancellationToken ct)
+    {
+        LandingGitResult listed;
+        try { listed = await git.RunAsync(directory, arguments, ct); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException) { return null; }
+        if (!listed.Succeeded || listed.WroteStandardError) return null;
+        var stage = arguments[0] == "ls-files";
+        var entries = new Dictionary<string, TreeEntry>(StringComparer.Ordinal);
+        foreach (var row in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = row.IndexOf('\t');
+            if (tab < 0) return null;
+            var fields = row[..tab].Split(' ');
+            if (fields.Length != 3) return null;
+            var mode = fields[0];
+            var oid = stage ? fields[1] : fields[2];
+            if (stage ? fields[2] != "0" : fields[1] != (mode == "160000" ? "commit" : "blob")) return null;
+            if (mode is not ("100644" or "100755" or "120000" or "160000") || !IsGitOid(oid)) return null;
+            if (!entries.TryAdd(row[(tab + 1)..].Replace('\\', '/'), new(mode, oid.ToLowerInvariant()))) return null;
+        }
+        return entries;
     }
 
     private static bool IsGitOid(string value) => value.Length == 40

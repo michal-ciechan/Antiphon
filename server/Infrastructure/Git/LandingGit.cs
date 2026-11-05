@@ -804,9 +804,9 @@ public class LandingGit : ILandingGit
             var code = ex.HResult & 0xFFFF;
             return new(code == 0 ? 1 : code, "", "registration_entry_move_failed");
         }
-        // The registration is gone; leftover administrative bytes go with the set-aside record.
-        try { WorktreeNoFollowDelete.Delete(retired); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        // The registration is gone. CARD-1717 B-3: the administrative entry stays beside the set-aside
+        // record until the set-aside tree is gone (WorktreeSetAside.TryClear), so a held remainder can still
+        // be registered again by moving both back.
         // File I/O never passes ChangesRegistrations, so a cached worktree list would still name
         // this path and the caller would put the tree back (CARD-0721).
         Scope?.Invalidate(false);
