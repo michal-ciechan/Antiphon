@@ -75,7 +75,6 @@ public sealed class BuildSlotMaxHoldTests
     }
 
     [Test]
-    [Arguments("0")]
     [Arguments("-1")]
     public void V4_Nonpositive_bound_is_rejected_by_production_options(string value)
     {
@@ -84,6 +83,19 @@ public sealed class BuildSlotMaxHoldTests
             using var f = new Fixture(value);
         });
         ex.Message.ShouldContain("SessionRunner:BuildSlots:LeaseMaxHoldHours");
+    }
+
+    [Test]
+    public void V7_Zero_uses_the_default_bound()
+    {
+        using var f = Should.NotThrow(() => new Fixture("0"));
+        f.Acquire();
+        f.Time.Advance(TimeSpan.FromHours(48) - TimeSpan.FromTicks(1));
+        f.Broker.Sweep().ShouldBe(0);
+        f.Time.Advance(TimeSpan.FromTicks(1));
+        f.Broker.Sweep().ShouldBe(1);
+        f.Broker.List().Occupied.ShouldBe(0);
+        f.Messages.ShouldContain(m => m.Contains("absolute max hold 48h exceeded"));
     }
 
     private sealed class Fixture : IDisposable
