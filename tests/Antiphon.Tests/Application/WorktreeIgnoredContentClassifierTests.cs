@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.SessionRunner;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -287,6 +288,116 @@ public sealed class WorktreeIgnoredContentClassifierTests
         Same(result.Protected, "bin/.env.local", "dist/credentials.json", "node_modules/.env");
         Same(result.Disposable, "obj/plain.dll");
         result.Evidence.ShouldBeEmpty();
+    }
+
+    // CARD-1718 A-D3 round 2 (review 47d31366 B-2, B-3, A-1). One documented floor, read by the
+    // server classifier and the runner classifier. A catch-all disposable override cannot release
+    // it. `*.token` is not on the floor: `bin/design.token` stays disposable (false holds).
+    // `.aws/credentials` is the `**/credentials*` rule, not a second glob.
+    private static readonly string[] DocumentedSecretFloor =
+    [
+        "**/.env*", "**/.env*/**",
+        "**/*.pem", "**/*.pem/**",
+        "**/*.key", "**/*.key/**",
+        "**/id_rsa*", "**/id_rsa*/**",
+        "**/id_ed25519*", "**/id_ed25519*/**",
+        "**/*.pfx", "**/*.pfx/**",
+        "**/*.p12", "**/*.p12/**",
+        "**/*.jks", "**/*.jks/**",
+        "**/*.kdbx", "**/*.kdbx/**",
+        "**/credentials*", "**/credentials*/**",
+        "**/.npmrc", "**/.npmrc/**",
+        "**/.netrc", "**/.netrc/**",
+        "**/.git-credentials", "**/.git-credentials/**",
+        "**/.pgpass", "**/.pgpass/**",
+        "**/secrets.json", "**/secrets.json/**",
+        "**/kubeconfig", "**/kubeconfig/**",
+        "**/.docker/config.json", "**/.docker/config.json/**",
+    ];
+
+    [Test]
+    public void Documented_secret_floor_is_in_the_server_defaults()
+    {
+        foreach (var pattern in DocumentedSecretFloor)
+            WorktreeCleanupSettings.DefaultProtectedIgnored.ShouldContain(pattern);
+    }
+
+    [Test]
+    [Arguments("bin/.env")]
+    [Arguments("node_modules/.env")]
+    [Arguments("node_modules/pkg/.env/token")]
+    [Arguments("bin/tls.pem")]
+    [Arguments("bin/tls.pem/token")]
+    [Arguments("bin/tls.key")]
+    [Arguments("bin/tls.key/token")]
+    [Arguments("bin/id_rsa")]
+    [Arguments("bin/id_rsa.pub")]
+    [Arguments("bin/id_rsa/x")]
+    [Arguments("bin/id_ed25519")]
+    [Arguments("bin/id_ed25519.pub")]
+    [Arguments("bin/id_ed25519/x")]
+    [Arguments("bin/cert.pfx")]
+    [Arguments("bin/cert.pfx/token")]
+    [Arguments("bin/store.p12")]
+    [Arguments("bin/store.p12/token")]
+    [Arguments("bin/store.jks")]
+    [Arguments("bin/store.jks/token")]
+    [Arguments("bin/vault.kdbx")]
+    [Arguments("bin/vault.kdbx/token")]
+    [Arguments("bin/credentials.json")]
+    [Arguments("bin/Credentials.JSON")]
+    [Arguments("bin/credentials/token")]
+    [Arguments("dist/credentials/token")]
+    [Arguments("bin/.npmrc")]
+    [Arguments("bin/.npmrc/token")]
+    [Arguments("bin/.netrc")]
+    [Arguments("bin/.aws/credentials")]
+    [Arguments("bin/.aws/credentials/token")]
+    [Arguments("bin/.git-credentials")]
+    [Arguments("bin/.pgpass")]
+    [Arguments("bin/secrets.json")]
+    [Arguments("bin/secrets.json/token")]
+    [Arguments("bin/kubeconfig")]
+    [Arguments("bin/kubeconfig/token")]
+    [Arguments("bin/.docker/config.json")]
+    [Arguments("bin/.docker/config.json/token")]
+    [Arguments(".docker/config.json")]
+    public void Both_classifiers_protect_the_secret_floor_under_a_disposable_override(string path)
+    {
+        var server = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/*"],
+            ProtectedIgnored = [],
+        }));
+        var runner = new RunnerWorkspaceIgnoredContent(["**/*"]);
+        var normalized = WorktreeIgnoredContentClassifier.Normalize(path);
+        var result = server.Classify([path]);
+        Same(result.Protected, normalized);
+        result.Disposable.ShouldBeEmpty();
+        result.Evidence.ShouldBeEmpty();
+        runner.Classify(path).ShouldBe(RunnerIgnoredContentKind.Protected, path);
+    }
+
+    [Test]
+    [Arguments("bin/notes.json")]
+    [Arguments("bin/design.token")]
+    [Arguments("dist/credential.txt")]
+    [Arguments("node_modules/my.keyboard")]
+    [Arguments("node_modules/env.local")]
+    [Arguments("bin/notkubeconfig")]
+    [Arguments("bin/secrets.json.bak")]
+    [Arguments("bin/app.pem.backup")]
+    [Arguments("bin/identity.txt")]
+    public void Near_miss_names_stay_disposable_on_both_classifiers(string path)
+    {
+        var server = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/*"],
+            ProtectedIgnored = [],
+        }));
+        var runner = new RunnerWorkspaceIgnoredContent(["**/*"]);
+        Same(server.Classify([path]).Disposable, WorktreeIgnoredContentClassifier.Normalize(path));
+        runner.Classify(path).ShouldBe(RunnerIgnoredContentKind.Disposable, path);
     }
 
     // The floor is the documented names, not every file under those directories.

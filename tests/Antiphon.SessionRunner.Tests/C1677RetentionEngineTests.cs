@@ -822,4 +822,115 @@ public sealed class C1677RetentionEngineTests
         }
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task Ignored_secret_files_survive_admission_on_dry_run_and_execute(CancellationToken ct)
+    {
+        // CARD-1718 A-D3 round 2 (review 47d31366 B-1). A clean pushed mirror whose ignored
+        // bin/.env, node_modules/.env and dist/credentials/token are invisible to status porcelain.
+        // Admission must keep the tree, its registration and every secret byte. DryRun must not
+        // answer would_remove.
+        using var s = Create();
+        var m = IgnoredSecrets(s);
+        var paths = new[] { "bin/.env", "node_modules/.env", "dist/credentials/token" };
+        var bytes = paths.ToDictionary(path => path, path => File.ReadAllBytes(m.Path + "/" + path));
+
+        var dry = await s.Engine().RetainAsync(Request(m, WorkspaceRetainModes.DryRun), ct);
+        dry.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, dry.Detail);
+        dry.Reason.ShouldBe("ignored_secret", dry.Detail);
+        dry.Detail.ShouldBe("bin/.env");
+
+        var response = await s.Engine().RetainAsync(Request(m), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe("ignored_secret", response.Detail);
+        response.Detail.ShouldBe("bin/.env");
+        Directory.Exists(m.Path).ShouldBeTrue();
+        s.Registered(m.Path).ShouldBeTrue();
+        s.RetiringEntries().ShouldBeEmpty();
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+        s.Calls("worktree", "move").ShouldBeEmpty();
+        foreach (var path in paths)
+            File.ReadAllBytes(m.Path + "/" + path).ShouldBe(bytes[path]);
+    }
+
+    [Test]
+    public async Task Phase_b_keeps_an_ignored_secret_planted_after_the_move(CancellationToken ct)
+    {
+        // B-1 removal. The tree was eligible at admission. A secret that appears in the moved
+        // tree must survive phase B: no `git worktree remove`, registration kept, bytes kept.
+        using var s = Create();
+        var m = s.Mirror();
+        var engine = s.Engine();
+        string? moved = null;
+        engine.PhaseBGate = path =>
+        {
+            moved = path;
+            Plant(path, "bin/.env", "late-secret");
+            return Task.CompletedTask;
+        };
+
+        var response = await engine.RetainAsync(Request(m), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe("ignored_secret", response.Detail);
+        response.Detail.ShouldBe("bin/.env");
+        Directory.Exists(moved).ShouldBeTrue();
+        File.ReadAllText(moved + "/bin/.env").ShouldBe("late-secret");
+        s.Registered(moved!).ShouldBeTrue();
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Residue_retry_keeps_an_ignored_secret(CancellationToken ct)
+    {
+        // B-1 recovery. The leaf is gone and its retiring residue holds an ignored secret.
+        // The retry must not hand that residue to `git worktree remove`.
+        using var s = Create();
+        var m = s.Mirror();
+        var residue = s.Retiring + "/task-a1677001.0badf00d";
+        Directory.CreateDirectory(s.Retiring);
+        Git(s.Repository, "worktree", "move", m.Path, residue);
+        Plant(residue, "bin/.env", "residue-secret");
+
+        var response = await s.Engine().RetainAsync(Request(m), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe("ignored_secret", response.Detail);
+        response.Detail.ShouldBe("bin/.env");
+        response.RetiringResidue.ShouldBeTrue();
+        File.ReadAllText(residue + "/bin/.env").ShouldBe("residue-secret");
+        s.Registered(residue).ShouldBeTrue();
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Unavailable_ignored_list_keeps_the_tree(CancellationToken ct)
+    {
+        // B-1. A failed ignored-file listing is a doubt. The tree stays; it is not treated as empty.
+        using var s = Create();
+        var m = s.Mirror();
+        Plant(m.Path, "bin/.env", "still-here");
+        s.Faults.Add(RetentionFault.In(m.Path, "ls-files", "ls-files failed"));
+
+        var response = await s.Engine().RetainAsync(Request(m), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceRetentionCodes.InspectionFailed, response.Detail);
+        Directory.Exists(m.Path).ShouldBeTrue();
+        File.ReadAllText(m.Path + "/bin/.env").ShouldBe("still-here");
+        s.Registered(m.Path).ShouldBeTrue();
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+    }
+
+    /// <summary>A clean pushed mirror plus the three ignored secrets the retention path must keep.</summary>
+    private static MirrorTree IgnoredSecrets(C1677RetentionScratch s)
+    {
+        var m = s.Mirror();
+        File.AppendAllText(m.Path + "/.gitignore", "node_modules/\ndist/\n");
+        Git(m.Path, "add", ".gitignore");
+        Git(m.Path, "commit", "-q", "-m", "ignore disposable trees");
+        Git(m.Path, "push", "-q", s.OriginGit, "HEAD:refs/heads/" + m.Branch);
+        Plant(m.Path, "bin/.env", "bin-env-secret");
+        Plant(m.Path, "node_modules/.env", "nm-env-secret");
+        Plant(m.Path, "dist/credentials/token", "dist-token-secret");
+        Git(m.Path, "status", "--porcelain", "--untracked-files=all").Trim().ShouldBeEmpty();
+        return m with { Head = Git(m.Path, "rev-parse", "HEAD").Trim() };
+    }
 }
