@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
+using System.Threading.Channels;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -7,6 +9,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -26,6 +29,192 @@ public sealed partial class ChannelInboundRecoveryTests
     // Generous for one bounded pass (1 s per busy session plus the healthy delivery); the base
     // code never finishes the pass while the lock is held.
     private static readonly TimeSpan C1716PassBound = TimeSpan.FromSeconds(8);
+
+    [Test]
+    public async Task C1716_BusyPass_PublishesHeartbeatAndPreventsPrematureStall()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await CreateHarnessAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(), PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        var clock = new FakeTimeProvider(h.Now);
+        var bridge = Bridge(h, clock);
+        var inbound = await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-heartbeat-{Guid.NewGuid():N}",
+            "busy pending body", h.Now.AddMinutes(-10));
+        var signal = h.Provider.GetRequiredService<ChannelInboundWakeSignal>();
+        signal.LastPass.ShouldBeNull();
+        var queueLock = h.Queue.GetLock(h.SessionId);
+        await queueLock.WaitAsync();
+        try
+        {
+            clock.Advance(TimeSpan.FromMinutes(4));
+            await bridge.DrainPendingAsync(Ct).WaitAsync(C1716PassBound);
+            var published = signal.LastPass.ShouldNotBeNull("busy-heartbeat: a busy pass is still a completed pass");
+            published.CompletedAt.ShouldBe(clock.GetUtcNow(), "busy-heartbeat-time");
+            published.RowsSeen.ShouldBe(1);
+            published.RowsQueued.ShouldBe(0);
+            published.SessionsSkippedBusy.ShouldBe(1);
+            await using var db = Db(schema.ConnectionString);
+            (await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inbound)).QueueMessageId.ShouldBeNull();
+            clock.Advance(TimeSpan.FromMinutes(1));
+            (await bridge.CheckWakeWorkerStallAsync(Ct)).ShouldBeFalse("busy-heartbeat-age: five minutes since startup, only one since a healthy busy pass");
+            (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(0);
+        }
+        finally { queueLock.Release(); bridge.Dispose(); }
+    }
+
+    [Test]
+    public async Task C1716_HostedWorker_RetriesBusyAtFiveSecondsThenUsesIdleTick()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await CreateHarnessAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(), PreserveDatabaseOnDispose = true,
+        });
+        await InstallTranscriptReceipt(h);
+        var chat = await h.BindChannelAsync();
+        var inbound = await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-loop-{Guid.NewGuid():N}", "retry body");
+        var healthy = await SeedHealthyRecipientAsync(h, "healthy during busy pass");
+        var clock = new C1716LoopClock(h.Now);
+        using var bridge = Bridge(h, clock);
+        var queueLock = h.Queue.GetLock(h.SessionId);
+        await queueLock.WaitAsync();
+        var held = true;
+        try
+        {
+            await bridge.StartAsync(Ct);
+            var retry = await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(5) || due == TimeSpan.FromSeconds(10));
+            retry.ShouldBe(TimeSpan.FromSeconds(5), "busy-loop-delay: the actual worker must use the busy retry");
+            bridge.CompletedDrainIterations.ShouldBe(1);
+            await AssertCompleteHealthyReceiptAsync(h, healthy);
+            queueLock.Release();
+            held = false;
+            clock.Advance(TimeSpan.FromMilliseconds(4999));
+            bridge.CompletedDrainIterations.ShouldBe(1);
+            await using (var before = Db(schema.ConnectionString))
+                (await before.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inbound)).QueueMessageId.ShouldBeNull();
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            var idle = await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(5) || due == TimeSpan.FromSeconds(10));
+            idle.ShouldBe(TimeSpan.FromSeconds(10), "idle-loop-delay: a completed retry returns to the idle tick");
+            bridge.CompletedDrainIterations.ShouldBe(2);
+            await using (var after = Db(schema.ConnectionString))
+                (await after.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inbound)).QueueMessageId.ShouldNotBeNull("busy-loop-owner: retried at five seconds, before the idle tick");
+            clock.Advance(TimeSpan.FromMilliseconds(9999));
+            bridge.CompletedDrainIterations.ShouldBe(2);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            (await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(10))).ShouldBe(TimeSpan.FromSeconds(10));
+            bridge.CompletedDrainIterations.ShouldBe(3);
+        }
+        finally
+        {
+            if (held) queueLock.Release();
+            await bridge.StopAsync(Ct).WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    [Test]
+    public async Task C1716_HostedService_StartsIndependentStallCheckerAndRearmsAfterRecovery()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new C1716WakeScanGate();
+        await using var h = await CreateHarnessAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(), PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        await InstallTranscriptReceipt(h);
+        var chat = await h.BindChannelAsync();
+        var clock = new C1716LoopClock(h.Now);
+        using var bridge = Bridge(h, clock);
+        await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-startup-{Guid.NewGuid():N}", "first stall", h.Now.AddMinutes(-10));
+        var first = gate.Arm();
+        try
+        {
+            await bridge.StartAsync(Ct);
+            await first.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await clock.NextTimerAsync(due => due == TimeSpan.FromMinutes(1));
+            bridge.CompletedDrainIterations.ShouldBe(0, "the wake worker is held before completing its first pass");
+            clock.Advance(TimeSpan.FromMinutes(5));
+            await WaitForAsync(async () => await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId) == 1);
+            await clock.NextTimerAsync(due => due == TimeSpan.FromMinutes(1));
+            clock.Advance(TimeSpan.FromMinutes(1));
+            await clock.NextTimerAsync(due => due == TimeSpan.FromMinutes(1));
+            (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(1, "scheduled-stall-once");
+            first.Release.TrySetResult();
+            await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(10));
+            bridge.CompletedDrainIterations.ShouldBe(1);
+            h.Provider.GetRequiredService<ChannelInboundWakeSignal>().LastPass!.CompletedAt.ShouldBe(clock.GetUtcNow());
+            await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-startup-again-{Guid.NewGuid():N}",
+                "second stall", clock.GetUtcNow().UtcDateTime.AddMinutes(-10));
+            var second = gate.Arm();
+            clock.Advance(TimeSpan.FromSeconds(10));
+            await second.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromMinutes(5));
+            await WaitForAsync(async () => await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId) == 2);
+            bridge.CompletedDrainIterations.ShouldBe(1, "the independent checker runs while the next wake pass is still held");
+        }
+        finally
+        {
+            gate.ReleaseAll();
+            await bridge.StopAsync(Ct).WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    // Observe timers only after their real registration, so fake time never races a worker's wait setup.
+    private sealed class C1716LoopClock(DateTimeOffset start) : TimeProvider
+    {
+        private readonly FakeTimeProvider _clock = new(start);
+        private readonly Channel<TimeSpan> _timers = Channel.CreateUnbounded<TimeSpan>();
+        public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
+        public override long GetTimestamp() => _clock.GetTimestamp();
+        public override long TimestampFrequency => _clock.TimestampFrequency;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _clock.CreateTimer(callback, state, dueTime, period);
+            _timers.Writer.TryWrite(dueTime);
+            return timer;
+        }
+        public void Advance(TimeSpan amount) => _clock.Advance(amount);
+        public async Task<TimeSpan> NextTimerAsync(Func<TimeSpan, bool> matches)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (true)
+            {
+                var due = await _timers.Reader.ReadAsync(timeout.Token);
+                if (matches(due)) return due;
+            }
+        }
+    }
+
+    private sealed class C1716WakeScanGate : DbCommandInterceptor
+    {
+        internal sealed record Hold(TaskCompletionSource Entered, TaskCompletionSource Release);
+        private readonly List<Hold> _holds = [];
+        private Hold? _next;
+        public Hold Arm()
+        {
+            var hold = new Hold(new(TaskCreationOptions.RunContinuationsAsynchronously), new(TaskCreationOptions.RunContinuationsAsynchronously));
+            _holds.Add(hold);
+            Volatile.Write(ref _next, hold);
+            return hold;
+        }
+        public void ReleaseAll() { foreach (var hold in _holds) hold.Release.TrySetResult(); }
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("ChannelInbounds", StringComparison.Ordinal)
+                && command.CommandText.Contains("min(", StringComparison.OrdinalIgnoreCase)
+                && Interlocked.Exchange(ref _next, null) is { } hold)
+            {
+                hold.Entered.TrySetResult();
+                await hold.Release.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
+    }
 
     [Test]
     [Arguments("enqueue")]
