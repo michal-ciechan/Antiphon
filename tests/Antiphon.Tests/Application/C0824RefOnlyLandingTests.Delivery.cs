@@ -50,7 +50,7 @@ public sealed partial class C0824RefOnlyLandingTests
             {
                 h.Queue.TryDequeue(out _).ShouldBeFalse("lost-land-wakeup-is-real");
                 await h.RestartServicesAsync(); h.Messages = caller.Queue; h.Boundary = null;
-                await h.Services.GetRequiredService<AgentTaskLandService>().SweepAsync(default);
+                await h.SweepAsync();
             }
             try { await h.RunQueuedAsync(); }
             catch (LandingSafetyHarness.InjectedSaveFailure) when (variant == "before-terminal") { }
@@ -138,8 +138,9 @@ public sealed partial class C0824RefOnlyLandingTests
                 saved.QueueMessageId.ShouldBe(row.Id); row.Id.ShouldBe(queued.Id, "one-keyed-row");
                 saved.Body.ShouldBe(note.Body); row.Body.ShouldBe(note.Body);
                 row.LastDeliveryBaselineSequence.ShouldNotBeNull();
+                var deliveryFloor = row.LastDeliveryBaselineSequence.Value;
                 var prompts = await db.TranscriptEntries.Where(p => p.AgentSessionId == caller.SessionId
-                    && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > floor).ToListAsync();
+                    && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > floor && p.Sequence > deliveryFloor).ToListAsync();
                 var prompt = prompts.Where(p => PromptSubmissionMatch.IsCompleteIn(note.Body, p.Text ?? "")).ShouldHaveSingleItem();
                 prompt.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence!.Value);
                 saved.ConfirmingPromptSequence.ShouldBe(prompt.Sequence);
@@ -213,8 +214,14 @@ public sealed partial class C0824RefOnlyLandingTests
             (await SeenAsync(async () =>
             {
                 await using var db = h.CreateContext();
-                return await db.TranscriptEntries.AnyAsync(p => p.AgentSessionId == caller.SessionId
-                    && p.Kind == TranscriptKinds.UserPrompt && p.Text == note.Body);
+                var delivery = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(q => q.SourceLandNotificationId == note.Id);
+                if (delivery?.LastDeliveryBaselineSequence is not long baseline
+                    || delivery.LastDeliveryStartedAt is not DateTime started) return false;
+                var texts = await db.TranscriptEntries.Where(p => p.AgentSessionId == caller.SessionId
+                    && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > baseline && p.Timestamp >= started)
+                    .Select(p => p.Text).ToListAsync();
+                return texts.Any(text => PromptSubmissionMatch.IsCompleteIn(note.Body, text ?? ""));
             }, TimeSpan.FromSeconds(5))).ShouldBeTrue("caller-whole-userprompt:" + label);
             await ReconcileAsync(null);
             await using (var db = h.CreateContext())
@@ -223,10 +230,14 @@ public sealed partial class C0824RefOnlyLandingTests
                 saved.State.ShouldBe(LandNotificationState.Confirmed, "caller-whole-userprompt:" + label);
                 var row = await db.SessionQueuedMessages.SingleAsync(q => q.SourceLandNotificationId == note.Id);
                 saved.QueueMessageId.ShouldBe(row.Id);
+                row.AgentSessionId.ShouldBe(caller.SessionId);
+                saved.ParentSessionId.ShouldBe(caller.SessionId);
                 var prompt = await db.TranscriptEntries.SingleAsync(p => p.AgentSessionId == caller.SessionId
                     && p.Kind == TranscriptKinds.UserPrompt && p.Sequence == saved.ConfirmingPromptSequence);
                 PromptSubmissionMatch.IsCompleteIn(note.Body, prompt.Text!).ShouldBeTrue();
                 prompt.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence!.Value);
+                prompt.Timestamp.ShouldNotBeNull();
+                prompt.Timestamp.Value.ShouldBeGreaterThanOrEqualTo(row.LastDeliveryStartedAt!.Value);
             }
             caller.Adapter.SubmittedBodies.ShouldHaveSingleItem("one-autonomous-submission");
             async Task ReconcileAsync(LandDeliveryBoundary? boundary)

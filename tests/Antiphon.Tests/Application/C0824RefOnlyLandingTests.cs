@@ -169,7 +169,12 @@ public sealed partial class C0824RefOnlyLandingTests
             if (variant == "resume") await h.ResetDatabaseAsync();
             await RefOnlyWorkspaceTestSetup.BindAsync(h, removeAuthoring: variant == "initial");
             var foreign = Path.Combine(h.Fixture.Root, "foreign-source-" + variant);
-            async Task AttachAsync() { await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", foreign, h.Fixture.SourceRef); }
+            async Task AttachAsync()
+            {
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", foreign, h.Fixture.SourceRef[11..]);
+                (await h.Fixture.RequiredAsync(foreign, "symbolic-ref", "HEAD")).Trim()
+                    .ShouldBe(h.Fixture.SourceRef, "source-full-ref-actually-registered");
+            }
             if (variant == "initial") await AttachAsync();
             else h.Verifier.Barrier = async () =>
             {
