@@ -854,6 +854,83 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    [Arguments(".antiphon/seed", ".env")]
+    [Arguments("bin/tool", "credentials/token")]
+    public async Task Ignored_nested_repository_secret_keeps_bytes_and_registration(string nested, string secret, CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Directory.CreateDirectory(m.Path + "/" + nested);
+        Git(m.Path + "/" + nested, "init", "-q");
+        Git(m.Path + "/" + nested, "-c", "user.email=x@y", "-c", "user.name=x", "commit", "-q", "--allow-empty", "-m", "seed");
+        var relative = nested + "/" + secret;
+        Plant(m.Path, relative, "nested-secret\n");
+        var bytes = File.ReadAllBytes(m.Path + "/" + relative);
+        Git(m.Path, "ls-files", "--others", "--ignored", "--exclude-standard", "-z").ShouldBe(nested + "/\0");
+
+        foreach (var mode in new[] { WorkspaceRetainModes.DryRun, Execute })
+        {
+            var response = await s.Engine().RetainAsync(Request(m, mode), ct);
+            response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+            response.Reason.ShouldBe(WorkspaceRetentionCodes.IgnoredSecret, response.Detail);
+            response.Detail.ShouldBe(relative);
+            File.ReadAllBytes(m.Path + "/" + relative).ShouldBe(bytes);
+            s.Registered(m.Path).ShouldBeTrue();
+            s.Calls("worktree", "move").ShouldBeEmpty();
+            s.Calls("worktree", "remove").ShouldBeEmpty();
+        }
+    }
+
+    [Test]
+    [Arguments("link-file")]
+    [Arguments("link-directory")]
+    [Arguments("unreadable")]
+    [Arguments("control-name")]
+    [NativeLinuxOnly("Uses native Unix permissions, symbolic links and control-character filenames inside a scratch nested repository")]
+    public async Task Doubt_inside_collapsed_ignored_repository_keeps_the_tree(string shape, CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        var nested = m.Path + "/bin/tool";
+        Directory.CreateDirectory(nested);
+        Git(nested, "init", "-q");
+        Git(nested, "-c", "user.email=x@y", "-c", "user.name=x", "commit", "-q", "--allow-empty", "-m", "seed");
+        var entry = nested + "/cache";
+        if (shape == "link-file")
+        {
+            File.WriteAllText(s.Root + "/outside-cache", "ordinary bytes");
+            File.CreateSymbolicLink(entry, s.Root + "/outside-cache");
+        }
+        else if (shape == "link-directory")
+        {
+            Directory.CreateDirectory(s.Root + "/outside-cache");
+            Directory.CreateSymbolicLink(entry, s.Root + "/outside-cache");
+        }
+        else if (shape == "unreadable")
+        {
+            Directory.CreateDirectory(entry);
+            File.SetUnixFileMode(entry, UnixFileMode.None);
+        }
+        else
+            File.WriteAllText(nested + "/cache\nname", "ordinary bytes");
+        try
+        {
+            Git(m.Path, "ls-files", "--others", "--ignored", "--exclude-standard", "-z").ShouldBe("bin/tool/\0");
+            var response = await s.Engine().RetainAsync(Request(m, WorkspaceRetainModes.DryRun), ct);
+            response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+            response.Reason.ShouldBe(WorkspaceRetentionCodes.InspectionFailed, response.Detail);
+            Directory.Exists(nested).ShouldBeTrue();
+            s.Registered(m.Path).ShouldBeTrue();
+            s.MutatingVerbs().ShouldBeEmpty();
+        }
+        finally
+        {
+            if (shape == "unreadable")
+                File.SetUnixFileMode(entry, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Test]
     public async Task Phase_b_keeps_an_ignored_secret_planted_after_the_move(CancellationToken ct)
     {
         // B-1 removal. The tree was eligible at admission. A secret that appears in the moved

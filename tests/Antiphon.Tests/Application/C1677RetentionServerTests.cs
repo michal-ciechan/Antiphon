@@ -874,6 +874,33 @@ public sealed class C1677RetentionServerTests
         File.ReadAllBytes(Path.Combine(path, relative)).ShouldBe(bytes);
     }
 
+    [NativeLinuxOnly("The real retention runtime uses ProcWorkspaceSlotProcessProbe and scratch Git repositories")]
+    [Test]
+    public async Task Ignored_nested_repository_secret_survives_real_transport(CancellationToken ct)
+    {
+        await using var world = await C1677RetentionTransportWorld.StartAsync();
+        var (id, path) = await world.SeedMirroredTaskAsync();
+        var nested = path + "/bin/tool";
+        Directory.CreateDirectory(nested);
+        C0824SlotTransportWorld.Git(nested, "init", "-q");
+        C0824SlotTransportWorld.Git(nested, "-c", "user.email=x@y", "-c", "user.name=x", "commit", "-q", "--allow-empty", "-m", "seed");
+        Directory.CreateDirectory(nested + "/credentials");
+        File.WriteAllText(nested + "/credentials/token", "transport-nested-secret\n");
+        var bytes = File.ReadAllBytes(nested + "/credentials/token");
+        C0824SlotTransportWorld.Git(path, "ls-files", "--others", "--ignored", "--exclude-standard", "-z").ShouldBe("bin/tool/\0");
+
+        await world.TickAsync(ct);
+
+        (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(path);
+        var row = (await world.Server.RowsAsync(id)).ShouldHaveSingleItem();
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe("ignored_secret");
+        world.Registered(path).ShouldBeTrue();
+        File.ReadAllBytes(nested + "/credentials/token").ShouldBe(bytes);
+        world.Moves(path).ShouldBe(0);
+        world.Removes().ShouldBe(0);
+    }
+
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
     {
         var id = Guid.NewGuid();
