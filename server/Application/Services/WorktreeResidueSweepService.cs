@@ -204,6 +204,8 @@ public sealed class WorktreeResidueSweepService
             code = reason ?? "release_required";
             if (authorized && execute && !preview && actions < run.ActionBudget && _retirement is not null && release is not null)
             {
+                // CARD-1717 D-1: system:desktop-legacy-policy admission (the live switch and the retry cursor)
+                // is inside TryRetireAsync, under the repository lease. This sweep does not apply that switch.
                 var removed = await _retirement.TryRetireAsync(release, run.Id, ct);
                 actions++;
                 if (removed.IsClean)
