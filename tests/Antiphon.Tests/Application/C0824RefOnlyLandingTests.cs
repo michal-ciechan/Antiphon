@@ -108,7 +108,7 @@ public sealed partial class C0824RefOnlyLandingTests
             };
             // Reconstruct only the scoped graph before claiming the durable queued request.
             await h.RestartServicesAsync();
-            await h.Services.GetRequiredService<AgentTaskLandService>().SweepAsync(default);
+            await h.SweepAsync();
             if (variant.StartsWith("ticket-", StringComparison.Ordinal))
             {
                 var result = await ResumeWithChangedTicketAsync(h, variant);
@@ -178,10 +178,17 @@ public sealed partial class C0824RefOnlyLandingTests
             };
             await h.RequestAsync(Filter, source);
             h.Fixture.Git.Trace.Clear();
-            await h.RunQueuedAsync();
+            var runResult = await h.RunQueuedAsync();
             var op = await h.OperationAsync();
             await using var db = h.CreateContext();
             var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync();
+            Console.WriteLine("C0824_REGISTRATION " + System.Text.Json.JsonSerializer.Serialize(new
+            {
+                variant, result = runResult.ToString(), state = request.State.ToString(), request.HoldReasonCode,
+                request.SourceRefusalReason, request.ReconciliationError, request.TerminalEventId,
+                events = await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId)
+                    .Select(e => new { e.Type, e.LandRequestId, e.Detail }).ToListAsync()
+            }));
             var terminal = (await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId
                 && e.LandRequestId == request.Id && e.Type == AgentTaskEventType.LandRefused).ToListAsync())
                 .ShouldHaveSingleItem("source-registration-refused:" + variant);
