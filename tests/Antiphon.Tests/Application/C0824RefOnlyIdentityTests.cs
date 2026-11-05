@@ -27,12 +27,18 @@ public sealed class C0824RefOnlyIdentityTests
     public async Task Mode_round_trips_with_legacy_default()
     {
         // Assert representation before touching new columns: absent mapping must be assertion-red, never SQL setup red.
-        await using (var model = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        await using (var model = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                         .UseNpgsql("Host=localhost;Database=metadata_only").Options))
         {
             var task = model.Model.FindEntityType(typeof(AgentTask))!;
             task.FindProperty(nameof(AgentTask.DesktopWorkspaceKind)).ShouldNotBeNull("persisted-mode=RefOnly");
             task.FindProperty(nameof(AgentTask.TaskRefWorkspaceBindingId)).ShouldNotBeNull("persisted-binding=expected");
-            model.Model.FindEntityType(typeof(TaskRefWorkspaceBinding)).ShouldNotBeNull("durable-binding-schema");
+            var bindingModel = model.Model.FindEntityType(typeof(TaskRefWorkspaceBinding)).ShouldNotBeNull("durable-binding-schema");
+            bindingModel.GetIndexes().Any(i => i.IsUnique && i.Properties.Select(p => p.Name).SequenceEqual([nameof(TaskRefWorkspaceBinding.TaskId)]))
+                .ShouldBeTrue("duplicate-task-rejected");
+            bindingModel.GetIndexes().Any(i => i.IsUnique && i.Properties.Select(p => p.Name)
+                .SequenceEqual([nameof(TaskRefWorkspaceBinding.RepositoryPath), nameof(TaskRefWorkspaceBinding.FullRef)]))
+                .ShouldBeTrue("duplicate-ref-rejected");
         }
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var id = Guid.NewGuid();
@@ -286,6 +292,9 @@ public sealed class C0824RefOnlyIdentityTests
         var rc = await new TaskWorkspaceContextResolver(db).ResolveAsync(right, CancellationToken.None);
         var lk = WorkspaceReservationKey.For(lc.IdentityPath, lc.FullRef, left.RepoPath!);
         var rk = WorkspaceReservationKey.For(rc.IdentityPath, rc.FullRef, right.RepoPath!);
+        lk.CanonicalPath.ShouldBe(WorkspaceReservationKey.NormalizePath(left.WorktreePath), "reservation-distinct");
+        rk.CanonicalPath.ShouldBe(WorkspaceReservationKey.NormalizePath(right.WorktreePath), "reservation-distinct");
+        lk.CanonicalPath.ShouldNotBe(rk.CanonicalPath, "reservation-distinct");
         WorkspaceReservationKey.Same(lk, rk).ShouldBeFalse("reservation-distinct");
         (await admission.HasLiveTaskConsumerAsync(lc.IdentityPath, lc.FullRef, left.Id, CancellationToken.None)).ShouldBeFalse();
         await admission.RequireConsumerAsync(new(lk, WorkspaceReservationKind.Launch, left.Id, null, null), CancellationToken.None);

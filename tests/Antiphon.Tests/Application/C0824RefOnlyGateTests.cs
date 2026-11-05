@@ -152,7 +152,7 @@ public sealed class C0824RefOnlyGateTests
         public void Reload(string section)
         {
             File.WriteAllText(_path, "{\"Delegation\":{\"RefOnlyDesktop\":" + section + "}}");
-            try { _configuration.Reload(); } catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OptionsValidationException)) { }
+            try { _configuration.Reload(); } catch (AggregateException ex) when (ex.Flatten().InnerExceptions.All(e => e is OptionsValidationException)) { }
         }
         public void Dispose()
         {
