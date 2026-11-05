@@ -392,7 +392,7 @@ public sealed class GhostSeatReleaseTests
             var projectId = Guid.NewGuid();
             var boardId = Guid.NewGuid();
             var columnId = Guid.NewGuid();
-            db.Projects.Add(new Project { Id = projectId, Name = "c1719", CreatedAt = now, UpdatedAt = now });
+            db.Projects.Add(new Project { Id = projectId, Name = "c1719-" + projectId.ToString("N"), CreatedAt = now, UpdatedAt = now });
             db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "c1719", CreatedAt = now, UpdatedAt = now });
             db.BoardColumns.Add(new BoardColumn
             {
@@ -435,7 +435,7 @@ public sealed class GhostSeatReleaseTests
             {
                 Id = AgentId,
                 Name = "task-ghost",
-                Slug = "task-ghost",
+                Slug = "task-ghost-" + AgentId.ToString("N"),
                 WorkingDirectory = directory,
                 Details = "Ghost seat delegate.",
                 Status = AgentStatus.Idle,
