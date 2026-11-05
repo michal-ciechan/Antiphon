@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "5c7f5f061c21284a1e7bee0b18ac3cfd6cd7b3a51e36d6db450f5569628aaad4",
+  "policyHash": "069d68cae5af52e9769ce11bdc27426a8f1910f63803f2d8bc183a0c8fe92d32",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -928,6 +928,8 @@
           "class": "C1677RetentionServerTests",
           "methods": [
             "Busy_runner_retain_is_serialised",
+            "Ignored_nested_repository_secret_survives_real_transport",
+            "Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay",
             "Retain_recovery_at_each_handoff",
             "Retain_round_trip_real_runner"
           ],

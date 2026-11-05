@@ -1,6 +1,6 @@
 Design verification for the landed plan. Append structure; do not rewrite the fix design.
 Every guard that protects a safety-critical assertion gets a PC-n positive control.
-Read changed tests/fixtures/helpers and nearest fixture first. Require recipe/variant/case/oracle/reachability/classification. Unbound payloads need binding after Code.
+Read changed tests/fixtures/helpers and nearest fixture first. Require recipe/variant/case/oracle/reachability/classification. Unbound payloads: binding required after Code.
 
 ## Verification design
 ### Inspection
