@@ -9,6 +9,7 @@ public static class DelegationSettingsRegistration
 {
     public static IServiceCollection AddDelegationSettings(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddRefOnlyDesktopSettings(configuration);
         services.AddSingleton<IValidateOptions<DelegationSettings>, DelegationSettingsValidator>();
         services.AddSingleton<IValidateOptions<DelegationSettings>>(new DelegationSettingsShapeValidator(configuration));
         services.AddOptions<DelegationSettings>()

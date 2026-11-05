@@ -20,7 +20,9 @@ public sealed class AgentTaskLanding
     public string RepositoryPath { get; set; } = "";
     public string CommonDirectory { get; set; } = "";
     public string WorktreePath { get; set; } = "";
-    public string GitDirectory { get; set; } = "";
+    public string? GitDirectory { get; set; } = "";
+    public DesktopWorkspaceKind SourceDesktopWorkspaceKind { get; set; }
+    public Guid? SourceTaskRefWorkspaceBindingId { get; set; }
     public string SourceFullRef { get; set; } = "";
     public string OriginalSourceSha { get; set; } = "";
     public string? RebasedSourceSha { get; set; }
