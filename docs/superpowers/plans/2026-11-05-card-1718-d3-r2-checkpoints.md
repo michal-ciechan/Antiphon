@@ -41,6 +41,7 @@ Code uses the real historical pre-fix source as a negative witness, not delibera
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | all | tests/Antiphon.SessionRunner.Tests -> bin-c1718-r2-runner/ | runner-floor-and-retention | /*/*/(RunnerWorkspaceIgnoredContentFloorTests*)\|(C1677RetentionEngineTests*)\|(C1677RetentionDispatchTests*)\|(C1677RetentionInventoryTests*)\|(C1677RetentionNativeProcessTests*)\|(CompletedCardWorkspaceRemovalTests*)\|(TestClassificationGuardTests*)/* | V-B1, V-B2, V-B3, R-1, R-2 | all listed, 0 failed | 100 | 10 | true | TEMP=/tmp |
 | CP-2 | all | tests/Antiphon.Tests -> bin-c1718-r2-server/ | server-floor-transport-and-regressions | /*/*/(WorktreeIgnoredContentClassifierTests*)\|(WorktreeCleanupSettingsValidatorTests*)\|(C0824DesktopLegacyRelease*)\|(C1677RetentionServerTests*)\|(WorktreeGuardedCleanupTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-B1, V-B2, V-B3, R-1, R-2, V-Native | all listed, 0 failed; native skips pending | 300 | 12 | true | TEMP=/tmp |
+| CP-3 | appsettings-red | tests/Antiphon.SessionRunner.Tests -> bin-c1718-appsettings-red/ | appsettings-negative-witness | /*/*/C1677RetentionEngineTests/Appsettings_secret_survives_every_retention_boundary | V-B1-appsettings | 5 assertion failures before fix, green after fix | 5 | 6 | true | TEMP=/tmp |
 
 ## Performance budget
 
