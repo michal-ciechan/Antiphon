@@ -91,6 +91,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 else
                 {
+                    // CARD-1717 D-1: a resumed set-aside is a later pass. Re-read after the registration await.
+                    var resumed = await LiveAuthorizationAsync(request, ct);
+                    if (resumed is not null) return Finish(resumed, "set-aside: " + aside);
                     try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                     catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -151,6 +154,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // Revalidate durable authority immediately before deletion without reusing a tracked row.
                 reason = await AuthorityAsync(request, ct, refreshRemote: false);
                 if (reason is not null) return Finish(reason);
+                // CARD-1717 D-1: the final inspection is an await. Re-read before the move-aside.
+                reason = await LiveAuthorizationAsync(request, ct);
+                if (reason is not null) return Finish(reason);
                 // Review 5b79328d item 1: Git is never allowed to traverse the tree, because a link
                 // swapped in after the last reading would carry its deletion outside. The tree is set
                 // aside (a rename moves the entry itself), Git's administrative entry for the absent
@@ -189,6 +195,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     failedAt = clock.GetTimestamp();
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
+                }
+                // CARD-1717 D-1: unregister is an await. Re-read before the set-aside delete.
+                var stopped = await LiveAuthorizationAsync(request, ct);
+                if (stopped is not null)
+                {
+                    directoryGone = IsAbsent(source.WorktreePath);
+                    return Finish(stopped, "set-aside: " + aside);
                 }
                 try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                 catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
@@ -307,6 +320,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     ["show-ref", "--verify", "--hash", source.SourceFullRef], ct);
                 if (!current.Succeeded || current.Output.Trim() != request.ExpectedSourceSha)
                     return Refuse("source_changed");
+                // CARD-1717 D-1: the ref reads are awaits. Re-read before the local branch delete.
+                var live = await LiveAuthorizationAsync(request, ct);
+                if (live is not null) return Refuse(live);
                 var deleted = await git.RunAsync(source.RepositoryPath,
                     ["update-ref", "--no-deref", "-d", source.SourceFullRef, request.ExpectedSourceSha], ct);
                 if (!deleted.Succeeded) return Refuse("branch_delete_failed");
@@ -320,6 +336,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         {
             return Refuse("cleanup_inspection_error");
         }
+    }
+
+    /// <summary>CARD-1717 D-1. Null when this request has no live gate, or the gate still allows the step.</summary>
+    private static async Task<string?> LiveAuthorizationAsync(WorktreeRemovalRequest request, CancellationToken ct)
+    {
+        if (request.LiveAuthorization is null) return null;
+        return await request.LiveAuthorization(ct);
     }
 
     private async Task<string?> AuthorityAsync(WorktreeRemovalRequest request, CancellationToken ct, bool refreshRemote = true)
