@@ -45,12 +45,12 @@ admission. No full assembly run is planned. Required by Final profile.
 
 totalTimeoutMinutes: 140
 
-| ID | After | Build | Filter | Min | EstimatedMinutes | Repeat | Kind | Notes |
-|---|---|---|---|---:|---:|---:|---|---|
-| CP-1 | Red | tests/Antiphon.SessionRunner.Tests -> bin-c1713-red/ | /*/*/BuildSlotMaxHoldTests*/* | 5 | 2 | 1 | test | Base production plus red-first tests V-1..4 |
-| CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | /*/*/(BuildSlot*Tests*)/* | 40 | 3 | 1 | test | V-1..5 and R-1 full classes |
-| CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | /*/*/*/*[Category=Unit] | 3500 | 30 | 1 | test | R-3 whole Unit lane |
-| CP-4 | Fix | CP-3 | /*/*/(MechanicalPcContractTests*)|(TestClassificationPolicy*)|(TestClassificationGuard*)|(SlowTestRegistryMerge*)|(SlowTestTripwire*)/* | 20 | 2 | 1 | test | R-2 explicit required classes |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | Red | tests/Antiphon.SessionRunner.Tests -> bin-c1713-red/ | red | `/*/*/BuildSlotMaxHoldTests*/*` | V-1..4 | 5 executed, expected assertion failures at base | 5 | 2 |
+| CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..5, R-1 | Full classes, zero failed/skipped | 40 | 3 |
+| CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | unit | `/*/*/*/*[Category=Unit]` | R-3 | Whole Unit lane, zero failed | 3500 | 30 |
+| CP-4 | Fix | CP-3 | policy | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-2 | Full named classes, zero failed/skipped | 20 | 2 |
 
 ## Pending SourceLanding Mutation candidates
 
