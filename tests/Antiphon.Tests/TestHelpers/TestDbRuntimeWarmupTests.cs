@@ -42,7 +42,9 @@ internal sealed class RuntimeModelObserver : IObserver<DiagnosticListener>, IObs
     {
         if (value.Value is ContextInitializedEventData { Context: AppDbContext context }
             && Activity.Current?.GetTagItem("antiphon.fixture") as string == "db-runtime")
-            Initialized.Add((context.Model, TestContext.Current is null));
+            // TUnit keeps the first test ambient while awaiting assembly hooks. Its concrete
+            // assembly-hook scope, rather than TestContext presence, identifies this boundary.
+            Initialized.Add((context.Model, AssemblyHookContext.Current?.Assembly == typeof(TestDbFixture).Assembly));
     }
 
     public void OnCompleted() { }
