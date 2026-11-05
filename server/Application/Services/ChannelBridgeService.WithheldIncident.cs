@@ -11,8 +11,12 @@ namespace Antiphon.Server.Application.Services;
 public sealed partial class ChannelBridgeService
 {
     private const int WithheldIncidentPageSize = 64;
+    private const int WithheldScanFailureThreshold = 3;
     private DateTime? _withheldCursorAt;
     private Guid _withheldCursorId;
+    private int _withheldScanFailures;
+    private Guid? _withheldFailureIncidentId;
+    private bool _withheldFailureReported;
 
     // A transient cursor limits inspected queue rows as well as inserted incidents.
     // It wraps after the indexed range ends; durable stamps, never this hint, deduplicate.
@@ -24,6 +28,13 @@ public sealed partial class ChannelBridgeService
           AND q."LastDeliveryBaselineSequence" IS NULL AND q."DeliveryVerdict" IS NULL
           AND q."WithholdCount" > 0 AND q."FirstWithheldAt" IS NOT NULL
           AND q."FirstWithheldAt" <= @agedAt
+          AND EXISTS (
+              SELECT 1 FROM "ChannelInbounds" AS i
+              WHERE i."QueueMessageId" = q."Id" AND i."AgentId" IS NOT NULL
+                AND i."InputWithheldIncidentAt" IS NULL)
+          AND EXISTS (
+              SELECT 1 FROM "AgentSessions" AS s
+              WHERE s."Id" = q."AgentSessionId" AND s."Status" = 2)
         """;
     internal const string WithheldIncidentQueuePageEndSql = """
         ORDER BY q."FirstWithheldAt", q."Id"
@@ -86,6 +97,9 @@ public sealed partial class ChannelBridgeService
             try
             {
                 await ScanWithheldChannelIncidentsAsync(ct);
+                _withheldScanFailures = 0;
+                _withheldFailureIncidentId = null;
+                _withheldFailureReported = false;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -94,6 +108,20 @@ public sealed partial class ChannelBridgeService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Withheld channel incident scan failed; retrying");
+                _withheldScanFailures = Math.Min(WithheldScanFailureThreshold, _withheldScanFailures + 1);
+                if (_withheldScanFailures >= WithheldScanFailureThreshold && !_withheldFailureReported)
+                {
+                    try
+                    {
+                        await ReportWithheldScanFailureAsync(ct);
+                        _withheldFailureReported = true;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                    catch (Exception reportError)
+                    {
+                        _logger.LogWarning(reportError, "Withheld channel scan failure incident could not be saved; retrying");
+                    }
+                }
             }
 
             try
@@ -105,6 +133,35 @@ public sealed partial class ChannelBridgeService
                 return;
             }
         }
+    }
+
+    private async Task ReportWithheldScanFailureAsync(CancellationToken ct)
+    {
+        // The failed scan transaction has unwound. A small independent write can succeed even
+        // when the indexed scan exceeds its deadline. If the database is unavailable too, the
+        // loop retains this identity and retries; an uncertain commit cannot duplicate it.
+        var id = _withheldFailureIncidentId ??= Guid.NewGuid();
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bound.CancelAfter(TimeSpan.FromSeconds(5));
+        var token = bound.Token;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(token);
+        await db.Database.ExecuteSqlRawAsync(
+            "SET LOCAL lock_timeout = '100ms'; SET LOCAL statement_timeout = '2s'", token);
+        var kind = (int)AgentIncidentKind.ChannelReplyLost;
+        var severity = (int)AlertSeverity.Critical;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var message = $"Channel bridge withheld-incident scan failed {WithheldScanFailureThreshold} consecutive passes. "
+            + "Withheld input monitoring is degraded; inspect database load and channel bridge logs.";
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentIncidents" ("Id", "Kind", "Severity", "FailureReason", "Message", "CreatedAt")
+            VALUES ({id}, {kind}, {severity}, {"ChannelWithheldScanFailed"}, {message}, {now})
+            ON CONFLICT ("Id") DO NOTHING
+            """, token);
+        await tx.CommitAsync(token);
+        _logger.LogWarning("Raised channel withheld scan failure incident after {Count} consecutive failed passes",
+            WithheldScanFailureThreshold);
     }
 
     internal async Task ScanWithheldChannelIncidentsAsync(CancellationToken ct)
