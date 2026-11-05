@@ -18,7 +18,8 @@ public sealed class RunnerWorkspaceIgnoredContent
     {
         _protected = Compile([
             "**/.claude/**", "**/appsettings.*.json", "**/*.user", "**/*.local.json",
-            "**/.antiphon/report.md", "**/.antiphon/deliverables/**", "**/.env*", "**/.env*/**",
+            "**/.antiphon/report.md", "**/.antiphon/deliverables/**",
+            ..IgnoredSecretFloor.Patterns,
             "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",
         ]);
         _evidence = Compile([".antiphon/**/*.trx", ".antiphon/*checkpoints*/**"]);

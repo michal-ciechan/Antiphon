@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -318,6 +319,7 @@ public sealed class WorktreeIgnoredContentClassifierTests
     [Test]
     public void Documented_secret_floor_is_in_the_server_defaults()
     {
+        IgnoredSecretFloor.Patterns.ToArray().ShouldBe(DocumentedSecretFloor);
         foreach (var pattern in DocumentedSecretFloor)
             WorktreeCleanupSettings.DefaultProtectedIgnored.ShouldContain(pattern);
     }
@@ -370,6 +372,7 @@ public sealed class WorktreeIgnoredContentClassifierTests
             ProtectedIgnored = [],
         }));
         var runner = new RunnerWorkspaceIgnoredContent(["**/*"]);
+        IgnoredSecretFloor.Matches(path).ShouldBeTrue(path);
         var normalized = WorktreeIgnoredContentClassifier.Normalize(path);
         var result = server.Classify([path]);
         Same(result.Protected, normalized);
@@ -390,6 +393,7 @@ public sealed class WorktreeIgnoredContentClassifierTests
     [Arguments("bin/identity.txt")]
     public void Near_miss_names_stay_disposable_on_both_classifiers(string path)
     {
+        IgnoredSecretFloor.Matches(path).ShouldBeFalse(path);
         var server = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
         {
             DisposableIgnored = ["**/*"],

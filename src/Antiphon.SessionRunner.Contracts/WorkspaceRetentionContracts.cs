@@ -42,6 +42,9 @@ public static class WorkspaceRetentionCodes
     public const string InspectionFailed = "inspection_failed";
     /// <summary>CARD-1677 S1 hardening: a path or name holds a control character (or U+2028/U+2029); never a candidate.</summary>
     public const string NameControlCharacter = "name_control_character";
+
+    /// <summary>CARD-1718 A-D3. An ignored path matches <see cref="IgnoredSecretFloor"/>. The tree stays.</summary>
+    public const string IgnoredSecret = "ignored_secret";
 }
 
 /// <summary>
