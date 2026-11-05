@@ -1426,6 +1426,7 @@ public sealed class RunnerSettlementSyncTests
     internal sealed class RecordingGit(IRepositoryMutationLease? leases) : TaskProgressGit(leases)
     {
         private readonly ConcurrentQueue<string> _commands = new();
+        private readonly ConcurrentQueue<string> _directories = new();
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _inFlight;
@@ -1433,6 +1434,9 @@ public sealed class RunnerSettlementSyncTests
         private bool _merged;
 
         public IReadOnlyList<string> Commands => _commands.ToArray();
+        public IReadOnlyList<string> WorkingDirectories => _directories.ToArray();
+        public Func<string, IReadOnlyList<string>, CancellationToken, Task>? BeforeCommandAsync { get; set; }
+        public Func<IReadOnlyList<string>, LandingGitResult?>? FailCommand { get; set; }
         public int InFlight => Volatile.Read(ref _inFlight);
         public int Blocked => Volatile.Read(ref _blocked);
         public Func<IReadOnlyList<string>, bool>? BlockOn { get; set; }
@@ -1448,15 +1452,19 @@ public sealed class RunnerSettlementSyncTests
         public void Clear()
         {
             while (_commands.TryDequeue(out _)) { }
+            while (_directories.TryDequeue(out _)) { }
             _merged = false;
         }
 
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             _commands.Enqueue(string.Join(' ', arguments));
+            _directories.Enqueue(repository);
             Interlocked.Increment(ref _inFlight);
             try
             {
+                if (BeforeCommandAsync is not null) await BeforeCommandAsync(repository, arguments, ct);
+                if (FailCommand?.Invoke(arguments) is { } failed) return failed;
                 if (BlockOn?.Invoke(arguments) == true)
                 {
                     Interlocked.Increment(ref _blocked);
