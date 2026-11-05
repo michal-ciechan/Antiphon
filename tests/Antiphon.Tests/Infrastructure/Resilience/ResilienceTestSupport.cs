@@ -155,7 +155,10 @@ internal static class ResilienceTestHost
         {
             if (ownerDeadline is DateTimeOffset due && time.GetUtcNow() >= due)
                 break;
-            time.Advance(step);
+            var advance = ownerDeadline is DateTimeOffset boundary
+                ? TimeSpan.FromTicks(Math.Min(step.Ticks, (boundary - time.GetUtcNow()).Ticks))
+                : step;
+            time.Advance(advance);
             await Task.Delay(1);
         }
 
