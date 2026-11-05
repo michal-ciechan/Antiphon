@@ -5,7 +5,8 @@ using System.Text.Json;
 namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>What an earlier guarded removal set aside, recorded before the move.</summary>
-internal sealed record WorktreeSetAsideRecord(string WorktreePath, string SetAsidePath, string GitDirectory, DateTime RecordedAt);
+internal sealed record WorktreeSetAsideRecord(string WorktreePath, string SetAsidePath, string GitDirectory, DateTime RecordedAt,
+    string? DirectoryIdentity = null, string? ContentSeal = null);
 
 /// <summary>
 /// CARD-0665 (review 0c0b9a4e item 1): the set-aside tree has one deterministic name per worktree
@@ -39,6 +40,30 @@ internal static class WorktreeSetAside
         // A scanner may hold the fresh temporary file or the record for a moment.
         var r = renames ?? WorktreeRenames.System;
         r.Retrying(r.ReplaceFile, temporary, path);
+    }
+
+    /// <summary>
+    /// SHA-256 of the sorted no-follow listing (kind, relative path, length, UTC write ticks).
+    /// The worktree's own <c>.git</c> entry is omitted. A same-size same-mtime byte edit does not change it.
+    /// </summary>
+    internal static string ListingSeal(string root)
+    {
+        var lines = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                var relative = Path.GetRelativePath(root, entry).Replace(Path.DirectorySeparatorChar, '/');
+                if (relative.Equals(".git", StringComparison.OrdinalIgnoreCase)) continue;
+                var stamp = WorktreeNoFollowDelete.TryStamp(entry) ?? throw new IOException("listing_seal_entry_absent: " + relative);
+                lines.Add($"{stamp.Kind}\t{relative}\t{stamp.Length}\t{stamp.MtimeTicks}");
+                if (stamp.Kind == "dir") pending.Push(entry);
+            }
+        }
+        lines.Sort(StringComparer.Ordinal);
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', lines))));
     }
 
     /// <summary>Null when nothing is recorded; an unreadable record is an I/O error, never absence.</summary>
