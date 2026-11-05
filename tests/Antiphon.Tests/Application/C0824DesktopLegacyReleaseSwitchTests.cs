@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -8,6 +10,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -458,6 +461,223 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
         swept.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Refused));
         await AssertBytesAsync(w, a, before);
         (await w.ReleasesAsync(a)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+    }
+
+    /// <summary>
+    /// CARD-1717 B-B-1 (Review 11a6d8bb). A genuine system release reaches the remover without its live gate, after
+    /// Execute was turned off. Absence is not permission: the tree, registration and local branch stay.
+    /// </summary>
+    [Test]
+    public async Task Missing_live_gate_refuses_a_system_release()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var head = (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim();
+        await using var scope = w.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == a.Id);
+        await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>().ReleaseSystemAsync(a.Id,
+            new SystemReleaseRequest(task.ConcurrencyToken, head, DesktopLegacyReleasePolicyService.ReleaseReason), CancellationToken.None);
+        var r = await db.TaskWorktreeRetirements.AsNoTracking().SingleAsync(x => x.TaskId == a.Id);
+        r.CallerIdentity.ShouldBe(TaskWorktreeRetirementService.SystemCallerIdentity);
+        Apply(w, "execute");
+        await using var lease = await scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(r.RepositoryPath, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        var request = new WorktreeRemovalRequest(WorktreeRemovalPurpose.SettledTask,
+            new LandSourceCoordinates(r.TaskId, r.RepositoryPath, r.WorktreePath, r.SourceFullRef, r.TargetFullRef),
+            r.CommonDirectory, r.GitDirectory, r.SourceSha, r.ObservedTargetSha ?? new string('0', 40), null, lease,
+            ManagedRoot: w.Root, RetirementId: r.Id, HasDeletionIntent: true);
+        request.LiveAuthorization.ShouldBeNull();
+
+        var result = await scope.ServiceProvider.GetRequiredService<GuardedWorktreeRemoval>().RemoveAsync(request, CancellationToken.None);
+
+        result.Residue.ShouldBe("legacy_release_authorization_required");
+        result.DirectoryGone.ShouldBeFalse();
+        result.Unregistered.ShouldBeFalse();
+        result.BranchDeleted.ShouldBeFalse();
+        await AssertBytesAsync(w, a, before);
+    }
+
+    /// <summary>
+    /// CARD-1717 B-B-1 (Review 11a6d8bb). The mirror continuation re-read the switch before two more awaits (the task
+    /// read and the runner description). Execute turned off after the description must send no WorkspaceRemove and
+    /// keep the mirror path.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_after_runner_describe_sends_no_mirror_remove()
+    {
+        var proxy = DispatchProxy.Create<ISessionRunnerDirectory, DescribeProbe>();
+        var control = (DescribeProbe)(object)proxy;
+        await using var w = await DesktopLegacyWorld.CreateAsync(configure: services => services.AddSingleton(sp =>
+            new RemoteWorkspaceService(proxy, sp.GetRequiredService<ILandingGit>(), NullLogger<RemoteWorkspaceService>.Instance)));
+        await using var phone = await PhoneHomeTestHost.StartAsync(w.Clock, w.Host.Schema.ConnectionString);
+        control.Inner = phone.Directory;
+        var fired = 0;
+        var removes = 0;
+        var removesAfterOff = 0;
+        control.After = () =>
+        {
+            if (fired++ != 0) return;
+            w.Settings.Value.Execute.ShouldBeTrue("the switch is on until the description returns");
+            Apply(w, "execute");
+        };
+        var peer = await phone.ConnectPeerAsync();
+        phone.Directory.MarkRecovered(await phone.WaitLiveAsync());
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.WorkspaceRemove) return null;
+            removes++;
+            if (!w.Settings.Value.Execute) removesAfterOff++;
+            return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceRemoveResponse(true, null), PhoneHomeFraming.Json));
+        };
+        var mirror = Path.Combine(w.Fixture.Root, "c1717-mirror");
+        var a = await w.AddTaskAsync(seed: t => { t.RunnerId = phone.AllowedRunnerId; t.RemoteWorktreePath = mirror; });
+
+        await w.TickAsync();
+
+        fired.ShouldBe(1, "the mirror continuation described the runner once");
+        removesAfterOff.ShouldBe(0, "no WorkspaceRemove after the switch closed");
+        removes.ShouldBe(0);
+        await using var db = w.Db();
+        var saved = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == a.Id);
+        saved.RemoteWorktreePath.ShouldBe(mirror, "the mirror path is kept for a later pass");
+    }
+
+    /// <summary>
+    /// CARD-1717 A+B integration. The content binding (A) is the last await before the move-aside. Execute turned off
+    /// while it reads the index must still keep the tree: the switch is read after the binding, not before it.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_during_content_binding_preserves_the_tree()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var origin = await w.OriginRefsAsync();
+        var fired = false;
+        var previous = w.Fixture.Git.AfterCommand;
+        w.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (previous is not null) await previous(directory, args, result);
+            if (fired || !IsStageListing(args) || !LandingGit.PathsEqual(directory, a.Path)) return;
+            fired = true;
+            Apply(w, "execute");
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBeTrue("the binding read the index of the tree");
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+        await AssertBytesAsync(w, a, before);
+        Directory.Exists(WorktreeSetAside.SetAsidePath(a.Path)).ShouldBeFalse("nothing was moved aside");
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+
+        w.Fixture.Git.AfterCommand = previous;
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+    }
+
+    /// <summary>
+    /// CARD-1717 A+B integration. After the move-aside the census re-reads the set-aside tree (awaits) before Git's
+    /// entry is dropped. Execute turned off there must put the tree back registered, not unregister and hold it.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_after_move_aside_restores_the_registered_tree()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var origin = await w.OriginRefsAsync();
+        var aside = WorktreeSetAside.SetAsidePath(a.Path);
+        var fired = false;
+        var previous = w.Fixture.Git.AfterCommand;
+        w.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (previous is not null) await previous(directory, args, result);
+            if (fired || !IsStageListing(args) || !LandingGit.PathsEqual(directory, aside)) return;
+            fired = true;
+            Apply(w, "execute");
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBeTrue("the post-move census read the set-aside index");
+        var row = await w.RowAsync(tick.RunId, a);
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+        Directory.Exists(aside).ShouldBeFalse("the tree was put back");
+        await AssertBytesAsync(w, a, before);
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue("Git's entry was never dropped");
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+
+        w.Fixture.Git.AfterCommand = previous;
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+    }
+
+    /// <summary>
+    /// CARD-1717 A+B integration. With the switch on throughout, the content seal still decides: a tracked write
+    /// after the final clean status is refused and its bytes stay.
+    /// </summary>
+    [Test]
+    public async Task Content_seal_refuses_a_late_tracked_write_with_the_switch_on()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var tracked = Path.Combine(a.Path, a.Id8 + ".txt");
+        var origin = await w.OriginRefsAsync();
+        var wrote = false;
+        var previous = w.Fixture.Git.AfterCommand;
+        w.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (previous is not null) await previous(directory, args, result);
+            // The first plain ls-files in the tree is the late-name census, after the final clean status.
+            if (wrote || args.Count != 2 || args[0] != "ls-files" || args[1] != "-z" || !LandingGit.PathsEqual(directory, a.Path))
+                return;
+            wrote = true;
+            await File.WriteAllTextAsync(tracked, "unpushed bytes after the clean status\n");
+        };
+
+        var tick = await w.TickAsync();
+
+        wrote.ShouldBeTrue();
+        w.Settings.Value.Execute.ShouldBeTrue();
+        var row = await w.RowAsync(tick.RunId, a);
+        row.ReasonCode.ShouldBe("tracked_bytes_changed");
+        (await File.ReadAllTextAsync(tracked)).ShouldBe("unpushed bytes after the clean status\n");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+        (await w.ReleasesAsync(a)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+    }
+
+    private static bool IsStageListing(IReadOnlyList<string> args) =>
+        args.Count >= 2 && args[0] == "ls-files" && args[1] == "--stage";
+
+    /// <summary>Forwards to the real directory and runs <see cref="After"/> once each description has returned.</summary>
+    public class DescribeProbe : DispatchProxy
+    {
+        public ISessionRunnerDirectory Inner { get; set; } = null!;
+        public Action After { get; set; } = () => { };
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            var value = method!.Invoke(Inner, args);
+            return method.Name == "DescribeAsync" ? AfterDescribe((Task<RunnerDescriptor?>)value!) : value;
+        }
+
+        private async Task<RunnerDescriptor?> AfterDescribe(Task<RunnerDescriptor?> pending)
+        {
+            var result = await pending;
+            await Task.Yield();
+            After();
+            return result;
+        }
     }
 
     private static async Task<DesktopLegacyWorld.Handle> StartCommandAsync(DesktopLegacyWorld w)
