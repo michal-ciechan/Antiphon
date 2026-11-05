@@ -243,6 +243,11 @@ public sealed class C0824RefOnlyCleanupTests
     public async Task Remote_cleanup_still_uses_its_binding_and_generation()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Ready);
+        // Legacy removal prunes the whole registration root and correctly refuses competing journal custody.
+        f.Journal.Read()!.Count.ShouldBe(0, "legacy-removal-has-no-competing-journal-custody");
+        await RetirementRemoteActionAsync(f);
+        f.Journal.Read()!.Count.ShouldBe(0, "legacy-removal-does-not-borrow-completed-card-authority");
+        await f.PrepareNextMirrorAsync(MirrorPreparation.Ready);
         foreach (var preparation in new[] { MirrorPreparation.Ready, MirrorPreparation.Busy })
         {
             if (preparation == MirrorPreparation.Busy) await f.PrepareNextMirrorAsync(preparation);
@@ -342,8 +347,6 @@ public sealed class C0824RefOnlyCleanupTests
             (await f.Card.Host.Fixture.RequiredAsync(f.Card.Host.Fixture.Remote, "rev-parse", binding.FullRef))
                 .Trim().ShouldBe(f.Binding.CreationBaselineSha);
         }
-        await f.PrepareNextMirrorAsync(MirrorPreparation.Ready);
-        await RetirementRemoteActionAsync(f);
     }
 
     private static async Task RetirementRemoteActionAsync(CompletedCardMirrorFixture f)
