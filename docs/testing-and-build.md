@@ -611,7 +611,7 @@ The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedM
 CARD-1531 separates admission from execution. `--total-timeout` is the charged
 execution allowance (existing selected-estimate derivation when omitted).
 A plan may set that allowance with a `totalTimeoutMinutes: N` line in the
-`### Checkpoints` section. A value below `DeriveTotalMinutes` is refused as
+`### Checkpoints` section. The default is `max(30, 2*sum+10)`; an explicit value below `2*sum+10` is refused as
 `checkpoint-total-below-derived` unless that section also sets
 `totalTimeoutOverrideReason`. CLI `--total-timeout` is checked the same way when
 a selected row has a positive estimate; `--total-timeout-override-reason` is that

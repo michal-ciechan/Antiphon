@@ -270,7 +270,7 @@ public static class PlanTableImporter
             return Fail(directive.Error);
         if (directive.Minutes is int explicitTotal)
         {
-            var derived = RowTimeout.DeriveTotalMinutes(manifest.Checkpoints.Select(row => row.EstimatedMinutes ?? 0), null);
+            var derived = RowTimeout.DeriveMinimumTotalMinutes(manifest.Checkpoints.Select(row => row.EstimatedMinutes ?? 0));
             if (explicitTotal < derived)
             {
                 var message = $"refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes {explicitTotal} is below derived {derived}";

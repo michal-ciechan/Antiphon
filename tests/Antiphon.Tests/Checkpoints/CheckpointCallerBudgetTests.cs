@@ -23,6 +23,7 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
             | CP-1 | S1 | tests/Antiphon.Tests -> bin-floor/ | floor | /*/*/BudgetTests/* | V-1 | all listed | 1 | 1 |
             """;
         var root = TempDir();
+        RowTimeout.DeriveTotalMinutes([1], null).ShouldBe(30);
         if (entry == "plan")
         {
             var imported = PlanTableImporter.ImportMarkdown(table.Replace("### Checkpoints", "### Checkpoints\n\ntotalTimeoutMinutes: 12"));
@@ -96,7 +97,9 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
                 }
             }
         }
-        Select(manifest, TempDir(), rows, total).TotalTimeoutMinutes.ShouldBe(total, $"{caller}/{selection}/controls={controls}");
+        var reason = Regex.Match(source, @"--total-timeout-override-reason '(?<value>[^']+)'");
+        Select(manifest, TempDir(), rows, total, reason.Success ? reason.Groups["value"].Value : null)
+            .TotalTimeoutMinutes.ShouldBe(total, $"{caller}/{selection}/controls={controls}");
     }
 
     private static string Match(string source, string pattern)
@@ -116,7 +119,7 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
         });
     }
 
-    private static RunRequest Select(CheckpointManifest manifest, string root, string[] rows, int total)
+    private static RunRequest Select(CheckpointManifest manifest, string root, string[] rows, int total, string? reason = null)
     {
         var path = Path.Combine(root, "callers.yaml");
         File.WriteAllText(path, ManifestLoader.ToYaml(manifest));
@@ -124,10 +127,10 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
         options.Positionals.Add(path);
         options.Add("rows", string.Join(',', rows));
         options.Add("total-timeout", $"{total}m");
+        if (reason is not null)
+            options.Add("total-timeout-override-reason", reason);
         var method = typeof(Antiphon.Checkpoints.Program).GetMethod("LoadSelection", BindingFlags.Static | BindingFlags.NonPublic)!;
-        return ((CheckpointManifest Manifest, RunRequest Request))method.Invoke(null, [options, root, null, CancellationToken.None])! switch
-        {
-            var result => result.Request
-        };
+        var result = ((CheckpointManifest Manifest, RunRequest Request))method.Invoke(null, [options, root, null, CancellationToken.None])!;
+        return result.Request;
     }
 }

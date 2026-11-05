@@ -676,7 +676,7 @@ public static class Program
             var judged = manifest.Checkpoints.Where(row => rows.Count == 0 || rows.Contains(row.Id)).ToList();
             if (judged.Any(row => row.EstimatedMinutes is > 0))
             {
-                var derived = RowTimeout.DeriveTotalMinutes(judged.Select(row => row.EstimatedMinutes ?? 0), null);
+                var derived = RowTimeout.DeriveMinimumTotalMinutes(judged.Select(row => row.EstimatedMinutes ?? 0));
                 if (asked < derived)
                 {
                     var message = $"refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes {asked} is below derived {derived}";
