@@ -122,6 +122,10 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public string? StaleSubmitBody { get; set; }
     private bool _staleSubmitUsed;
     public int PromptOutputDelayMs { get; set; } = 10;
+    // Opt-in for fixtures about turn state rather than output scheduling.
+    public bool SynchronousPromptOutput { get; set; }
+    // Withhold asynchronous output deterministically without occupying a pool thread.
+    public Task? PromptOutputGate { get; set; }
     public bool ReadyResult { get; set; } = true;
     /// <summary>
     /// When set, <see cref="WaitForReadyAsync"/> waits on this instead of returning
@@ -351,6 +355,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             {
                 try
                 {
+                    if (PromptOutputGate is { } gate)
+                        await gate.WaitAsync(ct);
                     await Task.Delay(Math.Max(0, PromptOutputDelayMs), ct);
                     Emit(PromptOutput);
                     _firstPromptOutput.TrySetResult();
