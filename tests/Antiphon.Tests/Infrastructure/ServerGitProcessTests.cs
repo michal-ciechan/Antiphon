@@ -74,7 +74,7 @@ public sealed class ServerGitProcessTests
     // D-2: GitTool (agent-supplied git) and the runner are deliberately excluded.
     private static readonly (string File, int Sites)[] Roster =
     [
-        ("server/Infrastructure/Git/LandingGit.cs", 2),
+        ("server/Infrastructure/Git/LandingGit.cs", 3),
         ("server/Infrastructure/Git/GitService.cs", 2),
         ("server/Infrastructure/Git/WorktreeManager.cs", 1),
         ("server/Infrastructure/Git/CardFileRepository.cs", 1),
@@ -89,7 +89,7 @@ public sealed class ServerGitProcessTests
     [Test]
     public void C1432_every_server_git_start_site_disables_auto_maintenance()
     {
-        Roster.Sum(r => r.Sites).ShouldBe(13, "T-1 names thirteen server git start sites");
+        Roster.Sum(r => r.Sites).ShouldBe(14, "thirteen launches plus the non-launching eligibility probe");
         var root = RepositoryRoot();
         var missing = new List<string>();
         foreach (var (file, sites) in Roster)
@@ -97,7 +97,64 @@ public sealed class ServerGitProcessTests
             var text = File.ReadAllText(Path.Combine(root, file));
             var starts = Regex.Matches(text, @"new (System\.Diagnostics\.)?ProcessStartInfo\b").Select(m => m.Index).ToList();
             starts.Count.ShouldBe(sites, $"{file} ProcessStartInfo constructions");
-            for (var i = 0; i < starts.Count; i++)
+            missing.AddRange(ScanStartSites(text, file));
+        }
+        missing.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void C1432_scanner_accepts_a_non_launching_probe_and_two_guarded_launches()
+    {
+        ScanStartSites(ScannerSource, "LandingGit.cs").ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("ExecuteProcessAsync")]
+    [Arguments("RunGitInputBytesAsync")]
+    public void C1432_scanner_names_each_unguarded_launch(string method)
+    {
+        var source = ScannerSource.Replace($"ServerGitProcess.DisableAutoMaintenance({(method == "ExecuteProcessAsync" ? "start" : "input")});", "");
+        var failures = ScanStartSites(source, "LandingGit.cs");
+        failures.Count.ShouldBe(1);
+        failures[0].ShouldContain(method);
+    }
+
+    [Test]
+    public void C1432_scanner_rejects_a_third_unguarded_launch()
+    {
+        var source = ScannerSource.Replace("// extra site", "void ThirdLaunch() { var third = new ProcessStartInfo(\"git\"); Process.Start(third); }");
+        var failures = ScanStartSites(source, "LandingGit.cs");
+        failures.Count.ShouldBe(1);
+        failures[0].ShouldContain("ThirdLaunch");
+    }
+
+    [Test]
+    [Arguments("Process.Start(probe);")]
+    [Arguments("StartProcess(probe);")]
+    [Arguments("var child = new Process(); child.StartInfo = probe; child.Start();")]
+    public void C1432_scanner_rejects_a_launching_probe(string launch)
+    {
+        var source = ScannerSource.Replace("ConfigureProcess(probe);", "ConfigureProcess(probe); " + launch);
+        var failures = ScanStartSites(source, "LandingGit.cs");
+        failures.Count.ShouldBe(1);
+        failures[0].ShouldContain("InProcessEligible");
+        failures[0].ShouldContain("probe");
+    }
+
+    private const string ScannerSource = """
+        class LandingGit {
+            bool InProcessEligible() { var probe = new ProcessStartInfo("git"); ConfigureProcess(probe); return probe.FileName == "git"; }
+            void ExecuteProcessAsync() { var start = new ProcessStartInfo("git"); ConfigureProcess(start); ServerGitProcess.DisableAutoMaintenance(start); StartProcess(start); }
+            void RunGitInputBytesAsync() { var input = new ProcessStartInfo("git"); ConfigureProcess(input); ServerGitProcess.DisableAutoMaintenance(input); Process.Start(input); }
+            // extra site
+        }
+        """;
+
+    private static List<string> ScanStartSites(string text, string file)
+    {
+        var missing = new List<string>();
+        var starts = Regex.Matches(text, @"new (System\.Diagnostics\.)?ProcessStartInfo\b").Select(m => m.Index).ToList();
+        for (var i = 0; i < starts.Count; i++)
             {
                 // Each construction's body runs to the next construction (or the file end); the guard
                 // must sit between it and the process start.
@@ -108,8 +165,7 @@ public sealed class ServerGitProcessTests
                 if (guard < 0 || (launch.Success && launch.Index < guard))
                     missing.Add($"{file}:{LineOf(text, starts[i])}");
             }
-        }
-        missing.ShouldBeEmpty();
+        return missing;
     }
 
     private static int LineOf(string text, int index) => text.AsSpan(0, index).Count('\n') + 1;
