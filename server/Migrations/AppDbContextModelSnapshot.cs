@@ -2332,6 +2332,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("DesktopCleanupDisposition")
+                        .HasColumnType("integer");
+
                     b.Property<string>("DestinationFullRef")
                         .IsRequired()
                         .HasColumnType("text");
@@ -4657,6 +4660,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("DesktopCleanupDisposition")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("DesktopWorkspaceKind")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ExclusionReason")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -4681,6 +4690,9 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer");
 
                     b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("TaskRefWorkspaceBindingId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("WorkspaceIdentity")
