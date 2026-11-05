@@ -24,6 +24,7 @@ namespace Antiphon.Tests.Application;
 /// nothing was sent. The V-39 cases drive a real runner dispatcher and engine (F-4).
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
 [Timeout(45_000)]
 public sealed class C1677RetentionServerTests
 {
