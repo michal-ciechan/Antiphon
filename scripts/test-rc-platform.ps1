@@ -125,13 +125,22 @@ function Test-C1323_PlatformPolicy {
     Assert-C1323 ($old.SchemaVersion -eq 3 -and (Same-C1323Set $oldAuthority.RequiredSuites $expectedSuites) -and (Same-C1323Set (Get-C1323Required $nodes @(Get-NightlyProfileExclusions $old.Object 'rc' 'e2e' -Platform linux)) $expectedWindows)) 'schema3-compatibility'
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $shipRows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')
-    Assert-C1323 ($shipped.SchemaVersion -eq 4 -and $shipRows.Count -eq 3 -and @($shipRows | Where-Object { $_.platform -cne 'linux' -or $_.suite -cne 'e2e' }).Count -eq 0 -and (Same-C1323Set $shipRows.class $scoped.Class)) 'shipped-three-linux-rows'
+    $ownedKeys = @($shipRows | ForEach-Object { $_.suite + '|' + $_.class + '|' + $_.platform })
+    $expectedOwnedKeys = @(
+        'e2e|AgentTaskLandDeliveryE2ETests|linux', 'e2e|DispatchBaseWarningDeliveryE2ETests|linux',
+        'e2e|WorktreeRetirementDeliveryE2ETests|linux',
+        'antiphon|PosixHarnessToolTests|windows', 'antiphon|CardRelationshipScriptTests|windows'
+    )
+    $linuxShipRows = @($shipRows | Where-Object { $_.platform -ceq 'linux' })
+    Assert-C1323 ($shipped.SchemaVersion -eq 4 -and (Same-C1323Set $ownedKeys $expectedOwnedKeys) -and $linuxShipRows.Count -eq 3 -and @($linuxShipRows | Where-Object { $_.suite -cne 'e2e' }).Count -eq 0 -and (Same-C1323Set $linuxShipRows.class $scoped.Class)) 'shipped-three-linux-rows'
     $c1614 = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1614')
     $inbox = @($c1614 | Where-Object { [string]$_.class -ceq 'HostCustodyTests' -and [string]$_.platform -ceq 'linux' })
     $life = @($c1614 | Where-Object { [string]$_.class -ceq 'LinuxRunnerCustodyLifecycleTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' })
     $boot = @($c1614 | Where-Object { [string]$_.class -ceq 'CustodyNamespaceBootstrapTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' })
+    $nativeHost = @($c1614 | Where-Object { [string]$_.suite -ceq 'pty-host' -and [string]$_.class -ceq 'LinuxCustodyReleaseHostTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' -and @($_.methods | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0 })
+    $nativeHelper = @($c1614 | Where-Object { [string]$_.suite -ceq 'agents-pty' -and [string]$_.class -ceq 'LinuxCgroupContainmentTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' -and (Same-C1323Set @($_.methods) @('C1614_Helper_written_tree_is_read_by_production_reader')) })
     $inboxMethods = @($inbox | ForEach-Object { $_.methods })
-    Assert-C1323 ($c1614.Count -eq 3 -and $inbox.Count -eq 1 -and @($inboxMethods) -contains 'Inbox_is_unsupported_and_never_becomes_no_start_proof' -and @($inboxMethods) -contains 'C1614_Windows_tracked_linger_releases_job' -and [string]$inbox[0].reason -notlike 'Linux-only by construction:*' -and $life.Count -eq 1 -and $boot.Count -eq 1 -and $shipped.Hash -ceq [string]$shipped.Object.policyHash) 'card-1614-mixed-platform-rows'
+    Assert-C1323 ($c1614.Count -eq 5 -and $nativeHost.Count -eq 1 -and $nativeHelper.Count -eq 1 -and $inbox.Count -eq 1 -and @($inboxMethods) -contains 'Inbox_is_unsupported_and_never_becomes_no_start_proof' -and @($inboxMethods) -contains 'C1614_Windows_tracked_linger_releases_job' -and [string]$inbox[0].reason -notlike 'Linux-only by construction:*' -and $life.Count -eq 1 -and $boot.Count -eq 1 -and $shipped.Hash -ceq [string]$shipped.Object.policyHash) 'card-1614-mixed-platform-rows'
     $shippedCensus = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $shipped.Object
     Assert-C1323 ($shippedCensus.Ok -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved' $shippedCensus.Message
 
