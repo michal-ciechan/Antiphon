@@ -53,6 +53,59 @@ public sealed class GhostSeatReleaseTests
     }
 
     [Test]
+    public async Task Failed_owner_temporarily_blocked_during_candidate_read_keeps_the_seat()
+    {
+        var boundary = new CandidateReadBoundary();
+        await using var world = await World.StartAsync(boundary);
+        var task = await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+        boundary.BeforeRead = () => world.ChangeStatusAsync(task.Id, AgentTaskStatus.Blocked);
+        boundary.OnRead = () => world.ChangeStatusAsync(task.Id, AgentTaskStatus.Failed);
+
+        await world.RetireAsync();
+
+        boundary.BeforeCalls.ShouldBe(1, "G05: change status after owner and busy snapshots, before candidate SQL");
+        boundary.Calls.ShouldBe(1, "restore Failed only after the candidate SQL snapshot is fixed");
+        boundary.MaterializedStatuses.ShouldBe([AgentTaskStatus.Blocked]);
+        (await world.TaskStatusAsync()).ShouldBe(AgentTaskStatus.Failed,
+            "later guards see Failed, so they cannot mask a missing candidate-status guard");
+        world.Client.SlotReleases.ShouldBeEmpty("G05: the materialized Blocked candidate cannot authorize release");
+        (await world.SessionStatusAsync()).ShouldBe(SessionStatus.Running);
+        world.Stopper.Killed.ShouldBeEmpty();
+
+        await world.RetireAsync();
+        world.Client.SlotReleases.ShouldHaveSingleItem().SessionId.ShouldBe(world.SessionId,
+            "a fresh Failed snapshot releases the otherwise eligible seat on the next sweep");
+    }
+
+    [Test]
+    [Arguments(AgentTaskStatus.Queued)]
+    [Arguments(AgentTaskStatus.Dispatched)]
+    [Arguments(AgentTaskStatus.Working)]
+    [Arguments(AgentTaskStatus.Blocked)]
+    public async Task Older_open_owner_closed_after_busy_snapshot_keeps_the_seat_for_this_sweep(AgentTaskStatus status)
+    {
+        var boundary = new CandidateReadBoundary();
+        await using var world = await World.StartAsync(boundary);
+        var failed = await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+        var older = await world.SeedOlderOpenOwnerAsync(failed, status);
+        boundary.OnRead = () => world.ChangeStatusAsync(older, AgentTaskStatus.Completed);
+
+        await world.RetireAsync();
+
+        boundary.Calls.ShouldBe(1, "G07: the newer Failed task remains the current owner and reaches candidate loading");
+        boundary.MaterializedStatuses.ShouldBe([AgentTaskStatus.Failed]);
+        (await world.StatusAsync(older)).ShouldBe(AgentTaskStatus.Completed,
+            "the later open-task query cannot mask a missing busy-snapshot guard");
+        world.Client.SlotReleases.ShouldBeEmpty("G07: an agent busy in this sweep's snapshot keeps its seat");
+        (await world.SessionStatusAsync()).ShouldBe(SessionStatus.Running);
+        world.Stopper.Killed.ShouldBeEmpty();
+
+        await world.RetireAsync();
+        world.Client.SlotReleases.ShouldHaveSingleItem().SessionId.ShouldBe(world.SessionId,
+            "the next sweep observes the closed older owner and releases the eligible seat");
+    }
+
+    [Test]
     [Arguments("dirty")]
     [Arguments("unpushed")]
     [Arguments("unknown")]
@@ -587,6 +640,34 @@ public sealed class GhostSeatReleaseTests
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.CompletionProgressEvidenceJson, evidence));
         }
 
+        public async Task<Guid> SeedOlderOpenOwnerAsync(AgentTask failed, AgentTaskStatus status)
+        {
+            await using var db = Open();
+            var older = new AgentTask
+            {
+                Id = Guid.NewGuid(), Title = "older open owner", Goal = "keep the agent busy",
+                AgentId = AgentId, AgentSessionId = SessionId, Status = status,
+                CreatedAt = failed.CreatedAt.AddMinutes(-1),
+                DispatchedAt = failed.DispatchedAt!.Value.AddMinutes(-1),
+            };
+            db.AgentTasks.Add(older);
+            await db.SaveChangesAsync();
+            return older.Id;
+        }
+
+        public async Task ChangeStatusAsync(Guid taskId, AgentTaskStatus status)
+        {
+            await using var db = Open();
+            await db.AgentTasks.Where(t => t.Id == taskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, status));
+        }
+
+        public async Task<AgentTaskStatus> StatusAsync(Guid taskId)
+        {
+            await using var db = Open();
+            return await db.AgentTasks.Where(t => t.Id == taskId).Select(t => t.Status).SingleAsync();
+        }
+
         public async Task<SessionStatus> SessionStatusAsync()
         {
             await using var db = Open();
@@ -637,15 +718,42 @@ public sealed class GhostSeatReleaseTests
 
     // A real database read returns the old candidate snapshot while another writer commits
     // new settlement evidence. No production hook or timing race is needed for this witness.
-    private sealed class CandidateReadBoundary : DbCommandInterceptor
+    private sealed class CandidateReadBoundary : DbCommandInterceptor, IMaterializationInterceptor
     {
+        public Func<Task>? BeforeRead { get; set; }
         public Func<Task>? OnRead { get; set; }
+        public int BeforeCalls { get; private set; }
         public int Calls { get; private set; }
+        public List<AgentTaskStatus> MaterializedStatuses { get; } = [];
+        private bool _captureMaterialization;
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (BeforeRead is { } callback && IsCandidateRead(command))
+            {
+                BeforeRead = null;
+                BeforeCalls++;
+                await callback();
+            }
+            return result;
+        }
+
+        public object InitializedInstance(MaterializationInterceptionData materializationData, object entity)
+        {
+            if (_captureMaterialization && entity is AgentTask task)
+                MaterializedStatuses.Add(task.Status);
+            return entity;
+        }
+
+        private static bool IsCandidateRead(DbCommand command) => command.Parameters.Cast<DbParameter>()
+            .Any(p => p.ParameterName.Contains("ownerIds", StringComparison.Ordinal));
+
         public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
             CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
         {
-            if (OnRead is { } callback && command.Parameters.Cast<DbParameter>()
-                .Any(p => p.ParameterName.Contains("ownerIds", StringComparison.Ordinal)))
+            _captureMaterialization = IsCandidateRead(command);
+            if (OnRead is { } callback && _captureMaterialization)
             {
                 OnRead = null;
                 Calls++;
