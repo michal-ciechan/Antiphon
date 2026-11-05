@@ -251,8 +251,7 @@ internal static class WorktreeNoFollowDelete
         try { dir = OpenAt(Fd(parent), name, ODirectory | ONoFollow | OCloExec, name); }
         catch (IOException)
         {
-            // An approved directory that became a link is held; without a receipt the link itself goes.
-            if (approval is null && TryStat(Fd(parent), name, AtSymlinkNoFollow, out var swapped)
+            if (TryStat(Fd(parent), name, AtSymlinkNoFollow, out var swapped)
                 && (swapped.Mode & 0xF000) == SIfLnk)
             {
                 Unlink(parent, name, directory: false);
@@ -283,7 +282,7 @@ internal static class WorktreeNoFollowDelete
                 throw new ApprovedTreeRejectedException("set_aside_content_changed");
             if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
             var nowKind = now.Mode & 0xF000;
-            if (nowKind == SIfLnk && approval is null)
+            if (nowKind == SIfLnk)
             {
                 Unlink(parent, name, directory: false);
                 return;
@@ -639,8 +638,10 @@ internal static class RemovalApproval
                         continue;
                     var stamp = WorktreeNoFollowDelete.TryStamp(entry)
                         ?? throw new ApprovedTreeRejectedException("set_aside_content_changed");
-                    if (!Names.Contains(relative) || !Kinds.TryGetValue(relative, out var kind) || kind != stamp.Kind)
+                    if (!Names.Contains(relative) || !Kinds.TryGetValue(relative, out var kind))
                         throw new ApprovedTreeRejectedException("set_aside_content_changed");
+                    if (stamp.Kind == "link") continue;
+                    if (kind != stamp.Kind) throw new ApprovedTreeRejectedException("set_aside_content_changed");
                     if (Hashes.TryGetValue(relative, out var expected))
                     {
                         var hash = WorktreeNoFollowDelete.RegularFileHash(entry);
@@ -670,8 +671,10 @@ internal static class RemovalApproval
         public void RejectChanged(string relative, string kind, Func<string?> hash)
         {
             if (Administrative(relative)) return;
-            if (!Kinds.TryGetValue(relative, out var approved) || approved != kind)
-                throw new ApprovedTreeRejectedException("set_aside_content_changed");
+            if (!Kinds.TryGetValue(relative, out var approved)) throw new ApprovedTreeRejectedException("set_aside_content_changed");
+            // CARD-1017: an approved name that is now a link holds no worktree bytes; it is unlinked, never followed.
+            if (kind == "link") return;
+            if (approved != kind) throw new ApprovedTreeRejectedException("set_aside_content_changed");
             if (!Hashes.TryGetValue(relative, out var expected)) return;
             var actual = hash();
             if (actual is null || actual.Length == 0 || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
