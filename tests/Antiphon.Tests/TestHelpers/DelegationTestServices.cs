@@ -101,6 +101,7 @@ internal static class DelegationTestServices
         services.TryAddSingleton<GatedCommitService>();
         services.TryAddScoped<DelegationWorktreeService>();
         services.TryAddScoped<AgentTaskWorktreeBaseResolver>();
+        services.TryAddScoped<TaskWorkspaceContextResolver>();
         services.TryAddSingleton<GitProcessGate>();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<CardSiblingInspectionService>();

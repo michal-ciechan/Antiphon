@@ -350,6 +350,7 @@ try
     // CARD-0824 S1c: the role allow-list for slot leases, read from the options monitor at each decision.
     builder.Services.AddSingleton<WorkspaceSlotRoleGate>();
     builder.Services.AddSingleton<RefOnlyDesktopGate>();
+    builder.Services.AddScoped<TaskWorkspaceContextResolver>();
     builder.Services.AddScoped<RemoteWorkspaceService>();
     // CARD-0657 D-1: the pre-attribution sync the completion evaluator prepares through.
     builder.Services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
