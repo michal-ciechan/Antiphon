@@ -10,6 +10,8 @@ S1 commits the red-first witnesses. S2 repairs A-2 first: Failed seats require t
 
 S2 also changes the held attention wording, and introduces a five-attempt per-sweep release cap. Failed runner calls consume the attempt budget too. The cap applies to the ghost path; the qualified coordinator retains its independent policy and ownership. Ordinary witnesses use the real dispatcher, PostgreSQL and RunnerSlotService, with fake runner I/O; coordinator witnesses exercise both qualified and held outcomes with AutomaticEnabled true.
 
+The first S2 run at 1e5e9d6f9629d3ce5c05e6f14a6154dee181be6b passed the five-plus-two release counts, then failed the same witness's no-raw-stop assertion: released agents remained warm and a later cap sweep sent four redundant stops. The committed failing witness precedes this repair. On successful slot release, retain the incident-bearing agent as Stopped and persist it immediately; remove stopped agents from this sweep's warm counts. Keep the assertion and all timeouts unchanged. Rerun CP-2/CP-3 at the repaired committed SHA.
+
 No changes to project/build inputs, timeouts, or startup configuration. No changed OS-selected behavior; production callers remain portable. Activation after future landing requires a server restart, not a runner restart. This task performs neither.
 
 ## Performance budget
@@ -55,5 +57,6 @@ All deliberate mutants remain pending for SourceLanding Mutation, including inhe
 - PC-6: remove the five-attempt cap -> V-3.
 - PC-7: restore the old never-killed text -> V-4.
 - PC-8 variants hold/qualified: bypass coordinator ownership / suppress coordinator call -> V-5 (no force fallback / no gap).
+- PC-9: omit immediate post-release agent retirement -> V-3 no-raw-stop assertion (red at the first S2 SHA).
 
 No deliberate mutant is executed by Code. Ordinary red-first failures are production-baseline witnesses, not Mutation credit. Mutation owns missing-control discovery, red/restore/green and reachability.
