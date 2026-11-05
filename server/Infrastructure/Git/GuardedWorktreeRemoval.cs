@@ -386,7 +386,11 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         }
     }
 
-    /// <summary>CARD-1717 D-1. Null when this request has no live gate, or the gate still allows the step.</summary>
+    /// <summary>CARD-1717 B-B-1: a system release reached the remover without its live switch.</summary>
+    internal const string LiveAuthorizationRequired = "legacy_release_authorization_required";
+
+    /// <summary>CARD-1717 D-1. Null when this request has no live gate, or the gate still allows the step. A system
+    /// release without a gate never gets here: <see cref="AuthorityAsync"/> refuses it first.</summary>
     private static async Task<string?> LiveAuthorizationAsync(WorktreeRemovalRequest request, CancellationToken ct)
     {
         if (request.LiveAuthorization is null) return null;
@@ -421,6 +425,12 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 || !LandingGit.PathsEqual(retirement.CommonDirectory, common)
                 || retirement.State is WorktreeRetirementState.Revoked)
                 return "retirement_receipt_mismatch";
+            // CARD-1717 B-B-1: a release the desktop legacy policy filed is authorized only by its live switch.
+            // A request without that gate is refused at every entry (this check runs before each pass and the
+            // branch delete), never read as permission.
+            if (string.Equals(retirement.CallerIdentity, TaskWorktreeRetirementService.SystemCallerIdentity, StringComparison.Ordinal)
+                && request.LiveAuthorization is null)
+                return LiveAuthorizationRequired;
             if (!refreshRemote) return null;
             var destination = new LandingDestination(retirement.RemoteName, retirement.DestinationFullRef,
                 retirement.RemoteFingerprint);

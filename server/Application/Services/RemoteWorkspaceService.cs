@@ -1111,7 +1111,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// never allowed to fail retirement of the canonical desktop worktree.
     /// </summary>
     public async Task<string?> RemoveMirrorAsync(AgentTask task, CancellationToken ct,
-        string? publishedSha = null)
+        string? publishedSha = null, Func<CancellationToken, ValueTask<string?>>? liveAuthorization = null)
     {
         if (string.IsNullOrWhiteSpace(task.RemoteWorktreePath) || string.IsNullOrWhiteSpace(task.RunnerId))
             return null;
@@ -1125,6 +1125,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             var descriptor = await _runners.DescribeAsync(task.RunnerId, ct);
             var guarded = descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspacePublishV1) == true;
             publishedSha ??= PublishedShaForRemoval(task);
+            // CARD-1717 B-B-1: the description is the last await before the send. A gate that now refuses keeps
+            // the mirror and names why; no remove request is sent.
+            if (liveAuthorization is not null && await liveAuthorization(ct) is { } stopped)
+                return task.RemoteWorktreePath + " (" + stopped + ")";
             var response = await Remote(task.RunnerId).RemoveWorkspaceAsync(
                 new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath,
                     PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct);
