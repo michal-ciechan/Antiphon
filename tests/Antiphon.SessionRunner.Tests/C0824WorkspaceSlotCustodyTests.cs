@@ -10,7 +10,13 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>CARD-0824 S1 CP-2. Unpushed work and dirt are preserved, crashes recover, slots are exclusive.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(10_000)]
+// CARD-1722: 10 Linux runs / case at 388ff482, 2026-11-05 (task-871c4033).
+// Empirical nearest-rank p95 range 0.256-3.315s; Leased median 0.599s / p95 3.315s
+// (rounded up). max(2x p95, commissioned 60s Git floor) = 60s for every case.
+// Floor exception: loaded Windows b19a9880 Leased timed out at 10.13s. Linux n=10
+// is provisional for Windows; collect this class in the next CARD-1722 rc run.
+// Per-case measured table and deterministic guard: C0824WorkspaceSlotTimeoutBudgetTests.
+[Timeout(60_000)]
 public sealed class C0824WorkspaceSlotCustodyTests
 {
     [Test]
