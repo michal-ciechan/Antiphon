@@ -75,6 +75,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     // A reconnect keeps the runner boot identity; a store replacement is a new boot.
     private PhoneHomeProcessIdentity _identity = new();
     private int _holdArmed;
+    private int _holdSequence;
     private TaskCompletionSource _holderEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _holderRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -236,10 +237,15 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     // Sends an earlier actual WorkspaceMirror that holds the runner mutation turn until released.
     public async Task<Task> HoldMutationTurnAsync()
     {
+        var sequence = Interlocked.Increment(ref _holdSequence);
+        var branch = sequence == 1 ? BusyBranch : BusyBranch + "-" + sequence;
+        if (sequence != 1)
+            await Card.Host.Fixture.RequiredAsync(Card.Host.Fixture.Repository, "push", "origin",
+                Card.Host.Fixture.SeedSha + ":refs/heads/" + branch);
         _holderEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _holderRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Interlocked.Exchange(ref _holdArmed, 1);
-        var holder = Client.MirrorWorkspaceAsync(new(BusyBranch, Card.Host.Fixture.SeedSha,
+        var holder = Client.MirrorWorkspaceAsync(new(branch, Card.Host.Fixture.SeedSha,
             "task-" + Guid.NewGuid().ToString("N")[..8]), CancellationToken.None);
         await _holderEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         return holder;
