@@ -1440,6 +1440,10 @@ public sealed class LandingRemovalPolicyControlTests
             else if (args[0] == "ls-files" && args.Contains("--stage")) result = new(0, StageListing(staged: true), "");
             else if (args[0] == "ls-tree") result = new(0, StageListing(staged: false), "");
             else if (args[0] == "ls-files" && !args.Contains("--ignored")) result = new(0, TrackedListing, "");
+            // CARD-1717 A-B-7: this fixture has no line-ending conversion or filter, so the clean form is the raw bytes.
+            else if (args.Contains("hash-object"))
+                result = new(0, string.Concat(args.SkipWhile(a => a != "--").Skip(1)
+                    .Select(path => GitBlob(File.ReadAllBytes(Path.Combine(repository, path))) + "\n")), "");
             else throw new InvalidOperationException("Unexpected cleanup command: " + args[0]);
             return Task.FromResult(result);
         }
