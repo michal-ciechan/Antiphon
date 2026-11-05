@@ -94,6 +94,12 @@ public sealed record LandingSourceRecheck(string? Sha, string? Fingerprint, stri
     public bool Accepted => Reason is null && Sha is not null && Fingerprint is { Length: 64 };
 }
 
+/// <summary>
+/// The pre-push freshness pair: the remote source recheck and, only when that recheck accepted the expected
+/// commit, the target observation. <see cref="Target"/> is null when the source was not accepted.
+/// </summary>
+public sealed record LandingPrePushObservation(LandingSourceRecheck Source, LandingRemoteObservation? Target);
+
 /// <summary>CARD-1470: <see cref="MemoryWait"/> is the verifier's memory-floor wait or fallback, recorded on the land.</summary>
 public sealed record LandingVerification(bool Passed, string Description,
     Antiphon.Server.Application.Interfaces.BuildSlotMemoryWait? MemoryWait = null);

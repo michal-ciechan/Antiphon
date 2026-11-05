@@ -589,6 +589,55 @@ public sealed class LandingGitTests
     }
 
     [Test]
+    public async Task PrePushObservationReadsSourceAndTargetWithOneLsRemote()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var git = (Antiphon.Server.Application.Interfaces.ILandingGit)fixture.Git;
+        var destination = await fixture.Git.DestinationAsync(fixture.Repository, fixture.TargetRef, CancellationToken.None);
+        var observationRef = $"refs/antiphon/land/{Guid.NewGuid():N}/remote-observed";
+        fixture.Git.Trace.Clear();
+
+        var read = await git.ObserveSourceAndTargetAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            destination.Fingerprint, destination, fixture.SeedSha, observationRef, CancellationToken.None);
+
+        read.Source.Accepted.ShouldBeTrue();
+        read.Source.Sha.ShouldBe(fixture.SeedSha);
+        read.Target.ShouldNotBeNull();
+        read.Target!.Reason.ShouldBeNull();
+        read.Target.ContainsSource.ShouldBeTrue("the seed commit is the target's history");
+        var lsRemotes = fixture.Git.Trace.Where(a => a[0] == "ls-remote").ToList();
+        lsRemotes.Count.ShouldBe(1, "one remote read answers both refs");
+        lsRemotes[0].ShouldContain(fixture.SourceRef);
+        lsRemotes[0].ShouldContain(fixture.TargetRef);
+
+        // A moved remote source refuses before the target is pinned or judged.
+        var moved = (await fixture.Git.RunAsync(fixture.Repository, ["commit-tree", "-m", "moved", fixture.SeedSha + "^{tree}"],
+            CancellationToken.None)).Output.Trim();
+        await fixture.RequiredAsync(fixture.Repository, "push", fixture.Remote, $"{moved}:{fixture.SourceRef}", "--force");
+        fixture.Git.Trace.Clear();
+        read = await git.ObserveSourceAndTargetAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            destination.Fingerprint, destination, fixture.SeedSha, observationRef, CancellationToken.None);
+        read.Source.Sha.ShouldBe(moved);
+        read.Target.ShouldBeNull("a source that is not the expected commit never observes the target");
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "fetch" || a[0] == "update-ref");
+
+        // A changed endpoint is refused with the recheck's own reason, before any remote read.
+        fixture.Git.Trace.Clear();
+        read = await git.ObserveSourceAndTargetAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            new string('0', 64), destination, fixture.SeedSha, observationRef, CancellationToken.None);
+        read.Source.Reason.ShouldBe("source_remote_endpoint_changed");
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "ls-remote");
+
+        // A deleted remote source is missing, as the single read reports it.
+        await fixture.RequiredAsync(fixture.Remote, "update-ref", "-d", fixture.SourceRef);
+        read = await git.ObserveSourceAndTargetAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            destination.Fingerprint, destination, fixture.SeedSha, observationRef, CancellationToken.None);
+        read.Source.Reason.ShouldBe("source_remote_missing");
+        read.Target.ShouldBeNull();
+    }
+
+    [Test]
     public async Task C642_RecheckSourceRemoteIsOneRoundTripWithoutPins()
     {
         // CARD-0642 V-14 (absorbed by CARD-0688 D-1 as V-3).

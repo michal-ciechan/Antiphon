@@ -57,6 +57,21 @@ public interface ILandingGit
         string expectedFingerprint, CancellationToken ct)
         => Task.FromResult(new LandingSourceRecheck(null, null, "source_recheck_unsupported"));
     /// <summary>
+    /// The source recheck (D-8) and the target observation of one pre-push boundary. The default makes the two
+    /// separate reads, which keeps every double's command shapes; the real implementation reads both refs with
+    /// one <c>ls-remote</c>. The target is observed only when the source recheck accepted
+    /// <paramref name="expectedSourceSha"/>, so a refusal on the source never reads the target.
+    /// </summary>
+    async Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository, string sourceFullRef,
+        string expectedSourceSha, string expectedFingerprint, LandingDestination destination, string ancestrySha,
+        string observationRef, CancellationToken ct)
+    {
+        var source = await RecheckSourceRemoteAsync(repository, sourceFullRef, expectedSourceSha, expectedFingerprint, ct);
+        if (!source.Accepted || source.Sha != expectedSourceSha || source.Fingerprint != expectedFingerprint)
+            return new(source, null);
+        return new(source, await ObserveAsync(repository, destination, ancestrySha, observationRef, ct));
+    }
+    /// <summary>
     /// CARD-1432 G1: the object ids of <paramref name="fullRefs"/>. The result holds every ref read before the first
     /// unreadable one (missing or broken), in request order, so a caller checking refs in order refuses on the first
     /// absent entry. The default reads one ref per process, which keeps every fake's command shapes; a real

@@ -247,8 +247,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 if (await IsAncestorAsync(op.RepositoryPath, InputSha(op), op.TargetBeforeSha, ct))
                 {
                     // The observed remote target already carries the reviewed commit.
-                    await RecheckRemoteSourceAsync(op, ct);
-                    var remote = await ObserveAsync(op, InputSha(op), ct);
+                    var remote = await RecheckRemoteSourceAndObserveAsync(op, InputSha(op), ct);
                     if (!remote.ContainsSource)
                         throw new LandingRefusal("remote_changed_before_push", remote.Sha);
                     await RecheckSourceAsync(op, ct);
@@ -352,9 +351,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             if (op.Phase is LandPhase.Verified or LandPhase.LocalTargetAdvanced or LandPhase.PushStarted)
             {
                 await RecheckApprovalAsync(op, request, ct);
-                await RecheckRemoteSourceAsync(op, ct);
-                await RecheckSourceAsync(op, ct);
-                var beforePush = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
+                var beforePush = await RecheckRemoteSourceAndObserveAsync(op, op.VerifiedSourceSha!, ct,
+                    () => RecheckSourceAsync(op, ct));
                 if (!beforePush.ContainsSource)
                 {
                     // The pre-push observation is the CAS: a plain push of a descendant of the observed tip.
@@ -831,8 +829,36 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (_state.HasPublication(op))
             return;
         RequireSourceSnapshot(op);
-        var recheck = await git.RecheckSourceRemoteAsync(op.RepositoryPath, op.SourceFullRef, op.SourceRemoteSha!,
-            op.SourceRemoteFingerprint!, ct);
+        RequireRemoteSource(op, await git.RecheckSourceRemoteAsync(op.RepositoryPath, op.SourceFullRef,
+            op.SourceRemoteSha!, op.SourceRemoteFingerprint!, ct));
+    }
+
+    /// <summary>
+    /// The D-8 source recheck and the target observation of one boundary, read by one <c>ls-remote</c>. The refusals
+    /// keep their order: the remote source first (as <see cref="RecheckRemoteSourceAsync"/>), then
+    /// <paramref name="between"/> (the local source re-check that used to run between the two reads), then the target.
+    /// After publication the source is not rechecked, so only the target is observed.
+    /// </summary>
+    private async Task<LandingRemoteObservation> RecheckRemoteSourceAndObserveAsync(AgentTaskLanding op, string sha,
+        CancellationToken ct, Func<Task>? between = null)
+    {
+        if (_state.HasPublication(op))
+        {
+            if (between is not null) await between();
+            return await ObserveAsync(op, sha, ct);
+        }
+        RequireSourceSnapshot(op);
+        var read = await git.ObserveSourceAndTargetAsync(op.RepositoryPath, op.SourceFullRef, op.SourceRemoteSha!,
+            op.SourceRemoteFingerprint!, Destination(op), sha, op.RecoveryRefPrefix + "/remote-observed", ct);
+        RequireRemoteSource(op, read.Source);
+        if (between is not null) await between();
+        var observed = read.Target ?? throw new LandingRefusal("source_remote_changed");
+        Require(observed.Reason is null && observed.Sha is not null, observed.Reason ?? "remote_unknown");
+        return observed;
+    }
+
+    private static void RequireRemoteSource(AgentTaskLanding op, LandingSourceRecheck recheck)
+    {
         // A different endpoint is a different remote source, as the full observation always reported it.
         Require(recheck.Reason != "source_remote_endpoint_changed", "source_remote_changed");
         Require(recheck.Accepted, recheck.Reason ?? "source_remote_unreadable");

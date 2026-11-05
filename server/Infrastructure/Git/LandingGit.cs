@@ -1297,6 +1297,16 @@ public class LandingGit : ILandingGit
         return (new("origin", targetFullRef, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)))), endpoint);
     }
 
+    /// <summary><see cref="ReadDestinationAsync"/> with the push endpoint the caller has just read.</summary>
+    private async Task<(LandingDestination Destination, string Endpoint)> ReadDestinationFromEndpointAsync(
+        string repository, string targetFullRef, string endpoint, CancellationToken ct)
+    {
+        await ValidateBranchAsync(repository, targetFullRef, ct);
+        var symbolic = await RunAsync(repository, ["symbolic-ref", "-q", targetFullRef], ct);
+        if (symbolic.ExitCode != 1) throw new IOException("symbolic_destination");
+        return (new("origin", targetFullRef, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)))), endpoint);
+    }
+
     /// <summary>
     /// The destination re-check that precedes a remote command, returning the push endpoint it just
     /// read (null when the destination changed). The command then uses that endpoint instead of a
@@ -1339,24 +1349,103 @@ public class LandingGit : ILandingGit
             var fields = lines.Length == 1 ? lines[0].TrimEnd('\r').Split('\t') : [];
             if (fields.Length != 2 || fields[1] != destination.FullRef || !IsOid(fields[0]))
                 return new(null, false, "remote_response_invalid");
-            // A unique immutable observation ref avoids FETCH_HEAD/shared tracking state.
-            var pin = $"{observationRef}/{Guid.NewGuid():N}";
-            var fetch = await PinObservationAsync(repository, endpoint, destination.FullRef, pin, fields[0], ct);
-            if (!fetch.Succeeded) return new(null, false, "remote_fetch_failed");
-            var observed = await CommitAsync(repository, pin, ct);
-            if (observed != fields[0]) continue;
-            if (await DestinationAsync(repository, destination.FullRef, ct) != destination)
-                return new(null, false, "remote_configuration_changed");
-            var ancestry = await RunAsync(repository, ["merge-base", "--is-ancestor", sourceSha, observed], ct);
-            return ancestry.ExitCode switch
-            {
-                0 => new(observed, true, null),
-                1 => new(observed, false, null),
-                _ => new(null, false, "remote_ancestry_error"),
-            };
+            if (await PinAndJudgeAsync(repository, endpoint, destination, sourceSha, observationRef, fields[0], ct)
+                is { } judged)
+                return judged;
         }
         return new(null, false, "remote_changed_during_confirmation");
     }
+
+    /// <summary>
+    /// Pins the advertised target tip, reads it back, re-checks the destination and judges ancestry. Null when the
+    /// pin does not hold the advertised commit (the remote moved between the read and the pin): read again.
+    /// </summary>
+    private async Task<LandingRemoteObservation?> PinAndJudgeAsync(string repository, string endpoint,
+        LandingDestination destination, string sourceSha, string observationRef, string advertised, CancellationToken ct)
+    {
+        // A unique immutable observation ref avoids FETCH_HEAD/shared tracking state.
+        var pin = $"{observationRef}/{Guid.NewGuid():N}";
+        var fetch = await PinObservationAsync(repository, endpoint, destination.FullRef, pin, advertised, ct);
+        if (!fetch.Succeeded) return new(null, false, "remote_fetch_failed");
+        var observed = await CommitAsync(repository, pin, ct);
+        if (observed != advertised) return null;
+        if (await DestinationAsync(repository, destination.FullRef, ct) != destination)
+            return new(null, false, "remote_configuration_changed");
+        var ancestry = await RunAsync(repository, ["merge-base", "--is-ancestor", sourceSha, observed], ct);
+        return ancestry.ExitCode switch
+        {
+            0 => new(observed, true, null),
+            1 => new(observed, false, null),
+            _ => new(null, false, "remote_ancestry_error"),
+        };
+    }
+
+    /// <summary>
+    /// The pre-push boundary in one round trip: <c>ls-remote</c> of the source and the target together, instead of
+    /// the D-8 source recheck and the target observation each reading the remote. The source is judged exactly as
+    /// <see cref="RecheckSourceRemoteAsync"/> judges it (same endpoint fingerprint check, same reasons); the target
+    /// is observed only when the source was accepted, and then as <see cref="ObserveAsync"/> would from the same
+    /// advertisement (destination check, pin, read-back, destination re-check, ancestry). A pin that does not hold
+    /// the advertised tip falls back to a full observation, which reads the remote again.
+    /// </summary>
+    public virtual async Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository,
+        string sourceFullRef, string expectedSourceSha, string expectedFingerprint, LandingDestination destination,
+        string ancestrySha, string observationRef, CancellationToken ct)
+    {
+        if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedSourceSha))
+            return new(new(null, null, "invalid_observation_identity"), null);
+        if (sourceFullRef == destination.FullRef || !IsOid(ancestrySha)
+            || !observationRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
+        {
+            // Not a shape one read can answer: the two separate reads decide (and refuse) as before.
+            var alone = await RecheckSourceRemoteAsync(repository, sourceFullRef, expectedSourceSha, expectedFingerprint, ct);
+            if (!SourceHolds(alone, expectedSourceSha, expectedFingerprint)) return new(alone, null);
+            return new(alone, await ObserveAsync(repository, destination, ancestrySha, observationRef, ct));
+        }
+
+        string endpoint;
+        try { endpoint = await EndpointAsync(repository, ct); }
+        catch (IOException) { return new(new(null, null, "source_remote_endpoint_ambiguous"), null); }
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)));
+        if (fingerprint != expectedFingerprint)
+            return new(new(null, fingerprint, "source_remote_endpoint_changed"), null);
+
+        var read = await RunAsync(repository,
+            ["ls-remote", "--refs", "--exit-code", endpoint, sourceFullRef, destination.FullRef], ct);
+        // --exit-code is 2 only when neither ref matched: the source is missing, as its single read would say.
+        if (read.ExitCode == 2) return new(new(null, fingerprint, "source_remote_missing"), null);
+        if (!read.Succeeded) return new(new(null, fingerprint, "source_remote_unreadable"), null);
+        var lines = read.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r').Split('\t')).ToList();
+        // ls-remote patterns match a ref name's tail; each line must belong to exactly one of the two refs.
+        if (lines.Any(f => f.Length != 2 || TailMatches(f[1], sourceFullRef) == TailMatches(f[1], destination.FullRef)))
+            return new(new(null, fingerprint, "source_remote_response_invalid"), null);
+        var sourceLines = lines.Where(f => TailMatches(f[1], sourceFullRef)).ToList();
+        if (sourceLines.Count == 0) return new(new(null, fingerprint, "source_remote_missing"), null);
+        if (sourceLines.Count != 1 || sourceLines[0][1] != sourceFullRef || !IsOid(sourceLines[0][0]))
+            return new(new(null, fingerprint, "source_remote_response_invalid"), null);
+        LandingSourceRecheck source = new(sourceLines[0][0], fingerprint, null);
+        if (!SourceHolds(source, expectedSourceSha, expectedFingerprint)) return new(source, null);
+
+        // The target half, as the first attempt of ObserveWithPrefixAsync judges this same advertisement.
+        var check = await RunAsync(repository, ["check-ref-format", observationRef], ct);
+        if (!check.Succeeded) return new(source, new(null, false, "invalid_observation_ref"));
+        var (current, _) = await ReadDestinationFromEndpointAsync(repository, destination.FullRef, endpoint, ct);
+        if (current != destination) return new(source, new(null, false, "remote_configuration_changed"));
+        var targetLines = lines.Where(f => TailMatches(f[1], destination.FullRef)).ToList();
+        if (targetLines.Count == 0) return new(source, new(null, false, "remote_read_failed"));
+        if (targetLines.Count != 1 || targetLines[0][1] != destination.FullRef || !IsOid(targetLines[0][0]))
+            return new(source, new(null, false, "remote_response_invalid"));
+        var judged = await PinAndJudgeAsync(repository, endpoint, destination, ancestrySha, observationRef,
+            targetLines[0][0], ct);
+        return new(source, judged ?? await ObserveWithPrefixAsync(repository, destination, ancestrySha, observationRef, ct));
+    }
+
+    private static bool TailMatches(string name, string pattern) =>
+        name == pattern || name.EndsWith("/" + pattern, StringComparison.Ordinal);
+
+    private static bool SourceHolds(LandingSourceRecheck source, string expectedSha, string expectedFingerprint) =>
+        source.Accepted && source.Sha == expectedSha && source.Fingerprint == expectedFingerprint;
 
     /// <summary>
     /// Pins the commit a fresh <c>ls-remote</c> just advertised for <paramref name="remoteRef"/> under
