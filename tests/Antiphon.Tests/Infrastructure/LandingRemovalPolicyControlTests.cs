@@ -951,6 +951,102 @@ public sealed class LandingRemovalPolicyControlTests
         File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
     }
 
+    // CARD-1717 D-4: a retry must not delete bytes added under the recorded set-aside tree.
+    [Test]
+    public async Task C1717_D4_RetryKeepsBytesAddedAfterThePartialRelease()
+    {
+        using var f = new RemovalFixture();
+        f.AfterUnregister = () => throw new IOException("audit cut after real unregister");
+        var first = await f.RemoveAsync();
+        first.Residue.ShouldBe("cleanup_inspection_error");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        f.AfterUnregister = null;
+        var notes = Path.Combine(aside, "operator-recovery-notes.txt");
+        File.WriteAllText(notes, "only-copy-created-between-attempts");
+        var second = await f.RemoveAsync();
+        second.IsClean.ShouldBeFalse();
+        second.Residue.ShouldBe("set_aside_content_changed");
+        File.ReadAllText(notes).ShouldBe("only-copy-created-between-attempts");
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // CARD-1717 D-4: a different directory at the recorded path is not the set-aside tree.
+    [Test]
+    public async Task C1717_D4_RetryKeepsAReplacementDirectory()
+    {
+        using var f = new RemovalFixture();
+        f.AfterUnregister = () => throw new IOException("audit cut after real unregister");
+        (await f.RemoveAsync()).Residue.ShouldBe("cleanup_inspection_error");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        f.AfterUnregister = null;
+        var rescued = aside + ".rescued";
+        Directory.Move(aside, rescued);
+        Directory.CreateDirectory(aside);
+        var foreign = Path.Combine(aside, "foreign.txt");
+        File.WriteAllText(foreign, "foreign-only-copy");
+        var second = await f.RemoveAsync();
+        second.IsClean.ShouldBeFalse();
+        second.Residue.ShouldBe("set_aside_identity_mismatch");
+        File.ReadAllText(foreign).ShouldBe("foreign-only-copy");
+        File.ReadAllText(Path.Combine(rescued, "keep.txt")).ShouldBe("private work");
+        Directory.Exists(rescued).ShouldBeTrue();
+    }
+
+    // CARD-1717 D-4: a receipt with no directory identity is not authority to delete.
+    [Test]
+    public async Task C1717_D4_UnsealedReceiptIsNotDeleted()
+    {
+        using var f = new RemovalFixture();
+        var aside = WorktreeSetAside.SetAsidePath(f.Source);
+        WorktreeNoFollowDelete.MoveAside(f.Source, aside);
+        WorktreeSetAside.Record(f.Root, new(f.Source, aside, f.Operation.GitDirectory, DateTime.UtcNow));
+        f.Registered = false;
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("set_aside_unsealed");
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
+        Directory.Exists(aside).ShouldBeTrue();
+    }
+
+    // CARD-1717 D-3: bytes changed after the retention copy are not deleted with the tree.
+    [Test]
+    public async Task C1717_D3_ChangedEvidenceBytesAreKept()
+    {
+        using var f = new RemovalFixture();
+        var ev = Path.Combine(f.Source, ".antiphon", "checkpoint-note.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(ev)!);
+        File.WriteAllText(ev, "retained-old");
+        f.IgnoredPaths.Add(".antiphon/checkpoint-note.md");
+        f.AfterInspection = count =>
+        {
+            if (count == 2) File.WriteAllText(ev, "new-only-copy-after-retention");
+        };
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("evidence_bytes_changed");
+        File.ReadAllText(ev).ShouldBe("new-only-copy-after-retention");
+        Directory.Exists(f.Source).ShouldBeTrue();
+    }
+
+    // CARD-1717 D-2: a non-ignored file written after the final clean inspection is not deleted.
+    [Test]
+    public async Task C1717_D2_LateUntrackedFileIsKept()
+    {
+        using var f = new RemovalFixture();
+        var late = Path.Combine(f.Source, "late-unsaved.txt");
+        f.AfterInspection = count =>
+        {
+            if (count == 2) File.WriteAllText(late, "only-copy-late-bytes");
+        };
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("untracked_after_proof");
+        File.ReadAllText(late).ShouldBe("only-copy-late-bytes");
+        Directory.Exists(f.Source).ShouldBeTrue();
+        f.BranchPresent.ShouldBeTrue();
+    }
+
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
     {
         public List<(int Evidence, int AtInspection)> Calls { get; } = [];
