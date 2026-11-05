@@ -5,8 +5,8 @@ Base: `388ff482046a62f813a251208bfeabe7c21808ea`. Final verification.
 
 ## Decision and evidence
 
-Add positive integer `SessionRunner:BuildSlots:LeaseMaxHoldHours`, default 48.
-Absent uses 48; zero/negative refuse options validation. Age starts at grant,
+Add integer `SessionRunner:BuildSlots:LeaseMaxHoldHours`, default 48.
+Absent and zero use 48; negative refuses options validation. Age starts at grant,
 never at renewal, re-acquisition or TTL extension. At age >= bound the next
 sweep/acquire/renew removes the lease and logs a warning once, including lease,
 holder, age and `absolute max hold <hours>h exceeded`. No process is killed.
@@ -28,7 +28,11 @@ V-1: default live matching pid stays occupied until one tick before 48h, then
 reaps exactly at 48h once, records one warning/reap, cannot be released again.
 V-2: configured 72h protects a 60h holder; reacquire/renew cannot restart age.
 V-3: configured 1h bound wins even before 90m TTL; waiting acquire is admitted.
-V-4: 0 and -1 fail via production options binding.
+V-4: -1 fails via production options binding. The historical red run also
+contained a zero-rejection test; that proposed decision was corrected to match
+the card. It is not evidence for the final zero-fallback contract.
+V-7: zero binds successfully and protects a live holder until exactly 48h, then
+reaps it. CP-5 is the red-first zero acceptance witness before normalization.
 V-5: real PowerShell wrapper sends its own pid/start over HTTP to real
 SystemProcessLivenessProbe; fake clock crosses TTL, stays protected within 48h,
 then reaps at bound while process is still alive. Existing wrapper waits remain
@@ -80,15 +84,17 @@ totalTimeoutMinutes: 140
 | CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..6, R-1 | Exactly 40 executed/passed; zero failed/skipped | 40 | 3 |
 | CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | unit | `/*/*/*/*[Category=Unit]` | R-3 | Whole Unit lane, zero failed | 3500 | 30 |
 | CP-4 | Fix | CP-3 | policy | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-2 | Full named classes, zero failed/skipped | 20 | 2 |
+| CP-5 | ZeroRed | tests/Antiphon.SessionRunner.Tests -> bin-c1713-zero-red/ | zero-red | `/*/*/BuildSlotMaxHoldTests*/V7_Zero_uses_the_default_bound` | V-7 | Expected assertion failure before zero normalization | 1 | 1 |
 
 ## Pending SourceLanding Mutation candidates
 
 PC-1: remove absolute-bound branch; V1_Default_keeps_live_holder_until_48_hours_then_reaps_once must fail at reap count.
 PC-2: lower default to 24; same method must fail at pre-bound protection.
 PC-3: use last renewal instead of grant age; V2_Configured_bound_uses_grant_age_and_cannot_be_extended_by_reacquire_or_renew must fail at renewal refusal.
-PC-4: remove options validation; V4_Nonpositive_bound_is_rejected_by_production_options (both variants) must fail at expected exception.
+PC-4: remove negative-value validation; V4_Nonpositive_bound_is_rejected_by_production_options (-1) must fail at expected exception. The old zero-rejection variant is retired in favor of PC-7.
 PC-5: put bound behind TTL; V3_Bound_applies_before_ttl_and_next_acquire_admits_a_waiter must fail at waiter admission.
 PC-6: restrict the bound to pid mode; V6_Healthy_renew_mode_holder_is_reaped_at_bound_before_ttl must fail at final renewal refusal.
+PC-7: remove zero normalization; V7_Zero_uses_the_default_bound must fail at its no-exception or pre-bound protection assertion.
 All PCs pending binding/execution by SourceLanding Mutation, method scoped.
 Unbound handoff: [candidate inventory](../mutations/2026-11-05-card-1713-build-slot-max-hold-candidates.md).
 
