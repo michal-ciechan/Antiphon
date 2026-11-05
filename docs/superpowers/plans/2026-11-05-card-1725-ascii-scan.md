@@ -27,13 +27,13 @@ Fresh isolated checkpoint build once per group; reuse across rows. Cold build es
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1725-final/` | ascii-files | `/*/*/CheckpointInheritedFileTests*/*` | V-1,V-2 | 6 cases, 0 failed/skipped after fix | 6 | 6 | true |
-| CP-2 | S2 | CP-1 | required-guards | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | R-1 | all classes, 0 failed/skipped | 1 | 2 | true |
-| CP-3 | S2 | CP-1 | unit-ad | `/*/*/(A*)\|(B*)\|(C*)\|(D*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 10 | true |
-| CP-4 | S2 | CP-1 | unit-eh | `/*/*/(E*)\|(F*)\|(G*)\|(H*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 3 | true |
-| CP-5 | S2 | CP-1 | unit-il | `/*/*/(I*)\|(J*)\|(K*)\|(L*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 3 | true |
-| CP-6 | S2 | CP-1 | unit-mp | `/*/*/(M*)\|(N*)\|(O*)\|(P*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 7 | true |
-| CP-7 | S2 | CP-1 | unit-qt | `/*/*/(Q*)\|(R*)\|(S*)\|(T*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 10 | true |
-| CP-8 | S2 | CP-1 | unit-uz | `/*/*/(U*)\|(V*)\|(W*)\|(X*)\|(Y*)\|(Z*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 2 | true |
+| CP-2 | S1-S2 | CP-1 | required-guards | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | R-1 | all classes, 0 failed/skipped | 1 | 2 | true |
+| CP-3 | S1-S2 | CP-1 | unit-ad | `/*/*/(A*)\|(B*)\|(C*)\|(D*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 10 | true |
+| CP-4 | S1-S2 | CP-1 | unit-eh | `/*/*/(E*)\|(F*)\|(G*)\|(H*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 3 | true |
+| CP-5 | S1-S2 | CP-1 | unit-il | `/*/*/(I*)\|(J*)\|(K*)\|(L*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 3 | true |
+| CP-6 | S1-S2 | CP-1 | unit-mp | `/*/*/(M*)\|(N*)\|(O*)\|(P*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 7 | true |
+| CP-7 | S1-S2 | CP-1 | unit-qt | `/*/*/(Q*)\|(R*)\|(S*)\|(T*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 10 | true |
+| CP-8 | S1-S2 | CP-1 | unit-uz | `/*/*/(U*)\|(V*)\|(W*)\|(X*)\|(Y*)\|(Z*)/*[Category=Unit]` | R-2 | nonzero, 0 failed/skipped | 1 | 2 | true |
 
 ### Mutation
 
