@@ -15,6 +15,10 @@ V-2: The original CP-6 full classes pass with caches enabled and original 35/45-
 including every original 77-case identity. Record setup, clone queue/execution and test durations.
 V-3: The ten real-runner cases have an assembly-local process limiter. Their scratch Git helper
 measures spawn plus exit/output draining with one cancellation deadline; failures stay failures.
+The base's nine additional secret-preservation transport cases use the same strict lane. The
+already-limited nested-repository secret case retains its limiter. The method roster guard now
+has eight arguments; the seven original variants have retained RED evidence and the added variant
+remains a pending negative control for Mutation.
 R-1: Worker children, deferred probes and DB-free selections remain cold (full
 TestDbFixtureLazyInitializationTests). Preserve isolated clone databases and cache optimizations.
 R-2: Classification and slow-registry guards and mechanical instruction contract pass.
@@ -24,6 +28,11 @@ PC-1 pending SourceLanding Mutation: remove the assembly hook's runtime warm-up 
 TestDbRuntimeWarmupTests.Real_provider_and_model_are_ready_before_the_timed_body, require its pre-body
 EF observation assertion red, restore and green. PC-2 pending: remove the scratch-Git deadline; run only Scratch_git_deadline_includes_inherited_output_drains. PC-3 pending: remove one transport method limiter; run its exact Real_transport_methods_use_the_assembly_local_strict_lane case. Mutation owns binding and missing-control discovery.
 Code does not execute deliberate mutants. An unbound candidate may be written in docs/superpowers/mutations/.
+
+Run 20261105-220005-1e7c at 710dd6a9b8528740bb4c755795a9edfbe3b4b5ec was stopped using
+the checkpoint tool after its successful build and before any result flushed. The full-class audit
+found the nine newer real-transport cases lacked a limiter. No row from that canceled run is credited;
+the fresh output below prevents reuse of its incomplete proof. Preserve its build/admission costs.
 
 ## Performance budget
 
@@ -64,6 +73,6 @@ remain native and Windows obligations are unchanged. Restart: none (server/runne
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | repair | tests/Antiphon.Tests -> bin-d69fe301-proof/ | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
+| CP-1 | repair | tests/Antiphon.Tests -> bin-d69fe301-final/ | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/final-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/final-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-final;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
 | CP-6 | repair | CP-1 | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 128 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
 | CP-3 | repair | CP-1 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |
