@@ -62,6 +62,23 @@ the first cached pack had p95 70.768 ms and maximum 325.291 ms; twice the observ
 rounded up to a second, bounds start, exit and both drains. This is one heterogeneous loaded
 process sample, not a repeated per-method p95. CARD-1404/1514 own collecting up to three comparable
 future cold-process samples; no repeat of an unchanged green selection is required here.
+Cached CP-6 at 33160161969aee5395465bb347c07410220d5e19 passed 138/138, all original 77
+identities matched/passed, no failed/skipped. Host execution 56.216 seconds; clone queue p95/max
+0.014/0.144 ms, clone execution p95/max 330.504/500.904 ms. Warm-up 4.289 seconds ended before
+the first TRX start. Preserve this green outcome; it is not the final limiter proof: test/Git spans
+showed four real transports/Git calls overlapping despite the strict method attributes. The pinned
+TUnit class limiter took precedence over the method lane. Run 20261105-224444-d5ea was stopped
+before the remaining rows flushed to repair that binding; no fixture/Unit row is credited.
+
+All 33 scripted methods now bind WorkspaceRigConcurrencyLimit at METHOD scope, with no class
+parallel limiter. The nine real-transport methods bind only ProcessSpawnLimit. The strengthened
+roster guard forbids a class limiter and requires exactly one method lane on every selected method.
+Manual V-3 acceptance joins actual Git operation spans: require peak scratch-Git operations = 1,
+not merely an attribute census. Scripted test intervals must peak at no more than 4.
+PC-4's two class-family candidates require method rebinding by Mutation: A removes the lane from
+C0824_ReleasedTaskCoordinatesNotAmbiguous; B removes it from Execute_off_sends_dry_run_only.
+Run Scripted_rig_classes_share_bounded_admission for either exact control. Both remain pending,
+including missing-control discovery. The prior class-location candidates are not marked passed.
 ## Performance budget
 
 Fixture lifetime: the existing assembly hook runs once; retain store selection, workers and probes.
@@ -101,6 +118,6 @@ remain native and Windows obligations are unchanged. Restart: none (server/runne
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-6 | repair | tests/Antiphon.Tests -> bin-d69fe301-admitted/ | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 138 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/admitted-cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
-| CP-1 | repair | CP-6 | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/admitted-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/boundary-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-boundary;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
-| CP-3 | repair | CP-6 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/admitted-unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |
+| CP-6 | repair | tests/Antiphon.Tests -> bin-d69fe301-lanes/ | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 138 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/lanes-cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
+| CP-1 | repair | CP-6 | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/lanes-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/boundary-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-boundary;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
+| CP-3 | repair | CP-6 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/lanes-unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |

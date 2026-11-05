@@ -24,7 +24,6 @@ namespace Antiphon.Tests.Application;
 /// nothing was sent. The V-39 cases drive a real runner dispatcher and engine (F-4).
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
 [Timeout(45_000)]
 public sealed class C1677RetentionServerTests
 {
@@ -156,6 +155,7 @@ public sealed class C1677RetentionServerTests
     [Arguments("leaf-carriage-return")]
     [Arguments("leaf-line-separator")]
     [Arguments("leaf-trailing-space")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Each_ineligible_task_alone_is_recorded_and_never_sent(string mode)
     {
         // V-30 (G-42..G-64, I-1, I-5, I-11). One fact differs from the eligible shape; the control is still sent.
@@ -253,6 +253,7 @@ public sealed class C1677RetentionServerTests
     [Arguments(AgentTaskStatus.Succeeded)]
     [Arguments(AgentTaskStatus.Failed)]
     [Arguments(AgentTaskStatus.Canceled)]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Terminal_statuses_at_the_age_floor_are_sent(AgentTaskStatus status)
     {
         // V-30b. The no-false-refusal control: CompletedAt exactly MinTerminalHours ago is eligible.
@@ -263,6 +264,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Disabled_job_contacts_no_runner()
     {
         // V-31 (G-65). No retention frame of any kind, inventory included.
@@ -277,6 +279,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Execute_off_sends_dry_run_only()
     {
         // V-31b (G-66).
@@ -294,6 +297,7 @@ public sealed class C1677RetentionServerTests
     [Arguments("unlisted")]
     [Arguments("not-phone-home")]
     [Arguments("no-capability")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Only_listed_capable_phone_home_runners_are_contacted(string shape)
     {
         // V-31c (G-67, G-68, G-69, D-11).
@@ -325,6 +329,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Execute_requests_are_bounded_per_tick()
     {
         // V-32 (G-70). Five eligible, a bound of two: the two oldest, in order.
@@ -338,6 +343,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Second_request_waits_for_the_first_reply()
     {
         // V-32b (G-71). One request at a time.
@@ -358,6 +364,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Requests_are_paced()
     {
         // V-32c (G-72). The pause runs on the fake clock.
@@ -384,6 +391,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Reopened_task_is_rechecked_before_its_turn()
     {
         // V-33 (G-73). The second candidate is reopened while the first request is in flight.
@@ -403,6 +411,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Kept_trees_do_not_starve_newer_removable_ones()
     {
         // Review c238f9ca D-1. Thirty trees the runner keeps (dirty) are older than five removable ones, with the
@@ -437,6 +446,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Dry_run_census_covers_the_whole_population()
     {
         // Review c238f9ca D-1. In DryRun nothing clears, so a would_remove moves the task behind the never-sent
@@ -458,6 +468,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Kept_tree_backs_off_until_its_reason_changes()
     {
         // Review c238f9ca D-1. A keep backs the tree off (60 min, doubling per repeat); a changed reason is
@@ -485,6 +496,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Kept_tree_backoff_doubles_per_repeat_of_the_same_reason()
     {
         // CARD-1684 S18 (guard (h)). A first keep backs off 60 min; a second keep of the same reason backs off
@@ -507,6 +519,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Kept_tree_backoff_is_capped_at_kept_recheck_max_hours()
     {
         // CARD-1684 S19 (guard (h)). Six keeps of the same reason: 60, 120, 240, 480 and 960 min, then
@@ -537,6 +550,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Changed_task_facts_resend_a_backed_off_tree_at_once()
     {
         // Review c238f9ca D-1. The backoff belongs to the facts it was answered for: a task that ran again and
@@ -555,6 +569,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Preview_is_dry_run_even_when_execute_is_on()
     {
         // Review c238f9ca D-3 (a). With the shipped Execute=true the preview route still sends DryRun only.
@@ -573,6 +588,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Preview_of_an_unlisted_runner_contacts_nothing()
     {
         // CARD-1684 S09 (guard (e)). The preview route honours the Runners allow-list: a preview for a capable,
@@ -594,6 +610,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Tick_stops_starting_requests_past_its_budget()
     {
         // Review c238f9ca A-2. Past MaxTickMinutes the tick sends no further request; the rest stay for later.
@@ -620,6 +637,7 @@ public sealed class C1677RetentionServerTests
     [Test]
     [Arguments("enabled")]
     [Arguments("execute")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Switching_off_stops_a_running_tick(string setting)
     {
         // Review c238f9ca A-3. Enabled=false (the kill switch) or Execute=false, set while a tick runs, stops it
@@ -646,6 +664,7 @@ public sealed class C1677RetentionServerTests
     [Arguments("kept")]
     [Arguments("lost")]
     [Arguments("already-absent")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Outcome_recording(string outcome)
     {
         // V-34 (G-74, G-75, G-77, I-14).
@@ -699,6 +718,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Unmatched_inventory_names_are_reported_not_sent()
     {
         // V-35 (G-76). The 17-folder shape: reported with an owner hint, never sent.
@@ -726,6 +746,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Control_character_inventory_names_are_reported_not_sent()
     {
         // CARD-1677 S1 hardening (review d0b57b9c A-3). An inventory name that is a known task leaf plus a
@@ -749,6 +770,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Known_leaf_with_a_trailing_space_is_reported_not_skipped()
     {
         // CARD-1677 S1 hardening mutation XS (task cde14651). An inventory name that is a known task leaf plus a
