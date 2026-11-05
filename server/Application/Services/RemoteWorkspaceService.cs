@@ -43,6 +43,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly int _remotePrepPushBudgetMinutes;
     private readonly bool _workspaceSlots;
     private readonly WorkspaceSlotRoleGate _roleGate;
+    private readonly TaskWorkspaceContextResolver? _workspaceContexts;
     internal Action? BeforeRemoveMirrorCommand { get; set; }
 
     public RemoteWorkspaceService(
@@ -56,7 +57,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         IRunnerMirrorPublisher? mirrorPublisher = null,
         RepositoryLeaseWaiters? leaseWaiters = null,
         IOptionsMonitor<DelegationSettings>? monitor = null,
-        WorkspaceSlotRoleGate? roleGate = null)
+        WorkspaceSlotRoleGate? roleGate = null,
+        TaskWorkspaceContextResolver? workspaceContexts = null)
     {
         _runners = runners;
         _git = git;
@@ -72,6 +74,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         _workspaceSlots = configured.WorkspaceSlotsEnabled;
         // CARD-0824 S1c S-3: the flag stays restart-only (IOptions); only the role list is read live, from the monitor.
         _roleGate = roleGate ?? new WorkspaceSlotRoleGate(monitor, NullLogger<WorkspaceSlotRoleGate>.Instance);
+        _workspaceContexts = workspaceContexts;
     }
 
     /// <summary>
