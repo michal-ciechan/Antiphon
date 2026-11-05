@@ -9,6 +9,7 @@ using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -237,6 +238,10 @@ public sealed class DesktopLegacyReleasePolicyService
                 break;
             }
         }
+
+        // CARD-1708: an executing tick the switch did not stop prunes salvage refs past their retention.
+        if (execute && stopped is null && StopReason(preview, execute, tickStarted) is null)
+            await PruneSalvageAsync(settings, ct);
 
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
@@ -851,4 +856,29 @@ public sealed class DesktopLegacyReleasePolicyService
     }
 
     private DateTime Now() => _clock.GetUtcNow().UtcDateTime;
+
+    /// <summary>
+    /// CARD-1708: in each repository a system release ran in, delete the salvage refs whose own reflog is at least
+    /// <c>SalvageRefRetentionDays</c> old. A younger ref, or one without a readable time, is kept; a failure is logged.
+    /// </summary>
+    private async Task PruneSalvageAsync(WorktreeLegacyReleaseSettings settings, CancellationToken ct)
+    {
+        var repositories = await _db.TaskWorktreeRetirements.AsNoTracking()
+            .Where(r => r.CallerIdentity == TaskWorktreeRetirementService.SystemCallerIdentity)
+            .Select(r => r.RepositoryPath).Distinct().ToListAsync(ct);
+        foreach (var repository in repositories.Where(Directory.Exists).Order(StringComparer.Ordinal))
+        {
+            try
+            {
+                var pruned = await WorktreeReflogSalvage.PruneAsync(_git, repository, Now(),
+                    TimeSpan.FromDays(settings.SalvageRefRetentionDays), ct);
+                if (pruned > 0)
+                    _logger.LogInformation("Desktop legacy release pruned {Count} salvage ref(s) in {Repository}", pruned, repository);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
+            {
+                _logger.LogWarning(ex, "Desktop legacy release could not prune salvage refs in {Repository}", repository);
+            }
+        }
+    }
 }

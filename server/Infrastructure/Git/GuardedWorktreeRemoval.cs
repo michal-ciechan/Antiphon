@@ -179,6 +179,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // finish it, and Git is never handed the path, which is free once the tree moved.
                 // CARD-1717 round 2: tracked bytes are bound to the proven commit, and the receipt keeps
                 // content hashes plus the retained copies, before anything moves.
+                // CARD-1708: the unregister drops the tree's HEAD reflog and the branch delete its branch reflog. A commit
+                // only they reach gets a salvage ref first; a failure, or the switch turned off, refuses while nothing moved.
+                if (request.SalvageScope is not null)
+                {
+                    var salvaged = await WorktreeReflogSalvage.SalvageAsync(git, source, request.SalvageScope,
+                        c => LiveAuthorizationAsync(request, c), ct);
+                    if (salvaged is not null) return Finish(salvaged);
+                }
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
                 var bound = await BindContentAsync(request, source.WorktreePath, second, retainedFiles, ct);
                 if (bound.Reason is not null) return Finish(bound.Reason);

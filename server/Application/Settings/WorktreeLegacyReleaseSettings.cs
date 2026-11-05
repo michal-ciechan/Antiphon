@@ -37,6 +37,12 @@ public sealed class WorktreeLegacyReleaseSettings
     /// <summary>T-D-4: after this many refusals a task is Held <c>retry_exhausted</c> and never attempted again.</summary>
     public int MaxRefusedAttempts { get; set; } = 5;
 
+    /// <summary>
+    /// CARD-1708: an executing tick deletes a <c>refs/antiphon/salvage/*</c> ref (a reflog-only commit kept when its
+    /// tree was released) only once that ref's own reflog says it is at least this many days old.
+    /// </summary>
+    public int SalvageRefRetentionDays { get; set; } = 30;
+
     public string RecurringJobId { get; set; } = "antiphon:desktop-legacy-release";
 
     /// <summary>Five-field cron (UTC).</summary>
@@ -71,6 +77,8 @@ public sealed class WorktreeLegacyReleaseSettingsValidator : IValidateOptions<Wo
             failures.Add(p + "RefusedRecheckMaxHours must be at least 1.");
         if (options.MaxRefusedAttempts is < 1 or > 50)
             failures.Add(p + "MaxRefusedAttempts must be between 1 and 50.");
+        if (options.SalvageRefRetentionDays is < 1 or > 3650)
+            failures.Add(p + "SalvageRefRetentionDays must be between 1 and 3650.");
         if (string.IsNullOrWhiteSpace(options.RecurringJobId))
             failures.Add(p + "RecurringJobId must not be empty.");
         if (string.IsNullOrWhiteSpace(options.Cron)
