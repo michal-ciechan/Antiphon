@@ -49,7 +49,8 @@ public sealed class WorktreeHealthService
         var now = _clock.GetUtcNow().UtcDateTime;
         var tasks = await _db.AgentTasks
             .AsNoTracking()
-            .Select(t => new TaskRow(t.Id, t.Status, t.RepoPath, t.WorktreePath, t.WorktreeBranch))
+            .Select(t => new TaskRow(t.Id, t.Status, t.RepoPath, t.WorktreePath, t.WorktreeBranch)
+            { DesktopWorkspaceKind = t.DesktopWorkspaceKind, TaskRefWorkspaceBindingId = t.TaskRefWorkspaceBindingId })
             .ToListAsync(ct);
         var byShort = tasks
             .GroupBy(t => DelegationReportFormatter.Short(t.Id), StringComparer.OrdinalIgnoreCase)
@@ -74,7 +75,7 @@ public sealed class WorktreeHealthService
             }
 
             scannedRepos.Add(repo);
-            foreach (var classified in Classify(scan, byShort))
+            foreach (var classified in Classify(scan, byShort, tasks.Where(t => t.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly).ToList()))
             {
                 seen.Add((classified.RepoPath, classified.Branch, classified.Shape));
                 await UpsertAsync(classified, now, ct);
@@ -108,11 +109,26 @@ public sealed class WorktreeHealthService
 
     internal static IEnumerable<ClassifiedFinding> Classify(
         IReadOnlyList<DelegateWorktreeScanEntry> scan,
-        IReadOnlyDictionary<string, TaskRow> byShort)
+        IReadOnlyDictionary<string, TaskRow> byShort,
+        IReadOnlyList<TaskRow>? refOnlyTasks = null)
     {
         foreach (var entry in scan)
         {
             byShort.TryGetValue(entry.ShortId, out var task);
+            var exactRefOnly = refOnlyTasks?.FirstOrDefault(t =>
+                WorkspaceReservationKey.NormalizeRef(t.WorktreeBranch) == WorkspaceReservationKey.NormalizeRef(entry.Branch)
+                && WorkspaceReservationKey.PathsEqual(t.RepoPath ?? "", entry.RepoPath));
+            if (exactRefOnly is not null) task = exactRefOnly;
+            if (task?.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                && WorkspaceReservationKey.NormalizeRef(task.WorktreeBranch) == WorkspaceReservationKey.NormalizeRef(entry.Branch)
+                && WorkspaceReservationKey.PathsEqual(task.RepoPath ?? "", entry.RepoPath))
+            {
+                if (entry.Registered)
+                    yield return new ClassifiedFinding(entry.RepoPath, entry.Branch, entry.Path, task.Id,
+                        WorktreeHealthShape.RefOnlySourceRegistered,
+                        "RefOnly source has a checkout registration; binding=" + task.TaskRefWorkspaceBindingId);
+                if (!entry.Registered) continue; // Absence is expected; actual registration/lock residue stays visible.
+            }
             var lockBit = entry.Locked
                 ? (string.IsNullOrWhiteSpace(entry.LockReason) ? "locked" : $"locked {entry.LockReason}")
                 : null;

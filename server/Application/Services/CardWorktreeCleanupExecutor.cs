@@ -28,6 +28,11 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             .SingleAsync(e => e.Id == endpointId, ct);
         var entry = endpoint.OperationId is null ? "card-admission" : "card-replay";
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:" + entry, endpoint.Target.TaskId, ct);
+        var owner = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == endpoint.Target.TaskId, ct);
+        if (endpoint.OperationId is null && await DesktopWorkspaceCleanup.DecideAsync(db, owner, ct) is { } initialDesktop)
+            return await RecordDesktopDecisionAsync(endpoint, initialDesktop, ct);
+        if (endpoint.OperationId is not null && await DesktopWorkspaceCleanup.DecideAsync(db, owner, ct) is { } replayDesktop)
+            return await RecordDesktopDecisionAsync(endpoint, replayDesktop, ct);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:" + entry, endpoint.Target.TaskId, ct);
         if (endpoint.State == CardWorktreeCleanupEndpointState.Complete)
             return new(endpoint.RegistrationRemoved == true, endpoint.DirectoryRemoved == true, endpoint.BranchRemoved == true, null);
@@ -76,7 +81,6 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         var digest = CardDoneArtifactPreservation.Digest(task.Result);
         if (BeforeIntentAsync is not null) await BeforeIntentAsync(ct);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:card-intent", task.Id, ct);
-        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:card-intent", task.Id, ct);
 
         // All slow inspection finished above. This lock is shared with launch admission;
         // card writers serialize through the card row. There is no Git or network I/O here.
@@ -90,6 +94,13 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
                 .OrderByDescending(r => r.RevisionNumber).Select(r => r.Id).FirstOrDefaultAsync(ct);
             var fresh = await db.AgentTasks.FromSqlInterpolated($"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
                 .AsNoTracking().SingleAsync(ct);
+            if (await DesktopWorkspaceCleanup.DecideAsync(db, fresh, ct) is { } intentDesktop)
+            {
+                await tx.RollbackAsync(ct);
+                await tx.DisposeAsync();
+                return await RecordDesktopDecisionAsync(endpoint, intentDesktop, ct);
+            }
+            if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:card-intent", task.Id, ct);
             reason = !DoneAuthorizes(card) || currentGeneration != endpoint.Target.Cleanup.DoneRevisionId
                 ? "done_generation_revoked"
                 : fresh.Attempt != task.Attempt || fresh.Status != task.Status
@@ -249,6 +260,8 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
     {
         var result = await retirement.TryRetireCardDoneAsync(row, endpoint.Id, runId, ct);
         if (BeforeOutcomeAsync is not null) await BeforeOutcomeAsync(ct);
+        if (result.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired)
+            return await RecordDesktopDecisionAsync(endpoint, result, ct);
         endpoint.DirectoryRemoved = result.DirectoryGone;
         endpoint.RegistrationRemoved = result.Unregistered;
         endpoint.BranchRemoved = result.BranchDeleted;
@@ -260,6 +273,24 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         endpoint.ConcurrencyToken = Guid.NewGuid();
         await db.SaveChangesAsync(ct);
         return result;
+    }
+
+    private async Task<WorktreeRemoval> RecordDesktopDecisionAsync(CardWorktreeCleanupEndpoint endpoint,
+        WorktreeRemoval decision, CancellationToken ct)
+    {
+        if (decision.DesktopCleanupDisposition != DesktopCleanupDisposition.NotRequired)
+            return await RefuseAsync(endpoint, decision.Residue!, ct);
+        if (endpoint.State == CardWorktreeCleanupEndpointState.Complete) return decision; // Preserve a historical receipt.
+        endpoint.Target.DesktopWorkspaceKind = decision.DesktopWorkspaceKind;
+        endpoint.Target.TaskRefWorkspaceBindingId = decision.TaskRefWorkspaceBindingId;
+        endpoint.Target.DesktopCleanupDisposition = DesktopCleanupDisposition.NotRequired;
+        endpoint.State = CardWorktreeCleanupEndpointState.NotRequired;
+        endpoint.DirectoryRemoved = endpoint.RegistrationRemoved = endpoint.BranchRemoved = false;
+        endpoint.Reason = DesktopWorkspaceCleanup.NotRequiredReason;
+        endpoint.UpdatedAt = clock.GetUtcNow().UtcDateTime;
+        endpoint.ConcurrencyToken = Guid.NewGuid();
+        await db.SaveChangesAsync(ct);
+        return decision;
     }
 
     private async Task<WorktreeRemoval> RefuseAsync(CardWorktreeCleanupEndpoint endpoint, string reason, CancellationToken ct)

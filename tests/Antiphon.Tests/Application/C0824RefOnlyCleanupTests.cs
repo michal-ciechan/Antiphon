@@ -39,7 +39,7 @@ public sealed class C0824RefOnlyCleanupTests
             var released = await service.ReleaseSystemAsync(task.Id,
                 new(task.ConcurrencyToken, sha, "fixture reviewed release"), default);
             var release = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == released.Id);
-            var bound = await BindAsync(w.Host, handle.Id, removeAuthoring: true);
+            var bound = await BindAsync(w.Host, handle.Id, removeAuthoring: true, identity: handle.Path);
             await db.Entry(task).ReloadAsync();
             var unsafeEntered = false;
             service.DesktopBoundaryAsync = (site, id, ct) => { if (id == task.Id && site == "unsafe:" + consumer) unsafeEntered = true; return Task.CompletedTask; };
@@ -138,6 +138,20 @@ public sealed class C0824RefOnlyCleanupTests
             report = await health.SweepAsync(default);
             report.Findings.ShouldContain(f => f.TaskId == residueHandle.Id && f.Shape == "RefOnlySourceRegistered",
                 "desktop-not-required:health-keeps-real-source-registration");
+            var collidingId = Guid.Parse(residueHandle.Id8 + "-0000-0000-0000-000000000000");
+            collidingId.ShouldNotBe(residueHandle.Id, "discriminating-full-task-identity");
+            var keyedByShort = new Dictionary<string, WorktreeHealthService.TaskRow>
+            {
+                [residueHandle.Id8] = new(collidingId, AgentTaskStatus.Succeeded, w.Fixture.Repository,
+                    Path.Combine(w.Root, "foreign"), "feat/card-task-" + residueHandle.Id8 + "-foreign")
+            };
+            var exactOwner = new WorktreeHealthService.TaskRow(residueHandle.Id, AgentTaskStatus.Succeeded,
+                w.Fixture.Repository, residueBinding.Identity, residueHandle.Branch)
+                { DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly, TaskRefWorkspaceBindingId = residueBinding.Id };
+            WorktreeHealthService.Classify(
+                [new(w.Fixture.Repository, registered, residueHandle.Branch, residueHandle.Id8, true, false, null, true, true)],
+                keyedByShort, [exactOwner]).ShouldContain(f => f.TaskId == residueHandle.Id && f.Shape == WorktreeHealthShape.RefOnlySourceRegistered,
+                    "full-ref-custody-survives-short-id-collision");
             await w.Fixture.RequiredAsync(w.Fixture.Repository, "worktree", "remove", registered);
             var publication = new AgentTaskLanding { Id = Guid.NewGuid(), TaskId = residueHandle.Id, Active = true,
                 SourceDesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly, SourceTaskRefWorkspaceBindingId = residueBinding.Id,
@@ -176,9 +190,10 @@ public sealed class C0824RefOnlyCleanupTests
             await AssertIntactAsync(land, bound, source, "guarded-cleanup");
         }
 
+        await using var card = await CompletedCardCleanupFixture.CreateAsync();
         foreach (var consumer in new[] { "card-discovery", "card-admission", "card-replay", "card-intent" })
         {
-            await using var card = await CompletedCardCleanupFixture.CreateAsync();
+            if (consumer != "card-discovery") await card.CreateNextTaskAsync();
             if (consumer != "card-discovery") await card.DiscoverAsync(); // Stale eligible desktop row.
             var cardBinding = await BindAsync(card.Host, card.TaskId, removeAuthoring: false, identity: card.Tree);
             if (consumer == "card-discovery")
@@ -223,9 +238,11 @@ public sealed class C0824RefOnlyCleanupTests
     [Test]
     public async Task Remote_cleanup_still_uses_its_binding_and_generation()
     {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Ready);
         foreach (var preparation in new[] { MirrorPreparation.Ready, MirrorPreparation.Busy })
         {
-            await using var f = await CompletedCardMirrorFixture.CreateAsync(preparation);
+            if (preparation == MirrorPreparation.Busy) await f.PrepareNextMirrorAsync(preparation);
+            var priorJournalEntries = f.Journal.Read()!.Count;
             var binding = await BindAsync(f.Card.Host, f.Card.TaskId, removeAuthoring: true);
             await f.DiscoverAsync();
             var desktop = await f.Card.CleanupAsync();
@@ -242,7 +259,7 @@ public sealed class C0824RefOnlyCleanupTests
                     .ExecuteUpdateAsync(s => s.SetProperty(b => b.TaskId, foreignTask));
             }
             var inspected = f.InspectionRequests;
-            await f.HeldAsync("task_snapshot_changed");
+            await f.HeldAsync("task_snapshot_changed", priorJournalEntries);
             f.InspectionRequests.ShouldBe(inspected, "wrong-binding-refused-before-recipient");
             await using (var db = f.Card.Host.CreateContext())
                 await db.TaskWorktreeMirrorBindings.Where(b => b.Id == initial.MirrorBindingId)
@@ -251,7 +268,7 @@ public sealed class C0824RefOnlyCleanupTests
             {
                 await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = "fixture-slot"; t.RemoteWorkspaceSlotGeneration = generation;
                     t.RemoteWorkspaceSlotReleasedAt = null; });
-                await f.HeldAsync("slot_managed");
+                await f.HeldAsync("slot_managed", priorJournalEntries);
                 f.InspectionRequests.ShouldBe(inspected, "slot-generation-held:" + generation);
             }
             await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = null; t.RemoteWorkspaceSlotGeneration = null; });
@@ -276,7 +293,7 @@ public sealed class C0824RefOnlyCleanupTests
             // Replay store check runs independently of the coordinator's first store read.
             f.LiveStoreOverride = (call, real) => call == 2 ? Guid.NewGuid() : real;
             var sent = f.SentOperationIds.Count;
-            await f.HeldAsync("runner_store_mismatch");
+            await f.HeldAsync("runner_store_mismatch", priorJournalEntries);
             f.SentOperationIds.Count.ShouldBe(sent, "wrong-store-replay-never-sent");
             f.LiveStoreOverride = null;
 
@@ -285,7 +302,7 @@ public sealed class C0824RefOnlyCleanupTests
                 "owned pre-send transport loss", Antiphon.SessionRunner.Contracts.PhoneHomeProblemTypes.Unavailable); };
             (await f.TryAsync()).Complete.ShouldBeFalse();
             hit.ShouldBeTrue("remote-cut:before-send");
-            f.Journal.Read()!.Count.ShouldBe(0);
+            f.Journal.Read()!.Count.ShouldBe(priorJournalEntries);
             f.BeforeRemoval = null; f.Clock.Advance(TimeSpan.FromMinutes(6));
             await f.DisconnectAsync(); await f.ReconnectAsync();
 
@@ -296,7 +313,7 @@ public sealed class C0824RefOnlyCleanupTests
             if (holder is not null) await f.ReleaseWhenQueuedAsync(holder, attempted, Antiphon.SessionRunner.Contracts.PhoneHomeOperation.CompletedCardWorkspaceRemove);
             (await attempted).Complete.ShouldBeFalse();
             Directory.Exists(f.Mirror).ShouldBeFalse("remote-recipient-actually-removed");
-            f.Journal.Read()!.Count.ShouldBe(1, "remote-recipient-journal");
+            f.Journal.Read()!.Count.ShouldBe(priorJournalEntries + 1, "remote-recipient-journal");
             f.AfterRemoval = null; f.Clock.Advance(TimeSpan.FromMinutes(6));
             await f.DisconnectAsync(); await f.ReconnectAsync();
             f.FailReceiptImport = true;
@@ -309,26 +326,24 @@ public sealed class C0824RefOnlyCleanupTests
             (await f.EndpointAsync()).ImportedReceipt.ShouldBeNull("wrong-receipt-not-imported");
             f.AlterReceipt = null;
             await f.DisconnectAsync(); await f.ReconnectAsync();
-            await f.AssertRemovedAsync(await f.TryAsync());
+            await f.AssertRemovedAsync(await f.TryAsync(), priorJournalEntries + 1);
             var saved = await f.EndpointAsync();
             saved.OperationId.ShouldBe(intent.OperationId, "same-operation-replay");
             saved.ImmutableRequest.ShouldBe(intent.ImmutableRequest, "same-command-bytes-replay");
             f.SentOperationIds.Distinct().ShouldHaveSingleItem().ShouldBe(intent.OperationId!.Value);
-            f.Journal.Read()!.Count.ShouldBe(1, "no-duplicate-destructive-action");
+            f.Journal.Read()!.Count.ShouldBe(priorJournalEntries + 1, "no-duplicate-destructive-action");
             if (preparation == MirrorPreparation.Busy)
                 f.Order.ShouldContain("queued:" + Antiphon.SessionRunner.Contracts.PhoneHomeOperation.CompletedCardWorkspaceRemove);
             (await File.ReadAllTextAsync(binding.Sentinel)).ShouldBe(binding.SentinelBytes);
             (await f.Card.Host.Fixture.RequiredAsync(f.Card.Host.Fixture.Remote, "rev-parse", binding.FullRef))
                 .Trim().ShouldBe(f.Binding.CreationBaselineSha);
         }
-        await RemoteActionAsync();
+        await f.PrepareNextMirrorAsync(MirrorPreparation.Ready);
+        await RetirementRemoteActionAsync(f);
     }
 
-    private static async Task RemoteActionAsync() => await RetirementRemoteActionAsync();
-
-    private static async Task RetirementRemoteActionAsync()
+    private static async Task RetirementRemoteActionAsync(CompletedCardMirrorFixture f)
     {
-        await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Ready);
         var bound = await BindAsync(f.Card.Host, f.Card.TaskId, removeAuthoring: true);
         await f.Card.ChangeTaskAsync(t => { t.RunnerId = f.Binding.RunnerId; t.RemoteWorktreePath = f.Mirror;
             t.RemoteWorkspaceSlotId = "ws-owned-by-another-generation"; t.RemoteWorkspaceSlotGeneration = 4;
@@ -478,6 +493,7 @@ public sealed class C0824RefOnlyCleanupTests
         result.DesktopCleanupDisposition.ShouldBe(DesktopCleanupDisposition.NotRequired, "desktop-not-required:" + consumer);
         result.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
         result.TaskRefWorkspaceBindingId.ShouldBe(binding);
+        result.IsClean.ShouldBeFalse("no-desktop-removed-claim");
         result.DirectoryGone.ShouldBeFalse(); result.Unregistered.ShouldBeFalse(); result.BranchDeleted.ShouldBeFalse();
     }
     private static async Task AssertIntactAsync(LandingSafetyHarness h, Binding binding, string sha, string consumer, bool forbidSourceCwd = true)

@@ -92,6 +92,7 @@ public sealed class TaskWorktreeRetirementService
 
         AuthorizeCaller(caller, taskId);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:operator-release", taskId, ct);
+        await RefuseDesktopReleaseAsync(taskId, ct);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:operator-release", taskId, ct);
         return await ReleaseCoreAsync(taskId, body, sourceSha,
             caller.Task is null ? "operator" : caller.Task.Id.ToString("D"), caller.SessionId, caller.Task?.Id,
@@ -113,6 +114,7 @@ public sealed class TaskWorktreeRetirementService
         var request = new ReleaseWorktreeRetirementRequest(body.ExpectedTaskRevision, sourceSha, null, true, body.Reason,
             body.HandoffDispositions, MissingReportReviewed: false);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:system-release", taskId, ct);
+        await RefuseDesktopReleaseAsync(taskId, ct);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:system-release", taskId, ct);
         return await ReleaseCoreAsync(taskId, request, sourceSha, SystemCallerIdentity, null, null,
             ownBranchDestination: true, ct);
@@ -127,6 +129,8 @@ public sealed class TaskWorktreeRetirementService
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
 
+        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason)
+            throw new ConflictException("This task has no releasable desktop checkout.", desktopReason);
         if (task.ConcurrencyToken != body.ExpectedTaskRevision)
             throw new ConflictException("The reviewed task revision is stale.", "stale_approval_snapshot");
         if (!Terminal.Contains(task.Status))
@@ -286,6 +290,7 @@ public sealed class TaskWorktreeRetirementService
     public async Task<(bool Authorized, string? Reason)> EvaluateEligibilityAsync(AgentTask task, TaskWorktreeRetirement? release, CancellationToken ct)
     {
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:eligibility", task.Id, ct);
+        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason) return (false, desktopReason);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:eligibility", task.Id, ct);
         if (!Terminal.Contains(task.Status)) return (false, "live_owner");
         if (task.CompletedAt is null
@@ -324,6 +329,22 @@ public sealed class TaskWorktreeRetirementService
     private async Task<WorktreeRemoval> TryRetireCoreAsync(TaskWorktreeRetirement retirement, Guid? runId, Guid? endpointId, CancellationToken ct)
     {
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:retire-action", retirement.TaskId, ct);
+        var owner = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == retirement.TaskId, ct);
+        if (owner is null) return new(false, false, false, "task_absent");
+        if (await DesktopWorkspaceCleanup.DecideAsync(_db, owner, ct) is { } desktop)
+        {
+            // No desktop claim, journal or removal is created. A separately owned per-task mirror can still retire.
+            if (desktop.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired && endpointId is null
+                && Terminal.Contains(owner.Status) && owner.Attempt == retirement.TaskAttempt
+                && SnapshotStillValid(retirement, owner)
+                && (owner.RemoteWorkspaceSlotId is null || owner.RemoteWorkspaceSlotReleasedAt is not null)
+                && !await MirrorOwnedByRetentionAsync(owner.Id, ct))
+            {
+                await RemoveRemoteMirrorAsync(owner.Id, ct);
+                await _db.SaveChangesAsync(ct);
+            }
+            return desktop;
+        }
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:retire-action", retirement.TaskId, ct);
         if (_worktrees is null || _leases is null || _commands is null)
             return new(false, false, false, "retirement_executor_unavailable");
@@ -511,12 +532,22 @@ public sealed class TaskWorktreeRetirementService
         return attempt;
     }
 
+    private async Task RefuseDesktopReleaseAsync(Guid taskId, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
+        if (DesktopWorkspaceCleanup.Reason(task) is { } reason)
+            throw new ConflictException("This task has no releasable desktop checkout.", reason);
+    }
+
     private async Task RemoveRemoteMirrorAsync(Guid taskId, CancellationToken ct)
     {
         if (_remoteWorkspace is null)
             return;
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
-        if (task is null || string.IsNullOrWhiteSpace(task.RemoteWorktreePath))
+        if (task is not null) await _db.Entry(task).ReloadAsync(ct);
+        if (task is null || string.IsNullOrWhiteSpace(task.RemoteWorktreePath)
+            || task.RemoteWorkspaceSlotId is not null && task.RemoteWorkspaceSlotReleasedAt is null)
             return;
         try
         {

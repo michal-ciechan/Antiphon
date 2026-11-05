@@ -81,10 +81,19 @@ public sealed class WorktreeResidueSweepService
 
         var scan = await _worktrees.ScanResidueCandidatesAsync(extraRepos, cancellationToken);
         var facts = new List<WorktreeResidueFacts>(scan.Count);
+        var recordedWithoutCheckout = new List<WorktreeResidueRow>();
         foreach (var entry in scan)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var task = MatchTask(entry, tasks);
+            if (task is not null && (task.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || task.TaskRefWorkspaceBindingId is not null))
+            {
+                recordedWithoutCheckout.Add(new(entry.Path, entry.Branch, entry.RepoPath, task.MergeTargetRef ?? defaultBranch,
+                    task.Id, task.Status, WorktreeResidueLabel.Unknown,
+                    task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly ? "RefOnly" : "WorkspaceHeld",
+                    "desktop_not_required; binding=" + task.TaskRefWorkspaceBindingId, Keep: true));
+                continue;
+            }
             var target = task?.MergeTargetRef;
             if (string.IsNullOrWhiteSpace(target))
                 target = defaultBranch;
@@ -105,7 +114,7 @@ public sealed class WorktreeResidueSweepService
                 git.HasUntrackedModifications));
         }
 
-        var classified = Classify(facts, _settings, utcNow);
+        var classified = Classify(facts, _settings, utcNow).Concat(recordedWithoutCheckout).ToList();
         var rows = new List<WorktreeResidueRow>(classified.Count);
         var removed = 0;
 
@@ -192,7 +201,12 @@ public sealed class WorktreeResidueSweepService
             var outcome = WorktreeResidueCandidateOutcome.Held;
             var code = "release_required";
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:residue-settled", task.Id, ct);
-            if (release?.State == WorktreeRetirementState.Complete)
+            if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason)
+            {
+                code = desktopReason;
+                run.Held++;
+            }
+            else if (release?.State == WorktreeRetirementState.Complete)
             {
                 outcome = WorktreeResidueCandidateOutcome.Removed;
                 code = "removed";
@@ -247,6 +261,9 @@ public sealed class WorktreeResidueSweepService
                     ReasonCode = code,
                     TaskId = task.Id,
                     RetirementId = release?.Id,
+                    DirectoryRemoved = DesktopWorkspaceCleanup.Reason(task) is not null ? false : null,
+                    RegistrationRemoved = DesktopWorkspaceCleanup.Reason(task) is not null ? false : null,
+                    BranchRemoved = DesktopWorkspaceCleanup.Reason(task) is not null ? false : null,
                     Path = task.WorktreePath,
                     Branch = task.WorktreeBranch,
                     EvaluatedAt = now,
@@ -265,7 +282,15 @@ public sealed class WorktreeResidueSweepService
             var cursor = cursors.GetValueOrDefault(cursorKey);
             var earlierRetries = queuedBefore.GetValueOrDefault(op.Id);
             var decision = PublicationLanePolicy.Decide(op, earlierRetries, cursor, now, _settings);
-            if (decision == PublicationLaneDecision.Cooldown)
+            var owner = tasks.SingleOrDefault(t => t.Id == op.TaskId);
+            if (op.SourceDesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || op.SourceTaskRefWorkspaceBindingId is not null
+                || owner is not null && DesktopWorkspaceCleanup.Reason(owner) is not null)
+            {
+                code = op.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                    || owner?.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly ? "desktop_not_required" : "desktop_workspace_kind_invalid";
+                run.Held++;
+            }
+            else if (decision == PublicationLaneDecision.Cooldown)
             {
                 // Paced: the retry queued within CleanupRetryCooldownDays has not had its daily run yet.
                 code = "cooldown";
@@ -330,6 +355,9 @@ public sealed class WorktreeResidueSweepService
                     TaskId = op.TaskId,
                     LandingOperationId = op.Id,
                     LandRequestId = requestId,
+                    DirectoryRemoved = code == "desktop_not_required" ? false : null,
+                    RegistrationRemoved = code == "desktop_not_required" ? false : null,
+                    BranchRemoved = code == "desktop_not_required" ? false : null,
                     Path = op.WorktreePath,
                     Branch = op.SourceFullRef,
                     EvaluatedAt = now,
@@ -503,6 +531,10 @@ public sealed class WorktreeResidueSweepService
             return Row(facts, WorktreeResidueLabel.Unknown, "Unknown", "no AgentTask row", keep: true);
 
         var task = facts.Task;
+        if (task.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || task.TaskRefWorkspaceBindingId is not null)
+            return Row(facts, WorktreeResidueLabel.Unknown,
+                task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly ? "RefOnly" : "WorkspaceHeld",
+                "desktop_not_required; binding=" + task.TaskRefWorkspaceBindingId, keep: true);
         if (LiveStatuses.Contains(task.Status))
             return Row(facts, WorktreeResidueLabel.Live, "Live", $"task is {task.Status}", keep: true);
 
@@ -621,6 +653,8 @@ public sealed class WorktreeResidueSweepService
                 t.WorktreeBranch,
                 t.MergeTargetRef,
                 t.RepoPath,
+                t.DesktopWorkspaceKind,
+                t.TaskRefWorkspaceBindingId,
                 EventTypes = t.Events.Select(e => e.Type)
             })
             .ToListAsync(cancellationToken);
@@ -634,7 +668,7 @@ public sealed class WorktreeResidueSweepService
                 t.WorktreeBranch,
                 t.MergeTargetRef,
                 t.RepoPath,
-                t.EventTypes.ToList()))
+                t.EventTypes.ToList()) { DesktopWorkspaceKind = t.DesktopWorkspaceKind, TaskRefWorkspaceBindingId = t.TaskRefWorkspaceBindingId })
             .ToList();
     }
 

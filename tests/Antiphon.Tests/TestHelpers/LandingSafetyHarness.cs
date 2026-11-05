@@ -31,6 +31,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public SessionMessageQueueService? Messages { get; set; }
     public AppDbContext? CurrentLandContext { get; private set; }
     public ILandingGit? GitOverride { get; set; }
+    public Action<AgentTaskLandingProtocol>? ConfigureProtocol { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
     public DbCommandInterceptor? CommandInterceptor { get; set; }
     public DbTransactionInterceptor? TransactionInterceptor { get; set; }
@@ -82,7 +83,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         services.AddSingleton<ILandingVerifier>(Verifier);
         services.AddScoped(_ => CreateContext());
         services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(Fixture.Root, "trees") });
-        services.AddScoped<AgentTaskLandingProtocol>();
+        services.AddScoped(sp =>
+        {
+            var protocol = ActivatorUtilities.CreateInstance<AgentTaskLandingProtocol>(sp);
+            ConfigureProtocol?.Invoke(protocol);
+            return protocol;
+        });
         services.AddScoped(sp => CreateLand(sp.GetRequiredService<AppDbContext>(), sp));
         ConfigureServices?.Invoke(services);
         Services = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });

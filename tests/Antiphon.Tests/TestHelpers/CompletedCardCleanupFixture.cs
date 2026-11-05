@@ -24,7 +24,8 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     public Guid CardId { get; private set; }
     public Guid DoneColumnId { get; private set; }
     public Guid ReviewColumnId { get; private set; }
-    public Guid TaskId => Host.Fixture.TaskId;
+    private Guid? _activeTaskId;
+    public Guid TaskId => _activeTaskId ?? Host.Fixture.TaskId;
     public string Tree { get; private set; } = "";
     public string Sentinel => Path.Combine(Tree, ".antiphon", "checkpoints", "sentinel.trx");
     public string OriginalBytes => "fixture evidence survives refusal\n";
@@ -150,6 +151,31 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
         change(task);
         await db.SaveChangesAsync();
+    }
+
+    public async Task CreateNextTaskAsync()
+    {
+        var priorId = TaskId;
+        var id = Guid.NewGuid();
+        var branch = "feat/card-task-" + id.ToString("N")[..8];
+        var tree = Path.Combine(Host.Fixture.Root, "trees", "card-task-" + id.ToString("N")[..8]);
+        await Host.Fixture.RequiredAsync(Host.Fixture.Repository, "worktree", "add", "-b", branch, tree, Host.Fixture.SeedSha);
+        await Host.Fixture.RequiredAsync(Host.Fixture.Repository, "push", "origin", "refs/heads/" + branch);
+        await using var db = Host.CreateContext();
+        var prior = await db.AgentTasks.SingleAsync(t => t.Id == priorId);
+        var task = new AgentTask
+        {
+            Id = id, RootTaskId = id, CardId = CardId, Role = prior.Role, Workspace = WorkspaceMode.Worktree,
+            Status = AgentTaskStatus.Succeeded, WorkingDirectory = tree, RepoPath = Host.Fixture.Repository,
+            WorktreePath = tree, WorktreeBranch = branch, WorktreeBaseSha = Host.Fixture.SeedSha,
+            Result = prior.Result, CompletedAt = Host.Clock.GetUtcNow().UtcDateTime.AddHours(-3),
+            CreatedAt = Host.Clock.GetUtcNow().UtcDateTime.AddHours(-4), MergeTargetRef = "master", Attempt = 1
+        };
+        prior.CardId = null; // Keep its immutable endpoint/journal history; this fixture's next task owns the current card.
+        db.AgentTasks.Add(task); await db.SaveChangesAsync();
+        _activeTaskId = id; Tree = tree; TargetId = EndpointId = Guid.Empty;
+        Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
+        await File.WriteAllTextAsync(Sentinel, OriginalBytes);
     }
 
     public async Task BindRepairOwnerAsync(bool borrowed)

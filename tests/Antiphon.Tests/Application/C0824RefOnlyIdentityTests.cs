@@ -33,6 +33,8 @@ public sealed class C0824RefOnlyIdentityTests
         {
             var task = model.Model.FindEntityType(typeof(AgentTask))!;
             task.FindProperty(nameof(AgentTask.DesktopWorkspaceKind)).ShouldNotBeNull("persisted-mode=RefOnly");
+            Convert.ToInt32(task.FindProperty(nameof(AgentTask.DesktopWorkspaceKind))!.GetDefaultValue())
+                .ShouldBe((int)DesktopWorkspaceKind.Checkout, "legacy-default=Checkout");
             task.FindProperty(nameof(AgentTask.TaskRefWorkspaceBindingId)).ShouldNotBeNull("persisted-binding=expected");
             var bindingModel = model.Model.FindEntityType(typeof(TaskRefWorkspaceBinding)).ShouldNotBeNull("durable-binding-schema");
             bindingModel.GetIndexes().Any(i => i.IsUnique && i.Properties.Select(p => p.Name).SequenceEqual([nameof(TaskRefWorkspaceBinding.TaskId)]))

@@ -17,4 +17,7 @@ public enum WorktreeHealthShape
 
     /// <summary>delegate branch (legacy or card/stage form) branch, no worktree, no task row.</summary>
     DanglingBranchNoTask = 4,
+
+    /// <summary>A recorded RefOnly source is attached to a desktop checkout.</summary>
+    RefOnlySourceRegistered = 5,
 }

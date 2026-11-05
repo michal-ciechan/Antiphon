@@ -13,7 +13,7 @@ public sealed record WorktreeRemoval(
     string? Residue,
     WorktreeCleanupReference? Diagnostics = null)
 {
-    public bool IsClean => Residue is null;
+    public bool IsClean => Residue is null && DesktopCleanupDisposition == Antiphon.Server.Domain.Enums.DesktopCleanupDisposition.Required;
     public DesktopCleanupDisposition DesktopCleanupDisposition { get; init; }
     public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
     public Guid? TaskRefWorkspaceBindingId { get; init; }

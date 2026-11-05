@@ -27,6 +27,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     /// <summary>CARD-0688 D-11: wall seconds of this invocation's land-worktree reset(s), for the profile line.</summary>
     internal double? LastResetSeconds { get; private set; }
+    internal Action<Guid>? TaskIdentityCompared { get; set; }
 
     /// <summary>The land worktree seam; built from the Git settings when DI did not register one.</summary>
     internal ILandWorkspace? LandWorkspace { get; } = landWorkspace
@@ -744,6 +745,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && currentTask.DesktopWorkspaceKind == op.SourceDesktopWorkspaceKind
             && currentTask.TaskRefWorkspaceBindingId == op.SourceTaskRefWorkspaceBindingId
             && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
+        TaskIdentityCompared?.Invoke(op.TaskId);
         try
         {
             var context = await new TaskWorkspaceContextResolver(db).ResolveAsync(currentTask!, ct);
