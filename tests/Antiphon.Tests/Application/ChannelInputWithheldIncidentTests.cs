@@ -549,7 +549,7 @@ public sealed class ChannelInputWithheldIncidentTests
     public async Task C1591_NonShutdownCancellationContinues()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var clock = new ScanClock(new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero));
+        var clock = Clock();
         var commands = new ScanCommands();
         await using var h = await OpenAsync(schema.ConnectionString, clock, o => o.AddInterceptors(commands));
         var now = clock.GetUtcNow().UtcDateTime;
@@ -571,6 +571,7 @@ public sealed class ChannelInputWithheldIncidentTests
             await using var probe = Db(schema.ConnectionString);
             if (await WithheldIncidentsAsync(probe, h.AgentId) == 1)
                 break;
+            clock.Advance(TimeSpan.FromSeconds(10));
             await Task.Delay(50);
         }
         cts.Cancel();
@@ -663,15 +664,6 @@ public sealed class ChannelInputWithheldIncidentTests
         ReplyHandle = chat,
         Raw = JsonDocument.Parse("{\"from\":\"native\"}").RootElement.Clone(),
     };
-
-    private sealed class ScanClock(DateTimeOffset utc) : TimeProvider
-    {
-        private DateTimeOffset _utc = utc;
-        public override DateTimeOffset GetUtcNow() => _utc;
-        public void Advance(TimeSpan by) => _utc += by;
-        public override Task Delay(TimeSpan delay, CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
-    }
 
     private sealed class CaptureLogger : ILogger<ChannelBridgeService>
     {
