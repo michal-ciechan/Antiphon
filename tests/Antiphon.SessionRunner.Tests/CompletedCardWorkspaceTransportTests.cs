@@ -11,6 +11,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
 {
     // CARD-1718 B-2/B-3: real transport, initial and locked final classifier readings, then replay.
     [Test]
+    [Arguments("bin/appsettings.Development.json", false)]
+    [Arguments("bin/appsettings.Development.json", true)]
     [Arguments("bin/tls.pem", false)]
     [Arguments("bin/tls.pem", true)]
     [Arguments("bin/credentials/token", false)]
@@ -23,20 +25,26 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         var f = r.Fixture;
         var full = Path.Combine(f.Checkout, relative);
         byte[] secret = [0, 1, 13, 10, 255, 42];
+        var planted = false;
         void Plant()
         {
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
             File.WriteAllBytes(full, secret);
+            planted = true;
         }
-        if (afterInitial)
-            r.Hook("AfterInitialInspectionForTest", (Func<Task>)(() => { Plant(); return Task.CompletedTask; }));
-        else
+        if (!afterInitial)
             Plant();
         var command = r.Command with { PolicyPatterns = ["**/*"] };
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var reply = await TransportDispatcher(r, true).DispatchAsync(
+            var dispatcher = TransportDispatcher(r, true, removal =>
+            {
+                if (afterInitial)
+                    removal.AfterInitialInspectionForTest = () => { Plant(); return Task.CompletedTask; };
+            });
+            var reply = await dispatcher.DispatchAsync(
                 TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, command), CancellationToken.None);
+            planted.ShouldBeTrue("the selected production inspection must see the planted secret");
             reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
             Held(reply.Payload!.Value, "protected_content");
             File.ReadAllBytes(full).ShouldBe(secret);
@@ -54,7 +62,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), operation,
             body is null ? null : JsonSerializer.SerializeToElement(body, PhoneHomeFraming.Json));
 
-    private static PhoneHomeCommandDispatcher TransportDispatcher(RemovalRig r, bool configured)
+    private static PhoneHomeCommandDispatcher TransportDispatcher(RemovalRig r, bool configured,
+        Action<RunnerCompletedCardWorkspaceRemoval>? configure = null)
     {
         var storePath = Path.Combine(r.Fixture.Root, "registration-store");
         File.WriteAllText(storePath, r.Fixture.StoreId);
@@ -64,6 +73,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             var type = typeof(SessionRunnerRuntime).Assembly.GetType("Antiphon.SessionRunner.RunnerCompletedCardWorkspaceTransport");
             type.ShouldNotBeNull("S6 explicit typed transport must exist");
             var transport = Activator.CreateInstance(type!, r.Workspace, r.Journal, r.Gate)!;
+            configure?.Invoke(((RunnerCompletedCardWorkspaceTransport)transport).Removal);
             var property = typeof(SessionRunnerRuntime).GetProperty("CompletedCardWorkspace", BindingFlags.Instance | BindingFlags.NonPublic);
             property.ShouldNotBeNull("S6 runtime opt-in composition must exist");
             property!.SetValue(r.Fixture.Runtime, transport);

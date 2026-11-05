@@ -42,11 +42,11 @@ public sealed class WorktreeCleanupSettings
     /// <c>.docker/config.json</c>, each with a <c>/**</c> companion so a secret-named directory
     /// keeps the files under it (<c>bin/credentials/token</c>, <c>bin/tls.pem/token</c>).
     /// <c>.aws/credentials</c> is the <c>credentials*</c> rule. <c>*.token</c> is intentionally
-    /// absent. The existing <c>**/appsettings.*.json</c> rule stays beside the floor.
+    /// absent. The existing <c>**/appsettings.*.json</c> rule is also shared with active retention.
     /// </summary>
     public static IReadOnlyList<string> DefaultProtectedIgnored { get; } =
     [
-        "**/.claude/**", "**/appsettings.*.json", "**/*.user", "**/*.local.json",
+        "**/.claude/**", "**/*.user", "**/*.local.json",
         "**/.antiphon/report.md", "**/.antiphon/deliverables/**",
         ..IgnoredSecretFloor.Patterns,
         "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",
