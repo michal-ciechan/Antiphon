@@ -304,7 +304,7 @@ public sealed class C1708ReflogSalvageTests
 
         w.Fixture.Git.BeforeCommand = null;
         fired.ShouldBe(1, "the first delete was reached and no later one was attempted");
-        (await SalvageRefsAsync(w)).Order(StringComparer.Ordinal).ShouldBe(expected, "the switch went off: nothing is pruned");
+        (await SalvageRefsAsync(w)).Order(StringComparer.Ordinal).ToArray().ShouldBe(expected, "the switch went off: nothing is pruned");
 
         w.Settings.Value.Execute = true;
         await w.TickAsync();
