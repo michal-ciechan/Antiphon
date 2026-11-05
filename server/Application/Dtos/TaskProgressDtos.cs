@@ -112,7 +112,11 @@ public sealed record RemoteSyncEvidence(
     public static RemoteSyncEvidence From(int attempt, RemoteSettlementSyncResult result) =>
         new(attempt, result.State, result.FullRef, result.RemoteSha,
             result.Confirmed ? result.DesktopAfterSha : null, result.Reason,
-            result.MirrorSha, result.MirrorRelation, result.MirrorDirty, result.MirrorPushed, result.MirrorInspection);
+            result.MirrorSha, result.MirrorRelation, result.MirrorDirty, result.MirrorPushed, result.MirrorInspection)
+        {
+            DesktopWorkspaceKind = result.DesktopWorkspaceKind,
+            TaskRefWorkspaceBindingId = result.TaskRefWorkspaceBindingId,
+        };
 }
 
 public sealed record CompletionProgressSource(

@@ -160,7 +160,8 @@ public sealed class TaskCompletionProgressService
         AgentTask task, ProgressClaimParse claim, RemoteSettlementSyncResult prepared, CancellationToken ct)
     {
         var sync = RemoteSyncEvidence.From(task.Attempt, prepared);
-        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
+        var snapshot = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+        var baseline = snapshot?.Primary;
 
         Evaluation Result(CompletionProgressAssessment assessment, string? reason, bool complete,
             string? local = null, string? verified = null)
@@ -180,6 +181,35 @@ public sealed class TaskCompletionProgressService
 
         if (baseline is null)
             return Unknown(prepared.Reason ?? RemoteSettlementSyncReasons.BaselineUnavailable);
+
+        TaskWorkspaceContext? refContext = null;
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            if (snapshot!.SchemaVersion != 2)
+                return Unknown("ref_only_baseline_invalid");
+            if (prepared.Confirmed || prepared.State == RemoteSettlementSyncState.Pending)
+            {
+                if (_workspaceContexts is null || prepared.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+                    || prepared.TaskRefWorkspaceBindingId != task.TaskRefWorkspaceBindingId)
+                    return Unknown("ref_only_binding_required");
+                try
+                {
+                    refContext = await _workspaceContexts.ResolveCurrentAsync(task, ct);
+                    if (refContext.PreparationState != TaskRefWorkspacePreparationState.Published
+                        || baseline.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+                        || baseline.TaskRefWorkspaceBindingId != refContext.BindingId
+                        || baseline.OwnerTaskId != task.Id || baseline.RegisteredCheckout is not null
+                        || baseline.FullRef != refContext.FullRef || prepared.FullRef != refContext.FullRef
+                        || baseline.LocalSha != refContext.BaseSha || prepared.BaselineSha != refContext.BaseSha
+                        || !WorkspaceReservationKey.PathsEqual(baseline.CanonicalRepository, refContext.GitWorkingDirectory)
+                        || !WorkspaceReservationKey.PathsEqual(baseline.CanonicalCommonDirectory, refContext.CommonDirectory!))
+                        return Unknown("ref_only_baseline_invalid");
+                    TaskWorkspaceContextResolver.RequireRepositoryIdentity(refContext,
+                        await _git.CommonDirectoryAsync(baseline.CanonicalRepository, ct));
+                }
+                catch (ConflictException ex) { return Unknown(ex.Code ?? "ref_only_binding_state_changed"); }
+            }
+        }
 
         if (prepared.State == RemoteSettlementSyncState.NoPushedProgress)
             return Negative(claim.Sha is not null
@@ -248,23 +278,8 @@ public sealed class TaskCompletionProgressService
         PrimaryObservation observed;
         if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
         {
-            if (_workspaceContexts is null || prepared.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
-                || prepared.TaskRefWorkspaceBindingId != task.TaskRefWorkspaceBindingId)
-                return Unknown("ref_only_binding_required");
-            try
-            {
-                var context = await _workspaceContexts.ResolveCurrentAsync(task, ct);
-                if (context.PreparationState != TaskRefWorkspacePreparationState.Published
-                    || baseline.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
-                    || baseline.TaskRefWorkspaceBindingId != context.BindingId
-                    || baseline.FullRef != context.FullRef
-                    || !WorkspaceReservationKey.PathsEqual(repo, context.GitWorkingDirectory))
-                    return Unknown("ref_only_baseline_invalid");
-                TaskWorkspaceContextResolver.RequireRepositoryIdentity(context, await _git.CommonDirectoryAsync(repo, ct));
-                var tip = await _git.RevParseCommitAsync(repo, context.FullRef, ct);
-                observed = new(tip.Succeeded, tip.Reason, context.FullRef, tip.Sha);
-            }
-            catch (ConflictException ex) { return Unknown(ex.Code ?? "ref_only_binding_state_changed"); }
+            var tip = await _git.RevParseCommitAsync(repo, refContext!.FullRef, ct);
+            observed = new(tip.Succeeded, tip.Reason, refContext.FullRef, tip.Sha);
         }
         else observed = await ObservePrimaryCheckoutAsync(baseline, ct);
         if (!observed.Succeeded
