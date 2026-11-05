@@ -50,9 +50,9 @@ internal static class WorktreeNoFollowDelete
         }
         // A name created after the receipt was sealed is still here. Refuse before any unlink.
         RemovalApproval.Current.Value?.RejectDrift(full);
-        if (OperatingSystem.IsWindows()) DeleteWindows(full, protectedRoot);
+        if (OperatingSystem.IsWindows()) DeleteWindows(full, "", protectedRoot);
         else if (OperatingSystem.IsLinux()) DeleteLinux(full, protectedRoot);
-        else DeletePortable(full, protectedRoot);
+        else DeletePortable(full, "", protectedRoot);
     }
 
     /// <summary>
@@ -85,19 +85,28 @@ internal static class WorktreeNoFollowDelete
         catch (DirectoryNotFoundException) { return true; }
     }
 
-    private static void DeleteWindows(string path, string? protectedRoot)
+    private static void DeleteWindows(string path, string relative, string? protectedRoot)
     {
         using var handle = OpenNoFollow(path);
         if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
         const uint directory = 0x10, reparsePoint = 0x400;
-        if ((info.FileAttributes & reparsePoint) == 0 && (info.FileAttributes & directory) != 0)
+        var isLink = (info.FileAttributes & reparsePoint) != 0;
+        var isDirectory = !isLink && (info.FileAttributes & directory) != 0;
+        // CARD-1717 B-3: the held handle shares no delete, so this name is not replaced between its hash and delete.
+        var approval = RemovalApproval.Current.Value;
+        if (approval is not null && relative.Length != 0)
+            approval.RejectChanged(relative, isLink ? "link" : isDirectory ? "dir" : "file", () => WindowsRegularFileHash(path));
+        if (isDirectory)
         {
             WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
             // The held handle pins this directory, so the listing below resolves through it.
-            foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList())
+            var children = Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList();
+            approval?.RejectUnapproved(relative, children.Select(c => Path.GetFileName(c)));
+            foreach (var child in children)
             {
                 WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
-                DeleteWindows(child, protectedRoot);
+                var name = Path.GetFileName(child);
+                DeleteWindows(child, relative.Length == 0 ? name : relative + "/" + name, protectedRoot);
             }
             WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
         }
@@ -217,10 +226,17 @@ internal static class WorktreeNoFollowDelete
 
     internal readonly record struct EntryStamp(string Kind, long Length, long MtimeTicks);
 
+    // CARD-1717 B-3: under a receipt each directory's listing is checked once against it, and each entry
+    // again (kind, then the bytes of a content-bound file) just before its unlink. Only listed names are
+    // unlinked; a name created after the listing is found when the emptied directory is listed again,
+    // and the walk stops there with the remainder still in the set-aside.
     private static void DeleteLinuxName(SafeFileHandle parent, string name, string relative, string? protectedRoot)
     {
         if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var listed)) throw Failure("stat", name);
         var kind = listed.Mode & 0xF000;
+        var approval = RemovalApproval.Current.Value;
+        if (approval is not null && relative.Length != 0)
+            approval.RejectChanged(relative, KindOf(listed), () => HashAt(parent, name, listed));
         if (kind == SIfLnk)
         {
             Unlink(parent, name, directory: false);
@@ -235,7 +251,9 @@ internal static class WorktreeNoFollowDelete
         try { dir = OpenAt(Fd(parent), name, ODirectory | ONoFollow | OCloExec, name); }
         catch (IOException)
         {
-            if (TryStat(Fd(parent), name, AtSymlinkNoFollow, out var swapped) && (swapped.Mode & 0xF000) == SIfLnk)
+            // An approved directory that became a link is held; without a receipt the link itself goes.
+            if (approval is null && TryStat(Fd(parent), name, AtSymlinkNoFollow, out var swapped)
+                && (swapped.Mode & 0xF000) == SIfLnk)
             {
                 Unlink(parent, name, directory: false);
                 return;
@@ -246,44 +264,26 @@ internal static class WorktreeNoFollowDelete
         {
             if (!TryStat(Fd(dir), "", AtEmptyPath, out var opened) || !SameNode(listed, opened))
                 throw new IOException("no_follow_identity_changed: " + name);
+            var nested = protectedRoot is not null && relative.Length != 0;
             var children = ListDir(dir);
-            if (protectedRoot is not null && relative.Length != 0 && children.Exists(IsRepositoryMarker))
+            if (nested && children.Exists(IsRepositoryMarker))
                 throw new NestedRepositoryPreservedException([relative + "/"]);
-            var known = new HashSet<string>(children, StringComparer.Ordinal);
+            approval?.RejectUnapproved(relative, children);
             foreach (var child in children)
             {
                 // The marker check above ran once. A repository created after that listing must stop
                 // the walk before the next name is unlinked.
-                if (protectedRoot is not null && relative.Length != 0 && LinuxDirectoryHasMarker(dir))
+                if (nested && LinuxDirectoryHasMarker(dir))
                     throw new NestedRepositoryPreservedException([relative + "/"]);
-                var childRelative = relative.Length == 0 ? child : relative + "/" + child;
-                var approval = RemovalApproval.Current.Value;
-                if (approval is not null)
-                {
-                    var present = ListDir(dir);
-                    foreach (var addedName in present)
-                    {
-                        if (known.Contains(addedName)) continue;
-                        var added = relative.Length == 0 ? addedName : relative + "/" + addedName;
-                        if (added.Equals(".git", StringComparison.OrdinalIgnoreCase)
-                            || added.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        if (!approval.Names.Contains(added))
-                            throw new ApprovedTreeRejectedException("set_aside_content_changed");
-                    }
-                    if (!present.Contains(child)) continue;
-                    if (approval.Hashes.TryGetValue(childRelative, out var expected))
-                    {
-                        var hash = HashAt(dir, child);
-                        if (hash is not null && (hash.Length == 0 || !hash.Equals(expected, StringComparison.OrdinalIgnoreCase)))
-                            throw new ApprovedTreeRejectedException("set_aside_content_changed");
-                    }
-                }
-                DeleteLinuxName(dir, child, childRelative, protectedRoot);
+                DeleteLinuxName(dir, child, relative.Length == 0 ? child : relative + "/" + child, protectedRoot);
             }
+            if (nested && LinuxDirectoryHasMarker(dir))
+                throw new NestedRepositoryPreservedException([relative + "/"]);
+            if (approval is not null && ListDir(dir).Count != 0)
+                throw new ApprovedTreeRejectedException("set_aside_content_changed");
             if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
             var nowKind = now.Mode & 0xF000;
-            if (nowKind == SIfLnk)
+            if (nowKind == SIfLnk && approval is null)
             {
                 Unlink(parent, name, directory: false);
                 return;
@@ -329,7 +329,9 @@ internal static class WorktreeNoFollowDelete
     private static bool LinuxDirectoryHasMarker(SafeFileHandle dir) =>
         TryStat(Fd(dir), ".git", AtSymlinkNoFollow, out _) || TryStat(Fd(dir), "HEAD", AtSymlinkNoFollow, out _);
 
-    private static string? HashAt(SafeFileHandle parent, string name)
+    /// <summary>SHA-256 of the regular file <paramref name="name"/> names, opened without following a link. Null
+    /// when absent; empty when it is not a regular file or not the inode that was listed.</summary>
+    private static string? HashAt(SafeFileHandle parent, string name, in LinuxStatx listed)
     {
         var raw = openat(Fd(parent), name, ORdOnly | ONoFollow | OCloExec);
         if (raw < 0)
@@ -341,10 +343,13 @@ internal static class WorktreeNoFollowDelete
         }
         using var handle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
         if (!TryStat(Fd(handle), "", AtEmptyPath, out var stat)) throw Failure("stat", name);
-        if ((stat.Mode & 0xF000) != SIfReg) return "";
+        if ((stat.Mode & 0xF000) != SIfReg || !SameNode(listed, stat)) return "";
         using var stream = new FileStream(handle, FileAccess.Read);
         return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
+
+    private static string KindOf(in LinuxStatx stat) =>
+        (stat.Mode & 0xF000) switch { SIfLnk => "link", SIfDir => "dir", SIfReg => "file", _ => "other" };
 
     private static SafeFileHandle OpenLinuxDirectory(string path)
     {
@@ -374,17 +379,21 @@ internal static class WorktreeNoFollowDelete
     }
 
     private static bool TryStat(int dirfd, string name, int flags, out LinuxStatx stat) =>
-        Statx(dirfd, name, flags, StatxBasicStats, out stat) == 0
+        Statx(dirfd, name, flags, StatxBasicStats | StatxBtime, out stat) == 0
         && (stat.Mask & (StatxType | StatxMode | StatxIno)) == (StatxType | StatxMode | StatxIno);
 
     private static bool SameNode(in LinuxStatx left, in LinuxStatx right) =>
         left.Inode == right.Inode && left.DevMajor == right.DevMajor && left.DevMinor == right.DevMinor;
 
-    private static string LinuxIdentity(in LinuxStatx stat) => $"linux:{stat.DevMajor}:{stat.DevMinor}:{stat.Inode}";
+    // CARD-1717 B-2: an inode number is reused once its directory is gone. The birth time, where the file
+    // system reports one, tells a directory created later at a reused inode from the recorded one.
+    private static string LinuxIdentity(in LinuxStatx stat) => (stat.Mask & StatxBtime) == 0
+        ? $"linux:{stat.DevMajor}:{stat.DevMinor}:{stat.Inode}"
+        : $"linux:{stat.DevMajor}:{stat.DevMinor}:{stat.Inode}:{stat.BtimeSec}.{stat.BtimeNsec:D9}";
 
     private static EntryStamp StampOf(in LinuxStatx stat)
     {
-        var kind = (stat.Mode & 0xF000) switch { SIfLnk => "link", SIfDir => "dir", SIfReg => "file", _ => "other" };
+        var kind = KindOf(stat);
         var ticks = DateTimeOffset.FromUnixTimeSeconds(stat.MtimeSec).Ticks + stat.MtimeNsec / 100;
         return new EntryStamp(kind, kind == "file" ? (long)stat.Size : 0, ticks);
     }
@@ -469,7 +478,7 @@ internal static class WorktreeNoFollowDelete
         }
     }
 
-    private static string GitBlobOf(Stream stream)
+    internal static string GitBlobOf(Stream stream)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         hash.AppendData(Encoding.ASCII.GetBytes("blob "
@@ -491,6 +500,7 @@ internal static class WorktreeNoFollowDelete
     private const int ONoFollow = 0x20000;
     private const int OCloExec = 0x80000;
     private const uint StatxBasicStats = 0x7ff;
+    private const uint StatxBtime = 0x800;
     private const uint StatxType = 0x1;
     private const uint StatxMode = 0x2;
     private const uint StatxIno = 0x100;
@@ -501,17 +511,24 @@ internal static class WorktreeNoFollowDelete
     private const int ENotDir = 20;
     private const int ELoop = 40;
 
-    private static void DeletePortable(string path, string? protectedRoot)
+    private static void DeletePortable(string path, string relative, string? protectedRoot)
     {
         // Unix has no handle-pinned walk here; lstat each entry and unlink a link without descending.
         var info = new FileInfo(path);
-        if (info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint)) { File.Delete(path); return; }
-        if (!info.Attributes.HasFlag(FileAttributes.Directory)) { File.Delete(path); return; }
+        var isLink = info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint);
+        var isDirectory = !isLink && info.Attributes.HasFlag(FileAttributes.Directory);
+        var approval = RemovalApproval.Current.Value;
+        if (approval is not null && relative.Length != 0)
+            approval.RejectChanged(relative, isLink ? "link" : isDirectory ? "dir" : "file", () => RegularFileHash(path));
+        if (!isDirectory) { File.Delete(path); return; }
         WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
-        foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList())
+        var children = Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList();
+        approval?.RejectUnapproved(relative, children.Select(c => Path.GetFileName(c)));
+        foreach (var child in children)
         {
             WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
-            DeletePortable(child, protectedRoot);
+            var name = Path.GetFileName(child);
+            DeletePortable(child, relative.Length == 0 ? name : relative + "/" + name, protectedRoot);
         }
         WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
         Directory.Delete(path, recursive: false);
@@ -580,6 +597,8 @@ internal static class WorktreeNoFollowDelete
         [FieldOffset(28)] public ushort Mode;
         [FieldOffset(32)] public ulong Inode;
         [FieldOffset(40)] public ulong Size;
+        [FieldOffset(80)] public long BtimeSec;
+        [FieldOffset(88)] public uint BtimeNsec;
         [FieldOffset(112)] public long MtimeSec;
         [FieldOffset(120)] public uint MtimeNsec;
         [FieldOffset(136)] public uint DevMajor;
@@ -632,6 +651,36 @@ internal static class RemovalApproval
                 }
             }
         }
+
+        /// <summary>A listed name the receipt never approved refuses before anything in its directory goes.</summary>
+        public void RejectUnapproved(string relativeDirectory, IEnumerable<string> children)
+        {
+            foreach (var child in children)
+            {
+                var relative = relativeDirectory.Length == 0 ? child : relativeDirectory + "/" + child;
+                if (!Administrative(relative) && !Names.Contains(relative))
+                    throw new ApprovedTreeRejectedException("set_aside_content_changed");
+            }
+        }
+
+        /// <summary>
+        /// The entry about to be unlinked still has its approved kind and, for a content-bound file, the
+        /// approved bytes. <paramref name="hash"/> reads the entry the walk will unlink.
+        /// </summary>
+        public void RejectChanged(string relative, string kind, Func<string?> hash)
+        {
+            if (Administrative(relative)) return;
+            if (!Kinds.TryGetValue(relative, out var approved) || approved != kind)
+                throw new ApprovedTreeRejectedException("set_aside_content_changed");
+            if (!Hashes.TryGetValue(relative, out var expected)) return;
+            var actual = hash();
+            if (actual is null || actual.Length == 0 || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                throw new ApprovedTreeRejectedException("set_aside_content_changed");
+        }
+
+        // The worktree's own .git entry is administrative and never in the receipt.
+        private static bool Administrative(string relative) => relative.Equals(".git", StringComparison.OrdinalIgnoreCase)
+            || relative.StartsWith(".git/", StringComparison.OrdinalIgnoreCase);
     }
 }
 
