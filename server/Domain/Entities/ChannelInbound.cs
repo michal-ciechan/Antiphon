@@ -19,4 +19,6 @@ public sealed class ChannelInbound
     public DateTime? ContinuityHoldIncidentAt { get; set; }
     public DateTime? SuspensionHoldIncidentAt { get; set; }
     public DateTime? LivenessHoldIncidentAt { get; set; }
+    /// <summary>When the aged queued-withhold incident was recorded. Kept across restart and incident pruning.</summary>
+    public DateTime? InputWithheldIncidentAt { get; set; }
 }

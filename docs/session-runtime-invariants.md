@@ -1770,7 +1770,8 @@ late-confirm, land receipt, and the absent-launch never-attempted hold do not
 read the record as a delivery attempt. Moving a pending note onto another
 session clears the record. The record is not cleared when the withhold ends, so
 `PendingNotesAged` can still name a withhold after the session is no longer
-withheld if the note stays pending for another reason. Adopted
+withheld if the note stays pending for another reason. A sibling loop records
+the incident and does not flush. Adopted
 idle, an operator draft, a dialog, and a Working screen on an adopted session
 still write no bytes. A body already written retains its existing composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
