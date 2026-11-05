@@ -6,7 +6,14 @@ namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>What an earlier guarded removal set aside, recorded before the move.</summary>
 internal sealed record WorktreeSetAsideRecord(string WorktreePath, string SetAsidePath, string GitDirectory, DateTime RecordedAt,
-    string? DirectoryIdentity = null, string? ContentSeal = null);
+    string? DirectoryIdentity = null, string? ContentSeal = null,
+    string? EntryManifest = null, string? EvidenceManifest = null);
+
+/// <summary>One approved set-aside entry. <see cref="Hash"/> is SHA-256 for a content-bound file and null for a name-only entry.</summary>
+internal sealed record WorktreeApprovedEntry(string Path, string Kind, string? Hash);
+
+/// <summary>A retained evidence copy the receipt can re-check without trusting the listing seal.</summary>
+internal sealed record EvidencePin(string Relative, string RetainedPath, string Sha256);
 
 /// <summary>
 /// CARD-0665 (review 0c0b9a4e item 1): the set-aside tree has one deterministic name per worktree

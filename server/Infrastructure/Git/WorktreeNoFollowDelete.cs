@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -46,6 +48,8 @@ internal static class WorktreeNoFollowDelete
             var repositories = WorktreeNestedRepositories.Find(full);
             if (repositories.Length != 0) throw new NestedRepositoryPreservedException(repositories);
         }
+        // A name created after the receipt was sealed is still here. Refuse before any unlink.
+        RemovalApproval.Current.Value?.RejectDrift(full);
         if (OperatingSystem.IsWindows()) DeleteWindows(full, protectedRoot);
         else if (OperatingSystem.IsLinux()) DeleteLinux(full, protectedRoot);
         else DeletePortable(full, protectedRoot);
@@ -198,6 +202,19 @@ internal static class WorktreeNoFollowDelete
         return Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
     }
 
+    /// <summary>
+    /// Git blob id of a regular file opened without following a link. Null when absent; empty when
+    /// the entry exists and is not a regular file.
+    /// </summary>
+    internal static string? GitBlobSha1(string path)
+    {
+        if (OperatingSystem.IsLinux()) return LinuxGitBlob(path);
+        if (OperatingSystem.IsWindows()) return WindowsGitBlob(path);
+        if (!File.Exists(path)) return null;
+        using var stream = File.OpenRead(path);
+        return GitBlobOf(stream);
+    }
+
     internal readonly record struct EntryStamp(string Kind, long Length, long MtimeTicks);
 
     private static void DeleteLinuxName(SafeFileHandle parent, string name, string relative, string? protectedRoot)
@@ -232,8 +249,38 @@ internal static class WorktreeNoFollowDelete
             var children = ListDir(dir);
             if (protectedRoot is not null && relative.Length != 0 && children.Exists(IsRepositoryMarker))
                 throw new NestedRepositoryPreservedException([relative + "/"]);
+            var known = new HashSet<string>(children, StringComparer.Ordinal);
             foreach (var child in children)
-                DeleteLinuxName(dir, child, relative.Length == 0 ? child : relative + "/" + child, protectedRoot);
+            {
+                // The marker check above ran once. A repository created after that listing must stop
+                // the walk before the next name is unlinked.
+                if (protectedRoot is not null && relative.Length != 0 && LinuxDirectoryHasMarker(dir))
+                    throw new NestedRepositoryPreservedException([relative + "/"]);
+                var childRelative = relative.Length == 0 ? child : relative + "/" + child;
+                var approval = RemovalApproval.Current.Value;
+                if (approval is not null)
+                {
+                    var present = ListDir(dir);
+                    foreach (var addedName in present)
+                    {
+                        if (known.Contains(addedName)) continue;
+                        var added = relative.Length == 0 ? addedName : relative + "/" + addedName;
+                        if (added.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                            || added.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!approval.Names.Contains(added))
+                            throw new ApprovedTreeRejectedException("set_aside_content_changed");
+                    }
+                    if (!present.Contains(child)) continue;
+                    if (approval.Hashes.TryGetValue(childRelative, out var expected))
+                    {
+                        var hash = HashAt(dir, child);
+                        if (hash is not null && (hash.Length == 0 || !hash.Equals(expected, StringComparison.OrdinalIgnoreCase)))
+                            throw new ApprovedTreeRejectedException("set_aside_content_changed");
+                    }
+                }
+                DeleteLinuxName(dir, child, childRelative, protectedRoot);
+            }
             if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
             var nowKind = now.Mode & 0xF000;
             if (nowKind == SIfLnk)
@@ -278,6 +325,26 @@ internal static class WorktreeNoFollowDelete
 
     private static bool IsRepositoryMarker(string name) =>
         name.Equals(".git", StringComparison.OrdinalIgnoreCase) || name.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LinuxDirectoryHasMarker(SafeFileHandle dir) =>
+        TryStat(Fd(dir), ".git", AtSymlinkNoFollow, out _) || TryStat(Fd(dir), "HEAD", AtSymlinkNoFollow, out _);
+
+    private static string? HashAt(SafeFileHandle parent, string name)
+    {
+        var raw = openat(Fd(parent), name, ORdOnly | ONoFollow | OCloExec);
+        if (raw < 0)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error is ENoEnt or ENotDir) return null;
+            if (error == ELoop) return "";
+            throw Failure("open", name, error);
+        }
+        using var handle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
+        if (!TryStat(Fd(handle), "", AtEmptyPath, out var stat)) throw Failure("stat", name);
+        if ((stat.Mode & 0xF000) != SIfReg) return "";
+        using var stream = new FileStream(handle, FileAccess.Read);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
 
     private static SafeFileHandle OpenLinuxDirectory(string path)
     {
@@ -339,6 +406,23 @@ internal static class WorktreeNoFollowDelete
         return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
+    private static string? LinuxGitBlob(string path)
+    {
+        var raw = openat(AtFdCwd, path, ORdOnly | ONoFollow | OCloExec);
+        if (raw < 0)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error is ENoEnt or ENotDir) return null;
+            if (error == ELoop) return "";
+            throw Failure("open", path, error);
+        }
+        using var handle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
+        if (!TryStat(Fd(handle), "", AtEmptyPath, out var stat)) throw Failure("stat", path);
+        if ((stat.Mode & 0xF000) != SIfReg) return "";
+        using var stream = new FileStream(handle, FileAccess.Read);
+        return GitBlobOf(stream);
+    }
+
     private static string WindowsDirectoryIdentity(string path)
     {
         using var handle = OpenNoFollow(path);
@@ -364,6 +448,36 @@ internal static class WorktreeNoFollowDelete
             using var stream = new FileStream(handle, FileAccess.Read);
             return Convert.ToHexStringLower(SHA256.HashData(stream));
         }
+    }
+
+    private static string? WindowsGitBlob(string path)
+    {
+        var handle = CreateFileW(path, 0x80000000, 0x1 | 0x2 | 0x4, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            handle.Dispose();
+            if (error is 2 or 3) return null;
+            throw Failure("open", path, error);
+        }
+        using (handle)
+        {
+            if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
+            if ((info.FileAttributes & 0x400) != 0 || (info.FileAttributes & 0x10) != 0) return "";
+            using var stream = new FileStream(handle, FileAccess.Read);
+            return GitBlobOf(stream);
+        }
+    }
+
+    private static string GitBlobOf(Stream stream)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        hash.AppendData(Encoding.ASCII.GetBytes("blob "
+            + stream.Length.ToString(CultureInfo.InvariantCulture) + "\0"));
+        var buffer = new byte[81920];
+        int read;
+        while ((read = stream.Read(buffer)) != 0) hash.AppendData(buffer.AsSpan(0, read));
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
     private static int Fd(SafeFileHandle handle) => handle.DangerousGetHandle().ToInt32();
@@ -479,4 +593,49 @@ internal static class WorktreeNoFollowDelete
         public uint CreationLow, CreationHigh, LastAccessLow, LastAccessHigh, LastWriteLow, LastWriteHigh;
         public uint FileSizeHigh, FileSizeLow;
     }
+}
+
+/// <summary>The set-aside manifest the no-follow delete re-checks. A rejection leaves the remainder in place.</summary>
+internal static class RemovalApproval
+{
+    internal static readonly AsyncLocal<Listing?> Current = new();
+
+    internal sealed class Listing
+    {
+        public required HashSet<string> Names { get; init; }
+        public required Dictionary<string, string> Kinds { get; init; }
+        public required Dictionary<string, string> Hashes { get; init; }
+
+        public void RejectDrift(string root)
+        {
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.TryPop(out var directory))
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    var relative = Path.GetRelativePath(root, entry).Replace(Path.DirectorySeparatorChar, '/');
+                    if (relative.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                        || relative.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var stamp = WorktreeNoFollowDelete.TryStamp(entry)
+                        ?? throw new ApprovedTreeRejectedException("set_aside_content_changed");
+                    if (!Names.Contains(relative) || !Kinds.TryGetValue(relative, out var kind) || kind != stamp.Kind)
+                        throw new ApprovedTreeRejectedException("set_aside_content_changed");
+                    if (Hashes.TryGetValue(relative, out var expected))
+                    {
+                        var hash = WorktreeNoFollowDelete.RegularFileHash(entry);
+                        if (hash is null || hash.Length == 0 || !hash.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                            throw new ApprovedTreeRejectedException("set_aside_content_changed");
+                    }
+                    if (stamp.Kind == "dir") pending.Push(entry);
+                }
+            }
+        }
+    }
+}
+
+internal sealed class ApprovedTreeRejectedException(string reason) : IOException(reason)
+{
+    public string Reason { get; } = reason;
 }
