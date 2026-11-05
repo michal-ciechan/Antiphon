@@ -56,6 +56,12 @@ Admission happens before timed bodies, not in a new semaphore wait inside them. 
 methods retain their stricter process lane. Isolation, assertions, caches and 35/45-second limits
 stay unchanged. PC-4 pending Mutation: remove either class's WorkspaceRigConcurrencyLimit attribute;
 Scripted_rig_classes_share_bounded_admission must fail. Both class variants remain pending.
+
+Scratch Git's whole-operation deadline is now 1 second: the 372 retained command spans from
+the first cached pack had p95 70.768 ms and maximum 325.291 ms; twice the observed maximum,
+rounded up to a second, bounds start, exit and both drains. This is one heterogeneous loaded
+process sample, not a repeated per-method p95. CARD-1404/1514 own collecting up to three comparable
+future cold-process samples; no repeat of an unchanged green selection is required here.
 ## Performance budget
 
 Fixture lifetime: the existing assembly hook runs once; retain store selection, workers and probes.

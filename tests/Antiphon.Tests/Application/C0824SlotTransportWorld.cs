@@ -161,8 +161,9 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     }
 
     // Scratch commands share the existing custodied runner's single start/exit/drain deadline.
-    // The default is provisional (CARD-1514/1404); command spans provide its calibration samples.
-    internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(15);
+    // Provisional cold-process sample (CARD-1514/1404): 372 commands in CP-6 at 259c2cde,
+    // max 325.291 ms. Round twice that observed maximum up to one second, including both drains.
+    internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(1);
 
     public static string Git(string workingDirectory, params string[] args) =>
         RunGit(workingDirectory, args,
