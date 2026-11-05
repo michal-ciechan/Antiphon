@@ -94,7 +94,7 @@ public sealed class GhostSeatReleaseTests
         await world.SeedFailedAsync(9, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
 
         var row = (await world.HeldAsync()).ShouldHaveSingleItem();
-        row.Evidence.ShouldContain("10 idle minutes", "V-4: describe the actual release bound");
+        row.Evidence.ShouldContain("10 idle minutes");
         row.Evidence.ShouldContain("dirty, unpushed or unknown");
         row.Evidence.ShouldNotContain("never killed");
         row.Evidence.ShouldContain("mirror=clean-equal");
@@ -130,7 +130,13 @@ public sealed class GhostSeatReleaseTests
         f.RecordedStops.Killed.ShouldBeEmpty();
         await using var db = f.Db();
         var release = await db.RunnerSeatReleases.SingleAsync();
-        release.ReasonCode.ShouldBe(held ? "Working" : nameof(TerminalSeatReleaseOutcome.Released));
+        if (held)
+            release.ReasonCode.ShouldBe("Working");
+        else
+        {
+            release.State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+            release.OutcomeCode.ShouldBe(nameof(TerminalSeatReleaseOutcome.Released));
+        }
     }
 
     [Test]
