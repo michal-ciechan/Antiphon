@@ -896,6 +896,7 @@ public sealed class C1677RetentionEngineTests
         Git(nested, "init", "-q");
         Git(nested, "-c", "user.email=x@y", "-c", "user.name=x", "commit", "-q", "--allow-empty", "-m", "seed");
         var entry = nested + "/cache";
+        UnixFileMode? originalMode = null;
         if (shape == "link-file")
         {
             File.WriteAllText(s.Root + "/outside-cache", "ordinary bytes");
@@ -909,6 +910,7 @@ public sealed class C1677RetentionEngineTests
         else if (shape == "unreadable")
         {
             Directory.CreateDirectory(entry);
+            originalMode = File.GetUnixFileMode(entry);
             File.SetUnixFileMode(entry, UnixFileMode.None);
         }
         else
@@ -926,7 +928,7 @@ public sealed class C1677RetentionEngineTests
         finally
         {
             if (shape == "unreadable")
-                File.SetUnixFileMode(entry, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                File.SetUnixFileMode(entry, originalMode!.Value);
         }
     }
 
