@@ -922,6 +922,44 @@ public sealed class C1677RetentionEngineTests
         s.Calls("worktree", "remove").ShouldBeEmpty();
     }
 
+    [Test]
+    [Arguments("admission")]
+    [Arguments("locked")]
+    [Arguments("phase-b")]
+    [Arguments("recovery-dry")]
+    [Arguments("recovery-execute")]
+    public async Task Appsettings_secret_survives_every_retention_boundary(string boundary, CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        var engine = s.Engine();
+        var keptPath = m.Path;
+        const string relative = "bin/appsettings.Development.json";
+        const string bytes = "{\"fixture-secret\":42}";
+        if (boundary.StartsWith("recovery", StringComparison.Ordinal))
+        {
+            keptPath = s.Retiring + "/task-a1677001.0badf00d";
+            Directory.CreateDirectory(s.Retiring);
+            Git(s.Repository, "worktree", "move", m.Path, keptPath);
+            Plant(keptPath, relative, bytes);
+        }
+        else if (boundary == "phase-b")
+            engine.PhaseBGate = path => { keptPath = path; Plant(path, relative, bytes); return Task.CompletedTask; };
+        else if (boundary == "locked")
+            engine.PhaseCut = phase => { if (phase == "locked") Plant(m.Path, relative, bytes); };
+        else
+            Plant(m.Path, relative, bytes);
+
+        var mode = boundary == "recovery-dry" ? WorkspaceRetainModes.DryRun : WorkspaceRetainModes.Execute;
+        var response = await engine.RetainAsync(Request(m, mode), ct);
+        response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
+        response.Reason.ShouldBe("ignored_secret", response.Detail);
+        response.Detail.ShouldBe(relative);
+        File.ReadAllText(keptPath + "/" + relative).ShouldBe(bytes);
+        s.Registered(keptPath).ShouldBeTrue();
+        s.Calls("worktree", "remove").ShouldBeEmpty();
+    }
+
     /// <summary>A clean pushed mirror plus the three ignored secrets the retention path must keep.</summary>
     private static MirrorTree IgnoredSecrets(C1677RetentionScratch s)
     {
