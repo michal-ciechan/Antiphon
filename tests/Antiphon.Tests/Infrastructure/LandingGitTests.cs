@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -257,6 +258,7 @@ public sealed class LandingGitTests
 
     /// <summary>CARD-1714 item 1, the real shape on Linux: an unreadable untracked directory (git warns, exits 0).</summary>
     [Test]
+    [NativeLinuxOnly("POSIX permissions; the Windows long-path shape is CP-25")]
     public async Task C1714_Status_that_cannot_open_a_directory_is_untrusted()
     {
         if (OperatingSystem.IsWindows()) Skip.Test("POSIX permissions; the Windows long-path shape is CP-25");
@@ -720,6 +722,7 @@ public sealed class LandingGitTests
     // redirected pipe. This stand-in is that shape on Linux.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("POSIX double-fork witness; the in-tree pre-push sleeper is C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.")]
     public async Task C1076_BudgetKillDoesNotWaitOutADetachedPipeHolder(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
@@ -784,6 +787,7 @@ public sealed class LandingGitTests
     // grandchild keeps stdout open past the remaining budget. The journal stays until that close.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("POSIX double-fork witness for a normal exit whose grandchild keeps stdout.")]
     public async Task C1076_NormalExitWaitsForADetachedPipeHolderPastTheBudget(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
@@ -981,6 +985,7 @@ public sealed class LandingGitTests
     // left it, and a dead root then fences every later land.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("POSIX stand-in that closes stdin so the batch write gets EPIPE.")]
     public async Task C1076_UpdateRefsStdinBreakClearsTheJournal(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
@@ -1016,6 +1021,7 @@ public sealed class LandingGitTests
     // is the kill. A detached stdout holder keeps the journal until that pipe reaches EOF.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("POSIX double-fork witness for the update-ref --stdin abandon path.")]
     public async Task C1076_UpdateRefsCancellationKeepsJournalUntilStdoutHolderExits(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
@@ -1086,6 +1092,7 @@ public sealed class LandingGitTests
     // A pipe holder that is not provably ours must not keep the fence: the record goes at once.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux /proc stand-in for a pipe holder outside the owned tree. Native rows are C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.")]
     public async Task C1076_StrangerPipeHolderDoesNotKeepTheJournal(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -1129,6 +1136,7 @@ public sealed class LandingGitTests
     // cannot see it, so the record stays (reason=owned_holder) until that holder closes the pipe.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux /proc stand-in for an owned pipe holder outside the parent-pid walk.")]
     public async Task C1076_OwnedPipeHolderOutsideTheTreeKeepsTheJournal(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -1169,6 +1177,7 @@ public sealed class LandingGitTests
     // undumpable or setuid descendant) may be a writer, so the record stays (reason=pipe_open).
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux /proc environ scan.")]
     public async Task C1076_UnreadableEnvironOfALaterProcessKeepsTheJournal(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -1190,6 +1199,7 @@ public sealed class LandingGitTests
     // started before the owned root cannot descend from it (pid 1 is unreadable to a normal uid).
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux /proc environ scan.")]
     public async Task C1076_UnreadableEnvironOfAnEarlierProcessDoesNotKeepTheJournal(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -1212,6 +1222,7 @@ public sealed class LandingGitTests
     // record stays. The stand-in job replaces the Windows job on this host.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux /proc stand-in pipe holder; the job is a stand-in.")]
     public async Task C1076_LateJobAssignmentWithNoMembersKeepsTheJournal(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -1235,6 +1246,7 @@ public sealed class LandingGitTests
     // members proves no owned writer lives, so the stranger does not fence.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux /proc stand-in pipe holder; the job is a stand-in.")]
     public async Task C1076_JobAssignedBeforeSpawnWithNoMembersReleasesTheJournal(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -1378,6 +1390,7 @@ public sealed class LandingGitTests
     // has exited. Native C448 and C1076 left one .git/antiphon/children record in that shape.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("PR_SET_PDEATHSIG stand-in for the Windows job-object kill order. The native rows are C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.")]
     public async Task C448_ParentDeathGrandchildDoesNotKeepTheJournal(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
@@ -1440,6 +1453,7 @@ public sealed class LandingGitTests
     // Streams may already be at EOF; that is not an exit of the root.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("POSIX stand-in for a root that closes its pipes and keeps running. The native rows are C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.")]
     public async Task C448_JournalStaysWhileTheRootLives(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
@@ -1507,6 +1521,7 @@ public sealed class LandingGitTests
     /// row rewrites that parent. The journal is removed once that holder exits.</summary>
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux stand-in that injects the Windows parent pid. Native rows remain C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.")]
     public async Task C448_LateInTreeHolderIsKilledAndTheJournalIsRemoved(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())

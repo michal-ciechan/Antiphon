@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
@@ -16,6 +17,7 @@ namespace Antiphon.PtyHost.Tests;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[NativeLinuxOnly("The inbox pty launch runs on Linux.")]
 public sealed class LinuxCustodyReleaseHostTests
 {
     [Test]

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "0686a97cccbec3d421b2298b47ff64aaa63d923d654252e2ea44bd3d1532487b",
+  "policyHash": "0ac7b7c0dfcf6949ef1714fcfa02d4acd58e6258a8556209248338408f8f46a2",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1342,6 +1342,143 @@
           ],
           "reason": "Explicit live-provider WQ-3 manual obligation; requires a separately commissioned headed real-provider run (CARD-1011), never unattended qualification.",
           "owner": "CARD-1566"
+        },
+        {
+          "suite": "pty-host",
+          "class": "LinuxCustodyReleaseHostTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Inbox PTY launch and Linux custody host witnesses.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "Card1685LinuxCustodyRunnerTests",
+          "methods": [
+            "C1685_Direct_throwing_termination_still_backs_off"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-1685"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "LinuxCgroupContainmentTests",
+          "methods": [
+            "C1614_Helper_written_tree_is_read_by_production_reader"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-1614"
+        },
+        {
+          "suite": "antiphon",
+          "class": "TempRootSweepAnchoredDeleteTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: Linux symlink, FIFO, socket, link(2), unlinkat and device-boundary witnesses.",
+          "owner": "CARD-1596"
+        },
+        {
+          "suite": "antiphon",
+          "class": "LandingGitTests",
+          "methods": [
+            "C1076_BudgetKillDoesNotWaitOutADetachedPipeHolder",
+            "C1076_NormalExitWaitsForADetachedPipeHolderPastTheBudget",
+            "C1076_UpdateRefsStdinBreakClearsTheJournal",
+            "C1076_UpdateRefsCancellationKeepsJournalUntilStdoutHolderExits",
+            "C1076_StrangerPipeHolderDoesNotKeepTheJournal",
+            "C1076_OwnedPipeHolderOutsideTheTreeKeepsTheJournal",
+            "C1076_UnreadableEnvironOfALaterProcessKeepsTheJournal",
+            "C1076_UnreadableEnvironOfAnEarlierProcessDoesNotKeepTheJournal",
+            "C1076_LateJobAssignmentWithNoMembersKeepsTheJournal",
+            "C1076_JobAssignedBeforeSpawnWithNoMembersReleasesTheJournal",
+            "C448_ParentDeathGrandchildDoesNotKeepTheJournal",
+            "C448_JournalStaysWhileTheRootLives",
+            "C448_LateInTreeHolderIsKilledAndTheJournalIsRemoved",
+            "C1714_Status_that_cannot_open_a_directory_is_untrusted"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: POSIX pipe-holder/process stand-ins and mode-bit status witnesses; native Windows landing acceptance remains required.",
+          "owner": "CARD-0448"
+        },
+        {
+          "suite": "antiphon",
+          "class": "OwnedProcessTreeTests",
+          "methods": [
+            "C448_SnapshotFailureKillsTheChildAndLeavesTheGrandchild",
+            "C448_ProductionKillPassesTheServerPid"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-0448"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointReceiptStallBudgetTests",
+          "methods": [
+            "healthy_receipts_complete_with_every_pool_worker_occupied"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-1601"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PosixHarnessToolTests",
+          "methods": [
+            "Capture_identity_resolves_git_sh_instead_of_hard_coded_bin_sh",
+            "Cutover_window_completes_without_cat_grep_or_tr_on_path"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-1323"
+        },
+        {
+          "suite": "antiphon",
+          "class": "AgentReportStoreBudgetTests",
+          "methods": [
+            "Slow_git_response_does_not_spend_write_budget"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-1605"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CardRelationshipScriptTests",
+          "methods": [
+            "Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
+          "owner": "CARD-1323"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824DesktopLegacyReleasePolicyTests",
+          "methods": [
+            "Status_that_cannot_read_a_posix_directory_holds_it"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: POSIX unreadable-directory status witness; the long-path-config sibling remains required.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
+          "class": "LiveLaneIsolationTests",
+          "methods": [
+            "StartupArgvMatchesProductionApplyOff"
+          ],
+          "reason": "Separate CARD-1545 producer/consumer parity workflow: exact-filter consumer requires an owned portable context and source/run/build-bound PTY producer capture receipt; commissioned via scripts/test-live-lane-isolation.ps1, never the RC wildcard.",
+          "owner": "CARD-1545"
+        },
+        {
+          "suite": "antiphon",
+          "class": "AgentReportStoreLoadTests",
+          "methods": [
+            "Store_samples_record_normal_and_contended_phases"
+          ],
+          "reason": "Separate manual CARD-1605 measurement obligation: commission ANTIPHON_REPORT_STORE_MEASUREMENTS=1 on native Linux and retain normal/contended phase samples; enabling it on Windows cannot run its Linux executable.",
+          "owner": "CARD-1605"
         }
       ]
     }

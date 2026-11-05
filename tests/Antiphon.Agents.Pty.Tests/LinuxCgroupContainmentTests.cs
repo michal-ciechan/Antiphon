@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using Antiphon.Agents.Pty;
 using Shouldly;
@@ -203,6 +204,7 @@ public sealed class LinuxCgroupContainmentTests
     // The installed enter helper writes the namespaced tree. The production
     // reader must return that pid, not a decoy left at the pre-namespace path.
     [Test]
+    [NativeLinuxOnly("The custody helper tree is created with unshare on Linux only.")]
     public async Task C1614_Helper_written_tree_is_read_by_production_reader()
     {
         if (!OperatingSystem.IsLinux())

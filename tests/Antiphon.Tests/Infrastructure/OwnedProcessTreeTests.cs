@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using System.Globalization;
 using Antiphon.Server.Infrastructure.Git;
@@ -467,6 +468,7 @@ public sealed class OwnedProcessTreeTests
     /// <c>Kill(entireProcessTree: true)</c> also kills the grandchild.</summary>
     [Test]
     [Timeout(30_000)]
+    [NativeLinuxOnly("Live Linux grandchild. Native rows remain C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion and C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal.")]
     public async Task C448_SnapshotFailureKillsTheChildAndLeavesTheGrandchild(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
@@ -522,6 +524,7 @@ public sealed class OwnedProcessTreeTests
 
     [Test]
     [Timeout(30_000)]
+    [NativeLinuxOnly("The production server-pid arguments are witnessed by a live Linux kill.")]
     public async Task C448_ProductionKillPassesTheServerPid(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

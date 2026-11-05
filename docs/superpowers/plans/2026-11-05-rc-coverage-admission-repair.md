@@ -39,7 +39,7 @@ PC-5: omit one retained-reason native marker; NativeLinuxPolicyWitnessTests.Poli
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | n/a | admission-red-first | `pwsh -NoProfile -File scripts/test-rc-coverage-admission.ps1` | V-1, R-1, R-2 | 7 harness assertions, 0 failed after S2 | n/a | 1 |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-07ab-policy/ | policy-consumers | `/*/*/(RcCoverageAdmissionTests*)\|(ReleaseGatePlatformTests*)\|(ReleaseGatePolicyTests*)\|(LiveLaneRunnerTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(NativeLinuxPolicyMatcherParityTests*)\|(NativeLinuxPolicyWitnessMutationTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(NightlyScriptsTests*)\|(NightlyDiscoveryParserTests*)\|(NightlyExecutionDiagnosticTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(RcFailureHistoryTests*)\|(ReleaseGateActivationTests*)/*` | V-1, V-2, V-3, R-1, R-2 | all listed, 0 failed | 100 | 8 |
+| CP-2 | S2 | tests/Antiphon.Tests -> bin-07ab-policy/ | policy-consumers | `/*/*/(RcCoverageAdmissionTests*)\|(ReleaseGatePlatformTests*)\|(ReleaseGatePolicyTests*)\|(LiveLaneRunnerTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(NativeLinuxPolicyMatcherParityTests*)\|(NativeLinuxPolicyWitnessMutationTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(NightlyScriptsTests*)\|(NightlyDiscoveryParserTests*)\|(NightlyExecutionDiagnosticTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(RcFailureHistoryTests*)\|(ReleaseGateActivationTests*)\|(InterimVerificationReadinessTests*)/*` | V-1, V-2, V-3, R-1, R-2 | all listed, 0 failed | 100 | 8 |
 | CP-3 | S2 | CP-2 | whole-unit | `/*/*/*/*[Category=Unit]` | V-5 | >=1 executed, 0 failed | 1 | 20 |
 | CP-4 | S2 | CP-2 | full-split-class | `/*/*/C0824DesktopLegacyReleasePolicyTests*/*` | V-4 | all listed, 0 failed | 1 | 5 |
 | CP-5 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-07ab-runner/ | runner-markers | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | V-2 | all listed, 0 failed | 4 | 3 |
@@ -47,3 +47,32 @@ PC-5: omit one retained-reason native marker; NativeLinuxPolicyWitnessTests.Poli
 | CP-7 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-07ab-pty/ | pty-markers | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | V-2 | all listed, 0 failed | 4 | 3 |
 | CP-8 | S2 | tests/Antiphon.E2E -> bin-07ab-e2e/ | report-policy-consumer | `/*/*/ReleaseGateReportDeliveryTests*/*` | V-6 | all listed, 0 failed | 1 | 5 |
 | CP-9 | S2 | n/a | nightly-coverage-script | `pwsh -NoProfile -File scripts/test-nightly-tests.ps1` | V-3, R-2 | >=80 harness assertions, 0 failed | n/a | 2 |
+
+## Non-native digest maintenance record
+
+Before: 89 non-native records; digest `8397984d90368a0ef1cbc5991610ae50328165b40ac2503559ae0562d72b554d`. After: 91 records; digest `be806b71aa6cdf11edc0961cb1babd782034c0556e5f2e985dbbe8f2f7d7592f`. All existing records are byte-for-byte canonically retained. Only these two records are appended (neither is a migrated native identity):
+
+```json
+[
+  {
+    "suite": "antiphon",
+    "class": "LiveLaneIsolationTests",
+    "methods": [
+      "StartupArgvMatchesProductionApplyOff"
+    ],
+    "reason": "Separate CARD-1545 producer/consumer parity workflow: exact-filter consumer requires an owned portable context and source/run/build-bound PTY producer capture receipt; commissioned via scripts/test-live-lane-isolation.ps1, never the RC wildcard.",
+    "owner": "CARD-1545"
+  },
+  {
+    "suite": "antiphon",
+    "class": "AgentReportStoreLoadTests",
+    "methods": [
+      "Store_samples_record_normal_and_contended_phases"
+    ],
+    "reason": "Separate manual CARD-1605 measurement obligation: commission ANTIPHON_REPORT_STORE_MEASUREMENTS=1 on native Linux and retain normal/contended phase samples; enabling it on Windows cannot run its Linux executable.",
+    "owner": "CARD-1605"
+  }
+]
+```
+
+The literal digest remains a frozen reviewed oracle, never computed from live policy during a test. Existing R-13 variants and four suite witnesses remain required.
