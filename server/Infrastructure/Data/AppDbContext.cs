@@ -42,6 +42,7 @@ public class AppDbContext : DbContext
     public DbSet<RemoteControlModalEpisode> RemoteControlModalEpisodes => Set<RemoteControlModalEpisode>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
+    public DbSet<TaskRefWorkspaceBinding> TaskRefWorkspaceBindings => Set<TaskRefWorkspaceBinding>();
     public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
     public DbSet<ExternalIssueRef> ExternalIssueRefs => Set<ExternalIssueRef>();
     public DbSet<CardComment> CardComments => Set<CardComment>();
@@ -2230,6 +2231,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<AgentTaskLanding>(entity =>
         {
+            entity.Property(l => l.SourceDesktopWorkspaceKind).IsRequired().HasDefaultValue(DesktopWorkspaceKind.Checkout);
+            entity.Property(l => l.SourceTaskRefWorkspaceBindingId);
+            entity.Property(l => l.GitDirectory).IsRequired(false);
             entity.ToTable("AgentTaskLandings", table =>
             {
                 table.HasCheckConstraint(
@@ -2280,11 +2284,35 @@ public class AppDbContext : DbContext
                 entity.Property(name).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
         });
 
+        modelBuilder.Entity<TaskRefWorkspaceBinding>(entity =>
+        {
+            entity.HasKey(b => b.Id);
+            entity.HasIndex(b => b.TaskId).IsUnique();
+            entity.HasIndex(b => new { b.RepositoryPath, b.FullRef }).IsUnique();
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(b => b.TaskId).OnDelete(DeleteBehavior.Cascade);
+            entity.Property(b => b.RepositoryPath).IsRequired().HasMaxLength(1000);
+            entity.Property(b => b.CommonDirectory).IsRequired().HasMaxLength(1000);
+            entity.Property(b => b.IdentityPath).IsRequired().HasMaxLength(1000);
+            entity.Property(b => b.Branch).IsRequired().HasMaxLength(300);
+            entity.Property(b => b.FullRef).IsRequired().HasMaxLength(400);
+            entity.Property(b => b.SelectedBaseSha).IsRequired().HasMaxLength(64);
+            entity.Property(b => b.SelectedBaseRef).IsRequired().HasMaxLength(400);
+            entity.Property(b => b.Revision).IsConcurrencyToken();
+            foreach (var property in new[] { nameof(TaskRefWorkspaceBinding.TaskId), nameof(TaskRefWorkspaceBinding.RepositoryPath),
+                         nameof(TaskRefWorkspaceBinding.CommonDirectory), nameof(TaskRefWorkspaceBinding.IdentityPath),
+                         nameof(TaskRefWorkspaceBinding.Branch), nameof(TaskRefWorkspaceBinding.FullRef),
+                         nameof(TaskRefWorkspaceBinding.SelectedBaseSha), nameof(TaskRefWorkspaceBinding.SelectedBaseRef),
+                         nameof(TaskRefWorkspaceBinding.SelectedBaseSource), nameof(TaskRefWorkspaceBinding.SelectedBaseTaskId) })
+                entity.Property(property).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
+        });
+
+        modelBuilder.Entity<AgentTaskLandRequest>().Property(r => r.SourceDesktopWorkspaceKindSnapshot)
+            .IsRequired().HasDefaultValue(DesktopWorkspaceKind.Checkout);
+
         modelBuilder.Entity<AgentTask>(entity =>
         {
-            // Additive API scaffold; behavior and schema are introduced after assertion-red witnesses.
-            entity.Ignore(t => t.DesktopWorkspaceKind);
-            entity.Ignore(t => t.TaskRefWorkspaceBindingId);
+            entity.Property(t => t.DesktopWorkspaceKind).IsRequired().HasDefaultValue(DesktopWorkspaceKind.Checkout);
+            entity.Property(t => t.TaskRefWorkspaceBindingId);
             entity.ToTable("AgentTasks");
             entity.HasIndex(t => t.CardWorkflowStageId).HasDatabaseName("IX_AgentTasks_CardWorkflowStageId");
             entity.HasOne(t => t.CardWorkflowStage).WithMany()

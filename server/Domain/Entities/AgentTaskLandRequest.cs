@@ -66,6 +66,8 @@ public sealed class AgentTaskLandRequest
     public string? RepositoryPathSnapshot { get; set; }
     public string? WorktreePathSnapshot { get; set; }
     public string? TargetFullRefSnapshot { get; set; }
+    public DesktopWorkspaceKind SourceDesktopWorkspaceKindSnapshot { get; set; }
+    public Guid? SourceTaskRefWorkspaceBindingIdSnapshot { get; set; }
 
     public LandSourceResolutionState SourceResolutionState { get; set; }
     public string? LocalBeforeSha { get; set; }
