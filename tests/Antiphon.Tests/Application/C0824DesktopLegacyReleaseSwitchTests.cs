@@ -547,6 +547,165 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
     }
 
     /// <summary>
+    /// CARD-0824 S4a round 3 Review B-1. Unregister reads the common directory and the entry's <c>gitdir</c> (awaits)
+    /// before it moves Git's administrative entry. Execute turned off after that read must put the tree back
+    /// registered, not drop the registration.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_inside_unregister_keeps_the_registration()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var origin = await w.OriginRefsAsync();
+        var aside = WorktreeSetAside.SetAsidePath(a.Path);
+        var armed = false;
+        var fired = 0;
+        var previous = w.Fixture.Git.AfterCommand;
+        w.Fixture.Git.BeforeUnregister = _ => { armed = true; return Task.CompletedTask; };
+        w.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (previous is not null) await previous(directory, args, result);
+            if (!armed || fired != 0 || !args.Contains("--git-common-dir")) return;
+            result.Succeeded.ShouldBeTrue("the unregister's own common-directory read returned");
+            w.Settings.Value.Execute.ShouldBeTrue("the switch is on until the inner read returns");
+            fired++;
+            Apply(w, "execute");
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBe(1, "the unregister's common-directory read was reached once");
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue("Git's entry was never dropped");
+        Directory.Exists(aside).ShouldBeFalse("the tree was put back");
+        await AssertBytesAsync(w, a, before);
+        w.Fixture.Git.RegistrationDrops.ShouldBeEmpty();
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+
+        w.Fixture.Git.BeforeUnregister = null;
+        w.Fixture.Git.AfterCommand = previous;
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a round 3 Review B-1. The local branch delete writes its child journal (awaits) before the git
+    /// child starts. Execute turned off after the journal is flushed must keep the branch.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_before_branch_delete_start_keeps_the_branch()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var origin = await w.OriginRefsAsync();
+        var armed = false;
+        var fired = 0;
+        var previousCommand = w.Fixture.Git.BeforeCommand;
+        var previousHook = RepositoryChildJournal.BeforeReplaceForTests;
+        w.Fixture.Git.BeforeCommand = async (directory, args) =>
+        {
+            if (args.Count > 0 && args[0] == "update-ref" && args.Contains("-d") && args.Contains(a.FullRef)) armed = true;
+            return previousCommand is null ? null : await previousCommand(directory, args);
+        };
+        RepositoryChildJournal.BeforeReplaceForTests = async temporary =>
+        {
+            if (previousHook is not null) await previousHook(temporary);
+            if (!armed || fired != 0) return;
+            File.Exists(temporary).ShouldBeTrue("the journal is flushed before the child starts");
+            w.Settings.Value.Execute.ShouldBeTrue("the switch is on until the journal await");
+            fired++;
+            Apply(w, "execute");
+        };
+        DesktopLegacyReleasePolicyService.TickResult tick;
+        try { tick = await w.TickAsync(); }
+        finally { RepositoryChildJournal.BeforeReplaceForTests = previousHook; }
+
+        fired.ShouldBe(1, "the branch delete's journal was written once");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is intact");
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+        (await w.ReleasesAsync(a)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+
+        w.Fixture.Git.BeforeCommand = previousCommand;
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+    }
+
+    /// <summary>
+    /// CARD-0824 S4a round 3 Review B-2. A WorkspaceRemove already queued behind the connection's send gate was
+    /// authorized before it waited. Execute turned off while it waits must send nothing and keep the mirror path.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_while_mirror_remove_waits_to_send_keeps_the_mirror()
+    {
+        var proxy = DispatchProxy.Create<ISessionRunnerDirectory, DescribeProbe>();
+        var control = (DescribeProbe)(object)proxy;
+        await using var w = await DesktopLegacyWorld.CreateAsync(configure: services => services.AddSingleton(sp =>
+            new RemoteWorkspaceService(proxy, sp.GetRequiredService<ILandingGit>(), NullLogger<RemoteWorkspaceService>.Instance)));
+        await using var phone = await PhoneHomeTestHost.StartAsync(w.Clock, w.Host.Schema.ConnectionString);
+        control.Inner = phone.Directory;
+        var peer = await phone.ConnectPeerAsync();
+        var live = await phone.WaitLiveAsync();
+        phone.Directory.MarkRecovered(live);
+        var send = (SemaphoreSlim)typeof(PhoneHomeLiveConnection)
+            .GetField("_send", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(live)!;
+        var waiters = (System.Collections.IDictionary)typeof(PhoneHomeLiveConnection)
+            .GetField("_waiters", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(live)!;
+        var held = false;
+        var described = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        control.After = () =>
+        {
+            if (held) return;
+            w.Settings.Value.Execute.ShouldBeTrue("the switch is on at the description");
+            send.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue("the test holds the send gate");
+            held = true;
+            described.TrySetResult();
+        };
+        var removes = 0;
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.WorkspaceRemove) return null;
+            removes++;
+            return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceRemoveResponse(true, null), PhoneHomeFraming.Json));
+        };
+        var mirror = Path.Combine(w.Fixture.Root, "c0824-queued-mirror");
+        var a = await w.AddTaskAsync(seed: t => { t.RunnerId = phone.AllowedRunnerId; t.RemoteWorktreePath = mirror; });
+
+        var pending = w.TickAsync();
+        try
+        {
+            await described.Task.WaitAsync(TimeSpan.FromSeconds(60));
+            var queued = false;
+            for (var until = DateTime.UtcNow.AddSeconds(30); !queued && DateTime.UtcNow < until;)
+            {
+                foreach (var waiter in waiters.Values.Cast<object>().ToList())
+                    if ((PhoneHomeOperation)waiter.GetType().GetProperty("Operation")!.GetValue(waiter)! == PhoneHomeOperation.WorkspaceRemove)
+                        queued = true;
+                if (!queued) await Task.Delay(10);
+            }
+            queued.ShouldBeTrue("the WorkspaceRemove is queued behind the held send gate");
+            Apply(w, "execute");
+        }
+        finally
+        {
+            if (held) { held = false; send.Release(); }
+        }
+        await pending.WaitAsync(TimeSpan.FromSeconds(90));
+
+        removes.ShouldBe(0, "no WorkspaceRemove left after the switch closed");
+        await using var db = w.Db();
+        var saved = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == a.Id);
+        saved.RemoteWorktreePath.ShouldBe(mirror, "the mirror path is kept for a later pass");
+    }
+
+    /// <summary>
     /// CARD-1717 A+B integration. The content binding (A) is the last await before the move-aside. Execute turned off
     /// while it reads the index must still keep the tree: the switch is read after the binding, not before it.
     /// </summary>
