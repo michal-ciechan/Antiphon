@@ -19,8 +19,9 @@ public abstract record BuildSlotOutcome
 /// sweep (timer and every acquire) reaps a lease whose holder pid is gone or recycled, or that is
 /// past its TTL. CARD-0851: in pid mode a lease past its TTL is kept while its holder pid still
 /// answers with the start time recorded at grant (within <see cref="SameHolderStartTolerance"/>),
-/// so a driver that runs longer than the TTL keeps its slot; renew mode keeps the TTL. The memory
-/// floor is checked at grant time only; a held lease is never revoked and nothing is killed.
+/// so a driver that runs longer than the TTL keeps its slot; renew mode keeps the TTL. CARD-1713:
+/// every lease is reaped at LeaseMaxHoldHours from grant, even with a live matching holder.
+/// The memory floor is checked at grant time only. Nothing is killed.
 /// </summary>
 public sealed class BuildSlotBroker
 {
@@ -198,7 +199,9 @@ public sealed class BuildSlotBroker
         foreach (var lease in _leases.ToList())
         {
             string? reason = null;
-            if (now >= lease.ExpiresAtUtc)
+            if ((now - lease.GrantedAtUtc).TotalHours >= _settings.LeaseMaxHoldHours)
+                reason = $"absolute max hold {_settings.LeaseMaxHoldHours}h exceeded";
+            else if (now >= lease.ExpiresAtUtc)
             {
                 if (!SameHolderStillRunning(lease))
                     reason = $"ttl {_settings.LeaseTtlMinutes}m expired";

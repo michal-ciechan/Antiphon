@@ -30,6 +30,7 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
     public HttpClient Http { get; }
     public string SlotsUrl => new Uri(Address, "build-slots").ToString();
     public BuildSlotBroker Broker => _app.Services.GetRequiredService<BuildSlotBroker>();
+    public IProcessLivenessProbe Liveness => _app.Services.GetRequiredService<IProcessLivenessProbe>();
 
     public static async Task<BuildSlotTestHost> StartAsync(
         Dictionary<string, string?> settings,

@@ -24,6 +24,9 @@ public sealed class BuildSlotSettings
     /// <summary>Above the 25.5-min full Antiphon.Tests run and the 21-min pathological build (CARD-0222).</summary>
     public int LeaseTtlMinutes { get; set; } = 90;
 
+    /// <summary>Absolute grant age limit, even for a live holder. Above 17-30h qualifications; cannot be disabled.</summary>
+    public int LeaseMaxHoldHours { get; set; } = 48;
+
     /// <summary>The poll interval a refused wrapper is told to wait.</summary>
     public int RetryAfterMs { get; set; } = 15_000;
 
@@ -50,6 +53,8 @@ public sealed class BuildSlotSettings
             throw new InvalidOperationException($"{SectionName}:MinAvailableMemoryMb must not be negative.");
         if (LeaseTtlMinutes < 1)
             throw new InvalidOperationException($"{SectionName}:LeaseTtlMinutes must be at least 1.");
+        if (LeaseMaxHoldHours < 1)
+            throw new InvalidOperationException($"{SectionName}:LeaseMaxHoldHours must be at least 1.");
         if (RetryAfterMs < 1)
             throw new InvalidOperationException($"{SectionName}:RetryAfterMs must be positive.");
         if (WaiterSilenceMs < 1)
