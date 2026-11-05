@@ -27,6 +27,7 @@ namespace Antiphon.Tests.Application;
 /// (slot, generation), and the release reconciler needs every D-10 condition.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
 // CARD-1660 (R5): each test builds its own rig, and the class runs its 24 cases in parallel. Measured on
 // server2 on 2026-11-02 at 30cb5279b: per-test p95 12.6-15.8 s alone (load 17-28), 17.2 s with 16 busy
 // threads beside it (load 37). The budget is 2x that loaded p95; it was 20 s and went red under load.

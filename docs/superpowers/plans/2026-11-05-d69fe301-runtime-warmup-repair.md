@@ -42,6 +42,20 @@ AssemblyHookContext.Current for this test assembly; it retains the positive boun
 exactly-one real EF event and model identity. No assertion or timeout is loosened. No stopped row
 is credited. CP-6 now goes first so the exact requested pack flushes before the longer guard/Unit
 rows. Current base roster: workspace 24 + retention 71 + settings 14 + phone-home 29 = 138 cases.
+The first complete cached CP-6 execution, 20261105-222542-e953 at
+259c2cde2b9a6cda9b982f61751d770b84933052, was 136/138: 76/77 original identities passed,
+C0824_ReleaseRoundTripRealRunner(direct) still hit 35 seconds, and the adjacent phone-home
+overflow log witness saw zero terminal log records. Runtime warm-up: 10.272 seconds outside
+bodies. Clone queue p95/max: 24.865/26.934 seconds; clone execution p95/max: 5.548/9.006 seconds.
+The run was stopped before other rows flushed so the measured admission defect could be repaired.
+The exact phone-home method passed once on the native e6da2453 base build; inheritance is therefore
+not established. Preserve that result without claiming the first whole CP-6 row green.
+
+The two rig classes now share a four-wide TUnit lane (the measured default clone capacity).
+Admission happens before timed bodies, not in a new semaphore wait inside them. Real transport
+methods retain their stricter process lane. Isolation, assertions, caches and 35/45-second limits
+stay unchanged. PC-4 pending Mutation: remove either class's WorkspaceRigConcurrencyLimit attribute;
+Scripted_rig_classes_share_bounded_admission must fail. Both class variants remain pending.
 ## Performance budget
 
 Fixture lifetime: the existing assembly hook runs once; retain store selection, workers and probes.
@@ -81,6 +95,6 @@ remain native and Windows obligations are unchanged. Restart: none (server/runne
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-6 | repair | tests/Antiphon.Tests -> bin-d69fe301-boundary/ | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 138 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
-| CP-1 | repair | CP-6 | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/boundary-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/boundary-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-boundary;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
-| CP-3 | repair | CP-6 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |
+| CP-6 | repair | tests/Antiphon.Tests -> bin-d69fe301-admitted/ | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 138 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/admitted-cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
+| CP-1 | repair | CP-6 | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/admitted-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/boundary-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-boundary;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
+| CP-3 | repair | CP-6 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/admitted-unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |
