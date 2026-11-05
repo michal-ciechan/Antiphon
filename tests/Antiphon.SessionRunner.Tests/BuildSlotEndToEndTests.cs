@@ -1,5 +1,9 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text;
+using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -18,6 +22,45 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class BuildSlotEndToEndTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(90);
+
+    [Test]
+    public async Task V5_Real_wrapper_identity_survives_ttl_and_is_reaped_at_absolute_bound()
+    {
+        var time = new FakeTimeProvider();
+        await using var host = await BuildSlotTestHost.StartAsync(new()
+        {
+            ["SessionRunner:BuildSlots:MaxConcurrent"] = "1",
+            ["SessionRunner:BuildSlots:MinAvailableMemoryMb"] = "0",
+        }, time: time);
+        host.Liveness.ShouldBeOfType<SystemProcessLivenessProbe>();
+        using var dir = new TempDir();
+        var marks = Path.Combine(dir.Path, "marks.txt");
+        await using var wrapper = Wrapper.Start(host, dir, "max-hold-real", marks, holdSeconds: 120);
+        await WaitUntilAsync(() => File.Exists(marks) && File.ReadAllText(marks).Contains("max-hold-real start"),
+            "the real wrapper command is running", wrapper);
+        var lease = host.Broker.List().Leases.Single();
+        lease.Pid.ShouldBe(wrapper.Pid);
+        lease.HolderAlive.ShouldBeTrue();
+        host.Liveness.TryGetStartTimeUtc(wrapper.Pid).ShouldBe(wrapper.ProcessStartUtc);
+
+        // The wrapper serialized this exact real identity. Re-acquiring with it must return its
+        // original lease, proving the original JSON request carried the actual process start.
+        using var response = await host.Http.PostAsJsonAsync("build-slots",
+            new BuildSlotRequest(wrapper.Pid, wrapper.ProcessStartUtc, "identity-check"));
+        response.EnsureSuccessStatusCode();
+        var repeated = await response.Content.ReadFromJsonAsync<BuildSlotGrant>();
+        repeated!.LeaseId.ShouldBe(lease.LeaseId);
+
+        time.Advance(TimeSpan.FromHours(48) - TimeSpan.FromTicks(1));
+        host.Broker.Sweep().ShouldBe(0);
+        host.Broker.List().Leases.Single().LeaseId.ShouldBe(lease.LeaseId);
+        wrapper.HasExited.ShouldBeFalse();
+        time.Advance(TimeSpan.FromTicks(1));
+        host.Broker.Sweep(); // The hosted sweeper may already have consumed the fake timer.
+        host.Broker.List().Leases.ShouldBeEmpty();
+        wrapper.HasExited.ShouldBeFalse("expiry releases the slot without killing the real holder");
+        wrapper.Kill();
+    }
 
     [Test]
     public async Task Two_wrappers_on_a_budget_of_one_run_one_after_the_other()
@@ -99,6 +142,9 @@ public sealed class BuildSlotEndToEndTests
         private Wrapper(Process process) => _process = process;
 
         public string Output { get { lock (_output) return _output.ToString(); } }
+        public int Pid => _process.Id;
+        public DateTime ProcessStartUtc => _process.StartTime.ToUniversalTime();
+        public bool HasExited => _process.HasExited;
 
         public static Wrapper Start(BuildSlotTestHost host, TempDir dir, string label, string marks, int holdSeconds)
         {

@@ -24,6 +24,8 @@ public sealed class BuildSlotMaxHoldTests
         f.Broker.List().Occupied.ShouldBe(0);
         f.Broker.Sweep().ShouldBe(0);
         f.Messages.Count(m => m.Contains("absolute max hold 48h exceeded")).ShouldBe(1);
+        f.Messages.ShouldContain(m => m.StartsWith("[Warning]") && m.Contains("absolute max hold 48h exceeded")
+            && m.Contains(grant.LeaseId!.Value.ToString()) && m.Contains("held 172800s"));
         f.Broker.Metrics().Reaps.ShouldBe(1);
         f.Broker.Release(grant.LeaseId!.Value).ShouldBeFalse();
     }
