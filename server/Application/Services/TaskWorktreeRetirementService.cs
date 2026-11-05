@@ -501,7 +501,11 @@ public sealed class TaskWorktreeRetirementService
         // CARD-1717 D-1: the retention read is an await. A system switch that closed skips the mirror delete.
         if (endpointId is null && !await MirrorOwnedByRetentionAsync(retirement.TaskId, ct)
             && await StopLegacyContinuationAsync(system, systemTaskId, ct) is null)
-            await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
+            await RemoveRemoteMirrorAsync(retirement.TaskId,
+                // CARD-1717 B-B-1: the task read and the runner description are awaits; the switch is read
+                // again after the last of them, immediately before the remove request is sent.
+                system ? token => new ValueTask<string?>(LegacyReleaseAdmissionAsync(systemTaskId, pace: true, token)) : null,
+                ct);
 
         retirement.UpdatedAt = UtcNow();
         retirement.ConcurrencyToken = Guid.NewGuid();
@@ -645,7 +649,8 @@ public sealed class TaskWorktreeRetirementService
             throw new ConflictException("This task has no releasable desktop checkout.", reason);
     }
 
-    private async Task RemoveRemoteMirrorAsync(Guid taskId, CancellationToken ct)
+    private async Task RemoveRemoteMirrorAsync(Guid taskId, Func<CancellationToken, ValueTask<string?>>? liveAuthorization,
+        CancellationToken ct)
     {
         if (_remoteWorkspace is null)
             return;
@@ -656,7 +661,7 @@ public sealed class TaskWorktreeRetirementService
             return;
         try
         {
-            var residue = await _remoteWorkspace.RemoveMirrorAsync(task, ct);
+            var residue = await _remoteWorkspace.RemoveMirrorAsync(task, ct, liveAuthorization: liveAuthorization);
             task.RemoteWorktreeResidue = residue;
             if (residue is null)
                 task.RemoteWorktreePath = null;
