@@ -309,7 +309,8 @@ public class ResilienceBudgetTests
             ResilienceTestHost.Stamp(request, ResilienceOperations.RunnerList, budget);
             var started = time.GetUtcNow();
             await Should.ThrowAsync<TaskCanceledException>(() =>
-                ResilienceTestHost.Pump(time, client.SendAsync(request), TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(8)));
+                ResilienceTestHost.Pump(
+                    time, client.SendAsync(request), TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(8), started.AddSeconds(seconds)));
             var elapsed = time.GetUtcNow() - started;
             elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(seconds));
             elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(seconds + 2));

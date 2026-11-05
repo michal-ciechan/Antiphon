@@ -92,6 +92,20 @@ public static class ManifestValidator
             }
             ValidateEnvironment(row);
         }
+
+        if (manifest.Timeouts.ExplicitTotalMinutes is int explicitTotal)
+        {
+            if (explicitTotal <= 0)
+                throw new ManifestValidationException("total-timeout",
+                    "refused: checkpoint-total-below-derived: totalTimeoutMinutes must be a positive integer");
+            if (manifest.Checkpoints.Any(row => row.EstimatedMinutes is > 0))
+            {
+                var derived = RowTimeout.DeriveTotalMinutes(manifest.Checkpoints.Select(row => row.EstimatedMinutes ?? 0), null);
+                if (explicitTotal < derived && string.IsNullOrWhiteSpace(manifest.Timeouts.TotalOverrideReason))
+                    throw new ManifestValidationException("total-timeout",
+                        $"refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes {explicitTotal} is below derived {derived}");
+            }
+        }
     }
 
     public static void ValidateEnvironment(CheckpointSpec row)

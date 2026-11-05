@@ -712,8 +712,22 @@ public sealed class RunScheduler
         var ownerEnded = cancellationToken.IsCancellationRequested && request.OwnerBound;
         var reason = block ?? (ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended"
             : cancellationToken.IsCancellationRequested ? "caller-requested" : budget.Reason ?? "timeout");
-        var result = Placeholder(spec, reason, ownerEnded || block is not null ? ExitCodes.OwnerEnded
-            : cancellationToken.IsCancellationRequested ? ExitCodes.Canceled : ExitCodes.Timeout);
+        var exit = ownerEnded || block is not null ? ExitCodes.OwnerEnded
+            : cancellationToken.IsCancellationRequested ? ExitCodes.Canceled : ExitCodes.Timeout;
+        var trxPath = Path.Combine(request.RunDirectory, "rows", spec.Id, "run.trx");
+        string? keptPath = null;
+        TrxParseResult? trx = null;
+        if (File.Exists(trxPath))
+        {
+            var parsed = TrxReport.Parse(trxPath);
+            if (parsed.Ok)
+            {
+                keptPath = trxPath;
+                trx = parsed;
+            }
+        }
+
+        var result = Placeholder(spec, reason, exit, keptPath, trx);
         result.TerminalReason = reason;
         result.WaitedSeconds = progress.WaitedSeconds;
         result.Slot = progress.Slot;
@@ -773,13 +787,15 @@ public sealed class RunScheduler
         progress.ExitCode = exitCode;
     }
 
-    private static RowRunResult Placeholder(CheckpointSpec spec, string state, int exitCode) =>
+    private static RowRunResult Placeholder(CheckpointSpec spec, string state, int exitCode, string? trxPath = null, TrxParseResult? trx = null) =>
         new()
         {
             Id = spec.Id,
             ExitCode = exitCode,
             State = state,
             BuildState = state == "build-failed" ? "failed" : "n/a",
+            TrxPath = trxPath,
+            Trx = trx,
         };
 
     private static double Elapsed(DateTimeOffset? started) =>

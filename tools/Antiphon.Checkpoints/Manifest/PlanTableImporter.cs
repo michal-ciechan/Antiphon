@@ -265,7 +265,61 @@ public static class PlanTableImporter
 
         if (2L * manifest.Checkpoints.Sum(row => (long)(row.EstimatedMinutes ?? 0)) + 10 > int.MaxValue)
             return Fail("EstimatedMinutes: derived total deadline overflows");
+        var directive = ReadBudgetDirective(section);
+        if (directive.Error is not null)
+            return Fail(directive.Error);
+        if (directive.Minutes is int explicitTotal)
+        {
+            var derived = RowTimeout.DeriveTotalMinutes(manifest.Checkpoints.Select(row => row.EstimatedMinutes ?? 0), null);
+            if (explicitTotal < derived)
+            {
+                var message = $"refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes {explicitTotal} is below derived {derived}";
+                if (string.IsNullOrWhiteSpace(directive.Reason))
+                    return Fail(message);
+                warnings.Add(message);
+            }
+
+            manifest.Timeouts.ExplicitTotalMinutes = explicitTotal;
+            if (!string.IsNullOrWhiteSpace(directive.Reason))
+                manifest.Timeouts.TotalOverrideReason = directive.Reason;
+        }
+
         return new ImportResult { Manifest = manifest, Warnings = warnings, ExitCode = ExitCodes.Green };
+    }
+
+    private readonly record struct BudgetDirective(int? Minutes, string? Reason, string? Error);
+
+    private static BudgetDirective ReadBudgetDirective(IReadOnlyList<string> section)
+    {
+        int? minutes = null;
+        string? reason = null;
+        foreach (var raw in section)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith('|') || line.StartsWith('#'))
+                continue;
+            if (line.StartsWith("totalTimeoutMinutes:", StringComparison.Ordinal))
+            {
+                if (minutes is not null)
+                    return new BudgetDirective(null, null, "refused: checkpoint-total-below-derived: totalTimeoutMinutes is repeated");
+                var text = line["totalTimeoutMinutes:".Length..].Trim();
+                if (!int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value) || value <= 0)
+                    return new BudgetDirective(null, null, "refused: checkpoint-total-below-derived: totalTimeoutMinutes must be a positive integer");
+                minutes = value;
+                continue;
+            }
+
+            if (!line.StartsWith("totalTimeoutOverrideReason:", StringComparison.Ordinal))
+                continue;
+            if (reason is not null)
+                return new BudgetDirective(null, null, "refused: checkpoint-total-below-derived: totalTimeoutOverrideReason is repeated");
+            var reasonText = line["totalTimeoutOverrideReason:".Length..].Trim();
+            if (reasonText.Length == 0)
+                return new BudgetDirective(null, null, "refused: checkpoint-total-below-derived: totalTimeoutOverrideReason is empty");
+            reason = reasonText;
+        }
+
+        return new BudgetDirective(minutes, reason, null);
     }
 
     private static bool TryPositiveEstimate(string cell, out int estimate) =>

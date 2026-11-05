@@ -804,6 +804,46 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task plan_total_directive_is_the_execution_allowance_until_the_request_overrides_it()
+    {
+        var markdown = """
+            ### Checkpoints
+
+            totalTimeoutMinutes: 30
+            totalTimeoutOverrideReason: incident 20261105-013711-58df kept the 30 minute cap
+
+            | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+            |---|---|---|---|---|---|---|---:|---:|
+            | CP-1 | S1 | n/a | a | `true` | V-1 | exit 0 | n/a | 11 |
+            | CP-2 | S1 | n/a | b | `true` | V-1 | exit 0 | n/a | 11 |
+            """;
+        var imported = PlanTableImporter.ImportMarkdown(markdown);
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        var manifest = imported.Manifest.ShouldNotBeNull();
+        manifest.Timeouts.ExplicitTotalMinutes.ShouldBe(30);
+        var repo = TempDir();
+        var runtime = new CheckpointApp.Runtime
+        {
+            EnvironmentLookup = _ => null,
+            Driver = new FakeDriver(),
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
+            Slots = new FixedSlotClient("off"),
+        };
+        var run = CreateFixtureRun(manifest, new RunRequest { Slots = "off", KeepOutputs = true }, repo);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(0);
+        var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+        (state.TotalTimeoutAt!.Value - state.StartedAt).TotalMinutes.ShouldBe(30);
+
+        var overridden = CreateFixtureRun(manifest, new RunRequest
+        {
+            Slots = "off", KeepOutputs = true, TotalTimeoutMinutes = 60,
+        }, repo);
+        (await CheckpointApp.ExecuteAsync(overridden, CancellationToken.None, runtime)).ShouldBe(0);
+        var overrideState = new RunStateStore().TryRead(Path.Combine(overridden, "state.json"))!;
+        (overrideState.TotalTimeoutAt!.Value - overrideState.StartedAt).TotalMinutes.ShouldBe(60);
+    }
+
+    [Test]
     public void invalid_estimates_are_refused_before_start()
     {
         const string head = "### Checkpoints\n| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows |\n|---|---|---|---|---|---|---|---:|---:|---:|\n";

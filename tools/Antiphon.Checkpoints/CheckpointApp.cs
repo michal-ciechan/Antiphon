@@ -192,6 +192,7 @@ public static class CheckpointApp
         if (request.Serial)
             width = 1;
         var totalMinutes = request.TotalTimeoutMinutes
+            ?? manifest.Timeouts.ExplicitTotalMinutes
             ?? RowTimeout.DeriveTotalMinutes(selected.Select(row => row.EstimatedMinutes ?? 0), null);
         state.TotalTimeoutAt = state.StartedAt.AddMinutes(totalMinutes);
         Note($"execute rows={selected.Count} width={width} total={totalMinutes}m");

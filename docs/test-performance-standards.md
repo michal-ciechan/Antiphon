@@ -69,6 +69,12 @@ authorize repeating expensive work or crediting missing verification.
    Enforcement: Plan performance budget and Review checklist; automatic measured timeout
    derivation is not yet enforced: CARD-1404. Existing importer defaults are implementation facts,
    not compliant budgets; record exceptions until changed through the ordinary pipeline.
+   The Unit lane has no measured p95. Incident 20261105-013711-58df reached 535s on
+   `/*/*/*/*[Category=Unit]` and was killed with no TRX; that kill is not a p95. Shard
+   EstimatedMinutes stay provisional. Budget the run from `DeriveTotalMinutes`, not an explicit 30.
+   A `totalTimeoutMinutes: N` line below that derivation is refused as `checkpoint-total-below-derived`
+   unless the same section gives `totalTimeoutOverrideReason`. The importer 15-minute floor and 3x
+   estimate are not this policy (CARD-1720).
 
 6. **R6 - Bound external calls.** Tests and live startup MUST measure external database, IO,
    HTTP, CLI/process and other calls individually, with cancellation/deadlines appropriate to
