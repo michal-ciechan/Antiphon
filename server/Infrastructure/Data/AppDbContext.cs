@@ -2282,6 +2282,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<AgentTask>(entity =>
         {
+            // Additive API scaffold; behavior and schema are introduced after assertion-red witnesses.
+            entity.Ignore(t => t.DesktopWorkspaceKind);
+            entity.Ignore(t => t.TaskRefWorkspaceBindingId);
             entity.ToTable("AgentTasks");
             entity.HasIndex(t => t.CardWorkflowStageId).HasDatabaseName("IX_AgentTasks_CardWorkflowStageId");
             entity.HasOne(t => t.CardWorkflowStage).WithMany()
