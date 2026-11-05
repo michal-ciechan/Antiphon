@@ -574,7 +574,10 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
         row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
         row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
         await AssertBytesAsync(w, a, before);
-        Directory.Exists(WorktreeSetAside.SetAsidePath(a.Path)).ShouldBeFalse("nothing was moved aside");
+        var aside = WorktreeSetAside.SetAsidePath(a.Path);
+        Directory.Exists(aside).ShouldBeFalse("nothing was moved aside");
+        // A later re-read would put a moved tree back; no command may have run in a set-aside at all.
+        w.Fixture.Git.Commands.ShouldNotContain(c => LandingGit.PathsEqual(c.Directory, aside), "the tree never moved");
         (await w.OriginRefsAsync()).ShouldBe(origin);
 
         w.Fixture.Git.AfterCommand = previous;
