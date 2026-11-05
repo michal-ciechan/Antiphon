@@ -1,4 +1,5 @@
 using System.Globalization;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -202,4 +203,85 @@ public sealed partial class AgentTaskDispatcher
     }
 
     private static DateTime AsUtc(DateTime value) => FailedTaskSessionFacts.AsUtc(value);
+
+    /// <summary>
+    /// CARD-1719. Release a Failed seat whose recorded mirror is clean and equal to origin.
+    /// The qualified coordinator, when it owns the task, has already taken the agent out of
+    /// the pool; OwnsAutomaticPath is the second fence and a hold there is not force-released.
+    /// A runner that cannot be released is kept. This never calls KillAsync.
+    /// </summary>
+    private async Task<int> ReleaseCleanGhostSeatsAsync(
+        List<(Agent Agent, Guid? SessionId)> parsed,
+        IReadOnlyDictionary<Guid, FailedTaskSessionOwnership.Binding> failedOwners,
+        IReadOnlyDictionary<Guid, SessionStatus> sessionStatus,
+        IReadOnlyDictionary<Guid, string?> sessionRunnerIds,
+        IReadOnlySet<Guid> uncertainSessionIds,
+        IReadOnlySet<Guid> missingTurnBoundary,
+        IReadOnlyDictionary<Guid, bool> workingSessions,
+        IReadOnlySet<Guid> busyAgentIds,
+        IReadOnlySet<Guid> sourcedOwnerIds,
+        HashSet<Agent> retire,
+        DateTime now,
+        CancellationToken ct)
+    {
+        if (failedOwners.Count == 0 || _runners is null)
+            return 0;
+
+        var ownerIds = failedOwners.Values.Select(owner => owner.Id).ToList();
+        var tasks = await _db.AgentTasks.AsNoTracking()
+            .Where(task => ownerIds.Contains(task.Id))
+            .ToDictionaryAsync(task => task.Id, ct);
+        var released = 0;
+        foreach (var row in parsed)
+        {
+            if (row.SessionId is not Guid sessionId || !failedOwners.TryGetValue(sessionId, out var owner))
+                continue;
+            if (!tasks.TryGetValue(owner.Id, out var task) || task.Status != AgentTaskStatus.Failed)
+                continue;
+            if (busyAgentIds.Contains(row.Agent.Id) || sourcedOwnerIds.Contains(row.Agent.Id))
+                continue;
+            if (workingSessions.GetValueOrDefault(sessionId)
+                || uncertainSessionIds.Contains(sessionId)
+                || missingTurnBoundary.Contains(sessionId))
+                continue;
+            if (row.Agent.Status != AgentStatus.Idle || row.Agent.PoolIdleSince is null)
+                continue;
+            if (sessionStatus.GetValueOrDefault(sessionId) != SessionStatus.Running)
+                continue;
+            if (_terminalSeatRelease?.OwnsAutomaticPath(task) == true)
+                continue;
+
+            var disposition = GhostSeatRelease.Read(
+                TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)?.RemoteSync);
+            if (disposition != GhostSeatRelease.MirrorDisposition.CleanEqual)
+                continue;
+            var since = task.CompletedAt ?? row.Agent.PoolIdleSince;
+            if (!GhostSeatRelease.IdleElapsed(since, now))
+                continue;
+
+            var runnerId = sessionRunnerIds.GetValueOrDefault(sessionId);
+            if (string.IsNullOrWhiteSpace(runnerId))
+                runnerId = task.RunnerId;
+            if (string.IsNullOrWhiteSpace(runnerId))
+                continue;
+
+            var reason =
+                $"Failed task {DelegationReportFormatter.Short(task.Id)} mirror clean and equal to origin, idle since {since:O}.";
+            try
+            {
+                await RunnerSlotService.ReleaseAsync(_runners, _db, runnerId, sessionId, reason, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex,
+                    "Ghost seat release kept session {SessionId} for Failed task {TaskId}", sessionId, task.Id);
+                continue;
+            }
+
+            retire.Remove(row.Agent);
+            released++;
+        }
+
+        return released;
+    }
 }
