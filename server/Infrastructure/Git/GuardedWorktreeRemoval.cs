@@ -98,6 +98,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 else
                 {
+                    // CARD-1717 D-4: the receipt names a path. Delete only the directory inode and listing it recorded.
+                    var custody = CustodyOf(pending);
+                    if (custody is not null) return Finish(custody, "set-aside: " + aside);
                     try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                     catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -166,8 +169,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // Review 0c0b9a4e: the set-aside name is recorded before the move so a later pass can
                 // finish it, and Git is never handed the path, which is free once the tree moved.
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
+                var identity = WorktreeNoFollowDelete.DirectoryIdentity(source.WorktreePath);
+                var seal = WorktreeSetAside.ListingSeal(source.WorktreePath);
                 WorktreeSetAside.Record(request.CommonDirectory, new(source.WorktreePath, aside, request.GitDirectory,
-                    clock.GetUtcNow().UtcDateTime), Renames);
+                    clock.GetUtcNow().UtcDateTime, identity, seal), Renames);
                 try { WorktreeNoFollowDelete.MoveAside(source.WorktreePath, aside, Renames); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -457,6 +462,30 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     {
         try { _ = File.GetAttributes(Path.Combine(gitDirectory, "gitdir")); return true; }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+    }
+
+    /// <summary>
+    /// Null when the recorded tree may be deleted. An unsealed receipt or a different directory inode
+    /// refuses without walking that tree. A listing change refuses unless a nested repository appeared,
+    /// which the delete's own census still preserves.
+    /// </summary>
+    private static string? CustodyOf(WorktreeSetAsideRecord record)
+    {
+        if (string.IsNullOrEmpty(record.DirectoryIdentity) || string.IsNullOrEmpty(record.ContentSeal))
+            return "set_aside_unsealed";
+        string identity;
+        try { identity = WorktreeNoFollowDelete.DirectoryIdentity(record.SetAsidePath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            { return "set_aside_identity_mismatch"; }
+        if (!string.Equals(identity, record.DirectoryIdentity, StringComparison.Ordinal))
+            return "set_aside_identity_mismatch";
+        string seal;
+        try { seal = WorktreeSetAside.ListingSeal(record.SetAsidePath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { return "set_aside_content_changed"; }
+        if (string.Equals(seal, record.ContentSeal, StringComparison.Ordinal)) return null;
+        if (WorktreeNestedRepositories.Find(record.SetAsidePath).Length != 0) return null;
+        return "set_aside_content_changed";
     }
 
     // C448 V36: the refusal names its Win32 code; the residue is otherwise unchanged.
