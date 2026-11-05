@@ -8373,6 +8373,10 @@ namespace Antiphon.Server.Migrations
                         .IsUnique()
                         .HasFilter("\"RuntimeActionKey\" IS NOT NULL");
 
+                    b.HasIndex("FirstWithheldAt", "Id")
+                        .HasDatabaseName("IX_SessionQueuedMessages_AgedChannelWithhold")
+                        .HasFilter("\"Origin\" = 1 AND \"Status\" = 0 AND \"DeliveryAttempts\" = 0 AND \"LastDeliveryStartedAt\" IS NULL AND \"LastDeliveryBaselineSequence\" IS NULL AND \"DeliveryVerdict\" IS NULL AND \"WithholdCount\" > 0 AND \"FirstWithheldAt\" IS NOT NULL");
+
                     b.HasIndex("Origin", "Status")
                         .HasDatabaseName("IX_SessionQueuedMessages_OpenChannelCorrelations")
                         .HasFilter("\"ChannelReplySettledAt\" IS NULL");

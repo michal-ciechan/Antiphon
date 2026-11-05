@@ -26,7 +26,7 @@ Keep host/startup/body/teardown and per-test durations; finer phases unknown if 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1591-repair/` | withheld-incident | `/*/*/(ChannelInputWithheldIncidentTests*)\|(DialogDeliveryAdmissionTests*)/*` | V-1, V-2, V-3, V-4, V-5, R-1, B2-B6 | every case, 0 failed/skipped at fixed source | 24 | 11 | true | `TEMP=/tmp` |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1591-repair/` | withheld-incident | `/*/*/(ChannelInputWithheldIncidentTests*)\|(DialogDeliveryAdmissionTests*)/*` | V-1, V-2, V-3, V-4, V-5, R-1, B2-B6 | every case, 0 failed/skipped at fixed source | 25 | 11 | true | `TEMP=/tmp` |
 | CP-3 | S1 | CP-1 | channel-regressions | `/*/*/(ChannelInbound*)\|(ChannelBridge*)/*` | inbound acceptance, wake recovery, queue receipt, busy recipients | every case, 0 failed/skipped | 88 | 6 | true | `TEMP=/tmp` |
 | CP-4 | S1 | CP-1 | migration-model | `/*/*/(AppDbContextModelTests*)\|(TestSchemaSnapshotTests*)\|(TestMigrationFingerprintTests*)\|(ChannelOutboundMigrationTests*)/*` | model/snapshot parity, schema clone, migration contracts | every case, 0 failed/skipped | 10 | 3 | true | `TEMP=/tmp` |
 | CP-5 | S1 | CP-1 | classification-guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | B1, registry integrity | every case, 0 failed/skipped | 47 | 3 | true | `TEMP=/tmp` |
@@ -40,3 +40,10 @@ one invalid Attention reason-text premise and one frozen-clock/queue-reentry del
 fixture timeout. The latter two are witness repairs, not product-defect proof.
 The first cold checkpoint hit its unchanged 12m build deadline with zero tests.
 A separately leased native build passed in 356s and its test run took 231s.
+
+B4 migration 20261105052528_ChannelQueuedWithholdScanIndex is CLI-generated
+and adds only a nonunique partial index on (FirstWithheldAt, Id). It changes no data
+or columns and is compatible with the previous binary. CREATE INDEX is transactional
+and can briefly block writes; no live DDL or rollout is part of this task.
+Server activation is caller-owned after review/publication; no runner restart is needed.
+Unbound Mutation candidates: ../mutations/2026-11-05-card-1591-s1-candidates.md.
