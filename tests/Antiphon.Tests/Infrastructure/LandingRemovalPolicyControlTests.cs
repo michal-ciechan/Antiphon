@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 using Shouldly;
 using TUnit.Core;
 
@@ -1060,7 +1061,15 @@ public sealed class LandingRemovalPolicyControlTests
             var root = Path.Combine(fixture.Root, "retained");
             return Task.FromResult(Refusal is not null ? new WorktreeEvidenceRetentionResult(null, [], Refusal)
                 : new WorktreeEvidenceRetentionResult(root, [.. relativePaths.Select(p =>
-                    new RetainedWorktreeFile(p, Path.Combine(root, p), 1, new string('0', 64)))], null));
+                    new RetainedWorktreeFile(p, Path.Combine(root, p), 1, SourceHash(worktreePath, p)))], null));
+        }
+
+        private static string SourceHash(string worktree, string relative)
+        {
+            var path = Path.Combine(worktree, relative.Replace('/', Path.DirectorySeparatorChar));
+            return File.Exists(path)
+                ? Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))
+                : new string('0', 64);
         }
     }
 
