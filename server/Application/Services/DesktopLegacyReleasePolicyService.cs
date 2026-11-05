@@ -61,6 +61,7 @@ public sealed class DesktopLegacyReleasePolicyService
     private readonly AppDbContext _db;
     private readonly TaskWorktreeRetirementService _retirement;
     private readonly ILandingGit _git;
+    private readonly IRepositoryMutationLease _leases;
     private readonly IOptionsMonitor<WorktreeLegacyReleaseSettings> _settings;
     private readonly IOptionsMonitor<RunnerWorktreeRetentionSettings> _retention;
     private readonly GitSettings _gitSettings;
@@ -68,12 +69,14 @@ public sealed class DesktopLegacyReleasePolicyService
     private readonly ILogger<DesktopLegacyReleasePolicyService> _logger;
 
     public DesktopLegacyReleasePolicyService(AppDbContext db, TaskWorktreeRetirementService retirement, ILandingGit git,
-        IOptionsMonitor<WorktreeLegacyReleaseSettings> settings, IOptionsMonitor<RunnerWorktreeRetentionSettings> retention,
+        IRepositoryMutationLease leases, IOptionsMonitor<WorktreeLegacyReleaseSettings> settings,
+        IOptionsMonitor<RunnerWorktreeRetentionSettings> retention,
         IOptions<GitSettings> gitSettings, TimeProvider clock, ILogger<DesktopLegacyReleasePolicyService> logger)
     {
         _db = db;
         _retirement = retirement;
         _git = git;
+        _leases = leases;
         _settings = settings;
         _retention = retention;
         _gitSettings = gitSettings.Value;
@@ -242,9 +245,10 @@ public sealed class DesktopLegacyReleasePolicyService
             }
         }
 
-        // CARD-1708: an executing tick the switch did not stop prunes salvage refs past their retention.
+        // CARD-1708: an executing tick the switch did not stop prunes salvage refs past their retention; Review
+        // 9222cb00 B-3: the switch is re-read before each delete, and a refusal stops the tick.
         if (execute && stopped is null && StopReason(preview, execute, tickStarted) is null)
-            await PruneSalvageAsync(settings, ct);
+            stopped = await PruneSalvageAsync(settings, tickStarted, ct);
 
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
@@ -875,26 +879,50 @@ public sealed class DesktopLegacyReleasePolicyService
 
     /// <summary>
     /// CARD-1708: in each repository a system release ran in, delete the salvage refs whose own reflog is at least
-    /// <c>SalvageRefRetentionDays</c> old. A younger ref, or one without a readable time, is kept; a failure is logged.
+    /// <c>SalvageRefRetentionDays</c> old. Review 9222cb00 B-2: only under the repository lease the release holds, and
+    /// only the refs of a task whose every release is Complete and finished at least the retention ago (read under that
+    /// lease); an unfinished or retried release keeps its refs. B-3: the switch is re-read before every delete; its
+    /// refusal is returned and nothing more is deleted. A younger ref, or one without a readable time, is kept; a busy
+    /// lease skips the repository and a failure is logged.
     /// </summary>
-    private async Task PruneSalvageAsync(WorktreeLegacyReleaseSettings settings, CancellationToken ct)
+    private async Task<string?> PruneSalvageAsync(WorktreeLegacyReleaseSettings settings, DateTime tickStarted,
+        CancellationToken ct)
     {
+        var keep = TimeSpan.FromDays(settings.SalvageRefRetentionDays);
+        Func<CancellationToken, Task<string?>> live = _ => Task.FromResult(StopReason(false, true, tickStarted));
         var repositories = await _db.TaskWorktreeRetirements.AsNoTracking()
             .Where(r => r.CallerIdentity == TaskWorktreeRetirementService.SystemCallerIdentity)
             .Select(r => r.RepositoryPath).Distinct().ToListAsync(ct);
         foreach (var repository in repositories.Where(Directory.Exists).Order(StringComparer.Ordinal))
         {
+            if (await live(ct) is { } refused) return refused;
             try
             {
-                var pruned = await WorktreeReflogSalvage.PruneAsync(_git, repository, Now(),
-                    TimeSpan.FromDays(settings.SalvageRefRetentionDays), ct);
+                await using var lease = await _leases.TryAcquireAsync(repository, ct);
+                if (lease is null)
+                {
+                    _logger.LogInformation("Desktop legacy release kept the salvage refs in {Repository}: repository lease busy", repository);
+                    continue;
+                }
+                var cutoff = Now() - keep;
+                var releases = await _db.TaskWorktreeRetirements.AsNoTracking()
+                    .Where(r => _db.TaskWorktreeRetirements.Any(s => s.TaskId == r.TaskId && s.RepositoryPath == repository
+                        && s.CallerIdentity == TaskWorktreeRetirementService.SystemCallerIdentity))
+                    .Select(r => new { r.TaskId, r.State, r.RetirementCompletedAt }).ToListAsync(ct);
+                var prunable = releases.GroupBy(r => r.TaskId)
+                    .Where(g => g.All(r => r.State == WorktreeRetirementState.Complete
+                        && r.RetirementCompletedAt is { } done && done <= cutoff))
+                    .Select(g => WorktreeReflogSalvage.Scope(g.Key)).ToHashSet(StringComparer.Ordinal);
+                var (pruned, stopped) = await WorktreeReflogSalvage.PruneAsync(_git, repository, Now(), keep, prunable, live, ct);
                 if (pruned > 0)
                     _logger.LogInformation("Desktop legacy release pruned {Count} salvage ref(s) in {Repository}", pruned, repository);
+                if (stopped is not null) return stopped;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
             {
                 _logger.LogWarning(ex, "Desktop legacy release could not prune salvage refs in {Repository}", repository);
             }
         }
+        return null;
     }
 }
