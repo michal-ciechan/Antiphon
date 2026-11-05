@@ -79,13 +79,14 @@ public sealed partial class ChannelInboundRecoveryTests
         var healthy = await SeedHealthyRecipientAsync(h, "healthy during busy pass");
         var clock = new C1716LoopClock(h.Now);
         using var bridge = Bridge(h, clock);
+        clock.CompletedPasses = () => bridge.CompletedDrainIterations;
         var queueLock = h.Queue.GetLock(h.SessionId);
         await queueLock.WaitAsync();
         var held = true;
         try
         {
             await bridge.StartAsync(Ct);
-            var retry = await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(5) || due == TimeSpan.FromSeconds(10));
+            var retry = await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(5) || due == TimeSpan.FromSeconds(10), completedPasses: 1);
             retry.ShouldBe(TimeSpan.FromSeconds(5), "busy-loop-delay: the actual worker must use the busy retry");
             bridge.CompletedDrainIterations.ShouldBe(1);
             await AssertCompleteHealthyReceiptAsync(h, healthy);
@@ -96,7 +97,7 @@ public sealed partial class ChannelInboundRecoveryTests
             await using (var before = Db(schema.ConnectionString))
                 (await before.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inbound)).QueueMessageId.ShouldBeNull();
             clock.Advance(TimeSpan.FromMilliseconds(1));
-            var idle = await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(5) || due == TimeSpan.FromSeconds(10));
+            var idle = await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(5) || due == TimeSpan.FromSeconds(10), completedPasses: 2);
             idle.ShouldBe(TimeSpan.FromSeconds(10), "idle-loop-delay: a completed retry returns to the idle tick");
             bridge.CompletedDrainIterations.ShouldBe(2);
             await using (var after = Db(schema.ConnectionString))
@@ -104,7 +105,7 @@ public sealed partial class ChannelInboundRecoveryTests
             clock.Advance(TimeSpan.FromMilliseconds(9999));
             bridge.CompletedDrainIterations.ShouldBe(2);
             clock.Advance(TimeSpan.FromMilliseconds(1));
-            (await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(10))).ShouldBe(TimeSpan.FromSeconds(10));
+            (await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(10), completedPasses: 3)).ShouldBe(TimeSpan.FromSeconds(10));
             bridge.CompletedDrainIterations.ShouldBe(3);
         }
         finally
@@ -128,6 +129,7 @@ public sealed partial class ChannelInboundRecoveryTests
         var chat = await h.BindChannelAsync();
         var clock = new C1716LoopClock(h.Now);
         using var bridge = Bridge(h, clock);
+        clock.CompletedPasses = () => bridge.CompletedDrainIterations;
         await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-startup-{Guid.NewGuid():N}", "first stall", h.Now.AddMinutes(-10));
         var first = gate.Arm();
         try
@@ -143,7 +145,7 @@ public sealed partial class ChannelInboundRecoveryTests
             await clock.NextTimerAsync(due => due == TimeSpan.FromMinutes(1));
             (await C1716StallIncidentsAsync(schema.ConnectionString, h.AgentId)).ShouldBe(1, "scheduled-stall-once");
             first.Release.TrySetResult();
-            await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(10));
+            await clock.NextTimerAsync(due => due == TimeSpan.FromSeconds(10), completedPasses: 1);
             bridge.CompletedDrainIterations.ShouldBe(1);
             h.Provider.GetRequiredService<ChannelInboundWakeSignal>().LastPass!.CompletedAt.ShouldBe(clock.GetUtcNow());
             await SeedC1716InboundAsync(h, h.AgentId, chat, $"c1716-startup-again-{Guid.NewGuid():N}",
@@ -166,24 +168,26 @@ public sealed partial class ChannelInboundRecoveryTests
     private sealed class C1716LoopClock(DateTimeOffset start) : TimeProvider
     {
         private readonly FakeTimeProvider _clock = new(start);
-        private readonly Channel<TimeSpan> _timers = Channel.CreateUnbounded<TimeSpan>();
+        private readonly Channel<(TimeSpan Due, int CompletedPasses)> _timers = Channel.CreateUnbounded<(TimeSpan, int)>();
+        public Func<int> CompletedPasses { get; set; } = () => 0;
         public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
         public override long GetTimestamp() => _clock.GetTimestamp();
         public override long TimestampFrequency => _clock.TimestampFrequency;
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = _clock.CreateTimer(callback, state, dueTime, period);
-            _timers.Writer.TryWrite(dueTime);
+            _timers.Writer.TryWrite((dueTime, CompletedPasses()));
             return timer;
         }
         public void Advance(TimeSpan amount) => _clock.Advance(amount);
-        public async Task<TimeSpan> NextTimerAsync(Func<TimeSpan, bool> matches)
+        public async Task<TimeSpan> NextTimerAsync(Func<TimeSpan, bool> matches, int? completedPasses = null)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             while (true)
             {
-                var due = await _timers.Reader.ReadAsync(timeout.Token);
-                if (matches(due)) return due;
+                var timer = await _timers.Reader.ReadAsync(timeout.Token);
+                if (matches(timer.Due) && (completedPasses is null || timer.CompletedPasses == completedPasses))
+                    return timer.Due;
             }
         }
     }
