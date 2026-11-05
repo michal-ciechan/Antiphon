@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -46,6 +47,7 @@ internal static class WorktreeNoFollowDelete
             if (repositories.Length != 0) throw new NestedRepositoryPreservedException(repositories);
         }
         if (OperatingSystem.IsWindows()) DeleteWindows(full, protectedRoot);
+        else if (OperatingSystem.IsLinux()) DeleteLinux(full, protectedRoot);
         else DeletePortable(full, protectedRoot);
     }
 
@@ -129,6 +131,262 @@ internal static class WorktreeNoFollowDelete
             throw Failure("delete", path);
     }
 
+    // CARD-1717 D-5: a path walk can lstat a directory and then enumerate the symlink that replaced it.
+    // Linux holds a directory descriptor from a no-follow walk and unlinks names relative to that
+    // descriptor. A swapped symlink is unlinked as the link; a different directory inode is refused.
+    private static void DeleteLinux(string path, string? protectedRoot)
+    {
+        var parentPath = Path.GetDirectoryName(path) ?? throw Failure("open", path);
+        using var parent = OpenLinuxDirectory(parentPath);
+        DeleteLinuxName(parent, Path.GetFileName(path), "", protectedRoot);
+    }
+
+    /// <summary>Device and inode of the directory entry itself. A symlink is not followed.</summary>
+    internal static string DirectoryIdentity(string path)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        if (OperatingSystem.IsWindows()) return WindowsDirectoryIdentity(full);
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("directory identity");
+        var parentPath = Path.GetDirectoryName(full) ?? throw Failure("open", full);
+        using var parent = OpenLinuxDirectory(parentPath);
+        if (!TryStat(Fd(parent), Path.GetFileName(full), AtSymlinkNoFollow, out var stat)) throw Failure("stat", full);
+        return LinuxIdentity(stat);
+    }
+
+    /// <summary>No-follow kind, length and UTC write ticks. Null when the entry is already absent.</summary>
+    internal static EntryStamp? TryStamp(string path)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            if (Statx(AtFdCwd, path, AtSymlinkNoFollow, StatxBasicStats, out var stat) != 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                if (error is ENoEnt or ENotDir) return null;
+                throw Failure("stat", path, error);
+            }
+            return StampOf(stat);
+        }
+        if (!OperatingSystem.IsWindows())
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists && info.LinkTarget is null) return null;
+            var kind = info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint) ? "link"
+                : info.Attributes.HasFlag(FileAttributes.Directory) ? "dir" : "file";
+            return new EntryStamp(kind, kind == "file" ? info.Length : 0, info.LastWriteTimeUtc.Ticks);
+        }
+        if (!GetFileAttributesExW(path, 0, out var data))
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error is 2 or 3) return null;
+            throw Failure("stat", path, error);
+        }
+        var windowsKind = (data.FileAttributes & 0x400) != 0 ? "link" : (data.FileAttributes & 0x10) != 0 ? "dir" : "file";
+        var windowsLength = windowsKind == "file" ? ((long)data.FileSizeHigh << 32) | data.FileSizeLow : 0;
+        var write = ((long)data.LastWriteHigh << 32) | data.LastWriteLow;
+        return new EntryStamp(windowsKind, windowsLength, DateTime.FromFileTimeUtc(write).Ticks);
+    }
+
+    /// <summary>
+    /// SHA-256 of a regular file opened without following a link. Null when absent; empty when the
+    /// entry exists and is not a regular file.
+    /// </summary>
+    internal static string? RegularFileHash(string path)
+    {
+        if (OperatingSystem.IsLinux()) return LinuxRegularFileHash(path);
+        if (OperatingSystem.IsWindows()) return WindowsRegularFileHash(path);
+        if (!File.Exists(path)) return null;
+        return Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
+    }
+
+    internal readonly record struct EntryStamp(string Kind, long Length, long MtimeTicks);
+
+    private static void DeleteLinuxName(SafeFileHandle parent, string name, string relative, string? protectedRoot)
+    {
+        if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var listed)) throw Failure("stat", name);
+        var kind = listed.Mode & 0xF000;
+        if (kind == SIfLnk)
+        {
+            Unlink(parent, name, directory: false);
+            return;
+        }
+        if (kind != SIfDir)
+        {
+            UnlinkSameNode(parent, name, listed);
+            return;
+        }
+        SafeFileHandle dir;
+        try { dir = OpenAt(Fd(parent), name, ODirectory | ONoFollow | OCloExec, name); }
+        catch (IOException)
+        {
+            if (TryStat(Fd(parent), name, AtSymlinkNoFollow, out var swapped) && (swapped.Mode & 0xF000) == SIfLnk)
+            {
+                Unlink(parent, name, directory: false);
+                return;
+            }
+            throw new IOException("no_follow_identity_changed: " + name);
+        }
+        using (dir)
+        {
+            if (!TryStat(Fd(dir), "", AtEmptyPath, out var opened) || !SameNode(listed, opened))
+                throw new IOException("no_follow_identity_changed: " + name);
+            var children = ListDir(dir);
+            if (protectedRoot is not null && relative.Length != 0 && children.Exists(IsRepositoryMarker))
+                throw new NestedRepositoryPreservedException([relative + "/"]);
+            foreach (var child in children)
+                DeleteLinuxName(dir, child, relative.Length == 0 ? child : relative + "/" + child, protectedRoot);
+            if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
+            var nowKind = now.Mode & 0xF000;
+            if (nowKind == SIfLnk)
+            {
+                Unlink(parent, name, directory: false);
+                return;
+            }
+            if (nowKind != SIfDir || !SameNode(listed, now))
+                throw new IOException("no_follow_identity_changed: " + name);
+            Unlink(parent, name, directory: true);
+        }
+    }
+
+    private static void UnlinkSameNode(SafeFileHandle parent, string name, LinuxStatx listed)
+    {
+        if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
+        if ((now.Mode & 0xF000) == SIfLnk)
+        {
+            Unlink(parent, name, directory: false);
+            return;
+        }
+        if (!SameNode(listed, now)) throw new IOException("no_follow_identity_changed: " + name);
+        Unlink(parent, name, directory: false);
+    }
+
+    private static void Unlink(SafeFileHandle parent, string name, bool directory)
+    {
+        if (unlinkat(Fd(parent), name, directory ? AtRemovedIr : 0) != 0) throw Failure("unlink", name);
+    }
+
+    private static List<string> ListDir(SafeFileHandle dir)
+    {
+        var names = new List<string>();
+        foreach (var entry in Directory.EnumerateFileSystemEntries("/proc/self/fd/" + Fd(dir)))
+        {
+            var child = Path.GetFileName(entry);
+            if (child is "." or "..") continue;
+            names.Add(child);
+        }
+        return names;
+    }
+
+    private static bool IsRepositoryMarker(string name) =>
+        name.Equals(".git", StringComparison.OrdinalIgnoreCase) || name.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+
+    private static SafeFileHandle OpenLinuxDirectory(string path)
+    {
+        var current = OpenAt(AtFdCwd, "/", ODirectory | ONoFollow | OCloExec, path);
+        try
+        {
+            foreach (var component in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var next = OpenAt(Fd(current), component, ODirectory | ONoFollow | OCloExec, path);
+                current.Dispose();
+                current = next;
+            }
+            return current;
+        }
+        catch
+        {
+            current.Dispose();
+            throw;
+        }
+    }
+
+    private static SafeFileHandle OpenAt(int dirfd, string name, int flags, string diagnostic)
+    {
+        var raw = openat(dirfd, name, flags);
+        if (raw < 0) throw Failure("open", diagnostic);
+        return new SafeFileHandle((IntPtr)raw, ownsHandle: true);
+    }
+
+    private static bool TryStat(int dirfd, string name, int flags, out LinuxStatx stat) =>
+        Statx(dirfd, name, flags, StatxBasicStats, out stat) == 0
+        && (stat.Mask & (StatxType | StatxMode | StatxIno)) == (StatxType | StatxMode | StatxIno);
+
+    private static bool SameNode(in LinuxStatx left, in LinuxStatx right) =>
+        left.Inode == right.Inode && left.DevMajor == right.DevMajor && left.DevMinor == right.DevMinor;
+
+    private static string LinuxIdentity(in LinuxStatx stat) => $"linux:{stat.DevMajor}:{stat.DevMinor}:{stat.Inode}";
+
+    private static EntryStamp StampOf(in LinuxStatx stat)
+    {
+        var kind = (stat.Mode & 0xF000) switch { SIfLnk => "link", SIfDir => "dir", SIfReg => "file", _ => "other" };
+        var ticks = DateTimeOffset.FromUnixTimeSeconds(stat.MtimeSec).Ticks + stat.MtimeNsec / 100;
+        return new EntryStamp(kind, kind == "file" ? (long)stat.Size : 0, ticks);
+    }
+
+    private static string? LinuxRegularFileHash(string path)
+    {
+        var raw = openat(AtFdCwd, path, ORdOnly | ONoFollow | OCloExec);
+        if (raw < 0)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error is ENoEnt or ENotDir) return null;
+            if (error == ELoop) return "";
+            throw Failure("open", path, error);
+        }
+        using var handle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
+        if (!TryStat(Fd(handle), "", AtEmptyPath, out var stat)) throw Failure("stat", path);
+        if ((stat.Mode & 0xF000) != SIfReg) return "";
+        using var stream = new FileStream(handle, FileAccess.Read);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
+
+    private static string WindowsDirectoryIdentity(string path)
+    {
+        using var handle = OpenNoFollow(path);
+        if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
+        var prefix = (info.FileAttributes & 0x400) != 0 ? "link" : "win";
+        return $"{prefix}:{info.VolumeSerialNumber:x8}:{info.FileIndexHigh:x8}:{info.FileIndexLow:x8}";
+    }
+
+    private static string? WindowsRegularFileHash(string path)
+    {
+        var handle = CreateFileW(path, 0x80000000, 0x1 | 0x2 | 0x4, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            handle.Dispose();
+            if (error is 2 or 3) return null;
+            throw Failure("open", path, error);
+        }
+        using (handle)
+        {
+            if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
+            if ((info.FileAttributes & 0x400) != 0 || (info.FileAttributes & 0x10) != 0) return "";
+            using var stream = new FileStream(handle, FileAccess.Read);
+            return Convert.ToHexStringLower(SHA256.HashData(stream));
+        }
+    }
+
+    private static int Fd(SafeFileHandle handle) => handle.DangerousGetHandle().ToInt32();
+
+    private const int AtFdCwd = -100;
+    private const int AtSymlinkNoFollow = 0x100;
+    private const int AtRemovedIr = 0x200;
+    private const int AtEmptyPath = 0x1000;
+    private const int ORdOnly = 0;
+    private const int ODirectory = 0x10000;
+    private const int ONoFollow = 0x20000;
+    private const int OCloExec = 0x80000;
+    private const uint StatxBasicStats = 0x7ff;
+    private const uint StatxType = 0x1;
+    private const uint StatxMode = 0x2;
+    private const uint StatxIno = 0x100;
+    private const int SIfDir = 0x4000;
+    private const int SIfReg = 0x8000;
+    private const int SIfLnk = 0xA000;
+    private const int ENoEnt = 2;
+    private const int ENotDir = 20;
+    private const int ELoop = 40;
+
     private static void DeletePortable(string path, string? protectedRoot)
     {
         // Unix has no handle-pinned walk here; lstat each entry and unlink a link without descending.
@@ -187,4 +445,38 @@ internal static class WorktreeNoFollowDelete
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass,
         ref FileDispositionInfo info, uint size);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileAttributesExW(string name, int infoLevel, out Win32FileAttributeData data);
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    private static extern int Statx(int dirfd, string path, int flags, uint mask, out LinuxStatx stat);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int openat(int dirfd, string path, int flags);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int unlinkat(int dirfd, string path, int flags);
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxStatx
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(40)] public ulong Size;
+        [FieldOffset(112)] public long MtimeSec;
+        [FieldOffset(120)] public uint MtimeNsec;
+        [FieldOffset(136)] public uint DevMajor;
+        [FieldOffset(140)] public uint DevMinor;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32FileAttributeData
+    {
+        public uint FileAttributes;
+        public uint CreationLow, CreationHigh, LastAccessLow, LastAccessHigh, LastWriteLow, LastWriteHigh;
+        public uint FileSizeHigh, FileSizeLow;
+    }
 }
