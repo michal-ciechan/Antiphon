@@ -43,6 +43,33 @@ must preserve ordinary Unit contracts. This is an unbounded class selection,
 approximately 3600+ cases, estimated 30m on a saturated host, plus cold build and
 admission. No full assembly run is planned. Required by Final profile.
 
+## Performance budget
+
+Costs are provisional, tracked by CARD-1713; Unit p95 is unknown (CARD-1404 /
+CARD-1720), not inferred from a killed run. Collect one complete Final selection
+here; do not repeat a green proof for timing. First completed runner selection
+at 38e7740b44378375474b6268a5c07291016bdcfa took 134.760s wall,
+93.449s build and 19.815s row execution (40 executed, one V-5 input error).
+That single failed selection is not a measured p95. Budget runner execution
+at 3m, policy at 2m and Unit provisionally at 30m, excluding broker admission.
+Retain the importer's finite 15m build/row floor and 90m derived Unit row budget
+as explicit provisional exceptions pending this measurement; no timeout is
+widened to repair red. Admission is independently bounded at 45m; total charged
+execution is 140m. If actual selection time exceeds 30m, caller must commission
+Debug with the retained run, SHA, load and timings (delegate cannot sub-delegate).
+
+Fake-clock broker cases own only lightweight service providers, with no web
+host, database or wall-clock lease-age waits. V-5 needs one private Kestrel host
+for the actual HTTP identity and broker timer lifecycle; its 48h fake clock
+cannot be shared with the existing real-clock wrapper cases. All wrapper
+processes are joined/killed by the existing fixture; its existing 90s readiness
+and exit watchdogs are unchanged. No AppHost or database is started by new tests.
+TRX retains exact membership and per-test durations; checkpoint reports retain
+admission, build, host startup, tests and teardown phases. Additional unrecorded
+HTTP/process/fixture subphases remain unknown, never reported as zero. Evidence
+lives under `.antiphon/checkpoints/<run>/`; the final task report retains all
+attempts and separates failed/stopped runs from passing receipts.
+
 ### Checkpoints
 
 totalTimeoutMinutes: 140
