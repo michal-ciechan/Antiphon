@@ -662,6 +662,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             ["ls-tree", "-r", "-z", "--full-tree", request.ExpectedSourceSha], ct);
         if (committed is null) return "source_changed";
         if (staged.Count != committed.Count) return "tracked_bytes_changed";
+        var filtered = new List<(string Relative, string Oid)>();
         var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
         foreach (var (relative, entry) in staged)
         {
@@ -688,9 +689,45 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     && File.GetUnixFileMode(full).HasFlag(UnixFileMode.UserExecute) != (entry.Mode == "100755"))
                     return "tracked_bytes_changed";
                 oid = WorktreeNoFollowDelete.GitBlobSha1(full);
+                // CARD-1717 A-B-7: a checkout through core.autocrlf, an eol/text attribute or a clean filter holds
+                // bytes that differ from the blob. Git's own clean form decides those below; the raw hashes of the
+                // receipt still bind every byte that is later deleted.
+                if (oid is { Length: > 0 } && !oid.Equals(entry.Oid, StringComparison.OrdinalIgnoreCase))
+                {
+                    filtered.Add((relative, entry.Oid));
+                    continue;
+                }
             }
             if (oid is null || oid.Length == 0 || !oid.Equals(entry.Oid, StringComparison.OrdinalIgnoreCase))
                 return "tracked_bytes_changed";
+        }
+        return filtered.Count == 0 ? null : await CleanFormDiffersAsync(root, filtered, ct);
+    }
+
+    /// <summary>
+    /// CARD-1717 A-B-7. Null when <c>git hash-object</c>, run in the tree so each path's attributes and the
+    /// repository's line-ending settings apply, gives every listed file its expected blob: the bytes are what
+    /// <c>git diff</c> would call unchanged. Any other answer, or a failed command, is tracked_bytes_changed.
+    /// </summary>
+    private async Task<string?> CleanFormDiffersAsync(string root, List<(string Relative, string Oid)> files, CancellationToken ct)
+    {
+        const int batch = 100;
+        for (var start = 0; start < files.Count; start += batch)
+        {
+            var chunk = files.GetRange(start, Math.Min(batch, files.Count - start));
+            // safecrlf only warns about a later conversion; it does not change the hash.
+            var arguments = new List<string> { "-c", "core.safecrlf=false", "hash-object", "--" };
+            arguments.AddRange(chunk.Select(f => f.Relative));
+            LandingGitResult hashed;
+            try { hashed = await git.RunAsync(root, arguments, ct); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+            { return "tracked_bytes_changed"; }
+            if (!hashed.Succeeded) return "tracked_bytes_changed";
+            var oids = hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (oids.Length != chunk.Count) return "tracked_bytes_changed";
+            for (var i = 0; i < chunk.Count; i++)
+                if (!IsGitOid(oids[i]) || !oids[i].Equals(chunk[i].Oid, StringComparison.OrdinalIgnoreCase))
+                    return "tracked_bytes_changed";
         }
         return null;
     }
