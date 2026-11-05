@@ -5,7 +5,6 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 
 namespace Antiphon.Tests.Application;
@@ -13,7 +12,7 @@ namespace Antiphon.Tests.Application;
 public sealed partial class C0824RefOnlyLandingTests
 {
     private static async Task NegativeReceiptEvidenceAsync(LandingSafetyHarness h, BridgeQueueHarness caller,
-        AgentTaskLandNotification note, CompletionNoteFlushQueue flushes, FakeTimeProvider clock)
+        AgentTaskLandNotification note, CompletionNoteFlushQueue flushes, ScaledTimeProvider clock)
     {
         var otherSession = Guid.NewGuid();
         await using (var db = h.CreateContext())
