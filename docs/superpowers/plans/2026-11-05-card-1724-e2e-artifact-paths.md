@@ -32,6 +32,9 @@ E2EArtifactPathGuardTests.E2E_writers_do_not_target_repository_docs; restore the
 Agent screenshot's FindRepoRoot()/docs/screenshots destination, require assertion
 red naming AgentE2ETests, restore and require green. Mutation owns this cycle and
 additional missing-control discovery; Code's ordinary S1 regression is separate.
+PC-1 variants also restore one Board screenshot writer and the canary's
+FindRepositoryRoot()/docs/investigations writer, independently, using that same
+exact guard method. All three variants remain pending for Mutation.
 
 ## Performance budget
 
@@ -51,7 +54,7 @@ UseAppHost=false. Bootstrap tool compilation is an explained extra gated build.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1724-red/` | scanner-red | `/*/*/E2EArtifactPathGuardTests*/*` | V-1 | 5 executed; repository guard red naming AgentE2ETests, 4 scanner cases green | 5 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1724-green/` | scanner-and-policy | `/*/*/(E2EArtifactPathGuardTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | V-1, R-1 | all listed, 0 failed | 5 | 10 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1724-green/` | scanner-and-policy | `/*/*/(E2EArtifactPathGuardTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | V-1, R-1 | all listed, 0 failed | 6 | 10 |
 | CP-3 | S2 | n/a | e2e-compile | `dotnet build tests/Antiphon.E2E -p:UseAppHost=false --nologo` | V-2 | build exit 0, no E2E execution | n/a | 5 |
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-2 | >= 1 executed, 0 failed | 1 | 40 |
 
