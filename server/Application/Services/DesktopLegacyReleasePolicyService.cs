@@ -229,10 +229,16 @@ public sealed class DesktopLegacyReleasePolicyService
             }
 
             prechecks++;
-            var outcome = await ActAsync(run, candidate, settings, root, execute, rowCursors, taskCursors, preview, ct);
+            var outcome = await ActAsync(run, candidate, settings, root, execute, rowCursors, taskCursors, preview, tickStarted, ct);
             wrote = outcome.Wrote;
             if (outcome.Filed) filed++;
             if (outcome.Retired) retired++;
+            if (outcome.Stopped is not null)
+            {
+                stopped = outcome.Stopped;
+                _logger.LogWarning("Desktop legacy release stopped after {Prechecks} pre-check(s): {Reason}", prechecks, stopped);
+                break;
+            }
         }
 
         run.FinishedAt = Now();
@@ -243,12 +249,14 @@ public sealed class DesktopLegacyReleasePolicyService
         return new TickResult(run.Id, candidates.Count, eligible.Count, filed, retired, backedOff, stopped);
     }
 
-    /// <summary><c>Wrote</c>: the candidate filed a release or ran the guarded removal (the pause follows it).</summary>
-    private sealed record ActOutcome(bool Wrote, bool Filed, bool Retired);
+    /// <summary><c>Wrote</c>: the candidate filed a release or ran the guarded removal (the pause follows it).
+    /// <c>Stopped</c> is set when the switch or the tick budget refused this row after its pre-check; the row is
+    /// already written, so the tick breaks without a second deferred row.</summary>
+    private sealed record ActOutcome(bool Wrote, bool Filed, bool Retired, string? Stopped = null);
 
     private async Task<ActOutcome> ActAsync(WorktreeResidueRun run, AgentTask candidate, WorktreeLegacyReleaseSettings settings,
         string root, bool execute, Dictionary<string, WorktreeResidueCandidateCursor> rowCursors,
-        Dictionary<string, WorktreeResidueCandidateCursor> taskCursors, bool preview, CancellationToken ct)
+        Dictionary<string, WorktreeResidueCandidateCursor> taskCursors, bool preview, DateTime tickStarted, CancellationToken ct)
     {
         var stage = "release_failed";
         try
@@ -292,6 +300,15 @@ public sealed class DesktopLegacyReleasePolicyService
                 // executing pass resets a held state only once its filing stands (below).
                 if (!preview && !execute)
                     RecordCheck(taskCursors, fresh, "would_release", settled: false, settings);
+            }
+
+            // CARD-1717 D-1: re-read after the pre-check (and on a command that already started, which skips it)
+            // before filing or TryRetire. The captured execute flag keeps a dry tick on would_release.
+            var stoppedNow = StopReason(preview, execute, tickStarted);
+            if (stoppedNow is not null)
+            {
+                await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, stoppedNow, fresh, release?.Id, ct);
+                return new(false, false, false, stoppedNow);
             }
 
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-action", fresh.Id, ct);
@@ -359,6 +376,14 @@ public sealed class DesktopLegacyReleasePolicyService
                 // open a path that long. Nothing moved; the tree is held (backing off) rather than ending Partial.
                 row = await RowAsync(run, WorktreeResidueCandidateOutcome.Held, PathTooLong, fresh, release.Id, ct, save: false);
                 StampRetry(taskCursors, fresh.Id, PathTooLong, settings);
+            }
+            else if (removed.Residue is TaskWorktreeRetirementService.LegacyReleaseDisabled
+                or TaskWorktreeRetirementService.LegacyReleaseExecuteOff
+                or TaskWorktreeRetirementService.LegacyReleasePaced)
+            {
+                // The executor already refused before any delete. Do not stamp a retry: toggling the switch
+                // must not burn MaxRefusedAttempts, and the pending cursor stays as it was.
+                row = await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, removed.Residue, fresh, release.Id, ct, save: false);
             }
             else if (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted)
             {

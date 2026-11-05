@@ -38,6 +38,7 @@ public sealed class TaskWorktreeRetirementService
     private readonly ILogger<TaskWorktreeRetirementService> _logger;
     private readonly RemoteWorkspaceService? _remoteWorkspace;
     private readonly IOptionsMonitor<RunnerWorktreeRetentionSettings>? _retention;
+    private readonly IOptionsMonitor<WorktreeLegacyReleaseSettings>? _legacyRelease;
 
     /// <summary>CARD-0824 S4a S-3: the caller identity of a release the desktop legacy policy filed.</summary>
     public const string SystemCallerIdentity = "system:desktop-legacy-policy";
@@ -68,10 +69,13 @@ public sealed class TaskWorktreeRetirementService
         // CARD-0604 D-15: absent, a remote mirror is simply left for the runner-side sweep.
         RemoteWorkspaceService? remoteWorkspace = null,
         // CARD-0824 S4a T-D-6: the runners whose mirrors CARD-1677 retention owns.
-        IOptionsMonitor<RunnerWorktreeRetentionSettings>? retention = null)
+        IOptionsMonitor<RunnerWorktreeRetentionSettings>? retention = null,
+        // CARD-1717 D-1: absent, a system release fails closed rather than deleting.
+        IOptionsMonitor<WorktreeLegacyReleaseSettings>? legacyRelease = null)
     {
         _remoteWorkspace = remoteWorkspace;
         _retention = retention;
+        _legacyRelease = legacyRelease;
         _db = db;
         _clock = clock;
         _settings = settings.Value;
@@ -120,6 +124,10 @@ public sealed class TaskWorktreeRetirementService
             throw new ValidationException(nameof(body.Reason), "A disposition reason is required.");
         if (!GitObjectId.TryNormalize(body.SourceSha, out var sourceSha))
             throw new ValidationException(nameof(body.SourceSha), "SourceSha must be a full lowercase hex object id.");
+        // CARD-1717 D-1: filing is itself a step toward deletion. Read the switch here, before any row is inserted.
+        var blocked = await LegacyReleaseAdmissionAsync(taskId, pace: false, ct);
+        if (blocked is not null)
+            throw new ConflictException("Desktop legacy release is not executing.", blocked);
         var request = new ReleaseWorktreeRetirementRequest(body.ExpectedTaskRevision, sourceSha, null, true, body.Reason,
             body.HandoffDispositions, MissingReportReviewed: false);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:system-release", taskId, ct);
@@ -374,6 +382,11 @@ public sealed class TaskWorktreeRetirementService
                 await _db.Entry(retirement).ReloadAsync(ct);
             if (retirement.State == WorktreeRetirementState.Complete)
                 return new(true, true, true, null);
+            // CARD-1717 D-1: Enabled, Execute, and the retry cursor are read under the lease, after the slow
+            // pre-checks and after a command that already started, before a new attempt or any delete.
+            var blocked = await LegacyReleaseAdmissionAsync(retirement.TaskId, pace: true, ct);
+            if (blocked is not null)
+                return new(false, false, false, blocked);
         }
 
         var attempt = await GetOrCreateAttemptAsync(retirement, runId, ct);
@@ -457,6 +470,35 @@ public sealed class TaskWorktreeRetirementService
         retirement.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         return removed;
+    }
+
+    /// <summary>
+    /// CARD-1717 D-1. Admission for <see cref="SystemCallerIdentity"/> only. <paramref name="pace"/> is the
+    /// destructive continuation (a retry); filing does not consult the backoff cursor. A missing monitor, an
+    /// invalid hot reload, or <c>Enabled=false</c> is <see cref="LegacyReleaseDisabled"/>. The switch is decided
+    /// before the cursor, so a disabled policy reports the switch rather than the pace.
+    /// </summary>
+    private async Task<string?> LegacyReleaseAdmissionAsync(Guid taskId, bool pace, CancellationToken ct)
+    {
+        if (_legacyRelease is null)
+            return LegacyReleaseDisabled;
+        var read = DesktopLegacyReleasePolicyService.ReadSettings(_legacyRelease, _logger);
+        if (!read.Enabled || read.Settings is null)
+            return LegacyReleaseDisabled;
+        if (!read.Settings.Execute)
+            return LegacyReleaseExecuteOff;
+        if (!pace)
+            return null;
+
+        var key = DesktopLegacyReleasePolicyService.RetryCursorKey(taskId);
+        var cursor = await _db.WorktreeResidueCandidateCursors.AsNoTracking()
+            .SingleOrDefaultAsync(c => c.CandidateKey == key, ct);
+        if (cursor?.NotBefore is { } notBefore
+            && notBefore > UtcNow()
+            && cursor.LastOutcomeKey is { } outcome
+            && outcome.StartsWith("retry|", StringComparison.Ordinal))
+            return LegacyReleasePaced;
+        return null;
     }
 
     /// <summary>
