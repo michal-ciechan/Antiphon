@@ -133,10 +133,12 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var firstLinks = WorktreeIgnoredContentGate.ReparsePoints(source.WorktreePath, first);
                 if (firstLinks.Length != 0)
                     return Finish("ignored_reparse_point", WorktreeIgnoredContentGate.ReparseDetail(firstLinks));
+                IReadOnlyList<RetainedWorktreeFile>? retainedFiles = null;
                 if (ignored is not null)
                 {
                     var retained = await ignored.RetainAsync(request, first.Evidence, ct);
                     if (retained.Reason is not null) return Finish(retained.Reason);
+                    retainedFiles = retained.Files;
                     retainedDetail = WorktreeIgnoredContentGate.RetainedDetail(retained);
                 }
                 reason = await AuthorityAsync(request, ct);
@@ -149,8 +151,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var finalLinks = WorktreeIgnoredContentGate.ReparsePoints(source.WorktreePath, second);
                 if (finalLinks.Length != 0)
                     return Finish("ignored_reparse_point", WorktreeIgnoredContentGate.ReparseDetail(finalLinks));
-                // Disposable churn is allowed; evidence must be exactly what was retained.
+                // Disposable churn is allowed; evidence names, then the bytes retention already hashed, must match.
                 if (!second.Evidence.SequenceEqual(first.Evidence, StringComparer.Ordinal)) return Finish("ignored_content_changed");
+                if (!EvidenceBytesMatch(source.WorktreePath, retainedFiles)) return Finish("evidence_bytes_changed");
                 // CARD-1714: the no-follow delete cannot open an entry past the platform limit, so a deeper tree would
                 // be set aside, unregistered and then stuck half deleted on every retry. Refuse while nothing has
                 // moved, measuring each entry under its set-aside name (longer than its own).
@@ -202,6 +205,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
                 }
+                // CARD-1717 D-3: the retained copy can still be replaced after the tree has moved.
+                if (!EvidenceBytesMatch(aside, retainedFiles)) return Finish("evidence_bytes_changed", "set-aside: " + aside);
                 try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                 catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -462,6 +467,29 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     {
         try { _ = File.GetAttributes(Path.Combine(gitDirectory, "gitdir")); return true; }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+    }
+
+    /// <summary>
+    /// True when every retained file that is still present hashes to the digest retention recorded.
+    /// An absent path is skipped. A present non-file does not match.
+    /// </summary>
+    private static bool EvidenceBytesMatch(string root, IReadOnlyList<RetainedWorktreeFile>? files)
+    {
+        if (files is null) return true;
+        foreach (var file in files)
+        {
+            var source = Path.Combine(root, file.Relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!HashAgrees(source, file.Sha256)) return false;
+            if (!HashAgrees(file.RetainedPath, file.Sha256)) return false;
+        }
+        return true;
+    }
+
+    private static bool HashAgrees(string path, string expected)
+    {
+        var hash = WorktreeNoFollowDelete.RegularFileHash(path);
+        if (hash is null) return true;
+        return hash.Length != 0 && hash.Equals(expected, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
