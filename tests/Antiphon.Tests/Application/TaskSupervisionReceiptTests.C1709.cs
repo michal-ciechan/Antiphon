@@ -328,6 +328,9 @@ public sealed partial class TaskSupervisionReceiptTests
             released = true;
             h.Clock.Advance(CompletionNoteWorkHostedService.BusyRetryDelay);
             await UntilEnqueuedAsync(h, m => m.SourceTaskSupervisionNoticeId == notice, "the retry pass enqueues the skipped notice");
+            // Enqueue precedes the end of the pass. Observe the next wait before testing shutdown,
+            // so cancellation cannot let the loop exit before it reaches the guarded wait.
+            await clock.BackstopTimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(20));
         }
         finally
         {
@@ -503,12 +506,14 @@ public sealed partial class TaskSupervisionReceiptTests
     {
         public ConcurrentQueue<TimeSpan> DueTimes { get; } = new();
         public TaskCompletionSource TimerCreated { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource BackstopTimerCreated { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = inner.CreateTimer(callback, state, dueTime, period);
             DueTimes.Enqueue(dueTime);
             TimerCreated.TrySetResult();
+            if (dueTime == TimeSpan.FromMinutes(15)) BackstopTimerCreated.TrySetResult();
             return timer;
         }
     }
