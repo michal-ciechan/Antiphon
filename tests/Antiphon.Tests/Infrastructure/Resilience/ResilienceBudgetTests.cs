@@ -318,44 +318,37 @@ public class ResilienceBudgetTests
     }
 
     [Test]
-    public async Task Pump_stops_at_the_owner_deadline_when_the_continuation_is_gated()
+    [Arguments(200)]
+    [Arguments(700)]
+    public async Task Pump_stops_at_the_owner_deadline_when_the_continuation_is_gated(int stepMilliseconds)
     {
         var time = Clock();
         var started = time.GetUtcNow();
         var deadline = started.AddSeconds(5);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var openedByOvershoot = 0;
-        var work = Task.Run(async () =>
+        var due = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var timer = time.CreateTimer(_ => due.TrySetResult(), null, TimeSpan.FromSeconds(5), Timeout.InfiniteTimeSpan);
+        async Task<TimeSpan> CompleteAfterRelease()
         {
-            while (time.GetUtcNow() < deadline)
-                await Task.Yield();
-            var watcher = Task.Run(async () =>
-            {
-                var real = DateTime.UtcNow;
-                while (DateTime.UtcNow - real < TimeSpan.FromMilliseconds(2500))
-                {
-                    if (time.GetUtcNow() >= deadline.AddSeconds(2))
-                    {
-                        Interlocked.Exchange(ref openedByOvershoot, 1);
-                        release.TrySetResult();
-                        return;
-                    }
-
-                    await Task.Delay(1);
-                }
-
-                release.TrySetResult();
-            });
             await release.Task;
-            await watcher;
             return time.GetUtcNow() - started;
-        });
+        }
 
-        var elapsed = await ResilienceTestHost.Pump(
-            time, work, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(8), deadline);
-        elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(5));
-        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(7));
-        openedByOvershoot.ShouldBe(0);
+        var pump = ResilienceTestHost.Pump(
+            time, CompleteAfterRelease(), TimeSpan.FromMilliseconds(stepMilliseconds), TimeSpan.FromSeconds(8), deadline);
+        try
+        {
+            await due.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Keep the continuation pending after its owner timer fires, independently of fake time.
+            await Task.Delay(100);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await pump;
+        }
+
+        (await pump).ShouldBe(TimeSpan.FromSeconds(5));
     }
 
     [Test]
