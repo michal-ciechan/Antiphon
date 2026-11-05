@@ -41,7 +41,8 @@ R-1: all BuildSlot broker, settings, endpoint, metrics and end-to-end classes.
 V-6: a healthy renew-mode holder remains leased until one tick before its 1h
 bound, then renewal is refused at that bound despite the later 90m TTL.
 R-2: MechanicalPcContractTests and TestClassificationPolicy*,
-TestClassificationGuard*, SlowTestRegistryMerge*, SlowTestTripwire*.
+TestClassificationGuard*, SlowTestRegistryMerge*, SlowTestTripwire*. Also run
+the linked TestClassificationGuardTests in the affected runner assembly.
 R-3: whole Antiphon.Tests Unit lane. Shared regression invariant: lease changes
 must preserve ordinary Unit contracts. This is an unbounded class selection,
 approximately 3600+ cases, estimated 30m on a saturated host, plus cold build and
@@ -81,10 +82,11 @@ totalTimeoutMinutes: 140
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | Red | tests/Antiphon.SessionRunner.Tests -> bin-c1713-red/ | red | `/*/*/BuildSlotMaxHoldTests*/*` | V-1..4 | Historical base witness: 5 failures at cc166db9d3ca78af6606abf2939b8010122aa843; later V-6 is ordinary green scope | 5 | 2 |
-| CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..6, R-1 | Exactly 40 executed/passed; zero failed/skipped | 40 | 3 |
+| CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..7, R-1 | Exactly 40 executed/passed; zero failed/skipped | 40 | 3 |
 | CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | unit | `/*/*/*/*[Category=Unit]` | R-3 | Whole Unit lane, zero failed | 3500 | 30 |
 | CP-4 | Fix | CP-3 | policy | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-2 | Full named classes, zero failed/skipped | 20 | 2 |
 | CP-5 | ZeroRed | tests/Antiphon.SessionRunner.Tests -> bin-c1713-zero-red/ | zero-red | `/*/*/BuildSlotMaxHoldTests*/V7_Zero_uses_the_default_bound` | V-7 | Expected assertion failure before zero normalization | 1 | 1 |
+| CP-6 | Fix | CP-2 | runner-policy | `/*/*/TestClassificationGuard*/*` | R-2 runner | Exactly 1 executed/passed; zero failed/skipped | 1 | 1 |
 
 ## Pending SourceLanding Mutation candidates
 
