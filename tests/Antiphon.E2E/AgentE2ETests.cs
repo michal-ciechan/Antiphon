@@ -126,9 +126,7 @@ public class AgentE2ETests
                 Timeout = 10_000
             });
             var screenshotPath = Path.Combine(
-                FindRepoRoot(),
-                "docs",
-                "screenshots",
+                PlaywrightFixture.ScreenshotRoot,
                 "agents",
                 "01-agent-queue-foundation.png");
             Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
@@ -245,19 +243,6 @@ public class AgentE2ETests
         Directory.CreateDirectory(root);
         _tempRoots.Add(root);
         return root;
-    }
-
-    private static string FindRepoRoot()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null)
-        {
-            if (Directory.Exists(Path.Combine(dir, ".git")) || File.Exists(Path.Combine(dir, ".git")))
-                return dir;
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-
-        return Directory.GetCurrentDirectory();
     }
 
     private static async Task DeleteDirectoryBestEffortAsync(string path)

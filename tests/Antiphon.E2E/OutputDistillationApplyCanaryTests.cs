@@ -193,8 +193,7 @@ public class OutputDistillationApplyCanaryTests
             positive.Ledger.AvailabilityKind!.Value.ToString(), positive.Ledger.AvailabilityAlias!, approval.ExpectedDistillerModelAlias,
             positive.ReadHash, positive.ReadLength, positive.ToolEvidence, true, 1, 1, app.RunnerCensusCompleted)
             .Validate(Middle, ["next: review", "handoff: Review the canary evidence.", "--- deliverable ---"]);
-        var evidencePath = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "docs", "investigations",
-            $"{DateTimeOffset.UtcNow:yyyy-MM-dd}-card-0419-apply-acceptance.md");
+        var evidencePath = Path.Combine(root, "apply-acceptance.md");
         await File.WriteAllTextAsync(evidencePath,
             $"# CARD-0419 isolated Apply acceptance\n\nPassed at {DateTimeOffset.UtcNow:O}. Approval: {approval.ApprovalReference}.\n\n"
             + $"Parent `{parentId}`; retained evidence `{root}` (loaded binary hashes/MVID, runner PID/start time, transcripts, ledger and teardown).\n\n"

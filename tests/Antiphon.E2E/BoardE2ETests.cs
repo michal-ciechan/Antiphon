@@ -366,9 +366,7 @@ public class BoardE2ETests
                 .ToBeVisibleAsync();
 
             var screenshotPath = Path.Combine(
-                FindRepoRoot(),
-                "docs",
-                "screenshots",
+                PlaywrightFixture.ScreenshotRoot,
                 "toonsharp-antiphon",
                 "36-spawn-legacy-worktree-running.png");
             Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
@@ -595,9 +593,7 @@ public class BoardE2ETests
             await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Resume" })).ToBeVisibleAsync();
 
             var screenshotPath = Path.Combine(
-                FindRepoRoot(),
-                "docs",
-                "screenshots",
+                PlaywrightFixture.ScreenshotRoot,
                 "toonsharp-antiphon",
                 "33-stopped-session-overlay-resume.png");
             Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
@@ -659,9 +655,7 @@ public class BoardE2ETests
             await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Start new session" })).ToBeVisibleAsync();
 
             var screenshotPath = Path.Combine(
-                FindRepoRoot(),
-                "docs",
-                "screenshots",
+                PlaywrightFixture.ScreenshotRoot,
                 "toonsharp-antiphon",
                 "35-claude-session-recovery-prompt.png");
             Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
@@ -716,9 +710,7 @@ public class BoardE2ETests
             await Expect(dialog.GetByTestId("session-terminal-inactive-overlay")).Not.ToBeVisibleAsync();
 
             var screenshotPath = Path.Combine(
-                FindRepoRoot(),
-                "docs",
-                "screenshots",
+                PlaywrightFixture.ScreenshotRoot,
                 "toonsharp-antiphon",
                 "34-running-session-stop-button.png");
             Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
@@ -1054,19 +1046,6 @@ public class BoardE2ETests
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
                 $"git {string.Join(' ', arguments)} failed with exit code {process.ExitCode}: {stdout}{stderr}");
-    }
-
-    private static string FindRepoRoot()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null)
-        {
-            if (Directory.Exists(Path.Combine(dir, ".git")))
-                return dir;
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-
-        return Directory.GetCurrentDirectory();
     }
 
     private static async Task DeleteDirectoryBestEffortAsync(string path)

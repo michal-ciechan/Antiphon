@@ -29,6 +29,7 @@ public sealed class E2EArtifactPathGuardTests
 
     [Test]
     [Arguments("page.ScreenshotAsync(new PageScreenshotOptions { Path = output })")]
+    [Arguments("var options = new PageScreenshotOptions { Path = output }; page.ScreenshotAsync(options)")]
     [Arguments("File.WriteAllTextAsync(output, text)")]
     [Arguments("Directory.CreateDirectory(Path.GetDirectoryName(output))")]
     public void Scanner_rejects_docs_paths_reaching_writers(string writer)
@@ -50,6 +51,12 @@ public sealed class E2EArtifactPathGuardTests
                 var output = Path.Combine(PlaywrightFixture.ScreenshotRoot, "x.png");
                 page.ScreenshotAsync(new PageScreenshotOptions { Path = output });
                 File.WriteAllText(Path.Combine(tempRoot, "docs", "x"), text);
+                var scratch = Path.Combine(FindRepoRoot(), ".antiphon", "acceptance");
+                File.WriteAllText(Path.Combine(scratch, "docs", "x"), text);
+                File.WriteAllText(output, File.ReadAllText(input));
+            } void Other() {
+                var input = Path.Combine(PlaywrightFixture.ScreenshotRoot, "other.png");
+                page.ScreenshotAsync(new PageScreenshotOptions { Path = input });
             } }
             """;
         FindDocsWrites(source).ShouldBeEmpty();
@@ -61,20 +68,39 @@ public sealed class E2EArtifactPathGuardTests
     {
         var tree = CSharpSyntaxTree.ParseText(source);
         var syntax = tree.GetRoot();
-        var paths = new Dictionary<string, PathKind>(StringComparer.Ordinal);
+        var paths = new Dictionary<(int Scope, string Name), PathKind>();
+        (int Scope, string Name) Key(SyntaxNode node, string name) =>
+            (node.Ancestors().OfType<BaseMethodDeclarationSyntax>().FirstOrDefault()?.SpanStart ?? -1, name);
         PathKind Kind(SyntaxNode node)
         {
-            var nodes = node.DescendantNodesAndSelf().ToArray();
-            var aliases = nodes.OfType<IdentifierNameSyntax>()
-                .Select(n => paths.GetValueOrDefault(n.Identifier.ValueText)).ToArray();
-            if (aliases.Contains(PathKind.Docs)) return PathKind.Docs;
-            var repo = aliases.Contains(PathKind.Repository) || nodes.OfType<InvocationExpressionSyntax>()
-                .Any(n => n.Expression.ToString().Split('.').Last() is
-                    "FindRepoRoot" or "FindRepositoryRoot" or "RepositoryRoot");
-            if (!repo) return PathKind.Other;
-            return nodes.OfType<LiteralExpressionSyntax>().Any(n => n.Token.ValueText
-                .Replace('\\', '/').Split('/').Contains("docs", StringComparer.OrdinalIgnoreCase))
-                ? PathKind.Docs : PathKind.Repository;
+            if (node is IdentifierNameSyntax identifier)
+                return paths.GetValueOrDefault(Key(node, identifier.Identifier.ValueText),
+                    paths.GetValueOrDefault((-1, identifier.Identifier.ValueText)));
+            if (node is InvocationExpressionSyntax call)
+            {
+                var name = call.Expression.ToString().Split('.').Last();
+                if (name is "FindRepoRoot" or "FindRepositoryRoot" or "RepositoryRoot")
+                    return PathKind.Repository;
+                if (name is "Combine" or "Join")
+                {
+                    var args = call.ArgumentList.Arguments;
+                    if (args.Count > 1 && Kind(args[0].Expression) == PathKind.Repository)
+                    {
+                        var firstSegment = args.Skip(1).Select(a => a.Expression)
+                            .OfType<LiteralExpressionSyntax>().SelectMany(n => n.Token.ValueText
+                                .Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries))
+                            .FirstOrDefault();
+                        // A child such as .antiphon/acceptance is not the repository root;
+                        // its own scratch docs tree must not be mistaken for checkout docs.
+                        if (firstSegment is not null)
+                            return firstSegment.Equals("docs", StringComparison.OrdinalIgnoreCase)
+                                ? PathKind.Docs : PathKind.Other;
+                    }
+                }
+            }
+            var children = node.ChildNodes().Select(Kind).ToArray();
+            if (children.Contains(PathKind.Docs)) return PathKind.Docs;
+            return children.Contains(PathKind.Repository) ? PathKind.Repository : PathKind.Other;
         }
         bool changed;
         do
@@ -84,16 +110,18 @@ public sealed class E2EArtifactPathGuardTests
             {
                 if (variable.Initializer is null) continue;
                 var kind = Kind(variable.Initializer.Value);
-                if ((int)kind <= (int)paths.GetValueOrDefault(variable.Identifier.ValueText)) continue;
-                paths[variable.Identifier.ValueText] = kind;
+                var key = Key(variable, variable.Identifier.ValueText);
+                if ((int)kind <= (int)paths.GetValueOrDefault(key)) continue;
+                paths[key] = kind;
                 changed = true;
             }
             foreach (var assignment in syntax.DescendantNodes().OfType<AssignmentExpressionSyntax>())
             {
                 if (assignment.Left is not IdentifierNameSyntax name) continue;
                 var kind = Kind(assignment.Right);
-                if ((int)kind <= (int)paths.GetValueOrDefault(name.Identifier.ValueText)) continue;
-                paths[name.Identifier.ValueText] = kind;
+                var key = Key(name, name.Identifier.ValueText);
+                if ((int)kind <= (int)paths.GetValueOrDefault(key)) continue;
+                paths[key] = kind;
                 changed = true;
             }
         } while (changed);
@@ -101,7 +129,8 @@ public sealed class E2EArtifactPathGuardTests
             .Where(n => n.Expression is MemberAccessExpressionSyntax member &&
                 (member.Name.Identifier.ValueText is "ScreenshotAsync" or "CreateDirectory" ||
                  member.Name.Identifier.ValueText.StartsWith("WriteAll", StringComparison.Ordinal)))
-            .Where(n => Kind(n.ArgumentList) == PathKind.Docs)
+            .Where(n => n.ArgumentList.Arguments.Count > 0 &&
+                Kind(n.ArgumentList.Arguments[0].Expression) == PathKind.Docs)
             .Select(n => tree.GetLineSpan(n.Span).StartLinePosition.Line + 1).ToArray();
     }
 
