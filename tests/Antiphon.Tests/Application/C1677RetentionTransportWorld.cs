@@ -152,6 +152,8 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
         Git(path, "add", ".gitignore");
         Git(path, "commit", "-q", "-m", "ignore disposable trees");
         Git(path, "push", "-q", OriginGit, "HEAD:refs/heads/" + branch);
+        // The runner's unpushed check reads origin's remote-tracking ref, not the bare URL just pushed.
+        Git(Clone, "fetch", "origin", "refs/heads/" + branch + ":refs/remotes/origin/" + branch);
         WriteSecret(path, "bin/.env", "bin-env-secret\n");
         WriteSecret(path, "node_modules/.env", "nm-env-secret\n");
         WriteSecret(path, "dist/credentials/token", "dist-token-secret\n");

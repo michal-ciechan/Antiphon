@@ -927,6 +927,8 @@ public sealed class C1677RetentionEngineTests
         Git(m.Path, "add", ".gitignore");
         Git(m.Path, "commit", "-q", "-m", "ignore disposable trees");
         Git(m.Path, "push", "-q", s.OriginGit, "HEAD:refs/heads/" + m.Branch);
+        // rev-list counts commits absent from origin's remote-tracking refs, not the bare push URL.
+        Git(s.Repository, "fetch", "origin", "refs/heads/" + m.Branch + ":refs/remotes/origin/" + m.Branch);
         Plant(m.Path, "bin/.env", "bin-env-secret");
         Plant(m.Path, "node_modules/.env", "nm-env-secret");
         Plant(m.Path, "dist/credentials/token", "dist-token-secret");
