@@ -94,6 +94,16 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         BuildServices(); // New lease provider and graph; no tracked/in-process receipt is reused.
     }
 
+    /// <summary>Fresh task/operation state over the same immutable Git seed; migrations remain assembly-shared.</summary>
+    public async Task ResetDatabaseAsync()
+    {
+        await Services.DisposeAsync();
+        await Schema.DisposeAsync();
+        Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        BuildServices();
+        await SeedAsync();
+    }
+
     private async Task SeedAsync()
     {
         await using var db = CreateContext();
