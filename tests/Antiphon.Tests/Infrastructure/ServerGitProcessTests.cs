@@ -1,7 +1,9 @@
 using System.Diagnostics;
-using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -72,32 +74,34 @@ public sealed class ServerGitProcessTests
     }
 
     // D-2: GitTool (agent-supplied git) and the runner are deliberately excluded.
-    private static readonly (string File, int Sites)[] Roster =
+    private static readonly (string File, int Constructions, int Launches)[] Roster =
     [
-        ("server/Infrastructure/Git/LandingGit.cs", 3),
-        ("server/Infrastructure/Git/GitService.cs", 2),
-        ("server/Infrastructure/Git/WorktreeManager.cs", 1),
-        ("server/Infrastructure/Git/CardFileRepository.cs", 1),
-        ("server/Application/Services/GitWorkspaceService.cs", 2),
-        ("server/Application/Services/DelegationWorktreeService.cs", 1),
-        ("server/Application/Services/DelegationWorkspaceResolver.cs", 1),
-        ("server/Application/Services/OrchestratorWorkspaceLayout.cs", 1),
-        ("server/Application/Services/AgentTaskReplyService.cs", 1),
-        ("server/Infrastructure/ExternalChanges/ChangeDetectionService.cs", 1),
+        ("server/Infrastructure/Git/LandingGit.cs", 3, 2),
+        ("server/Infrastructure/Git/GitService.cs", 2, 2),
+        ("server/Infrastructure/Git/WorktreeManager.cs", 1, 1),
+        ("server/Infrastructure/Git/CardFileRepository.cs", 1, 1),
+        ("server/Application/Services/GitWorkspaceService.cs", 2, 2),
+        ("server/Application/Services/DelegationWorktreeService.cs", 1, 1),
+        ("server/Application/Services/DelegationWorkspaceResolver.cs", 1, 1),
+        ("server/Application/Services/OrchestratorWorkspaceLayout.cs", 1, 1),
+        ("server/Application/Services/AgentTaskReplyService.cs", 1, 1),
+        ("server/Infrastructure/ExternalChanges/ChangeDetectionService.cs", 1, 1),
     ];
 
     [Test]
     public void C1432_every_server_git_start_site_disables_auto_maintenance()
     {
-        Roster.Sum(r => r.Sites).ShouldBe(14, "thirteen launches plus the non-launching eligibility probe");
+        Roster.Sum(r => r.Constructions).ShouldBe(14, "thirteen launches plus the non-launching eligibility probe");
+        Roster.Sum(r => r.Launches).ShouldBe(13, "T-1 names thirteen server git start sites");
         var root = RepositoryRoot();
         var missing = new List<string>();
-        foreach (var (file, sites) in Roster)
+        foreach (var (file, constructions, launches) in Roster)
         {
             var text = File.ReadAllText(Path.Combine(root, file));
-            var starts = Regex.Matches(text, @"new (System\.Diagnostics\.)?ProcessStartInfo\b").Select(m => m.Index).ToList();
-            starts.Count.ShouldBe(sites, $"{file} ProcessStartInfo constructions");
-            missing.AddRange(ScanStartSites(text, file));
+            var audit = AuditStartSites(text, file);
+            audit.Constructions.ShouldBe(constructions, $"{file} ProcessStartInfo constructions");
+            audit.Launches.ShouldBe(launches, $"{file} actual launches (eligibility probes are separate)");
+            missing.AddRange(audit.Failures);
         }
         missing.ShouldBeEmpty();
     }
@@ -129,6 +133,30 @@ public sealed class ServerGitProcessTests
     }
 
     [Test]
+    [Arguments("comment")]
+    [Arguments("wrong-target")]
+    [Arguments("late")]
+    [Arguments("conditional")]
+    [Arguments("reconfigured")]
+    public void C1432_scanner_rejects_guards_that_do_not_protect_the_launch(string shape)
+    {
+        const string guard = "ServerGitProcess.DisableAutoMaintenance(start);";
+        var replacement = shape switch
+        {
+            "comment" => "/* " + guard + " */",
+            "wrong-target" => "ServerGitProcess.DisableAutoMaintenance(other);",
+            "late" => "",
+            "conditional" => "if (enabled) { " + guard + " }",
+            _ => guard + " ConfigureProcess(start);",
+        };
+        var source = ScannerSource.Replace(guard, replacement);
+        if (shape == "late") source = source.Replace("StartProcess(start);", "StartProcess(start); " + guard);
+        var failures = ScanStartSites(source, "LandingGit.cs");
+        failures.Count.ShouldBe(1);
+        failures[0].ShouldContain("ExecuteProcessAsync/start");
+    }
+
+    [Test]
     [Arguments("Process.Start(probe);")]
     [Arguments("StartProcess(probe);")]
     [Arguments("var child = new Process(); child.StartInfo = probe; child.Start();")]
@@ -151,21 +179,80 @@ public sealed class ServerGitProcessTests
         """;
 
     private static List<string> ScanStartSites(string text, string file)
+        => AuditStartSites(text, file).Failures;
+
+    private static (int Constructions, int Launches, List<string> Failures) AuditStartSites(string text, string file)
     {
         var missing = new List<string>();
-        var starts = Regex.Matches(text, @"new (System\.Diagnostics\.)?ProcessStartInfo\b").Select(m => m.Index).ToList();
-        for (var i = 0; i < starts.Count; i++)
+        var tree = CSharpSyntaxTree.ParseText(text, new CSharpParseOptions(LanguageVersion.Preview));
+        foreach (var error in tree.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error))
+            missing.Add($"{file}: invalid C# source: {error}");
+        var starts = tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>()
+            .Where(node => node.Type.ToString() is "ProcessStartInfo" or "System.Diagnostics.ProcessStartInfo").ToList();
+        var launchCount = 0;
+        foreach (var start in starts)
+        {
+            var method = start.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
+            var target = start.Parent switch
             {
-                // Each construction's body runs to the next construction (or the file end); the guard
-                // must sit between it and the process start.
-                var end = i + 1 < starts.Count ? starts[i + 1] : text.Length;
-                var body = text[starts[i]..end];
-                var guard = body.IndexOf("ServerGitProcess.DisableAutoMaintenance(", StringComparison.Ordinal);
-                var launch = Regex.Match(body, @"(Process\.Start\(|StartProcess\(|\.Start\(\))");
-                if (guard < 0 || (launch.Success && launch.Index < guard))
-                    missing.Add($"{file}:{LineOf(text, starts[i])}");
+                EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax variable } => variable.Identifier.ValueText,
+                AssignmentExpressionSyntax assignment when assignment.Right == start => assignment.Left.ToString(),
+                _ => null,
+            };
+            var site = $"{file}:{LineOf(text, start.SpanStart)} {method?.Identifier.ValueText ?? "<outside method>"}/{target ?? "<unknown target>"}";
+            if (method is null || target is null)
+            {
+                missing.Add(site + ": unrecognized construction ownership");
+                continue;
             }
-        return missing;
+            var calls = method.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();
+            if (Path.GetFileName(file) == "LandingGit.cs" && method.Identifier.ValueText == "InProcessEligible" && target == "probe")
+            {
+                // Only this exact construction is allowed to be non-launching. Forbid launches
+                // anywhere in its method, including through an aliased Process.StartInfo.
+                var escapes = method.DescendantNodes().OfType<IdentifierNameSyntax>()
+                    .Where(id => id.Identifier.ValueText == "probe")
+                    .Any(id => !(id.Parent is MemberAccessExpressionSyntax member && member.Expression == id)
+                        && !(id.Parent is ArgumentSyntax argument && argument.Parent?.Parent is InvocationExpressionSyntax call
+                            && call.Expression.ToString() == "ConfigureProcess"));
+                if (calls.Any(call => LaunchTarget(call) is not null) || escapes)
+                    missing.Add(site + ": eligibility probe must never launch or escape to a launch helper");
+                continue;
+            }
+
+            var launches = calls.Where(call => LaunchTarget(call) == target).ToList();
+            launchCount += launches.Count;
+            if (launches.Count != 1)
+                missing.Add(site + $": expected one actual launch, found {launches.Count}");
+            foreach (var launch in launches)
+            {
+                var configuration = calls.Where(call => call.Expression.ToString() == "ConfigureProcess"
+                    && call.ArgumentList.Arguments.SingleOrDefault()?.Expression.ToString() == target).ToList();
+                var guarded = calls.Any(call => call.Expression.ToString() == "ServerGitProcess.DisableAutoMaintenance"
+                    && call.ArgumentList.Arguments.SingleOrDefault()?.Expression.ToString() == target
+                    && PrecedesOnSamePath(call, launch)
+                    && configuration.All(config => PrecedesOnSamePath(config, call)));
+                if (!guarded)
+                    missing.Add(site + $": missing own auto-maintenance guard after configuration and before {launch.Expression}");
+            }
+        }
+        return (starts.Count, launchCount, missing);
+    }
+
+    private static bool PrecedesOnSamePath(InvocationExpressionSyntax before, InvocationExpressionSyntax after)
+        => before.Parent is ExpressionStatementSyntax { Parent: BlockSyntax block }
+            && before.SpanStart < after.SpanStart && after.Ancestors().Contains(block);
+
+    private static string? LaunchTarget(InvocationExpressionSyntax call)
+    {
+        if (call.Expression is IdentifierNameSyntax { Identifier.ValueText: "StartProcess" }
+            || call.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "StartProcess" })
+            return call.ArgumentList.Arguments.FirstOrDefault()?.Expression.ToString();
+        if (call.Expression is not MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Start" } member)
+            return null;
+        if (member.Expression.ToString() is "Process" or "System.Diagnostics.Process")
+            return call.ArgumentList.Arguments.FirstOrDefault()?.Expression.ToString();
+        return call.ArgumentList.Arguments.Count == 0 ? member.Expression + ".StartInfo" : null;
     }
 
     private static int LineOf(string text, int index) => text.AsSpan(0, index).Count('\n') + 1;
