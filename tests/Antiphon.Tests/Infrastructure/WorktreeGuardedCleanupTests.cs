@@ -532,8 +532,9 @@ public sealed class WorktreeGuardedCleanupTests
 
         if (pendingRecovery)
         {
+            var identity = WorktreeNoFollowDelete.DirectoryIdentity(fixture.Source);
             WorktreeSetAside.Record(h.Operation.CommonDirectory,
-                new(fixture.Source, aside, h.Operation.GitDirectory, DateTime.UtcNow));
+                new(fixture.Source, aside, h.Operation.GitDirectory, DateTime.UtcNow, identity));
             WorktreeNoFollowDelete.MoveAside(fixture.Source, aside);
             await CacheMissingTreeAsync();
             h.CleanFirst = true;
