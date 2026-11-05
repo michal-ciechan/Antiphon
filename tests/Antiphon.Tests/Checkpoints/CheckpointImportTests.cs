@@ -1,3 +1,4 @@
+using System.Reflection;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -550,6 +551,55 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         var manifest = reimported.Manifest.ShouldNotBeNull();
         manifest.Builds.Select(build => build.Id).ShouldBe(["bin-a", "bin-c"]);
         manifest.Checkpoints.Select(row => row.Build).ShouldBe(["bin-a", "bin-a", "bin-c", "bin-c"]);
+    }
+
+    [Test]
+    public void explicit_total_below_derived_is_refused_without_an_override_reason()
+    {
+        // Two estimates of 11 sum to 22. DeriveTotalMinutes(null explicit) is max(30, 2*22+10) = 54.
+        var imported = PlanTableImporter.ImportMarkdown(BudgetTable("totalTimeoutMinutes: 30"));
+        imported.ExitCode.ShouldBe(2);
+        imported.Error.ShouldContain("refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes 30 is below derived 54");
+    }
+
+    [Test]
+    public void explicit_total_below_derived_warns_when_an_override_reason_is_given()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(BudgetTable(
+            "totalTimeoutMinutes: 30\ntotalTimeoutOverrideReason: incident 20261105-013711-58df kept the 30 minute cap"));
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Warnings.Any(warning => warning.Contains(
+            "refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes 30 is below derived 54",
+            StringComparison.Ordinal)).ShouldBeTrue(string.Join(" | ", imported.Warnings));
+    }
+
+    [Test]
+    public void cli_total_below_derived_is_refused_without_an_override_reason()
+    {
+        var root = TempDir();
+        var plan = Path.Combine(root, "plan.md");
+        File.WriteAllText(plan, BudgetTable());
+        var options = new Antiphon.Checkpoints.Program.ArgSet();
+        options.Add("plan", plan);
+        options.Add("total-timeout", "30m");
+        var method = typeof(Antiphon.Checkpoints.Program).GetMethod("LoadSelection", BindingFlags.Static | BindingFlags.NonPublic);
+        method.ShouldNotBeNull();
+        var error = Should.Throw<TargetInvocationException>(() =>
+            method.Invoke(null, [options, root, null, CancellationToken.None]));
+        var validation = error.InnerException.ShouldBeOfType<ManifestValidationException>();
+        validation.Field.ShouldBe("total-timeout");
+        validation.Message.ShouldContain("refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes 30 is below derived 54");
+    }
+
+    private static string BudgetTable(string? directive = null)
+    {
+        var head = string.IsNullOrWhiteSpace(directive) ? "" : directive.Trim() + "\n\n";
+        return "### Checkpoints\n\n" + head + """
+            | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+            |---|---|---|---|---|---|---|---:|---:|
+            | CP-1 | S1 | `tests/Antiphon.Tests -> bin-ex/` | shard-a | `/*/*/ShardATests/*` | V-1 | all listed | 1 | 11 |
+            | CP-2 | S1 | CP-1 | shard-b | `/*/*/*/*[Category=Unit]` | V-1 | all listed | 1 | 11 |
+            """;
     }
 
     private static string[] FilterMethods(string? filter)

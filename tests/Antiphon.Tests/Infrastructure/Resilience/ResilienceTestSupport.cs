@@ -147,13 +147,19 @@ internal static class ResilienceTestHost
     public static void Stamp(HttpRequestMessage request, string operation, ResilienceBudget? budget = null) =>
         ResilienceRequest.Stamp(request, operation, budget);
 
-    public static async Task<T> Pump<T>(FakeTimeProvider time, Task<T> work, TimeSpan step, TimeSpan realLimit)
+    public static async Task<T> Pump<T>(
+        FakeTimeProvider time, Task<T> work, TimeSpan step, TimeSpan realLimit, DateTimeOffset? ownerDeadline = null)
     {
         var started = DateTime.UtcNow;
         while (!work.IsCompleted && DateTime.UtcNow - started < realLimit)
         {
+            // The deadline is visible so the gate witness compiles. This revision still advances after it is due.
+            var due = ownerDeadline is DateTimeOffset deadline && time.GetUtcNow() >= deadline;
             time.Advance(step);
-            await Task.Delay(1);
+            if (due)
+                await Task.Delay(1);
+            else
+                await Task.Delay(1);
         }
 
         return await work.WaitAsync(TimeSpan.FromSeconds(2));

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -143,6 +144,66 @@ public sealed class TimeoutTests : CheckpointTestBase
         result.ExitCode.ShouldBe(ExitCodes.Timeout);
         result.State.Reason.ShouldBe("execution-budget-exceeded");
         result.Rows.Select(row => row.State).OrderBy(state => state).ShouldBe(["execution-budget-exceeded", "skipped"]);
+    }
+
+    [Test]
+    public async Task unit_shards_keep_their_trx_when_the_total_budget_kills_a_later_shard()
+    {
+        var clock = new FakeTimeProvider();
+        await using var budget = new RunBudgetClock(TimeSpan.FromMinutes(30), TimeSpan.FromMinutes(60), clock);
+        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsRun, async (request, token) =>
+        {
+            var shard = Path.GetFileName(CheckpointFixtures.ResultsDirectory(request).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            CheckpointFixtures.WriteResults(
+                CheckpointFixtures.TrxFile(request), ($"{shard}Tests.KeepsTrx", "Passed"));
+            if (shard == "CP-2")
+            {
+                written.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+            }
+
+            return new DriverResult(0, "", "");
+        });
+        var manifest = new CheckpointManifest();
+        manifest.Builds.Add(new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" });
+        manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-1", "bin-a"));
+        var category = CheckpointFixtures.Row("CP-2", "bin-a");
+        category.Filter = "/*/*/*/*[Category=Unit]";
+        category.Expect = [];
+        manifest.Checkpoints.Add(category);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var run = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
+        {
+            Manifest = manifest,
+            Rows = manifest.Checkpoints,
+            RunDirectory = TempDir(),
+            WorkingDirectory = ProjectDirectories(manifest),
+            State = new RunState { RunId = "shards", StartedAt = DateTimeOffset.UtcNow },
+            Slots = new FixedSlotClient("unavailable"),
+            Commit = new string('c', 40),
+            Width = 1,
+            Budget = budget,
+        }, stop.Token);
+        try
+        {
+            await written.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromMinutes(31));
+            var result = await run.WaitAsync(TimeSpan.FromSeconds(10));
+            var first = result.Rows.Single(row => row.Id == "CP-1");
+            var second = result.Rows.Single(row => row.Id == "CP-2");
+            first.Trx.ShouldNotBeNull().Passed.ShouldBe(1);
+            second.Trx.ShouldNotBeNull().Passed.ShouldBe(1);
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await run.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
+        }
     }
 
     [Test]

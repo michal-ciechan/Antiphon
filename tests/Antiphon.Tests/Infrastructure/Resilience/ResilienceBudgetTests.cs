@@ -317,6 +317,47 @@ public class ResilienceBudgetTests
     }
 
     [Test]
+    public async Task Pump_stops_at_the_owner_deadline_when_the_continuation_is_gated()
+    {
+        var time = Clock();
+        var started = time.GetUtcNow();
+        var deadline = started.AddSeconds(5);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var openedByOvershoot = 0;
+        var work = Task.Run(async () =>
+        {
+            while (time.GetUtcNow() < deadline)
+                await Task.Yield();
+            var watcher = Task.Run(async () =>
+            {
+                var real = DateTime.UtcNow;
+                while (DateTime.UtcNow - real < TimeSpan.FromMilliseconds(2500))
+                {
+                    if (time.GetUtcNow() >= deadline.AddSeconds(2))
+                    {
+                        Interlocked.Exchange(ref openedByOvershoot, 1);
+                        release.TrySetResult();
+                        return;
+                    }
+
+                    await Task.Delay(1);
+                }
+
+                release.TrySetResult();
+            });
+            await release.Task;
+            await watcher;
+            return time.GetUtcNow() - started;
+        });
+
+        var elapsed = await ResilienceTestHost.Pump(
+            time, work, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(8), deadline);
+        elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(5));
+        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(7));
+        openedByOvershoot.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Nested_pages_share_one_deadline()
     {
         var time = Clock();
