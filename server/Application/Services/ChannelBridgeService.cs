@@ -26,7 +26,7 @@ namespace Antiphon.Server.Application.Services;
 /// Hosted only when <c>ChannelBridge:Enabled</c> is true; consume failures back off and retry so a
 /// broker outage degrades to "messages arrive late", never a crashed server.
 /// </summary>
-public sealed class ChannelBridgeService : BackgroundService
+public sealed partial class ChannelBridgeService : BackgroundService
 {
     private static readonly TimeSpan ConsumeRetryBackoff = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SessionPollInterval = TimeSpan.FromSeconds(2);
@@ -96,6 +96,7 @@ public sealed class ChannelBridgeService : BackgroundService
         using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var worker = RunWakeWorkerAsync(workerCts.Token);
         var stallCheck = RunWakeWorkerStallCheckAsync(workerCts.Token);
+        var withheld = RunWithheldIncidentLoopAsync(workerCts.Token);
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -136,6 +137,7 @@ public sealed class ChannelBridgeService : BackgroundService
             await workerCts.CancelAsync();
             await worker;
             await stallCheck;
+            await withheld;
         }
     }
 

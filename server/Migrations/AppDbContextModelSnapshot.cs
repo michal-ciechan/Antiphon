@@ -4716,6 +4716,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("EnvelopeJson")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("InputWithheldIncidentAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("LivenessHoldIncidentAt")
                         .HasColumnType("timestamp with time zone");
 

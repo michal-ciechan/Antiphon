@@ -67,8 +67,10 @@ uncertain terminal writes.
 Continuity, suspension and liveness wake refusals keep an unowned inbound pending. Once it has
 waited `ChannelBridge:AgedHoldIncidentMinutes` (default 10) from acceptance, each known reason
 raises one Critical `ChannelReplyLost` incident for that inbound; the reason-specific stamp
-survives restarts and incident-history pruning. Herdr, capacity and wake-timeout paths keep their
-existing incident policies.
+survives restarts and incident-history pruning. A queued channel withhold at least that old,
+measured from `FirstWithheldAt`, raises one Critical `ChannelReplyLost` with reason
+`ChannelInputWithheld`; its stamp is `InputWithheldIncidentAt`. Herdr, capacity and wake-timeout
+paths keep their existing incident policies.
 The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
 are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each
 pass records its completion (`GET /api/channels/wake-worker`) and logs a summary at Information when it
