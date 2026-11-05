@@ -35,11 +35,14 @@ public sealed class GhostSeatReleaseTests
     private static readonly DateTimeOffset Now = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
 
     [Test]
-    public async Task Completed_followup_resets_idle_until_ten_minutes_after_last_activity()
+    [Arguments("transcript")]
+    [Arguments("session")]
+    [Arguments("codex")]
+    public async Task Completed_followup_resets_idle_until_ten_minutes_after_last_activity(string activity)
     {
         await using var world = await World.StartAsync();
         await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
-        await world.FollowupAsync(minutesAgo: 9);
+        await world.ActivityAsync(activity, minutesAgo: 9);
 
         await world.RetireAsync();
         world.Client.SlotReleases.ShouldBeEmpty("V-1: a completed followup restarts the idle clock");
@@ -151,7 +154,7 @@ public sealed class GhostSeatReleaseTests
         world.Stopper.Killed.ShouldBeEmpty();
         (await world.SessionStatusAsync()).ShouldBe(SessionStatus.Running);
 
-        await world.AgeCompletionAsync(task.Id, minutes: 10);
+        world.Advance(TimeSpan.FromMinutes(1));
         await world.RetireAsync();
 
         world.Client.SlotReleases.Count.ShouldBe(1);
@@ -427,9 +430,9 @@ public sealed class GhostSeatReleaseTests
                 Cwd = directory,
                 Cols = 120,
                 Rows = 30,
-                CreatedAt = now,
-                StartedAt = now,
-                LastSeenAt = now,
+                CreatedAt = now.AddMinutes(-idleMinutes - 1),
+                StartedAt = now.AddMinutes(-idleMinutes - 1),
+                LastSeenAt = now.AddMinutes(-idleMinutes),
             });
             db.Agents.Add(new Agent
             {
@@ -552,20 +555,24 @@ public sealed class GhostSeatReleaseTests
             await db.SaveChangesAsync();
         }
 
-        public async Task AgeCompletionAsync(Guid taskId, int minutes)
-        {
-            await using var db = Open();
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
-            task.CompletedAt = _clock.GetUtcNow().UtcDateTime.AddMinutes(-minutes);
-            await db.SaveChangesAsync();
-        }
-
         public void Advance(TimeSpan elapsed) => _clock.Advance(elapsed);
 
-        public async Task FollowupAsync(int minutesAgo)
+        public async Task ActivityAsync(string activity, int minutesAgo)
         {
             await using var db = Open();
             var at = _clock.GetUtcNow().UtcDateTime.AddMinutes(-minutesAgo);
+            if (activity == "session")
+            {
+                await db.AgentSessions.Where(s => s.Id == SessionId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(s => s.LastSeenAt, at));
+                return;
+            }
+            if (activity == "codex")
+            {
+                await db.AgentSessions.Where(s => s.Id == SessionId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(s => s.CodexTokenCountAt, at));
+                return;
+            }
             db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = SessionId,
                 Sequence = 3, Kind = TranscriptKinds.UserPrompt, Text = "operator followup", CreatedAt = at.AddSeconds(-1) });
             db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = SessionId,
