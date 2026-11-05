@@ -160,8 +160,19 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         Git(Clone, "config", "user.name", "c0824");
     }
 
-    public static string Git(string workingDirectory, params string[] args)
+    // Scratch commands share the existing custodied runner's single start/exit/drain deadline.
+    // The default is provisional (CARD-1514/1404); command spans provide its calibration samples.
+    internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(15);
+
+    public static string Git(string workingDirectory, params string[] args) =>
+        RunGit(workingDirectory, args,
+            TUnit.Core.TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None, GitBudget);
+
+    internal static string RunGit(string workingDirectory, string[] args, CancellationToken ct, TimeSpan budget)
     {
+        using var phase = Antiphon.Tests.TestHelpers.TestTiming.BeginPhase(
+            Antiphon.Tests.TestHelpers.TestPhaseKind.ProcessWait, "scratch-git");
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.Span("git " + (args.FirstOrDefault() ?? ""));
         var psi = new ProcessStartInfo
         {
             FileName = "git",
@@ -174,13 +185,15 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
             psi.ArgumentList.Add(arg);
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
         psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr}");
-        return stdout.GetAwaiter().GetResult();
+        // No config-discovery subprocess is necessary for these fixture-owned repositories.
+        // Run still owns descendants and bounds both drains even after the direct child exits.
+        var result = Antiphon.Checkpoints.CheckpointProcessRunner.Run(
+            psi, checked((int)budget.TotalMilliseconds), git: false, cancellationToken: ct);
+        if (result.TimedOut)
+            throw new TimeoutException("scratch git exceeded its operation deadline");
+        if (result.Exit != 0)
+            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {result.Stderr}");
+        return result.Stdout;
     }
 
     public async ValueTask DisposeAsync()

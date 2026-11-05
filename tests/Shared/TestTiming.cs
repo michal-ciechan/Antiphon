@@ -778,6 +778,7 @@ public sealed class TestTimingSession : IDisposable
         "delete-tree", "queue", "start", "stop", "drop", "spawn",
         "wait", "before", "after", "child", "span",
         "seed", "prepare", "run", "pool", "cleanup",
+        "runtime-model", "scratch-git",
         "checkpoint-tool", "checkpoint-scope",
         "shape-git", "shape-judge", "shape-links", "shape-pwsh", "shape-receipt",
         "shape-repository", "shape-tool-checkpoint", "shape-user-inputs",

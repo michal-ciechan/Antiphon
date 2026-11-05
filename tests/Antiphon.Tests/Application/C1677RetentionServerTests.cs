@@ -773,6 +773,7 @@ public sealed class C1677RetentionServerTests
 
     [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task Retain_round_trip_real_runner(CancellationToken ct)
     {
         // V-39 (F-4). Producer -> client -> socket -> real runner dispatcher -> real engine -> real git.
@@ -787,6 +788,7 @@ public sealed class C1677RetentionServerTests
 
     [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task Busy_runner_retain_is_serialised(CancellationToken ct)
     {
         // V-39b. While one request is outstanding the tick sends no second; delivered, it removes once.
@@ -810,6 +812,7 @@ public sealed class C1677RetentionServerTests
     [Test]
     [Arguments("reply-lost")]
     [Arguments("crash-between-phases")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task Retain_recovery_at_each_handoff(string handoff, CancellationToken ct)
     {
         // V-39c (D-1 recovery rows). A lost reply is unknown with the path kept, then already_absent;

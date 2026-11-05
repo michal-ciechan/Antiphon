@@ -364,6 +364,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task C0824_LeaseRoundTripRealRunner()
     {
         // V-40 (D-A). Server tick -> preparer -> socket -> real runner pool: the runner ledger and the tree agree with the row.
@@ -380,6 +381,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task C0824_BusyRunnerLeaseSerialisedNotDuplicated()
     {
         // V-41 (D-A). A slow recipient: ticks while the lease is outstanding send no second request and grow nothing.
@@ -400,6 +402,7 @@ public sealed class C0824WorkspaceSlotServerTests
     [Test]
     [Arguments("reply-lost")]
     [Arguments("runner-crash-after-leasing")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task C0824_LeaseRecoveryAtEachHandoff(string handoff)
     {
         // V-42 (D-A). A lost reply or a runner crash mid-lease: the retry resends the same preparation and ends with one lease.
@@ -444,6 +447,7 @@ public sealed class C0824WorkspaceSlotServerTests
     [Test]
     [Arguments("direct")]
     [Arguments("reply-lost")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task C0824_ReleaseRoundTripRealRunner(string mode)
     {
         // V-43 (D-B). Reconciler -> socket -> real runner: the slot is Free and detached; the row keeps the slot
