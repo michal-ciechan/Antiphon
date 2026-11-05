@@ -88,13 +88,13 @@ public sealed class GhostSeatReleaseTests
         await using var world = await World.StartAsync(boundary);
         var failed = await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
         var older = await world.SeedOlderOpenOwnerAsync(failed, status);
-        boundary.OnRead = () => world.ChangeStatusAsync(older, AgentTaskStatus.Completed);
+        boundary.OnRead = () => world.ChangeStatusAsync(older, AgentTaskStatus.Succeeded);
 
         await world.RetireAsync();
 
         boundary.Calls.ShouldBe(1, "G07: the newer Failed task remains the current owner and reaches candidate loading");
         boundary.MaterializedStatuses.ShouldBe([AgentTaskStatus.Failed]);
-        (await world.StatusAsync(older)).ShouldBe(AgentTaskStatus.Completed,
+        (await world.StatusAsync(older)).ShouldBe(AgentTaskStatus.Succeeded,
             "the later open-task query cannot mask a missing busy-snapshot guard");
         world.Client.SlotReleases.ShouldBeEmpty("G07: an agent busy in this sweep's snapshot keeps its seat");
         (await world.SessionStatusAsync()).ShouldBe(SessionStatus.Running);
