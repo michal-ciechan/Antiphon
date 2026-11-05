@@ -59,6 +59,22 @@ public sealed class BuildSlotMaxHoldTests
     }
 
     [Test]
+    public void V6_Healthy_renew_mode_holder_is_reaped_at_bound_before_ttl()
+    {
+        using var f = new Fixture("1", holderLiveness: "renew");
+        var grant = f.Acquire();
+        f.Time.Advance(TimeSpan.FromMinutes(30));
+        f.Broker.Renew(grant.LeaseId!.Value).ShouldBeTrue();
+        f.Time.Advance(TimeSpan.FromMinutes(30) - TimeSpan.FromTicks(1));
+        f.Broker.Renew(grant.LeaseId.Value).ShouldBeTrue();
+        f.Broker.List().Occupied.ShouldBe(1);
+        f.Time.Advance(TimeSpan.FromTicks(1));
+        f.Broker.Renew(grant.LeaseId.Value).ShouldBeFalse();
+        f.Broker.List().Occupied.ShouldBe(0);
+        f.Messages.ShouldContain(m => m.Contains("absolute max hold 1h exceeded"));
+    }
+
+    [Test]
     [Arguments("0")]
     [Arguments("-1")]
     public void V4_Nonpositive_bound_is_rejected_by_production_options(string value)
@@ -79,12 +95,14 @@ public sealed class BuildSlotMaxHoldTests
         public List<string> Messages { get; } = [];
         public BuildSlotBroker Broker { get; }
 
-        public Fixture(string? maxHoldHours = null)
+        public Fixture(string? maxHoldHours = null, string holderLiveness = "pid")
         {
             var values = new Dictionary<string, string?>
             {
                 ["SessionRunner:BuildSlots:MaxConcurrent"] = "1",
                 ["SessionRunner:BuildSlots:MinAvailableMemoryMb"] = "0",
+                ["SessionRunner:BuildSlots:HolderLiveness"] = holderLiveness,
+                ["SessionRunner:BuildSlots:RenewGraceSeconds"] = "7200",
             };
             if (maxHoldHours is not null)
                 values["SessionRunner:BuildSlots:LeaseMaxHoldHours"] = maxHoldHours;

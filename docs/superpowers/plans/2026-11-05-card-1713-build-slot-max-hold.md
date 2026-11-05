@@ -34,6 +34,8 @@ SystemProcessLivenessProbe; fake clock crosses TTL, stays protected within 48h,
 then reaps at bound while process is still alive. Existing wrapper waits remain
 bounded; no wall-clock sleep advances lease age.
 R-1: all BuildSlot broker, settings, endpoint, metrics and end-to-end classes.
+V-6: a healthy renew-mode holder remains leased until one tick before its 1h
+bound, then renewal is refused at that bound despite the later 90m TTL.
 R-2: MechanicalPcContractTests and TestClassificationPolicy*,
 TestClassificationGuard*, SlowTestRegistryMerge*, SlowTestTripwire*.
 R-3: whole Antiphon.Tests Unit lane. Shared regression invariant: lease changes
@@ -47,8 +49,8 @@ totalTimeoutMinutes: 140
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | Red | tests/Antiphon.SessionRunner.Tests -> bin-c1713-red/ | red | `/*/*/BuildSlotMaxHoldTests*/*` | V-1..4 | 5 executed, expected assertion failures at base | 5 | 2 |
-| CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..5, R-1 | Full classes, zero failed/skipped | 40 | 3 |
+| CP-1 | Red | tests/Antiphon.SessionRunner.Tests -> bin-c1713-red/ | red | `/*/*/BuildSlotMaxHoldTests*/*` | V-1..4 | Historical base witness: 5 failures at cc166db9d3ca78af6606abf2939b8010122aa843; later V-6 is ordinary green scope | 5 | 2 |
+| CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..6, R-1 | Exactly 40 executed/passed; zero failed/skipped | 40 | 3 |
 | CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | unit | `/*/*/*/*[Category=Unit]` | R-3 | Whole Unit lane, zero failed | 3500 | 30 |
 | CP-4 | Fix | CP-3 | policy | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-2 | Full named classes, zero failed/skipped | 20 | 2 |
 
@@ -59,6 +61,7 @@ PC-2: lower default to 24; same method must fail at pre-bound protection.
 PC-3: use last renewal instead of grant age; V2_Configured_bound_uses_grant_age_and_cannot_be_extended_by_reacquire_or_renew must fail at renewal refusal.
 PC-4: remove options validation; V4_Nonpositive_bound_is_rejected_by_production_options (both variants) must fail at expected exception.
 PC-5: put bound behind TTL; V3_Bound_applies_before_ttl_and_next_acquire_admits_a_waiter must fail at waiter admission.
+PC-6: restrict the bound to pid mode; V6_Healthy_renew_mode_holder_is_reaped_at_bound_before_ttl must fail at final renewal refusal.
 All PCs pending binding/execution by SourceLanding Mutation, method scoped.
 Unbound handoff: [candidate inventory](../mutations/2026-11-05-card-1713-build-slot-max-hold-candidates.md).
 
