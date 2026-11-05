@@ -19,7 +19,7 @@ public sealed class ChangeAwareReleaseBudgetTests
             // Stop at the launch boundary: inspect the real request without a slow child.
             OwnerFactory = request => { observed = request; throw new LaunchObservedException(); },
         };
-        var cases = new ChangeAwareReleaseTests(options);
+        var cases = new ChangeAwareReleaseTests { HarnessOptions = options };
         await Should.ThrowAsync<LaunchObservedException>(() => caseName switch
         {
             "C1313_BaselineAuthority" => cases.C1313_BaselineAuthority(),
