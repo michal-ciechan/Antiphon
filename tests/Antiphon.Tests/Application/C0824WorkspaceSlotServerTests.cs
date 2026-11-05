@@ -27,7 +27,6 @@ namespace Antiphon.Tests.Application;
 /// (slot, generation), and the release reconciler needs every D-10 condition.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
 // CARD-1660 (R5): each test builds its own rig, and the class runs its 24 cases in parallel. Measured on
 // server2 on 2026-11-02 at 30cb5279b: per-test p95 12.6-15.8 s alone (load 17-28), 17.2 s with 16 busy
 // threads beside it (load 37). The budget is 2x that loaded p95; it was 20 s and went red under load.
@@ -53,6 +52,7 @@ public sealed class C0824WorkspaceSlotServerTests
     private const string PreSlotDefaultHandoffDigest = "5DCDE154371E04DE1AD48AB39D1A7214CAF4E1D9677A6672B56CB45A85460023";
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public void C0824_DefaultHandoffDigestIsThePreSlotDigest()
     {
         // V-12 (review f4c293bc D-2). A handoff action stored before the land keeps its digest: a default request omits
@@ -69,6 +69,7 @@ public sealed class C0824WorkspaceSlotServerTests
     [Test]
     [Arguments("flag-off")]
     [Arguments("runner-lacks-WorkspaceSlotV1")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_FlagOffMirrorRequestUnchanged(string mode)
     {
         // V-12. Either half missing keeps the legacy task-<id> request byte-identical and stores the runner's path.
@@ -92,6 +93,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_ColdWorkspacePersistsAndLeaseCarriesCold()
     {
         // V-37a. A slot lease carries slot=true and the task's WorkspaceColdReset as cold; the reply's slot is stored.
@@ -123,6 +125,7 @@ public sealed class C0824WorkspaceSlotServerTests
     [Test]
     [Arguments("overflow_cap")]
     [Arguments("disk_budget")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_SlotUnavailableHoldsWithoutFallback(string bound)
     {
         // V-13. The runner's pool bound holds the task Queued with that reason and never falls back to task-<id>.
@@ -151,6 +154,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_ReleasedTaskCoordinatesNotAmbiguous()
     {
         // V-10a. Ownership of a reused slot path compares (slot, generation), never the path string.
@@ -175,6 +179,7 @@ public sealed class C0824WorkspaceSlotServerTests
     [Test]
     [Arguments("slot-managed-refusal")]
     [Arguments("slot-bound-no-request")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_LegacyRemovalTreatsSlotManagedAsRemoved(string mode)
     {
         // V-10b. The shared removal primitive (retirement and drain re-arm both call it) returns no residue for a slot.
@@ -212,6 +217,7 @@ public sealed class C0824WorkspaceSlotServerTests
     [Arguments("sync-debt-held")]
     [Arguments("live-follow-up")]
     [Arguments("all-hold")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_ReleaseReconcilerRequiresAllConditions(string mode)
     {
         // V-55 (D-10). Only a terminal task with a free seat, no Pending/Held sync debt and no live follow-up is released.
@@ -277,6 +283,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_ReconcilerBoundsSlotUnknownRetries()
     {
         // D-3 (review 3a354688). A runner that answers slot_unknown (the slot is on another runner) is asked at most
@@ -306,6 +313,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public void C0824_ContinueResumeRefusedForSlotCwd()
     {
         // V-39 (Q-1 default). --continue resumes the newest conversation in the cwd: in a shared slot that is another task's.
@@ -322,6 +330,7 @@ public sealed class C0824WorkspaceSlotServerTests
     }
 
     [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task C0824_OperatorColdResetRouteRecordsAndForwards()
     {
         // V-37b (pre-rc cold reset). The operator route needs the token and forwards the slot list (order and set)
