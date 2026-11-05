@@ -24,6 +24,28 @@ public class LandingGit : ILandingGit
     /// Past the bound the journal stays and the pool thread is released.</summary>
     internal static readonly TimeSpan AbandonedRootExitBound = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// CARD-0824 S4a round 3 Review B-1: a caller's live switch for one call, read after this class's own last await
+    /// before a destructive step (a mutating child's start, the administrative entry's move). A non-null answer
+    /// refuses that step before anything changes. Ambient so every override that calls base still reaches it.
+    /// </summary>
+    private static readonly AsyncLocal<Func<CancellationToken, Task<string?>>?> DestructiveGate = new();
+
+    internal static IDisposable GateDestructiveStep(Func<CancellationToken, Task<string?>> gate)
+    {
+        var previous = DestructiveGate.Value;
+        DestructiveGate.Value = gate;
+        return new GateScope(previous);
+    }
+
+    private sealed class GateScope(Func<CancellationToken, Task<string?>>? previous) : IDisposable
+    {
+        public void Dispose() => DestructiveGate.Value = previous;
+    }
+
+    private static Task<string?> DestructiveRefusalAsync(CancellationToken ct) =>
+        DestructiveGate.Value is { } gate ? gate(ct) : Task.FromResult<string?>(null);
+
     private readonly CardFileBoardLookup? _cardFiles;
 
     public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
@@ -209,6 +231,15 @@ public class LandingGit : ILandingGit
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
+        // CARD-0824 S4a round 3 Review B-1: writing the journal awaits. A caller's switch is read here, last before the
+        // child starts; a refusal starts nothing and clears the unstarted journal.
+        if (journal is not null)
+        {
+            string? refused;
+            try { refused = await DestructiveRefusalAsync(ct); }
+            catch { journal.NotStarted(); throw; }
+            if (refused is not null) { journal.NotStarted(); return new(1, "", refused); }
+        }
         using var owned = journal is null ? null : CreateOwnedMarker(WriteChildLog);
         owned?.Apply(start);
         Process? child;
@@ -775,6 +806,9 @@ public class LandingGit : ILandingGit
         { return new(1, "", "registration_entry_missing"); }
         if (recorded.Length == 0 || !PathsEqual(recorded, Path.Combine(worktreePath, ".git")))
             return new(1, "", "registration_entry_mismatch");
+        // CARD-0824 S4a round 3 Review B-1: the reads above await. A caller's switch is read here; nothing awaits
+        // between this read and the move.
+        if (await DestructiveRefusalAsync(ct) is { } refused) return new(1, "", refused);
         if (File.Exists(Path.Combine(admin, "locked"))) return new(1, "", "registration_locked");
         if (Exists(worktreePath)) return new(1, "", "worktree_path_recreated");
         var retired = WorktreeSetAside.RetiredAdminPath(common, worktreePath);
