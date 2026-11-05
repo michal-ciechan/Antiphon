@@ -10,12 +10,14 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
+using System.Data.Common;
 
 namespace Antiphon.Tests.Application;
 
@@ -31,6 +33,105 @@ namespace Antiphon.Tests.Application;
 public sealed class GhostSeatReleaseTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+
+    [Test]
+    public async Task Completed_followup_resets_idle_until_ten_minutes_after_last_activity()
+    {
+        await using var world = await World.StartAsync();
+        await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+        await world.FollowupAsync(minutesAgo: 9);
+
+        await world.RetireAsync();
+        world.Client.SlotReleases.ShouldBeEmpty("V-1: a completed followup restarts the idle clock");
+        world.Advance(TimeSpan.FromMinutes(1));
+        await world.RetireAsync();
+        world.Client.SlotReleases.Count.ShouldBe(1, "V-1: release at the activity idle bound");
+        world.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("dirty")]
+    [Arguments("unpushed")]
+    [Arguments("unknown")]
+    public async Task Mirror_changed_after_candidate_read_keeps_the_seat(string shape)
+    {
+        var boundary = new CandidateReadBoundary();
+        await using var world = await World.StartAsync(boundary);
+        var task = await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+        boundary.OnRead = () => world.ChangeMirrorAsync(task.Id, shape switch
+        {
+            "dirty" => Mirror("equal", true),
+            "unpushed" => Mirror("descends", false),
+            _ => null,
+        });
+
+        await world.RetireAsync();
+
+        boundary.Calls.ShouldBe(1, "V-2: change the record after the candidate snapshot was taken");
+        world.Client.SlotReleases.ShouldBeEmpty("V-2: stale clean evidence cannot authorize release");
+        (await world.SessionStatusAsync()).ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task One_sweep_releases_at_most_five_seats_and_the_next_sweep_drains_the_remainder()
+    {
+        await using var world = await World.StartAsync();
+        for (var i = 0; i < 7; i++)
+            await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+
+        await world.RetireAsync();
+        world.Client.SlotReleases.Count.ShouldBe(5, "V-3: runner API calls are bounded per sweep");
+        await world.RetireAsync();
+        world.Client.SlotReleases.Count.ShouldBe(7, "V-3: deferred seats remain eligible next sweep");
+        world.Client.SlotReleases.Select(r => r.SessionId).Distinct().Count().ShouldBe(7);
+        world.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Held_attention_describes_conditional_release_and_preservation()
+    {
+        await using var world = await World.StartAsync();
+        await world.SeedFailedAsync(9, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+
+        var row = (await world.HeldAsync()).ShouldHaveSingleItem();
+        row.Evidence.ShouldContain("10 idle minutes", "V-4: describe the actual release bound");
+        row.Evidence.ShouldContain("dirty, unpushed or unknown");
+        row.Evidence.ShouldNotContain("never killed");
+        row.Evidence.ShouldContain("mirror=clean-equal");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Automatic_coordinator_owns_both_hold_and_release_without_force_fallback(bool held)
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Failed);
+        await f.EditAsync((task, agent) =>
+        {
+            task.CompletedAt = f.Now.AddMinutes(-30);
+            task.CompletionProgressEvidenceJson = Mirror("equal", false);
+            agent.PoolIdleSince = f.Now.AddMinutes(-30);
+        });
+        if (held)
+            f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Working, Token = null };
+        using (var scope = f.Harness.Provider.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>()
+                .Value.AutomaticEnabled.ShouldBeTrue();
+            scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+                .OwnsAutomaticPath(await f.TaskAsync()).ShouldBeTrue();
+        }
+
+        await f.SweepAsync(janitor: true);
+        await f.SweepAsync(janitor: true);
+
+        f.Wire.ForceCommands.ShouldBe(0, "V-5: the ghost janitor never falls through the coordinator");
+        f.Wire.ConditionalCommands.ShouldBe(held ? 0 : 1, "V-5: no gap and no double release");
+        f.RecordedStops.Killed.ShouldBeEmpty();
+        await using var db = f.Db();
+        var release = await db.RunnerSeatReleases.SingleAsync();
+        release.ReasonCode.ShouldBe(held ? "Working" : nameof(TerminalSeatReleaseOutcome.Released));
+    }
 
     [Test]
     public async Task Clean_equal_failed_seat_is_released_after_the_idle_bound()
@@ -216,7 +317,7 @@ public sealed class GhostSeatReleaseTests
             Stopper = stopper;
         }
 
-        public static async Task<World> StartAsync()
+        public static async Task<World> StartAsync(CandidateReadBoundary? boundary = null)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new FakeTimeProvider(Now);
@@ -224,7 +325,11 @@ public sealed class GhostSeatReleaseTests
             var stopper = new RecordingSessionStopper { StopsSessionsIn = schema.ConnectionString };
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
+            services.AddDbContext<AppDbContext>(o =>
+            {
+                o.UseNpgsql(schema.ConnectionString);
+                if (boundary is not null) o.AddInterceptors(boundary);
+            });
             services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -449,6 +554,26 @@ public sealed class GhostSeatReleaseTests
             await db.SaveChangesAsync();
         }
 
+        public void Advance(TimeSpan elapsed) => _clock.Advance(elapsed);
+
+        public async Task FollowupAsync(int minutesAgo)
+        {
+            await using var db = Open();
+            var at = _clock.GetUtcNow().UtcDateTime.AddMinutes(-minutesAgo);
+            db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = SessionId,
+                Sequence = 3, Kind = TranscriptKinds.UserPrompt, Text = "operator followup", CreatedAt = at.AddSeconds(-1) });
+            db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = SessionId,
+                Sequence = 4, Kind = TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = at });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task ChangeMirrorAsync(Guid taskId, string? evidence)
+        {
+            await using var db = Open();
+            await db.AgentTasks.Where(t => t.Id == taskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.CompletionProgressEvidenceJson, evidence));
+        }
+
         public async Task<SessionStatus> SessionStatusAsync()
         {
             await using var db = Open();
@@ -495,6 +620,26 @@ public sealed class GhostSeatReleaseTests
         }
 
         private AppDbContext Open() => new(TestDbFixture.CreateDbContextOptions(_connectionString));
+    }
+
+    // A real database read returns the old candidate snapshot while another writer commits
+    // new settlement evidence. No production hook or timing race is needed for this witness.
+    private sealed class CandidateReadBoundary : DbCommandInterceptor
+    {
+        public Func<Task>? OnRead { get; set; }
+        public int Calls { get; private set; }
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            if (OnRead is { } callback && command.Parameters.Cast<DbParameter>()
+                .Any(p => p.ParameterName.Contains("ownerIds", StringComparison.Ordinal)))
+            {
+                OnRead = null;
+                Calls++;
+                await callback();
+            }
+            return result;
+        }
     }
 
     private sealed class SlotDirectory(FakeSessionRunnerClient client) : ISessionRunnerDirectory
