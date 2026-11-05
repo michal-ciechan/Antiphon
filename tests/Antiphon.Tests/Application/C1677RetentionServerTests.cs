@@ -875,7 +875,7 @@ public sealed class C1677RetentionServerTests
     }
 
     [NativeLinuxOnly("The real retention runtime uses ProcWorkspaceSlotProcessProbe and scratch Git repositories")]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     [Test]
     public async Task Ignored_nested_repository_secret_survives_real_transport(CancellationToken ct)
     {
