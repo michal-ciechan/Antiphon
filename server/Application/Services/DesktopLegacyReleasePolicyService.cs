@@ -295,7 +295,9 @@ public sealed class DesktopLegacyReleasePolicyService
             Precheck? check = null;
             if (release is null || release.CommandIntentId is null)
             {
-                check = await PrecheckAsync(fresh, ct);
+                // Keep the classified revision across both rereads. A fresh eligible row is not
+                // permission to release a revision that this tick never classified.
+                check = await PrecheckAsync(candidate, ct);
                 if (check.Reason is not null)
                 {
                     _logger.LogInformation(
@@ -325,6 +327,11 @@ public sealed class DesktopLegacyReleasePolicyService
             if (DesktopWorkspaceCleanup.Reason(fresh) is { } desktopReason)
             {
                 await HoldAsync(run, rowCursors, taskCursors, fresh, desktopReason, settled: false, settings, preview, ct);
+                return new(false, false, false);
+            }
+            if (fresh.ConcurrencyToken != candidate.ConcurrencyToken)
+            {
+                await HoldAsync(run, rowCursors, taskCursors, fresh, "task_changed", settled: false, settings, preview, ct);
                 return new(false, false, false);
             }
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-action", fresh.Id, ct);
@@ -436,8 +443,9 @@ public sealed class DesktopLegacyReleasePolicyService
     private async Task<Precheck> PrecheckAsync(AgentTask task, CancellationToken ct)
     {
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-precheck", task.Id, ct);
-        task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
-        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason) return new(desktopReason);
+        var current = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        if (DesktopWorkspaceCleanup.Reason(current) is { } desktopReason) return new(desktopReason);
+        if (current.ConcurrencyToken != task.ConcurrencyToken) return new("task_changed");
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-precheck", task.Id, ct);
         var path = task.WorktreePath!;
         try

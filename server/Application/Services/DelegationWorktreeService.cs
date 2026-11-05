@@ -665,6 +665,8 @@ public sealed class DelegationWorktreeService
 
     private async Task<MergeOutcome> TryMergeBackCoreAsync(AgentTask task, bool cleanupOnly, CancellationToken ct)
     {
+        if (DesktopWorkspaceCleanup.Reason(task) is { } desktopReason)
+            return new MergeOutcome(MergeResult.LeftForHuman, [], desktopReason);
         if (task.Role == Domain.Enums.AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             return new MergeOutcome(MergeResult.LeftForHuman, [], "Verification snapshot retained; no autosave or publication.");
         if (task.WorktreePath is not { } worktree || task.WorktreeBranch is not { } branch
