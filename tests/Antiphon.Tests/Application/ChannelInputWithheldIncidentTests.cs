@@ -523,7 +523,7 @@ public sealed class ChannelInputWithheldIncidentTests
             clock, NullLogger<AttentionService>.Instance);
         var rows = (await attention.GetAsync(ct, includeProgressProbe: false)).Items
             .Where(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == h.AgentId
-                && i.Evidence.Contains("ChannelInputWithheld", StringComparison.Ordinal))
+                && i.Evidence.Contains(native, StringComparison.Ordinal))
             .ToList();
         rows.Count.ShouldBe(1);
         rows[0].Evidence.ShouldContain(native);
@@ -551,7 +551,7 @@ public sealed class ChannelInputWithheldIncidentTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
-        await using var h = await OpenProducerAsync(schema.ConnectionString, clock);
+        await using var h = await OpenProducerAsync(schema.ConnectionString, TimeProvider.System);
         await h.InsertStoreVisibleTurnAsync("earlier prompt", "earlier reply");
         h.Adapter.DialogAdopted = false;
         var floor = 0L;
@@ -570,7 +570,7 @@ public sealed class ChannelInputWithheldIncidentTests
                 Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
                 null, null, null, null, null);
             h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], sequence));
-            await h.Runtime.SyncTranscriptAsync(h.SessionId, ct);
+            await h.Runtime.CatchUpTranscriptAsync(h.SessionId, ct);
             receipt.TrySetResult(submitted);
         };
         var chat = await h.BindChannelAsync();

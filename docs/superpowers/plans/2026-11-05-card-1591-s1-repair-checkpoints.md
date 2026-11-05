@@ -9,7 +9,7 @@ Invariant: historical withholds cannot page while a recipient works or has a dur
 hold, or after another hold incident for that inbound. An incident and its stamp
 commit together under nonblocking queue/inbound row locks, fencing queue disposition.
 No scan path writes session input or waits for the session semaphore. A pass caps
-its incidents at 64 and SQL at a short statement/lock deadline, using a partial aged
+its inspected queue heads and incidents at 64, and SQL at a short statement/lock deadline, using a partial aged
 withhold index. Non-shutdown cancellation logs a failed pass and retries.
 
 The original no-index prescription is superseded for B4. Add only the aged pending
@@ -26,10 +26,17 @@ Keep host/startup/body/teardown and per-test durations; finer phases unknown if 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1591-repair/` | withheld-incident | `/*/*/(ChannelInputWithheldIncidentTests*)\|(DialogDeliveryAdmissionTests*)/*` | V-1, V-2, V-3, V-4, V-5, R-1, B2-B6 | every case, 0 failed/skipped at fixed source | 23 | 11 | true | `TEMP=/tmp` |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1591-repair/` | withheld-incident | `/*/*/(ChannelInputWithheldIncidentTests*)\|(DialogDeliveryAdmissionTests*)/*` | V-1, V-2, V-3, V-4, V-5, R-1, B2-B6 | every case, 0 failed/skipped at fixed source | 24 | 11 | true | `TEMP=/tmp` |
 | CP-3 | S1 | CP-1 | channel-regressions | `/*/*/(ChannelInbound*)\|(ChannelBridge*)/*` | inbound acceptance, wake recovery, queue receipt, busy recipients | every case, 0 failed/skipped | 88 | 6 | true | `TEMP=/tmp` |
 | CP-4 | S1 | CP-1 | migration-model | `/*/*/(AppDbContextModelTests*)\|(TestSchemaSnapshotTests*)\|(TestMigrationFingerprintTests*)\|(ChannelOutboundMigrationTests*)/*` | model/snapshot parity, schema clone, migration contracts | every case, 0 failed/skipped | 10 | 3 | true | `TEMP=/tmp` |
 | CP-5 | S1 | CP-1 | classification-guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | B1, registry integrity | every case, 0 failed/skipped | 47 | 3 | true | `TEMP=/tmp` |
 
 All M1..M5 and review-proposed controls remain pending for method-scoped
 SourceLanding Mutation. Ordinary pre-fix witnesses are not Mutation certification.
+
+Pre-fix native witnesses at ef3dea0c2252dd2307a0cacd5317946981b4bff7: 70 executed,
+46 passed, 24 failed. Nine registry failures; 13 B2/B3/B4/B6 behavior failures;
+one invalid Attention reason-text premise and one frozen-clock/queue-reentry delivered
+fixture timeout. The latter two are witness repairs, not product-defect proof.
+The first cold checkpoint hit its unchanged 12m build deadline with zero tests.
+A separately leased native build passed in 356s and its test run took 231s.
