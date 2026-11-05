@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Runtime.InteropServices;
 using System.Text;
 using Antiphon.Checkpoints;
@@ -16,6 +17,7 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class TempRootSweepAnchoredDeleteTests
 {
     [Test]
+    [NativeLinuxOnly("the sweep parent-swap witness uses a Linux directory symlink")]
     public void swapped_parent_symlink_cannot_redirect_temp_root_sweep()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("the sweep parent-swap witness uses a Linux directory symlink");
@@ -44,6 +46,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     // Characterization of preserved reclaim. Base already removed a FIFO or socket
     // (fifo_or_socket_root_is_reclaimed). This is not a red witness of the anchored walk.
     [Test]
+    [NativeLinuxOnly("FIFO and Unix socket entries are Linux directory entries")]
     public void fifo_and_socket_inside_the_root_are_removed()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("FIFO and Unix socket entries are Linux directory entries");
@@ -67,6 +70,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     }
 
     [Test]
+    [NativeLinuxOnly("requires a Linux symlink")]
     public void symlink_inside_the_root_is_unlinked_without_following()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("requires a Linux symlink");
@@ -89,6 +93,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     }
 
     [Test]
+    [NativeLinuxOnly("a backslash is a legal Linux file name")]
     public void backslash_name_inside_the_root_is_reclaimed_with_the_root()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("a backslash is a legal Linux file name");
@@ -112,6 +117,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     }
 
     [Test]
+    [NativeLinuxOnly("the hard-link truncate witness uses Linux link(2)")]
     public void hard_link_outside_the_root_is_not_truncated()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("the hard-link truncate witness uses Linux link(2)");
@@ -148,6 +154,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     // A real mount needs root. The listed device is rewritten so the walk stops
     // before MarkDeleting and the marker stays with the root.
     [Test]
+    [NativeLinuxOnly("the mount-boundary witness needs a non-zero Linux device id")]
     public void mounted_child_keeps_the_root_and_its_marker()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("the mount-boundary witness needs a non-zero Linux device id");
@@ -172,6 +179,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     // The leaf is removed after it was listed and before unlinkat. Base File.Delete
     // treated that race as success and still reclaimed the root.
     [Test]
+    [NativeLinuxOnly("the vanish witness uses Linux ENOENT from unlinkat")]
     public void a_leaf_that_vanishes_mid_delete_still_reclaims_the_root()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("the vanish witness uses Linux ENOENT from unlinkat");
@@ -192,6 +200,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     // A directory symlink to a mode-000 child must not throw out of SweepOnce.
     // The bad root stays, with its marker, and the other root is still reclaimed.
     [Test]
+    [NativeLinuxOnly("the unreadable directory-symlink witness uses Linux mode bits")]
     public void directory_symlink_to_an_unreadable_child_does_not_abort_other_roots()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("the unreadable directory-symlink witness uses Linux mode bits");
@@ -227,6 +236,7 @@ public sealed class TempRootSweepAnchoredDeleteTests
     // The outside tree is not the root's content. Listing it would see tool/ and
     // skip as nested-custody-missing, or would change these bytes.
     [Test]
+    [NativeLinuxOnly("requires a Linux directory symlink")]
     public void directory_symlink_does_not_read_or_modify_the_outside_tree()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("requires a Linux directory symlink");

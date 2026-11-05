@@ -42,8 +42,9 @@ public sealed record InspectionReport(IReadOnlyList<WitnessDiagnostic> Diagnosti
 public static class NativeLinuxPolicyWitness
 {
     public const string AttributeSha256 = "31ca5740f4127fe7b3b0fc18639e75262cdb3ae49c3bc545e62a130b99d68ac4";
-    // Includes CARD-1614's Windows tracked-linger method on the legacy HostCustodyTests row.
-    public const string LegacyExclusionDigest = "8397984d90368a0ef1cbc5991610ae50328165b40ac2503559ae0562d72b554d";
+    // Includes CARD-1614 tracked-linger and the separately commissioned CARD-1545 parity / CARD-1605 load obligations.
+    // Exact two-record addition: docs/superpowers/plans/2026-11-05-rc-coverage-admission-repair.md.
+    public const string LegacyExclusionDigest = "be806b71aa6cdf11edc0961cb1babd782034c0556e5f2e985dbbe8f2f7d7592f";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";

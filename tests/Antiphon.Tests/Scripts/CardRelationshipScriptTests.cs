@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Tests.Application;
@@ -185,6 +186,7 @@ public sealed class CardRelationshipScriptTests
     // whitespace collapse no longer contains the server phrase. Linux pipes report
     // width 80 and stay green without this pty.
     [Test]
+    [NativeLinuxOnly("The 120-column concise-view witness needs a Linux pty.")]
     public async Task Block_404_detail_stays_intact_when_concise_view_wraps_at_120_columns()
     {
         if (!OperatingSystem.IsLinux())

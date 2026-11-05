@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using SkipTestException = TUnit.Core.Exceptions.SkipTestException;
@@ -17,6 +18,7 @@ public sealed class Card1685LinuxCustodyRunnerTests
     /// t=0 would then kill and throw again.
     /// </summary>
     [Test]
+    [NativeLinuxOnly("The Linux custody containment runs on Linux.")]
     public async Task C1685_Direct_throwing_termination_still_backs_off()
     {
         if (!OperatingSystem.IsLinux())

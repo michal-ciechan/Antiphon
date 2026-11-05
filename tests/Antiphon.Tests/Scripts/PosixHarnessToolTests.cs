@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using Antiphon.Tests.Checkpoints;
 using Antiphon.Tests.TestHelpers;
@@ -96,6 +97,7 @@ public sealed class PosixHarnessToolTests
     }
 
     [Test]
+    [NativeLinuxOnly("The Windows-shaped capture resolver witness executes a planted sh.exe script. Qualification_timing_completes_without_mkfifo_chmod_or_ln_on_path runs the production case on Windows through the same resolver (NativeLinuxGate, docs/testing-and-build.md).")]
     public void Capture_identity_resolves_git_sh_instead_of_hard_coded_bin_sh()
     {
         NativeLinuxGate.Require(
@@ -122,6 +124,7 @@ public sealed class PosixHarnessToolTests
     }
 
     [Test]
+    [NativeLinuxOnly("CARD-1407 window fakes are POSIX sh scripts; cat, grep and tr are external. Windows skips these cases because an extensionless sh fake is not a Windows executable.")]
     public void Cutover_window_completes_without_cat_grep_or_tr_on_path()
     {
         NativeLinuxGate.Require(

@@ -91,6 +91,13 @@ foreach ($obligation in $manual) {
     if ($rows.Count -ne 1 -or @($rows[0].methods).Count -ne 1 -or $rows[0].methods[0] -cne $obligation.m -or $rows[0].PSObject.Properties.Name -contains 'platform') { $manualWrong += $obligation.c }
 }
 Assert-C487 ($manualWrong.Count -eq 0) 'CoverageAdmission separate-method-workflows' ($manualWrong -join ',')
+# Resolve each suite/platform once for this run, as the real planner does.
+$exclusions = @{}
+foreach ($suite in @($nodes.s | Sort-Object -Unique)) {
+    foreach ($platform in @('windows','linux')) {
+        $exclusions["$suite|$platform"] = @(Get-NightlyProfileExclusions $policy.Object 'rc' $suite -Platform $platform)
+    }
+}
 $missing = @(); $wrong = @(); $terminal = @(); $portable = @(); $linuxMissing = @()
 foreach ($expected in @($inventory + $manual)) {
     if (@($nodes | Where-Object { $_.s -ceq $expected.s -and $_.c -ceq $expected.c -and $_.m -ceq $expected.m }).Count -ne 1) { $missing += ($expected.c+'.'+$expected.m) }
@@ -98,7 +105,7 @@ foreach ($expected in @($inventory + $manual)) {
 foreach ($node in $nodes) {
     $native = @($inventory | Where-Object { $_.s -ceq $node.s -and $_.c -ceq $node.c -and $_.m -ceq $node.m })
     $workflow = @($manual | Where-Object { $_.c -ceq $node.c -and $_.m -ceq $node.m })
-    $windowsRows = @(Get-NightlyProfileExclusions $policy.Object 'rc' $node.s -Platform windows)
+    $windowsRows = $exclusions[$node.s + "|windows"]
     $d = Get-NightlyDiscoveryDisposition $node $windowsRows -ProfileAware
     $wantExcluded = ($native.Count -gt 0 -or $workflow.Count -gt 0)
     if (($d.Disposition -ceq 'excluded') -ne $wantExcluded) { $wrong += $node.Uid }
@@ -109,7 +116,7 @@ foreach ($node in $nodes) {
     if ($d.Disposition -ceq 'required') {
         $terminal += [pscustomobject]@{ Identity=$node.Uid; Outcome=$(if ($wantExcluded) { 'NotExecuted' } else { 'Passed' }) }
     }
-    $linuxRows = @(Get-NightlyProfileExclusions $policy.Object 'rc' $node.s -Platform linux)
+    $linuxRows = $exclusions[$node.s + "|linux"]
     $ld = Get-NightlyDiscoveryDisposition $node $linuxRows -ProfileAware
     if (($ld.Disposition -ceq 'excluded') -ne ($workflow.Count -gt 0)) { $linuxMissing += $node.Uid }
 }

@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -436,9 +437,16 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     /// untracked directory; the Windows long-path shape is CP-25's N-2b, whose status this pins to core.longpaths.
     /// </summary>
     [Test]
-    [Arguments("unreadable-directory")]
     [Arguments("long-path-config")]
-    public async Task Status_that_cannot_read_the_whole_tree_holds_it(string shape)
+    public Task Status_that_cannot_read_the_whole_tree_holds_it(string shape) =>
+        AssertStatusReadHoldsTree(shape);
+
+    [Test]
+    [NativeLinuxOnly("POSIX permissions; the Windows long-path shape is the native N-2b case")]
+    public Task Status_that_cannot_read_a_posix_directory_holds_it() =>
+        AssertStatusReadHoldsTree("unreadable-directory");
+
+    private async Task AssertStatusReadHoldsTree(string shape)
     {
         if (shape == "unreadable-directory" && OperatingSystem.IsWindows())
             Skip.Test("POSIX permissions; the Windows long-path shape is the native N-2b case");

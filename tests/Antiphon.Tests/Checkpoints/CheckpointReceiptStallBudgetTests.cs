@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
@@ -52,6 +53,7 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    [NativeLinuxOnly("Linux scheduling witness; no native Windows qualification")]
     public async Task healthy_receipts_complete_with_every_pool_worker_occupied(bool embedded)
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("Linux scheduling witness; no native Windows qualification");

@@ -1,3 +1,4 @@
+using Antiphon.TestSupport;
 using System.Diagnostics;
 using System.Text;
 using Antiphon.Server.Application.Services;
@@ -54,6 +55,7 @@ public class AgentReportStoreBudgetTests
     }
 
     [Test]
+    [NativeLinuxOnly("CARD-1605 delayed executable requires native Linux")]
     public async Task Slow_git_response_does_not_spend_write_budget()
     {
         NativeLinuxGate.Require("CARD-1605 delayed executable requires native Linux");
