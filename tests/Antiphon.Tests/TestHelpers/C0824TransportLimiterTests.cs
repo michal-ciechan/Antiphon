@@ -9,6 +9,15 @@ namespace Antiphon.Tests.TestHelpers;
 public sealed class C0824TransportLimiterTests
 {
     [Test]
+    public void Scripted_rig_classes_share_bounded_admission()
+    {
+        typeof(C0824WorkspaceSlotServerTests)
+            .GetCustomAttribute<ParallelLimiterAttribute<WorkspaceRigConcurrencyLimit>>().ShouldNotBeNull();
+        typeof(C1677RetentionServerTests)
+            .GetCustomAttribute<ParallelLimiterAttribute<WorkspaceRigConcurrencyLimit>>().ShouldNotBeNull();
+    }
+
+    [Test]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_LeaseRoundTripRealRunner))]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_BusyRunnerLeaseSerialisedNotDuplicated))]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_LeaseRecoveryAtEachHandoff))]
