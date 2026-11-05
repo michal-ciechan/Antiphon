@@ -60,6 +60,7 @@ PC-3: use last renewal instead of grant age; V2_Configured_bound_uses_grant_age_
 PC-4: remove options validation; V4_Nonpositive_bound_is_rejected_by_production_options (both variants) must fail at expected exception.
 PC-5: put bound behind TTL; V3_Bound_applies_before_ttl_and_next_acquire_admits_a_waiter must fail at waiter admission.
 All PCs pending binding/execution by SourceLanding Mutation, method scoped.
+Unbound handoff: [candidate inventory](../mutations/2026-11-05-card-1713-build-slot-max-hold-candidates.md).
 
 ## OS and startup
 
