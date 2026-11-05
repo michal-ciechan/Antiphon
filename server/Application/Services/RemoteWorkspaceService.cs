@@ -45,6 +45,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly WorkspaceSlotRoleGate _roleGate;
     private readonly TaskWorkspaceContextResolver? _workspaceContexts;
     internal Action? BeforeRemoveMirrorCommand { get; set; }
+    internal Func<string, CancellationToken, Task>? SyncBoundaryAsync { get; set; }
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
