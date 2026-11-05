@@ -38,9 +38,19 @@ public sealed class TaskWorktreeRetirementService
     private readonly ILogger<TaskWorktreeRetirementService> _logger;
     private readonly RemoteWorkspaceService? _remoteWorkspace;
     private readonly IOptionsMonitor<RunnerWorktreeRetentionSettings>? _retention;
+    private readonly IOptionsMonitor<WorktreeLegacyReleaseSettings>? _legacyRelease;
 
     /// <summary>CARD-0824 S4a S-3: the caller identity of a release the desktop legacy policy filed.</summary>
     public const string SystemCallerIdentity = "system:desktop-legacy-policy";
+
+    /// <summary>CARD-1717 D-1. <c>WorktreeLegacyRelease:Enabled</c> is off, or the settings cannot be read.</summary>
+    public const string LegacyReleaseDisabled = "legacy_release_disabled";
+
+    /// <summary>CARD-1717 D-1. <c>WorktreeLegacyRelease:Execute</c> is off.</summary>
+    public const string LegacyReleaseExecuteOff = "legacy_release_execute_off";
+
+    /// <summary>CARD-1717 D-1. The system release's legacy retry cursor is still in the future.</summary>
+    public const string LegacyReleasePaced = "legacy_release_paced";
 
     public TaskWorktreeRetirementService(
         AppDbContext db,
@@ -58,10 +68,13 @@ public sealed class TaskWorktreeRetirementService
         // CARD-0604 D-15: absent, a remote mirror is simply left for the runner-side sweep.
         RemoteWorkspaceService? remoteWorkspace = null,
         // CARD-0824 S4a T-D-6: the runners whose mirrors CARD-1677 retention owns.
-        IOptionsMonitor<RunnerWorktreeRetentionSettings>? retention = null)
+        IOptionsMonitor<RunnerWorktreeRetentionSettings>? retention = null,
+        // CARD-1717 D-1: absent, a system release fails closed rather than deleting.
+        IOptionsMonitor<WorktreeLegacyReleaseSettings>? legacyRelease = null)
     {
         _remoteWorkspace = remoteWorkspace;
         _retention = retention;
+        _legacyRelease = legacyRelease;
         _db = db;
         _clock = clock;
         _settings = settings.Value;
@@ -107,6 +120,10 @@ public sealed class TaskWorktreeRetirementService
             throw new ValidationException(nameof(body.Reason), "A disposition reason is required.");
         if (!GitObjectId.TryNormalize(body.SourceSha, out var sourceSha))
             throw new ValidationException(nameof(body.SourceSha), "SourceSha must be a full lowercase hex object id.");
+        // CARD-1717 D-1: filing is itself a step toward deletion. Read the switch here, before any row is inserted.
+        var blocked = await LegacyReleaseAdmissionAsync(taskId, pace: false, ct);
+        if (blocked is not null)
+            throw new ConflictException("Desktop legacy release is not executing.", blocked);
         var request = new ReleaseWorktreeRetirementRequest(body.ExpectedTaskRevision, sourceSha, null, true, body.Reason,
             body.HandoffDispositions, MissingReportReviewed: false);
         return await ReleaseCoreAsync(taskId, request, sourceSha, SystemCallerIdentity, null, null,
@@ -178,6 +195,15 @@ public sealed class TaskWorktreeRetirementService
             throw new ConflictException("A conflicting release already exists for this attempt.", "release_conflict");
         }
 
+        // CARD-1717 D-1: the checks above are awaits. A system filing re-reads the switch under this
+        // lock, before the insert. An existing row returned above is not an insert and stays ungated.
+        if (string.Equals(callerIdentity, SystemCallerIdentity, StringComparison.Ordinal))
+        {
+            var filing = await LegacyReleaseAdmissionAsync(taskId, pace: false, ct);
+            if (filing is not null)
+                throw new ConflictException("Desktop legacy release is not executing.", filing);
+        }
+
         var now = UtcNow();
         var row = new TaskWorktreeRetirement
         {
@@ -213,6 +239,17 @@ public sealed class TaskWorktreeRetirementService
         };
         _db.TaskWorktreeRetirements.Add(row);
         await _db.SaveChangesAsync(ct);
+        // CARD-1717 D-1: release-before flips inside SavingChanges, after the pre-insert read.
+        // Refuse before commit and drop the tracked row so the open transaction rolls the insert back.
+        if (string.Equals(callerIdentity, SystemCallerIdentity, StringComparison.Ordinal))
+        {
+            var filing = await LegacyReleaseAdmissionAsync(taskId, pace: false, ct);
+            if (filing is not null)
+            {
+                _db.Entry(row).State = EntityState.Detached;
+                throw new ConflictException("Desktop legacy release is not executing.", filing);
+            }
+        }
         await tx.CommitAsync(ct);
         return ToDto(row);
     }
@@ -335,6 +372,11 @@ public sealed class TaskWorktreeRetirementService
                 await _db.Entry(retirement).ReloadAsync(ct);
             if (retirement.State == WorktreeRetirementState.Complete)
                 return new(true, true, true, null);
+            // CARD-1717 D-1: Enabled, Execute, and the retry cursor are read under the lease, after the slow
+            // pre-checks and after a command that already started, before a new attempt or any delete.
+            var blocked = await LegacyReleaseAdmissionAsync(retirement.TaskId, pace: true, ct);
+            if (blocked is not null)
+                return new(false, false, false, blocked);
         }
 
         var attempt = await GetOrCreateAttemptAsync(retirement, runId, ct);
@@ -363,8 +405,14 @@ public sealed class TaskWorktreeRetirementService
             }
         }
 
+        // Captured after the lease reload. The delegate re-reads at each later destructive step.
+        var systemTaskId = retirement.TaskId;
         if (attempt.CommandIntentId is null)
         {
+            // CARD-1717 D-1: claim and the live-consumer reads are awaits. Re-read before command start.
+            var beforeCommand = await StopLegacyContinuationAsync(system, systemTaskId, ct);
+            if (beforeCommand is not null)
+                return new(false, false, false, beforeCommand);
             var commandId = Guid.NewGuid();
             if (!await _commands.TryCommitIntentAsync(attempt.Id, commandId, ct))
                 return new(false, false, false, "cleanup_command_slot_spent");
@@ -375,6 +423,12 @@ public sealed class TaskWorktreeRetirementService
             await _db.SaveChangesAsync(ct);
         }
 
+        // CARD-1717 D-1: intent-after flips inside the intent commit, before TryCommitIntentAsync
+        // returns. CommandStarted is already saved, so a later tick can reopen a pass that removed nothing.
+        var afterCommand = await StopLegacyContinuationAsync(system, systemTaskId, ct);
+        if (afterCommand is not null)
+            return new(false, false, false, afterCommand);
+
         var request = new WorktreeRemovalRequest(
             WorktreeRemovalPurpose.SettledTask,
             new LandSourceCoordinates(retirement.TaskId, retirement.RepositoryPath, retirement.WorktreePath,
@@ -382,7 +436,10 @@ public sealed class TaskWorktreeRetirementService
             retirement.CommonDirectory, retirement.GitDirectory, retirement.SourceSha,
             retirement.ObservedTargetSha ?? new string('0', 40),
             null, lease, ManagedRoot: ResolveManagedRoot(), RetirementId: retirement.Id,
-            HasDeletionIntent: true, CardDoneEndpointId: endpointId);
+            HasDeletionIntent: true, CardDoneEndpointId: endpointId,
+            LiveAuthorization: system
+                ? token => new ValueTask<string?>(LegacyReleaseAdmissionAsync(systemTaskId, pace: true, token))
+                : null);
         var removed = await _worktrees.TryRemoveAsync(request, ct);
         await _commands.RecordComponentAsync(attempt.Id, removed.DirectoryGone, null, null, removed.Residue, ct);
         await _commands.RecordComponentAsync(attempt.Id, null, removed.Unregistered, null, removed.Residue, ct);
@@ -411,13 +468,61 @@ public sealed class TaskWorktreeRetirementService
         // to reach the runner records residue for the operator's sweep and never blocks or
         // reverses the retirement of the thing that actually matters.
         // CARD-0824 S4a T-D-6: a runner CARD-1677 retention owns keeps its mirror (the runner decides).
-        if (endpointId is null && !await MirrorOwnedByRetentionAsync(retirement.TaskId, ct))
+        // CARD-1717 D-1: the retention read is an await. A system switch that closed skips the mirror delete.
+        if (endpointId is null && !await MirrorOwnedByRetentionAsync(retirement.TaskId, ct)
+            && await StopLegacyContinuationAsync(system, systemTaskId, ct) is null)
             await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
 
         retirement.UpdatedAt = UtcNow();
         retirement.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         return removed;
+    }
+
+    /// <summary>
+    /// CARD-1717 D-1. Admission for <see cref="SystemCallerIdentity"/> only. <paramref name="pace"/> is the
+    /// destructive continuation (a retry); filing does not consult the backoff cursor. A missing monitor, an
+    /// invalid hot reload, or <c>Enabled=false</c> is <see cref="LegacyReleaseDisabled"/>. The switch is decided
+    /// before the cursor, so a disabled policy reports the switch rather than the pace. The switch is read
+    /// again after the cursor await, so a flip during that wait still stops the continuation.
+    /// </summary>
+    private async Task<string?> LegacyReleaseAdmissionAsync(Guid taskId, bool pace, CancellationToken ct)
+    {
+        var blocked = ReadLegacySwitch();
+        if (blocked is not null)
+            return blocked;
+        if (!pace)
+            return null;
+
+        var key = DesktopLegacyReleasePolicyService.RetryCursorKey(taskId);
+        var cursor = await _db.WorktreeResidueCandidateCursors.AsNoTracking()
+            .SingleOrDefaultAsync(c => c.CandidateKey == key, ct);
+        if (cursor?.NotBefore is { } notBefore
+            && notBefore > UtcNow()
+            && cursor.LastOutcomeKey is { } outcome
+            && outcome.StartsWith("retry|", StringComparison.Ordinal))
+            return LegacyReleasePaced;
+        return ReadLegacySwitch();
+    }
+
+    /// <summary>CARD-1717 D-1. The switch as of this instant. Null means the continuation may proceed.</summary>
+    private string? ReadLegacySwitch()
+    {
+        if (_legacyRelease is null)
+            return LegacyReleaseDisabled;
+        var read = DesktopLegacyReleasePolicyService.ReadSettings(_legacyRelease, _logger);
+        if (!read.Enabled || read.Settings is null)
+            return LegacyReleaseDisabled;
+        if (!read.Settings.Execute)
+            return LegacyReleaseExecuteOff;
+        return null;
+    }
+
+    /// <summary>CARD-1717 D-1. Null for a caller-filed release, or when the system switch still allows the step.</summary>
+    private async Task<string?> StopLegacyContinuationAsync(bool system, Guid taskId, CancellationToken ct)
+    {
+        if (!system) return null;
+        return await LegacyReleaseAdmissionAsync(taskId, pace: true, ct);
     }
 
     /// <summary>
