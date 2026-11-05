@@ -41,7 +41,11 @@ public sealed record WorktreeResidueTaskSnapshot(
     string? WorktreeBranch,
     string? MergeTargetRef,
     string? RepoPath,
-    IReadOnlyList<AgentTaskEventType> EventTypes);
+    IReadOnlyList<AgentTaskEventType> EventTypes)
+{
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
+}
 
 /// <summary>Classifier input: one candidate plus optional task and git facts.</summary>
 public sealed record WorktreeResidueFacts(

@@ -14,7 +14,11 @@ namespace Antiphon.Server.Application.Services;
 /// directory and remote execution binding before crossing their respective I/O boundaries.
 /// </summary>
 public sealed record TaskWorkspaceContext(DesktopWorkspaceKind Kind, Guid? BindingId, string IdentityPath,
-    string GitWorkingDirectory, string? CommonDirectory, string? ExecutionDirectory, string FullRef, string? BaseSha);
+    string GitWorkingDirectory, string? CommonDirectory, string? ExecutionDirectory, string FullRef, string? BaseSha)
+{
+    public TaskRefWorkspacePreparationState? PreparationState { get; init; }
+    public long? BindingRevision { get; init; }
+}
 
 public sealed class TaskWorkspaceContextResolver(AppDbContext db)
 {
@@ -34,10 +38,10 @@ public sealed class TaskWorkspaceContextResolver(AppDbContext db)
             throw Refuse("source_coordinates_missing");
         if (string.IsNullOrWhiteSpace(task.RepoPath))
             throw Refuse("ref_only_repository_required");
-        if (task.TaskRefWorkspaceBindingId is not Guid id)
+        if (task.TaskRefWorkspaceBindingId is not Guid id || id == Guid.Empty)
             throw Refuse("ref_only_binding_required");
         var binding = await db.TaskRefWorkspaceBindings.AsNoTracking().SingleOrDefaultAsync(b => b.Id == id, ct);
-        if (binding is null || binding.Id != id)
+        if (binding is null)
             throw Refuse("ref_only_binding_identity_mismatch");
         if (binding.TaskId != task.Id)
             throw Refuse("ref_only_binding_task_mismatch");
@@ -46,6 +50,8 @@ public sealed class TaskWorkspaceContextResolver(AppDbContext db)
         if (string.IsNullOrWhiteSpace(binding.CommonDirectory))
             throw Refuse("ref_only_common_directory_required");
         Absolute(binding.CommonDirectory, "ref_only_common_directory_required");
+        if (SamePath(binding.IdentityPath, binding.RepositoryPath) || SamePath(binding.IdentityPath, binding.CommonDirectory))
+            throw Refuse("ref_only_identity_not_unique");
         if (!SamePath(binding.IdentityPath, task.WorktreePath))
             throw Refuse("ref_only_binding_identity_path_mismatch");
         if (binding.FullRef != FullRef(task.WorktreeBranch) || binding.FullRef != FullRef(binding.Branch)
@@ -58,7 +64,8 @@ public sealed class TaskWorkspaceContextResolver(AppDbContext db)
         if (!Enum.IsDefined(binding.PreparationState) || binding.Revision < 0)
             throw Refuse("ref_only_binding_preparation_invalid");
         return new(DesktopWorkspaceKind.RefOnly, binding.Id, binding.IdentityPath, binding.RepositoryPath,
-            binding.CommonDirectory, task.RemoteWorktreePath, binding.FullRef, binding.SelectedBaseSha);
+            binding.CommonDirectory, task.RemoteWorktreePath, binding.FullRef, binding.SelectedBaseSha)
+        { PreparationState = binding.PreparationState, BindingRevision = binding.Revision };
     }
 
     public string IdentityForNewBinding(string configuredRoot, Guid taskId)

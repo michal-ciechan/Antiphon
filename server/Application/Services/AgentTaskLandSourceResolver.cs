@@ -42,17 +42,29 @@ public sealed class AgentTaskLandSourceResolver(
 
         if (task.RepoPath is null || task.WorktreePath is null || task.WorktreeBranch is null)
             return await RefuseAsync(task, request, baseline, "source_coordinates_missing", null, null, null, ct);
+        TaskWorkspaceContext context;
+        try { context = await new TaskWorkspaceContextResolver(db).ResolveAsync(task, ct); }
+        catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
+        { return await RefuseAsync(task, request, baseline, ex.Code!, null, null, null, ct); }
         var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath, task.WorktreePath,
-            FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"));
-        if (request.SourceFullRefSnapshot is not null && request.SourceFullRefSnapshot != coordinates.SourceFullRef
-            || request.TargetFullRefSnapshot is not null && request.TargetFullRefSnapshot != coordinates.TargetFullRef
-            || request.RepositoryPathSnapshot is not null && !SamePath(request.RepositoryPathSnapshot, coordinates.RepositoryPath)
-            || request.WorktreePathSnapshot is not null && !SamePath(request.WorktreePathSnapshot, coordinates.WorktreePath))
+            FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"))
+        { DesktopWorkspaceKind = context.Kind, TaskRefWorkspaceBindingId = context.BindingId };
+        if (context.Kind == DesktopWorkspaceKind.RefOnly && RefOnlyLandRecovery.IsUnsupported(request))
+            return await RefuseAsync(task, request, baseline, "ref_only_land_recovery_unsupported", null, null, null, ct);
+        if (context.Kind == DesktopWorkspaceKind.RefOnly && context.PreparationState != TaskRefWorkspacePreparationState.Published)
+            return await RefuseAsync(task, request, baseline, "ref_only_preparation_incomplete", null, null, null, ct);
+        if (!LandRequestSourceIdentity.Matches(request, coordinates))
             return await RefuseAsync(task, request, baseline, "request_coordinates_changed", null, null, null, ct);
 
         var common = await git.CommonDirectoryAsync(coordinates.RepositoryPath, ct);
+        try { TaskWorkspaceContextResolver.RequireRepositoryIdentity(context, common); }
+        catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
+        { return await RefuseAsync(task, request, baseline, ex.Code!, null, null, null, ct); }
         if (!leases.Owns(lease, common))
             return await RefuseAsync(task, request, baseline, "repository_lease_required", null, null, null, ct);
+        if (context.Kind == DesktopWorkspaceKind.RefOnly
+            && (await git.LiveRegistrationsAsync(coordinates.RepositoryPath, ct)).Any(r => r.Branch == coordinates.SourceFullRef))
+            return await RefuseAsync(task, request, baseline, "ref_only_source_registered", null, null, null, ct);
 
         if (request.SourceAdvanceChildOperation is not null)
         {
@@ -172,8 +184,9 @@ public sealed class AgentTaskLandSourceResolver(
         request.SourceRelationship = relationship;
         request.SourceCommonDirectory = common;
         request.SourceWorktreePath = coordinates.WorktreePath;
-        request.SourceGitDirectory = Path.Combine(common, "worktrees", Path.GetFileName(
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(coordinates.WorktreePath))));
+        request.SourceGitDirectory = context.Kind == DesktopWorkspaceKind.RefOnly ? null
+            : Path.Combine(common, "worktrees", Path.GetFileName(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(coordinates.WorktreePath))));
         request.SourceResolutionState = LandSourceResolutionState.Observed;
         if (await CheckpointAsync(task, request, baseline, ct) is { } observedStop) return observedStop;
         baseline = LandSourceCheckpointBaseline.From(request, task);

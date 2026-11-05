@@ -67,8 +67,15 @@ internal static class LandOperationFactory
             }
         }
 
-        string worktreePath, gitDirectory;
-        if (Directory.Exists(coordinates.WorktreePath))
+        string worktreePath;
+        string? gitDirectory;
+        if (coordinates.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            if (coordinates.TaskRefWorkspaceBindingId is null) return new(null, "ref_only_binding_required");
+            worktreePath = coordinates.WorktreePath;
+            gitDirectory = null;
+        }
+        else if (Directory.Exists(coordinates.WorktreePath))
         {
             worktreePath = await git.CanonicalDirectoryAsync(coordinates.WorktreePath, ct);
             var admin = await git.RunAsync(worktreePath, ["rev-parse", "--absolute-git-dir"], ct);
@@ -94,6 +101,8 @@ internal static class LandOperationFactory
             Id = id, TaskId = task.Id, SchemaVersion = 3, Phase = LandPhase.Inspected,
             CreatedAt = now, UpdatedAt = now, RepositoryPath = coordinates.RepositoryPath,
             WorktreePath = worktreePath, CommonDirectory = common, GitDirectory = gitDirectory,
+            SourceDesktopWorkspaceKind = coordinates.DesktopWorkspaceKind,
+            SourceTaskRefWorkspaceBindingId = coordinates.TaskRefWorkspaceBindingId,
             SourceFullRef = coordinates.SourceFullRef, SourceLocalSha = local.Sha,
             OriginalSourceSha = expected, ReviewedSourceSha = expected,
             PreparationInputSha = derivation ? previous!.RebasedSourceSha : expected,

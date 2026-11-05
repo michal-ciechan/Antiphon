@@ -503,6 +503,15 @@ public sealed class AgentTaskLandService
             return LandRunResult.Complete;
         }
 
+        if (task.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || task.TaskRefWorkspaceBindingId is not null)
+        {
+            try { await new TaskWorkspaceContextResolver(_db).ResolveAsync(task, ct); }
+            catch (ConflictException ex)
+            {
+                await RefuseAsync(task, ex.Code!, ct);
+                return LandRunResult.Complete;
+            }
+        }
         if (_protocol is null || _leases is null || _landingGit is null || task.RepoPath is null)
         {
             await RefuseAsync(task, "landing_protocol_unavailable", ct);
@@ -915,7 +924,7 @@ public sealed class AgentTaskLandService
     {
         if (_landingGit is null || task.RepoPath is null)
             return null;
-        if (task.WorktreePath is not null
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout && task.WorktreePath is not null
             && await ProbeCheckoutIndexLockAsync(task.WorktreePath, ct) is { } source)
         {
             if (source.Reason != GitIndexLock.PathErrorReason
@@ -1623,6 +1632,8 @@ public sealed class AgentTaskLandService
             : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal) ? task.WorktreeBranch : "refs/heads/" + task.WorktreeBranch,
         RepositoryPathSnapshot = task.RepoPath,
         WorktreePathSnapshot = task.WorktreePath,
+        SourceDesktopWorkspaceKindSnapshot = task.DesktopWorkspaceKind,
+        SourceTaskRefWorkspaceBindingIdSnapshot = task.TaskRefWorkspaceBindingId,
         TargetFullRefSnapshot = task.MergeTargetRef is null ? "refs/heads/master"
             : task.MergeTargetRef.StartsWith("refs/", StringComparison.Ordinal) ? task.MergeTargetRef : "refs/heads/" + task.MergeTargetRef,
         };

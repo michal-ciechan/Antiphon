@@ -26,7 +26,11 @@ public sealed record LandingIndexLockObservation(
     string? Reason);
 
 public sealed record LandSourceCoordinates(Guid TaskId, string RepositoryPath, string WorktreePath,
-    string SourceFullRef, string TargetFullRef);
+    string SourceFullRef, string TargetFullRef)
+{
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
+}
 
 public sealed record LandSourceSnapshot(LandSourceCoordinates Coordinates, string CommonDirectory,
     string RegisteredPath, string GitDirectory, string SymbolicHead, string HeadSha,

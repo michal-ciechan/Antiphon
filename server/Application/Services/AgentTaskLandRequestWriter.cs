@@ -68,6 +68,10 @@ internal sealed record LandSourceCheckpointBaseline(
     Guid? LandingOperationId,
     Guid? ActiveLandingId)
 {
+    public DesktopWorkspaceKind SourceDesktopWorkspaceKindSnapshot { get; init; }
+    public Guid? SourceTaskRefWorkspaceBindingIdSnapshot { get; init; }
+    public DesktopWorkspaceKind TaskDesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
     public static LandSourceCheckpointBaseline From(AgentTaskLandRequest request, AgentTask task) => new(
         request.Id, request.TaskId, request.Attempt, task.LandAttempt, request.RequestedAt,
         request.SchemaVersion, request.ExpectedSourceSha, request.ReviewEvidenceId, request.ApprovalKind,
@@ -86,7 +90,13 @@ internal sealed record LandSourceCheckpointBaseline(
         request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship,
         request.RecoveryPatchesContained, request.RecoveryUncontainedPatches, request.RecoveryAdoptedAt,
         request.LandingOperationId,
-        task.ActiveLandingId);
+        task.ActiveLandingId)
+    {
+        SourceDesktopWorkspaceKindSnapshot = request.SourceDesktopWorkspaceKindSnapshot,
+        SourceTaskRefWorkspaceBindingIdSnapshot = request.SourceTaskRefWorkspaceBindingIdSnapshot,
+        TaskDesktopWorkspaceKind = task.DesktopWorkspaceKind,
+        TaskRefWorkspaceBindingId = task.TaskRefWorkspaceBindingId,
+    };
 }
 
 internal sealed record LandSourceCheckpointPatch(
@@ -249,6 +259,10 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
             || request.SourceFullRefSnapshot != baseline.SourceFullRefSnapshot
             || request.RepositoryPathSnapshot != baseline.RepositoryPathSnapshot
             || request.WorktreePathSnapshot != baseline.WorktreePathSnapshot
+            || request.SourceDesktopWorkspaceKindSnapshot != baseline.SourceDesktopWorkspaceKindSnapshot
+            || request.SourceTaskRefWorkspaceBindingIdSnapshot != baseline.SourceTaskRefWorkspaceBindingIdSnapshot
+            || task.DesktopWorkspaceKind != baseline.TaskDesktopWorkspaceKind
+            || task.TaskRefWorkspaceBindingId != baseline.TaskRefWorkspaceBindingId
             || request.TargetFullRefSnapshot != baseline.TargetFullRefSnapshot)
             return true;
         if (request.RecoveryMode != baseline.RecoveryMode

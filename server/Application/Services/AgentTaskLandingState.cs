@@ -37,7 +37,10 @@ public sealed class AgentTaskLandingState
             (LandPhase.PublicationConfirmed, LandPhase.CleanupStarted) => HasPublication(operation)
                 && operation.CleanupStartedAt is not null && operation.ExpectedDeletionSha == ExpectedDeletion(operation),
             (LandPhase.CleanupStarted, LandPhase.Complete) => HasPublication(operation)
-                && operation.DirectoryRemoved && operation.RegistrationRemoved && operation.BranchRemoved,
+                && (operation.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                    ? operation.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired
+                        && !operation.DirectoryRemoved && !operation.RegistrationRemoved && !operation.BranchRemoved
+                    : operation.DirectoryRemoved && operation.RegistrationRemoved && operation.BranchRemoved),
             (_, LandPhase.Refused) => !HasPublication(operation) && operation.Phase != LandPhase.Complete,
             _ => false,
         };
@@ -129,7 +132,11 @@ public sealed class AgentTaskLandingState
         && !string.IsNullOrWhiteSpace(operation.RepositoryPath)
         && !string.IsNullOrWhiteSpace(operation.CommonDirectory)
         && !string.IsNullOrWhiteSpace(operation.WorktreePath)
-        && !string.IsNullOrWhiteSpace(operation.GitDirectory)
+        && (operation.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.Checkout
+            ? operation.SourceTaskRefWorkspaceBindingId is null && !string.IsNullOrWhiteSpace(operation.GitDirectory)
+            : operation.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly && operation.SchemaVersion == 3
+                && operation.SourceTaskRefWorkspaceBindingId is Guid binding && binding != Guid.Empty
+                && operation.GitDirectory is null && operation.RecoveryMode == LandRecoveryMode.None)
         && operation.RemoteFingerprint.Length == 64
         && operation.RecoveryRefPrefix == $"refs/antiphon/land/{operation.TaskId:N}/{operation.Id:N}"
         && (operation.SchemaVersion == 1 || HasV2ApprovalStatic(operation))
