@@ -191,6 +191,7 @@ public sealed class ChannelInputWithheldIncidentTests
     [Arguments("liveness")]
     [Arguments("compacting")]
     [Arguments("legacy-liveness")]
+    [Arguments("herdr")]
     [Timeout(120_000)]
     public async Task C1591_CurrentHoldKeepsHistoricalWithholdQuiet(string hold, CancellationToken ct)
     {
@@ -213,6 +214,7 @@ public sealed class ChannelInputWithheldIncidentTests
             state.LivenessLatchedAt = hold == "legacy-liveness" ? at.AddYears(-1)
                 : hold == "liveness" ? at : null;
             state.ActiveCompactionRecoveryId = hold == "compacting" ? Guid.NewGuid() : null;
+            state.HerdrFailureHeldAt = hold == "herdr" ? at : null;
             state.UpdatedAt = at;
             await db.SaveChangesAsync();
         }
