@@ -69,7 +69,13 @@ waited `ChannelBridge:AgedHoldIncidentMinutes` (default 10) from acceptance, eac
 raises one Critical `ChannelReplyLost` incident for that inbound; the reason-specific stamp
 survives restarts and incident-history pruning. A queued channel withhold at least that old,
 measured from `FirstWithheldAt`, raises one Critical `ChannelReplyLost` with reason
-`ChannelInputWithheld`; its stamp is `InputWithheldIncidentAt`. Herdr, capacity and wake-timeout
+`ChannelInputWithheld`; its stamp is `InputWithheldIncidentAt`. This requires a durable
+withhold on a never-attempted pending channel row and a Running, idle recipient.
+Current supervision/compaction holds (including legacy latches) suppress it, as does
+any prior continuity, suspension or liveness incident stamp on that inbound. The
+scan inspects at most 64 indexed queue heads per pass and advances a wrapping cursor;
+it never takes the session semaphore or writes input. No-charge dialog, remote-control
+menu and missing-snapshot holds remain outside this incident. Herdr, capacity and wake-timeout
 paths keep their existing incident policies.
 The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
 are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each

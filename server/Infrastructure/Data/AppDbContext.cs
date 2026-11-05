@@ -1816,6 +1816,12 @@ public class AppDbContext : DbContext
             entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
             entity.Property(m => m.WithholdCount).IsRequired().HasDefaultValue(0);
             entity.Property(m => m.LastWithholdReason).HasMaxLength(200);
+            entity.HasIndex(m => new { m.FirstWithheldAt, m.Id })
+                .HasDatabaseName("IX_SessionQueuedMessages_AgedChannelWithhold")
+                .HasFilter("\"Origin\" = 1 AND \"Status\" = 0 AND \"DeliveryAttempts\" = 0 "
+                    + "AND \"LastDeliveryStartedAt\" IS NULL AND \"LastDeliveryBaselineSequence\" IS NULL "
+                    + "AND \"DeliveryVerdict\" IS NULL AND \"WithholdCount\" > 0 AND \"FirstWithheldAt\" IS NOT NULL");
+
 
             // Pending messages for a session are flushed in FIFO order.
             entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })
