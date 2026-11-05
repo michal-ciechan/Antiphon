@@ -214,6 +214,9 @@ public class AgentTask
     /// </summary>
     public string? WorktreePath { get; set; }
 
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; set; }
+    public Guid? TaskRefWorkspaceBindingId { get; set; }
+
     /// <summary>The task branch the worktree is on; what merges into <see cref="MergeTargetRef"/>.</summary>
     public string? WorktreeBranch { get; set; }
 
