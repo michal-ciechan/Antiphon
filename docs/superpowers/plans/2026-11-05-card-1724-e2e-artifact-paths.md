@@ -5,6 +5,9 @@ Base: `d465bd4e363a3fd3ba334f174a5576852ee7e227`. Original Code/landing owner:
 
 S1 adds a Roslyn source guard while leaving the defective E2E sources intact.
 S2 redirects repository-docs writers to ignored E2E TestOutput and verifies them.
+S3 records the unbound Mutation candidate in
+`docs/superpowers/mutations/2026-11-05-card-1724-e2e-artifact-paths-candidate.md`
+and closes the full-history evidence guard. S2 implementation/test selections stay unchanged.
 No documentation screenshot update mode is needed; deliberate documentation refresh
 remains separate from ordinary test execution.
 
@@ -57,10 +60,11 @@ UseAppHost=false. Bootstrap tool compilation is an explained extra gated build.
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1724-green/` | scanner-and-policy | `/*/*/(E2EArtifactPathGuardTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | V-1, R-1 | all listed, 0 failed | 6 | 10 |
 | CP-3 | S2 | n/a | e2e-compile | `dotnet build tests/Antiphon.E2E -p:UseAppHost=false --nologo` | V-2 | build exit 0, no E2E execution | n/a | 5 |
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-2 | >= 1 executed, 0 failed | 1 | 40 |
+| CP-5 | S3 | n/a | evidence-history | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef d465bd4e363a3fd3ba334f174a5576852ee7e227 -HeadRef HEAD` | V-4 | exit 0, 0 violations | n/a | 1 |
 
 ### Cost
 
-Ordinary checkpoint estimate: 61 minutes plus authoring and admission, exceeding
+Ordinary checkpoint estimate: 62 minutes plus authoring and admission, exceeding
 the brief's 60-minute total budget. Run focused proof first; report any incomplete
 ordinary scope honestly and hand remaining execution to Code. Mutation floor:
 one method-scoped PC cycle plus discovery, provisional 6 minutes plus admission.
