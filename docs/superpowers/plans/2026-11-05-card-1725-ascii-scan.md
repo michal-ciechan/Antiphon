@@ -38,3 +38,9 @@ Fresh isolated checkpoint build once per group; reuse across rows. Cold build es
 ### Mutation
 
 PC-1/R3 and PC-2/R4: pending for SourceLanding Mutation. Revert only the corresponding ASCII scan from loop to Where-Object pipeline; exact C1725_LargeAsciiCallers method selector (both parameters); expected watchdog assertion red, restore green. Candidate under docs/superpowers/mutations/2026-11-05-card-1725-candidate.md is unbound. Code owns no deliberate mutants. Ordinary red/green is separate from Mutation credit.
+
+## Measured implementation result
+
+S2 uses plain foreach counting, retaining every-byte classification and exact count. The V-1 method additionally places invalid bytes 128,255,129 across the first and final positions of each 2 MiB input and requires exactly three reported errors within the same watchdog. This prevents an early-exit or boolean-only scan from satisfying the test.
+
+Ordinary red SHA 794bbf04a8de4f09c489722344791453fe09417e, CP-1 run 20261105-184534-6c06: 6 executed, 4 passed, 2 watchdog assertion failures (R3/R4), zero skips; original four cases green. Clean source, verified build, slot=granted waited=0s. Fix diagnostic (uncommitted, not qualification): one-byte runner plus real harness 2.830s / 210710528 bytes sampled peak RSS; 2 MiB runner 2.755s / 216240128 bytes, both exit 0, no watchdog, load 14.99. Memory is essentially unchanged; this is a CPU/pipeline-dispatch cost repair, not an OOM repair. Fixed ordinary checkpoints must still qualify committed S2. No p95 claim.

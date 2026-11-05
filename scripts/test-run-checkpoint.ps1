@@ -379,15 +379,22 @@ function Test-C585_LineFormat {
 function Test-C585_AsciiOnly {
     $ErrorActionPreference = 'Stop'
     try {
-        $runnerBytes = @((Read-CheckpointBytes $script:Runner) | Where-Object { $_ -gt 127 })
-        Assert-C487 -Cond ($runnerBytes.Count -eq 0) -Name 'C585 AsciiOnly run-checkpoint.ps1 is ASCII-only' -Detail ([string]$runnerBytes.Count)
+        # Avoid pipeline/scriptblock dispatch and retained boxed values for every byte.
+        $runnerNonAscii = 0
+        foreach ($value in (Read-CheckpointBytes $script:Runner)) {
+            if ($value -gt 127) { $runnerNonAscii++ }
+        }
+        Assert-C487 -Cond ($runnerNonAscii -eq 0) -Name 'C585 AsciiOnly run-checkpoint.ps1 is ASCII-only' -Detail ([string]$runnerNonAscii)
     } catch {
         Assert-C487 -Cond $false -Name 'C585 AsciiOnly run-checkpoint.ps1 is ASCII-only' -Detail $_.Exception.Message
     }
     $harness = Join-Path $here 'test-run-checkpoint.ps1'
     try {
-        $harnessBytes = @((Read-CheckpointBytes $harness) | Where-Object { $_ -gt 127 })
-        Assert-C487 -Cond ($harnessBytes.Count -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessBytes.Count)
+        $harnessNonAscii = 0
+        foreach ($value in (Read-CheckpointBytes $harness)) {
+            if ($value -gt 127) { $harnessNonAscii++ }
+        }
+        Assert-C487 -Cond ($harnessNonAscii -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessNonAscii)
     } catch {
         Assert-C487 -Cond $false -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail $_.Exception.Message
     }

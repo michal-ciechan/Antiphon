@@ -26,6 +26,13 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
         result.Stdout.ShouldContain("PASS C585 AsciiOnly run-checkpoint.ps1 is ASCII-only");
         result.Stdout.ShouldContain("PASS C585 AsciiOnly the harness is ASCII-only");
+
+        var (invalid, _) = await InvokeAsync(site, "large-non-ascii", cancellationToken);
+        invalid.Watchdog.ShouldBeFalse("counting invalid bytes must have the same bounded scan cost");
+        invalid.Exit.ShouldNotBe(0, invalid.Stdout + invalid.Stderr);
+        invalid.Stdout.ShouldContain(site == "R3"
+            ? "FAIL C585 AsciiOnly run-checkpoint.ps1 is ASCII-only - 3"
+            : "FAIL C585 AsciiOnly the harness is ASCII-only - 3");
     }
 
     [Test]
@@ -174,9 +181,18 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
             if (site == "R3" && shape == "fifo")
                 CheckpointBoundedProbe.Fifo(runner);
             else
-                File.WriteAllBytes(runner, site == "R3" && shape == "large-ascii"
+            {
+                var scanBytes = site == "R3" && shape.StartsWith("large-", StringComparison.Ordinal)
                     ? new byte[2 * 1024 * 1024]
-                    : site == "R3" && shape == "non-ascii" ? [65, 255] : [65]);
+                    : site == "R3" && shape == "non-ascii" ? [65, 255] : [65];
+                if (site == "R3" && shape == "large-non-ascii")
+                {
+                    scanBytes[0] = 128;
+                    scanBytes[^2] = 255;
+                    scanBytes[^1] = 129;
+                }
+                File.WriteAllBytes(runner, scanBytes);
+            }
             // This fixture is sourced after PowerShell parses the real harness and before
             // it calls AsciiOnly, so R4 changes only the file read by that second check.
             File.WriteAllText(Path.Combine(scripts, "fixtures/c889-c578-observation.ps1"), """
@@ -186,8 +202,14 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
                         [IO.File]::Delete($target)
                         & mkfifo $target
                         if ($LASTEXITCODE -ne 0) { throw 'fixture mkfifo failed' }
-                    } elseif ($env:C1233_SHAPE -eq 'large-ascii') {
-                        [IO.File]::WriteAllBytes($target, [byte[]]::new(2 * 1024 * 1024))
+                    } elseif ($env:C1233_SHAPE -like 'large-*') {
+                        $bytes = [byte[]]::new(2 * 1024 * 1024)
+                        if ($env:C1233_SHAPE -eq 'large-non-ascii') {
+                            $bytes[0] = 128
+                            $bytes[$bytes.Length - 2] = 255
+                            $bytes[$bytes.Length - 1] = 129
+                        }
+                        [IO.File]::WriteAllBytes($target, $bytes)
                     } elseif ($env:C1233_SHAPE -eq 'non-ascii') {
                         [IO.File]::WriteAllBytes($target, [byte[]]@(65, 255))
                     }
