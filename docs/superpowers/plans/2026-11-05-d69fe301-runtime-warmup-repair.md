@@ -34,6 +34,14 @@ the checkpoint tool after its successful build and before any result flushed. Th
 found the nine newer real-transport cases lacked a limiter. No row from that canceled run is credited;
 the fresh output below prevents reuse of its incomplete proof. Preserve its build/admission costs.
 
+Run 20261105-221029-3b25 at 0521d284e024a8406ca6d3188b013dc1f47626c0 was stopped after
+an introduced witness error: TUnit keeps TestContext.Current populated during assembly hooks.
+The actual image-hit runtime warm-up was measured at 4.313 seconds; its exactly-once event passed,
+but the test's ambient-null predicate was false. The corrected witness requires the concrete
+AssemblyHookContext.Current for this test assembly; it retains the positive boundary assertion,
+exactly-one real EF event and model identity. No assertion or timeout is loosened. No stopped row
+is credited. CP-6 now goes first so the exact requested pack flushes before the longer guard/Unit
+rows. Current base roster: workspace 24 + retention 71 + settings 14 + phone-home 29 = 138 cases.
 ## Performance budget
 
 Fixture lifetime: the existing assembly hook runs once; retain store selection, workers and probes.
@@ -73,6 +81,6 @@ remain native and Windows obligations are unchanged. Restart: none (server/runne
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | repair | tests/Antiphon.Tests -> bin-d69fe301-final/ | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/final-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/final-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-final;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
-| CP-6 | repair | CP-1 | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 128 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
-| CP-3 | repair | CP-1 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |
+| CP-6 | repair | tests/Antiphon.Tests -> bin-d69fe301-boundary/ | normal-cached-cp6 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)\|(PhoneHomeConnectionTests*)\|(C0824WorkspaceSlotServerTests*)/* | V-2, V-3 | all full classes, no failed/skipped | 138 | 3 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/cp6-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-6 |
+| CP-1 | repair | CP-6 | fixture-and-policy | /*/*/(TestDbRuntimeWarmupTests*)\|(C0824TransportGitTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | V-1, R-1, R-2 | all selected; disclose intentional child skips | 20 | 6 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/boundary-cp1-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/boundary-phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-boundary;ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
+| CP-3 | repair | CP-6 | final-unit | /*/*/*/*[Category=Unit] | R-3 | whole Unit lane; disclose inherited red | 1000 | 15 | true | ANTIPHON_TEST_TRACE_FILE=.antiphon/d69fe301/unit-trace.jsonl;ANTIPHON_TEST_PHASE_ROOT=.antiphon/d69fe301/phases;ANTIPHON_TEST_PHASE_RUN_ID=d69fe301-fix;ANTIPHON_TEST_PHASE_GROUP_ID=CP-3 |
