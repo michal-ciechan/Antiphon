@@ -517,12 +517,14 @@ public sealed class WorktreeGuardedCleanupTests
         h.SetAsideTrees().ShouldBeEmpty();
     }
 
-    /// <summary>Turns on core.autocrlf and gives the tracked file the CRLF bytes a Windows checkout writes.</summary>
+    /// <summary>Turns on core.autocrlf and checks the tracked file out again, so it holds CRLF bytes as on Windows.</summary>
     private static async Task<string> UseCrlfCheckoutAsync(RemovalHarness h)
     {
         await h.H.Fixture.RequiredAsync(h.H.Fixture.Repository, "config", "core.autocrlf", "true");
         var feature = Path.Combine(h.H.Fixture.Source, "feature.txt");
-        await File.WriteAllBytesAsync(feature, "valuable feature\r\n"u8.ToArray());
+        // A real checkout records the converted size in the index; rewriting the bytes alone leaves the index stat stale.
+        File.Delete(feature);
+        await h.H.Fixture.RequiredAsync(h.H.Fixture.Source, "checkout", "--", "feature.txt");
         (await h.H.Fixture.RequiredAsync(h.H.Fixture.Source, "status", "--porcelain=v1")).ShouldBeEmpty("a CRLF checkout is Git-clean");
         var raw = await File.ReadAllBytesAsync(feature);
         raw[^2..].ShouldBe(new byte[] { 0x0D, 0x0A });
