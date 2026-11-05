@@ -168,7 +168,7 @@ public sealed class C0824RefOnlyLandingTests
             var op = await h.OperationAsync();
             await using var db = h.CreateContext();
             var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync();
-            request.SourceRefusalReason.ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
+            (op?.LastReason ?? request.SourceRefusalReason).ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
             (op?.RemoteConfirmedAt).ShouldBeNull();
             h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove"));
             (await File.ReadAllTextAsync(Path.Combine(foreign, "feature.txt"))).ShouldBe("valuable feature\n");
