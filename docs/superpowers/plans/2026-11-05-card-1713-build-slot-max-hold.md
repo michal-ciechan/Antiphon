@@ -83,10 +83,54 @@ totalTimeoutMinutes: 140
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | Red | tests/Antiphon.SessionRunner.Tests -> bin-c1713-red/ | red | `/*/*/BuildSlotMaxHoldTests*/*` | V-1..4 | Historical base witness: 5 failures at cc166db9d3ca78af6606abf2939b8010122aa843; later V-6 is ordinary green scope | 5 | 2 |
 | CP-2 | Fix | tests/Antiphon.SessionRunner.Tests -> bin-c1713-final/ | broker | `/*/*/BuildSlot*Tests*/*` | V-1..7, R-1 | Exactly 40 executed/passed; zero failed/skipped | 40 | 3 |
-| CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | unit | `/*/*/*/*[Category=Unit]` | R-3 | Whole Unit lane, zero failed | 3500 | 30 |
+| CP-3 | Fix | tests/Antiphon.Tests -> bin-c1713-unit/ | unit-without-slow | `/*/*/*/*[(Category=Unit)&(Category!=Slow)]` | R-3 non-Slow partition | All selected Unit cases, zero failed; report native skips | 3500 | 15 |
 | CP-4 | Fix | CP-3 | policy | `/*/*/(MechanicalPcContractTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-2 | Full named classes, zero failed/skipped | 20 | 2 |
 | CP-5 | ZeroRed | tests/Antiphon.SessionRunner.Tests -> bin-c1713-zero-red/ | zero-red | `/*/*/BuildSlotMaxHoldTests*/V7_Zero_uses_the_default_bound` | V-7 | Expected assertion failure before zero normalization | 1 | 1 |
 | CP-6 | Fix | CP-2 | runner-policy | `/*/*/TestClassificationGuard*/*` | R-2 runner | Exactly 1 executed/passed; zero failed/skipped | 1 | 1 |
+| CP-7 | Fix | CP-3 | unit-slow | `/*/*/*/*[(Category=Unit)&(Category=Slow)]` | R-3 Slow partition | All selected Unit+Slow cases, zero failed; report native skips | 30 | 15 |
+
+## Finish verification packing (Code 1c9ceb47)
+
+The original CP-3 was the whole Unit lane, not a lease-cap class. Its source
+census includes hundreds of checkpoint/script methods, and its retained stack
+reached CheckpointFixtureProcess.RunAsync. The three Unit+Slow checkpoint
+classes perform real Git and dotnet fixture builds: CheckpointOutputConfinementTests,
+CheckpointShapeConflictTests and CheckpointTrackedBaselineTests (36 methods
+before native skips). This is a concrete execution cost in addition to outer
+build/admission; the stopped 35-minute host has no completed timing/roster receipt,
+so no single slowest-test or p95 claim is made.
+
+CP-3 now selects Unit without Slow; CP-7 selects Unit with Slow. Their disjoint
+union is exactly the former whole Unit predicate, including all lease-adjacent
+coverage. The combined executed floor remains at least 3500; the CP-7 floor is
+30 to allow its documented native-only skips. Both predicates use the supported
+[parenthesized property conjunction](https://tunit.dev/docs/execution/test-filters/).
+No PC witness or ordinary class is dropped. Final R-3 requires both receipts.
+
+Run only CP-3, CP-4 and CP-7, serially, with one shared isolated build. Preserve
+existing green CP-2/CP-6 receipts at 253a86bc397300936eee02c8b2ba1586d3cffd46:
+this finish changes the verification plan only, not implementation/tests.
+Historical red CP-1/CP-5 are not rerun as ordinary greens. CP-4 retains every
+full named guard class, including the non-Unit SlowTestRegistryMergeTests.
+
+The related admission/cold-build Debug is
+origin/feat/card-task-5ae98d31:docs/investigations/2026-11-05-debug-s5b-1-performance.md.
+It supports the three-row limit and native compile check; it does not prove that
+this card's 35-minute test execution was only build admission. Native compile
+on this worktree passed in 543.24s, admission 0s, at the unchanged lease-cap tip.
+The 15+15 minute partition estimates are provisional CARD-1713/CARD-1404
+measurements to collect once, not p95. Import the table, pin each Unit partition
+to 25 minutes and the guard row to 6 minutes (all reductions from prior caps),
+build deadline 25 minutes, slot acquisition 12 minutes, UseAppHost=false,
+TEMP=/tmp, and hard wall 40 minutes for this budgeted finish. No per-test timeout
+or assertion changes. Existing 140-minute charged allowance is retained; the
+independent 40-minute wall bound may leave rows incomplete, never green.
+Record exact TRX memberships/counts and row/build/admission phases. If the run
+exceeds 30 minutes retain evidence for caller-commissioned Debug; no automatic
+rerun of green rows. Known inherited reds remain MechanicalPcContractTests.
+C479_R06_LowNeverDiscoversAndTierRowsStayLow and NativeLinuxPolicyWitnessTests.
+Policy_rows_require_pinned_attribute / Markers_do_not_expand_policy_exclusions;
+the separate Code 340f1d0a owns their repair.
 
 ## Pending SourceLanding Mutation candidates
 
