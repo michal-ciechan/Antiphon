@@ -1175,11 +1175,13 @@ public sealed class LandingRemovalPolicyControlTests
         string? late = null;
         f.BeforeRealDelete = path =>
         {
+            if (late is not null || !Directory.Exists(path)) return;
             late = Path.Combine(path, "new-only-copy.txt");
             File.WriteAllText(late, "only-copy-created-after-final-check");
         };
         var result = await f.RemoveAsync();
         late.ShouldNotBeNull();
+        File.Exists(late).ShouldBeTrue("the only copy created at the delete call survives");
         File.ReadAllText(late).ShouldBe("only-copy-created-after-final-check");
         result.IsClean.ShouldBeFalse();
         result.Residue.ShouldBe("set_aside_content_changed");
@@ -1205,9 +1207,9 @@ public sealed class LandingRemovalPolicyControlTests
             f.RemoveExitCode = 128;
         };
         var result = await f.RemoveAsync();
+        File.Exists(Path.Combine(f.Source, "foreign.txt")).ShouldBeFalse("the foreign directory is not restored");
         result.IsClean.ShouldBeFalse();
         result.Residue.ShouldBe("set_aside_identity_mismatch");
-        File.Exists(Path.Combine(f.Source, "foreign.txt")).ShouldBeFalse();
         Directory.Exists(f.Source).ShouldBeFalse();
         File.ReadAllText(Path.Combine(saved!, "keep.txt")).ShouldBe("private work");
         File.ReadAllText(Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "foreign.txt")).ShouldBe("foreign-only-bytes");
