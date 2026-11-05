@@ -6,10 +6,11 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class ChangeAwareReleaseBudgetTests
 {
-    // CARD-1722: nearest-rank p95 of Investigate 5c10955b's five rc samples;
-    // ParameterHops has only the caller's g120 Windows sample (provisional p95).
+    // CARD-1722: provisional loaded BaselineAuthority sample from the existing C1590
+    // witness; median from Investigate 5c10955b's five rc samples. ParameterHops has
+    // only the caller's g120 Windows sample (provisional p95, not a native percentile).
     [Test]
-    [Arguments("C1313_BaselineAuthority", 294.207, 263.002)]
+    [Arguments("C1313_BaselineAuthority", 358.0, 263.002)]
     [Arguments("C1313_ParameterHops", 183.8, 183.8)]
     public async Task Slow_case_passes_measured_budget_to_harness(string caseName, double p95Seconds, double medianSeconds)
     {

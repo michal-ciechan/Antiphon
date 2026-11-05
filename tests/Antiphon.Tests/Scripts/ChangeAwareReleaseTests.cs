@@ -123,5 +123,17 @@ public sealed class ChangeAwareReleaseTests
             HarnessOptions with
             {
                 AdditionalArguments = FilterHostArguments,
+                // CARD-1722: BaselineAuthority took 358 s on loaded server2 (2026-11-03,
+                // n=1, provisional; same workload as C1590_PassedRunRemovesFixtureRoots).
+                // Investigate 5c10955b's five rc samples: median 263.002 s, sample p95
+                // 294.207 s. Round 2x the loaded sample to 720 s. ParameterHops took
+                // 183.8 s in Windows g120 (n=1, provisional); 600 s is the commissioned
+                // minimum for host load. Retain the next ordinary Linux/Windows samples.
+                ExecutionBudget = name switch
+                {
+                    "C1313_BaselineAuthority" => TimeSpan.FromSeconds(720),
+                    "C1313_ParameterHops" => TimeSpan.FromSeconds(600),
+                    _ => HarnessOptions.ExecutionBudget,
+                },
             }, CancellationToken.None);
 }
