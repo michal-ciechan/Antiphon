@@ -784,9 +784,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     }
 
     /// <summary>
-    /// Null when the recorded tree may be deleted. Missing approved names are finished work.
-    /// A new or changed entry is refused. A nested repository, and nothing else unexpected, falls
-    /// through so the delete's own census can preserve it.
+    /// Null when the recorded tree may be deleted. Missing approved names are finished work, and an approved
+    /// name that is now a link is only unlinked. A new or changed entry is refused. A nested repository, and
+    /// nothing else unexpected, falls through so the delete's own census can preserve it.
     /// </summary>
     private static string? CustodyOf(WorktreeSetAsideRecord record)
     {
@@ -841,6 +841,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                         if (stamp.Value.Kind == "dir") pending.Push(entry);
                         continue;
                     }
+                    // CARD-1017: an approved name that is now a link holds no worktree bytes; the delete unlinks it.
+                    if (stamp.Value.Kind == "link") continue;
                     if (expected.Kind != stamp.Value.Kind) return "set_aside_content_changed";
                     if (expected.Hash is not null)
                     {
