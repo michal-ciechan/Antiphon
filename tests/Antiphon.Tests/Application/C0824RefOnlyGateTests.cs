@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Application;
 public sealed class C0824RefOnlyGateTests
 {
     [Test]
+    [Timeout(2_000)]
     public void Default_off_and_empty_lists_admit_nothing()
     {
         var defaults = new RefOnlyDesktopSettings();
@@ -33,6 +34,7 @@ public sealed class C0824RefOnlyGateTests
     }
 
     [Test]
+    [Timeout(2_000)]
     public void Role_and_runner_both_must_match()
     {
         using var bound = new Bound(Enabled("Plan"));
@@ -98,6 +100,7 @@ public sealed class C0824RefOnlyGateTests
     }
 
     [Test]
+    [Timeout(2_000)]
     public void Mutation_source_landing_and_desktop_are_excluded()
     {
         using var bound = new Bound(Enabled("*"));
