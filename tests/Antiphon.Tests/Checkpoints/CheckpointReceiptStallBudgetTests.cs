@@ -100,7 +100,9 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
         var read = Task.Run(() => ReceiptFile.ReadBytes(f.Context, f.Payload));
         try
         {
-            stream.Entered.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            // Startup is a gate, not the refusal budget: a queued pool worker can be
+            // starved on a loaded host. The one-second refusal assertion below stays strict.
+            stream.Entered.Wait(TimeSpan.FromSeconds(60)).ShouldBeTrue();
             f.Clock.Advance(CheckpointFileReader.StallDeadline);
             await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(1)));
             read.IsCompleted.ShouldBeTrue("the caller must refuse while the synchronous syscall remains blocked");
