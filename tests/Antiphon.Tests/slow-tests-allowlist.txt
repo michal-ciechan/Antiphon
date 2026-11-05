@@ -329,6 +329,10 @@ Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
 
 # CARD-1032 S7: real PostgreSQL, scratch Git, phone-home recipient and receipt refusal matrices.
 Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests
+# CARD-0824 S5b-1: explicit migration upgrade and isolated persisted-coordinate ownership matrices.
+Antiphon.Tests.Application.C0824RefOnlyIdentityTests
+# CARD-0824 S5b-1: real Git land, verification-window drift and recovery refusal matrices.
+Antiphon.Tests.Application.C0824RefOnlyLandingTests
 # CARD-1259: isolated PostgreSQL commit faults, durable action debt and hosted worker lifecycle.
 Antiphon.Tests.Application.SessionRuntimeActionTests
 # CARD-1259: isolated schema recovery, real queue and retained transcript leases.

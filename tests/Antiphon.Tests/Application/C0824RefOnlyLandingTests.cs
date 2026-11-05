@@ -13,6 +13,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(60_000)] // CARD-0824 provisional multi-step budget; first red/green supplies the measured sample.
 public sealed class C0824RefOnlyLandingTests
@@ -167,7 +168,7 @@ public sealed class C0824RefOnlyLandingTests
             var op = await h.OperationAsync();
             await using var db = h.CreateContext();
             var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync();
-            request.TerminalFailureCode.ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
+            request.SourceRefusalReason.ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
             (op?.RemoteConfirmedAt).ShouldBeNull();
             h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove"));
             (await File.ReadAllTextAsync(Path.Combine(foreign, "feature.txt"))).ShouldBe("valuable feature\n");
@@ -198,7 +199,7 @@ public sealed class C0824RefOnlyLandingTests
                 h.Fixture.Git.Trace.Clear(); h.Fixture.Git.Commands.Clear();
                 await h.RunQueuedAsync();
                 await using var observed = h.CreateContext();
-                (await observed.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).TerminalFailureCode
+                (await observed.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).SourceRefusalReason
                     .ShouldStartWith("ref_only_land_recovery_unsupported", customMessage: "ref_only_land_recovery_unsupported:" + variant);
             }
             else
@@ -221,7 +222,7 @@ public sealed class C0824RefOnlyLandingTests
                 h.Fixture.Git.Trace.Clear(); h.Fixture.Git.Commands.Clear();
                 await h.RunQueuedAsync();
                 await using var observed = h.CreateContext();
-                (await observed.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).TerminalFailureCode
+                (await observed.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).SourceRefusalReason
                     .ShouldStartWith("ref_only_land_recovery_unsupported", customMessage: "ref_only_land_recovery_unsupported:resumed-reset");
             }
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("reset") || a.Contains("push") || a.Contains("update-ref") || a.Contains("fetch"), "recovery-writes=0");
@@ -275,7 +276,7 @@ public sealed class C0824RefOnlyLandingTests
                     (op?.RemoteConfirmedAt).ShouldBeNull("target-unpublished:" + variant);
                     await using var db = h.CreateContext();
                     var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync();
-                    var actual = op?.LastReason ?? request.TerminalFailureCode ?? request.HoldReasonCode;
+                    var actual = op?.LastReason ?? request.SourceRefusalReason ?? request.TerminalFailureCode ?? request.HoldReasonCode;
                     var expected = variant switch
                     {
                         "wrong-approved-S" => "reviewed_source_mismatch", "main-lock" or "land-lock" => "git_index_lock_held",

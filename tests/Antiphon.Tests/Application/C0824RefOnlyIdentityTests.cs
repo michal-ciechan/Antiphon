@@ -19,6 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(60_000)] // CARD-0824 provisional multi-step schema/identity budget.
 public sealed class C0824RefOnlyIdentityTests
