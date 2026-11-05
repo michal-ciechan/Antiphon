@@ -177,6 +177,8 @@ public sealed class LandingGitProfile
         var index = SubcommandIndex(arguments);
         if (index + 1 < arguments.Count && arguments[index] == "worktree" && arguments[index + 1] == "list")
             Interlocked.Increment(ref _worktreeLists);
+        // An in-process ls-remote of a local-path remote is still a fresh remote read.
+        if (index < arguments.Count && arguments[index] == "ls-remote") Interlocked.Increment(ref _remote);
     }
     public void Inspection() => Interlocked.Increment(ref _inspections);
 

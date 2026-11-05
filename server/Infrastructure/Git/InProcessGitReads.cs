@@ -29,7 +29,7 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// </list>
 /// <c>ANTIPHON_GIT_INPROCESS=off</c> turns it all off.
 /// </summary>
-internal static class InProcessGitReads
+internal static partial class InProcessGitReads
 {
     public const string EnvVar = "ANTIPHON_GIT_INPROCESS";
 
@@ -44,6 +44,8 @@ internal static class InProcessGitReads
         // this shape is valid under git-check-ref-format(1). Any other name is git's.
         if (arguments.Count == 2 && arguments[0] == "check-ref-format")
             return LandRefName.IsMatch(arguments[1]) ? Ok("") : null;
+        // ls-remote of a local-path remote opens the remote, not this repository.
+        if (arguments[0] == "ls-remote") return LsRemote(arguments);
         if (!Handled(arguments)) return null;
         try
         {
@@ -63,6 +65,7 @@ internal static class InProcessGitReads
     }
 
     private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base"
+            or "for-each-ref" or "diff-tree" or "ls-tree"
         || a is ["worktree", "list", "--porcelain", "-z"];
 
     /// <summary>
@@ -170,6 +173,9 @@ internal static class InProcessGitReads
                 var mergeBase = repo.ObjectDatabase.FindMergeBase(ancestor, descendant);
                 return mergeBase?.Sha == ancestor.Sha ? Ok("") : Exit(1);
             }
+
+            case "for-each-ref" or "diff-tree" or "ls-tree":
+                return MoreAnswer(repo, a);
         }
         return null;
     }

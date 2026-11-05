@@ -92,11 +92,12 @@ public class LandingGit : ILandingGit
     {
         if (started is null && GitPushUrlCache.IsCommand(arguments) && InProcessGitReads.Enabled && InProcessEligible())
             return await PushUrlAsync(repository, arguments, options, ct);
-        // The create-only observation pin: written in process when libgit2's write is git's (no child, so no journal).
-        // A cancelled call is left to the git path (checked before the write: a written pin is never reported as cancelled).
-        if (started is null && !ct.IsCancellationRequested && InProcessGitWrites.IsObservationPin(arguments)
+        // Create-only land pins and the land worktree lock: written in process when libgit2's write is git's (no
+        // child, so no journal). A cancelled call is left to the git path (checked before the write: a completed
+        // write is never reported as cancelled).
+        if (started is null && !ct.IsCancellationRequested && InProcessGitWrites.Handles(arguments)
             && InProcessGitReads.Enabled && InProcessEligible()
-            && InProcessGitWrites.TryCreateObservationPin(repository, arguments, _childEnvironment) is { } pinned)
+            && InProcessGitWrites.TryWrite(repository, arguments, _childEnvironment) is { } pinned)
         {
             Scope?.Profile.InProcessHit(arguments);
             return pinned;
@@ -187,7 +188,13 @@ public class LandingGit : ILandingGit
     }
 
     private LandingGitResult? InProcessAnswer(string repository, IReadOnlyList<string> arguments) =>
-        InProcessGitReads.Enabled && InProcessEligible() ? InProcessGitReads.TryAnswer(repository, arguments) : null;
+        InProcessGitReads.Enabled && InProcessEligible()
+        && (arguments.Count == 0 || arguments[0] != "ls-remote" || AnswerRemoteReadsInProcess)
+            ? InProcessGitReads.TryAnswer(repository, arguments) : null;
+
+    /// <summary>Whether <c>ls-remote</c> of a local-path remote may be answered in process (URL remotes never are).
+    /// A test that must exercise git's own ls-remote turns it off.</summary>
+    protected virtual bool AnswerRemoteReadsInProcess => true;
 
     private async Task<LandingGitResult> ExecuteScopedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
