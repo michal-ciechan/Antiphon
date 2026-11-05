@@ -29,7 +29,7 @@ public sealed partial class C0824RefOnlyLandingTests
             await using (var db = h.CreateContext())
             {
                 var saved = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
-                saved.QueueMessageId = null; saved.NextAttemptAt = null; saved.State = LandNotificationState.Queued;
+                saved.QueueMessageId = null; saved.NextAttemptAt = clock.GetUtcNow().UtcDateTime; saved.State = LandNotificationState.Queued;
                 var row = await db.SessionQueuedMessages.SingleAsync(q => q.SourceLandNotificationId == note.Id);
                 row.AgentSessionId = variant == "wrong-destination" ? otherSession : caller.SessionId;
                 row.ContentDigest = variant == "wrong-digest" ? DelegationNoteDigest.Compute("foreign digest") : note.ContentDigest;
@@ -50,7 +50,7 @@ public sealed partial class C0824RefOnlyLandingTests
                 row.AgentSessionId = caller.SessionId; row.ContentDigest = note.ContentDigest;
                 row.Status = QueuedMessageStatus.Pending; row.DeliveryAttempts = 0; row.DeliveryVerdict = null;
                 row.LastDeliveryBaselineSequence = null; row.LastDeliveryStartedAt = null;
-                saved.NextAttemptAt = null;
+                saved.NextAttemptAt = clock.GetUtcNow().UtcDateTime;
                 await db.SaveChangesAsync();
             }
         }
@@ -103,4 +103,3 @@ public sealed partial class C0824RefOnlyLandingTests
         }
     }
 }
-
