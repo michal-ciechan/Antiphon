@@ -48,6 +48,12 @@ PC-5: omit one retained-reason native marker; NativeLinuxPolicyWitnessTests.Poli
 | CP-8 | S2 | tests/Antiphon.E2E -> bin-07ab-e2e/ | report-policy-consumer | `/*/*/ReleaseGateReportDeliveryTests*/*` | V-6 | all listed, 0 failed | 1 | 5 |
 | CP-9 | S2 | n/a | nightly-coverage-script | `pwsh -NoProfile -File scripts/test-nightly-tests.ps1` | V-3, R-2 | >=80 harness assertions, 0 failed | n/a | 2 |
 
+| CP-10 | S3 | n/a | platform-owner-rosters | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case C1323_PlatformPolicy` | V-3, R-2 | 20 harness assertions, 0 failed | n/a | 1 |
+
+## S3 fixture roster repair
+
+The first S2 policy run exposed two introduced stale assumptions in C1323_PlatformPolicy: CARD-1323 and CARD-1614 had exactly three owned rows before this change. Retain the original three Linux E2E identities and all original mixed-platform checks, then assert the exact five CARD-1323 suite/class/platform keys and both new CARD-1614 native scopes (five rows total). No coverage, timeout, or result assertion is relaxed. CP-10 closes this repair before another cold build; the full ReleaseGatePlatformTests class remains in CP-2. PC-1 deletion variants for these four rows must also fail C1323_PlatformPolicy in separate method-scoped Mutation cycles.
+
 ## Non-native digest maintenance record
 
 Before: 89 non-native records; digest `8397984d90368a0ef1cbc5991610ae50328165b40ac2503559ae0562d72b554d`. After: 91 records; digest `be806b71aa6cdf11edc0961cb1babd782034c0556e5f2e985dbbe8f2f7d7592f`. All existing records are byte-for-byte canonically retained. Only these two records are appended (neither is a migrated native identity):
