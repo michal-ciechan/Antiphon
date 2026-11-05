@@ -36,7 +36,46 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         Git = new FixtureGit(Path.Combine(Root, "home"), TaskId);
     }
 
+    /// <summary>
+    /// Builds the fixture's repositories. With the default source branch they are cloned from a template built
+    /// once per process (<see cref="GitTreeTemplate"/>: the task id is a token, so branch names, the committed
+    /// <c>fixture-owner.txt</c> and the seed commit come out as a fresh build would make them), which saves the
+    /// ~10 git processes (~1.5 s) a build takes. <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c> builds every time.
+    /// </summary>
     public async Task InitializeAsync()
+    {
+        if (GitTreeTemplate.Enabled && SourceBranch is null)
+        {
+            GitTreeTemplate? template = null;
+            try
+            {
+                template = await TemplateAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"git-template disabled for this fixture: {ex.GetType().Name}: {ex.Message}");
+            }
+            if (template is not null)
+            {
+                var clone = template.CloneTo(Root, new Dictionary<string, string> { ["task"] = TaskId.ToString("N") });
+                SeedSha = clone.Map(template.Values["seed"]);
+                return;
+            }
+        }
+        await BuildAsync();
+    }
+
+    /// <summary>The process-wide template of a default fixture (token <c>task</c>, value <c>seed</c>).</summary>
+    internal static Task<GitTreeTemplate> TemplateAsync() =>
+        GitTreeTemplate.BuildOnceAsync("landing-git-fixture", ["task"], async (root, tokens) =>
+        {
+            var builder = new LandingGitFixture(root, Guid.ParseExact(tokens["task"], "N"));
+            await builder.BuildAsync();
+            return new() { ["seed"] = builder.SeedSha };
+        });
+
+    /// <summary>The fixture built with git processes, never from the template.</summary>
+    internal async Task BuildAsync()
     {
         await RequiredAsync(Repository, "init", "-b", "master");
         await RequiredAsync(Remote, "init", "--bare");
