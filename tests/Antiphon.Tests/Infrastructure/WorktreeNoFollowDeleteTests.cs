@@ -85,9 +85,29 @@ public sealed class WorktreeNoFollowDeleteTests
             return;
         }
 
+        AssertLateMarkerStopsTheWalk("child", "child");
+    }
+
+    // CARD-1717 B-3: the marker can appear in a directory above the one being walked. That directory's
+    // working tree includes the subtree, so the walk below it must stop as well.
+    [Test]
+    public void C1717_B3_LateRepositoryMarkerAboveTheWalkStopsIt()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("The late-marker walk is the Linux no-follow deleter.");
+            return;
+        }
+
+        AssertLateMarkerStopsTheWalk("parent/child", "parent");
+    }
+
+    private static void AssertLateMarkerStopsTheWalk(string childRelative, string markerRelative)
+    {
         var root = Path.Combine(Path.GetTempPath(), "c1717-b3-marker-" + Guid.NewGuid().ToString("N"));
         var tree = Path.Combine(root, "tree");
-        var child = Path.Combine(tree, "child");
+        var child = Path.Combine(tree, childRelative);
+        var marked = Path.Combine(tree, markerRelative);
         Directory.CreateDirectory(child);
         const int count = 20000;
         for (var i = 0; i < count; i++)
@@ -103,7 +123,7 @@ public sealed class WorktreeNoFollowDeleteTests
             {
                 while (File.Exists(observed) && !stop.IsCancellationRequested) Thread.Yield();
                 if (stop.IsCancellationRequested) return;
-                File.WriteAllText(Path.Combine(child, ".git"), "gitdir: private-repo\n");
+                File.WriteAllText(Path.Combine(marked, ".git"), "gitdir: private-repo\n");
                 wrote = true;
                 remainingAtMarker = Directory.GetFiles(child, "f*").Length;
             }
@@ -122,7 +142,7 @@ public sealed class WorktreeNoFollowDeleteTests
             var remaining = Directory.Exists(child) ? Directory.GetFiles(child, "f*").Length : 0;
             var lost = remainingAtMarker - remaining;
             lost.ShouldBeLessThanOrEqualTo(8, $"deleted {lost} files after the marker appeared ({error})");
-            File.Exists(Path.Combine(child, ".git")).ShouldBeTrue();
+            File.Exists(Path.Combine(marked, ".git")).ShouldBeTrue();
         }
         finally
         {
