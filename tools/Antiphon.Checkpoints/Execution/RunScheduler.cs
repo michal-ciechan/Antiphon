@@ -26,6 +26,7 @@ public sealed class SchedulerRequest
     public SourceRunGuard? SourceGuard { get; init; }
     public string? ExpectedSourceSha { get; init; }
     public string? TimingRoot { get; init; }
+    internal Func<CheckpointBuildBinding, CancellationToken, Task>? BeforeBuildReceiptWrite { get; init; }
 }
 
 public sealed class SchedulerResult
@@ -542,6 +543,8 @@ public sealed class RunScheduler
             var refusal = BuildConfinement.ReportedRefusal(result.Stderr) ?? BuildConfinement.ReportedRefusal(outside?.Detail);
             if (progress.State == "ok")
             {
+                if (request.BeforeBuildReceiptWrite is not null)
+                    await request.BeforeBuildReceiptWrite(built!, cancellationToken).ConfigureAwait(false);
                 var written = built!.Write(result.Exited);
                 if (written is not null)
                 {

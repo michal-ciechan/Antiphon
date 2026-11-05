@@ -9,6 +9,74 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class RunSchedulerTests : CheckpointTestBase
 {
     [Test]
+    public async Task rows_wait_for_the_build_source_receipt_before_readiness()
+    {
+        var root = TempDir();
+        var receiptEntered = new TaskCompletionSource<CheckpointBuildBinding>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReceipt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstRow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sentinelEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var manifest = TwoBuildRows();
+        manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-3", Command = "sentinel" });
+        foreach (var row in manifest.Checkpoints) row.Expect = [];
+        foreach (var build in manifest.Builds)
+            Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(root, build.Project))));
+        var state = new RunState { RunId = "receipt-order" };
+        var driver = InstantDriver(driver =>
+        {
+            driver.When(request => CheckpointFixtures.IsRun(request) && HasOutput(request, "bin-a/"), async (request, token) =>
+            {
+                await releaseFirstRow.Task.WaitAsync(token);
+                CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+                return new DriverResult(0, "", "");
+            });
+            driver.When(request => request.Arguments.Contains("sentinel"), (_, _) =>
+            {
+                sentinelEntered.TrySetResult();
+                return Task.FromResult(new DriverResult(0, "", ""));
+            });
+        });
+        var task = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
+        {
+            Manifest = manifest, Rows = manifest.Checkpoints, RunDirectory = root, WorkingDirectory = root,
+            State = state, Slots = new FixedSlotClient("granted"), Width = 2,
+            Commit = new string('a', 40), ExpectedSourceSha = new string('a', 40),
+            BeforeBuildReceiptWrite = async (binding, token) =>
+            {
+                if (!binding.OutputPath.EndsWith("bin-b", StringComparison.Ordinal)) return;
+                receiptEntered.TrySetResult(binding);
+                await releaseReceipt.Task.WaitAsync(token);
+            },
+        }, watchdog.Token);
+        CheckpointBuildBinding? heldBinding = null;
+        string? heldState = null;
+        string? heldReceipt = null;
+        try
+        {
+            heldBinding = await receiptEntered.Task.WaitAsync(watchdog.Token);
+            // The sentinel proves the scheduler has visited CP-2 while its receipt writer is held.
+            await sentinelEntered.Task.WaitAsync(watchdog.Token);
+            heldState = state.Builds.Single(build => build.Id == "bin-b").State;
+            heldReceipt = heldBinding.Check();
+        }
+        finally
+        {
+            releaseReceipt.TrySetResult();
+            releaseFirstRow.TrySetResult();
+            await task;
+        }
+        var result = await task;
+        result.Rows.Single(row => row.Id == "CP-2").State.ShouldBe("green",
+            string.Join(Environment.NewLine, result.Rows.Select(row => row.Line + Environment.NewLine + row.Output)));
+        heldState.ShouldBe("building");
+        heldReceipt.ShouldBe("unknown");
+        heldBinding.ShouldNotBeNull().Check().ShouldBe("verified");
+        result.Rows.ShouldAllBe(row => row.State == "green");
+        driver.InFlight.ShouldBe(0);
+    }
+
+    [Test]
     public async Task builds_never_overlap_even_with_free_slots_and_width_two()
     {
         var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
