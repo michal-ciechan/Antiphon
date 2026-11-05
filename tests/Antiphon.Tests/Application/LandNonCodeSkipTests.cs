@@ -2735,6 +2735,7 @@ public sealed class LandNonCodeSkipTests
         var graphRows = new List<string>();
         var executablePaths = new List<string>();
         var regularPaths = new List<string>();
+        var blobs = new List<(string Path, string Oid)>();
         foreach (var row in rows)
         {
             var tab = row.IndexOf('\t');
@@ -2748,9 +2749,15 @@ public sealed class LandNonCodeSkipTests
             graphPaths.Add(path);
             graphRows.Add(row);
             (metadata[0] == "100755" ? executablePaths : regularPaths).Add(path);
+            blobs.Add((path, metadata[2]));
+        }
+        // One cat-file --batch for every blob not yet read: a blob's bytes are fixed by its object id.
+        await ReadBlobsAsync(root, blobs.Select(b => b.Oid).Where(oid => !BlobBytes.ContainsKey(oid)).Distinct().ToList());
+        foreach (var (path, oid) in blobs)
+        {
             var destination = Path.Combine(fixture.Repository, path);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            await File.WriteAllBytesAsync(destination, await GitBytesAsync(root, "cat-file", "blob", metadata[2]));
+            await File.WriteAllBytesAsync(destination, BlobBytes[oid]);
         }
         // The real tracked inventory includes historical scripts beneath ignored .antiphon/.
         // Do not let destination line-ending settings reinterpret committed bytes.
@@ -2948,6 +2955,45 @@ public sealed class LandNonCodeSkipTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await process.WaitForExitAsync(timeout.Token);
         process.ExitCode.ShouldBe(0, await stdout + await stderr);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> BlobBytes = new(StringComparer.Ordinal);
+
+    /// <summary>Reads <paramref name="oids"/> through one <c>git cat-file --batch</c> into <see cref="BlobBytes"/>.</summary>
+    private static async Task ReadBlobsAsync(string root, IReadOnlyList<string> oids)
+    {
+        if (oids.Count == 0) return;
+        var start = GitStart(root, "cat-file", "--batch");
+        start.RedirectStandardInput = true;
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
+        var stderr = process.StandardError.ReadToEndAsync();
+        var feed = Task.Run(async () =>
+        {
+            await process.StandardInput.WriteAsync(string.Join('\n', oids) + "\n");
+            process.StandardInput.Close();
+        });
+        using var body = new MemoryStream();
+        await process.StandardOutput.BaseStream.CopyToAsync(body);
+        await feed;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync(timeout.Token);
+        process.ExitCode.ShouldBe(0, await stderr);
+        var bytes = body.ToArray();
+        var at = 0;
+        foreach (var oid in oids)
+        {
+            var newline = Array.IndexOf(bytes, (byte)'\n', at);
+            newline.ShouldBeGreaterThan(at, "cat-file --batch header");
+            var header = Encoding.ASCII.GetString(bytes, at, newline - at).Split(' ');
+            header.Length.ShouldBe(3, string.Join(' ', header));
+            header[0].ShouldBe(oid);
+            header[1].ShouldBe("blob", oid);
+            var size = int.Parse(header[2], CultureInfo.InvariantCulture);
+            BlobBytes[oid] = bytes[(newline + 1)..(newline + 1 + size)];
+            bytes[newline + 1 + size].ShouldBe((byte)'\n');
+            at = newline + 2 + size;
+        }
+        at.ShouldBe(bytes.Length, "cat-file --batch returned more than was asked");
     }
 
     private static async Task<byte[]> GitBytesAsync(string root, params string[] args)
