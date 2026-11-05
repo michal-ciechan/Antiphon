@@ -1145,6 +1145,11 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Depth")
                         .HasColumnType("integer");
 
+                    b.Property<int>("DesktopWorkspaceKind")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<DateTime?>("DispatchNotBeforeAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1463,6 +1468,9 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("TaskRefWorkspaceBindingId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -2142,6 +2150,11 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<int>("SourceDesktopWorkspaceKindSnapshot")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("SourceDiagnosticCode")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -2181,6 +2194,9 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int>("SourceResolutionState")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("SourceTaskRefWorkspaceBindingIdSnapshot")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("SourceWorktreePath")
                         .HasMaxLength(1000)
@@ -2327,7 +2343,6 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("GitDirectory")
-                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("LandWorkspaceReadyAt")
@@ -2466,6 +2481,11 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("SchemaVersion")
                         .HasColumnType("integer");
 
+                    b.Property<int>("SourceDesktopWorkspaceKind")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("SourceFullRef")
                         .IsRequired()
                         .HasColumnType("text");
@@ -2491,6 +2511,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("SourceRemoteSha")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("SourceTaskRefWorkspaceBindingId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("SupersedesRequestId")
                         .HasColumnType("uuid");
@@ -9145,6 +9168,74 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("SubscriptionUsageSamples", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskRefWorkspaceBinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Branch")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("CommonDirectory")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("FullRef")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<string>("IdentityPath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("PreparationState")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RepositoryPath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SelectedBaseRef")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<string>("SelectedBaseSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("SelectedBaseSource")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SelectedBaseTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TaskId")
+                        .IsUnique();
+
+                    b.HasIndex("RepositoryPath", "FullRef")
+                        .IsUnique();
+
+                    b.ToTable("TaskRefWorkspaceBindings");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskSupervisionNotice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -11674,6 +11765,15 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Stage");
 
                     b.Navigation("Workflow");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskRefWorkspaceBinding", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeMirrorBinding", b =>
