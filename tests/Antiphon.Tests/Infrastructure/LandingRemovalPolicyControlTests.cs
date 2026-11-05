@@ -958,7 +958,7 @@ public sealed class LandingRemovalPolicyControlTests
         using var f = new RemovalFixture();
         f.AfterUnregister = () => throw new IOException("audit cut after real unregister");
         var first = await f.RemoveAsync();
-        first.Residue.ShouldBe("cleanup_inspection_error");
+        first.Residue.ShouldBe("worktree_removal_incomplete");
         var aside = f.SetAsideTrees().ShouldHaveSingleItem();
         f.AfterUnregister = null;
         var notes = Path.Combine(aside, "operator-recovery-notes.txt");
@@ -977,7 +977,7 @@ public sealed class LandingRemovalPolicyControlTests
     {
         using var f = new RemovalFixture();
         f.AfterUnregister = () => throw new IOException("audit cut after real unregister");
-        (await f.RemoveAsync()).Residue.ShouldBe("cleanup_inspection_error");
+        (await f.RemoveAsync()).Residue.ShouldBe("worktree_removal_incomplete");
         var aside = f.SetAsideTrees().ShouldHaveSingleItem();
         f.AfterUnregister = null;
         var rescued = aside + ".rescued";
