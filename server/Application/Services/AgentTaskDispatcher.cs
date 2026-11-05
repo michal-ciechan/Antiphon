@@ -9502,6 +9502,7 @@ public sealed partial class AgentTaskDispatcher
         acted += await ReleaseCleanGhostSeatsAsync(
             parsed, failedOwners, sessionStatus, sessionRunnerIds, sessionStartedAt, uncertainSessionIds,
             missingTurnBoundary, workingSessions, busyAgentIds, sourcedOwnerIds, retire, now, ct);
+        warm.RemoveAll(a => a.Status == AgentStatus.Stopped);
         foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
         {
             retire.Remove(agent);

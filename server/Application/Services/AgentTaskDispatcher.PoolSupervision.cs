@@ -344,6 +344,10 @@ public sealed partial class AgentTaskDispatcher
             }
 
             retire.Remove(row.Agent);
+            // Release already wrote the incident and proved the seat stopped. Retain its
+            // audited agent, but never offer it to the warm-pool cap or a later raw stopper.
+            FinishPoolRetire(row.Agent, hasIncident: true, UtcNow());
+            await _db.SaveChangesAsync(ct);
             released++;
         }
 
