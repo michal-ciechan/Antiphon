@@ -880,10 +880,13 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
-    public async Task Residue_retry_keeps_an_ignored_secret(CancellationToken ct)
+    [Arguments(WorkspaceRetainModes.Execute)]
+    [Arguments(WorkspaceRetainModes.DryRun)]
+    public async Task Residue_retry_keeps_an_ignored_secret(string mode, CancellationToken ct)
     {
         // B-1 recovery. The leaf is gone and its retiring residue holds an ignored secret.
-        // The retry must not hand that residue to `git worktree remove`.
+        // DryRun never reaches phase B, so the refusal has to happen on the residue itself.
+        // Execute keeps it here too, before `git worktree remove`.
         using var s = Create();
         var m = s.Mirror();
         var residue = s.Retiring + "/task-a1677001.0badf00d";
@@ -891,7 +894,7 @@ public sealed class C1677RetentionEngineTests
         Git(s.Repository, "worktree", "move", m.Path, residue);
         Plant(residue, "bin/.env", "residue-secret");
 
-        var response = await s.Engine().RetainAsync(Request(m), ct);
+        var response = await s.Engine().RetainAsync(Request(m, mode), ct);
         response.Verdict.ShouldBe(WorkspaceRetentionCodes.Kept, response.Detail);
         response.Reason.ShouldBe("ignored_secret", response.Detail);
         response.Detail.ShouldBe("bin/.env");

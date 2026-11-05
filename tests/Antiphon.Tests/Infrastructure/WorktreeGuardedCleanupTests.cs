@@ -263,6 +263,36 @@ public sealed class WorktreeGuardedCleanupTests
         (await File.ReadAllTextAsync(path)).ShouldBe("{\"secret\":1}");
     }
 
+    [Test]
+    [Arguments("bin-private/credentials/token", 1)]
+    [Arguments("bin-private/credentials/token", 2)]
+    [Arguments("bin-private/tls.pem/token", 1)]
+    [Arguments("bin-private/tls.pem/token", 2)]
+    public async Task Secret_directory_descendants_survive_each_cleanup_reading(string relative, int reading)
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var reads = 0;
+        var path = Path.Combine(h.H.Fixture.Source, relative);
+        byte[] secret = [0, 255, 13, 10, 42];
+        h.OtherCommand = async (repo, args) =>
+        {
+            if (repo == h.H.Fixture.Source && GitSubcommand.Of(args) == "status" && h.Removes == 0 && ++reads == reading)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllBytesAsync(path, secret);
+            }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("ignored_content_preserved");
+        result.Detail.ShouldBe("protected: " + relative);
+        reads.ShouldBe(reading);
+        h.Removes.ShouldBe(0);
+        (await File.ReadAllBytesAsync(path)).ShouldBe(secret);
+        (await h.H.Fixture.RequiredAsync(h.H.Fixture.Repository, "worktree", "list", "--porcelain"))
+            .ShouldContain("worktree " + h.H.Fixture.Source.Replace('\\', '/'));
+    }
+
     // Review 9a0c7fb8 item 2 over real Git, which lists through a junction and whose non-forcing
     // `worktree remove` deletes through it: the swap between readings must refuse and leave the
     // link's target untouched.

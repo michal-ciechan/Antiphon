@@ -9,6 +9,45 @@ namespace Antiphon.SessionRunner.Tests;
 
 public sealed partial class CompletedCardWorkspaceRemovalTests
 {
+    // CARD-1718 B-2/B-3: real transport, initial and locked final classifier readings, then replay.
+    [Test]
+    [Arguments("bin/tls.pem", false)]
+    [Arguments("bin/tls.pem", true)]
+    [Arguments("bin/credentials/token", false)]
+    [Arguments("bin/credentials/token", true)]
+    [Arguments("bin/.docker/config.json", false)]
+    [Arguments("bin/.docker/config.json", true)]
+    public async Task Secret_floor_survives_transport_inspection_and_replay(string relative, bool afterInitial)
+    {
+        await using var r = new RemovalRig();
+        var f = r.Fixture;
+        var full = Path.Combine(f.Checkout, relative);
+        byte[] secret = [0, 1, 13, 10, 255, 42];
+        void Plant()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllBytes(full, secret);
+        }
+        if (afterInitial)
+            r.Hook("AfterInitialInspectionForTest", (Func<Task>)(() => { Plant(); return Task.CompletedTask; }));
+        else
+            Plant();
+        var command = r.Command with { PolicyPatterns = ["**/*"] };
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var reply = await TransportDispatcher(r, true).DispatchAsync(
+                TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, command), CancellationToken.None);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            Held(reply.Payload!.Value, "protected_content");
+            File.ReadAllBytes(full).ShouldBe(secret);
+            CompletedCardRunnerFixture.Git(f.Repository, "worktree", "list", "--porcelain")
+                .ShouldContain("worktree " + f.Checkout.Replace('\\', '/'));
+            Directory.Exists(RunnerWorkspaceRemovalJournal.SetAsideFor(command)).ShouldBeFalse();
+            r.Journal.Read()!.ShouldAllBe(intent => intent.Receipt == null);
+            r.Preserved();
+        }
+    }
+
     private static RunnerBuildDto TransportBuild => new("test", null, DateTime.UtcNow, DateTime.UtcNow);
 
     private static PhoneHomeFrame TransportFrame(PhoneHomeOperation operation, object? body) =>
