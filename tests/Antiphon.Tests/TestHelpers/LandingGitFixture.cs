@@ -233,7 +233,14 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             // covers start to exit; "git.spawned" marks calls that started a process, the rest were
             // answered in process or by a hook.
             if (System.Diagnostics.Activity.Current is { } span && span.DisplayName == "process-wait wait")
+            {
                 span.DisplayName = "process-wait git " + (arguments.Count > 0 ? arguments[0] : "?");
+                if (TestTrace.StacksEnabled)
+                {
+                    span.SetTag("code.stack", TestTrace.CallerFrames());
+                    span.SetTag("git.args", string.Join(" ", arguments.Take(4)));
+                }
+            }
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;

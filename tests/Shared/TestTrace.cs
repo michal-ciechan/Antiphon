@@ -32,6 +32,19 @@ public static partial class TestTrace
 
     private static readonly bool SqlStacks = Environment.GetEnvironmentVariable(StacksVariable) == "1";
 
+    /// <summary>True when <see cref="StacksVariable"/> asks for caller stacks.</summary>
+    public static bool StacksEnabled => SqlStacks;
+
+    /// <summary>The nearest Antiphon frames on the current stack (outside the test helpers' plumbing).</summary>
+    public static string CallerFrames(int take = 8) => string.Join(" < ", new StackTrace(1, false).GetFrames()
+        .Select(f => f.GetMethod())
+        .Where(m => m?.DeclaringType?.FullName is { } n && n.StartsWith("Antiphon.", StringComparison.Ordinal)
+            && !n.StartsWith("Antiphon.Tests.TestHelpers.TestTrace", StringComparison.Ordinal)
+            && !n.StartsWith("Antiphon.Tests.TestHelpers.LandingGitFixture", StringComparison.Ordinal)
+            && !n.StartsWith("Antiphon.Server.Infrastructure.Git.LandingGit", StringComparison.Ordinal))
+        .Select(m => m!.DeclaringType!.FullName + "." + m.Name)
+        .Distinct().Take(take));
+
     public static readonly ActivitySource Source = new(SourceName);
 
     private static readonly object Gate = new();
