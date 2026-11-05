@@ -43,6 +43,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly int _remotePrepPushBudgetMinutes;
     private readonly bool _workspaceSlots;
     private readonly WorkspaceSlotRoleGate _roleGate;
+    internal Action? BeforeRemoveMirrorCommand { get; set; }
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
@@ -1125,6 +1126,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             var descriptor = await _runners.DescribeAsync(task.RunnerId, ct);
             var guarded = descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspacePublishV1) == true;
             publishedSha ??= PublishedShaForRemoval(task);
+            BeforeRemoveMirrorCommand?.Invoke();
             var response = await Remote(task.RunnerId).RemoveWorkspaceAsync(
                 new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath,
                     PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct);

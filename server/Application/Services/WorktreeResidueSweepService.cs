@@ -32,6 +32,7 @@ public sealed class WorktreeResidueSweepService
     private readonly TaskWorktreeRetirementService? _retirement;
     private readonly AgentTaskLandService? _lands;
     private readonly IWorkspaceReservationJournal? _reservations;
+    internal Func<string, Guid, CancellationToken, Task>? DesktopBoundaryAsync { get; set; }
 
     public WorktreeResidueSweepService(
         AppDbContext db,
@@ -190,6 +191,7 @@ public sealed class WorktreeResidueSweepService
             var taskCursorKey = TaskCursorKey(task.Id);
             var outcome = WorktreeResidueCandidateOutcome.Held;
             var code = "release_required";
+            if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:residue-settled", task.Id, ct);
             if (release?.State == WorktreeRetirementState.Complete)
             {
                 outcome = WorktreeResidueCandidateOutcome.Removed;
@@ -198,6 +200,7 @@ public sealed class WorktreeResidueSweepService
             }
             else
             {
+            if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:residue-settled", task.Id, ct);
             var (authorized, reason) = _retirement is null
                 ? (false, "release_required")
                 : await _retirement.EvaluateEligibilityAsync(task, release, ct);
