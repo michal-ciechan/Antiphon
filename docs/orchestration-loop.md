@@ -2610,6 +2610,13 @@ retirement service's own codes. The guarded removal's own re-check (`LandingGit.
 source inspection) runs the same `-c core.longpaths=true` status and refuses a clean listing that warned on stderr as
 `status_untrusted` (CARD-1714). **Dirty or unpushed trees are never removed**: the
 Held row (path, branch, head SHA, origin tip, reason) is the evidence, and removal stays the caller-filed path.
+**Reflog-only commits are salvaged first (CARD-1708, operator 2026-11-05)**: before the move-aside, each commit that
+only the tree's HEAD reflog, its HEAD or its branch reflog reaches (no branch, tag or remote-tracking ref does) gets
+`refs/antiphon/salvage/<taskId>/<sha>` (at most 64 per tree after dropping commits another one reaches; idempotent). A
+reflog read or ref write that fails refuses the removal (`reflog_salvage_failed`, `reflog_salvage_over_limit`) while
+nothing has moved; the switch is read before the first write and as each write starts, so an off switch writes no
+ref. An executing tick deletes a salvage ref only once its own reflog is `WorktreeLegacyRelease:SalvageRefRetentionDays`
+(30, 1..3650) old; dry runs and previews prune nothing.
 Ignored files go through the CARD-0665 gate. A refused system release whose command removed nothing reopens a
 new attempt on its next due tick (60 min doubling to 24 h, at most `MaxRefusedAttempts` = 5); a caller-filed
 release keeps the one-command rule. A busy repository lease defers without counting. Every pre-check counts
