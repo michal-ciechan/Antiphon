@@ -249,8 +249,8 @@ public sealed class C0824RefOnlyCleanupTests
         foreach (var temporarySource in new[] { false, true })
         {
             var nonce = Guid.NewGuid().ToString("N");
-            var root = temporarySource ? Path.Combine(Path.GetTempPath(), "c0824-r5-" + nonce)
-                : Path.Combine(checkoutRoot, ".antiphon", "test-output", "c0824-r5-" + nonce);
+            var root = temporarySource ? Path.Combine(Path.GetTempPath(), "c1017", nonce)
+                : Path.Combine(checkoutRoot, ".antiphon", "test-output", "c1017", nonce);
             // A fixture-owned sibling of the Code checkout, outside TEMP and both source repositories.
             var reports = Path.Combine(Directory.GetParent(checkoutRoot)!.FullName, ".antiphon-test-evidence", "c0824-r5-" + nonce);
             Directory.Exists(reports).ShouldBeFalse("fresh-persistent-report-root");
