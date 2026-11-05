@@ -9,7 +9,11 @@ public sealed record PreparedLandingVerification(
     RepositoryVerificationIdentity Identity, string Repository, string Common, string LandGitDirectory,
     string TargetBeforeSha, LandingDestination Destination, string? Filter, string? ExpectedSourceSha,
     Guid? ReviewEvidenceId, LandRecoveryMode RecoveryMode, Guid? RecoverySourceTaskId,
-    string RecoveryRefPrefix, string[] SourceRegistrations, string? SourceCanonical);
+    string RecoveryRefPrefix, string[] SourceRegistrations, string? SourceCanonical)
+{
+    public DesktopWorkspaceKind SourceDesktopWorkspaceKind { get; init; }
+    public Guid? SourceTaskRefWorkspaceBindingId { get; init; }
+}
 
 internal sealed class LandRepositoryLeaseScope(IRepositoryMutationLease leases, ILandingGit git,
     string repository, RepositoryLeaseOwnerTag owner, RepositoryLease initial) : IAsyncDisposable

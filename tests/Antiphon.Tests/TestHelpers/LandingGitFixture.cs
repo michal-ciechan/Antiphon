@@ -166,6 +166,12 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         public string? HooksPathOverride { get; set; }
         /// <summary>CARD-0688: every command with the directory it ran in.</summary>
         public List<(string Directory, string[] Arguments)> Commands { get; } = [];
+        public List<string> IndexLockProbes { get; } = [];
+        public override Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct)
+        {
+            IndexLockProbes.Add(checkout);
+            return base.InspectIndexLockAsync(checkout, ct);
+        }
         public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
         public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
