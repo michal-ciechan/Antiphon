@@ -246,6 +246,60 @@ public sealed class WorktreeIgnoredContentClassifierTests
         Same(result.Disposable, ".antiphon/inbox/a.md");
     }
 
+    // CARD-1718 A-D3. A secret-shaped name inside a disposable directory is protected, so guarded
+    // removal holds the tree (ignored_content_preserved). It is not evidence: evidence is copied
+    // and then deleted. The disposable sibling shows the directory rule itself still applies.
+    [Test]
+    [Arguments("node_modules/.env")]
+    [Arguments("node_modules/pkg/.env")]
+    [Arguments("bin/.env.local")]
+    [Arguments("node_modules\\.env")]
+    [Arguments("bin/.ENV")]
+    [Arguments("node_modules/pkg/.env/token")]
+    [Arguments("dist/credentials.json")]
+    [Arguments("obj/server.pem")]
+    [Arguments("out/id_rsa")]
+    [Arguments("bin/id_rsa.pub")]
+    [Arguments("bin/tls.key")]
+    [Arguments("dist/cert.pfx")]
+    [Arguments("node_modules/.npmrc")]
+    [Arguments("client/out/.netrc")]
+    public void Secret_shaped_name_inside_disposable_directory_is_protected(string path)
+    {
+        var result = Defaults().Classify([path, "client/node_modules/x/y.js"]);
+        Same(result.Protected, WorktreeIgnoredContentClassifier.Normalize(path));
+        Same(result.Disposable, "client/node_modules/x/y.js");
+        result.Evidence.ShouldBeEmpty();
+    }
+
+    // An emptied operator protected list still cannot drop the floor, and a catch-all disposable
+    // glob still cannot release a secret-shaped name. A plain build output stays disposable.
+    [Test]
+    public void Operator_disposable_override_cannot_release_a_secret_shaped_name()
+    {
+        var classifier = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/*"],
+            ProtectedIgnored = [],
+        }));
+        var result = classifier.Classify([
+            "node_modules/.env", "bin/.env.local", "dist/credentials.json", "obj/plain.dll"]);
+        Same(result.Protected, "bin/.env.local", "dist/credentials.json", "node_modules/.env");
+        Same(result.Disposable, "obj/plain.dll");
+        result.Evidence.ShouldBeEmpty();
+    }
+
+    // The floor is the documented names, not every file under those directories.
+    [Test]
+    public void Ordinary_names_inside_disposable_directories_stay_disposable()
+    {
+        var result = Defaults().Classify([
+            "bin/notes.json", "dist/credential.txt", "node_modules/env.local", "node_modules/my.keyboard"]);
+        Same(result.Disposable, "bin/notes.json", "dist/credential.txt", "node_modules/env.local", "node_modules/my.keyboard");
+        result.Protected.ShouldBeEmpty();
+        result.Evidence.ShouldBeEmpty();
+    }
+
     private static void Same(ImmutableArray<string> actual, params string[] expected) =>
         actual.ToArray().ShouldBe(expected);
 
