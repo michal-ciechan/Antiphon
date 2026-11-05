@@ -11,7 +11,7 @@ S1 commits a failing independent admission roster witness. S2 adds the exact Win
 
 The initial native incremental compile and tool bootstrap are explicitly allowed additional builds: they establish compiler health before any cold checkpoint. Native output; UseAppHost=false; TEMP=/tmp. One lease per driver. Main checkpoint build is shared by three rows. Three other suite witnesses have their own isolated builds. All estimates below are provisional, not measured p95; CARD-1404/CARD-1720 own bounded measurements. Admission is separate (45-minute checkpoint default). DeriveTotalMinutes supplies the execution allowance; do not widen it. Preserve TRX per-test durations and tool build/slot/row timings in ignored evidence; fixture phases not emitted remain unknown.
 
-No full assembly is selected. Unit's invariant is classification/compiled policy consistency across the entire Unit lane; it omits delivery, landing, leases and persistence. Whole Unit has a historical 35-minute incomplete run (CARD-1720); if this selection exceeds 30 minutes the caller owes Debug, and it cannot be credited green from a timeout. No unchanged green repetition is needed. No test changes while a run is active. Groups contain at most three rows.
+No full assembly is selected. Unit's invariant is classification/compiled policy consistency across the entire Unit lane; it omits delivery, landing, leases and persistence. Whole Unit has a historical 35-minute incomplete run (CARD-1720); if this selection exceeds 30 minutes the caller owes Debug, and it cannot be credited green from a timeout. No unchanged green repetition is needed. No test changes while a run is active. Groups contain at most three rows. Run the bounded full C0824 class before the broad Unit row, retaining every selection and timeout.
 
 ## Verification design
 
@@ -40,14 +40,13 @@ PC-5: omit one retained-reason native marker; NativeLinuxPolicyWitnessTests.Poli
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | n/a | admission-red-first | `pwsh -NoProfile -File scripts/test-rc-coverage-admission.ps1` | V-1, R-1, R-2 | 7 harness assertions, 0 failed after S2 | n/a | 1 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-07ab-policy/ | policy-consumers | `/*/*/(RcCoverageAdmissionTests*)\|(ReleaseGatePlatformTests*)\|(ReleaseGatePolicyTests*)\|(LiveLaneRunnerTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(NativeLinuxPolicyMatcherParityTests*)\|(NativeLinuxPolicyWitnessMutationTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(NightlyScriptsTests*)\|(NightlyDiscoveryParserTests*)\|(NightlyExecutionDiagnosticTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(RcFailureHistoryTests*)\|(ReleaseGateActivationTests*)\|(InterimVerificationReadinessTests*)/*` | V-1, V-2, V-3, R-1, R-2 | all listed, 0 failed | 100 | 8 |
-| CP-3 | S2 | CP-2 | whole-unit | `/*/*/*/*[Category=Unit]` | V-5 | >=1 executed, 0 failed | 1 | 20 |
 | CP-4 | S2 | CP-2 | full-split-class | `/*/*/C0824DesktopLegacyReleasePolicyTests*/*` | V-4 | all listed, 0 failed | 1 | 5 |
+| CP-3 | S2 | CP-2 | whole-unit | `/*/*/*/*[Category=Unit]` | V-5 | >=1 executed, 0 failed | 1 | 20 |
 | CP-5 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-07ab-runner/ | runner-markers | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | V-2 | all listed, 0 failed | 4 | 3 |
 | CP-6 | S2 | tests/Antiphon.PtyHost.Tests -> bin-07ab-host/ | host-markers | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | V-2 | all listed, 0 failed | 4 | 3 |
 | CP-7 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-07ab-pty/ | pty-markers | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | V-2 | all listed, 0 failed | 4 | 3 |
 | CP-8 | S2 | tests/Antiphon.E2E -> bin-07ab-e2e/ | report-policy-consumer | `/*/*/ReleaseGateReportDeliveryTests*/*` | V-6 | all listed, 0 failed | 1 | 5 |
 | CP-9 | S2 | n/a | nightly-coverage-script | `pwsh -NoProfile -File scripts/test-nightly-tests.ps1` | V-3, R-2 | >=80 harness assertions, 0 failed | n/a | 2 |
-
 | CP-10 | S3 | n/a | platform-owner-rosters | `pwsh -NoProfile -File scripts/test-rc-platform.ps1 -Case C1323_PlatformPolicy` | V-3, R-2 | 20 harness assertions, 0 failed | n/a | 1 |
 
 ## S3 fixture roster repair
