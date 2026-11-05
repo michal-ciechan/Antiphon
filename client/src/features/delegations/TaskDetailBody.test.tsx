@@ -122,6 +122,30 @@ it.each([null, 'feat/card-task-ce744e22'])('C470 renders canonical mutation hand
   expect(target.searchParams.get('task')).toBe(FLY_ID)
 })
 
+it.each(['status_untrusted', 'source_dirty'])('C1715 shows the source refusal in task detail: %s', async (reason) => {
+  const task: AgentTaskDetailDto = {
+    ...detail(),
+    landRequest: {
+      id: 'cccccccc-0000-0000-0000-000000000003', state: 'Failed',
+      requestedAt: '2026-09-11T12:00:00Z', startedAt: null,
+      lastEvaluatedAt: '2026-09-11T12:00:00Z', lastProgressAt: '2026-09-11T12:00:00Z',
+      ageSeconds: 12, noProgressSeconds: 12, attempt: 1,
+      holdReasonCode: null, holdDetail: null, holdingTaskId: null, holdingTaskStatus: null,
+      heldSince: null, holdEpisode: 0, reconciliationError: null, notifications: [],
+      sourceRefusalReason: reason,
+    },
+  }
+  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
+  renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
+  const refusal = await screen.findByTestId('source-refusal')
+  expect(refusal).toHaveTextContent(`Source refusal: ${reason}`)
+  if (reason === 'status_untrusted') {
+    expect(refusal).toHaveTextContent('Git status wrote to stderr; worktree cleanliness could not be verified.')
+  } else {
+    expect(refusal).not.toHaveTextContent('Git status wrote to stderr')
+  }
+})
+
 it('shows exact approval, source resolution, verification and legacy evidence', async () => {
   const shaA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   const shaB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
