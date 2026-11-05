@@ -6,7 +6,7 @@ Read touched tests/fixtures/helpers before naming cases, the nearest fixture for
 ### Inspection
 - <bodies read> | <boundaries -> V/R IDs or exclusion>
 ### Delivery inventory
-For each new/changed async delivery path enumerate producer, destination, persistence boundary, recovery and observable receipt, joined by the durable identity. Include a producer-to-recipient test via the real queue: busy recipient, one already eligible, crash/enqueue-failure recovery at each handoff. A request, queue insert, event, Sent flag or ack never proves delivery. Session input needs the matching complete UserPrompt transcript. Declare substitutes and what each cannot prove. Reject a design stopping before recipient evidence. Each safety-critical delivery/recovery guard needs a named positive control.
+For each new/changed async delivery path enumerate producer, destination, persistence boundary, recovery and observable receipt, joined by the durable identity. Test the real queue: busy, already eligible, crash/enqueue-failure. Session input needs the matching complete UserPrompt transcript. Declare substitutes and what each cannot prove. Each safety-critical delivery/recovery guard needs a named positive control.
 ### Proves it works now
 - V-1: <behaviour> | <layer> | <test/command> | <expected>
 ### Guards the regression
@@ -21,7 +21,7 @@ List every safety-critical guard, incl. untested; split independently bypassable
 - <exclusion and reason>
 ### Checkpoints
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-One isolated build + one exact filter per row; union = whole ordinary scope. Min=-MinExecuted (TUnit executions; n/a non-TUnit). EstimatedMinutes=time. Schema: docs/testing-and-build.md.
+One isolated build + one exact filter per row. EstimatedMinutes without a measured p95 is provisional (CARD-1720); the Unit lane has none. Run total is max(30, 2*sum+10). totalTimeoutMinutes: N below it is refused unless totalTimeoutOverrideReason: is set. Shards may share one build; each writes rows/<id>/run.trx. The 15-minute floor and 3x estimate are not R5.
 ### Cost
 - Separate ordinary V/R floor (Code) = sum of CP EstimatedMinutes, and PC floor (Mutation). Name filters/minutes. Total = setup/build + V/R + each PC red/restore/green; label estimated/measured; quantify savings or justify zero.
 

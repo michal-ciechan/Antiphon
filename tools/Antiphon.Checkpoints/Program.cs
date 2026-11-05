@@ -670,6 +670,23 @@ public static class Program
                 row.Repeat = repeatOverride.Value;
         }
         ManifestValidator.Validate(manifest, repo);
+        var totalTimeoutMinutes = BoundedMinutes(options, "total-timeout");
+        if (totalTimeoutMinutes is int asked)
+        {
+            var judged = manifest.Checkpoints.Where(row => rows.Count == 0 || rows.Contains(row.Id)).ToList();
+            if (judged.Any(row => row.EstimatedMinutes is > 0))
+            {
+                var derived = RowTimeout.DeriveTotalMinutes(judged.Select(row => row.EstimatedMinutes ?? 0), null);
+                if (asked < derived)
+                {
+                    var message = $"refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes {asked} is below derived {derived}";
+                    if (string.IsNullOrWhiteSpace(options.Get("total-timeout-override-reason")))
+                        throw new ManifestValidationException("total-timeout", message);
+                    Console.Error.WriteLine("WARNING " + message);
+                }
+            }
+        }
+
         return (manifest, new RunRequest
         {
             Rows = rows,
@@ -677,7 +694,7 @@ public static class Program
             Baseline = options.Get("baseline"),
             KnownFlaky = (options.Get("known-flaky") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
             RowTimeoutMinutes = Minutes(options.Get("row-timeout")),
-            TotalTimeoutMinutes = BoundedMinutes(options, "total-timeout"),
+            TotalTimeoutMinutes = totalTimeoutMinutes,
             HardWallTimeoutMinutes = BoundedMinutes(options, "hard-wall-timeout"),
             Parallel = int.TryParse(options.Get("parallel"), out var width) ? width : null,
             Serial = options.Has("serial"),

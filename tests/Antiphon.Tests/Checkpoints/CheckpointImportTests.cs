@@ -571,6 +571,38 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         imported.Warnings.Any(warning => warning.Contains(
             "refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes 30 is below derived 54",
             StringComparison.Ordinal)).ShouldBeTrue(string.Join(" | ", imported.Warnings));
+        var manifest = imported.Manifest.ShouldNotBeNull();
+        manifest.Timeouts.ExplicitTotalMinutes.ShouldBe(30);
+        manifest.Timeouts.TotalOverrideReason.ShouldContain("20261105-013711-58df");
+        var roundTrip = ManifestLoader.LoadYaml(ManifestLoader.ToYaml(manifest), TempDir());
+        roundTrip.Timeouts.ExplicitTotalMinutes.ShouldBe(30);
+        roundTrip.Timeouts.TotalOverrideReason.ShouldContain("20261105-013711-58df");
+    }
+
+    [Test]
+    public void explicit_total_at_or_above_derived_is_kept_without_a_warning()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(BudgetTable("totalTimeoutMinutes: 54"));
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Warnings.Any(warning => warning.Contains("checkpoint-total-below-derived", StringComparison.Ordinal))
+            .ShouldBeFalse(string.Join(" | ", imported.Warnings));
+        imported.Manifest.ShouldNotBeNull().Timeouts.ExplicitTotalMinutes.ShouldBe(54);
+    }
+
+    [Test]
+    public void prose_mention_of_total_timeout_is_not_a_budget_directive()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(BudgetTable("The incident passed --total-timeout 30m in prose."));
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Manifest.ShouldNotBeNull().Timeouts.ExplicitTotalMinutes.ShouldBeNull();
+    }
+
+    [Test]
+    public void explicit_total_directive_must_be_a_positive_integer()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(BudgetTable("totalTimeoutMinutes: 0"));
+        imported.ExitCode.ShouldBe(2);
+        imported.Error.ShouldContain("refused: checkpoint-total-below-derived: totalTimeoutMinutes must be a positive integer");
     }
 
     [Test]
@@ -589,6 +621,55 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         var validation = error.InnerException.ShouldBeOfType<ManifestValidationException>();
         validation.Field.ShouldBe("total-timeout");
         validation.Message.ShouldContain("refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes 30 is below derived 54");
+    }
+
+    [Test]
+    public void cli_total_below_derived_is_allowed_when_an_override_reason_is_given()
+    {
+        var root = TempDir();
+        var plan = Path.Combine(root, "plan.md");
+        File.WriteAllText(plan, BudgetTable());
+        var options = new Antiphon.Checkpoints.Program.ArgSet();
+        options.Add("plan", plan);
+        options.Add("total-timeout", "30m");
+        options.Add("total-timeout-override-reason", "incident 20261105-013711-58df kept the 30 minute cap");
+        var method = typeof(Antiphon.Checkpoints.Program).GetMethod("LoadSelection", BindingFlags.Static | BindingFlags.NonPublic);
+        method.ShouldNotBeNull();
+        var selection = ((CheckpointManifest Manifest, RunRequest Request))method.Invoke(null, [options, root, null, CancellationToken.None])!;
+        selection.Request.TotalTimeoutMinutes.ShouldBe(30);
+    }
+
+    [Test]
+    public void yaml_explicit_total_below_derived_is_refused_without_a_reason()
+    {
+        var root = TempDir();
+        const string yaml = """
+            schemaVersion: 1
+            timeouts:
+              explicitTotalMinutes: 30
+            builds:
+              - id: bin-ex
+                project: tests/Antiphon.Tests
+                outputPath: bin-ex/
+            checkpoints:
+              - id: CP-1
+                after: [S1]
+                build: bin-ex
+                filter: "/*/*/ShardATests/*"
+                estimatedMinutes: 11
+              - id: CP-2
+                after: [S1]
+                build: bin-ex
+                filter: "/*/*/*/*[Category=Unit]"
+                estimatedMinutes: 11
+            """;
+        var error = Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(yaml, root));
+        error.Field.ShouldBe("total-timeout");
+        error.Message.ShouldContain("refused: checkpoint-total-below-derived: explicit totalTimeoutMinutes 30 is below derived 54");
+        var allowed = yaml.Replace("explicitTotalMinutes: 30", "explicitTotalMinutes: 30\n  totalOverrideReason: incident kept the cap", StringComparison.Ordinal);
+        var manifest = ManifestLoader.LoadYaml(allowed, root);
+        manifest.Timeouts.ExplicitTotalMinutes.ShouldBe(30);
+        manifest.Timeouts.TotalOverrideReason.ShouldBe("incident kept the cap");
     }
 
     private static string BudgetTable(string? directive = null)

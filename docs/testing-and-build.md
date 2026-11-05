@@ -120,8 +120,9 @@ For each new or changed test/fixture and its Plan budget, Review checks:
 
 Current checkpoint importer defaults described below (including the 15-minute floor and 3x
 estimate multiplier) are not the R5 policy: explicit measured budgets or documented exceptions
-are required until tooling is updated. This documentation does not change those defaults, live
-qualification, release gate credit or production timeouts.
+are required until tooling is updated. CARD-1720 refuses an explicit total below the derivation
+(`checkpoint-total-below-derived`) unless an override reason is given. This documentation does not
+change those defaults, live qualification, release gate credit or production timeouts.
 
 <!-- CARD-0254 preserved source begins -->
 
@@ -608,8 +609,15 @@ The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedM
 ### Checkpoint runner tool (CARD-0723)
 
 CARD-1531 separates admission from execution. `--total-timeout` is the charged
-execution allowance (existing selected-estimate derivation when omitted);
-`timeouts.totalMinutes` remains a legacy field unused by scheduled execution.
+execution allowance (existing selected-estimate derivation when omitted).
+A plan may set that allowance with a `totalTimeoutMinutes: N` line in the
+`### Checkpoints` section. A value below `DeriveTotalMinutes` is refused as
+`checkpoint-total-below-derived` unless that section also sets
+`totalTimeoutOverrideReason`. CLI `--total-timeout` is checked the same way when
+a selected row has a positive estimate; `--total-timeout-override-reason` is that
+reason. A request that already carries `TotalTimeoutMinutes` is unchanged. An
+existing whole-Unit row stays valid. `timeouts.totalMinutes` remains a legacy field
+unused by scheduled execution.
 Only the union of intervals where every runnable activity waits for broker
 admission and no driver/preflight/settlement work runs is excluded. A queued
 sibling never extends a running driver's deadline. `build.slotWaitMinutes`
@@ -1824,7 +1832,7 @@ Each shard row:
 - Selects only that class-level tag. A method-level `[Category("Unit")]` on a class with another category is outside these rows. `tests/Antiphon.Tests/Application/MatrixDefaultComplexityCreateTests.cs` is `[Category("Integration")]`, and `The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` at line 130 is `[Test, Category("Unit")]`. The full lane filter `/*/*/*/*[Category=Unit]` still selects that method. A class shard does not.
 - Is split again when a measurement would put `EstimatedMinutes` above 15.
 
-Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Shard runtimes are UNMEASURED. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, executing the shard rows does not demonstrate `ordinaryScopeCompleted=Full`. A Full Final receipt for the Unit lane is not yet demonstrated.
+Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Do not set an explicit total below that derivation: `totalTimeoutMinutes: N` below it is refused as `checkpoint-total-below-derived` unless `totalTimeoutOverrideReason` is set (CARD-1720). Each shard writes `rows/<id>/run.trx`. A later total-budget kill still reports a shard that already flushed that file. Shard runtimes are UNMEASURED, so those `EstimatedMinutes` values stay provisional under R5 and are not a measured p95. The killed run 20261105-013711-58df reached 535s on one whole-Unit row and wrote no TRX; that duration is not a p95. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, executing the shard rows does not demonstrate `ordinaryScopeCompleted=Full`. A Full Final receipt for the Unit lane is not yet demonstrated.
 
 ## Test traces (OpenTelemetry-style spans)
 

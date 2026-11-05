@@ -153,16 +153,18 @@ internal static class ResilienceTestHost
         var started = DateTime.UtcNow;
         while (!work.IsCompleted && DateTime.UtcNow - started < realLimit)
         {
-            // The deadline is visible so the gate witness compiles. This revision still advances after it is due.
-            var due = ownerDeadline is DateTimeOffset deadline && time.GetUtcNow() >= deadline;
+            if (ownerDeadline is DateTimeOffset due && time.GetUtcNow() >= due)
+                break;
             time.Advance(step);
-            if (due)
-                await Task.Delay(1);
-            else
-                await Task.Delay(1);
+            await Task.Delay(1);
         }
 
-        return await work.WaitAsync(TimeSpan.FromSeconds(2));
+        if (ownerDeadline is null)
+            return await work.WaitAsync(TimeSpan.FromSeconds(2));
+        var remaining = realLimit - (DateTime.UtcNow - started);
+        if (remaining < TimeSpan.FromMilliseconds(50))
+            remaining = TimeSpan.FromMilliseconds(50);
+        return await work.WaitAsync(remaining);
     }
 
     /// <summary>One observed zero-advance step: current UTC, requested boundary, whether the phase was still pending, and any invariant exception.</summary>
