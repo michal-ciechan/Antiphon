@@ -167,7 +167,7 @@ public sealed class C0824RefOnlyLandingTests
             var op = await h.OperationAsync();
             await using var db = h.CreateContext();
             var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync();
-            request.TerminalFailureCode.ShouldStartWith("ref_only_source_registered", "source-registration-refused:" + variant);
+            request.TerminalFailureCode.ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
             (op?.RemoteConfirmedAt).ShouldBeNull();
             h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove"));
             (await File.ReadAllTextAsync(Path.Combine(foreign, "feature.txt"))).ShouldBe("valuable feature\n");
@@ -199,7 +199,7 @@ public sealed class C0824RefOnlyLandingTests
                 await h.RunQueuedAsync();
                 await using var observed = h.CreateContext();
                 (await observed.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).TerminalFailureCode
-                    .ShouldStartWith("ref_only_land_recovery_unsupported", "ref_only_land_recovery_unsupported:" + variant);
+                    .ShouldStartWith("ref_only_land_recovery_unsupported", customMessage: "ref_only_land_recovery_unsupported:" + variant);
             }
             else
             {
@@ -222,7 +222,7 @@ public sealed class C0824RefOnlyLandingTests
                 await h.RunQueuedAsync();
                 await using var observed = h.CreateContext();
                 (await observed.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).TerminalFailureCode
-                    .ShouldStartWith("ref_only_land_recovery_unsupported", "ref_only_land_recovery_unsupported:resumed-reset");
+                    .ShouldStartWith("ref_only_land_recovery_unsupported", customMessage: "ref_only_land_recovery_unsupported:resumed-reset");
             }
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("reset") || a.Contains("push") || a.Contains("update-ref") || a.Contains("fetch"), "recovery-writes=0");
             Path.Exists(binding.Identity).ShouldBeFalse();
@@ -282,7 +282,7 @@ public sealed class C0824RefOnlyLandingTests
                         "endpoint-drift" => "verification_ticket_changed", "land-sequencer" => "verification_sequencer_changed",
                         "land-dirt" => "verification_tracked_tree_changed", _ => throw new InvalidOperationException(),
                     };
-                    actual.ShouldStartWith(expected, "target-unpublished:" + variant);
+                    actual.ShouldStartWith(expected, customMessage: "target-unpublished:" + variant);
                     if (variant is "endpoint-drift" or "land-lock" or "land-sequencer" or "land-dirt")
                         reached.ShouldBeTrue("guard-boundary-reached:" + variant);
                     (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", "refs/heads/master")).Trim()
