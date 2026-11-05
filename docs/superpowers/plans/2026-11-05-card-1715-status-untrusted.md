@@ -29,6 +29,6 @@ Unbound candidates: docs/superpowers/mutations/2026-11-05-card-1715-controls.md.
 |---|---|---|---|---|---|---|---|---|---|---|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1715-final/` | landing | `/*/*/(AgentTaskLandHalfResetTests*)\|(AgentTaskLandRegistrationSafetyTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(LandSourceIdentityTests*)\|(SlowTestRegistryMergeTests*)/*` | V-1,V-2,V-4,R-1,R-2,R-4,R-5 | all listed, 0 failed | 1 | 12 | true |
 | CP-2 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | V-5,R-5 | >= 1 executed, 0 failed | 1 | 15 | true |
-| CP-3 | S2 | n/a | detail | `pwsh -NoProfile -File scripts/test-client.ps1 TaskDetailBody.test.tsx` | V-3,R-3 | client file passes, 0 failed | n/a | 3 | true |
+| CP-3 | S2 | n/a | detail | `pwsh -NoProfile -File scripts/test-client.ps1 TaskDetailBody.test.tsx -JsonResultPath ../.antiphon/c1715-final-client.json` | V-3,R-3 | client file passes, 0 failed | n/a | 3 | true |
 
 CP-1 intentionally combines five bounded full classes to share a cold build. CP-2 includes the full named Unit guard/mechanical classes; separate green reruns would duplicate coverage. CP-3 also performs the required client typecheck and lint prerequisites. At most three rows per run. Known base failures named in the brief: C479_R06_LowNeverDiscoversAndTierRowsStayLow, Policy_rows_require_pinned_attribute, Markers_do_not_expand_policy_exclusions, LinuxOnlyWindowsExclusionPolicy. Confirm any observed inherited reds against unchanged production base before attributing them.

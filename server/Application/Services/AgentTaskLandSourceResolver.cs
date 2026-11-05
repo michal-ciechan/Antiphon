@@ -365,8 +365,9 @@ public sealed class AgentTaskLandSourceResolver(
                     expected, ownerObserved.Sha, expected, ct);
             inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
             if (!inspected.Accepted || inspected.Snapshot?.HeadSha != expected)
-                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
-                    inspected.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
+                return await RefuseAsync(task, request, baseline,
+                    inspected.Reason == "status_untrusted" ? "status_untrusted" : "adopt_local_changed",
+                    inspected.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct, inspected.Diagnostic);
             request.SourceAdvanceChildProcessId = null;
             request.SourceAdvanceChildStartTicks = null;
         }
@@ -506,8 +507,9 @@ public sealed class AgentTaskLandSourceResolver(
                     local, ownerObserved.Sha, expected, ct);
             var afterLocal = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
             if (!afterLocal.Accepted || afterLocal.Snapshot!.HeadSha != expected)
-                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
-                    afterLocal.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
+                return await RefuseAsync(task, request, baseline,
+                    afterLocal.Reason == "status_untrusted" ? "status_untrusted" : "adopt_local_changed",
+                    afterLocal.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct, afterLocal.Diagnostic);
             request.SourceAdvanceChildOperation = null;
             request.SourceAdvanceChildProcessId = null;
             request.SourceAdvanceChildStartTicks = null;
@@ -670,7 +672,9 @@ public sealed class AgentTaskLandSourceResolver(
         if (applied.Disposition == LandSourceCheckpointDisposition.StaleRequest) return Result.Stale();
         if (applied.Disposition == LandSourceCheckpointDisposition.SourceStateChanged)
             throw new LandSourceResolutionConflictException();
-        return Result.Refused(reason, diagnostic, detail);
+        return Result.Refused(reason, diagnostic, reason == "status_untrusted"
+            ? "Git status wrote to stderr; worktree cleanliness could not be verified."
+            : detail);
     }
 
     private async Task<Result?> CheckpointAsync(AgentTask task, AgentTaskLandRequest request,
