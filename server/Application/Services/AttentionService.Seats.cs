@@ -248,7 +248,8 @@ public sealed partial class AttentionService
                 $"notice={facts.NoticeState ?? "none"}; failure=" + (task.FailureReason ?? "unknown")
                     + $"; activity={facts.Activity}; session={session.Id:D}; "
                     + $"agent={task.AgentId?.ToString("D") ?? "none"}; "
-                    + "custody=held until authoritative exit or new ownership. Detection only; the session is never killed. "
+                    + $"Eligible pooled Failed seats with a clean, origin-equal mirror are released after {GhostSeatRelease.IdleMinutes} idle minutes; "
+                    + "dirty, unpushed or unknown mirrors keep the seat. "
                     + GhostSeatRelease.AttentionToken(GhostSeatRelease.Read(
                         TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)?.RemoteSync)),
                 task.CompletedAt ?? session.StartedAt,

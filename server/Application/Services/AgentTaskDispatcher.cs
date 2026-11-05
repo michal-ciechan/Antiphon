@@ -9496,11 +9496,11 @@ public sealed partial class AgentTaskDispatcher
                     || missingTurnBoundary.Contains(sid)))
             .Select(p => p.Agent).ToHashSet();
         var acted = 0;
-        // Before the protected loop stamps PoolIdleSince to now. The bound is CompletedAt, and
-        // the scan is every Failed owner in the pool, not the TTL retire set (production TTL is
+        // Before the protected loop stamps PoolIdleSince to now. Completion and fresh session
+        // activity bound the idle clock. Scan Failed owners, not the TTL retire set (production TTL is
         // 60 minutes). AutomaticEnabled off does not own these seats; OwnsAutomaticPath does.
         acted += await ReleaseCleanGhostSeatsAsync(
-            parsed, failedOwners, sessionStatus, sessionRunnerIds, uncertainSessionIds,
+            parsed, failedOwners, sessionStatus, sessionRunnerIds, sessionStartedAt, uncertainSessionIds,
             missingTurnBoundary, workingSessions, busyAgentIds, sourcedOwnerIds, retire, now, ct);
         foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
         {

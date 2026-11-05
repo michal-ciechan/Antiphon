@@ -20,7 +20,7 @@ Prior Review bbd446f6 measured the 139-case core selection at 373s plus a 278s n
 
 The initial plan included a whole-Unit CP-4 from the generic Final profile. It was never executed and is withdrawn before ordinary qualification under the brief's explicit "The whole Unit lane is NOT required (CARD-1720 owns that defect)" exception. CARD-1720 documents no-TRX expiries at 30 and 60 minutes and owns the sharding repair. Whole Unit is not claimed passed; the four named classification/slow Unit guard classes remain required. CP-4 now names the new method-scoped red activity variants, not the withdrawn lane.
 
-The assembly fixture owns PostgreSQL startup/migration once per run; each World uses an isolated cloned database and disposes it. RunnerSeatReleaseFixture owns its established isolated queue/HTTP fixture. No live external runner or provider call. Newly added tests add no timeouts. Existing fixture watchdogs are unchanged.
+The assembly fixture owns PostgreSQL startup/migration once per run; each World uses an isolated cloned database and disposes it. RunnerSeatReleaseFixture owns its established isolated queue/HTTP fixture. No live external runner or provider call. Newly added tests add no timeouts. Existing fixture watchdogs are unchanged. TRX supplies per-test duration; checkpoint PHASES supplies host startup/body/teardown. Separate container/migration/clone and individual SQL/HTTP span timings remain unknown where the established fixtures do not emit them (CARD-1514), never zero.
 
 ## Verification design
 
