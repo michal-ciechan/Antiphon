@@ -284,6 +284,161 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
         (await w.ReleasesAsync(a)).Single().CallerIdentity.ShouldBe("operator");
     }
 
+    /// <summary>
+    /// Review 5242d604. The command intent has already committed. Disabling either switch at that
+    /// await must keep the tree, registration and local branch. A later tick with the switch on finishes.
+    /// </summary>
+    [Test]
+    [Arguments("enabled", TaskWorktreeRetirementService.LegacyReleaseDisabled)]
+    [Arguments("execute", TaskWorktreeRetirementService.LegacyReleaseExecuteOff)]
+    public async Task Late_switch_after_intent_preserves_the_tree(string which, string reason)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var origin = await w.OriginRefsAsync();
+        var fired = false;
+        w.Host.RetirementCut.Cut = "intent-after";
+        w.Host.RetirementCut.Pause = () =>
+        {
+            if (fired) return Task.CompletedTask;
+            fired = true;
+            w.Host.RetirementCut.Cut = null;
+            Apply(w, which);
+            return Task.CompletedTask;
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBeTrue("the intent commit is the gate");
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        row.ReasonCode.ShouldBe(reason);
+        await AssertBytesAsync(w, a, before);
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+        (await w.ReleasesAsync(a)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+        (await w.AttemptsAsync(a)).ShouldContain(x => x.CommandIntentId != null, "the committed intent stays for resume");
+
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+    }
+
+    /// <summary>
+    /// Review 5242d604. The fourth status on the tree is the guarded remover's final inspection.
+    /// Disabling Execute there, after that await returns, must not move or delete.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_at_final_inspection_preserves_the_tree()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var origin = await w.OriginRefsAsync();
+        var statuses = 0;
+        var fired = false;
+        var previous = w.Fixture.Git.AfterCommand;
+        w.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (previous is not null) await previous(directory, args, result);
+            if (fired || DesktopLegacyWorld.Subcommand(args) != "status" || !LandingGit.PathsEqual(directory, a.Path))
+                return;
+            if (++statuses != 4) return;
+            result.ExitCode.ShouldBe(0);
+            fired = true;
+            Apply(w, "execute");
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBeTrue($"the fourth status is the final inspection (saw {statuses})");
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+        await AssertBytesAsync(w, a, before);
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+        (await w.ReleasesAsync(a)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+
+        w.Fixture.Git.AfterCommand = previous;
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+    }
+
+    /// <summary>
+    /// Review 5242d604. Unregister has finished and the only bytes are the set-aside. Disabling Execute
+    /// at that await must not delete the set-aside or the local branch. A later tick finishes both.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_after_unregister_preserves_set_aside()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var origin = await w.OriginRefsAsync();
+        var aside = WorktreeSetAside.SetAsidePath(a.Path);
+        var marker = Path.Combine(aside, a.Id8 + ".txt");
+        var fired = false;
+        w.Fixture.Git.AfterUnregister = _ =>
+        {
+            if (fired) return Task.CompletedTask;
+            fired = true;
+            Apply(w, "execute");
+            return Task.CompletedTask;
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBeTrue("unregister completed");
+        Directory.Exists(aside).ShouldBeTrue("the set-aside still holds the tree");
+        File.ReadAllText(marker).ShouldBe(a.Id8 + ".txt\n");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue("the local branch is intact");
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+        var release = (await w.ReleasesAsync(a)).Single();
+        release.State.ShouldNotBe(WorktreeRetirementState.Complete);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+
+        w.Fixture.Git.AfterUnregister = null;
+        Apply(w, "on");
+        await w.TickAsync();
+        await w.AssertRetiredAsync(a, origin);
+        Directory.Exists(aside).ShouldBeFalse("the resumed pass deleted the set-aside");
+    }
+
+    /// <summary>
+    /// Review 5242d604. Execute is turned off inside the release-row save, after filing admission.
+    /// The insert must roll back: no system row, and the tree stays.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_during_release_insert_inserts_nothing()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var before = await w.SnapshotAsync(a.Path);
+        var origin = await w.OriginRefsAsync();
+        var fired = false;
+        w.Host.RetirementCut.Cut = "release-before";
+        w.Host.RetirementCut.Pause = () =>
+        {
+            if (fired) return Task.CompletedTask;
+            fired = true;
+            w.Host.RetirementCut.Cut = null;
+            Apply(w, "execute");
+            return Task.CompletedTask;
+        };
+
+        var tick = await w.TickAsync();
+
+        fired.ShouldBeTrue("the release insert is the gate");
+        (await w.ReleasesAsync(a)).ShouldBeEmpty("a disabled switch inserts no system release");
+        await w.AssertIntactAsync(a, before);
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+        var row = await w.RowAsync(tick.RunId, a);
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        row.ReasonCode.ShouldBe(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+    }
+
     /// <summary>Settings that cannot be read fail closed: the sweep does not delete a system release.</summary>
     [Test]
     public async Task Residue_sweep_refuses_a_system_release_when_legacy_settings_cannot_be_read()
