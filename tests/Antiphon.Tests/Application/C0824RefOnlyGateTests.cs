@@ -28,6 +28,7 @@ public sealed class C0824RefOnlyGateTests
                      "{\"Enabled\":true,\"RunnerIds\":[\"fixture-runner\"],\"Roles\":\"none\"}" })
         {
             using var bound = new Bound(section);
+            Should.NotThrow(() => _ = bound.Settings, "valid-empty-or-disabled-section-binds");
             bound.Gate.Admits(Eligible()).ShouldBeFalse(section == "{}" ? "default-disabled" :
                 section.Contains("false") ? "explicit-disabled-refused" : section.Contains("[]") ? "empty-runners-refused" : "roles-none-refused");
         }

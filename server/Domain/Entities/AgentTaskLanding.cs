@@ -23,6 +23,7 @@ public sealed class AgentTaskLanding
     public string? GitDirectory { get; set; } = "";
     public DesktopWorkspaceKind SourceDesktopWorkspaceKind { get; set; }
     public Guid? SourceTaskRefWorkspaceBindingId { get; set; }
+    public DesktopCleanupDisposition DesktopCleanupDisposition { get; set; }
     public string SourceFullRef { get; set; } = "";
     public string OriginalSourceSha { get; set; } = "";
     public string? RebasedSourceSha { get; set; }

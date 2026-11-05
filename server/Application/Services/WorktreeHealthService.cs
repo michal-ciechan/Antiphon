@@ -173,7 +173,11 @@ public sealed class WorktreeHealthService
         AgentTaskStatus Status,
         string? RepoPath,
         string? WorktreePath,
-        string? WorktreeBranch);
+        string? WorktreeBranch)
+    {
+        public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+        public Guid? TaskRefWorkspaceBindingId { get; init; }
+    }
 
     internal sealed record ClassifiedFinding(
         string RepoPath,

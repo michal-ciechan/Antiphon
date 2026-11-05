@@ -1,3 +1,5 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Domain.Entities;
 
 /// <summary>One exact ordinary workspace of one attempt, linked to the existing local executor.</summary>
@@ -11,6 +13,9 @@ public sealed class CardWorktreeCleanupTarget
     public string RepositoryPath { get; set; } = "";
     public string WorktreePath { get; set; } = "";
     public string SourceFullRef { get; set; } = "";
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; set; }
+    public Guid? TaskRefWorkspaceBindingId { get; set; }
+    public DesktopCleanupDisposition DesktopCleanupDisposition { get; set; }
     public Guid? RetirementId { get; set; }
     public Guid? LandingOperationId { get; set; }
     public string? ExclusionReason { get; set; }
@@ -19,7 +24,7 @@ public sealed class CardWorktreeCleanupTarget
     public ICollection<CardWorktreeCleanupEndpoint> Endpoints { get; set; } = [];
 }
 
-public enum CardWorktreeCleanupEndpointState { Pending, IntentRecorded, Partial, Complete, Refused, Revoked }
+public enum CardWorktreeCleanupEndpointState { Pending, IntentRecorded, Partial, Complete, Refused, Revoked, NotRequired }
 
 /// <summary>Local and each proven mirror retain separate command identities and outcomes.</summary>
 public sealed class CardWorktreeCleanupEndpoint

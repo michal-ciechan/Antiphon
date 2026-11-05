@@ -74,8 +74,6 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         {
             if (task.RepoPath is null || task.WorktreePath is null || task.WorktreeBranch is null)
                 throw new LandingRefusal("source_coordinates_missing");
-            var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath, task.WorktreePath,
-                FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"));
             if (ticket is not null)
             {
                 // CARD-1463: the owner row is judged against the ticket's operation first, as the in-lease
@@ -83,13 +81,27 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 // as task_coordinates_changed rather than as a lease or pending-operation mismatch measured
                 // against the moved coordinates.
                 Require(op is not null && request is not null, "verification_ticket_changed");
+                await db.Entry(op!).ReloadAsync(ct);
                 await RequireTaskIdentityAsync(op!, ct);
             }
+            TaskWorkspaceContext context;
+            try { context = await new TaskWorkspaceContextResolver(db).ResolveAsync(task, ct); }
+            catch (Application.Exceptions.ConflictException ex) { throw new LandingRefusal(ex.Code!); }
+            if (context.Kind == DesktopWorkspaceKind.RefOnly && context.PreparationState != TaskRefWorkspacePreparationState.Published)
+                throw new LandingRefusal("ref_only_preparation_incomplete");
+            var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath, task.WorktreePath,
+                FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"))
+            { DesktopWorkspaceKind = context.Kind, TaskRefWorkspaceBindingId = context.BindingId };
+            if (context.Kind == DesktopWorkspaceKind.RefOnly
+                && (request is not null && RefOnlyLandRecovery.IsUnsupported(request)
+                    || op is not null && (op.RecoveryMode != LandRecoveryMode.None || op.ChildOperation == "source-adopt-reset")))
+                throw new LandingRefusal("ref_only_land_recovery_unsupported");
             var common = await git.CommonDirectoryAsync(coordinates.RepositoryPath, ct);
+            try { TaskWorkspaceContextResolver.RequireRepositoryIdentity(context, common); }
+            catch (Application.Exceptions.ConflictException ex) { throw new LandingRefusal(ex.Code!); }
             Require(leases.Owns(lease, common), "repository_lease_required");
             if (ticket is not null)
             {
-                await db.Entry(op!).ReloadAsync(ct);
                 await db.Entry(request!).ReloadAsync(ct);
                 await ValidateTicketAsync(task, op!, request!, ticket, ct);
             }
@@ -436,6 +448,19 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             op.Cleanup = LandCleanupStatus.Pending;
             await TransitionAsync(op, LandPhase.CleanupStarted, ct);
         }
+        if (op.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            Require(op.SourceTaskRefWorkspaceBindingId is not null && op.GitDirectory is null, "ref_only_binding_required");
+            op.DesktopCleanupDisposition = DesktopCleanupDisposition.NotRequired;
+            op.DirectoryRemoved = false;
+            op.RegistrationRemoved = false;
+            op.BranchRemoved = false;
+            op.Cleanup = LandCleanupStatus.Complete;
+            op.CleanupCompletedAt = Now();
+            op.LastReason = null;
+            if (op.Phase != LandPhase.Complete) _state.Transition(op, LandPhase.Complete, Now());
+            return new(op, null, []);
+        }
         WorktreeRemoval removed;
         try
         {
@@ -611,6 +636,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var admin = await git.RunAsync(op.LandWorktreePath!, ["rev-parse", "--absolute-git-dir"], ct);
         Require(admin.Succeeded, "land_worktree_identity_changed");
         var registrations = await git.LiveRegistrationsAsync(op.RepositoryPath, ct);
+        if (op.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            Require(!registrations.Any(r => r.Branch == op.SourceFullRef), "ref_only_source_registered");
         return (new(new(op.TaskId, request.Id, request.Attempt, op.Id, op.RebasedSourceSha!, op.LandWorktreePath!,
                 op.WorktreePath, op.SourceFullRef, op.TargetFullRef),
             op.RepositoryPath, op.CommonDirectory, admin.Output.Trim(), op.TargetBeforeSha, Destination(op),
@@ -618,9 +645,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             request.RecoverySourceTaskId, op.RecoveryRefPrefix,
             // A branch switch in the task checkout is cleanup residue (CARD-1463). Bind its
             // registration path independently of its current branch; other registrations still fence resume.
-            registrations.Where(r => r.Branch == op.SourceFullRef || SamePath(r.Path, op.WorktreePath))
+            registrations.Where(r => r.Branch == op.SourceFullRef
+                    || op.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.Checkout && SamePath(r.Path, op.WorktreePath))
                 .Select(r => r.Path).Order(StringComparer.Ordinal).ToArray(),
-            Directory.Exists(op.WorktreePath) ? await git.CanonicalDirectoryAsync(op.WorktreePath, ct) : null),
+            op.SourceDesktopWorkspaceKind == DesktopWorkspaceKind.Checkout && Directory.Exists(op.WorktreePath)
+                ? await git.CanonicalDirectoryAsync(op.WorktreePath, ct) : null)
+        {
+            SourceDesktopWorkspaceKind = op.SourceDesktopWorkspaceKind,
+            SourceTaskRefWorkspaceBindingId = op.SourceTaskRefWorkspaceBindingId,
+        },
             registrations);
     }
 
@@ -635,11 +668,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && task.CurrentLandRequestId == request.Id && task.ActiveLandingId == op.Id
             && task.LandAttempt == request.Attempt && LandApproval.RequestStatusEligible(task, request)
             && op.Active && op.Phase == LandPhase.Prepared, "verification_ticket_changed");
+        Require(LandRequestSourceIdentity.Matches(request, Coordinates(op)), "verification_ticket_changed");
         var (current, registrations) = await CaptureTicketAsync(op, request, ct);
         Require(current.Identity == ticket.Identity && current.Repository == ticket.Repository && current.Common == ticket.Common
             && current.LandGitDirectory == ticket.LandGitDirectory && current.TargetBeforeSha == ticket.TargetBeforeSha
             && current.Destination == ticket.Destination && current.Filter == ticket.Filter
             && current.ExpectedSourceSha == ticket.ExpectedSourceSha && current.ReviewEvidenceId == ticket.ReviewEvidenceId
+            && current.SourceDesktopWorkspaceKind == ticket.SourceDesktopWorkspaceKind
+            && current.SourceTaskRefWorkspaceBindingId == ticket.SourceTaskRefWorkspaceBindingId
             && current.RecoveryMode == ticket.RecoveryMode && current.RecoverySourceTaskId == ticket.RecoverySourceTaskId
             && current.RecoveryRefPrefix == ticket.RecoveryRefPrefix && current.SourceCanonical == ticket.SourceCanonical
             && current.SourceRegistrations.SequenceEqual(ticket.SourceRegistrations), "verification_ticket_changed");
@@ -705,7 +741,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && currentTask.RepoPath is not null && SamePath(currentTask.RepoPath, op.RepositoryPath)
             && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
             && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
+            && currentTask.DesktopWorkspaceKind == op.SourceDesktopWorkspaceKind
+            && currentTask.TaskRefWorkspaceBindingId == op.SourceTaskRefWorkspaceBindingId
             && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
+        try
+        {
+            var context = await new TaskWorkspaceContextResolver(db).ResolveAsync(currentTask!, ct);
+            TaskWorkspaceContextResolver.RequireRepositoryIdentity(context, op.CommonDirectory);
+        }
+        catch (Application.Exceptions.ConflictException) { throw new LandingRefusal("task_coordinates_changed"); }
     }
 
     private async Task ConfirmAsync(AgentTaskLanding op, LandingRemoteObservation remote,
@@ -931,6 +975,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     private static void RequireCoordinates(AgentTaskLanding op, LandSourceCoordinates coordinates, string common) =>
         Require(op.TaskId == coordinates.TaskId && op.SourceFullRef == coordinates.SourceFullRef
+            && op.SourceDesktopWorkspaceKind == coordinates.DesktopWorkspaceKind
+            && op.SourceTaskRefWorkspaceBindingId == coordinates.TaskRefWorkspaceBindingId
             && op.TargetFullRef == coordinates.TargetFullRef && SamePath(op.RepositoryPath, coordinates.RepositoryPath)
             && SamePath(op.WorktreePath, coordinates.WorktreePath) && SamePath(common, op.CommonDirectory),
             "pending_operation_coordinates_changed");
@@ -1113,7 +1159,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private static bool SamePath(string a, string b) => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     private static LandSourceCoordinates Coordinates(AgentTaskLanding op) => new(op.TaskId, op.RepositoryPath,
-        op.WorktreePath, op.SourceFullRef, op.TargetFullRef);
+        op.WorktreePath, op.SourceFullRef, op.TargetFullRef)
+    { DesktopWorkspaceKind = op.SourceDesktopWorkspaceKind, TaskRefWorkspaceBindingId = op.SourceTaskRefWorkspaceBindingId };
     private static LandingDestination Destination(AgentTaskLanding op) => new(op.RemoteName, op.DestinationFullRef, op.RemoteFingerprint);
     private sealed class LandingRefusal(string reason, string? detail = null) : Exception(reason)
     {

@@ -1,3 +1,5 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
@@ -12,6 +14,9 @@ public sealed record WorktreeRemoval(
     WorktreeCleanupReference? Diagnostics = null)
 {
     public bool IsClean => Residue is null;
+    public DesktopCleanupDisposition DesktopCleanupDisposition { get; init; }
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
 
     /// <summary>
     /// CARD-0665 D-8: operator-facing detail beside the bare <see cref="Residue"/> code, such as
