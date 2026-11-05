@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(60_000)] // CARD-0824 provisional multi-step budget; first red/green supplies the measured sample.
-public sealed class C0824RefOnlyLandingTests
+public sealed partial class C0824RefOnlyLandingTests
 {
     private const string Filter = "c0824-controlled-verifier";
 
@@ -168,7 +168,8 @@ public sealed class C0824RefOnlyLandingTests
             var op = await h.OperationAsync();
             await using var db = h.CreateContext();
             var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync();
-            (op?.LastReason ?? request.SourceRefusalReason).ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
+            (op?.LastReason ?? request.SourceRefusalReason ?? request.TerminalFailureCode ?? request.HoldReasonCode)
+                .ShouldStartWith("ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
             (op?.RemoteConfirmedAt).ShouldBeNull();
             h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove"));
             (await File.ReadAllTextAsync(Path.Combine(foreign, "feature.txt"))).ShouldBe("valuable feature\n");

@@ -174,6 +174,7 @@ public sealed class C0824RefOnlyIdentityTests
         (await Should.ThrowAsync<ConflictException>(() => resolver.ResolveAsync(task, CancellationToken.None)))
             .Code.ShouldBe("ref_only_common_directory_required", "common-required");
         Path.Exists(binding.IdentityPath).ShouldBeFalse("no-main-file-io");
+        await SourceCallerAsync("valid", "null-repository", "empty-repository", "null-identity", "missing-common");
     }
 
     [Test]
@@ -208,36 +209,43 @@ public sealed class C0824RefOnlyIdentityTests
         task.DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly;
         (await Should.ThrowAsync<ConflictException>(() => resolver.ResolveAsync(task, CancellationToken.None)))
             .Code.ShouldBe("ref_only_binding_required", "binding-required");
+        await SourceCallerAsync("valid", "valid-decoy");
     }
 
     [Test]
     public async Task Binding_survives_attempt_and_settings_changes()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var db = NewDb(schema);
-        var root = ScratchRoot();
-        var (task, binding) = await SeedAsync(db, Guid.NewGuid(), root);
-        var initial = await new TaskWorkspaceContextResolver(db).ResolveAsync(task, CancellationToken.None);
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var binding = await RefOnlyWorkspaceTestSetup.BindAsync(h);
+        await using var db = h.CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+        var initial = await new TaskWorkspaceContextResolver(db).ResolveAsync(task, default);
         initial.Kind.ShouldBe(DesktopWorkspaceKind.RefOnly, "existing-mode=RefOnly");
-        task.Attempt++;
-        await db.SaveChangesAsync();
-        await using var fresh = NewDb(schema);
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "move main after base selection");
+        var currentMain = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim();
+        currentMain.ShouldNotBe(h.Fixture.SeedSha, "discriminating-main-base");
+        task.Attempt++; await db.SaveChangesAsync();
+        await using var fresh = h.CreateContext();
         var durable = await fresh.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        // No admission options are a resolver dependency: closing or replacing them cannot select a different mode.
         var settings = new MutableMonitor<RefOnlyDesktopSettings>(new() { Enabled = false, RunnerIds = [], Roles = "none" });
         var gate = new RefOnlyDesktopGate(settings, NullLogger<RefOnlyDesktopGate>.Instance);
         gate.Admits(durable).ShouldBeFalse();
+        settings.Fault = new Microsoft.Extensions.Options.OptionsValidationException("",
+            typeof(RefOnlyDesktopSettings), [RefOnlyDesktopSettings.SectionName + ":Roles invalid"]);
+        gate.Admits(durable).ShouldBeFalse("invalid-admission-does-not-change-recorded-mode");
         var resolver = new TaskWorkspaceContextResolver(fresh);
-        resolver.IdentityForNewBinding(root + "-new", task.Id).ShouldNotBe(binding.IdentityPath);
-        var resolved = await resolver.ResolveAsync(durable, CancellationToken.None);
+        resolver.IdentityForNewBinding(h.Fixture.Root + "-new", task.Id).ShouldNotBe(binding.Identity);
+        var resolved = await resolver.ResolveAsync(durable, default);
         resolved.ShouldBe(initial, "binding-unchanged");
-        resolved.BaseSha.ShouldBe(BaseSha, "base-unchanged");
+        resolved.BaseSha.ShouldBe(h.Fixture.SeedSha, "base-unchanged");
         durable.TaskRefWorkspaceBindingId.ShouldBe(binding.Id);
         durable.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Explicit);
-        await fresh.TaskRefWorkspaceBindings.Where(b => b.Id == binding.Id).ExecuteUpdateAsync(s => s.SetProperty(b => b.SelectedBaseSha, new string('b', 40)));
-        await Should.ThrowAsync<ConflictException>(() => resolver.ResolveAsync(durable, CancellationToken.None), "failed-recorded-preparation-holds");
+        await fresh.TaskRefWorkspaceBindings.Where(b => b.Id == binding.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(b => b.SelectedBaseSha, new string('b', 40)));
+        await Should.ThrowAsync<ConflictException>(() => resolver.ResolveAsync(durable, default), "failed-recorded-preparation-holds");
         (await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
-        Path.Exists(binding.IdentityPath).ShouldBeFalse("no-checkout-fallback");
+        Path.Exists(binding.Identity).ShouldBeFalse("no-checkout-fallback");
     }
 
     [Test]
@@ -270,6 +278,7 @@ public sealed class C0824RefOnlyIdentityTests
             (await db.TaskRefWorkspaceBindings.AsNoTracking().CountAsync(b => b.Id == binding.Id)).ShouldBe(1, "binding-retained");
             db.ChangeTracker.Clear();
         }
+        await SourceCallerAsync("task", "binding-id", "repository", "common", "ref", "identity", "base");
     }
 
     [Test]
@@ -327,6 +336,85 @@ public sealed class C0824RefOnlyIdentityTests
         right.WorktreePath = left.WorktreePath;
         policy.CanPrepareSeparateDocs(followUp, [narrative]).ShouldBeFalse("advisory-identical-identity-refused");
     }
+
+    private static async Task SourceCallerAsync(params string[] variants)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var source = await h.AddSourceAsync();
+        foreach (var variant in variants)
+        {
+            if (variant != variants[0]) await h.ResetDatabaseAsync();
+            var bound = await RefOnlyWorkspaceTestSetup.BindAsync(h, removeAuthoring: variant == variants[0]);
+            if (variant == "valid-decoy")
+            {
+                Directory.CreateDirectory(bound.Identity);
+                await File.WriteAllTextAsync(Path.Combine(bound.Identity, "foreign.txt"), "caller decoy");
+            }
+            var queued = await h.RequestAsync("c0824-controlled-verifier", source);
+            await using var db = h.CreateContext();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+            var expected = variant switch
+            {
+                "null-repository" or "null-identity" => "source_coordinates_missing",
+                "empty-repository" => "ref_only_repository_required",
+                "missing-common" => "ref_only_common_directory_required",
+                "task" => "ref_only_binding_task_mismatch", "binding-id" => "ref_only_binding_identity_mismatch",
+                "repository" or "common" => "ref_only_binding_repository_mismatch",
+                "ref" => "ref_only_binding_ref_mismatch", "identity" => "ref_only_binding_identity_path_mismatch",
+                "base" => "ref_only_binding_base_mismatch", _ => null
+            };
+            if (variant == "null-repository") task.RepoPath = null;
+            if (variant == "empty-repository") task.RepoPath = "";
+            if (variant == "null-identity") task.WorktreePath = null;
+            if (variant == "binding-id") task.TaskRefWorkspaceBindingId = Guid.NewGuid();
+            await db.SaveChangesAsync();
+            var query = db.TaskRefWorkspaceBindings.Where(b => b.Id == bound.Id);
+            if (variant == "task")
+            {
+                var other = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask { Id = other, RootTaskId = other, WorkingDirectory = h.Fixture.Repository });
+                await db.SaveChangesAsync();
+                await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.TaskId, other));
+            }
+            if (variant == "repository") await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.RepositoryPath, h.Fixture.Remote));
+            if (variant == "missing-common") await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.CommonDirectory, ""));
+            if (variant == "common") await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.CommonDirectory, h.Fixture.Root));
+            if (variant == "ref") await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.FullRef, "refs/heads/foreign"));
+            if (variant == "identity") await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.IdentityPath, bound.Identity + "-foreign"));
+            if (variant == "base") await query.ExecuteUpdateAsync(s => s.SetProperty(b => b.SelectedBaseSha, new string('b', 40)));
+            var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
+            await using var lease = (await leases.TryAcquireAsync(h.Fixture.Repository, default)).ShouldNotBeNull();
+            var workspace = h.Services.GetRequiredService<ILandWorkspace>();
+            h.Fixture.Git.Trace.Clear(); h.Fixture.Git.Commands.Clear();
+            var result = await new AgentTaskLandSourceResolver(db, h.Fixture.Git, leases, h.Clock, landWorkspace: workspace)
+                .ResolveAsync(task, request, lease, default);
+            if (expected is null)
+            {
+                result.Reason.ShouldBeNull("valid-land-caller:" + variant);
+                result.Operation.ShouldNotBeNull().GitDirectory.ShouldBeNull("source-admin=null:" + variant);
+                result.Operation.SourceDesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly, "kind-from-row:" + variant);
+                result.Operation.SourceTaskRefWorkspaceBindingId.ShouldBe(bound.Id);
+            }
+            else
+            {
+                result.Reason.ShouldBe(expected, "foreign-" + variant + "-refused");
+                result.Operation.ShouldBeNull("no-operation-before-binding-validation");
+                h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("fetch") || a.Contains("update-ref") || a.Contains("push")
+                    || a.Contains("reset") || a.Contains("remove"), "no-main-file-io:" + variant);
+            }
+            h.Fixture.Git.Commands.ShouldNotContain(c => Same(c.Directory, bound.Identity), "no-identity-git:" + variant);
+            if (variant == "valid-decoy")
+            {
+                (await File.ReadAllTextAsync(Path.Combine(bound.Identity, "foreign.txt"))).ShouldBe("caller decoy");
+                File.Delete(Path.Combine(bound.Identity, "foreign.txt")); Directory.Delete(bound.Identity);
+            }
+            (await db.TaskRefWorkspaceBindings.AsNoTracking().CountAsync(b => b.Id == bound.Id)).ShouldBe(1, "binding-retained");
+        }
+    }
+
+    private static bool Same(string left, string right) => WorkspaceReservationKey.PathsEqual(left, right);
 
     private const string BaseSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static string ScratchRoot() => Path.Combine(Path.GetTempPath(), "c0824-context-" + Guid.NewGuid().ToString("N"));

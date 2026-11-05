@@ -82,6 +82,7 @@ public sealed class DesktopLegacyReleasePolicyService
 
     /// <summary>Test-only (S-4): invoked with the row's task id (or empty) after each candidate row is recorded.</summary>
     internal Action<Guid>? OnRow { get; set; }
+    internal Func<string, Guid, CancellationToken, Task>? DesktopBoundaryAsync { get; set; }
 
     public sealed record TickResult(Guid? RunId, int Examined, int Eligible, int Filed, int Retired, int BackedOff, string? Stopped);
 
@@ -159,7 +160,9 @@ public sealed class DesktopLegacyReleasePolicyService
         var eligible = new List<AgentTask>();
         foreach (var task in candidates)
         {
+            if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-candidate", task.Id, ct);
             var reason = Classify(task, facts, settings, root, Now());
+            if (reason is null && DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-candidate", task.Id, ct);
             if (reason is null) eligible.Add(task);
             else await CursorRowAsync(run, rowCursors, task, WorktreeResidueCandidateOutcome.Held, reason, preview, ct);
         }
@@ -291,6 +294,8 @@ public sealed class DesktopLegacyReleasePolicyService
                     RecordCheck(taskCursors, fresh, "would_release", settled: false, settings);
             }
 
+            if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-action", fresh.Id, ct);
+            if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-action", fresh.Id, ct);
             if (!execute)
             {
                 await RowAsync(run, WorktreeResidueCandidateOutcome.Preview, "would_release", fresh, release?.Id, ct);
@@ -390,6 +395,8 @@ public sealed class DesktopLegacyReleasePolicyService
 
     private async Task<Precheck> PrecheckAsync(AgentTask task, CancellationToken ct)
     {
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:legacy-precheck", task.Id, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:legacy-precheck", task.Id, ct);
         var path = task.WorktreePath!;
         try
         {

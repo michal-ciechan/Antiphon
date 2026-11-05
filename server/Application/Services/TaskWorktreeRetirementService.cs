@@ -41,6 +41,7 @@ public sealed class TaskWorktreeRetirementService
 
     /// <summary>CARD-0824 S4a S-3: the caller identity of a release the desktop legacy policy filed.</summary>
     public const string SystemCallerIdentity = "system:desktop-legacy-policy";
+    internal Func<string, Guid, CancellationToken, Task>? DesktopBoundaryAsync { get; set; }
 
     public TaskWorktreeRetirementService(
         AppDbContext db,
@@ -90,6 +91,8 @@ public sealed class TaskWorktreeRetirementService
             throw new ValidationException(nameof(body.SourceSha), "SourceSha must be a full lowercase hex object id.");
 
         AuthorizeCaller(caller, taskId);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:operator-release", taskId, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:operator-release", taskId, ct);
         return await ReleaseCoreAsync(taskId, body, sourceSha,
             caller.Task is null ? "operator" : caller.Task.Id.ToString("D"), caller.SessionId, caller.Task?.Id,
             ownBranchDestination: false, ct);
@@ -109,6 +112,8 @@ public sealed class TaskWorktreeRetirementService
             throw new ValidationException(nameof(body.SourceSha), "SourceSha must be a full lowercase hex object id.");
         var request = new ReleaseWorktreeRetirementRequest(body.ExpectedTaskRevision, sourceSha, null, true, body.Reason,
             body.HandoffDispositions, MissingReportReviewed: false);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:system-release", taskId, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:system-release", taskId, ct);
         return await ReleaseCoreAsync(taskId, request, sourceSha, SystemCallerIdentity, null, null,
             ownBranchDestination: true, ct);
     }
@@ -280,6 +285,8 @@ public sealed class TaskWorktreeRetirementService
 
     public async Task<(bool Authorized, string? Reason)> EvaluateEligibilityAsync(AgentTask task, TaskWorktreeRetirement? release, CancellationToken ct)
     {
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:eligibility", task.Id, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:eligibility", task.Id, ct);
         if (!Terminal.Contains(task.Status)) return (false, "live_owner");
         if (task.CompletedAt is null
             || UtcNow() - task.CompletedAt.Value < TimeSpan.FromMinutes(_settings.MinSettledMinutes))
@@ -316,6 +323,8 @@ public sealed class TaskWorktreeRetirementService
 
     private async Task<WorktreeRemoval> TryRetireCoreAsync(TaskWorktreeRetirement retirement, Guid? runId, Guid? endpointId, CancellationToken ct)
     {
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:retire-action", retirement.TaskId, ct);
+        if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:retire-action", retirement.TaskId, ct);
         if (_worktrees is null || _leases is null || _commands is null)
             return new(false, false, false, "retirement_executor_unavailable");
         if (retirement.State == WorktreeRetirementState.Complete)
