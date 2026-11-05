@@ -18,7 +18,7 @@ public sealed class BuildSlotMaxHoldTests
         var grant = f.Acquire();
         f.Time.Advance(TimeSpan.FromHours(48) - TimeSpan.FromTicks(1));
         f.Broker.Sweep().ShouldBe(0);
-        f.Broker.List().Leases.Single().LeaseId.ShouldBe(grant.LeaseId);
+        f.Broker.List().Leases.Single().LeaseId.ShouldBe(grant.LeaseId!.Value);
         f.Time.Advance(TimeSpan.FromTicks(1));
         f.Broker.Sweep().ShouldBe(1);
         f.Broker.List().Occupied.ShouldBe(0);
