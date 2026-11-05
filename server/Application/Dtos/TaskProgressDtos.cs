@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -51,7 +52,12 @@ public sealed record ProgressSourceBaseline(
     string? RegisteredCheckout,
     string FullRef,
     string LocalSha,
-    ProgressRemoteBaseline Remote);
+    ProgressRemoteBaseline Remote)
+{
+    // Absent fields retain the v1 Checkout interpretation. RefOnly requires an explicit v2 binding.
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
+}
 
 /// <summary>
 /// CARD-1115 D-4. A <c>repository_lease_busy</c> observation may retain the exact

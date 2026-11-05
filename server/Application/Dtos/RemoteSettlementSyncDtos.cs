@@ -1,3 +1,5 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
@@ -54,6 +56,10 @@ public sealed record RemoteSettlementSyncResult(
     /// </summary>
     bool? SourceDescends = null)
 {
+    /// <summary>For RefOnly the compatible Desktop* SHA fields describe ref tips, never a checkout.</summary>
+    public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
+    public Guid? TaskRefWorkspaceBindingId { get; init; }
+
     /// <summary>
     /// Only a desktop SHA on <see cref="RemoteSettlementSyncState.Synchronized"/> or
     /// <see cref="RemoteSettlementSyncState.NoPushedProgress"/> is confirmed.
