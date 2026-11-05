@@ -1,3 +1,5 @@
+using Antiphon.SessionRunner.Contracts;
+
 namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
@@ -33,17 +35,20 @@ public sealed class WorktreeCleanupSettings
     /// CARD-1718 A-D3: a secret-shaped name is on this floor, never the disposable allowlist, at any
     /// depth. A match keeps the tree (<c>ignored_content_preserved</c>), the same hold as any other
     /// default-deny path. It is not evidence: evidence is copied and then deleted with the tree.
-    /// The floor is <c>**/.env*</c> and <c>**/.env*/**</c> (a segment that starts with <c>.env</c>,
-    /// including <c>.env</c> and <c>.env.*</c>, and files under a directory of that name),
-    /// <c>**/*.pem</c>, <c>**/*.key</c>, <c>**/id_rsa*</c>, <c>**/*.pfx</c>, <c>**/credentials*</c>,
-    /// <c>**/.npmrc</c>, <c>**/.netrc</c>, and the existing <c>**/appsettings.*.json</c>.
+    /// The floor is <see cref="IgnoredSecretFloor.Patterns"/>: <c>.env</c> names and their descendants,
+    /// <c>*.pem</c>, <c>*.key</c>, <c>*.pfx</c>, <c>*.p12</c>, <c>*.jks</c>, <c>*.kdbx</c>,
+    /// <c>id_rsa*</c>, <c>id_ed25519*</c>, <c>credentials*</c>, <c>.npmrc</c>, <c>.netrc</c>,
+    /// <c>.git-credentials</c>, <c>.pgpass</c>, <c>secrets.json</c>, <c>kubeconfig</c> and
+    /// <c>.docker/config.json</c>, each with a <c>/**</c> companion so a secret-named directory
+    /// keeps the files under it (<c>bin/credentials/token</c>, <c>bin/tls.pem/token</c>).
+    /// <c>.aws/credentials</c> is the <c>credentials*</c> rule. <c>*.token</c> is intentionally
+    /// absent. The existing <c>**/appsettings.*.json</c> rule stays beside the floor.
     /// </summary>
     public static IReadOnlyList<string> DefaultProtectedIgnored { get; } =
     [
         "**/.claude/**", "**/appsettings.*.json", "**/*.user", "**/*.local.json",
         "**/.antiphon/report.md", "**/.antiphon/deliverables/**",
-        "**/.env*", "**/.env*/**", "**/*.pem", "**/*.key", "**/id_rsa*", "**/*.pfx",
-        "**/credentials*", "**/.npmrc", "**/.netrc",
+        ..IgnoredSecretFloor.Patterns,
         "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",
     ];
 

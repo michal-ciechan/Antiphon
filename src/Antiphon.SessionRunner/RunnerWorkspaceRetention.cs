@@ -148,6 +148,17 @@ public sealed class RunnerWorkspaceRetention
         var facts = step.Facts ?? new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept);
         if (PhaseBGate is { } gate)
             await gate(moved);
+        // A secret planted after the move, or a residue handed here, must not reach `git worktree remove`.
+        var ignored = await ReadIgnoredSecretAsync(moved, ct);
+        if (ignored.Doubt || ignored.Secret is not null)
+            return facts with
+            {
+                Verdict = WorkspaceRetentionCodes.Kept,
+                Reason = ignored.Secret is not null ? WorkspaceRetentionCodes.IgnoredSecret : WorkspaceRetentionCodes.InspectionFailed,
+                Detail = ignored.Secret is not null ? Bound(ignored.Secret) : "ignored list unavailable",
+                PhaseBMs = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                MovedPath = moved,
+            };
         var remove = await Git(step.Repository!, ct, "worktree", "remove", moved);
         var phaseB = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         if (remove is { ExitCode: 0 } && !EntryExists(moved))
@@ -369,6 +380,12 @@ public sealed class RunnerWorkspaceRetention
         if (!scan.Complete)
             return Final(facts with { Reason = WorkspaceRetentionCodes.HolderScanUnknown });
 
+        var ignored = await ReadIgnoredSecretAsync(path, ct);
+        if (ignored.Doubt)
+            return Final(facts with { Reason = WorkspaceRetentionCodes.InspectionFailed, Detail = "ignored list unavailable" });
+        if (ignored.Secret is { } secret)
+            return Final(facts with { Reason = WorkspaceRetentionCodes.IgnoredSecret, Detail = Bound(secret) });
+
         var nested = countNested ? CountNestedRepositories(path) : (int?)null;
         return new WorkspaceRetainStep(null, null, repository, facts with { Reason = null, Holders = [], NestedIgnoredRepos = nested });
     }
@@ -411,6 +428,11 @@ public sealed class RunnerWorkspaceRetention
             });
         if (!scan.Complete)
             return Final(facts with { Reason = WorkspaceRetentionCodes.HolderScanUnknown });
+        var ignored = await ReadIgnoredSecretAsync(residue, ct);
+        if (ignored.Doubt)
+            return Final(facts with { Reason = WorkspaceRetentionCodes.InspectionFailed, Detail = "ignored list unavailable" });
+        if (ignored.Secret is { } secret)
+            return Final(facts with { Reason = WorkspaceRetentionCodes.IgnoredSecret, Detail = Bound(secret) });
         if (!execute)
             return Final(facts with { Verdict = WorkspaceRetentionCodes.WouldRemove });
         var phaseA = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -475,6 +497,45 @@ public sealed class RunnerWorkspaceRetention
             readable = false;
             return [];
         }
+    }
+
+    /// <summary>
+    /// CARD-1718 A-D3. Ignored paths are invisible to <c>status --porcelain</c>, and
+    /// <c>git worktree remove</c> deletes them. The first ordinal secret-floor match is kept;
+    /// an unreadable listing, a control character or an escaping path is a doubt and also keeps the tree.
+    /// </summary>
+    private async Task<(bool Doubt, string? Secret)> ReadIgnoredSecretAsync(string path, CancellationToken ct)
+    {
+        (int ExitCode, string Stdout, string Stderr)? listed;
+        try
+        {
+            listed = await Inspect(path, ct, "ls-files", "--others", "--ignored", "--exclude-standard", "-z");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return (true, null);
+        }
+        if (listed is not { ExitCode: 0 })
+            return (true, null);
+        string? secret = null;
+        foreach (var raw in listed.Value.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var relative = IgnoredSecretFloor.Normalize(raw);
+            if (relative.Length == 0)
+                continue;
+            if (WorkspaceRetentionNames.HasControlCharacter(relative) || IgnoredSecretFloor.Escapes(relative))
+                return (true, null);
+            try
+            {
+                if (IgnoredSecretFloor.Matches(relative) && (secret is null || string.CompareOrdinal(relative, secret) < 0))
+                    secret = relative;
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return (true, null);
+            }
+        }
+        return (false, secret);
     }
 
     /// <summary>CARD-1590 evidence, not a refusal: nested <c>.git</c> entries (under ignored paths, as status was clean).</summary>
