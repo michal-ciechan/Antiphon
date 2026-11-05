@@ -24,6 +24,82 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentSessionCancelledTurnTests
 {
     [Test]
+    public async Task C1466_EchoWorld_output_precedes_withheld_async_work()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = EchoWorld.CreateAdapter();
+        adapter.PromptOutputGate = gate.Task;
+        var output = new List<string>();
+        adapter.OnTextDelta += output.Add;
+        try
+        {
+            await adapter.SendPromptAsync("work", CancellationToken.None);
+            (await adapter.WaitForFirstPromptOutputAsync(TimeSpan.Zero, CancellationToken.None))
+                .ShouldBeTrue("EchoWorld must emit before returning while async work is withheld");
+            output.ShouldBe(new[] { "Partial diagnostic response" });
+            adapter.Prompts.ShouldBe(new[] { "work" });
+        }
+        finally
+        {
+            gate.TrySetResult();
+            await adapter.WaitForFirstPromptOutputAsync(TimeSpan.FromSeconds(1), CancellationToken.None);
+        }
+    }
+
+    [Test]
+    public async Task C1466_Default_output_waits_for_async_gate()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "async", PromptOutputGate = gate.Task };
+        var output = new List<string>();
+        adapter.OnTextDelta += output.Add;
+        try
+        {
+            await adapter.SendPromptAsync("work", CancellationToken.None);
+            (await adapter.WaitForFirstPromptOutputAsync(TimeSpan.Zero, CancellationToken.None)).ShouldBeFalse();
+            output.ShouldBeEmpty();
+        }
+        finally
+        {
+            gate.TrySetResult();
+            (await adapter.WaitForFirstPromptOutputAsync(TimeSpan.FromSeconds(1), CancellationToken.None)).ShouldBeTrue();
+        }
+        output.ShouldBe(new[] { "async" });
+    }
+
+    [Test]
+    public async Task C1466_Empty_output_and_noise_do_not_signal_first_output()
+    {
+        var adapter = EchoWorld.CreateAdapter();
+        adapter.PromptOutput = "";
+        adapter.NoiseDuringSendPrompt = "noise";
+        var output = new List<string>();
+        adapter.OnTextDelta += output.Add;
+        await adapter.SendPromptAsync("work", CancellationToken.None);
+        output.ShouldBe(new[] { "noise" });
+        (await adapter.WaitForFirstPromptOutputAsync(TimeSpan.Zero, CancellationToken.None)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C1466_Synchronous_output_preserves_callback_and_prompt_failure()
+    {
+        var adapter = EchoWorld.CreateAdapter();
+        var calls = new List<string>();
+        adapter.OnPrompt = (prompt, _) => { calls.Add("callback:" + prompt); return Task.CompletedTask; };
+        adapter.OnTextDelta += text => calls.Add("output:" + text);
+        var failure = new InvalidOperationException("injected prompt failure");
+        adapter.PromptFailure = _ => failure;
+        (await Should.ThrowAsync<InvalidOperationException>(() => adapter.SendPromptAsync("failed", CancellationToken.None)))
+            .ShouldBeSameAs(failure);
+        adapter.Prompts.ShouldBe(new[] { "failed" });
+        calls.ShouldBe(new[] { "callback:failed" });
+        adapter.PromptFailure = null;
+        await adapter.SendPromptAsync("accepted", CancellationToken.None);
+        calls.ShouldBe(new[] { "callback:failed", "callback:accepted", "output:Partial diagnostic response" });
+        adapter.Prompts.ShouldBe(new[] { "failed", "accepted" });
+    }
+
+    [Test]
     public async Task C1322_Interrupted_result_preserves_live_session()
     {
         // Independent controls run before the regression witness, including on the red commit.
@@ -761,16 +837,18 @@ public sealed class AgentSessionCancelledTurnTests
             };
         }
 
+        public static FakeAgentProtocolAdapter CreateAdapter(AgentSessionRuntime? runtime = null) => new()
+        {
+            RegisterOnStart = runtime,
+            PromptOutput = "Partial diagnostic response",
+            TurnCompleted = false,
+            TurnStopReason = TranscriptKinds.StopReasons.Cancelled
+        };
+
         public async Task<LiveAttempt> StartCancelledAsync(
             bool persistLaunchPrompt = false, bool persistCancelledBurst = false)
         {
-            var adapter = new FakeAgentProtocolAdapter
-            {
-                RegisterOnStart = Runtime,
-                PromptOutput = "Partial diagnostic response",
-                TurnCompleted = false,
-                TurnStopReason = TranscriptKinds.StopReasons.Cancelled
-            };
+            var adapter = CreateAdapter(Runtime);
             if (persistLaunchPrompt)
                 adapter.OnPrompt = (prompt, ct) => PersistLaunchPromptAsync(adapter, prompt, ct);
             if (persistCancelledBurst)
