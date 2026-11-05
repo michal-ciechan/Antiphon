@@ -12,6 +12,65 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandHalfResetTests
 {
+    [Test]
+    public Task C1715_Initial_adoption_preserves_untrusted_status_reason() =>
+        AssertUntrustedStatusAfterResetAsync(resume: false);
+
+    [Test]
+    public Task C1715_Resumed_adoption_preserves_untrusted_status_reason() =>
+        AssertUntrustedStatusAfterResetAsync(resume: true);
+
+    private static async Task AssertUntrustedStatusAfterResetAsync(bool resume)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        if (resume)
+        {
+            await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+            await h.SweepAsync();
+        }
+        fixture.Boundary.ThrowConflict = false;
+        var resets = 0;
+        var warnings = 0;
+        h.Fixture.Git.AfterCommand = (directory, args, result) =>
+        {
+            if (directory == h.Fixture.Source && args[0] == "reset" && result.Succeeded) resets++;
+            return Task.CompletedTask;
+        };
+        h.Fixture.Git.BeforeCommand = (directory, args) =>
+        {
+            if (directory != h.Fixture.Source || GitSubcommand.Of(args) != "status" || resets == 0)
+                return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+            warnings++;
+            // Deliberately non-English and unrelated to a specific warning pattern. Any stderr counts.
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
+                new(0, "", "avertissement: marqueur-prive /private/config") { WroteStandardError = true });
+        };
+
+        await h.RunQueuedAsync();
+
+        resets.ShouldBe(1, "reach the post-reset inspection at the selected land site");
+        warnings.ShouldBe(1);
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBe("status_untrusted");
+        row.RecoveryAdoptedAt.ShouldBeNull();
+        row.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset");
+        (await h.OperationAsync()).ShouldBeNull("the refusal still precedes publication");
+        var refusal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e =>
+            e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused);
+        refusal.Detail.ShouldContain("status_untrusted");
+        refusal.Detail.ShouldContain("Git status wrote to stderr; worktree cleanliness could not be verified.");
+        refusal.Detail.ShouldNotContain("marqueur-prive");
+        refusal.Detail.ShouldNotContain("/private/config");
+        h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments[0] == "push"
+            && c.Arguments.Any(a => a.Contains(":refs/heads/master", StringComparison.Ordinal)));
+    }
+
     internal static string PorcelainPath(string path) => path.Replace('\\', '/');
 
     [Test]
