@@ -93,6 +93,9 @@ public sealed class C0824RefOnlySyncTests
         await w.RunAsync(w.Runner, "commit", "--allow-empty", "-m", "unrelated root");
         var unrelated = await w.RunAsync(w.Runner, "rev-parse", "HEAD");
         await w.RunAsync(w.Runner, "push", "--force", "origin", unrelated + ":" + w.FullRef);
+        // The observation pin deliberately does not force-fetch rewritten history. Make this
+        // fixture's unrelated object readable so the SUT reaches its independent ancestry guard.
+        await w.RunAsync(w.Desktop, "fetch", "origin", w.FullRef);
         w.Git.Clear();
         var crossed = false;
         var service = f.Service();
@@ -317,13 +320,21 @@ public sealed class C0824RefOnlySyncTests
     private static async Task WriteBindingFaultAsync(RefOnlySyncFixture f)
     {
         var b = f.Binding;
+        // Setting an EF entry Unchanged rejects its pending values. Capture the corrupt input
+        // first; otherwise ExecuteUpdate would silently write the restored original tuple.
+        var fault = new { b.TaskId, b.RepositoryPath, b.CommonDirectory, b.IdentityPath, b.FullRef,
+            b.SelectedBaseSha, b.SelectedBaseRef, b.SelectedBaseSource, b.SelectedBaseTaskId, b.PreparationState };
         f.Db.Entry(b).State = EntityState.Unchanged;
         await f.Db.SaveChangesAsync();
         await f.Db.TaskRefWorkspaceBindings.Where(row => row.Id == b.Id).ExecuteUpdateAsync(u => u
-            .SetProperty(row => row.TaskId, b.TaskId).SetProperty(row => row.RepositoryPath, b.RepositoryPath)
-            .SetProperty(row => row.CommonDirectory, b.CommonDirectory).SetProperty(row => row.IdentityPath, b.IdentityPath)
-            .SetProperty(row => row.FullRef, b.FullRef).SetProperty(row => row.SelectedBaseSha, b.SelectedBaseSha)
-            .SetProperty(row => row.SelectedBaseRef, b.SelectedBaseRef).SetProperty(row => row.SelectedBaseSource, b.SelectedBaseSource)
-            .SetProperty(row => row.SelectedBaseTaskId, b.SelectedBaseTaskId).SetProperty(row => row.PreparationState, b.PreparationState));
+            .SetProperty(row => row.TaskId, fault.TaskId).SetProperty(row => row.RepositoryPath, fault.RepositoryPath)
+            .SetProperty(row => row.CommonDirectory, fault.CommonDirectory).SetProperty(row => row.IdentityPath, fault.IdentityPath)
+            .SetProperty(row => row.FullRef, fault.FullRef).SetProperty(row => row.SelectedBaseSha, fault.SelectedBaseSha)
+            .SetProperty(row => row.SelectedBaseRef, fault.SelectedBaseRef).SetProperty(row => row.SelectedBaseSource, fault.SelectedBaseSource)
+            .SetProperty(row => row.SelectedBaseTaskId, fault.SelectedBaseTaskId).SetProperty(row => row.PreparationState, fault.PreparationState));
+        var stored = await f.Db.TaskRefWorkspaceBindings.AsNoTracking().SingleAsync(row => row.Id == b.Id);
+        new { stored.TaskId, stored.RepositoryPath, stored.CommonDirectory, stored.IdentityPath, stored.FullRef,
+            stored.SelectedBaseSha, stored.SelectedBaseRef, stored.SelectedBaseSource, stored.SelectedBaseTaskId, stored.PreparationState }
+            .ShouldBe(fault, "fault-input-reached-durable-binding");
     }
 }

@@ -55,6 +55,7 @@ public sealed record ProgressSourceBaseline(
     ProgressRemoteBaseline Remote)
 {
     // Absent fields retain the v1 Checkout interpretation. RefOnly requires an explicit v2 binding.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
     public Guid? TaskRefWorkspaceBindingId { get; init; }
 }
