@@ -181,6 +181,8 @@ public sealed partial class C0824RefOnlyLandingTests
                 await AttachAsync();
                 h.Fixture.Git.Trace.Clear(); h.Fixture.Git.Commands.Clear();
             };
+            var traceBoundary = new RefusalTraceBoundary(h.Fixture.Git, h.Fixture.TaskId);
+            h.Boundary = traceBoundary;
             await h.RequestAsync(Filter, source);
             h.Fixture.Git.Trace.Clear();
             var runResult = await h.RunQueuedAsync();
@@ -199,11 +201,25 @@ public sealed partial class C0824RefOnlyLandingTests
                 .ShouldHaveSingleItem("source-registration-refused:" + variant);
             terminal.Detail.ShouldStartWith("land refused: ref_only_source_registered", customMessage: "source-registration-refused:" + variant);
             (op?.RemoteConfirmedAt).ShouldBeNull();
-            h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove")
-                || a.Contains("fetch") || a.Contains("update-ref"), "source-registration-refused:" + variant + ":no-source-write");
+            // The protected interval ends at the committed refusal. Normal terminal retention runs afterwards.
+            var protectedTrace = traceBoundary.Commands.ShouldNotBeNull("committed-refusal-boundary-reached:" + variant);
+            protectedTrace.Where(a => a[0] == "push" || a.Contains("reset") || a.Contains("remove")
+                || a.Contains("fetch") || a.Contains("update-ref")).ToArray()
+                .ShouldBeEmpty("source-registration-refused:" + variant + ":no-source-write");
             (await File.ReadAllTextAsync(Path.Combine(foreign, "feature.txt"))).ShouldBe("valuable feature\n");
             await AssertSourceRetainedAsync(h, source);
             await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", foreign);
+        }
+    }
+
+    private sealed class RefusalTraceBoundary(LandingGitFixture.FixtureGit git, Guid owner) : LandDeliveryBoundary
+    {
+        public string[][]? Commands { get; private set; }
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary == "terminal-committed" && taskId == owner)
+                Commands = git.Trace.Select(arguments => arguments.ToArray()).ToArray();
+            return Task.CompletedTask;
         }
     }
 
