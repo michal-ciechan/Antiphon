@@ -42,6 +42,15 @@ public sealed class TaskWorktreeRetirementService
     /// <summary>CARD-0824 S4a S-3: the caller identity of a release the desktop legacy policy filed.</summary>
     public const string SystemCallerIdentity = "system:desktop-legacy-policy";
 
+    /// <summary>CARD-1717 D-1. <c>WorktreeLegacyRelease:Enabled</c> is off, or the settings cannot be read.</summary>
+    public const string LegacyReleaseDisabled = "legacy_release_disabled";
+
+    /// <summary>CARD-1717 D-1. <c>WorktreeLegacyRelease:Execute</c> is off.</summary>
+    public const string LegacyReleaseExecuteOff = "legacy_release_execute_off";
+
+    /// <summary>CARD-1717 D-1. The system release's legacy retry cursor is still in the future.</summary>
+    public const string LegacyReleasePaced = "legacy_release_paced";
+
     public TaskWorktreeRetirementService(
         AppDbContext db,
         TimeProvider clock,
