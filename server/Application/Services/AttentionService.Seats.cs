@@ -248,7 +248,9 @@ public sealed partial class AttentionService
                 $"notice={facts.NoticeState ?? "none"}; failure=" + (task.FailureReason ?? "unknown")
                     + $"; activity={facts.Activity}; session={session.Id:D}; "
                     + $"agent={task.AgentId?.ToString("D") ?? "none"}; "
-                    + "custody=held until authoritative exit or new ownership. Detection only; the session is never killed.",
+                    + "custody=held until authoritative exit or new ownership. Detection only; the session is never killed. "
+                    + GhostSeatRelease.AttentionToken(GhostSeatRelease.Read(
+                        TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)?.RemoteSync)),
                 task.CompletedAt ?? session.StartedAt,
                 null,
                 actions,
