@@ -23,6 +23,13 @@ public sealed class C0824RefOnlySyncTests
             var w = f.Git;
             var foreign = await w.PublishForeignBranchAsync("feat/card-task-ffffffff", "foreign.txt");
             await w.RunAsync(w.Desktop, "fetch", "origin", "refs/heads/feat/card-task-ffffffff:refs/heads/feat/card-task-ffffffff");
+            var foreignPin = "refs/antiphon/progress/ffffffffffffffffffffffffffffffff/keep";
+            await w.RunAsync(w.Desktop, "update-ref", foreignPin, foreign);
+            if (modern)
+            {
+                Directory.CreateDirectory(f.Identity);
+                await File.WriteAllTextAsync(Path.Combine(f.Identity, "foreign.txt"), "foreign decoy bytes");
+            }
             var main = await w.RevParseAsync("HEAD");
             var index = await w.RunAsync(w.Desktop, "write-tree");
             var bytes = await File.ReadAllBytesAsync(Path.Combine(w.Desktop, "README.md"));
@@ -42,12 +49,14 @@ public sealed class C0824RefOnlySyncTests
             (await w.RunAsync(w.Desktop, "write-tree")).ShouldBe(index, "main-intact:index");
             (await File.ReadAllBytesAsync(Path.Combine(w.Desktop, "README.md"))).ShouldBe(bytes, "main-intact:bytes");
             (await w.RevParseAsync("refs/heads/feat/card-task-ffffffff")).ShouldBe(foreign, "foreign-intact");
+            (await w.RevParseAsync(foreignPin)).ShouldBe(foreign, "foreign-intact:pin");
             (await w.RunAsync(w.Desktop, "worktree", "list", "--porcelain")).ShouldBe(registry, "registry-intact");
             (await w.RunAsync(w.Desktop, "show", source + ":work.txt")).ShouldBe("exact runner bytes");
-            Directory.Exists(f.Identity).ShouldBeFalse();
+            if (modern) (await File.ReadAllTextAsync(Path.Combine(f.Identity, "foreign.txt"))).ShouldBe("foreign decoy bytes", "foreign-intact:identity");
+            else Directory.Exists(f.Identity).ShouldBeFalse();
             f.AssertNoDesktopCommands();
 
-            var progress = new TaskCompletionProgressService(w.Git);
+            var progress = new TaskCompletionProgressService(w.Git, workspaceContexts: f.Contexts);
             var evaluation = await progress.EvaluateAsync(f.Task, "", result, default);
             evaluation.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved, "evaluation-progress-at-S");
             await w.RunAsync(w.Desktop, "update-ref", w.FullRef, w.Baseline, source);
@@ -107,7 +116,7 @@ public sealed class C0824RefOnlySyncTests
         var hit = false;
         w.Git.BeforeCommandAsync = async (_, args, _) =>
         {
-            if (args.Count < 2 || args[0] != "update-ref" || args[1] != w.FullRef || hit) return;
+            if (args[0] != "update-ref" || !args.Contains(w.FullRef) || hit) return;
             hit = true;
             await w.RunAsync(w.Desktop, "update-ref", w.FullRef, raced, w.Baseline);
         };
@@ -126,7 +135,7 @@ public sealed class C0824RefOnlySyncTests
             var advanced = false;
             w.Git.BeforeCommandAsync = (_, args, _) =>
             {
-                if (args.Count > 1 && args[0] == "update-ref" && args[1] == w.FullRef) advanced = true;
+                if (args[0] == "update-ref" && args.Contains(w.FullRef)) advanced = true;
                 return Task.CompletedTask;
             };
             w.Git.FailCommand = args => advanced && args.Contains(w.FullRef + "^{commit}")
@@ -149,13 +158,25 @@ public sealed class C0824RefOnlySyncTests
         var source = await w.RunnerPushAsync("work.txt", "source");
         var snapshot = TaskProgressJson.TryReadBaseline(f.Task.ProgressBaselineJson)!;
         var originalBaseline = f.Task.ProgressBaselineJson;
+        foreach (var endpoint in new[] { w.Runner, "" })
+        {
+            await w.RunAsync(w.Desktop, "remote", "set-url", "origin", endpoint);
+            w.Git.Clear();
+            (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeFalse("endpoint-refused-before-observe");
+            w.Git.Commands.ShouldNotContain(c => c.StartsWith("ls-remote ", StringComparison.Ordinal), "endpoint-refused-before-observe");
+            (await f.TipAsync()).ShouldBe(w.Baseline);
+            await w.RunAsync(w.Desktop, "remote", "set-url", "origin", w.Origin);
+        }
+        var foreignId = Guid.NewGuid();
+        f.Db.AgentTasks.Add(new() { Id = foreignId, RootTaskId = foreignId, WorkingDirectory = w.Desktop });
+        await f.Db.SaveChangesAsync();
         foreach (var variant in new[] { "binding-id", "binding-task", "repository", "common", "identity", "full-ref", "base-sha", "base-ref", "base-provenance", "base-owner", "preparation", "baseline-version", "baseline-mode", "baseline-binding" })
         {
             var binding = await f.Db.TaskRefWorkspaceBindings.SingleAsync(b => b.Id == f.Binding.Id);
             switch (variant)
             {
                 case "binding-id": f.Task.TaskRefWorkspaceBindingId = Guid.NewGuid(); break;
-                case "binding-task": binding.TaskId = Guid.NewGuid(); break;
+                case "binding-task": binding.TaskId = foreignId; break;
                 case "repository": binding.RepositoryPath = w.Runner; break;
                 case "common": binding.CommonDirectory = Path.Combine(w.Runner, ".git"); break;
                 case "identity": binding.IdentityPath = Path.Combine(w.Root, "foreign-identity"); break;
@@ -169,22 +190,22 @@ public sealed class C0824RefOnlySyncTests
                 case "baseline-mode": f.Task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(snapshot with { Primary = snapshot.Primary with { DesktopWorkspaceKind = DesktopWorkspaceKind.Checkout } }); break;
                 case "baseline-binding": f.Task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(snapshot with { Primary = snapshot.Primary with { TaskRefWorkspaceBindingId = Guid.NewGuid() } }); break;
             }
-            await f.Db.SaveChangesAsync();
+            await WriteBindingFaultAsync(f);
             w.Git.Clear();
             var result = await f.Service().SyncAsync(f.Task, default);
             result.Confirmed.ShouldBeFalse("refused:" + variant + ":initial");
             w.Git.Commands.ShouldNotContain(c => c.StartsWith("ls-remote ", StringComparison.Ordinal), "refused-before-observe:" + variant);
             (await f.TipAsync()).ShouldBe(w.Baseline);
-            await f.Db.Entry(binding).ReloadAsync();
             binding.TaskId = f.Task.Id; binding.RepositoryPath = w.Desktop; binding.CommonDirectory = snapshot.Primary.CanonicalCommonDirectory;
             binding.IdentityPath = f.Identity; binding.FullRef = w.FullRef; binding.SelectedBaseSha = w.Baseline;
             binding.SelectedBaseRef = f.Task.WorktreeBaseRef!; binding.SelectedBaseSource = f.Task.WorktreeBaseSource;
             binding.SelectedBaseTaskId = f.Task.WorktreeBaseTaskId; binding.PreparationState = TaskRefWorkspacePreparationState.Published;
             f.Task.TaskRefWorkspaceBindingId = binding.Id; f.Task.ProgressBaselineJson = originalBaseline;
-            await f.Db.SaveChangesAsync();
+            await WriteBindingFaultAsync(f);
         }
         foreach (var dimension in new[] { "revision", "binding-id", "endpoint", "observation-pin" })
         {
+            await w.RunnerPushAsync("gap-" + dimension + ".txt", dimension);
             var service = f.Service();
             var hit = false;
             service.SyncBoundaryAsync = async (site, _) =>
@@ -197,7 +218,7 @@ public sealed class C0824RefOnlySyncTests
                 if (dimension == "observation-pin")
                 {
                     var pin = (await w.RunAsync(w.Desktop, "for-each-ref", "--format=%(refname)", "refs/antiphon/progress/" + f.Task.Id.ToString("N")))
-                        .Split('\n').First(p => p.Contains("observation", StringComparison.Ordinal));
+                        .Split('\n').First(p => p.Contains("observe-", StringComparison.Ordinal));
                     await w.RunAsync(w.Desktop, "update-ref", pin, w.Baseline);
                 }
             };
@@ -208,6 +229,12 @@ public sealed class C0824RefOnlySyncTests
             await w.RunAsync(w.Desktop, "remote", "set-url", "origin", w.Origin);
             await f.Db.AgentTasks.Where(t => t.Id == f.Task.Id).ExecuteUpdateAsync(u => u.SetProperty(t => t.TaskRefWorkspaceBindingId, (Guid?)f.Binding.Id));
         }
+        w.Git.FailCommand = args => args[0] == "update-ref" && args.Contains(RemoteWorkspaceService.SettlementPin(f.Task.Id))
+            ? new(128, "", "pin refusal") : null;
+        var noPin = await f.Service().SyncAsync(f.Task, default);
+        noPin.Confirmed.ShouldBeFalse("refused:settlement-pin:under-lease");
+        (await f.TipAsync()).ShouldBe(w.Baseline);
+        w.Git.FailCommand = null;
         (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeTrue("valid-counterpart");
         f.AssertNoDesktopCommands();
     }
@@ -263,7 +290,7 @@ public sealed class C0824RefOnlySyncTests
             result.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseWaiting, "lease-window-bounded");
             (await f.TipAsync()).ShouldBe(w.Baseline);
         }
-        w.Git.BlockOn = args => args.Count > 1 && args[0] == "update-ref" && args[1] == w.FullRef;
+        w.Git.BlockOn = args => args[0] == "update-ref" && args.Contains(w.FullRef);
         using var cancel = new CancellationTokenSource();
         var pending = f.Service().SyncAsync(f.Task, cancel.Token);
         await w.Git.Entered.WaitAsync(TimeSpan.FromSeconds(10));
@@ -271,8 +298,32 @@ public sealed class C0824RefOnlySyncTests
         await Should.ThrowAsync<OperationCanceledException>(() => pending, "caller-cancellation-propagates");
         w.Git.InFlight.ShouldBe(0, "child-exited:caller");
         (await f.TipAsync()).ShouldBe(w.Baseline);
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        w.Git.OnBlocked = () => blocked.TrySetResult();
+        var timed = f.Service(clock).SyncAsync(f.Task, default);
+        await blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(120));
+        var timedResult = await timed.WaitAsync(TimeSpan.FromSeconds(10));
+        timedResult.Reason.ShouldBe(RemoteSettlementSyncReasons.Timeout);
+        w.Git.InFlight.ShouldBe(0, "child-exited:timeout");
+        (await f.TipAsync()).ShouldBe(w.Baseline);
         w.Git.BlockOn = null;
         (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeTrue("valid-retry");
         f.AssertNoDesktopCommands();
+    }
+
+    // These are corruption inputs, not normal EF writes: the production model deliberately makes
+    // these binding fields immutable. ExecuteUpdate bypasses that writer rule to exercise readers.
+    private static async Task WriteBindingFaultAsync(RefOnlySyncFixture f)
+    {
+        var b = f.Binding;
+        f.Db.Entry(b).State = EntityState.Unchanged;
+        await f.Db.SaveChangesAsync();
+        await f.Db.TaskRefWorkspaceBindings.Where(row => row.Id == b.Id).ExecuteUpdateAsync(u => u
+            .SetProperty(row => row.TaskId, b.TaskId).SetProperty(row => row.RepositoryPath, b.RepositoryPath)
+            .SetProperty(row => row.CommonDirectory, b.CommonDirectory).SetProperty(row => row.IdentityPath, b.IdentityPath)
+            .SetProperty(row => row.FullRef, b.FullRef).SetProperty(row => row.SelectedBaseSha, b.SelectedBaseSha)
+            .SetProperty(row => row.SelectedBaseRef, b.SelectedBaseRef).SetProperty(row => row.SelectedBaseSource, b.SelectedBaseSource)
+            .SetProperty(row => row.SelectedBaseTaskId, b.SelectedBaseTaskId).SetProperty(row => row.PreparationState, b.PreparationState));
     }
 }

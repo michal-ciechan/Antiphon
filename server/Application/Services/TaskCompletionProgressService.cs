@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -18,15 +19,17 @@ public sealed class TaskCompletionProgressService
     private readonly IWorkspaceProgressProbe? _files;
     private readonly TimeProvider _clock;
     private readonly IRemoteSettlementSync? _remoteSync;
+    private readonly TaskWorkspaceContextResolver? _workspaceContexts;
 
     public TaskCompletionProgressService(
         ITaskProgressGit git, IWorkspaceProgressProbe? files = null, TimeProvider? clock = null,
-        IRemoteSettlementSync? remoteSync = null)
+        IRemoteSettlementSync? remoteSync = null, TaskWorkspaceContextResolver? workspaceContexts = null)
     {
         _git = git;
         _files = files;
         _clock = clock ?? TimeProvider.System;
         _remoteSync = remoteSync;
+        _workspaceContexts = workspaceContexts;
     }
 
     /// <summary>
@@ -242,7 +245,28 @@ public sealed class TaskCompletionProgressService
         var repo = baseline.CanonicalRepository;
 
         // The desktop must still represent S: a checkout that moved after the sync is uncertainty.
-        var observed = await ObservePrimaryCheckoutAsync(baseline, ct);
+        PrimaryObservation observed;
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            if (_workspaceContexts is null || prepared.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+                || prepared.TaskRefWorkspaceBindingId != task.TaskRefWorkspaceBindingId)
+                return Unknown("ref_only_binding_required");
+            try
+            {
+                var context = await _workspaceContexts.ResolveCurrentAsync(task, ct);
+                if (context.PreparationState != TaskRefWorkspacePreparationState.Published
+                    || baseline.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+                    || baseline.TaskRefWorkspaceBindingId != context.BindingId
+                    || baseline.FullRef != context.FullRef
+                    || !WorkspaceReservationKey.PathsEqual(repo, context.GitWorkingDirectory))
+                    return Unknown("ref_only_baseline_invalid");
+                TaskWorkspaceContextResolver.RequireRepositoryIdentity(context, await _git.CommonDirectoryAsync(repo, ct));
+                var tip = await _git.RevParseCommitAsync(repo, context.FullRef, ct);
+                observed = new(tip.Succeeded, tip.Reason, context.FullRef, tip.Sha);
+            }
+            catch (ConflictException ex) { return Unknown(ex.Code ?? "ref_only_binding_state_changed"); }
+        }
+        else observed = await ObservePrimaryCheckoutAsync(baseline, ct);
         if (!observed.Succeeded
             || !string.Equals(observed.ObservedRef, baseline.FullRef, StringComparison.Ordinal)
             || !string.Equals(observed.ObservedSha, s, StringComparison.OrdinalIgnoreCase))
