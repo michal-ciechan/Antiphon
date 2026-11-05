@@ -9343,6 +9343,11 @@ public sealed partial class AgentTaskDispatcher
     /// instead of deleted (incidents cascade with the agent). A second pass sweeps pool delegates
     /// whose session is already terminal and who have no open task — the eight CARD-0085 Worktree
     /// rows that recovery used to abandon as <c>Running</c>.</para>
+    ///
+    /// <para>CARD-1719: a Failed owner whose recorded mirror is clean and equal to origin is
+    /// released through <see cref="RunnerSlotService.ReleaseAsync"/> after
+    /// <see cref="GhostSeatRelease.IdleMinutes"/> when the qualified coordinator does not own
+    /// the task. A dirty, unpushed or unknown mirror keeps the seat.</para>
     /// </summary>
     internal async Task<int> RetireIdleWarmAgentsAsync(CancellationToken ct)
     {
@@ -9466,8 +9471,8 @@ public sealed partial class AgentTaskDispatcher
         var ownerSessions = new Dictionary<Guid, (SessionStatus Status, DateTime StartedAt)>(unfinishedSessionIds.Count);
         foreach (var sid in unfinishedSessionIds)
             ownerSessions[sid] = (sessionStatus[sid], sessionStartedAt[sid]);
-        var failedLiveSessionIds = (await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, ownerSessions, ct))
-            .Keys.ToHashSet();
+        var failedOwners = await FailedTaskSessionOwnership.CurrentOwnersAsync(_db, ownerSessions, ct);
+        var failedLiveSessionIds = failedOwners.Keys.ToHashSet();
 
         // Protect in both the TTL and cap arms. Query the whole warm set so a protected cap
         // member is replaced by the next oldest idle member, never another worker.
@@ -9491,6 +9496,12 @@ public sealed partial class AgentTaskDispatcher
                     || missingTurnBoundary.Contains(sid)))
             .Select(p => p.Agent).ToHashSet();
         var acted = 0;
+        // Before the protected loop stamps PoolIdleSince to now. The bound is CompletedAt, and
+        // the scan is every Failed owner in the pool, not the TTL retire set (production TTL is
+        // 60 minutes). AutomaticEnabled off does not own these seats; OwnsAutomaticPath does.
+        acted += await ReleaseCleanGhostSeatsAsync(
+            parsed, failedOwners, sessionStatus, sessionRunnerIds, uncertainSessionIds,
+            missingTurnBoundary, workingSessions, busyAgentIds, sourcedOwnerIds, retire, now, ct);
         foreach (var agent in retire.Where(protectedAgents.Contains).ToList())
         {
             retire.Remove(agent);

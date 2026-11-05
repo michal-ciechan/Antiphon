@@ -65,7 +65,7 @@ public static class RunnerSlotService
     }
 
     public static async Task<RunnerSlotReleaseDto> ReleaseAsync(
-        PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string? reason,
+        ISessionRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string? reason,
         CancellationToken ct, ICollection<Guid>? intents = null)
     {
         var text = RequireReason(reason);
@@ -277,7 +277,7 @@ public static class RunnerSlotService
     }
 
     private static async Task ReleaseOneAsync(
-        PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
+        ISessionRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
         bool fromOrphanSweep, ICollection<Guid>? intents, CancellationToken ct)
     {
         var intent = NewIntent(runnerId, sessionId, reason, fromOrphanSweep);
