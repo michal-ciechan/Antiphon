@@ -502,10 +502,11 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<PhoneHomeWorkspaceBranchRefsDeleteResponse>(frame) ?? throw Missing("workspace-branch-refs-delete");
     }
 
+    /// <param name="beforeSend">CARD-0824 S4a round 3 Review B-2: read after the request's turn on the connection comes.</param>
     public async Task<PhoneHomeWorkspaceRemoveResponse> RemoveWorkspaceAsync(
-        PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct)
+        PhoneHomeWorkspaceRemoveRequest request, CancellationToken ct, Func<CancellationToken, ValueTask<string?>>? beforeSend = null)
     {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceRemove, request, ct);
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceRemove, request, beforeSend, ct);
         return Read<PhoneHomeWorkspaceRemoveResponse>(frame) ?? throw Missing("workspace-remove");
     }
 
