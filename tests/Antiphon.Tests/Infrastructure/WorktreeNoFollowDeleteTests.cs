@@ -221,10 +221,10 @@ public sealed class WorktreeNoFollowDeleteTests
         File.ReadAllText(outcome.Late).ShouldBe("CHANGED-bytes-mid-walk!!");
     }
 
-    // CARD-1717 B-2: Linux reuses a freed directory inode at once. A directory created later at the same
-    // inode must not carry the recorded identity, or a replacement would inherit the receipt.
+    // CARD-1717 B-2: Linux reuses a freed directory inode. A directory created later at the same inode must
+    // not carry the recorded identity, or a replacement would inherit the receipt.
     [Test]
-    public async Task C1717_B2_ReusedInodeIsANewDirectoryIdentity()
+    public void C1717_B2_ReusedInodeIsANewDirectoryIdentity()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -232,18 +232,21 @@ public sealed class WorktreeNoFollowDeleteTests
             return;
         }
 
+        // A private parent a few levels down keeps other writers out of the freed inode's group.
         var root = Path.Combine(Path.GetTempPath(), "c1717-b2-inode-" + Guid.NewGuid().ToString("N"));
-        var path = Path.Combine(root, "tree");
-        Directory.CreateDirectory(root);
+        var parent = Path.Combine(root, "a", "b");
+        var path = Path.Combine(parent, "tree");
+        Directory.CreateDirectory(parent);
         try
         {
-            for (var attempt = 0; attempt < 50; attempt++)
+            for (var attempt = 0; attempt < Attempts; attempt++)
             {
                 Directory.CreateDirectory(path);
                 var recorded = WorktreeNoFollowDelete.DirectoryIdentity(path);
                 Directory.Delete(path);
-                // A later clock tick: the coarse file-system clock can stamp two creations alike.
-                await Task.Delay(30);
+                // File-system timestamps come from the coarse real-time clock. Once it has ticked, a new
+                // directory's birth time differs from the recorded one; the wait itself touches no file.
+                NextCoarseTick();
                 Directory.CreateDirectory(path);
                 var replacement = WorktreeNoFollowDelete.DirectoryIdentity(path);
                 Directory.Delete(path);
@@ -251,7 +254,7 @@ public sealed class WorktreeNoFollowDeleteTests
                 replacement.ShouldNotBe(recorded, "a reused inode must not match the recorded directory");
                 return;
             }
-            throw new InvalidOperationException("the file system never reused the directory inode in 50 attempts");
+            throw new InvalidOperationException($"the file system never reused the directory inode in {Attempts} attempts");
         }
         finally
         {
@@ -260,6 +263,32 @@ public sealed class WorktreeNoFollowDeleteTests
 
         static string InodeOf(string identity) => identity.Split(':')[3];
     }
+
+    private const int Attempts = 400;
+
+    private static void NextCoarseTick()
+    {
+        if (clock_gettime(ClockRealtimeCoarse, out var start) != 0) throw new IOException("clock_gettime failed");
+        Timespec now;
+        do
+        {
+            Thread.SpinWait(64);
+            if (clock_gettime(ClockRealtimeCoarse, out now) != 0) throw new IOException("clock_gettime failed");
+        }
+        while (now.Seconds == start.Seconds && now.Nanoseconds == start.Nanoseconds);
+    }
+
+    private const int ClockRealtimeCoarse = 5;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Timespec
+    {
+        public long Seconds;
+        public long Nanoseconds;
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int clock_gettime(int clock, out Timespec time);
 
     /// <summary>Two approved directories of many files under a receipt, deleted while a writer acts once the walk is inside one.</summary>
     private sealed class WalkWorld : IDisposable
