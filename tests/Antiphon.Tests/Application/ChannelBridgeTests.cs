@@ -540,7 +540,8 @@ public class ChannelBridgeTests
     [Arguments(300)]
     public async Task Rapid_fire_same_sender_inbound_merges_within_window(int messageGapMs)
     {
-        await using var h = await HarnessAsync(debounceWindowMs: 150);
+        var debounceClock = new FakeTimeProvider();
+        await using var h = await HarnessAsync(debounceWindowMs: 150, debounceClock: debounceClock);
         await h.BindChannelAsync();
 
         var messages = new[] { "line one", "line two", "line three" }
@@ -552,7 +553,12 @@ public class ChannelBridgeTests
             await h.Bridge.HandleInboundAsync(message, CancellationToken.None);
         }
 
-        // Real-clock debounce (150ms window): wait for the flush to land.
+        // Database work and the loaded-host witness may take longer than the old real-time
+        // window. Only debounce time stays still until every inbound has been buffered.
+        h.Adapter.SubmittedBodies.ShouldBeEmpty("the debounce clock has not advanced");
+        debounceClock.Advance(TimeSpan.FromMilliseconds(151));
+
+        // The timer continuation and durable queue delivery complete asynchronously.
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < deadline && h.Adapter.SubmittedBodies.Count == 0)
             await Task.Delay(25);
@@ -1015,7 +1021,7 @@ public class ChannelBridgeTests
     };
 
     private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0, long maxAttachmentBytes = 14 * 1024 * 1024,
-        TimeProvider? outboundClock = null, bool ingestTranscript = false)
+        TimeProvider? outboundClock = null, bool ingestTranscript = false, TimeProvider? debounceClock = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -1066,7 +1072,10 @@ public class ChannelBridgeTests
             DebounceWindowMs = debounceWindowMs,
             MaxAttachmentBytes = maxAttachmentBytes,
         }));
-        services.AddSingleton<ChannelInboundDebouncer>();
+        if (debounceClock is null)
+            services.AddSingleton<ChannelInboundDebouncer>();
+        else
+            services.AddSingleton(sp => ActivatorUtilities.CreateInstance<ChannelInboundDebouncer>(sp, debounceClock));
         if (ingestTranscript)
         {
             // This witness ingests the submitted prompt through the real runtime.

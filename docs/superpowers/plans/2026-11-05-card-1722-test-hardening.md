@@ -33,7 +33,9 @@ witnesses only. No repeats are required after green.
 ## Performance budget
 
 Provisional shared Linux host budgets; CARD-1722 explicitly authorizes the 60-second
-startup safety gate as an exception for worker starvation. Preserve the existing one-second
+startup safety gate as an exception for worker starvation. Retain the synchronous event
+wait: an async continuation could itself wait for the sole pool worker that the synchronous
+read occupies. Only startup gets the expressly requested 60-second bound. Preserve the existing one-second
 refusal path and five-second late-close guard. ff3ef62e measured receipt full-class wall
 98.6-116.6 seconds, targeted ordinary maximum 416 ms, six-second starved reproduction.
 f059674d measured rapid-fire real arrival gaps 194-244 ms exceeding the old 150 ms window.
@@ -42,7 +44,8 @@ focused method 2 minutes, bridge class 10 minutes provisional, receipt class 4 m
 guards 3 minutes. Unit cost is unmeasured on this revision; CARD-1573 documents that the
 current lane can exceed 30 minutes. Bound the collection to one execution with a 35-minute
 row budget and retain incomplete status if it cannot finish; CARD-1514 already tracks the
-slow-lane investigation. Total execution cap 55 minutes; admission separately up to runner
+slow-lane investigation. Final rows use an explicit 35-minute outer row/build cap (a provisional CARD-1722
+collection limit, not a change to any behavior assertion). Total execution cap 55 minutes; admission separately up to runner
 configured slot limit, reported per row. No repeated samples or full assembly selection.
 Assembly Postgres is shared; per-test existing isolation is retained. No new host setup.
 TRX per-case elapsed/outcomes and checkpoint build/admission timing are retained. Internal
@@ -60,7 +63,10 @@ method-scoped SourceLanding Mutation; this supersedes the brief's direct-land su
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | all | `tests/Antiphon.Tests -> bin-card1722/` | merge-witness | `/*/*/ChannelBridgeTests*/Rapid_fire_same_sender_inbound_merges_within_window` | V-1 | all listed, 0 failed | 2 | 8 |
-| CP-2 | all | CP-1 | bridge | `/*/*/ChannelBridgeTests*/*` | R-1 | all listed, 0 failed | 41 | 5 |
-| CP-3 | all | CP-1 | receipt | `/*/*/CheckpointReceiptStallBudgetTests*/*` | V-2, R-2 | all listed, 0 failed | 6 | 2 |
-| CP-4 | all | CP-1 | guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-3 | all listed, 0 failed | 4 | 2 |
-| CP-5 | all | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 15 |
+| CP-2 | all | CP-1 | affected-and-guards | `/*/*/(ChannelBridgeTests*)\|(CheckpointReceiptStallBudgetTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | V-2, R-1, R-2, R-3 | all listed, 0 failed | 51 | 8 |
+| CP-3 | all | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-4 | >= 1 executed, 0 failed | 1 | 15 |
+
+Final slice consolidates the original CP-2/CP-3/CP-4 named-class selections into CP-2
+using supported class OR syntax and moves the identical Unit selection from CP-5 to CP-3.
+This shares assembly setup and admission without dropping any class or method. The original
+CP-1 red receipt remains historical evidence; rerun CP-1 at the fix before the full classes.
