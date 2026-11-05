@@ -71,12 +71,12 @@ internal static class InProcessGitReads
     /// source-observed/&lt;id&gt;, source-observed/probe, cleanup-observed, ...). No such name contains
     /// "..", "//", "@{", a leading dot, a ".lock" suffix or a character git refuses.
     /// </summary>
-    private static readonly System.Text.RegularExpressions.Regex LandRefName = new(
+    internal static readonly System.Text.RegularExpressions.Regex LandRefName = new(
         "^refs/antiphon/land/[0-9a-f]{32}/[0-9a-f]{32}(/(?:[0-9a-f]{32}|[a-z]+(?:-[a-z]+)*)){0,2}$",
         System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>Layouts whose answers libgit2 does not compute the way git does.</summary>
-    private static bool Unusual(Repository repo)
+    internal static bool Unusual(Repository repo)
     {
         var gitDir = repo.Info.Path;
         var common = CommonDirectory(gitDir);

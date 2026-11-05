@@ -92,6 +92,15 @@ public class LandingGit : ILandingGit
     {
         if (started is null && GitPushUrlCache.IsCommand(arguments) && InProcessGitReads.Enabled && InProcessEligible())
             return await PushUrlAsync(repository, arguments, options, ct);
+        // The create-only observation pin: written in process when libgit2's write is git's (no child, so no journal).
+        // A cancelled call is left to the git path (checked before the write: a written pin is never reported as cancelled).
+        if (started is null && !ct.IsCancellationRequested && InProcessGitWrites.IsObservationPin(arguments)
+            && InProcessGitReads.Enabled && InProcessEligible()
+            && InProcessGitWrites.TryCreateObservationPin(repository, arguments, _childEnvironment) is { } pinned)
+        {
+            Scope?.Profile.InProcessHit(arguments);
+            return pinned;
+        }
         if (started is null && !IsMutating(arguments) && InProcessAnswer(repository, arguments) is { } inProcess)
         {
             ct.ThrowIfCancellationRequested();
