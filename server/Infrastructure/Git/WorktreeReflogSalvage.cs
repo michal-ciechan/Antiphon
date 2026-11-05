@@ -10,8 +10,10 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// branch delete after it deletes the branch reflog. A commit that only those reflogs reach (history rewritten locally,
 /// never pushed) would become unrecoverable, so before anything moves each such commit gets
 /// <c>refs/antiphon/salvage/&lt;taskId&gt;/&lt;sha&gt;</c>. Reachable means from any branch, tag or remote-tracking
-/// ref. Writing the same ref again is a no-op, and any read or write failure refuses the removal (fail closed).
-/// The desktop legacy release tick prunes a salvage ref only once its own reflog says it is older than the retention.
+/// ref. A reflog protects both ids of each entry, so both are read (Review 9222cb00 B-1). A salvage ref is only ever a
+/// direct ref created from nothing; a symbolic or different existing one refuses (B-4). Any read or write failure
+/// refuses the removal (fail closed). The desktop legacy release tick prunes, under the repository lease and the live
+/// switch, only the refs of a task whose every release finished at least the retention ago (B-2, B-3).
 /// </summary>
 public static class WorktreeReflogSalvage
 {
@@ -29,7 +31,12 @@ public static class WorktreeReflogSalvage
     /// <summary>The tree needs more than <see cref="MaxRefs"/> salvage refs; nothing is removed.</summary>
     public const string OverLimit = "reflog_salvage_over_limit";
 
+    /// <summary>Review 9222cb00 B-4: a salvage name is already symbolic or names another object; nothing is removed.</summary>
+    public const string Collision = "reflog_salvage_collision";
+
     private const int ArgumentBatch = 200;
+
+    private const string RefFormat = "--format=%(refname) %(objectname) %(symref)";
 
     private static readonly Regex ReflogTime = new(@"@\{(?<t>[0-9]+)\}\z", RegexOptions.CultureInvariant);
 
@@ -53,11 +60,15 @@ public static class WorktreeReflogSalvage
         {
             var read = await git.RunAsync(directory, arguments, ct);
             if (!read.Succeeded) return Failed;
-            foreach (var line in Lines(read.Output))
-            {
-                if (!LandingGit.IsOid(line)) return Failed;
-                candidates.Add(line);
-            }
+            var shown = Lines(read.Output).ToList();
+            if (shown.Any(line => !LandingGit.IsOid(line))) return Failed;
+            candidates.UnionWith(shown);
+            if (arguments[0] != "reflog") continue;
+            // Review 9222cb00 B-1: an entry's old id is protected too (the commit a reset left), and no reflog format
+            // shows the oldest surviving entry's old id. Read both ids from the log Git keeps.
+            var logged = await LoggedIdsAsync(git, directory, arguments[^1], shown.Count != 0, ct);
+            if (logged is null) return Failed;
+            candidates.UnionWith(logged);
         }
         if (candidates.Count == 0) return null;
 
@@ -85,40 +96,57 @@ public static class WorktreeReflogSalvage
         }
         if (tips.Count > MaxRefs) return OverLimit;
 
+        // B-4: only our own direct ref holding exactly its commit counts as present; a symbolic one, or one naming
+        // another object, is a collision that is never written through.
+        var namespaceRefs = RefPrefix + scope + "/";
+        var existing = await git.RunAsync(source.RepositoryPath, ["for-each-ref", RefFormat, namespaceRefs], ct);
+        if (!existing.Succeeded) return Failed;
+        var held = Lines(existing.Output).ToList();
         if (live is not null && await live(ct) is { } refused) return refused;
         string? stopped = null;
         using (LandingGit.GateDestructiveStep(async c => stopped = live is null ? null : await live(c)))
         {
             foreach (var sha in tips.Order(StringComparer.Ordinal))
             {
-                var name = RefPrefix + scope + "/" + sha;
+                var name = namespaceRefs + sha;
+                if (held.Contains(name + " " + sha, StringComparer.Ordinal)) continue;
+                if (held.Any(l => l.StartsWith(name + " ", StringComparison.Ordinal))) return Collision;
+                // Create-only (the expected old value is the null id) and never through a symbolic ref.
                 var written = await git.RunAsync(source.RepositoryPath,
-                    ["update-ref", "--create-reflog", "-m", "antiphon salvage " + scope, name, sha], ct);
+                    ["update-ref", "--no-deref", "--create-reflog", "-m", "antiphon salvage " + scope, name, sha,
+                        new string('0', sha.Length)], ct);
                 if (stopped is not null) return stopped;
                 if (!written.Succeeded) return Failed;
             }
         }
-        var check = await git.RunAsync(source.RepositoryPath,
-            ["for-each-ref", "--format=%(refname) %(objectname)", RefPrefix + scope + "/"], ct);
+        var check = await git.RunAsync(source.RepositoryPath, ["for-each-ref", RefFormat, namespaceRefs], ct);
         if (!check.Succeeded) return Failed;
         var present = Lines(check.Output).ToHashSet(StringComparer.Ordinal);
-        return tips.All(sha => present.Contains(RefPrefix + scope + "/" + sha + " " + sha)) ? null : Failed;
+        return tips.All(sha => present.Contains(namespaceRefs + sha + " " + sha)) ? null : Failed;
     }
 
     /// <summary>
-    /// Deletes each salvage ref whose newest reflog entry is at least <paramref name="keep"/> old. A ref with no
-    /// readable reflog time is kept. Returns the number deleted; a failed read deletes nothing more.
+    /// Review 9222cb00 B-2/B-3/B-4. Deletes each salvage ref of a <paramref name="prunable"/> task scope whose newest
+    /// reflog entry is at least <paramref name="keep"/> old. Only a direct ref named after its own object is deleted,
+    /// never through a symbolic ref and only while it still holds that object. A ref with no readable reflog time is
+    /// kept, and a failed read deletes nothing more. <paramref name="live"/> is read before each delete and again as
+    /// its child starts; a refusal deletes nothing more and is returned as <c>Stopped</c>.
     /// </summary>
-    public static async Task<int> PruneAsync(ILandingGit git, string repository, DateTime nowUtc, TimeSpan keep,
-        CancellationToken ct)
+    public static async Task<(int Pruned, string? Stopped)> PruneAsync(ILandingGit git, string repository, DateTime nowUtc,
+        TimeSpan keep, IReadOnlySet<string> prunable, Func<CancellationToken, Task<string?>> live, CancellationToken ct)
     {
-        var listed = await git.RunAsync(repository, ["for-each-ref", "--format=%(refname) %(objectname)", RefPrefix], ct);
-        if (!listed.Succeeded) return 0;
+        if (prunable.Count == 0) return (0, null);
+        var listed = await git.RunAsync(repository, ["for-each-ref", RefFormat, RefPrefix], ct);
+        if (!listed.Succeeded) return (0, null);
         var pruned = 0;
-        foreach (var line in Lines(listed.Output).Take(MaxPrunedPerPass))
+        string? stopped = null;
+        using var gate = LandingGit.GateDestructiveStep(async c => stopped = await live(c));
+        foreach (var line in Lines(listed.Output).Where(l => prunable.Contains(ScopeOf(l))).Take(MaxPrunedPerPass))
         {
+            // A third field is a symbolic ref's target: never pruned.
             var parts = line.Split(' ');
-            if (parts.Length != 2 || !parts[0].StartsWith(RefPrefix, StringComparison.Ordinal) || !LandingGit.IsOid(parts[1]))
+            if (parts.Length != 2 || !LandingGit.IsOid(parts[1])
+                || !string.Equals(parts[0], RefPrefix + ScopeOf(line) + "/" + parts[1], StringComparison.Ordinal))
                 continue;
             var log = await git.RunAsync(repository, ["reflog", "show", "--date=unix", "--format=%gd", "-n", "1", parts[0]], ct);
             if (!log.Succeeded) continue;
@@ -127,10 +155,52 @@ public static class WorktreeReflogSalvage
                 continue;
             var written = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
             if (nowUtc - written < keep) continue;
-            var deleted = await git.RunAsync(repository, ["update-ref", "-d", parts[0], parts[1]], ct);
+            if (await live(ct) is { } refused) return (pruned, refused);
+            var deleted = await git.RunAsync(repository, ["update-ref", "--no-deref", "-d", parts[0], parts[1]], ct);
+            if (stopped is not null) return (pruned, stopped);
             if (deleted.Succeeded) pruned++;
         }
-        return pruned;
+        return (pruned, null);
+    }
+
+    /// <summary>The task scope of a <c>for-each-ref</c> line under <see cref="RefPrefix"/>, else empty.</summary>
+    private static string ScopeOf(string line)
+    {
+        if (!line.StartsWith(RefPrefix, StringComparison.Ordinal)) return "";
+        var slash = line.IndexOf('/', RefPrefix.Length);
+        return slash < 0 ? "" : line[RefPrefix.Length..slash];
+    }
+
+    /// <summary>
+    /// B-1: every non-null old and new id of the reflog Git keeps for <paramref name="log"/>; null when it cannot be
+    /// read completely, or is missing although <c>reflog show</c> listed entries (fail closed).
+    /// </summary>
+    private static async Task<IReadOnlyList<string>?> LoggedIdsAsync(ILandingGit git, string directory, string log,
+        bool listed, CancellationToken ct)
+    {
+        var located = await git.RunAsync(directory, ["rev-parse", "--path-format=absolute", "--git-path", "logs/" + log], ct);
+        var path = located.Output.Trim();
+        if (!located.Succeeded || path.Length == 0 || path.Contains('\n') || !Path.IsPathFullyQualified(path)) return null;
+        string text;
+        try
+        {
+            if (!File.Exists(path)) return listed ? null : [];
+            text = await File.ReadAllTextAsync(path, ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        var ids = new List<string>();
+        foreach (var line in Lines(text))
+        {
+            var fields = line.Split(' ', 3);
+            if (fields.Length < 3 || !LandingGit.IsOid(fields[0]) || !LandingGit.IsOid(fields[1])) return null;
+            foreach (var id in fields.Take(2))
+                if (id.Any(c => c != '0')) ids.Add(id);
+        }
+        if (listed && ids.Count == 0) return null;
+        return ids;
     }
 
     private static IEnumerable<string> Lines(string output) =>
