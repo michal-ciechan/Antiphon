@@ -539,16 +539,16 @@ public sealed class RunScheduler
         if (result is not null)
         {
             progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
-            progress.State = result.ExitCode == 0 && !result.TimedOut && sourceOk && outside?.Kind is null ? "ok" : "failed";
+            var succeeded = result.ExitCode == 0 && !result.TimedOut && sourceOk && outside?.Kind is null;
             var refusal = BuildConfinement.ReportedRefusal(result.Stderr) ?? BuildConfinement.ReportedRefusal(outside?.Detail);
-            if (progress.State == "ok")
+            if (succeeded)
             {
                 if (request.BeforeBuildReceiptWrite is not null)
                     await request.BeforeBuildReceiptWrite(built!, cancellationToken).ConfigureAwait(false);
                 var written = built!.Write(result.Exited);
                 if (written is not null)
                 {
-                    progress.State = "failed";
+                    succeeded = false;
                     progress.AdmissionExitCode = ExitCodes.Invalid;
                     progress.SlotReason = "refused: " + written;
                 }
@@ -564,7 +564,10 @@ public sealed class RunScheduler
                 progress.AdmissionExitCode = ExitCodes.Timeout;
                 progress.TerminalReason = "build-deadline-exceeded";
             }
-            progress.Source = request.SourceGuard?.Copy(progress.State == "ok" ? "verified" : "unknown") ?? new SourceEvidence();
+            progress.Source = request.SourceGuard?.Copy(succeeded ? "verified" : "unknown") ?? new SourceEvidence();
+            // Another completed row can wake Pick while this build task is still in flight.
+            // Publish readiness only after the receipt has been written and sealed successfully.
+            progress.State = succeeded ? "ok" : "failed";
         }
         else if (outside?.Kind is not null)
         {

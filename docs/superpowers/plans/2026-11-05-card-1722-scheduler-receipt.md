@@ -74,6 +74,16 @@ totalTimeoutMinutes: 90
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-card1722-receipt-red/` | receipt-witness | `/*/*/RunSchedulerTests*/rows_wait_for_the_build_source_receipt_before_readiness` | V-1 | all listed, 0 failed | 1 | 10 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-card1722-receipt-final/` | affected-and-guards | `/*/*/(RunSchedulerTests*)\|(CheckpointCallerBudgetTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | V-1, R-1, R-2, R-4 | all listed, 0 failed | 40 | 10 |
-| CP-3 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 20 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-card1722-receipt-final/` | receipt-witness | `/*/*/RunSchedulerTests*/rows_wait_for_the_build_source_receipt_before_readiness` | V-1 | all listed, 0 failed | 1 | 10 |
+| CP-2 | S2 | CP-1 | affected-and-guards | `/*/*/(RunSchedulerTests*)\|(CheckpointCallerBudgetTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | V-1, R-1, R-2, R-4 | all listed, 0 failed | 40 | 10 |
+| CP-3 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 20 |
+
+S1 historical CP-1 at 3caf83cb1a0befc099c8cbd271aa88d277aefaac used
+`bin-card1722-receipt-red/`: 1 executed, 0 passed, 1 failed, 0 skipped.
+Fresh TRX confirms the expected CP-2 build_source_mismatch assertion (not a
+build/fixture failure), with dirty=0 and buildSource=verified. Cold build 411.814 s;
+test-host wall 8.115 s; witness test wall 0.309 s; build/row waited=0s.
+The final table reruns CP-1 with a fresh output and shares it across CP-2/CP-3;
+all After cells become S2 to permit verified reuse. Run with --serial and
+--row-timeout 35m (provisional CARD-1722 Unit collection cap), --total-timeout 90m,
+--hard-wall-timeout 135m. The CP-1 regression assertions remain unchanged.
