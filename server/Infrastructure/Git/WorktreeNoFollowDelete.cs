@@ -93,9 +93,12 @@ internal static class WorktreeNoFollowDelete
         var isLink = (info.FileAttributes & reparsePoint) != 0;
         var isDirectory = !isLink && (info.FileAttributes & directory) != 0;
         // CARD-1717 B-3: the held handle shares no delete, so this name is not replaced between its hash and delete.
+        // A-B-3: the hash shares no write, so a handle already open for writing refuses it (sharing violation) and
+        // none can write while it reads.
         var approval = RemovalApproval.Current.Value;
         if (approval is not null && relative.Length != 0)
-            approval.RejectChanged(relative, isLink ? "link" : isDirectory ? "dir" : "file", () => WindowsRegularFileHash(path));
+            approval.RejectChanged(relative, isLink ? "link" : isDirectory ? "dir" : "file",
+                () => WindowsRegularFileHash(path, denyWrite: true));
         if (isDirectory)
         {
             WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
@@ -236,8 +239,9 @@ internal static class WorktreeNoFollowDelete
         if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var listed)) throw Failure("stat", name);
         var kind = listed.Mode & 0xF000;
         var approval = RemovalApproval.Current.Value;
+        LinuxStatx? hashed = null;
         if (approval is not null && relative.Length != 0)
-            approval.RejectChanged(relative, KindOf(listed), () => HashAt(parent, name, listed));
+            approval.RejectChanged(relative, KindOf(listed), () => HashAt(parent, name, listed, out hashed));
         if (kind == SIfLnk)
         {
             Unlink(parent, name, directory: false);
@@ -245,7 +249,7 @@ internal static class WorktreeNoFollowDelete
         }
         if (kind != SIfDir)
         {
-            UnlinkSameNode(parent, name, listed);
+            UnlinkSameNode(parent, name, listed, hashed);
             return;
         }
         SafeFileHandle dir;
@@ -297,7 +301,13 @@ internal static class WorktreeNoFollowDelete
         }
     }
 
-    private static void UnlinkSameNode(SafeFileHandle parent, string name, LinuxStatx listed)
+    /// <summary>
+    /// CARD-1717 A-B-3: <paramref name="hashed"/> is the stat the approved hash ended on. A write after it, through a
+    /// handle opened at any time, moves the size or the change time, so the bytes are kept and the walk stops. What
+    /// remains is a write landing between this statx and the unlinkat, or one in the same coarse clock tick as the
+    /// file's previous change that also keeps its size and modification time; nothing short of a lease closes those.
+    /// </summary>
+    private static void UnlinkSameNode(SafeFileHandle parent, string name, LinuxStatx listed, LinuxStatx? hashed)
     {
         if (!TryStat(Fd(parent), name, AtSymlinkNoFollow, out var now)) throw Failure("stat", name);
         if ((now.Mode & 0xF000) == SIfLnk)
@@ -306,6 +316,8 @@ internal static class WorktreeNoFollowDelete
             return;
         }
         if (!SameNode(listed, now)) throw new IOException("no_follow_identity_changed: " + name);
+        if (hashed is { } proof && !SameContent(proof, now))
+            throw new ApprovedTreeRejectedException("set_aside_content_changed");
         Unlink(parent, name, directory: false);
     }
 
@@ -340,8 +352,13 @@ internal static class WorktreeNoFollowDelete
 
     /// <summary>SHA-256 of the regular file <paramref name="name"/> names, opened without following a link. Null
     /// when absent; empty when it is not a regular file or not the inode that was listed.</summary>
-    private static string? HashAt(SafeFileHandle parent, string name, in LinuxStatx listed)
+    /// <remarks>CARD-1717 A-B-3: a writer that already held the file open can change bytes the hash has already
+    /// read. The descriptor is stat'ed before and after the read; a size, modification or change time that moved
+    /// means the bytes hashed are not the bytes on disk, and the entry reads as changed. <paramref name="after"/> is
+    /// the stat the hash ended on, for the re-check at the unlink.</remarks>
+    private static string? HashAt(SafeFileHandle parent, string name, in LinuxStatx listed, out LinuxStatx? after)
     {
+        after = null;
         var raw = openat(Fd(parent), name, ORdOnly | ONoFollow | OCloExec);
         if (raw < 0)
         {
@@ -352,9 +369,13 @@ internal static class WorktreeNoFollowDelete
         }
         using var handle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
         if (!TryStat(Fd(handle), "", AtEmptyPath, out var stat)) throw Failure("stat", name);
-        if ((stat.Mode & 0xF000) != SIfReg || !SameNode(listed, stat)) return "";
+        if ((stat.Mode & 0xF000) != SIfReg || !SameNode(listed, stat) || !SameContent(listed, stat)) return "";
+        // The stream owns the descriptor; it stays open for the second stat.
         using var stream = new FileStream(handle, FileAccess.Read);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
+        var hash = Convert.ToHexStringLower(SHA256.HashData(stream));
+        if (!TryStat(Fd(handle), "", AtEmptyPath, out var ended) || !SameContent(stat, ended)) return "";
+        after = ended;
+        return hash;
     }
 
     private static string KindOf(in LinuxStatx stat) =>
@@ -393,6 +414,11 @@ internal static class WorktreeNoFollowDelete
 
     private static bool SameNode(in LinuxStatx left, in LinuxStatx right) =>
         left.Inode == right.Inode && left.DevMajor == right.DevMajor && left.DevMinor == right.DevMinor;
+
+    // CARD-1717 A-B-3: a write moves the change time (which no caller can set back) and the modification time.
+    private static bool SameContent(in LinuxStatx left, in LinuxStatx right) => SameNode(left, right)
+        && left.Size == right.Size && left.MtimeSec == right.MtimeSec && left.MtimeNsec == right.MtimeNsec
+        && left.CtimeSec == right.CtimeSec && left.CtimeNsec == right.CtimeNsec;
 
     // CARD-1717 B-2: an inode number is reused once its directory is gone. The birth time, where the file
     // system reports one, tells a directory created later at a reused inode from the recorded one.
@@ -449,9 +475,9 @@ internal static class WorktreeNoFollowDelete
         return $"{prefix}:{info.VolumeSerialNumber:x8}:{info.FileIndexHigh:x8}:{info.FileIndexLow:x8}";
     }
 
-    private static string? WindowsRegularFileHash(string path)
+    private static string? WindowsRegularFileHash(string path, bool denyWrite = false)
     {
-        var handle = CreateFileW(path, 0x80000000, 0x1 | 0x2 | 0x4, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
+        var handle = CreateFileW(path, 0x80000000, denyWrite ? 0x1u | 0x4 : 0x1 | 0x2 | 0x4, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastPInvokeError();
@@ -608,6 +634,8 @@ internal static class WorktreeNoFollowDelete
         [FieldOffset(40)] public ulong Size;
         [FieldOffset(80)] public long BtimeSec;
         [FieldOffset(88)] public uint BtimeNsec;
+        [FieldOffset(96)] public long CtimeSec;
+        [FieldOffset(104)] public uint CtimeNsec;
         [FieldOffset(112)] public long MtimeSec;
         [FieldOffset(120)] public uint MtimeNsec;
         [FieldOffset(136)] public uint DevMajor;
