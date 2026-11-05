@@ -850,6 +850,7 @@ public sealed class C1677RetentionServerTests
     [Arguments("bin/id_ed25519")]
     [Arguments("bin/.aws/credentials")]
     [Arguments("bin/.docker/config.json")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay(string relative, CancellationToken ct)
     {
         // CARD-1718 A-D3 round 2 (review 47d31366 B-1, B-2). Producer to the real runner retention
