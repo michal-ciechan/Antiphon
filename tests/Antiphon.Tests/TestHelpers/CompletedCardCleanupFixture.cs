@@ -35,17 +35,19 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     /// <summary>Fixture-only cohort. Shipped configuration stays Execute=false and CardDoneAfterUtc=null.</summary>
     public WorktreeResidueSettings Residue { get; } = new() { Execute = true, MinSettledMinutes = 120 };
 
-    private CompletedCardCleanupFixture(TimeProvider? clock)
+    private CompletedCardCleanupFixture(TimeProvider? clock, string? sourceRoot = null, string? reportRoot = null)
     {
         var checkout = new DirectoryInfo(AppContext.BaseDirectory);
         while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
-        var root = Path.Combine(checkout?.FullName ?? throw new InvalidOperationException("checkout missing"),
+        var root = sourceRoot ?? Path.Combine(checkout?.FullName ?? throw new InvalidOperationException("checkout missing"),
             ".antiphon", "test-output", "c1017", Guid.NewGuid().ToString("N"));
         Host = new LandingSafetyHarness(root)
         {
             Clock = clock ?? TimeProvider.System,
             ConfigureServices = services =>
             {
+                if (reportRoot is not null)
+                    services.Configure<DelegationSettings>(s => s.ReportStorageRoot = reportRoot);
                 services.AddSingleton<CardDoneArtifactPreservation>();
                 services.AddScoped<CardWorktreeCleanupExecutor>();
                 services.AddScoped<CardWorktreeCleanupService>();
@@ -54,9 +56,10 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         };
     }
 
-    public static async Task<CompletedCardCleanupFixture> CreateAsync(string? leaf = null, TimeProvider? clock = null)
+    public static async Task<CompletedCardCleanupFixture> CreateAsync(string? leaf = null, TimeProvider? clock = null,
+        string? sourceRoot = null, string? reportRoot = null)
     {
-        var f = new CompletedCardCleanupFixture(clock);
+        var f = new CompletedCardCleanupFixture(clock, sourceRoot, reportRoot);
         Console.WriteLine($"C1017_FIXTURE stage=host-initialize task={f.TaskId} root={f.Host.Fixture.Root}");
         await f.Host.InitializeAsync();
         // FixtureGit ignores global configuration, while WorktreeManager starts native Git.

@@ -274,6 +274,15 @@ from CARD-0681's Unit-lane portability work. See the
 
 ### Default Code/Review recipe
 
+`Antiphon.Tests` uses TUnit 1.44 reflection discovery. Its assembly scan rejects any
+assembly whose full location contains the case-sensitive substring `ref` or
+`runtimes`. Keep checkpoint output names and their parent paths free of those
+substrings (for example, `bin-c0824-s2-a/`). CARD-0824 run
+`20261105-222447-3643` built successfully into `bin-c0824-ref2-a/` but selected no
+assemblies and crashed discovery with `SemaphoreSlim maxCount=0`, before writing
+TRX. This is a startup failure, never a passing zero-test row. Change the ignored
+manifest's output name while retaining its filters, budgets and source binding.
+
 Build once in the worktree's native default output (no custom output; CARD-1629). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
 
 The brief/verification section must list coverage-to-class and end with the `### Checkpoints` table (below). Code and Review report the filters they ran and the actual expanded counts. Unit-only is insufficient for native delivery, landing, leases or persistence. A broad namespace/full-assembly exception names the affected cross-cutting invariant, the classes that cannot be bounded, and the expected cost **before** the run; missing rationale is a Review defect. CI/nightly keep the broad run. Per-PC Mutation stays method-scoped. Do not silently edit `LandVerifyFilter` or the production verifier as part of a documentation policy change.
