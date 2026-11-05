@@ -15,6 +15,7 @@ discovery, deliberate edits and red/restore/green evidence.
 | PC-4a | Remove positive bound validation; input 0 | V4_Nonpositive_bound_is_rejected_by_production_options | Production options must throw InvalidOperationException |
 | PC-4b | Remove positive bound validation; input -1 | V4_Nonpositive_bound_is_rejected_by_production_options | Production options must throw InvalidOperationException |
 | PC-5 | Apply absolute bound only inside the expired-TTL branch | V3_Bound_applies_before_ttl_and_next_acquire_admits_a_waiter | Waiting acquire at configured 1h must succeed before 90m TTL |
+| PC-6 | Restrict the absolute-bound condition to pid mode | V6_Healthy_renew_mode_holder_is_reaped_at_bound_before_ttl | Renewal at the 1h bound must be false despite a healthy renewal and later TTL |
 
 Each phase uses the exact method filter
 `/*/*/BuildSlotMaxHoldTests/ExactMethodName`, never the whole class. PC-4's
