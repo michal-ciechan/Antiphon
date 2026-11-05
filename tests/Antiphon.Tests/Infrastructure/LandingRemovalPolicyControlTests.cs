@@ -1051,6 +1051,170 @@ public sealed class LandingRemovalPolicyControlTests
         f.BranchPresent.ShouldBeTrue();
     }
 
+    // CARD-1717 B-1: a retained copy that disappears after retention is not a durable receipt.
+    [Test]
+    public async Task C1717_B1_MissingRetainedCopyIsNotDeleted()
+    {
+        using var f = new RemovalFixture();
+        var ev = Path.Combine(f.Source, ".antiphon", "note.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(ev)!);
+        File.WriteAllText(ev, "only-retained-byte-copy");
+        f.IgnoredPaths.Add(".antiphon/note.md");
+        f.AfterInspection = count =>
+        {
+            if (count != 2) return;
+            var retained = Path.Combine(f.Root, "retained", ".antiphon", "note.md");
+            if (File.Exists(retained)) File.Delete(retained);
+        };
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("evidence_retained_missing");
+        File.ReadAllText(ev).ShouldBe("only-retained-byte-copy");
+        Directory.Exists(f.Source).ShouldBeTrue();
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // CARD-1717 B-1: a crash after unregister must not delete evidence whose bytes changed
+    // while the listing seal stayed equal. The retained digest is the authority, not the seal.
+    [Test]
+    public async Task C1717_B1_CrashRetryKeepsChangedEvidence()
+    {
+        using var f = new RemovalFixture();
+        var ev = Path.Combine(f.Source, ".antiphon", "note.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(ev)!);
+        File.WriteAllText(ev, "retained-old");
+        f.IgnoredPaths.Add(".antiphon/note.md");
+        f.AfterUnregister = () => throw new IOException("review crash after actual unregister");
+        var first = await f.RemoveAsync(gate: true);
+        first.Residue.ShouldBe("worktree_removal_incomplete");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        var source = Path.Combine(aside, ".antiphon", "note.md");
+        var seal = WorktreeSetAside.ListingSeal(aside);
+        var written = File.GetLastWriteTimeUtc(source);
+        File.WriteAllText(source, "CHANGED-new!");
+        File.SetLastWriteTimeUtc(source, written);
+        WorktreeSetAside.ListingSeal(aside).ShouldBe(seal, "equal length and mtime must not authorize the new bytes");
+        f.AfterUnregister = null;
+        var retry = await f.RemoveAsync(gate: true);
+        retry.IsClean.ShouldBeFalse();
+        retry.Residue.ShouldBe("evidence_bytes_changed");
+        File.ReadAllText(source).ShouldBe("CHANGED-new!");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // CARD-1717 B-2: a tracked edit that preserves length and mtime keeps the listing seal
+    // and must still be refused. Those bytes were never committed.
+    [Test]
+    public async Task C1717_B2_EqualStatTrackedEditIsNotDeleted()
+    {
+        using var f = new RemovalFixture();
+        f.AfterUnregister = () => throw new IOException("review cut after real unregister");
+        (await f.RemoveAsync()).Residue.ShouldBe("worktree_removal_incomplete");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        var file = Path.Combine(aside, "keep.txt");
+        var before = WorktreeSetAside.ListingSeal(aside);
+        var written = File.GetLastWriteTimeUtc(file);
+        var changed = new string('Z', "private work".Length);
+        File.WriteAllText(file, changed);
+        File.SetLastWriteTimeUtc(file, written);
+        WorktreeSetAside.ListingSeal(aside).ShouldBe(before);
+        f.AfterUnregister = null;
+        var second = await f.RemoveAsync();
+        second.IsClean.ShouldBeFalse();
+        second.Residue.ShouldBe("set_aside_content_changed");
+        File.ReadAllText(file).ShouldBe(changed);
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // CARD-1717 B-3: bytes written into an already tracked file after the clean status are not
+    // the pushed blob. The census sees a tracked name and must not bless the new contents.
+    [Test]
+    public async Task C1717_B3_TrackedWriteAfterCleanStatusIsKept()
+    {
+        using var f = new RemovalFixture();
+        const string changed = "unpushed-bytes-after-clean-status";
+        f.AfterInspection = count =>
+        {
+            if (count == 2) File.WriteAllText(Path.Combine(f.Source, "keep.txt"), changed);
+        };
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("tracked_bytes_changed");
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe(changed);
+        Directory.Exists(f.Source).ShouldBeTrue();
+        f.BranchPresent.ShouldBeTrue();
+        f.SetAsideTrees().ShouldBeEmpty();
+    }
+
+    // CARD-1717 B-3: a file created at the real delete call, after every census, is an only copy.
+    [Test]
+    public async Task C1717_B3_FileAtDeleteBoundaryIsKept()
+    {
+        using var f = new RemovalFixture();
+        string? late = null;
+        f.BeforeRealDelete = path =>
+        {
+            late = Path.Combine(path, "new-only-copy.txt");
+            File.WriteAllText(late, "only-copy-created-after-final-check");
+        };
+        var result = await f.RemoveAsync();
+        late.ShouldNotBeNull();
+        File.ReadAllText(late).ShouldBe("only-copy-created-after-final-check");
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("set_aside_content_changed");
+        File.ReadAllText(Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "keep.txt")).ShouldBe("private work");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // CARD-1717 B-4: a foreign directory installed at the set-aside path is not moved back onto
+    // the registered worktree when unregister refuses.
+    [Test]
+    public async Task C1717_B4_ForeignDirectoryIsNotRestored()
+    {
+        using var f = new RemovalFixture();
+        string? saved = null;
+        f.BeforeUnregister = () =>
+        {
+            var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+            saved = aside + ".rescued";
+            Directory.Move(aside, saved);
+            Directory.CreateDirectory(aside);
+            File.WriteAllText(Path.Combine(aside, "foreign.txt"), "foreign-only-bytes");
+            f.RemoveExitCode = 128;
+        };
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("set_aside_identity_mismatch");
+        File.Exists(Path.Combine(f.Source, "foreign.txt")).ShouldBeFalse();
+        Directory.Exists(f.Source).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(saved!, "keep.txt")).ShouldBe("private work");
+        File.ReadAllText(Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "foreign.txt")).ShouldBe("foreign-only-bytes");
+        f.SetAsideRecords().ShouldNotBeEmpty();
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    // CARD-1717 B-5: an approved file already unlinked by an interrupted delete is completed work.
+    // The unchanged remainder must resume instead of refusing the whole listing forever.
+    [Test]
+    public async Task C1717_B5_PartialUnlinkOfApprovedFileResumes()
+    {
+        using var f = new RemovalFixture();
+        Directory.CreateDirectory(Path.Combine(f.Source, "notes"));
+        File.WriteAllText(Path.Combine(f.Source, "notes", "keep-too.txt"), "also private");
+        f.TrackedListing = "keep.txt\0notes/keep-too.txt\0";
+        f.AfterUnregister = () => throw new IOException("review cut after real unregister");
+        var first = await f.RemoveAsync();
+        first.Residue.ShouldBe("worktree_removal_incomplete");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        File.Delete(Path.Combine(aside, "keep.txt"));
+        f.AfterUnregister = null;
+        var second = await f.RemoveAsync();
+        second.IsClean.ShouldBeTrue(second.Residue);
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+        f.BranchPresent.ShouldBeFalse();
+    }
+
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
     {
         public List<(int Evidence, int AtInspection)> Calls { get; } = [];
@@ -1128,6 +1292,8 @@ public sealed class LandingRemovalPolicyControlTests
             if (renameFault is { } f && f.Rename == rename && call <= f.Failures) throw f.Fault(call);
             real();
         }
+        /// <summary>Runs immediately before the real no-follow delete, after any injected fault.</summary>
+        public Action<string>? BeforeRealDelete { get; set; }
         public int DeleteCalls { get; private set; }
         private (Func<int, Exception?> Fault, int Failures)? deleteFault;
         /// <summary>
@@ -1146,13 +1312,18 @@ public sealed class LandingRemovalPolicyControlTests
                 if (f.Fault(call) is { } fault) throw fault;
                 return;
             }
+            BeforeRealDelete?.Invoke(path);
             WorktreeNoFollowDelete.Delete(path, preserveNestedRepositories);
         }
         // Without an injected fault the fixture renames and deletes exactly as production does.
-        private WorktreeRenames Renames => renameFault is null && deleteFault is null ? WorktreeRenames.System : new(
+        // A before-delete hook still has to wrap that delete; the system delegate never sees it.
+        private WorktreeRenames Renames => renameFault is null && deleteFault is null && BeforeRealDelete is null
+            ? WorktreeRenames.System
+            : new(
             (s, d) => Rename("move", () => Directory.Move(s, d)),
             (s, d) => Rename("record", () => File.Move(s, d, overwrite: true)),
-            p => { Pauses.Add(p); OnPause?.Invoke(); }, Windows) { DeleteTree = Delete };
+            p => { Pauses.Add(p); OnPause?.Invoke(); },
+            renameFault is null && deleteFault is null ? OperatingSystem.IsWindows() : Windows) { DeleteTree = Delete };
         public RemovalFixture()
         {
             Retention = new(this);
