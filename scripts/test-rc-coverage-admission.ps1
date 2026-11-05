@@ -118,9 +118,9 @@ Assert-C487 ($wrong.Count -eq 0) 'CoverageAdmission exact-windows-dispositions' 
 Assert-C487 ($linuxMissing.Count -eq 0) 'CoverageAdmission linux-retains-native' ($linuxMissing -join ',')
 Assert-C487 ($portable -contains 'C0824DesktopLegacyReleasePolicyTests.Status_that_cannot_read_the_whole_tree_holds_it' -and $portable -contains 'CardRelationshipScriptTests.Block_fails_loudly_when_relationships_returns_404' -and $portable.Count -gt 20) 'CoverageAdmission portable-siblings' ($portable -join ',')
 $verdictArgs = @{ ProcessExit=0; Sha='fixture'; ExpectedSha='fixture'; GitRef='fixture'; ExpectedRef='fixture'; PolicyHash=$policy.Hash; ExpectedPolicyHash=$policy.Hash }
-$v = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal @args
+$v = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal @verdictArgs
 Assert-C487 $v.coverageComplete 'CoverageAdmission coverage-sweep' (@($v.reasons) -join ',')
 $terminal += [pscustomobject]@{ Identity='Required.WindowsCapability'; Outcome='NotExecuted' }
-$red = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal @args
+$red = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal @verdictArgs
 Assert-C487 (-not $red.coverageComplete -and (@($red.reasons) -join ',') -like '*Required.WindowsCapability*') 'CoverageAdmission required-skips-stay-incomplete'
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 7
