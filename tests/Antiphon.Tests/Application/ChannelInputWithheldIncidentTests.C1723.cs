@@ -56,6 +56,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         error.ShouldBeNull("a non-shutdown cancellation must not fault the hosted sibling");
         attempts.ShouldBeGreaterThanOrEqualTo(2, "the same worker must perform another pass");
         logger.Lines.ShouldContain(line => line.Contains("failed", StringComparison.OrdinalIgnoreCase));
+        logger.Levels.ShouldContain(LogLevel.Warning);
         h.Adapter.SentInput.ShouldBeEmpty();
     }
 
@@ -103,17 +104,23 @@ public sealed partial class ChannelInputWithheldIncidentTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     [Timeout(120_000)]
-    public async Task C1723_RepeatedScanTimeoutRaisesOnceAndSuccessRearms(CancellationToken ct)
+    public async Task C1723_RepeatedScanTimeoutRaisesOnceAndSuccessRearms(bool failIncidentWrite, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = Clock();
         var commands = new ScanCommands();
         await using var h = await OpenAsync(schema.ConnectionString, clock, o => o.AddInterceptors(commands));
         var attempts = 0;
+        var incidentWrites = 0;
         var fail = true;
         commands.Fault = sql =>
         {
+            if (sql.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal))
+                return Interlocked.Increment(ref incidentWrites) == 1 && failIncidentWrite
+                    ? new OperationCanceledException("independent incident write cancellation") : null;
             if (!sql.Contains("SELECT q.\"Id\", q.\"FirstWithheldAt\"", StringComparison.Ordinal)) return null;
             Interlocked.Increment(ref attempts);
             return Volatile.Read(ref fail) ? new TimeoutException("database scan deadline") : null;
@@ -144,6 +151,11 @@ public sealed partial class ChannelInputWithheldIncidentTests
             await Passes(2);
             (await Incidents()).ShouldBe(0, "two failures are below the three-pass threshold");
             await Passes(3);
+            if (failIncidentWrite)
+            {
+                (await Incidents()).ShouldBe(0, "the first monitor write was canceled");
+                await Passes(4);
+            }
             await WaitForAsync(async () => await Incidents() == 1);
             await Passes(5);
             (await Incidents()).ShouldBe(1, "a sustained outage raises once");
@@ -154,6 +166,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
             (await Incidents()).ShouldBe(1, "success resets the consecutive-failure count");
             await Passes(9);
             await WaitForAsync(async () => await Incidents() == 2);
+            incidentWrites.ShouldBe(failIncidentWrite ? 3 : 2, "only a failed write is retried within a streak");
             await using var verify = Db(schema.ConnectionString);
             var incidents = await verify.AgentIncidents.Where(i => i.FailureReason == "ChannelWithheldScanFailed")
                 .ToListAsync(ct);

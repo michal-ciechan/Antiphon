@@ -52,6 +52,7 @@ once, target only new failures. Never widen a timeout or loosen an assertion.
   irrelevant heads, one newly aged row found in the first scan, <=16 DB commands and no input.
 - V-3: C1723_RepeatedScanTimeoutRaisesOnceAndSuccessRearms: K-1 quiet, K one incident,
   more failures stay once, success resets, another K failures re-arms; actual AttentionService row.
+  Variants: normal alert write and first alert write canceled (retry without ending the loop).
 - R-1: full ChannelInputWithheldIncidentTests and DialogDeliveryAdmissionTests preserve
   transaction races, lock deadlines, no-input, index plan, restart and delivered prompt witnesses.
 - R-2: full ChannelBridge*/ChannelInbound* (includes ChannelInboundRecoveryTests C1716).
@@ -67,7 +68,7 @@ All deliberate PCs stay pending for SourceLanding Mutation. Candidates:
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-0 | RED | `tests/Antiphon.Tests -> bin-c1723-red/` | pre-fix | `/*/*/ChannelInputWithheldIncidentTests/C1723*` | V-1,V-2,V-3 red first | guarded defects fail | 6 | 4 | true | `TEMP=/tmp` |
-| CP-1 | FIX | `tests/Antiphon.Tests -> bin-c1723-final/` | withheld-hosted | `/*/*/(ChannelInputWithheldIncidentTests*)\|(DialogDeliveryAdmissionTests*)/*` | V-1,V-2,V-3,R-1 | all pass, no skips | 31 | 4 | true | `TEMP=/tmp` |
+| CP-1 | FIX | `tests/Antiphon.Tests -> bin-c1723-final/` | withheld-hosted | `/*/*/(ChannelInputWithheldIncidentTests*)\|(DialogDeliveryAdmissionTests*)/*` | V-1,V-2,V-3,R-1 | all pass, no skips | 32 | 4 | true | `TEMP=/tmp` |
 | CP-2 | FIX | CP-1 | channels | `/*/*/(ChannelBridge*)\|(ChannelInbound*)/*` | R-2 | all pass, no skips | 88 | 6 | true | `TEMP=/tmp` |
 | CP-3 | FIX | CP-1 | guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/*` | R-3 | all pass, no skips | 47 | 3 | true | `TEMP=/tmp` |
 | CP-4 | FIX | CP-1 | unit-ad | `/*/*/(A*)\|(B*)\|(C*)\|(D*)/*[Category=Unit]` | R-3 | nonzero, all pass | 1 | 15 | true | `TEMP=/tmp` |

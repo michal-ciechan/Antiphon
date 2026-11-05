@@ -788,11 +788,15 @@ public sealed partial class ChannelInputWithheldIncidentTests
     private sealed class CaptureLogger : ILogger<ChannelBridgeService>
     {
         public List<string> Lines { get; } = [];
+        public List<LogLevel> Levels { get; } = [];
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) =>
+            Func<TState, Exception?, string> formatter)
+        {
             Lines.Add(formatter(state, exception));
+            Levels.Add(logLevel);
+        }
 
         private sealed class NullScope : IDisposable
         {

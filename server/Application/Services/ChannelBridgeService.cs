@@ -211,7 +211,7 @@ public sealed partial class ChannelBridgeService : BackgroundService
                     Interlocked.Increment(ref _completedDrainIterations);
                     delay = NextWakeDelay(pass);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
                     _logger.LogWarning(ex, "Durable channel inbound drain failed; retrying");
                 }
@@ -378,7 +378,7 @@ public sealed partial class ChannelBridgeService : BackgroundService
             {
                 await Task.Delay(WakeWorkerStallCheckInterval, _timeProvider, ct);
                 try { await CheckWakeWorkerStallAsync(ct); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
                     _logger.LogWarning(ex, "Channel wake worker stall check failed");
                 }
