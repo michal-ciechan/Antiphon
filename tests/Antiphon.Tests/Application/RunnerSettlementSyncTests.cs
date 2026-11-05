@@ -1250,9 +1250,9 @@ public sealed class RunnerSettlementSyncTests
 
         public RemoteWorkspaceService Service(
             TimeProvider? clock = null, IWorkspaceReservationJournal? reservations = null, Action? leaseBusy = null,
-            IRunnerMirrorPublisher? publisher = null) =>
+            IRunnerMirrorPublisher? publisher = null, TaskWorkspaceContextResolver? workspaceContexts = null) =>
             new(new UnusedDirectory(), Git, NullLogger<RemoteWorkspaceService>.Instance, Git, Leases, reservations,
-                mirrorPublisher: publisher)
+                mirrorPublisher: publisher, workspaceContexts: workspaceContexts)
             {
                 Clock = clock ?? TimeProvider.System,
                 LeaseBusyObserved = leaseBusy,
