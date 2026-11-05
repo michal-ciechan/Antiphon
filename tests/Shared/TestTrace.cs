@@ -25,6 +25,13 @@ public static partial class TestTrace
     public const string SourceName = "Antiphon.Tests";
     public const string FileVariable = "ANTIPHON_TEST_TRACE_FILE";
 
+    /// <summary>With <c>ANTIPHON_TEST_TRACE_STACKS=1</c>, each SQL span (Npgsql) carries
+    /// <c>code.stack</c>: the nearest Antiphon frames that issued it. Diagnostic only; it costs a
+    /// stack walk per query.</summary>
+    public const string StacksVariable = "ANTIPHON_TEST_TRACE_STACKS";
+
+    private static readonly bool SqlStacks = Environment.GetEnvironmentVariable(StacksVariable) == "1";
+
     public static readonly ActivitySource Source = new(SourceName);
 
     private static readonly object Gate = new();
@@ -116,6 +123,17 @@ public static partial class TestTrace
                 Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
                 SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
                 ActivityStopped = sink.Write,
+                ActivityStarted = a =>
+                {
+                    if (!SqlStacks || a.Source.Name != "Npgsql") return;
+                    var frames = new StackTrace(1, false).GetFrames()
+                        .Select(f => f.GetMethod())
+                        .Where(m => m?.DeclaringType?.FullName is { } n && n.StartsWith("Antiphon.", StringComparison.Ordinal)
+                            && !n.StartsWith("Antiphon.Tests.TestHelpers.TestTrace", StringComparison.Ordinal))
+                        .Select(m => m!.DeclaringType!.FullName + "." + m.Name)
+                        .Distinct().Take(6);
+                    a.SetTag("code.stack", string.Join(" < ", frames));
+                },
             };
             ActivitySource.AddActivityListener(listener);
             AppDomain.CurrentDomain.ProcessExit += (_, _) => sink.Flush();

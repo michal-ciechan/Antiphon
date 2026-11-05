@@ -95,7 +95,9 @@ public static class TestTiming
 
     public static IDisposable BeginProcess(string exeBasename, int? argc, string category)
     {
-        var span = TestTrace.Span("process " + exeBasename, ("antiphon.phase", "process"), ("process.category", category));
+        // Covers the spawn (CreateProcess/fork-exec) only, not the child's run: the caller's own span
+        // (for git, LandingGitFixture's "process-wait git <command>") covers start to exit.
+        var span = TestTrace.Span("process-start " + exeBasename, ("antiphon.phase", "process"), ("process.category", category));
         var session = Resolve();
         if (session is null || !session.Enabled)
             return Traced(Noop.Instance, span);
