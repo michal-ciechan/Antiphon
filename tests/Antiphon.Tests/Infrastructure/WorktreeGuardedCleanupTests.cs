@@ -447,6 +447,34 @@ public sealed class WorktreeGuardedCleanupTests
         second.BranchDeleted.ShouldBeTrue();
     }
 
+    // CARD-1717 B-3 over real Git: a write into the set-aside tree after the registration drop is held. The
+    // remainder stays recorded beside Git's administrative entry, so moving both back registers it again.
+    [Test]
+    public async Task C1717_B3_HeldRemainderAfterUnregisterIsRestorable()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        string? late = null;
+        h.H.Fixture.Git.AfterUnregister = _ =>
+        {
+            late = Path.Combine(h.SetAsideTrees().ShouldHaveSingleItem(), "late-only-copy.txt");
+            return File.WriteAllTextAsync(late, "written after the registration drop");
+        };
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("set_aside_content_changed");
+        result.Unregistered.ShouldBeTrue();
+        var aside = h.SetAsideTrees().ShouldHaveSingleItem();
+        (await File.ReadAllTextAsync(late!)).ShouldBe("written after the registration drop");
+        var admin = WorktreeSetAside.RetiredAdminPath(h.Operation.CommonDirectory, h.H.Fixture.Source);
+        Directory.Exists(admin).ShouldBeTrue("the administrative entry stays with the held remainder");
+        WorktreeSetAside.Read(h.Operation.CommonDirectory, h.H.Fixture.Source).ShouldNotBeNull();
+        h.H.Fixture.Git.AfterUnregister = null;
+        Directory.Move(admin, h.Operation.GitDirectory);
+        Directory.Move(aside, h.H.Fixture.Source);
+        (await h.H.Fixture.RequiredAsync(h.H.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(h.SourceSha);
+        (await File.ReadAllTextAsync(Path.Combine(h.H.Fixture.Source, "late-only-copy.txt")))
+            .ShouldBe("written after the registration drop");
+    }
+
     // Review 0c0b9a4e item 2 over real Git: between the move-aside and the registration drop the
     // original path is recreated as a junction to a copy of the tree (a valid-looking worktree Git
     // would accept). Nothing is deleted through it and the set-aside tree keeps its registration.

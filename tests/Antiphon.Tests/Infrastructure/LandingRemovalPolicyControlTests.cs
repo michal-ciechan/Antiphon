@@ -1146,6 +1146,27 @@ public sealed class LandingRemovalPolicyControlTests
         f.SetAsideTrees().ShouldBeEmpty();
     }
 
+    // CARD-1717 B-3: the same late bytes staged into the index after the clean status still are not the
+    // pushed blob. The index then agrees with the file; only the proven commit's tree does not.
+    [Test]
+    public async Task C1717_B3_RestagedTrackedWriteAfterCleanStatusIsKept()
+    {
+        using var f = new RemovalFixture();
+        const string changed = "unpushed-bytes-staged-after-clean-status";
+        f.AfterInspection = count =>
+        {
+            if (count != 2) return;
+            File.WriteAllText(Path.Combine(f.Source, "keep.txt"), changed);
+            f.Restaged["keep.txt"] = RemovalFixture.GitBlob(System.Text.Encoding.UTF8.GetBytes(changed));
+        };
+        var result = await f.RemoveAsync();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("tracked_bytes_changed");
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe(changed);
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.BranchPresent.ShouldBeTrue();
+    }
+
     // CARD-1717 B-3: a file created at the real delete call, after every census, is an only copy.
     [Test]
     public async Task C1717_B3_FileAtDeleteBoundaryIsKept()
@@ -1414,7 +1435,8 @@ public sealed class LandingRemovalPolicyControlTests
             else if (args[0] == "status") result = new(LocalChange == "status-error" ? 128 : 0,
                 LocalChange == "dirty" ? " M keep.txt\0" : "", "");
             else if (args[0] == "merge-base") result = new(LocalChange == "ancestry" ? 1 : 0, "", "");
-            else if (args[0] == "ls-files" && args.Contains("--stage")) result = new(0, StageListing(), "");
+            else if (args[0] == "ls-files" && args.Contains("--stage")) result = new(0, StageListing(staged: true), "");
+            else if (args[0] == "ls-tree") result = new(0, StageListing(staged: false), "");
             else if (args[0] == "ls-files" && !args.Contains("--ignored")) result = new(0, TrackedListing, "");
             else throw new InvalidOperationException("Unexpected cleanup command: " + args[0]);
             return Task.FromResult(result);
@@ -1432,7 +1454,9 @@ public sealed class LandingRemovalPolicyControlTests
             AfterUnregister?.Invoke();
             return Task.FromResult(new LandingGitResult(0, "", ""));
         }
-        private string StageListing()
+        /// <summary>Restaged index blobs: <c>ls-files --stage</c> reports these, the commit tree never does.</summary>
+        public Dictionary<string, string> Restaged { get; } = new(StringComparer.Ordinal);
+        private string StageListing(bool staged)
         {
             var listing = new System.Text.StringBuilder();
             foreach (var name in TrackedListing.Split('\0', StringSplitOptions.RemoveEmptyEntries))
@@ -1443,12 +1467,13 @@ public sealed class LandingRemovalPolicyControlTests
                     oid = GitBlob(File.ReadAllBytes(path));
                     stageBlobs[name] = oid;
                 }
-                listing.Append("100644 ").Append(oid).Append(" 0\t").Append(name).Append('\0');
+                if (staged && Restaged.TryGetValue(name, out var restaged)) oid = restaged;
+                listing.Append(staged ? $"100644 {oid} 0\t" : $"100644 blob {oid}\t").Append(name).Append('\0');
             }
             return listing.ToString();
         }
 
-        private static string GitBlob(byte[] bytes)
+        public static string GitBlob(byte[] bytes)
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
             hash.AppendData(System.Text.Encoding.ASCII.GetBytes($"blob {bytes.Length}\0"));
