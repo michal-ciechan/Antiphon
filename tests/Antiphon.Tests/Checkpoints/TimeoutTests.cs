@@ -195,6 +195,8 @@ public sealed class TimeoutTests : CheckpointTestBase
             var result = await run.WaitAsync(TimeSpan.FromSeconds(10));
             var first = result.Rows.Single(row => row.Id == "CP-1");
             var second = result.Rows.Single(row => row.Id == "CP-2");
+            result.ExitCode.ShouldBe(ExitCodes.Timeout);
+            second.State.ShouldBe("execution-budget-exceeded");
             first.Trx.ShouldNotBeNull().Passed.ShouldBe(1);
             second.Trx.ShouldNotBeNull().Passed.ShouldBe(1);
         }
