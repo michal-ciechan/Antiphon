@@ -836,6 +836,38 @@ public sealed class C1677RetentionServerTests
         world.Removes().ShouldBe(1, "phase B ran exactly once");
     }
 
+    [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
+    [Test]
+    public async Task Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay(CancellationToken ct)
+    {
+        // CARD-1718 A-D3 round 2 (review 47d31366 B-1, B-2). Producer to the real runner retention
+        // path. Ignored bin/.env, node_modules/.env and dist/credentials/token survive the first
+        // pass and the replay after a lost reply. Nothing is moved or removed.
+        await using var world = await C1677RetentionTransportWorld.StartAsync();
+        var (id, path) = await world.SeedMirroredTaskAsync();
+        world.PublishIgnoredSecrets(path, "feat/card-task-a1677001");
+        var secrets = new[] { "bin/.env", "node_modules/.env", "dist/credentials/token" };
+        var bytes = secrets.ToDictionary(secret => secret, secret => File.ReadAllBytes(Path.Combine(path, secret)));
+        world.DropNextReply = true;
+
+        await world.TickAsync(ct);
+        (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(path);
+        (await world.Server.RowsAsync(id)).ShouldHaveSingleItem().ReasonCode.ShouldBe("unknown");
+
+        await world.TickAsync(ct);
+        (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(path);
+        var rows = await world.Server.RowsAsync(id);
+        rows.Count.ShouldBe(2);
+        rows.Last().Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        rows.Last().ReasonCode.ShouldBe("ignored_secret");
+        world.Registered(path).ShouldBeTrue();
+        world.Moves(path).ShouldBe(0);
+        world.Removes().ShouldBe(0);
+        Directory.Exists(path).ShouldBeTrue();
+        foreach (var secret in secrets)
+            File.ReadAllBytes(Path.Combine(path, secret)).ShouldBe(bytes[secret]);
+    }
+
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
     {
         var id = Guid.NewGuid();

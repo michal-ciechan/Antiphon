@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Shouldly;
 
 namespace Antiphon.Tests.Application;
 
@@ -138,6 +139,31 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
 
     public bool Registered(string path) =>
         Git(Clone, "worktree", "list", "--porcelain").Replace("\r\n", "\n").Split('\n').Contains("worktree " + path);
+
+    /// <summary>
+    /// Commit ignore rules for <c>node_modules/</c> and <c>dist/</c>, push them, then plant ignored
+    /// <c>bin/.env</c>, <c>node_modules/.env</c> and <c>dist/credentials/token</c>. Status stays clean.
+    /// </summary>
+    public void PublishIgnoredSecrets(string path, string branch)
+    {
+        Git(path, "config", "user.email", "c1677@localhost");
+        Git(path, "config", "user.name", "c1677");
+        File.AppendAllText(path + "/.gitignore", "node_modules/\ndist/\n");
+        Git(path, "add", ".gitignore");
+        Git(path, "commit", "-q", "-m", "ignore disposable trees");
+        Git(path, "push", "-q", OriginGit, "HEAD:refs/heads/" + branch);
+        WriteSecret(path, "bin/.env", "bin-env-secret\n");
+        WriteSecret(path, "node_modules/.env", "nm-env-secret\n");
+        WriteSecret(path, "dist/credentials/token", "dist-token-secret\n");
+        Git(path, "status", "--porcelain", "--untracked-files=all").Trim().ShouldBeEmpty();
+    }
+
+    private static void WriteSecret(string root, string relative, string text)
+    {
+        var full = Path.Combine(root, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, text);
+    }
 
     public int Moves(string path)
     {
