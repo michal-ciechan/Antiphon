@@ -160,7 +160,7 @@ foreach ($allowedProperty in @(
     '_GitRevParseExitCode', '_LandFakeGrokDir', '_PtyHostNativeDir', '_StagedHelperDest', '_StagedHelperDir',
     '_StagedHelperFramework', '_StagedHelperGlob', '_StagedHelperShared', 'AntiphonCleanFileMaxBytes', 'AntiphonMessagingVersion',
     'AssemblyName', 'Authors', 'ConcurrentGarbageCollection', 'DefaultItemExcludes', 'Description',
-    'EnableMicrosoftTestingPlatformRunner', 'EnablePublicApiAnalyzers', 'FakeBrowserOutputDir',
+    'EnableMicrosoftTestingPlatformRunner', 'EnablePublicApiAnalyzers', 'EnableTUnitSourceGeneration', 'FakeBrowserOutputDir',
     'FakeBrowserTargetPath', 'ImplicitUsings', 'InvariantGlobalization', 'IsAspireHost', 'IsPackable',
     'IsTestProject', 'Nullable', 'OutputType', 'PackageId', 'PackageLicenseExpression', 'PackageProjectUrl',
     'PackageReadmeFile', 'PackageTags', 'PackAsTool', 'PublishRepositoryUrl', 'RepositoryUrl', 'RollForward',
