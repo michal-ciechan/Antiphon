@@ -12,6 +12,8 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class RunnerWorkspaceIgnoredContentFloorTests
 {
     [Test]
+    [Arguments("bin/appsettings.Development.json")]
+    [Arguments("bin/appsettings.Development.json/token")]
     [Arguments("bin/tls.pem")]
     [Arguments("bin/tls.key")]
     [Arguments("bin/id_rsa")]

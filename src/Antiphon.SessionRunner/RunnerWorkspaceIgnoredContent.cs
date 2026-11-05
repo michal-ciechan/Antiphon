@@ -17,7 +17,7 @@ public sealed class RunnerWorkspaceIgnoredContent
     public RunnerWorkspaceIgnoredContent(IReadOnlyList<string>? disposablePatterns = null)
     {
         _protected = Compile([
-            "**/.claude/**", "**/appsettings.*.json", "**/*.user", "**/*.local.json",
+            "**/.claude/**", "**/*.user", "**/*.local.json",
             "**/.antiphon/report.md", "**/.antiphon/deliverables/**",
             ..IgnoredSecretFloor.Patterns,
             "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",

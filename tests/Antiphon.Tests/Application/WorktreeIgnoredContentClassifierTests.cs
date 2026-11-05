@@ -297,6 +297,7 @@ public sealed class WorktreeIgnoredContentClassifierTests
     // `.aws/credentials` is the `**/credentials*` rule, not a second glob.
     private static readonly string[] DocumentedSecretFloor =
     [
+        "**/appsettings.*.json", "**/appsettings.*.json/**",
         "**/.env*", "**/.env*/**",
         "**/*.pem", "**/*.pem/**",
         "**/*.key", "**/*.key/**",
@@ -325,6 +326,8 @@ public sealed class WorktreeIgnoredContentClassifierTests
     }
 
     [Test]
+    [Arguments("bin/appsettings.Development.json")]
+    [Arguments("bin/appsettings.Development.json/token")]
     [Arguments("bin/.env")]
     [Arguments("node_modules/.env")]
     [Arguments("node_modules/pkg/.env/token")]

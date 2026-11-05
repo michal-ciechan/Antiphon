@@ -22,6 +22,7 @@ public static class IgnoredSecretFloor
     /// </summary>
     public static IReadOnlyList<string> Patterns { get; } =
     [
+        "**/appsettings.*.json", "**/appsettings.*.json/**",
         "**/.env*", "**/.env*/**",
         "**/*.pem", "**/*.pem/**",
         "**/*.key", "**/*.key/**",

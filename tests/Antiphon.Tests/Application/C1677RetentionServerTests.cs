@@ -838,6 +838,7 @@ public sealed class C1677RetentionServerTests
 
     [NativeLinuxOnly("CARD-1677 Linux-only by construction: the real runner engine's holder scan reads /proc; off Linux it is incomplete and retention keeps the tree (holder_scan_unknown)")]
     [Test]
+    [Arguments("bin/appsettings.Development.json")]
     [Arguments("bin/.env")]
     [Arguments("node_modules/.env")]
     [Arguments("dist/credentials/token")]
