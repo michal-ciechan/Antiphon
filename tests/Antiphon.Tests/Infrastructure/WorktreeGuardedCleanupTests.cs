@@ -445,6 +445,60 @@ public sealed class WorktreeGuardedCleanupTests
             .ShouldBe("written after the registration drop");
     }
 
+    // CARD-1717 A-B-7 (Review ea048200): with core.autocrlf=true a Git-clean checkout holds CRLF bytes while the
+    // blob holds LF. Comparing raw working bytes with the blob refused every such tree as tracked_bytes_changed.
+    [Test]
+    public async Task C1717_B7_CleanCrlfCheckoutIsRemovable()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var feature = await UseCrlfCheckoutAsync(h);
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBeNull();
+        result.IsClean.ShouldBeTrue(result.Residue);
+        File.Exists(feature).ShouldBeFalse();
+        Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
+        h.SetAsideTrees().ShouldBeEmpty();
+    }
+
+    // CARD-1717 A-B-7 control: under the same line-ending conversion a tracked edit after the final status is
+    // still not the pushed blob, and its bytes stay.
+    [Test]
+    public async Task C1717_B7_TrackedEditUnderCrlfIsKept()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var feature = await UseCrlfCheckoutAsync(h);
+        var edited = false;
+        h.OtherCommand = async (repo, args) =>
+        {
+            // The first plain ls-files in the tree is the late-name census, after the final clean status.
+            if (!edited && args.Count == 2 && args[0] == "ls-files" && args[1] == "-z"
+                && LandingGit.PathsEqual(repo, h.H.Fixture.Source))
+            {
+                edited = true;
+                await File.WriteAllTextAsync(feature, "edited after the clean status\r\n");
+            }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        edited.ShouldBeTrue();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("tracked_bytes_changed");
+        (await File.ReadAllTextAsync(feature)).ShouldBe("edited after the clean status\r\n");
+        h.SetAsideTrees().ShouldBeEmpty();
+    }
+
+    /// <summary>Turns on core.autocrlf and gives the tracked file the CRLF bytes a Windows checkout writes.</summary>
+    private static async Task<string> UseCrlfCheckoutAsync(RemovalHarness h)
+    {
+        await h.H.Fixture.RequiredAsync(h.H.Fixture.Repository, "config", "core.autocrlf", "true");
+        var feature = Path.Combine(h.H.Fixture.Source, "feature.txt");
+        await File.WriteAllBytesAsync(feature, "valuable feature\r\n"u8.ToArray());
+        (await h.H.Fixture.RequiredAsync(h.H.Fixture.Source, "status", "--porcelain=v1")).ShouldBeEmpty("a CRLF checkout is Git-clean");
+        var raw = await File.ReadAllBytesAsync(feature);
+        raw[^2..].ShouldBe(new byte[] { 0x0D, 0x0A });
+        return feature;
+    }
+
     // Review 0c0b9a4e item 2 over real Git: between the move-aside and the registration drop the
     // original path is recreated as a junction to a copy of the tree (a valid-looking worktree Git
     // would accept). Nothing is deleted through it and the set-aside tree keeps its registration.

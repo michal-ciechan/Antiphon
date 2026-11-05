@@ -266,6 +266,154 @@ public sealed class WorktreeNoFollowDeleteTests
 
     private const int Attempts = 400;
 
+    // CARD-1717 A-B-3 (Review ea048200): a writer that opened the file before the walk overwrites bytes the
+    // per-unlink hash has already read. The hash still matches the receipt, so only a write-stability check on
+    // the hashed descriptor tells the bytes on disk from the bytes hashed. The new bytes must survive.
+    [Test]
+    public void C1717_B3_WriteThroughAnOpenHandleDuringTheHashIsKept()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("The inotify-timed writer is Linux; the Windows deny-write hash is C1717_B3_WindowsOpenWriterRefusesTheDelete.");
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), "c1717-b3-openfd-" + Guid.NewGuid().ToString("N"));
+        var tree = Path.Combine(root, "tree");
+        var big = Path.Combine(tree, "big.bin");
+        Directory.CreateDirectory(tree);
+        try
+        {
+            // Large enough that hashing it outlasts the observer's reaction by a wide margin.
+            var block = new byte[1 << 20];
+            Array.Fill(block, (byte)'a');
+            using (var create = new FileStream(big, FileMode.CreateNew, FileAccess.Write))
+                for (var i = 0; i < 64; i++) create.Write(block);
+            var listing = WalkWorld.Approve(tree);
+            var marker = "CHANGED-through-an-open-handle"u8.ToArray();
+            using var writer = new FileStream(big, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            var notify = inotify_init1(InNonBlock | InCloExec);
+            if (notify < 0) throw new IOException("inotify_init1 failed: " + Marshal.GetLastPInvokeError());
+            Exception? writerError = null;
+            var wrote = false;
+            var opens = 0;
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            try
+            {
+                if (inotify_add_watch(notify, big, InOpen | InAccess) < 0)
+                    throw new IOException("inotify_add_watch failed: " + Marshal.GetLastPInvokeError());
+                var observer = new Thread(() =>
+                {
+                    try
+                    {
+                        var buffer = new byte[4096];
+                        while (!stop.IsCancellationRequested)
+                        {
+                            var read = (int)read_events(notify, buffer, buffer.Length);
+                            if (read <= 0) { Thread.Yield(); continue; }
+                            for (var offset = 0; offset + 16 <= read;)
+                            {
+                                var mask = BitConverter.ToUInt32(buffer, offset + 4);
+                                var length = BitConverter.ToInt32(buffer, offset + 12);
+                                offset += 16 + length;
+                                if ((mask & InOpen) != 0) opens++;
+                                // Open 1 is the drift census, open 2 the per-unlink hash. Its first read has happened.
+                                if ((mask & InAccess) == 0 || opens < 2) continue;
+                                writer.Seek(0, SeekOrigin.Begin);
+                                writer.Write(marker);
+                                writer.Flush(flushToDisk: true);
+                                wrote = true;
+                                return;
+                            }
+                        }
+                    }
+                    catch (Exception ex) { writerError = ex; }
+                });
+                observer.Start();
+                Exception? error = null;
+                var previous = RemovalApproval.Current.Value;
+                RemovalApproval.Current.Value = listing;
+                try { WorktreeNoFollowDelete.Delete(tree, preserveNestedRepositories: true); }
+                catch (Exception ex) { error = ex; }
+                finally
+                {
+                    RemovalApproval.Current.Value = previous;
+                    stop.Cancel();
+                    observer.Join();
+                }
+                writerError.ShouldBeNull(writerError?.ToString());
+                wrote.ShouldBeTrue($"the writer never saw the per-unlink hash read (opens={opens})");
+                File.Exists(big).ShouldBeTrue("a file written while it was hashed is not unlinked");
+                error.ShouldBeOfType<ApprovedTreeRejectedException>(error?.ToString()).Reason.ShouldBe("set_aside_content_changed");
+                using var check = new FileStream(big, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                var head = new byte[marker.Length];
+                check.ReadExactly(head);
+                head.ShouldBe(marker, "the bytes written through the open handle survive");
+            }
+            finally { close(notify); }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // CARD-1717 A-B-3 Windows twin (pending native execution, B-6): the per-entry hash shares no write, so a handle
+    // already open for writing makes the hash open fail and the delete stops with the file in place.
+    [Test]
+    public void C1717_B3_WindowsOpenWriterRefusesTheDelete()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("Share modes are the Windows no-follow delete; Linux is C1717_B3_WriteThroughAnOpenHandleDuringTheHashIsKept.");
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), "c1717-b3-winwriter-" + Guid.NewGuid().ToString("N"));
+        var tree = Path.Combine(root, "tree");
+        var file = Path.Combine(tree, "held.txt");
+        Directory.CreateDirectory(tree);
+        try
+        {
+            File.WriteAllText(file, "approved-bytes");
+            var listing = WalkWorld.Approve(tree);
+            Exception? error = null;
+            using (var writer = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                var previous = RemovalApproval.Current.Value;
+                RemovalApproval.Current.Value = listing;
+                try { WorktreeNoFollowDelete.Delete(tree, preserveNestedRepositories: true); }
+                catch (Exception ex) { error = ex; }
+                finally { RemovalApproval.Current.Value = previous; }
+                writer.Write("later-bytes"u8);
+            }
+            error.ShouldBeAssignableTo<IOException>(error?.ToString());
+            File.Exists(file).ShouldBeTrue("a file open for writing is not deleted");
+            File.ReadAllText(file).ShouldEndWith("later-bytes");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private const int InNonBlock = 0x800;
+    private const int InCloExec = 0x80000;
+    private const uint InAccess = 0x1;
+    private const uint InOpen = 0x20;
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int inotify_init1(int flags);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int inotify_add_watch(int fd, string path, uint mask);
+
+    [DllImport("libc", EntryPoint = "read", SetLastError = true)]
+    private static extern nint read_events(int fd, byte[] buffer, nint count);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int close(int fd);
+
     private static void NextCoarseTick()
     {
         if (clock_gettime(ClockRealtimeCoarse, out var start) != 0) throw new IOException("clock_gettime failed");
@@ -356,7 +504,7 @@ public sealed class WorktreeNoFollowDeleteTests
             return new(error, walked!, other!, late);
         }
 
-        private static RemovalApproval.Listing Approve(string tree)
+        internal static RemovalApproval.Listing Approve(string tree)
         {
             var names = new HashSet<string>(StringComparer.Ordinal);
             var kinds = new Dictionary<string, string>(StringComparer.Ordinal);
