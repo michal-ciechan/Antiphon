@@ -171,9 +171,22 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
                 sessionId, request.AttemptId, false, CompactionStopOutcomes.Unsupported, null));
     }
 
+    public List<(Guid SessionId, string Reason)> SlotReleases { get; } = [];
+
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
     {
         KillCalls++;
+        return Task.FromResult(new SessionRunnerSessionDto(
+            sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
+    }
+
+    /// <summary>
+    /// The operator slot release. This does not call <see cref="KillAsync"/>: a ghost-seat
+    /// witness has to tell the runner primitive apart from a raw session kill.
+    /// </summary>
+    public Task<SessionRunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct)
+    {
+        SlotReleases.Add((sessionId, reason));
         return Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
     }
