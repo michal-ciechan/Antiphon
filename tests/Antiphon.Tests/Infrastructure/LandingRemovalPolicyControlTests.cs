@@ -446,6 +446,9 @@ public sealed class LandingRemovalPolicyControlTests
     {
         if (!OperatingSystem.IsWindows()) { Skip.Test("Sharing-mode locks are a Windows file-system behaviour."); return; }
         using var f = new RemovalFixture();
+        // The fixture's inspection is already clean. The held file is part of that tree, so the
+        // post-proof census must see it as tracked rather than as a file written after the proof.
+        f.TrackedListing = "keep.txt\0zz-held.txt\0";
         File.WriteAllText(Path.Combine(f.Source, "zz-held.txt"), "held by a scanner");
         FileStream? held = null;
         f.BeforeUnregister = () =>
@@ -1090,6 +1093,8 @@ public sealed class LandingRemovalPolicyControlTests
         public string InspectedSha { get; set; } = Sha;
         public string? IgnoredPath { get; set; }
         public List<string> IgnoredPaths { get; } = [];
+        /// <summary>Stable <c>git ls-files -z</c> answer. Not a live listing of the fixture tree.</summary>
+        public string TrackedListing { get; set; } = "keep.txt\0";
         public int RemoveExitCode { get; set; }
         public bool Registered { get; set; } = true;
         /// <summary>Runs between the move-aside and the registration drop.</summary>
@@ -1230,6 +1235,7 @@ public sealed class LandingRemovalPolicyControlTests
             else if (args[0] == "status") result = new(LocalChange == "status-error" ? 128 : 0,
                 LocalChange == "dirty" ? " M keep.txt\0" : "", "");
             else if (args[0] == "merge-base") result = new(LocalChange == "ancestry" ? 1 : 0, "", "");
+            else if (args[0] == "ls-files" && !args.Contains("--ignored")) result = new(0, TrackedListing, "");
             else throw new InvalidOperationException("Unexpected cleanup command: " + args[0]);
             return Task.FromResult(result);
         }

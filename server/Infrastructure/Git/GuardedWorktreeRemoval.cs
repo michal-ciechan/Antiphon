@@ -157,6 +157,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // Revalidate durable authority immediately before deletion without reusing a tracked row.
                 reason = await AuthorityAsync(request, ct, refreshRemote: false);
                 if (reason is not null) return Finish(reason);
+                // CARD-1717 D-2: status already returned. A regular file that is neither tracked nor
+                // ignored appeared after that proof and must still be here when deletion starts.
+                var late = await LateUntrackedAsync(source.WorktreePath, final.Snapshot!, ct);
+                if (late is not null) return Finish(late);
                 // Review 5b79328d item 1: Git is never allowed to traverse the tree, because a link
                 // swapped in after the last reading would carry its deletion outside. The tree is set
                 // aside (a rename moves the entry itself), Git's administrative entry for the absent
@@ -167,8 +171,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 if (!IsAbsent(aside)) return Finish("set_aside_unrecorded", "set-aside: " + aside);
                 var identity = WorktreeNoFollowDelete.DirectoryIdentity(source.WorktreePath);
                 var seal = WorktreeSetAside.ListingSeal(source.WorktreePath);
-                WorktreeSetAside.Record(request.CommonDirectory, new(source.WorktreePath, aside, request.GitDirectory,
-                    clock.GetUtcNow().UtcDateTime, identity, seal), Renames);
+                var recorded = new WorktreeSetAsideRecord(source.WorktreePath, aside, request.GitDirectory,
+                    clock.GetUtcNow().UtcDateTime, identity, seal);
+                WorktreeSetAside.Record(request.CommonDirectory, recorded, Renames);
                 try { WorktreeNoFollowDelete.MoveAside(source.WorktreePath, aside, Renames); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -179,6 +184,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                         clock.GetUtcNow().UtcDateTime, true);
                     failedAt = clock.GetTimestamp();
                     return Finish("worktree_remove_failed");
+                }
+                // The rename can admit a new file or a different directory before Git's entry is dropped.
+                var drifted = CustodyOf(recorded);
+                if (drifted is null) drifted = await LateUntrackedAsync(aside, final.Snapshot!, ct);
+                if (drifted is not null)
+                {
+                    var restored = await RestoreRegisteredTreeAsync();
+                    return restored ? Finish(drifted, "set-aside: " + aside) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
                 }
                 string? failure;
                 setAsideDetail = "set-aside: " + aside;
@@ -198,7 +211,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
                 }
-                // CARD-1717 D-3: the retained copy can still be replaced after the tree has moved.
+                // CARD-1717 D-2/D-3: after the registration is gone the tree is held, not put back.
+                // A nested repository that appeared in this window still falls through to the delete.
+                var held = CustodyOf(recorded);
+                if (held is not null)
+                {
+                    directoryGone = IsAbsent(source.WorktreePath);
+                    return Finish(held, "set-aside: " + aside);
+                }
                 if (!EvidenceBytesMatch(aside, retainedFiles)) return Finish("evidence_bytes_changed", "set-aside: " + aside);
                 try { WorktreeNoFollowDelete.DeleteSettled(aside, preserveNestedRepositories: true, Renames); }
                 catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
@@ -460,6 +480,50 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     {
         try { _ = File.GetAttributes(Path.Combine(gitDirectory, "gitdir")); return true; }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+    }
+
+    /// <summary>
+    /// Null when the tree still matches the tracked index and the ignored names from the last inspection.
+    /// A regular file in neither set is untracked_after_proof. Directory links are not flagged: the
+    /// no-follow delete unlinks them without walking the target. A file symlink is the same. The
+    /// worktree's own .git entry is administrative. An ls-files failure is source_changed.
+    /// </summary>
+    private async Task<string?> LateUntrackedAsync(string root, LandSourceSnapshot snapshot, CancellationToken ct)
+    {
+        LandingGitResult listed;
+        try { listed = await git.RunAsync(root, ["ls-files", "-z"], ct); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+        { return "source_changed"; }
+        if (!listed.Succeeded || listed.WroteStandardError) return "source_changed";
+        var tracked = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            tracked.Add(name.Replace('\\', '/'));
+        var ignored = new HashSet<string>(StringComparer.Ordinal);
+        if (!snapshot.IgnoredPaths.IsDefault)
+            foreach (var path in snapshot.IgnoredPaths) ignored.Add(path.Replace('\\', '/'));
+        try
+        {
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.TryPop(out var directory))
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    var relative = Path.GetRelativePath(root, entry).Replace(Path.DirectorySeparatorChar, '/');
+                    if (relative.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                        || relative.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var stamp = WorktreeNoFollowDelete.TryStamp(entry);
+                    if (stamp is null) return "source_changed";
+                    if (stamp.Value.Kind == "dir") pending.Push(entry);
+                    else if (stamp.Value.Kind == "file" && !tracked.Contains(relative) && !ignored.Contains(relative))
+                        return "untracked_after_proof";
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return "source_changed"; }
+        return null;
     }
 
     /// <summary>
