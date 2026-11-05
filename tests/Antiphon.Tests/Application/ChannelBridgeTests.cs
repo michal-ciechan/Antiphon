@@ -536,7 +536,9 @@ public class ChannelBridgeTests
     // PR 9: rapid-fire same-sender messages debounce into ONE routed prompt — single truthful
     // envelope header, one line per message, one reply correlation for the whole flush.
     [Test]
-    public async Task Rapid_fire_same_sender_inbound_merges_within_window()
+    [Arguments(0)]
+    [Arguments(300)]
+    public async Task Rapid_fire_same_sender_inbound_merges_within_window(int messageGapMs)
     {
         await using var h = await HarnessAsync(debounceWindowMs: 150);
         await h.BindChannelAsync();
@@ -544,7 +546,11 @@ public class ChannelBridgeTests
         var messages = new[] { "line one", "line two", "line three" }
             .Select(line => TelegramText(h.ChatId, line, title: "Family", author: "Mike")).ToArray();
         foreach (var message in messages)
+        {
+            if (message != messages[0] && messageGapMs > 0)
+                await Task.Delay(messageGapMs);
             await h.Bridge.HandleInboundAsync(message, CancellationToken.None);
+        }
 
         // Real-clock debounce (150ms window): wait for the flush to land.
         var deadline = DateTime.UtcNow.AddSeconds(5);
