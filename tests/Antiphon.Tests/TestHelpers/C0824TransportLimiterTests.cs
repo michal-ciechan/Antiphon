@@ -16,6 +16,7 @@ public sealed class C0824TransportLimiterTests
     [Arguments(typeof(C1677RetentionServerTests), nameof(C1677RetentionServerTests.Retain_round_trip_real_runner))]
     [Arguments(typeof(C1677RetentionServerTests), nameof(C1677RetentionServerTests.Busy_runner_retain_is_serialised))]
     [Arguments(typeof(C1677RetentionServerTests), nameof(C1677RetentionServerTests.Retain_recovery_at_each_handoff))]
+    [Arguments(typeof(C1677RetentionServerTests), nameof(C1677RetentionServerTests.Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay))]
     public void Real_transport_methods_use_the_assembly_local_strict_lane(Type type, string name)
     {
         var method = type.GetMethod(name).ShouldNotBeNull();
