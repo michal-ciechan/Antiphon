@@ -108,7 +108,10 @@ public sealed class C0824RefOnlyCleanupTests
             var retirement = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
             var persisted = new WorktreeResidueSweepService(db, manager, settings, gitSettings, w.Clock,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeResidueSweepService>.Instance, retirement);
+            var unsafeSettled = false;
+            persisted.DesktopBoundaryAsync = (site, id, ct) => { if (id == residueHandle.Id && site == "unsafe:residue-settled") unsafeSettled = true; return Task.CompletedTask; };
             await persisted.RunAsync(default);
+            unsafeSettled.ShouldBeFalse("desktop-not-required:residue-settled:unsafe-entry");
             var run = await db.WorktreeResidueRuns.OrderByDescending(r => r.StartedAt).FirstAsync();
             var row = await db.WorktreeResidueRunCandidates.SingleAsync(r => r.RunId == run.Id && r.TaskId == residueHandle.Id);
             row.ReasonCode.ShouldBe("desktop_not_required", "desktop-not-required:residue-settled");
@@ -317,6 +320,61 @@ public sealed class C0824RefOnlyCleanupTests
             (await f.Card.Host.Fixture.RequiredAsync(f.Card.Host.Fixture.Remote, "rev-parse", binding.FullRef))
                 .Trim().ShouldBe(f.Binding.CreationBaselineSha);
         }
+        await RemoteActionAsync();
+    }
+
+    private static async Task RemoteActionAsync() => await RetirementRemoteActionAsync();
+
+    private static async Task RetirementRemoteActionAsync()
+    {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Ready);
+        var bound = await BindAsync(f.Card.Host, f.Card.TaskId, removeAuthoring: true);
+        await f.Card.ChangeTaskAsync(t => { t.RunnerId = f.Binding.RunnerId; t.RemoteWorktreePath = f.Mirror;
+            t.RemoteWorkspaceSlotId = "ws-owned-by-another-generation"; t.RemoteWorkspaceSlotGeneration = 4;
+            t.RemoteWorkspaceSlotReleasedAt = null; });
+        var remote = new RemoteWorkspaceService(f.Wire.Directory, f.Card.Host.Fixture.Git,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<RemoteWorkspaceService>.Instance);
+        var commands = 0;
+        remote.BeforeRemoveMirrorCommand = () => commands++;
+        var task = await f.TaskAsync();
+        await remote.RemoveMirrorAsync(task, default);
+        commands.ShouldBe(0, "slot-bytes-preserved; no-remove-command");
+        (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n", "slot-bytes-preserved");
+        task.RemoteWorkspaceSlotGeneration++;
+        await remote.RemoveMirrorAsync(task, default);
+        commands.ShouldBe(0, "wrong-generation-slot-keeps-its-owner");
+
+        await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = null; t.RemoteWorkspaceSlotGeneration = null; });
+        var prior = f.Card.Host.ConfigureServices;
+        f.Card.Host.ConfigureServices = services => { prior?.Invoke(services); services.AddSingleton(remote); };
+        await f.Card.Host.RestartServicesAsync();
+        await using var scope = f.Card.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == f.Card.TaskId);
+        var report = await File.ReadAllBytesAsync(task.ResultFilePath!);
+        var release = new TaskWorktreeRetirement
+        {
+            Id = Guid.NewGuid(), TaskId = task.Id, TaskAttempt = task.Attempt, TerminalStatus = task.Status,
+            TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = CardDoneArtifactPreservation.Digest(task.Result),
+            ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = "operator", ReleaseReason = "fixture mirror release",
+            ReleasedAt = f.Clock.GetUtcNow().UtcDateTime, HandoffDispositionJson = "[]", Active = true,
+            RepositoryPath = task.RepoPath!, CommonDirectory = bound.Common, WorktreePath = bound.Identity,
+            GitDirectory = "", SourceFullRef = bound.FullRef, SourceSha = f.Binding.CreationBaselineSha,
+            TargetFullRef = "refs/heads/master", State = WorktreeRetirementState.Released,
+            UpdatedAt = f.Clock.GetUtcNow().UtcDateTime
+        };
+        db.TaskWorktreeRetirements.Add(release); await db.SaveChangesAsync();
+        AssertNotRequired(await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>()
+            .TryRetireAsync(release, null, default), bound.Id, "remote-independent-retirement");
+        commands.ShouldBe(1, "remote-action-reached");
+        Directory.Exists(f.Mirror).ShouldBeFalse("remote-action-recipient-image");
+        Directory.Exists(f.Binding.GitDirectory).ShouldBeFalse("remote-action-recipient-registration");
+        (await db.TaskWorktreeRetirementAttempts.CountAsync(a => a.RetirementId == release.Id)).ShouldBe(0, "no-desktop-attempt-for-remote-action");
+        (await File.ReadAllBytesAsync(task.ResultFilePath!)).ShouldBe(report, "external-report-retained");
+        (await File.ReadAllTextAsync(bound.Sentinel)).ShouldBe(bound.SentinelBytes);
+        var remoteRef = await f.Card.Host.Fixture.Git.RunAsync(f.Card.Host.Fixture.Remote, ["rev-parse", "--verify", bound.FullRef], default);
+        remoteRef.Succeeded.ShouldBeTrue("remote-source-ref-retained");
+        remoteRef.Output.Trim().ShouldBe(f.Binding.CreationBaselineSha);
     }
 
     [Test]
@@ -337,6 +395,7 @@ public sealed class C0824RefOnlyCleanupTests
         (await File.ReadAllTextAsync(Path.Combine(dirty.Path, "dirty.txt"))).ShouldBe("retained dirty bytes");
         Directory.Exists(shaped.Path).ShouldBeTrue();
         await w.AssertRetiredAsync(clean, origin);
+        await AssertMissingCheckoutEligibilityAsync(w, missing);
         await using var db = w.Db();
         foreach (var id in new[] { missing.Id, dirty.Id, shaped.Id, clean.Id })
         {
@@ -344,6 +403,21 @@ public sealed class C0824RefOnlyCleanupTests
             task.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.Checkout, "legacy-kind=Checkout");
             task.TaskRefWorkspaceBindingId.ShouldBeNull();
         }
+    }
+
+    private static async Task AssertMissingCheckoutEligibilityAsync(DesktopLegacyWorld w, DesktopLegacyWorld.Handle missing)
+    {
+        await using var scope = w.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == missing.Id);
+        var release = new TaskWorktreeRetirement { Id = Guid.NewGuid(), TaskId = task.Id, TaskAttempt = task.Attempt,
+            Active = true, State = WorktreeRetirementState.Released, TerminalStatus = task.Status,
+            ReportDigest = CardDoneArtifactPreservation.Digest(task.Result), RepositoryPath = task.RepoPath!,
+            WorktreePath = task.WorktreePath!, SourceFullRef = missing.FullRef };
+        var result = await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>()
+            .EvaluateEligibilityAsync(task, release, default);
+        result.Reason.ShouldNotBe("desktop_not_required", "no-false-NotRequired");
+        (await new TaskWorkspaceContextResolver(db).ResolveAsync(task, default)).Kind.ShouldBe(DesktopWorkspaceKind.Checkout, "legacy-kind=Checkout");
     }
 
     internal sealed record Binding(Guid Id, Guid TaskId, string Identity, string FullRef, string Common, string Sentinel, string SentinelBytes, string Pin);
@@ -420,4 +494,3 @@ public sealed class C0824RefOnlyCleanupTests
         }
     }
 }
-
