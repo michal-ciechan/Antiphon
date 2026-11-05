@@ -67,8 +67,10 @@ uncertain terminal writes.
 Continuity, suspension and liveness wake refusals keep an unowned inbound pending. Once it has
 waited `ChannelBridge:AgedHoldIncidentMinutes` (default 10) from acceptance, each known reason
 raises one Critical `ChannelReplyLost` incident for that inbound; the reason-specific stamp
-survives restarts and incident-history pruning. Herdr, capacity and wake-timeout paths keep their
-existing incident policies.
+survives restarts and incident-history pruning. A queued channel withhold at least that old,
+measured from `FirstWithheldAt`, raises one Critical `ChannelReplyLost` with reason
+`ChannelInputWithheld`; its stamp is `InputWithheldIncidentAt`. Herdr, capacity and wake-timeout
+paths keep their existing incident policies.
 Capacity notices use the reply handle captured in that inbound envelope, even if the channel
 catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 
