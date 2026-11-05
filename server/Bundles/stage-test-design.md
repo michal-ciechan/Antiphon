@@ -21,7 +21,7 @@ List all safety-critical guards, incl. untested. Split independent bypasses; map
 - <exclusion and reason>
 ### Checkpoints
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-One isolated build + exact filter per row; union=whole ordinary scope. Min=-MinExecuted (n/a non-TUnit). EstimatedMinutes=time, provisional without measured p95; target 2x p95. Schema: docs/testing-and-build.md. Derive total=max(30,2*sum+10); lower totalTimeoutMinutes needs totalTimeoutOverrideReason. Unit shards share a build; per-row TRX. Default floor/3x is not R5.
+One isolated build + exact filter per row; union=whole ordinary scope. Min=-MinExecuted (n/a non-TUnit). EstimatedMinutes=time, provisional without measured p95; target 2x p95. Schema: docs/testing-and-build.md. Derive total=max(30,2*sum+10); lower totalTimeoutMinutes needs totalTimeoutOverrideReason. Unit shards share a build; per-row TRX.
 ### Cost
 - Ordinary V/R floor (Code)=sum EstimatedMinutes; PC floor (Mutation). Name filters/minutes. Total=build/setup+V/R+PC red/restore/green; label estimated/measured; quantify savings or justify zero.
 
