@@ -113,11 +113,12 @@ public sealed class C1729LayeringGuardTests
         var map = Edges + "\nhost/** Host\ncore/** Core\napp/** Application\ngit/** Git\nrunner/** Runners\ndata/** Persistence";
         var result = Analyze(map, "strict: true\n# slice test\napp/Listed.cs -> GitType @ git/GitType.cs",
         [new("host/Entry.cs", "class Entry { GitType g; Runner r; Service s; }"),
-         new("core/Value.cs", "class Value {}"),
+         new("core/Value.cs", "class Value {} enum Status { Pending }"),
+         new("core/Member.cs", "class Member { Status status = Status.Pending; dynamic value; object Read() => value.Outcome; }") ,
          new("core/Comment.cs", "// Service\n/* Service */\n#region Service\nclass Comment {}\n#endregion"),
          new("core/String.cs", "class Text { string s = \"Service\"; char c = 'S'; }"),
          new("core/Nested.cs", "class Outer { class Nested {} Nested field; }"),
-         new("app/Service.cs", "class Service { Value v; Store s; }"),
+         new("app/Service.cs", "class Service { Value v; Store s; } class Pending {} class Outcome {}"),
          new("app/Listed.cs", "class Listed { GitType field; }"),
          new("git/GitType.cs", "class GitType { Value v; }"),
          new("runner/Runner.cs", "class Runner {}"), new("data/Store.cs", "class Store {}")]);
@@ -127,6 +128,7 @@ public sealed class C1729LayeringGuardTests
         result.Unlisted.Where(v => v.FromFile == "core/Comment.cs").ShouldBeEmpty("findings=0:comment");
         result.Unlisted.Where(v => v.FromFile == "core/String.cs").ShouldBeEmpty("findings=0:string");
         result.Unlisted.Where(v => v.FromFile == "core/Nested.cs").ShouldBeEmpty("findings=0:own-declaration");
+        result.Unlisted.Where(v => v.FromFile == "core/Member.cs").ShouldBeEmpty("findings=0:value-members");
         result.Listed.Length.ShouldBe(1, "listed=1");
         result.UnlistedCount.ShouldBe(0, "unlisted=0");
         result.Passes.ShouldBeTrue("verdict=pass");
@@ -171,6 +173,13 @@ public sealed class C1729LayeringGuardTests
         disallowed.Ambiguous.Length.ShouldBe(1, "ambiguous=1:disallowed");
         disallowed.UnlistedCount.ShouldBe(1, "unlisted=1:disallowed");
         disallowed.Passes.ShouldBeFalse("disallowed-verdict=fail");
+        var partial = Analyze(SyntheticMap, "strict: true",
+        [new("app/Reader.cs", "namespace X.App; partial class Reader {}"),
+         new("app/Reader.Part.cs", "namespace X.App; partial class Reader {}"),
+         new("core/C.cs", "using X.App; class C { Reader field; }")]);
+        partial.Ambiguous.ShouldBeEmpty("partial-is-one-type");
+        partial.Unlisted.ShouldContain(new Violation("core/C.cs", "Reader", "app/Reader.cs"), "partial-primary-file");
+        partial.Passes.ShouldBeFalse("partial-forbidden-edge");
     }
 
     [Test]
