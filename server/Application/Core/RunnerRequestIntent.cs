@@ -75,4 +75,3 @@ public sealed record RunnerRequestIntent(RunnerRequestSource Source, string? Rem
         : trimmed.Any(char.IsControl) ? "must not contain control characters"
         : null;
 }
-
