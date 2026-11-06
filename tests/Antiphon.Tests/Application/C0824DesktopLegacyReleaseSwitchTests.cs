@@ -708,6 +708,140 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
     }
 
     /// <summary>
+    /// CARD-0824 S4a integration Review B-1 (d8af9f97). A RefOnly task's system release reaches the S5b-1 no-checkout
+    /// mirror path with the switch on. Execute turned off after that admission, at the runner description and while
+    /// the WorkspaceRemove waits behind the send gate, must send nothing and keep the mirror path; the same release
+    /// with the switch on sends exactly one remove.
+    /// </summary>
+    [Test]
+    public async Task Late_switch_on_ref_only_mirror_continuation_sends_no_remove()
+    {
+        var proxy = DispatchProxy.Create<ISessionRunnerDirectory, DescribeProbe>();
+        var control = (DescribeProbe)(object)proxy;
+        await using var w = await DesktopLegacyWorld.CreateAsync(configure: services => services.AddSingleton(sp =>
+            new RemoteWorkspaceService(proxy, sp.GetRequiredService<ILandingGit>(), NullLogger<RemoteWorkspaceService>.Instance)));
+        await using var phone = await PhoneHomeTestHost.StartAsync(w.Clock, w.Host.Schema.ConnectionString);
+        control.Inner = phone.Directory;
+        var peer = await phone.ConnectPeerAsync();
+        var live = await phone.WaitLiveAsync();
+        phone.Directory.MarkRecovered(live);
+        var send = (SemaphoreSlim)typeof(PhoneHomeLiveConnection)
+            .GetField("_send", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(live)!;
+        var waiters = (System.Collections.IDictionary)typeof(PhoneHomeLiveConnection)
+            .GetField("_waiters", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(live)!;
+        var removes = 0;
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.WorkspaceRemove) return null;
+            removes++;
+            return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceRemoveResponse(true, null), PhoneHomeFraming.Json));
+        };
+        var mirror = Path.Combine(w.Fixture.Root, "c0824-ref-only-mirror");
+        var a = await w.AddTaskAsync(seed: t => { t.RunnerId = phone.AllowedRunnerId; t.RemoteWorktreePath = mirror; });
+        var sha = (await w.ReadAsync(a.Path, "rev-parse", "HEAD")).Trim();
+        var bound = await C0824RefOnlyCleanupTests.BindAsync(w.Host, a.Id, removeAuthoring: true);
+        Guid releaseId;
+        await using (var db = w.Db())
+        {
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == a.Id);
+            task.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+            var release = new TaskWorktreeRetirement
+            {
+                Id = Guid.NewGuid(), TaskId = task.Id, TaskAttempt = task.Attempt, TerminalStatus = task.Status,
+                TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = CardDoneArtifactPreservation.Digest(task.Result),
+                ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = TaskWorktreeRetirementService.SystemCallerIdentity,
+                ReleaseReason = "fixture ref-only mirror release", ReleasedAt = w.Now, HandoffDispositionJson = "[]",
+                Active = true, RepositoryPath = task.RepoPath!, CommonDirectory = bound.Common, WorktreePath = bound.Identity,
+                GitDirectory = "", SourceFullRef = bound.FullRef, SourceSha = sha, TargetFullRef = "refs/heads/master",
+                State = WorktreeRetirementState.Released, UpdatedAt = w.Now,
+            };
+            db.TaskWorktreeRetirements.Add(release);
+            await db.SaveChangesAsync();
+            releaseId = release.Id;
+        }
+
+        async Task<WorktreeRemoval> RetireAsync()
+        {
+            await using var scope = w.Host.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var release = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == releaseId);
+            var result = await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>()
+                .TryRetireAsync(release, null, default);
+            result.DesktopCleanupDisposition.ShouldBe(DesktopCleanupDisposition.NotRequired, "the RefOnly no-checkout branch");
+            result.TaskRefWorkspaceBindingId.ShouldBe(bound.Id);
+            return result;
+        }
+        async Task AssertKeptAsync(string cut)
+        {
+            removes.ShouldBe(0, cut + ": no WorkspaceRemove after the switch closed");
+            await using var db = w.Db();
+            var saved = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == a.Id);
+            saved.RemoteWorktreePath.ShouldBe(mirror, cut + ": the mirror path is kept for a later pass");
+            saved.RemoteWorktreeResidue.ShouldNotBeNull(cut).ShouldContain(TaskWorktreeRetirementService.LegacyReleaseExecuteOff);
+            saved.TaskRefWorkspaceBindingId.ShouldBe(bound.Id, cut);
+            (await db.TaskWorktreeRetirementAttempts.CountAsync(x => x.RetirementId == releaseId)).ShouldBe(0, cut + ": no desktop attempt");
+            (await File.ReadAllTextAsync(bound.Sentinel)).ShouldBe(bound.SentinelBytes, cut);
+            foreach (var (repository, reference) in new[] { (w.Fixture.Repository, bound.FullRef), (w.Fixture.Repository, bound.Pin), (w.Fixture.Remote, bound.FullRef) })
+                (await w.ReadAsync(repository, "rev-parse", "--verify", reference)).Trim().ShouldBe(sha, cut + ": source ref retained");
+        }
+
+        // (a) Admission passed (the description is reached only after it); Execute closes once the description returns.
+        var described = 0;
+        control.After = () =>
+        {
+            if (described++ != 0) return;
+            w.Settings.Value.Execute.ShouldBeTrue("the switch is on until the description returns");
+            Apply(w, "execute");
+        };
+        await RetireAsync();
+        described.ShouldBe(1, "the RefOnly mirror continuation described the runner once");
+        await AssertKeptAsync("describe");
+
+        // (b) The remove was authorized before it queued behind the held send gate; Execute closes while it waits.
+        Apply(w, "on");
+        var held = false;
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        control.After = () =>
+        {
+            if (held) return;
+            w.Settings.Value.Execute.ShouldBeTrue("the switch is on at the description");
+            send.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue("the test holds the send gate");
+            held = true;
+            reached.TrySetResult();
+        };
+        var pending = RetireAsync();
+        try
+        {
+            await reached.Task.WaitAsync(TimeSpan.FromSeconds(60));
+            var queued = false;
+            for (var until = DateTime.UtcNow.AddSeconds(30); !queued && DateTime.UtcNow < until;)
+            {
+                foreach (var waiter in waiters.Values.Cast<object>().ToList())
+                    if ((PhoneHomeOperation)waiter.GetType().GetProperty("Operation")!.GetValue(waiter)! == PhoneHomeOperation.WorkspaceRemove)
+                        queued = true;
+                if (!queued) await Task.Delay(10);
+            }
+            queued.ShouldBeTrue("the WorkspaceRemove is queued behind the held send gate");
+            Apply(w, "execute");
+        }
+        finally
+        {
+            if (held) send.Release();
+        }
+        await pending.WaitAsync(TimeSpan.FromSeconds(90));
+        await AssertKeptAsync("queued-send");
+
+        // Control: the same release with the switch on throughout sends exactly one remove.
+        control.After = () => { };
+        Apply(w, "on");
+        await RetireAsync();
+        removes.ShouldBe(1, "the RefOnly mirror continuation sends its remove while the switch is on");
+        await using (var db = w.Db())
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == a.Id)).RemoteWorktreePath.ShouldBeNull("the mirror is retired");
+    }
+
+    /// <summary>
     /// CARD-1717 A+B integration. The content binding (A) is the last await before the move-aside. Execute turned off
     /// while it reads the index must still keep the tree: the switch is read after the binding, not before it.
     /// </summary>
