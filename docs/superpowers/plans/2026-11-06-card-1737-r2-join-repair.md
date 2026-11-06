@@ -60,11 +60,9 @@ totalTimeoutOverrideReason: Same bounded build/row ceilings as Review; estimates
 | CP-4 | FIX | CP-1 | full-affected-and-guards | /*/*/(C1708ReflogSalvageTests*)\|(LiveLaneRunnerTests*)\|(SlowTestRegistryMergeTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/* | V-JOIN,full affected class,named guards | all eleven class rosters, 110 passed | 110 | 6 | true |
 
 Round-3 CP-0 is intentionally red, executed only on the new test-first commit. CP-1..4 run
-once after the fix. CP-4 includes the regression's four arguments and the 105
+once after the fix. CP-4 includes V-TIMEOUT, the regression's four arguments and the 105
 previously selected results. CP-4 is explicitly added by this repair brief to
 the design's closed three-row selection. No green row is repeated for timing.
-
-## Pending SourceLanding Mutation
 
 ## Round 3 B-2R: retain the primary failure on a bounded join failure
 
@@ -102,7 +100,7 @@ Restore, rebuild, same method green. Mutation owns that deliberate cycle and
 additional missing-control discovery, including cancellation-callback failures.
 No Code mutation credit is claimed.
 
-### Earlier pending controls
+## Pending SourceLanding Mutation
 
 PC-JOIN: in SAL SalvageSource remove cancellation forwarding and both cancel/join
 calls, restoring reviewed behavior; run only
