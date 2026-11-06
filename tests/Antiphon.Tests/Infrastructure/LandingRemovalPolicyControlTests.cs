@@ -22,7 +22,7 @@ public sealed class LandingRemovalPolicyControlTests
 {
     [Test]
     [Timeout(10_000)]
-    public async Task C1737_MatchingContentReplacementIsNotDeleted()
+    public async Task C1737_MatchingContentReplacementIsNotDeleted(CancellationToken cancellationToken)
     {
         using var timing = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "run");
         using var f = new RemovalFixture();

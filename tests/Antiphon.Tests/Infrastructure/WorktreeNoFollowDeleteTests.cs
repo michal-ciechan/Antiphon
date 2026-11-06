@@ -17,7 +17,7 @@ public sealed class WorktreeNoFollowDeleteTests
     [Test]
     [Timeout(5_000)]
     [NativeLinuxOnly("Linux-only by construction: real statx, no-follow directory descriptors and unlinkat are required; Windows has a separate native witness.")]
-    public void C1737_PostHashWriteSurvivesFinalStat()
+    public void C1737_PostHashWriteSurvivesFinalStat(CancellationToken cancellationToken)
     {
         using var timing = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "run");
         var boundary = new PostHashBoundary();
