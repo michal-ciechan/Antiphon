@@ -142,7 +142,17 @@ internal static class RefOnlyRedirectWitness
             var oldFree = world.Pool.Ledger().Slot(slot.Id)!;
             oldFree.State.ShouldBe(WorkspaceSlotStates.Free, "old-ledger-free:" + variant);
             oldFree.TaskId.ShouldBeNull("old-owner-detached:" + variant);
-            var newSlot = recipient.Pool.Ledger().Slots.Single(s => s.TaskId == id);
+            var targetSlots = recipient.Pool.Ledger().Slots.Where(s => s.TaskId == id).ToList();
+            await using (var diagnostics = rig.NewDb())
+            {
+                var events = await diagnostics.AgentTaskEvents.AsNoTracking()
+                    .Where(e => e.AgentTaskId == id).OrderBy(e => e.At).Select(e => e.Detail).ToListAsync();
+                targetSlots.Count.ShouldBe(1, "target-real-preparation:" + variant + "; status=" + moved.Status
+                    + "; prep-failures=" + moved.RemotePrepFailures + "; not-before=" + moved.DispatchNotBeforeAt
+                    + "; mirror-requests=" + peer.RequestCount(PhoneHomeOperation.WorkspaceMirror)
+                    + "; events=" + string.Join(" | ", events));
+            }
+            var newSlot = targetSlots.Single();
             moved.RemoteWorktreePath.ShouldBe(newSlot.Path, "target-real-preparation:" + variant);
             C0824SlotTransportWorld.Git(newSlot.Path, "rev-parse", "HEAD").Trim().ShouldBe(source, "target-at-S:" + variant);
             C0824SlotTransportWorld.Git(world.Origin, "rev-parse", fullRef).Trim().ShouldBe(source, "source-ref-survives:" + variant);
