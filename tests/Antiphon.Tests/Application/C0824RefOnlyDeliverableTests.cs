@@ -40,7 +40,7 @@ public sealed class C0824RefOnlyDeliverableTests
             (await File.ReadAllBytesAsync(Path.Combine(w.Task.DeliverableBundleDir!, member.StoredFile))).ShouldBe(bytes, "bundle-bytes=S:" + role);
             if (refOnly)
             {
-                w.Task.DeliverableBundleDir!.ShouldStartWith(f.Root.Path, "explicit-durable-artifact-store");
+                w.Task.DeliverableBundleDir!.ShouldStartWith(f.Root.Path, Case.Sensitive, "explicit-durable-artifact-store");
                 f.Git.ByteReads.ShouldContain(r => r.Sha == source && r.Path == "docs/evidence.md", "read-exact-commit");
                 (await File.ReadAllTextAsync(Path.Combine(w.Task.WorktreePath!, "docs/evidence.md"))).ShouldBe("foreign identity decoy");
             }
