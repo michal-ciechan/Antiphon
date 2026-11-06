@@ -55,6 +55,7 @@ public sealed class ControlledLandingRemovalReadTests
         var committed = await controlled.RequiredAsync(controlled.Repository, "ls-tree", "-r", "-z", "--full-tree", controlled.SourceHead);
         committed.ShouldBe(await real.GitReadAsync("ls-tree", "-r", "-z", "--full-tree", "HEAD"));
         // Remote-only empty commits inherit their parent's tree, not the stale local target index.
+        controlled.SetRemoteSource(controlled.SourceHead);
         var remote = controlled.AdvanceRemoteSource();
         await real.GitAsync("commit", "--allow-empty", "-m", "remote-only");
         (await controlled.RequiredAsync(controlled.Repository, "ls-tree", "-r", "-z", "--full-tree", remote)).ShouldBe(committed);

@@ -20,9 +20,11 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     private readonly Dictionary<string, Commit> _objects = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _files = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _index = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _indexModes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _untracked = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _targetFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _targetIndex = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _targetIndexModes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _targetUntracked = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _sequencer = new(StringComparer.Ordinal);
     private readonly HashSet<string> _targetSequencer = new(StringComparer.Ordinal);
@@ -98,7 +100,6 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         Directory.CreateDirectory(SourceGitDirectory);
         Directory.CreateDirectory(Path.Combine(CommonDir, "antiphon"));
         SeedSha = NextOid();
-        _objects[SeedSha] = new Commit(SeedSha, []);
         _sourceHead = SeedSha;
         _targetHead = SeedSha;
         _sourceBranch = SourceRef;
@@ -117,6 +118,12 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         _index["keep.txt"] = "seed\n";
         _targetFiles["keep.txt"] = "seed\n";
         _targetIndex["keep.txt"] = "seed\n";
+        // The ownership sentinel is tracked in the real fixture too. Omitting it from
+        // the index makes the late-untracked census correctly refuse this fake tree.
+        var owner = TaskId.ToString("N") + "\n";
+        _files["fixture-owner.txt"] = _index["fixture-owner.txt"] = owner;
+        _targetFiles["fixture-owner.txt"] = _targetIndex["fixture-owner.txt"] = owner;
+        _objects[SeedSha] = new Commit(SeedSha, [], IndexTree(Source));
         _worktrees[Source] = new Worktree(Source, SourceRef, SeedSha);
         _worktrees[Repository] = new Worktree(Repository, TargetRef, SeedSha);
         WriteHeadFiles();
@@ -340,7 +347,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public string AdvanceRemoteSource()
     {
         var sha = NextOid();
-        _objects[sha] = new Commit(sha, [_remoteSource]);
+        _objects[sha] = new Commit(sha, [_remoteSource], _objects[_remoteSource].Tree);
         _remoteSource = sha;
         return sha;
     }
@@ -349,7 +356,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public string AdvanceRemoteTarget()
     {
         var sha = NextOid();
-        _objects[sha] = new Commit(sha, [_remoteTarget]);
+        _objects[sha] = new Commit(sha, [_remoteTarget], _objects[_remoteTarget].Tree);
         _remoteTarget = sha;
         return sha;
     }
@@ -357,7 +364,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public string DivergeRemoteSource()
     {
         var sha = NextOid();
-        _objects[sha] = new Commit(sha, [SeedSha]);
+        _objects[sha] = new Commit(sha, [SeedSha], _objects[SeedSha].Tree);
         _remoteSource = sha;
         return sha;
     }
@@ -404,7 +411,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public void RewriteRemoteAwayFromSource()
     {
         var other = NextOid();
-        _objects[other] = new Commit(other, [SeedSha]);
+        _objects[other] = new Commit(other, [SeedSha], _objects[SeedSha].Tree);
         _remoteTarget = other;
     }
 
@@ -495,6 +502,10 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] => true,
             // CARD-1717: the guarded removal's late-untracked check lists the tracked index.
             ["ls-files", "-z"] => true,
+            ["ls-files", "--stage", "-z"] => true,
+            ["ls-tree", "-r", "-z", "--full-tree", var revision] => IsRevision(revision),
+            ["-c", "core.safecrlf=false", "hash-object", "--", ..] =>
+                args.Count > 4 && args.Skip(4).All(path => IsRelativeFile(path, afterSeparator: true)),
             ["worktree", "list", "--porcelain", "-z"] => true,
             ["worktree", "remove", "--registration-only", var path] => PathsEqual(path, Source),
             ["worktree", "lock", var path] => PathsEqual(path, Source),
@@ -561,20 +572,90 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         return name == "HEAD" || LooksOid(name) || IsFullRef(name);
     }
 
-    private static bool IsRelativeFile(string path) => !string.IsNullOrWhiteSpace(path)
-        && !Path.IsPathRooted(path) && !path.StartsWith('-')
+    private static bool IsRelativeFile(string path, bool afterSeparator = false) => !string.IsNullOrWhiteSpace(path)
+        && !Path.IsPathRooted(path) && (afterSeparator || !path.StartsWith('-'))
         && path.Replace('\\', '/').Split('/').All(part => part is not ("" or "." or "..") && !part.Contains(':'));
+
+    // S4a reads the same index before and after the source directory's rename. The
+    // set-aside path still has the source's Git administration until unregister.
+    private bool IsSourceIndex(string directory) => IsSource(directory) || PathsEqual(directory,
+        Antiphon.Server.Infrastructure.Git.WorktreeSetAside.SetAsidePath(Source));
+
+    private ImmutableDictionary<string, TrackedFile> IndexTree(string directory)
+    {
+        if (IsLand(directory)) return _objects[LandHead!].Tree;
+        var source = IsSourceIndex(directory);
+        var index = source ? _index : _targetIndex;
+        var modes = source ? _indexModes : _targetIndexModes;
+        return index.ToImmutableDictionary(p => p.Key,
+            p => new TrackedFile(modes.GetValueOrDefault(p.Key, "100644"), p.Value), StringComparer.Ordinal);
+    }
+
+    private LandingGitResult ListFiles(string directory, IReadOnlyList<string> args)
+    {
+        if (args.Contains("--ignored"))
+            return new(0, string.Concat(IgnoredPaths().Select(path => path + "\0")), "");
+        var staged = args.Contains("--stage");
+        var rows = IndexTree(directory).OrderBy(p => p.Key, StringComparer.Ordinal)
+            .Select(p => staged ? $"{p.Value.Mode} {BlobOf(p.Value.Content)} 0\t{p.Key}\0" : p.Key + "\0");
+        return new(0, string.Concat(rows), "");
+    }
+
+    private LandingGitResult ListTree(string directory, string revision)
+    {
+        var resolved = RevParse(directory, ["rev-parse", "--verify", revision]);
+        if (!resolved.Succeeded || !_objects.TryGetValue(resolved.Output.Trim(), out var commit))
+            return new(128, "", "git_exit_128") { WroteStandardError = true };
+        return new(0, string.Concat(commit.Tree.OrderBy(p => p.Key, StringComparer.Ordinal)
+            .Select(p => $"{p.Value.Mode} blob {BlobOf(p.Value.Content)}\t{p.Key}\0")), "");
+    }
+
+    private static string BlobOf(string content)
+    {
+        using var bytes = new MemoryStream(Encoding.UTF8.GetBytes(content));
+        return BlobOf(bytes);
+    }
+
+    private static string BlobOf(Stream bytes)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        hash.AppendData(Encoding.ASCII.GetBytes($"blob {bytes.Length}\0"));
+        var buffer = new byte[8192];
+        int read;
+        while ((read = bytes.Read(buffer)) != 0) hash.AppendData(buffer.AsSpan(0, read));
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static LandingGitResult HashObjects(string directory, IEnumerable<string> paths)
+    {
+        var output = new StringBuilder();
+        foreach (var path in paths)
+        {
+            try
+            {
+                // This fixture stages literal file bytes (no clean filters or autocrlf).
+                // Hash the working file, never the index or the committed version.
+                using var bytes = File.OpenRead(Path.Combine(directory, path));
+                output.Append(BlobOf(bytes)).Append('\n');
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { return new(128, output.ToString(), "git_exit_128") { WroteStandardError = true }; }
+        }
+        return new(0, output.ToString(), "");
+    }
 
     private LandingGitResult Dispatch(string repository, IReadOnlyList<string> args)
     {
         if (args.Count == 0) throw Unsupported(args);
+        if (args[0] == "ls-files") return ListFiles(repository, args);
+        if (args[0] == "ls-tree") return ListTree(repository, args[^1]);
+        if (args[0] == "-c" && args[2] == "hash-object") return HashObjects(repository, args.Skip(4));
         if (IsLand(repository)) return DispatchLand(args);
         if (args[0] == "rev-parse") return RevParse(repository, args);
         if (args[0] == "symbolic-ref") return SymbolicRef(repository, args);
         if (args[0] == "show-ref") return ShowRef(args);
         if (args[0] == "for-each-ref") return ForEachRef(args);
         if (args[0] == "status") return new(0, StatusOutput(IsSource(repository)), "");
-        if (args[0] == "ls-files") return new(0, string.Join('\0', IgnoredPaths()) + (IgnoredPaths().Length == 0 ? "" : "\0"), "");
         if (args[0] == "worktree" && args.Count > 1 && args[1] == "list") return WorktreeList();
         if (args[0] == "worktree" && args.Count > 1 && args[1] == "remove") return WorktreeRemove(args);
         if (args[0] == "worktree" && args.Count > 1 && args[1] == "lock")
@@ -664,7 +745,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
                 files[path] = content;
             (IsSource(repository) ? _untracked : _targetUntracked).Clear();
             var sha = NextOid();
-            _objects[sha] = new Commit(sha, [HeadOf(repository)]);
+            _objects[sha] = new Commit(sha, [HeadOf(repository)], IndexTree(repository));
             SetHead(repository, sha);
             return new(0, "", "");
         }
@@ -692,6 +773,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             var root = WorktreePath(repository);
             var map = IsSource(repository) ? _untracked : _targetUntracked;
             var index = IsSource(repository) ? _index : _targetIndex;
+            var modes = IsSource(repository) ? _indexModes : _targetIndexModes;
             IEnumerable<string> names = name is null
                 ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(root, p).Replace('\\', '/'))
                 : [name];
@@ -701,7 +783,12 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
                 string? content = File.Exists(disk) ? File.ReadAllText(disk)
                     : map.TryGetValue(item, out var u) ? u : null;
                 if (content is null) continue;
+                var link = new FileInfo(disk).LinkTarget;
+                if (link is not null) content = link;
                 index[item] = content;
+                modes[item] = link is not null ? "120000"
+                    : !OperatingSystem.IsWindows() && File.GetUnixFileMode(disk).HasFlag(UnixFileMode.UserExecute)
+                        ? "100755" : "100644";
                 map.Remove(item);
             }
             return new(0, "", "");
@@ -756,7 +843,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         {
             var onto = args[^1];
             var rebased = NextOid();
-            _objects[rebased] = new Commit(rebased, [onto]);
+            _objects[rebased] = new Commit(rebased, [onto], _objects[LandHead!].Tree);
             LandHead = rebased;
             _worktrees[Land!] = _worktrees[Land!] with { Head = rebased };
             WriteHeadFiles();
@@ -979,7 +1066,8 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         return status.Length > 0;
     }
 
-    private string HeadOf(string repository) => IsSource(repository) ? _sourceHead : IsRemote(repository) ? _remoteTarget : _targetHead;
+    private string HeadOf(string repository) => IsLand(repository) ? LandHead!
+        : IsSourceIndex(repository) ? _sourceHead : IsRemote(repository) ? _remoteTarget : _targetHead;
 
     private void SetHead(string repository, string sha)
     {
@@ -1039,7 +1127,8 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     private static InvalidOperationException Unsupported(IReadOnlyList<string> args) =>
         new("unsupported controlled git command: " + string.Join(' ', args));
 
-    private sealed record Commit(string Sha, string[] Parents);
+    private sealed record TrackedFile(string Mode, string Content);
+    private sealed record Commit(string Sha, string[] Parents, ImmutableDictionary<string, TrackedFile> Tree);
     private sealed record Worktree(string Path, string Branch, string Head);
 }
 
