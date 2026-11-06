@@ -27,7 +27,7 @@ public sealed class C0824RefOnlyContinuationTests
         await using var w = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true, refOnly: true);
         var source = await w.CommitAsync("park-source.txt");
         var result = await w.PrepareAsync();
-        result.Evidence.ShouldNotBeNull("reached:C2:RefOnly:publication").SourceSha.ShouldBe(source);
+        result.Evidence.ShouldNotBeNull("reached:C2:RefOnly:publication:" + result.Reason).SourceSha.ShouldBe(source);
         (await w.RemoteShaAsync()).ShouldBe(source, "park-origin-exact-S");
         var row = await w.RowAsync();
         row.SyncState.ShouldBe(AgentTaskParkSyncState.Pending, "park-debt-pending");
@@ -129,11 +129,13 @@ public sealed class C0824RefOnlyContinuationTests
     }
 
     [Test]
-    public async Task Blocked_reply_preserves_runner_and_binding_when_gate_closes()
+    public async Task Blocked_reply_preserves_runner_and_binding_when_gate_closes(CancellationToken ct)
     {
         foreach (var busy in new[] { false, true })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            var admission = new RefOnlyDesktopSettings { Enabled = true, RunnerIds = ["fixture"], Roles = "Custom" };
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
+                refOnlySettings: admission);
             await f.CreateSourceAsync(remote: true);
             await using (var db = f.Db())
             {
@@ -141,10 +143,17 @@ public sealed class C0824RefOnlyContinuationTests
                 await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
             }
             var before = await f.TaskAsync();
+            f.Harness.Provider.GetRequiredService<RefOnlyDesktopGate>().Admits(before).ShouldBeTrue("reached:C3:gate:open");
+            admission.Enabled = false;
+            f.Harness.Provider.GetRequiredService<RefOnlyDesktopGate>().Admits(before).ShouldBeFalse("reached:C3:gate:closed");
             await f.AttachRecipientAsync(f.SessionId, busy);
             const string answer = "Keep the bound runner and the immutable source.";
-            await f.AnswerAsync(answer);
-            var queued = (await f.AnswerQueueAsync()).ShouldNotBeNull("reached:C3:live:queue");
+            await f.DriveAnswerAsync(answer, ct);
+            await using var lookup = f.Db();
+            var replied = await lookup.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Replied, ct);
+            var key = AgentTaskInputService.ConversationKey(f.TaskId, replied.Id);
+            var queued = (await lookup.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m =>
+                m.AgentSessionId == f.SessionId && m.ConversationKey == key, ct)).ShouldNotBeNull("reached:C3:live:queue");
             queued.Body.ShouldContain(answer, Case.Sensitive, "answer-independent-content");
             if (busy) f.Submitted.ShouldBeEmpty("busy-answer-defers");
             await f.RestartAsync();

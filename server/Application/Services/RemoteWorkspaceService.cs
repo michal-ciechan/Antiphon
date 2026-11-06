@@ -112,6 +112,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// </summary>
     public async Task<RemotePushResult> PushBranchAsync(AgentTask task, CancellationToken ct)
     {
+        if (!Enum.IsDefined(task.DesktopWorkspaceKind)) return new(false, null, "desktop_workspace_kind_invalid");
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout && task.TaskRefWorkspaceBindingId is not null)
+            return new(false, null, "desktop_workspace_binding_contradictory");
         if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
             return await PushRefOnlyBranchAsync(task, ct);
         if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
@@ -151,6 +154,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         try
         {
             var observed = await _refWorkspaces.InspectAsync(task, baseline.Primary, null, ct);
+            if (!_leases.Owns(lease, observed.Context.CommonDirectory!))
+                return new(false, null, "ref_only_repository_lease_required");
             var repo = observed.Context.GitWorkingDirectory;
             var origin = await _git.RunAsync(repo, ["remote", "get-url", "--push", "--all", "origin"], ct);
             var urls = origin.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
@@ -1112,6 +1117,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     {
         try
         {
+            if (park.WorkspaceSnapshotJson is not null && task.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly)
+                return "park_workspace_changed";
             if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
             {
                 if (string.IsNullOrWhiteSpace(task.RunnerId) || RunnerRequestIntent.IsDesktopAlias(task.RunnerId)

@@ -677,6 +677,13 @@ public sealed partial class AgentTaskDispatcher
             // Old rows can retain the public desktop aliases. Use the canonical null binding
             // before capacity, platform and preparation checks. Persist it before the
             // separate claim context reads the queued row.
+            if (!Enum.IsDefined(task.DesktopWorkspaceKind)
+                || task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout && task.TaskRefWorkspaceBindingId is not null)
+            {
+                heldThisTick.Add((task.Id, HoldKind.RunnerUnavailable));
+                await TraceHeldAsync(task, "desktop_workspace_binding_contradictory", lastHeld, ct);
+                continue;
+            }
             if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
                 && (string.IsNullOrWhiteSpace(task.RunnerId) || RunnerRequestIntent.IsDesktopAlias(task.RunnerId)))
             {
@@ -5703,6 +5710,13 @@ public sealed partial class AgentTaskDispatcher
         await _db.Entry(claimed).ReloadAsync(ct);
         // Ends the claim span on this path; an exception before here leaves it unexported only.
         claimSpan?.Dispose();
+        if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            && (string.IsNullOrWhiteSpace(claimed.RunnerId) || RunnerRequestIntent.IsDesktopAlias(claimed.RunnerId)))
+        {
+            await AbandonClaimAsync(ct);
+            await RemoteWarnAsync(claimed, UtcNow(), "ref_only_requires_remote_runner", ct);
+            return DispatchOneResult.NotClaimed;
+        }
         if (preflight is not null && !DelegationWorktreeService.IsOrdinaryPreflightTask(claimed))
         {
             await transaction.RollbackAsync(ct);

@@ -286,7 +286,10 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
             || !Antiphon.Server.Domain.GitObjectId.IsFull(park.BaselineSha)
             || park.FullRef?.StartsWith("refs/heads/", StringComparison.Ordinal) != true
             || baseline.OwnerTaskId != task.Id || baseline.FullRef != park.FullRef || baseline.LocalSha != park.BaselineSha
-            || !WorkspaceReservationKey.PathsEqual(baseline.RegisteredCheckout ?? "", park.WorktreePath ?? ""))
+            || (task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout
+                ? !WorkspaceReservationKey.PathsEqual(baseline.RegisteredCheckout ?? "", park.WorktreePath ?? "")
+                : baseline.RegisteredCheckout is not null || baseline.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+                    || baseline.TaskRefWorkspaceBindingId != task.TaskRefWorkspaceBindingId))
             return "park_ownership_unknown";
         var key = WorkspaceReservationKey.For(park.WorktreePath, park.FullRef, baseline.CanonicalRepository);
         if ((await reservations.ReadActiveAsync(key, ct)).Any(r => r.Kind != WorkspaceReservationKind.Launch

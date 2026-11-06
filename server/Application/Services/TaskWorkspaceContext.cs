@@ -38,7 +38,9 @@ public sealed class TaskWorkspaceContextResolver(AppDbContext db)
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == task.AgentSessionId, ct);
         if (session is null || session.RunnerId != task.RunnerId
             || session.RunnerStoreId is null || session.RunnerStoreId == Guid.Empty
-            || session.RunnerCwd != context.ExecutionDirectory)
+            || session.StartedAt == default || session.RunnerCwd != context.ExecutionDirectory
+            || !await db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id == task.Id
+                && t.AgentSessionId == task.AgentSessionId && t.AgentId == task.AgentId, ct))
             throw Refuse("ref_only_execution_binding_required");
         return context;
     }
