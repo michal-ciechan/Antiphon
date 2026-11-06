@@ -174,7 +174,14 @@ internal static class LayeringGuardEngine
         }
         foreach (var group in declarations.GroupBy(d => d.Identity).Where(g => g.Any(d => d.Partial) && g.Select(d => d.Layer).Distinct().Count() > 1))
             parseErrors.Add("split-type:" + group.Key);
-        var index = declarations.GroupBy(d => d.Name).ToDictionary(g => g.Key, g => g.Distinct().ToArray(), StringComparer.Ordinal);
+        // Partial declarations in one layer are one type. Prefer its primary file for row identity.
+        // The split-type check above still rejects declarations spanning different layers.
+        var indexedDeclarations = declarations.GroupBy(d => d.Identity).SelectMany(g =>
+            g.All(d => d.Partial) && g.Select(d => d.Layer).Distinct().Count() == 1
+                ? g.OrderByDescending(d => System.IO.Path.GetFileNameWithoutExtension(d.Path) == d.Name)
+                    .ThenBy(d => d.Path, StringComparer.Ordinal).Take(1)
+                : g);
+        var index = indexedDeclarations.GroupBy(d => d.Name).ToDictionary(g => g.Key, g => g.Distinct().ToArray(), StringComparer.Ordinal);
         var globalUsings = roots.Values.SelectMany(r => r.Usings).Where(u => u.GlobalKeyword.IsKind(SyntaxKind.GlobalKeyword) && u.Alias is null)
             .Select(u => u.Name?.ToString() ?? "").ToHashSet(StringComparer.Ordinal);
         var violations = new HashSet<Violation>();
@@ -190,6 +197,21 @@ internal static class LayeringGuardEngine
                 if (own.Contains(name) || declaredNames.Contains(name)) continue;
                 var attribute = node.Ancestors().OfType<AttributeSyntax>().Any(a => a.Name.Span.Contains(node.Span));
                 if (!index.TryGetValue(name, out var candidates) && !(attribute && index.TryGetValue(name + "Attribute", out candidates))) continue;
+                // A qualified member is a type reference only when the indexed type has that
+                // owner. This keeps value properties and enum members out of the type graph.
+                if (node.Parent is MemberBindingExpressionSyntax) continue;
+                var qualifiedName = node.Parent switch
+                {
+                    MemberAccessExpressionSyntax access when access.Name == node => access.Expression + "." + name,
+                    QualifiedNameSyntax qualified when qualified.Right == node => qualified.Left + "." + name,
+                    _ => null
+                };
+                if (qualifiedName is not null)
+                {
+                    qualifiedName = Regex.Replace(qualifiedName.Replace("global::", "", StringComparison.Ordinal), @"<[^<>]*>", "");
+                    candidates = candidates.Where(c => c.Identity == qualifiedName || c.Identity.EndsWith("." + qualifiedName, StringComparison.Ordinal)).ToArray();
+                    if (candidates.Length == 0) continue;
+                }
                 if (candidates.Length > 1)
                 {
                     var usings = root.Usings.Concat(node.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().SelectMany(n => n.Usings))
@@ -230,6 +252,7 @@ internal static class LayeringGuardEngine
             _ => false
         },
         LabeledStatementSyntax n => n.Identifier == token,
+        EnumMemberDeclarationSyntax n => n.Identifier == token,
         SingleVariableDesignationSyntax n => n.Identifier == token,
         TypeParameterSyntax n => n.Identifier == token,
         ForEachStatementSyntax n => n.Identifier == token,
