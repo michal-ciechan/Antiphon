@@ -19,7 +19,11 @@ internal sealed class RefOnlyDeliverableFixture : IAsyncDisposable
     public static async Task<RefOnlyDeliverableFixture> CreateAsync(AgentTaskRole role = AgentTaskRole.Docs,
         bool refOnly = true, IReadOnlyDictionary<string, string>? initialFiles = null)
     {
-        var f = new RefOnlyDeliverableFixture { Root = new(), World = await RunnerSettlementWorld.CreateAsync(role, initialFiles: initialFiles) };
+        var root = new RefOnlyPersistentRoot();
+        RunnerSettlementWorld world;
+        try { world = await RunnerSettlementWorld.CreateAsync(role, initialFiles: initialFiles); }
+        catch { root.Dispose(); throw; }
+        var f = new RefOnlyDeliverableFixture { Root = root, World = world };
         try
         {
             if (refOnly) await f.World.RecordRefOnlyAsync();

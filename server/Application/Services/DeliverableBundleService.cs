@@ -165,7 +165,7 @@ public sealed class DeliverableBundleService
         }
 
         var shortId = DelegationReportFormatter.Short(task.Id);
-        var bundleDir = refOnly ? Path.Combine(root, shortId) : Path.Combine(root, ".antiphon", "deliverables", shortId);
+        var bundleDir = refOnly ? Path.Combine(root, task.Id.ToString("N")) : Path.Combine(root, ".antiphon", "deliverables", shortId);
         Directory.CreateDirectory(bundleDir);
 
         var identifier = db is null ? null : await CardIdentifierAsync(db, task, ct);
