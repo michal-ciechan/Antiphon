@@ -1255,9 +1255,14 @@ public sealed partial class AgentTaskDispatcher
         if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
         {
             store = _runners?.GetLiveStoreId(runnerId);
+            // Slot mirrors return their ledger tuple instead of a completed card-workspace
+            // binding. Their pre-request preparation still records the authoritative store.
             var owners = await _db.TaskWorktreeMirrorBindings.AsNoTracking().Where(b => b.TaskId == task.Id
-                    && b.Attempt == attempt && b.RunnerId == runnerId && b.WorktreePath == path
-                    && b.SourceFullRef == "refs/heads/" + task.WorktreeBranch && b.BindingId != Guid.Empty)
+                    && b.Attempt == attempt && b.RunnerId == runnerId && b.PreparationId != Guid.Empty
+                    && b.SourceFullRef == "refs/heads/" + task.WorktreeBranch
+                    && b.CreationBaselineSha == task.WorktreeBaseSha
+                    && (b.BindingId != Guid.Empty && b.WorktreePath == path
+                        || b.BindingId == Guid.Empty && b.WorktreePath == ""))
                 .Select(b => b.RunnerStoreId).Take(2).ToListAsync(ct);
             if (store is null || generation is null or <= 0 || owners.Count != 1
                 || !Guid.TryParse(owners[0], out var recordedStore) || recordedStore != store)
