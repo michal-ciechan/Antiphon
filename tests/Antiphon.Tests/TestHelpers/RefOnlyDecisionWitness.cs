@@ -60,6 +60,23 @@ internal static class RefOnlyDecisionWitness
         granted.Disposition.ShouldBe(InternalDecisionDisposition.Continue, "grant-root=runner");
         granted.Reason.ShouldBe("dispatch_grant");
         (await service.CheckAsync(f.Task.Id, request, caller, default)).ShouldBe(granted, "durable-grant-idempotent");
+        foreach (var dimension in new[] { "root", "store", "generation", "session", "paths" })
+        {
+            recipient.DecisionPathRewrite = result => result with { Binding = dimension switch
+            {
+                "root" => result.Binding with { Root = f.Identity },
+                "store" => result.Binding with { RunnerStoreId = Guid.NewGuid() },
+                "generation" => result.Binding with { AcceptedStartedAt = generation.AddSeconds(1) },
+                "session" => result.Binding with { SessionId = Guid.NewGuid() },
+                _ => result.Binding with { Paths = ["foreign.txt"] }
+            } };
+            try
+            {
+                (await service.CheckAsync(f.Task.Id, request with { RequestId = Guid.NewGuid() }, caller, default))
+                    .Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman, "inspection-echo-refused:" + dimension);
+            }
+            finally { recipient.DecisionPathRewrite = null; }
+        }
 
         // A real external link at the granted spelling must withhold, despite a regular
         // same-named identity file and a previously successful exact-file grant.
