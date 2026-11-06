@@ -153,5 +153,5 @@ Mutation; ordinary red-first tests do not discharge them.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-5 | S3 | tests/Antiphon.Tests -> bin-c1581-r2-red2/ | repair-red | /*/*/AgentTaskLandDispatchYieldTests/(C1581_a_runnable*)\|(C1581_hosted*) | V-4,V-5 | expected priority assertion failures at reviewed production | 7 | 8 | true |
-| CP-6 | S4-S5 | tests/Antiphon.Tests -> bin-c1581-r2-green3/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
+| CP-6 | S4 | tests/Antiphon.Tests -> bin-c1581-r2-green3/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
 | CP-7 | S4 | CP-6 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |
