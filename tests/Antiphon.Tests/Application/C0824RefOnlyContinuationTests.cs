@@ -39,13 +39,14 @@ public sealed class C0824RefOnlyContinuationTests
         await using (var db = w.Fixture.Db())
         {
             var workspace = new RemoteWorkspaceService(w.Directory, w.Git,
-                NullLogger<RemoteWorkspaceService>.Instance, w.Git, w.Leases, w.Reservations,
+                NullLogger<RemoteWorkspaceService>.Instance, new TaskParkPublicationTests.ParkGit(w.Leases), w.Leases, w.Reservations,
                 workspaceContexts: new TaskWorkspaceContextResolver(db));
             var recovery = new BlockedTaskSyncRecoveryService(db, workspace, w.Service(db), new MockEventBus(),
                 TimeProvider.System, NullLogger<BlockedTaskSyncRecoveryService>.Instance);
             (await recovery.SweepAsync(default)).ShouldBe(1, "reached:C2:accepted-debt:claim");
         }
-        (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready, "park-ready=S:gate-off");
+        var recovered = await w.RowAsync();
+        recovered.SyncState.ShouldBe(AgentTaskParkSyncState.Ready, "park-ready=S:gate-off:" + recovered.SyncReasonCode);
         (await w.GitTextAsync(w.Repository, "rev-parse", w.FullRef)).ShouldBe(source, "park-ready-exact-ref");
         (await w.GitTextAsync(w.Repository, "show", source + ":park-source.txt")).ShouldBe("park-source.txt", "park-ready-exact-bytes");
         var accepted = await w.RowAsync();
@@ -121,7 +122,7 @@ public sealed class C0824RefOnlyContinuationTests
         }
         // Continue through the production answer/dispatcher/queue callers. The modeled
         // recipient writes a UserPrompt only when the real queue actually submits input.
-        await using var resumed = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await using var resumed = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, syncRecovery: true);
         await resumed.CreateSourceAsync(remote: true);
         await using (var db = resumed.Db())
         {
@@ -144,7 +145,7 @@ public sealed class C0824RefOnlyContinuationTests
                 .Evidence.ShouldNotBeNull("reached:C1:park:published").SourceSha.ShouldBe(parkedSha);
             (await scope.ServiceProvider.GetRequiredService<BlockedTaskSyncRecoveryService>().SweepAsync(default)).ShouldBe(1);
         }
-        (await resumed.ParkAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready);
+        (await resumed.ParkAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready, await resumed.ParkDiagnosticAsync());
         await resumed.HandleParkAsync();
         (await resumed.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, await resumed.ParkDiagnosticAsync());
         const string answer = "Resume exactly the published source and retain its binding.";
@@ -244,7 +245,7 @@ public sealed class C0824RefOnlyContinuationTests
     {
         await using var db = w.Fixture.Db();
         var workspace = new RemoteWorkspaceService(w.Directory, w.Git,
-            NullLogger<RemoteWorkspaceService>.Instance, w.Git, w.Leases, w.Reservations,
+            NullLogger<RemoteWorkspaceService>.Instance, new TaskParkPublicationTests.ParkGit(w.Leases), w.Leases, w.Reservations,
             workspaceContexts: new TaskWorkspaceContextResolver(db));
         return await new BlockedTaskSyncRecoveryService(db, workspace, w.Service(db), new MockEventBus(),
             TimeProvider.System, NullLogger<BlockedTaskSyncRecoveryService>.Instance).SweepAsync(default);

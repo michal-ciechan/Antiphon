@@ -117,7 +117,13 @@ public sealed class C0824RefOnlyDeliverableTests
             }
             else
             {
-                w.Task.DeliverableBundleDir.ShouldBeNull("unavailable-source:" + admission);
+                var unavailable = await f.ManifestAsync();
+                unavailable.Complete.ShouldBeFalse("unavailable-source:" + admission);
+                unavailable.Sources.ShouldBeEmpty("no-source-without-admission:" + admission);
+                var omitted = unavailable.Omitted.ShouldHaveSingleItem();
+                omitted.OriginalRelativePath.ShouldBe("docs/b.md");
+                omitted.Length.ShouldBe(-1);
+                omitted.Reason.ShouldBe("committed source unavailable", "unavailable-source:" + admission);
                 f.Git.ByteReads.ShouldBeEmpty("no-moving-ref-fallback:" + admission);
                 f.Git.LengthReads.ShouldBeEmpty("no-size-read-without-admission:" + admission);
             }

@@ -136,11 +136,26 @@ public sealed class C0824RefOnlyConsumerTests
         ownerOne.TaskId.ShouldBe(f.Task.Id); ownerTwo.TaskId.ShouldBe(other.Id);
         (await journal.ReadActiveAsync(first, default)).ShouldHaveSingleItem().TaskId.ShouldBe(f.Task.Id, "owners-distinct:admission");
         (await journal.ReadActiveAsync(second, default)).ShouldHaveSingleItem().TaskId.ShouldBe(other.Id, "owners-distinct:second");
-        var sameRef = WorkspaceReservationKey.For(other.WorktreePath, "refs/heads/" + f.Task.WorktreeBranch, other.RepoPath);
-        var refused = await journal.TryClaimRetirementAsync(new(sameRef, WorkspaceReservationKind.Retirement,
+        // Journal reservations use an actual workspace coordinate. A fabricated different
+        // path with another task's ref is not that task's reservation key.
+        var refused = await journal.TryClaimRetirementAsync(new(first, WorkspaceReservationKind.Retirement,
             other.Id, RetirementId: Guid.NewGuid()), default);
-        refused.Accepted.ShouldBeFalse("same-ref-fenced");
+        refused.Accepted.ShouldBeFalse("active-owner-fenced");
         refused.Reason.ShouldBe("workspace_in_use");
+        // Ref ownership is admitted by the real binding producer, before a second
+        // identity can claim the first task's repository/ref coordinate.
+        var collisionId = Guid.NewGuid();
+        var collision = new AgentTask { Id = collisionId, RootTaskId = collisionId,
+            Workspace = WorkspaceMode.Worktree, WorkingDirectory = f.Task.RepoPath!, RepoPath = f.Task.RepoPath,
+            RunnerId = f.Task.RunnerId, WorktreeBranch = f.Task.WorktreeBranch,
+            WorktreeBaseSha = f.Git.Baseline, WorktreeBaseRef = "refs/heads/master",
+            WorktreeBaseSource = WorktreeBaseSource.Explicit };
+        f.Db.AgentTasks.Add(collision); await f.Db.SaveChangesAsync();
+        (await Should.ThrowAsync<ConflictException>(() => new TaskWorkspaceContextResolver(f.Db)
+            .RecordPlannedAsync(collision, f.Binding.CommonDirectory, f.Git.Root, default)))
+            .Code.ShouldBe("ref_only_legacy_ref_owner_conflict", "same-ref-fenced");
+        (await f.Db.TaskRefWorkspaceBindings.CountAsync(b => b.FullRef == f.Git.FullRef))
+            .ShouldBe(1, "one-full-ref-owner");
         item.WorktreePath.ShouldBe(f.Identity, "identity-is-history");
         item.RunnerId.ShouldBe(f.Task.RunnerId);
         Directory.Exists(f.Identity).ShouldBeFalse();

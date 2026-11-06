@@ -243,11 +243,13 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                             sp.GetRequiredService<ILogger<RemoteWorkspaceService>>(),
                             new TaskParkPublicationTests.ParkGit(sp.GetRequiredService<IRepositoryMutationLease>()),
                             sp.GetRequiredService<IRepositoryMutationLease>(), sp.GetRequiredService<IWorkspaceReservationJournal>(),
-                            mirrorPublisher: new SeatMirrorPublisher())
+                            mirrorPublisher: new SeatMirrorPublisher(),
+                            workspaceContexts: sp.GetRequiredService<TaskWorkspaceContextResolver>())
                         { Clock = clock, LeaseBusyObserved = () => wire.LeaseBusyObserved?.Invoke() });
                         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
                         services.AddScoped(sp => new TaskCompletionProgressService(sp.GetRequiredService<ITaskProgressGit>(),
-                            clock: clock, remoteSync: sp.GetRequiredService<RemoteWorkspaceService>()));
+                            clock: clock, remoteSync: sp.GetRequiredService<RemoteWorkspaceService>(),
+                            workspaceContexts: sp.GetRequiredService<TaskWorkspaceContextResolver>()));
                     }
                     services.AddScoped(sp => new AgentTaskDispatcher(
                         sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<AgentRegistry>(),
