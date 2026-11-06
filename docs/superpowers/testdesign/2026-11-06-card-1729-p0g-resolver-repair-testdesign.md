@@ -18,6 +18,22 @@ LandWorkspace row under P0-C5. Final CP-1 must print zero violations/stale rows.
 Parity is scoped by the repair brief to added test methods: zero methods added,
 zero removed, nine retained. No discovery driver is needed for in-body variants.
 
+Repair implementation: the repository census uses bounded `git ls-files -z`
+(15 seconds, five-second kill join), excluding migrations and output paths.
+A class-shared repository fixture performs one analysis for L1..L4, retaining
+the analysis map and parsed allowlist rather than recalculating them. It prints
+census/read/analysis timings. The class carries the assembly-local process
+limiter. No Slow category/registry or execution-policy/hash/census pin is changed.
+The per-file declaration lookup is grouped once instead of scanning the full
+declaration list for each source file.
+
+A-1 remains advisory: multi-glob lines still detect dead rules per line; known
+forward globs and the migration exclusion need an explicit per-glob exemption
+design before changing that grammar. A-3 remains the accepted syntax-only
+approximation (enclosing-namespace preference, renamed aliases, using-static,
+extension-only references and nested-generic-qualified owners). A-5 stays with
+P0-G2. These are not relabelled as repaired.
+
 V-1 and R-1 bind CP-1 and every new L5/L6 variant. V-2 real-tree strict ratchet
 activation stays with P0-G2; synthetic strict acceptance is exercised here.
 V-3..V-12 and R-2..R-8 belong to other Phase 0 slices and are not this repair.
