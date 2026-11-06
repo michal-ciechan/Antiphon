@@ -140,7 +140,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         bool syncDebt = true,
         int reclaimIntervalSeconds = 120,
         int reclaimHeldBackoffSeconds = 600,
-        ReclaimReservationGate? reservationGate = null)
+        ReclaimReservationGate? reservationGate = null,
+        RefOnlyDesktopSettings? refOnlySettings = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -165,6 +166,12 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                 ConfigureDbContext = configureDb,
                 ConfigureServices = services =>
                 {
+                    if (refOnlySettings is not null)
+                    {
+                        services.AddSingleton<IOptionsMonitor<RefOnlyDesktopSettings>>(
+                            new BridgeQueueHarness.OptionsMonitorStub<RefOnlyDesktopSettings>(refOnlySettings));
+                        services.AddSingleton<RefOnlyDesktopGate>();
+                    }
                     services.AddLogging(b => b.AddProvider(wire.Logs));
                     services.AddSingleton<RemoteSpillCourier>();
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
@@ -455,9 +462,16 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
     }
 
-    public Task<AgentTaskSummaryDto> AnswerAsync(string text, int? round = 1) =>
+    public Task<AgentTaskSummaryDto> AnswerAsync(string text, int? round = 1, CancellationToken ct = default) =>
         Harness.Provider.GetRequiredService<AgentTaskReplyService>()
-            .AnswerAsync(TaskId, text, AnswerOrigin.Web, round, CancellationToken.None);
+            .AnswerAsync(TaskId, text, AnswerOrigin.Web, round, ct);
+
+    public async Task<AgentTaskSummaryDto> DriveAnswerAsync(string text, CancellationToken ct)
+    {
+        var answer = AnswerAsync(text, ct: ct);
+        await DriveAsync(answer);
+        return await answer;
+    }
 
     public async Task<Exception?> TryAnswerAsync(string text, int? round = 1)
     {

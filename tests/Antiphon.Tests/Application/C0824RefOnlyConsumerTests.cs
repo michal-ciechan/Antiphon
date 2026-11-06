@@ -60,7 +60,10 @@ public sealed class C0824RefOnlyConsumerTests
         caller = await service.AuthenticateAsync(token, default);
         await Should.ThrowAsync<ForbiddenException>(() => service.CreateAsync(
             new CreateAgentTaskRequest(Goal: "worker cannot delegate"), caller, default));
-        session.RunnerStoreId = null; await f.Db.SaveChangesAsync();
+        // A coherent local tuple passes the database's all-or-none constraint and reaches
+        // the application refusal. A half tuple would fail setup before this guard.
+        session.RunnerId = null; session.RunnerStoreId = null; session.RunnerCwd = null;
+        await f.Db.SaveChangesAsync();
         (await Should.ThrowAsync<ConflictException>(() => service.AuthenticateAsync(token, default)))
             .Code.ShouldBe("ref_only_execution_binding_required");
         Directory.Exists(f.Identity).ShouldBeFalse("no-identity-materialization");
