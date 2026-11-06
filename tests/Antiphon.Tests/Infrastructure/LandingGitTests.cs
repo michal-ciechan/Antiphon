@@ -640,6 +640,80 @@ public sealed class LandingGitTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task PrePushObservationRunsLocalFenceBeforeTarget(bool fallback, bool refuse)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        ILandingGit git = fixture.Git;
+        var destination = await git.DestinationAsync(fixture.Repository,
+            fallback ? fixture.SourceRef : fixture.TargetRef, CancellationToken.None);
+        var observationRef = $"refs/antiphon/land/{Guid.NewGuid():N}/remote-observed";
+        fixture.Git.Trace.Clear();
+        var calls = 0;
+        Task<LandingPrePushObservation> ReadAsync() => git.ObserveSourceAndTargetAsync(fixture.Repository,
+            fixture.SourceRef, fixture.SeedSha, destination.Fingerprint, destination, fixture.SeedSha, observationRef,
+            () =>
+            {
+                calls++;
+                fixture.Git.Trace.Count(a => a[0] == "ls-remote").ShouldBe(1, "remote source precedes the local fence");
+                fixture.Git.Trace.Count(a => LandObservation.IsPinStep(a)).ShouldBe(0, "the local fence precedes target pins");
+                if (refuse) throw new InvalidOperationException("local source fence refused");
+                return Task.CompletedTask;
+            }, CancellationToken.None);
+
+        if (refuse)
+        {
+            var error = await Should.ThrowAsync<InvalidOperationException>(() => ReadAsync());
+            error.Message.ShouldBe("local source fence refused");
+            fixture.Git.Trace.Count(a => LandObservation.IsPinStep(a)).ShouldBe(0);
+        }
+        else
+        {
+            var read = await ReadAsync();
+            read.Source.Accepted.ShouldBeTrue();
+            read.Target.ShouldNotBeNull().ContainsSource.ShouldBeTrue();
+            fixture.Git.Trace.Count(a => LandObservation.IsPinStep(a)).ShouldBe(1);
+        }
+        calls.ShouldBe(1);
+        fixture.Git.Trace.Count(a => a[0] == "ls-remote").ShouldBe(fallback && !refuse ? 2 : 1);
+    }
+
+    [Test]
+    [Arguments("endpoint")]
+    [Arguments("moved")]
+    [Arguments("missing")]
+    public async Task PrePushRemoteRefusalNeverRunsLocalFence(string change)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        ILandingGit git = fixture.Git;
+        var destination = await git.DestinationAsync(fixture.Repository, fixture.TargetRef, CancellationToken.None);
+        if (change == "moved")
+        {
+            await fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "moved source");
+            await fixture.RequiredAsync(fixture.Source, "push", "origin", fixture.SourceRef);
+        }
+        if (change == "missing") await fixture.RequiredAsync(fixture.Remote, "update-ref", "-d", fixture.SourceRef);
+        fixture.Git.Trace.Clear();
+        var calls = 0;
+
+        var read = await git.ObserveSourceAndTargetAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            change == "endpoint" ? new string('0', 64) : destination.Fingerprint, destination, fixture.SeedSha,
+            $"refs/antiphon/land/{Guid.NewGuid():N}/remote-observed",
+            () => { calls++; return Task.CompletedTask; }, CancellationToken.None);
+
+        calls.ShouldBe(0, "remote source refusal must precede the local fence");
+        read.Target.ShouldBeNull();
+        if (change == "moved") read.Source.Sha.ShouldNotBe(fixture.SeedSha);
+        else read.Source.Reason.ShouldBe(change == "endpoint" ? "source_remote_endpoint_changed" : "source_remote_missing");
+        fixture.Git.Trace.Count(a => LandObservation.IsPinStep(a)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task C642_RecheckSourceRemoteIsOneRoundTripWithoutPins()
     {
         // CARD-0642 V-14 (absorbed by CARD-0688 D-1 as V-3).

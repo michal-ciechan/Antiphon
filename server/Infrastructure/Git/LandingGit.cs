@@ -1455,9 +1455,16 @@ public class LandingGit : ILandingGit
     /// advertisement (destination check, pin, read-back, destination re-check, ancestry). A pin that does not hold
     /// the advertised tip falls back to a full observation, which reads the remote again.
     /// </summary>
-    public virtual async Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository,
+    public virtual Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository,
         string sourceFullRef, string expectedSourceSha, string expectedFingerprint, LandingDestination destination,
         string ancestrySha, string observationRef, CancellationToken ct)
+        => ObserveSourceAndTargetAsync(repository, sourceFullRef, expectedSourceSha, expectedFingerprint, destination,
+            ancestrySha, observationRef, null, ct);
+
+    /// <inheritdoc cref="ILandingGit.ObserveSourceAndTargetAsync(string, string, string, string, LandingDestination, string, string, Func{Task}, CancellationToken)"/>
+    public virtual async Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository,
+        string sourceFullRef, string expectedSourceSha, string expectedFingerprint, LandingDestination destination,
+        string ancestrySha, string observationRef, Func<Task>? beforeTarget, CancellationToken ct)
     {
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedSourceSha))
             return new(new(null, null, "invalid_observation_identity"), null);
@@ -1467,6 +1474,7 @@ public class LandingGit : ILandingGit
             // Not a shape one read can answer: the two separate reads decide (and refuse) as before.
             var alone = await RecheckSourceRemoteAsync(repository, sourceFullRef, expectedSourceSha, expectedFingerprint, ct);
             if (!SourceHolds(alone, expectedSourceSha, expectedFingerprint)) return new(alone, null);
+            if (beforeTarget is not null) await beforeTarget();
             return new(alone, await ObserveAsync(repository, destination, ancestrySha, observationRef, ct));
         }
 
@@ -1493,6 +1501,7 @@ public class LandingGit : ILandingGit
             return new(new(null, fingerprint, "source_remote_response_invalid"), null);
         LandingSourceRecheck source = new(sourceLines[0][0], fingerprint, null);
         if (!SourceHolds(source, expectedSourceSha, expectedFingerprint)) return new(source, null);
+        if (beforeTarget is not null) await beforeTarget();
 
         // The target half, as the first attempt of ObserveWithPrefixAsync judges this same advertisement.
         var check = await RunAsync(repository, ["check-ref-format", observationRef], ct);

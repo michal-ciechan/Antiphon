@@ -882,7 +882,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     /// <summary>
     /// The D-8 source recheck and the target observation of one boundary, read by one <c>ls-remote</c>. The refusals
     /// keep their order: the remote source first (as <see cref="RecheckRemoteSourceAsync"/>), then
-    /// <paramref name="between"/> (the local source re-check that used to run between the two reads), then the target.
+    /// <paramref name="between"/> (the local source fence, inside the read before target processing), then the target.
     /// After publication the source is not rechecked, so only the target is observed.
     /// </summary>
     private async Task<LandingRemoteObservation> RecheckRemoteSourceAndObserveAsync(AgentTaskLanding op, string sha,
@@ -895,9 +895,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         }
         RequireSourceSnapshot(op);
         var read = await git.ObserveSourceAndTargetAsync(op.RepositoryPath, op.SourceFullRef, op.SourceRemoteSha!,
-            op.SourceRemoteFingerprint!, Destination(op), sha, op.RecoveryRefPrefix + "/remote-observed", ct);
+            op.SourceRemoteFingerprint!, Destination(op), sha, op.RecoveryRefPrefix + "/remote-observed", between, ct);
         RequireRemoteSource(op, read.Source);
-        if (between is not null) await between();
         var observed = read.Target ?? throw new LandingRefusal("source_remote_changed");
         Require(observed.Reason is null && observed.Sha is not null, observed.Reason ?? "remote_unknown");
         return observed;
