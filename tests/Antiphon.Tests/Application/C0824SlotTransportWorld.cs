@@ -146,7 +146,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         var work = Path.Combine(Root, "target-work");
         Directory.CreateDirectory(work);
         Git(Root, "clone", Origin, repository);
-        var service = new RunnerWorkspaceService(repository, work, Origin, publishedBranch: "main");
+        var service = new RunnerWorkspaceService(repository, work, Origin, psi => Process.Start(psi), publishedBranch: "main");
         var settings = new PhoneHomeSettings { Enabled = true, RunnerId = runnerId, AllowedCwd = work,
             RunnerRepository = repository, RunnerCloneSource = Origin, AllowedCloneSources = [Origin],
             CapacityStatePath = Path.Combine(Root, "target-capacity"), Capacity = 2,
