@@ -37,15 +37,15 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
         var root = TempDir();
         ManifestLoader.LoadYaml(F.Yaml, root).Checkpoints.Count.ShouldBe(1);
         // Test malformed input before testing new APIs: the base silently admits a blank/null key.
-        foreach (var value in new[] { "''", "null", "~", "", "[]", "{}", "1", "true", "[id]", "{id: value}" })
-            Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(F.Yaml + "\n    conditionalSkips: " + value, root))
+        foreach (var value in new[] { "''", "null", "NULL", "Null", "~", "", "[]", "{}", "1", "true", "TRUE", "[id]", "{id: value}", "!!int 1", "' id'", "'id '" })
+            Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(F.Yaml + "\n    conditionalSkips: " + value, root), "preserved:decl:admitted=false " + value)
                 .ExitCode.ShouldBe(2, "preserved:decl:admitted=false " + value);
         foreach (var cell in new[] { "", "``", "null", "[]", "{}", "two ids", "*", "1" })
             PlanTableImporter.ImportMarkdown(F.Table.Replace("| c1217-fixture-v1 |", "| " + cell + " |", StringComparison.Ordinal))
                 .ExitCode.ShouldBe(2, "preserved:table-decl:admitted=false " + cell);
         F.ParseCatalog(F.Catalog).ShouldNotBeNull();
         foreach (var (key, json) in InvalidCatalogs())
-            Should.Throw<ManifestValidationException>(() => F.ParseCatalog(json)).ExitCode.ShouldBe(2, "preserved:" + key + ":admitted=false");
+            Should.Throw<ManifestValidationException>(() => F.ParseCatalog(json), "preserved:" + key + ":admitted=false").ExitCode.ShouldBe(2);
         var imported = PlanTableImporter.ImportMarkdown(F.Table).Manifest!;
         var catalog = F.ParseCatalog(F.Catalog);
         foreach (var field in new[] { "id", "project", "filter", "floor" })
@@ -126,13 +126,13 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
             ("repeat", conditional + "\n    repeat: 2"),
             ("skip-only", conditional.Replace("minExecuted: 1", "minExecuted: 0", StringComparison.Ordinal)),
             ("known-flaky", conditional + "\nrerun:\n  knownFlaky: [Fixture.Cases.LinkA]"),
-            ("mixed-repeat", conditional + "\n  - id: CP-2\n    after: [S1]\n    build: bin-other\n    filter: /*/Fixture/Cases/*\n    repeat: 2\n".Replace("bin-other", "bin-fixture", StringComparison.Ordinal)),
+            ("mixed-repeat", conditional.Replace("checkpoints:", "  - id: bin-other\n    project: tests/Fixture\n    outputPath: bin-other/\ncheckpoints:", StringComparison.Ordinal)
+                + "\n  - id: CP-2\n    after: [S1]\n    build: bin-other\n    filter: /*/Fixture/Cases/*\n    repeat: 2\n"),
         })
         {
-            Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(yaml, root)).ExitCode.ShouldBe(2, "preserved:" + key + ":admitted=false");
-            // Each ordinary twin remains supported (mixed repeat needs its own build).
+            Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(yaml, root), "preserved:" + key + ":admitted=false").ExitCode.ShouldBe(2);
+            // Each ordinary twin remains supported, with independent builds for mixed repeats.
             var ordinary = yaml.Replace("    conditionalSkips: c1217-fixture-v1", "", StringComparison.Ordinal);
-            if (key == "mixed-repeat") ordinary = ordinary.Replace("    repeat: 2", "    repeat: 1", StringComparison.Ordinal);
             ManifestLoader.LoadYaml(ordinary, root).ShouldNotBeNull();
         }
         var manifest = ManifestLoader.LoadYaml(conditional, root);
@@ -162,6 +162,22 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
         yield return ("skip-only", F.Catalog.Replace("\"expectedTotal\":3", "\"expectedTotal\":2", StringComparison.Ordinal));
         yield return ("path", F.Catalog.Replace("tests/Fixture", "tests/../Fixture", StringComparison.Ordinal));
         yield return ("many-contracts", "{\"schemaVersion\":1,\"contracts\":[" + string.Join(",", Enumerable.Range(0, 65).Select(i => entry.Replace("c1217-fixture-v1", "c" + i, StringComparison.Ordinal))) + "]}");
+        var skip = JsonDocument.Parse(entry).RootElement.GetProperty("skips")[0].GetRawText();
+        var many = string.Join(",", Enumerable.Range(0, 65).Select(i => skip.Replace("LinkA", "Link" + i, StringComparison.Ordinal)));
+        yield return ("many-identities", "{\"schemaVersion\":1,\"contracts\":[{\"id\":\"many\",\"probe\":\"file-symlink-create-v1\",\"project\":\"tests/Fixture\",\"filter\":\"/*/Fixture/Cases/*\",\"expectedTotal\":66,\"minExecuted\":1,\"skips\":[" + many + "]}]}");
+        foreach (var name in new[] { "id", "probe", "project", "filter", "expectedTotal", "minExecuted", "skips" })
+        foreach (var value in new[] { "null", "true", "{}", "[]" })
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(F.Catalog)!;
+            node["contracts"]![0]![name] = System.Text.Json.Nodes.JsonNode.Parse(value);
+            yield return ("type-" + name + "-" + value, node.ToJsonString());
+        }
+        foreach (var path in new[] { "/tests/Fixture", "../Fixture", "tests//Fixture", "tests/./Fixture", "C:/Fixture", "tests\\Fixture" })
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(F.Catalog)!;
+            node["contracts"]![0]!["project"] = path;
+            yield return ("project-" + path, node.ToJsonString());
+        }
     }
 
     private static IEnumerable<(string, string)> InvalidTrx()

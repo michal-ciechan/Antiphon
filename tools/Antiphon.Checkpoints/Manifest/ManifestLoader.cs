@@ -23,6 +23,7 @@ public static class ManifestLoader
         {
             var stream = new YamlDotNet.RepresentationModel.YamlStream();
             stream.Load(new StringReader(yaml));
+            ValidateConditionalReferences(stream);
             if (stream.Documents.FirstOrDefault()?.RootNode is YamlDotNet.RepresentationModel.YamlMappingNode root
                 && root.Children.TryGetValue(new YamlDotNet.RepresentationModel.YamlScalarNode("timeouts"), out var timeouts)
                 && timeouts is YamlDotNet.RepresentationModel.YamlMappingNode mapping
@@ -70,4 +71,23 @@ public static class ManifestLoader
         LoadYaml(ReceiptFile.ReadText(context ?? CheckpointCleanupDefaults.Context, path, cancellationToken), worktreeRoot, validate);
 
     public static string ToYaml(CheckpointManifest manifest) => Serializer.Serialize(manifest);
+
+    // Inspect the supplied node before deserialization/coercion/normalization. In particular,
+    // a null key must never become an absent opt-in through IgnoreUnmatchedProperties.
+    private static void ValidateConditionalReferences(YamlDotNet.RepresentationModel.YamlStream stream)
+    {
+        if (stream.Documents.FirstOrDefault()?.RootNode is not YamlDotNet.RepresentationModel.YamlMappingNode root
+            || !root.Children.TryGetValue(new YamlDotNet.RepresentationModel.YamlScalarNode("checkpoints"), out var rows)
+            || rows is not YamlDotNet.RepresentationModel.YamlSequenceNode sequence)
+            return;
+        foreach (var node in sequence.Children.OfType<YamlDotNet.RepresentationModel.YamlMappingNode>())
+        {
+            if (!node.Children.TryGetValue(new YamlDotNet.RepresentationModel.YamlScalarNode("conditionalSkips"), out var value))
+                continue;
+            if (value is not YamlDotNet.RepresentationModel.YamlScalarNode scalar
+                || (!scalar.Tag.IsEmpty && scalar.Tag.Value != "tag:yaml.org,2002:str")
+                || !ConditionalSkipContract.IsValidId(scalar.Value))
+                throw new ManifestValidationException("conditionalSkips", "conditionalSkips must be a single nonempty contract ID");
+        }
+    }
 }

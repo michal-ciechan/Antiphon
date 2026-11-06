@@ -50,6 +50,8 @@ public sealed class TrxCaseResult
 
 public static class TrxReport
 {
+    public static StrictTrxParseResult ParseStrict(string path, int expectedTotal) => StrictTrxReport.Parse(path, expectedTotal);
+
     private static readonly HashSet<string> FailureOutcomes = new(StringComparer.Ordinal)
     {
         "Failed", "Error", "Timeout", "Aborted",

@@ -1,9 +1,6 @@
-using System.Reflection;
-using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Checkpoints;
-using Shouldly;
 
 namespace Antiphon.Tests.Checkpoints;
 
@@ -67,27 +64,11 @@ internal static class C1217ConditionalSkipFixture
         </TestRun>
         """;
 
-    // Reflection keeps the test-only commit executable against the pre-feature assembly.
-    // Missing APIs fail assertions, rather than becoming compile failures or fake answers.
-    internal static object ParseCatalog(string json) => Invoke("ConditionalSkipPolicyReader", "Parse", Encoding.UTF8.GetBytes(json));
+    internal static ConditionalSkipCatalog ParseCatalog(string json) => ConditionalSkipPolicyReader.Parse(Encoding.UTF8.GetBytes(json));
     internal static JsonElement Strict(string path, int total = 3) =>
-        JsonSerializer.SerializeToElement(Invoke("StrictTrxReport", "Parse", path, total));
-    internal static object Resolve(object catalog, CheckpointManifest manifest, CheckpointSpec row) =>
-        Invoke("ConditionalSkipPolicyReader", "Resolve", catalog, manifest, row);
+        JsonSerializer.SerializeToElement(TrxReport.ParseStrict(path, total));
+    internal static ConditionalSkipContract Resolve(ConditionalSkipCatalog catalog, CheckpointManifest manifest, CheckpointSpec row) =>
+        ConditionalSkipPolicyReader.Resolve(catalog, manifest, row);
     internal static void Combinations(CheckpointManifest manifest, bool merged) =>
-        Invoke("ConditionalSkipContract", "ValidateCombinations", manifest, merged);
-
-    private static object Invoke(string type, string method, params object[] args)
-    {
-        var target = typeof(ManifestLoader).Assembly.GetType("Antiphon.Checkpoints." + type);
-        target.ShouldNotBeNull($"S1 production API {type} must exist");
-        var member = target.GetMethod(method, BindingFlags.Public | BindingFlags.Static);
-        member.ShouldNotBeNull($"S1 production API {type}.{method} must exist");
-        try { return member.Invoke(null, args)!; }
-        catch (TargetInvocationException ex) when (ex.InnerException is not null)
-        {
-            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
-            throw;
-        }
-    }
+        ConditionalSkipContract.ValidateCombinations(manifest, merged);
 }
