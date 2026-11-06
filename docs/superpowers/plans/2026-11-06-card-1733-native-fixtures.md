@@ -76,3 +76,19 @@ A gated standalone SharedSeed diagnostic may verify the wrapper repair within th
 budget; it cannot replace CP-1. No additional checkpoint build is started without time to await it.
 Fresh is slightly above the Debug approximate 150s target; retain 300s and assess qualification
 samples/partitioning, never widen the cap. All PCs remain pending for SourceLanding Mutation.
+
+## Finish commission d463ea3b
+
+The finish brief explicitly defers CP-3/R-3 under CARD-1720; the interrupted historical
+Unit attempt remains incomplete. This commission runs CP-1 and CP-2 once at its pushed
+tip, preserving the two expected inherited native-policy failures rather than changing
+the excluded policy inputs. Required Unit completion and unresolved Unit findings stay
+with the caller's scoped qualification work; no Full ordinary gate is claimed here.
+
+The permitted native compile at 0bfaf02006f98c20bd82019950271242972bfe4b passed
+(0 errors). The exact Shared_seed_keeps_recipients_and_authority_private diagnostic
+then passed 1/1 with its three required assertion rows in 12.999 seconds. Separate
+build/test leases each waited 75 seconds. This verifies the pushed wrapper repair
+against the prior CP-1 failure, which reached only two rows before losing the
+script-scoped launcher. CP-1 remains required after this diagnostic; all assertions,
+the 300-second execution cap and the six pending Mutation controls remain unchanged.
