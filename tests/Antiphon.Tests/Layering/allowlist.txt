@@ -87,18 +87,18 @@ server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeRunnerClient @ 
 server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
 server/Application/Services/RunnerSlotReconcileJob.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
 
-# slice P0-C4
+# slice P0-C4-residual
+server/Application/Interfaces/IOrchestratorWorkspaceProbe.cs -> OrchestratorWorkspaceCli @ server/Application/Services/OrchestratorWorkspaceLayout.cs
+server/Application/Interfaces/IOrchestratorWorkspaceProbe.cs -> OrchestratorWorkspaceDirectoryFacts @ server/Application/Services/OrchestratorWorkspaceLayout.cs
+server/Application/Interfaces/IOrchestratorWorkspaceProbe.cs -> OrchestratorWorkspaceHomeState @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/AgentTaskService.cs -> OrchestratorWorkspaceFactGatherer @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/OrchestratorWorkspaceWarningService.cs -> OrchestratorWorkspaceCli @ server/Application/Services/OrchestratorWorkspaceLayout.cs
-server/Application/Services/OrchestratorWorkspaceWarningService.cs -> OrchestratorWorkspaceFactGatherer @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/OrchestratorWorkspaceWarningService.cs -> OrchestratorWorkspaceLayout @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/OrchestratorWorkspaceWarningService.cs -> OrchestratorWorkspaceState @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/ProjectSetupService.cs -> OrchestratorWorkspaceCli @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/ProjectSetupService.cs -> OrchestratorWorkspaceFactGatherer @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/ProjectSetupService.cs -> OrchestratorWorkspaceLayout @ server/Application/Services/OrchestratorWorkspaceLayout.cs
 server/Application/Services/ProjectSetupService.cs -> OrchestratorWorkspaceState @ server/Application/Services/OrchestratorWorkspaceLayout.cs
-server/Infrastructure/Agents/AgentExecutor.cs -> AuditService @ server/Application/Services/AuditService.cs
-server/Infrastructure/Agents/EventEmittingToolWrapper.cs -> AuditService @ server/Application/Services/AuditService.cs
 
 # slice P0-C5
 server/Application/Services/LandingVerifier.cs -> LandVerificationArtifacts @ server/Infrastructure/Git/LandVerificationArtifacts.cs
