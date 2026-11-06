@@ -54,6 +54,7 @@ public sealed class C1708ReflogSalvageTests
             throw new OperationCanceledException("witness boundary released", token);
         });
         var joinedBeforeDispose = false;
+        var disposed = false;
         Exception? observed = null;
         try
         {
@@ -65,7 +66,12 @@ public sealed class C1708ReflogSalvageTests
                 if (exit == "exception") throw new InvalidOperationException("intentional caller exception");
             }
             catch (Exception ex) { observed = ex; }
-            finally { await s.DisposeAsync(); }
+            finally
+            {
+                if (exit == "cancellation") await s.CaptureAsync();
+                await s.DisposeAsync();
+                disposed = true;
+            }
             joinedBeforeDispose = s.ReleaseTick!.IsCompleted && exited;
         }
         finally
@@ -76,8 +82,10 @@ public sealed class C1708ReflogSalvageTests
             catch (OperationCanceledException) { }
             try { await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
             catch (OperationCanceledException) { }
+            if (!disposed) await s.DisposeAsync();
         }
 
+        Console.WriteLine("join-observation:" + JsonSerializer.Serialize(new { exit, joinedBeforeDispose, touchedDisposedFixture, exited }));
         joinedBeforeDispose.ShouldBeTrue("joined:W-JOIN:release-tick-completed-before-fixture-dispose");
         touchedDisposedFixture.ShouldBeFalse("joined:W-JOIN:no-touch-after-fixture-dispose");
         Directory.Exists(root).ShouldBeFalse("the actual fixture was disposed");
@@ -130,7 +138,7 @@ public sealed class C1708ReflogSalvageTests
         };
         DesktopLegacyReleasePolicyService.TickResult tick;
         try { tick = await s.TickAsync(); }
-        finally { s.ClearHooks(); await s.CaptureAsync(); }
+        finally { await s.JoinTickAsync(); s.ClearHooks(); await s.CaptureAsync(); }
 
         Directory.Exists(s.Task.Path).ShouldBeTrue("preserved:W-U3:source-tree");
         await s.AssertCustodyAsync(s.HeadBytes, s.HeadLog);
@@ -169,7 +177,7 @@ public sealed class C1708ReflogSalvageTests
             return Task.CompletedTask;
         };
         try { await s.TickAsync(); }
-        finally { s.ClearHooks(); await s.CaptureAsync(); }
+        finally { await s.JoinTickAsync(); s.ClearHooks(); await s.CaptureAsync(); }
 
         // Removal is a prerequisite: a retained reflog must not mask an omitted source tuple.
         Directory.Exists(s.Task.Path).ShouldBeFalse("the source really was removed");
@@ -269,6 +277,7 @@ public sealed class C1708ReflogSalvageTests
         try { tick = await s.TickAsync(); }
         finally
         {
+            await s.JoinTickAsync();
             s.ClearHooks();
             if (originalMode is { } mode && OperatingSystem.IsLinux() && File.Exists(s.HeadLog))
                 File.SetUnixFileMode(s.HeadLog, mode);
@@ -352,12 +361,18 @@ public sealed class C1708ReflogSalvageTests
         LandingGitFixture.FixtureGit reader, string caseId, CancellationToken ct) : IAsyncDisposable
     {
         public DesktopLegacyWorld World => world;
+        private CancellationTokenSource? _tickCancellation;
+        private readonly object _joinGate = new();
+        private System.Threading.Tasks.Task? _join;
         public Task<DesktopLegacyReleasePolicyService.TickResult>? ReleaseTick { get; private set; }
         public async Task<DesktopLegacyReleasePolicyService.TickResult> TickAsync(
             Action<DesktopLegacyReleasePolicyService>? configure = null)
         {
+            if (ReleaseTick is not null) throw new InvalidOperationException("This source owns exactly one release tick");
+            _tickCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
             ReleaseTick = RunTickAsync(configure);
-            return await ReleaseTick.WaitAsync(ct);
+            try { return await ReleaseTick.WaitAsync(ct); }
+            finally { await JoinTickAsync(); }
         }
         private async Task<DesktopLegacyReleasePolicyService.TickResult> RunTickAsync(
             Action<DesktopLegacyReleasePolicyService>? configure)
@@ -365,7 +380,24 @@ public sealed class C1708ReflogSalvageTests
             await using var scope = world.Host.Services.CreateAsyncScope();
             var policy = scope.ServiceProvider.GetRequiredService<DesktopLegacyReleasePolicyService>();
             configure?.Invoke(policy);
-            return await policy.RunTickAsync(CancellationToken.None);
+            return await policy.RunTickAsync(_tickCancellation!.Token);
+        }
+        public System.Threading.Tasks.Task JoinTickAsync()
+        {
+            lock (_joinGate) return _join ??= CancelAndJoinTickAsync();
+        }
+        private async System.Threading.Tasks.Task CancelAndJoinTickAsync()
+        {
+            if (ReleaseTick is null) return;
+            _tickCancellation!.Cancel();
+            try { await ReleaseTick.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (Exception ex) when (ReleaseTick.IsCompleted)
+            {
+                // TickAsync owns the original outcome. Cleanup must observe completion
+                // without replacing a caller's cancellation, assertion or exception.
+                Console.WriteLine("joined-release-tick:" + ex.GetType().Name);
+            }
+            // A join deadline failure propagates: keep the world intact while a tick is live.
         }
         public DesktopLegacyWorld.Handle Task => task;
         public string Pushed { get; set; } = "";
@@ -454,6 +486,18 @@ public sealed class C1708ReflogSalvageTests
         }
         public async Task CaptureAsync(string? evidence = null)
         {
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                await CaptureCoreAsync(evidence);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                Console.WriteLine("post-tick:" + caseId + ":diagnostics-canceled-after-join");
+            }
+        }
+        private async Task CaptureCoreAsync(string? evidence)
+        {
             // Emit physical state before the preservation assertion can abort a mutant result.
             Console.WriteLine("post-tick:" + JsonSerializer.Serialize(new
             {
@@ -468,7 +512,13 @@ public sealed class C1708ReflogSalvageTests
                 reachable = await RequiredAsync(world.Fixture.Repository, "rev-list", "--all"),
             }));
         }
-        public ValueTask DisposeAsync() { ClearHooks(); return world.DisposeAsync(); }
+        public async ValueTask DisposeAsync()
+        {
+            await JoinTickAsync();
+            ClearHooks();
+            _tickCancellation?.Dispose();
+            await world.DisposeAsync();
+        }
     }
 
     /// <summary>(i) The rewritten commit is still reachable through its salvage ref once the tree is retired.</summary>
