@@ -25,7 +25,7 @@ public sealed class WorkspaceReservationJournal(
         var rows = await db.WorkspaceUseReservations.AsNoTracking()
             .Where(r => r.Active)
             .ToListAsync(ct);
-        return rows.Where(r => Same(r, key)).Select(ToSnapshot).ToList();
+        return (await OverlapAsync(db, rows, key, null, ct)).Select(ToSnapshot).ToList();
     }
 
     public async Task<IReadOnlyList<WorkspaceReservationSnapshot>> ReadActiveAsync(
@@ -34,9 +34,10 @@ public sealed class WorkspaceReservationJournal(
         if (!liveOwnersOnly) return await ReadActiveAsync(key, ct);
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var rows = (await db.WorkspaceUseReservations.AsNoTracking()
+        var active = await db.WorkspaceUseReservations.AsNoTracking()
             .Where(r => r.Active)
-            .ToListAsync(ct)).Where(r => Same(r, key)).ToList();
+            .ToListAsync(ct);
+        var rows = await OverlapAsync(db, active, key, null, ct);
         var orphaned = await FindOrphanedLaunchRowsAsync(db, rows, LaunchGrace, ct);
         return rows.Where(r => !orphaned.Contains(r)).Select(ToSnapshot).ToList();
     }
@@ -50,7 +51,7 @@ public sealed class WorkspaceReservationJournal(
         var blocking = await db.WorkspaceUseReservations
             .Where(r => r.Active && (r.Kind == WorkspaceReservationKind.Retirement || r.Kind == WorkspaceReservationKind.HistoricalFence))
             .ToListAsync(ct);
-        if (blocking.Any(r => Same(r, command.Key)))
+        if ((await OverlapAsync(db, blocking, command.Key, command.TaskId, ct)).Count != 0)
         {
             await tx.RollbackAsync(ct);
             return new(false, null, "workspace_reserved");
@@ -87,7 +88,7 @@ public sealed class WorkspaceReservationJournal(
         var existing = await db.WorkspaceUseReservations
             .Where(r => r.Active)
             .ToListAsync(ct);
-        var overlap = existing.Where(r => Same(r, command.Key)).ToList();
+        var overlap = await OverlapAsync(db, existing, command.Key, command.TaskId, ct);
         // CARD-0664 D-1: an orphaned Launch row (owner ended or missing, past grace) no longer
         // blocks, and the claim releases it on sight in its own transaction.
         var orphaned = await FindOrphanedLaunchRowsAsync(db, overlap, LaunchGrace, ct);
@@ -246,6 +247,28 @@ public sealed class WorkspaceReservationJournal(
 
     private static bool Same(WorkspaceUseReservation row, WorkspaceReservationKey key) =>
         WorkspaceReservationKey.Same(row.CanonicalPath, row.SourceFullRef, row.CommonDirectory, key);
+
+    // RefOnly identities distinguish task ownership, but they cannot make the same
+    // repository/ref independently writable. Keep the established Checkout path rule;
+    // when either owner is recorded RefOnly, also fence an exact nonempty full ref.
+    private static async Task<List<WorkspaceUseReservation>> OverlapAsync(AppDbContext db,
+        IReadOnlyList<WorkspaceUseReservation> rows, WorkspaceReservationKey key, Guid? taskId, CancellationToken ct)
+    {
+        var ids = rows.Where(r => r.TaskId.HasValue).Select(r => r.TaskId!.Value)
+            .Concat(taskId is Guid id ? new[] { id } : Array.Empty<Guid>()).Distinct().ToArray();
+        var refOwners = (await db.AgentTasks.AsNoTracking()
+            .Where(t => ids.Contains(t.Id) && t.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            .Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+        var normalized = key.Normalized();
+        var requestingRefOwner = taskId is Guid owner && refOwners.Contains(owner);
+        return rows.Where(r => Same(r, normalized)
+            || (requestingRefOwner || r.TaskId is Guid rowOwner && refOwners.Contains(rowOwner))
+                && normalized.SourceFullRef.Length != 0
+                && WorkspaceReservationKey.NormalizeRef(r.SourceFullRef) == normalized.SourceFullRef
+                && WorkspaceReservationKey.PathsEqual(
+                    WorkspaceReservationKey.NormalizeRepository(r.CommonDirectory, r.CanonicalPath), normalized.CommonDirectory))
+            .ToList();
+    }
 
     // Also acquired by CardDone intent admission. A short transaction serializes readers
     // with insertion even when no reservation row exists yet. Never held during external I/O.

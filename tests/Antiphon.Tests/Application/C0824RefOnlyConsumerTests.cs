@@ -142,6 +142,13 @@ public sealed class C0824RefOnlyConsumerTests
             other.Id, RetirementId: Guid.NewGuid()), default);
         refused.Accepted.ShouldBeFalse("active-owner-fenced");
         refused.Reason.ShouldBe("workspace_in_use");
+        var sameRef = WorkspaceReservationKey.For(other.WorktreePath, "refs/heads/" + f.Task.WorktreeBranch, other.RepoPath);
+        var crossIdentity = await journal.TryClaimRetirementAsync(new(sameRef, WorkspaceReservationKind.Retirement,
+            other.Id, RetirementId: Guid.NewGuid()), default);
+        crossIdentity.Accepted.ShouldBeFalse("same-ref-fenced");
+        crossIdentity.Reason.ShouldBe("workspace_in_use");
+        (await journal.ReadActiveAsync(sameRef, default)).ShouldHaveSingleItem().TaskId
+            .ShouldBe(f.Task.Id, "same-ref-owner-visible-across-identities");
         // Ref ownership is admitted by the real binding producer, before a second
         // identity can claim the first task's repository/ref coordinate.
         var collisionId = Guid.NewGuid();
