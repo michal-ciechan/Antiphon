@@ -70,9 +70,10 @@ function Test-C1733_ReservationFinally {
     $snap = Save-C599ASnapshot $fx
     $path = Join-Path $fx.ReleaseRoot 'publications.json'
     $original = [IO.File]::ReadAllBytes($path)
+    $restoreCount = $global:C1733Timing.restores
     $threw = $false
     try { Invoke-C1339ReservationVariant $fx $snap { [IO.File]::WriteAllText($path, '{broken'); throw 'mutation-threw' } 'unused' } catch { $threw = $_.Exception.Message -match 'mutation-threw' }
-    Assert-C487 ($threw -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq [Convert]::ToBase64String($original)) 'C1733 throwing-mutation-restores'
+    Assert-C487 ($threw -and $global:C1733Timing.restores -eq ($restoreCount + 1) -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq [Convert]::ToBase64String($original)) 'C1733 throwing-mutation-restores'
     $next = Invoke-C1339Promote $fx @{ WhatIf = $true }
     Assert-C487 ($next.ExitCode -eq 0) 'C1733 next-variant-valid' $next.Refusal
 }
@@ -95,6 +96,11 @@ function Test-C1733_SnapshotWork {
     [IO.Directory]::Delete([IO.Path]::GetDirectoryName($path))
     Restore-C1339Snapshot $snap
     Assert-C487 ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq 'AP8BgA==') 'C1733 missing-parent-restored'
+    $absentDirectory = Join-Path $fx.ReleaseRoot 'expected-absent'
+    $snap.Absent += $absentDirectory
+    [void][IO.Directory]::CreateDirectory($absentDirectory)
+    Restore-C1339Snapshot $snap
+    Assert-C487 (-not [IO.Directory]::Exists($absentDirectory)) 'C1733 absent-directory-restored'
     [IO.File]::Delete($path)
     [void][IO.Directory]::CreateDirectory($path)
     $threw = $false

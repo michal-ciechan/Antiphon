@@ -27,5 +27,5 @@ public sealed class C1733AllocatorFixtureTests
 
     [Test]
     public Task Snapshot_bytes_work_and_restore_failures_are_observed() =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1733", "C1733_SnapshotWork", 4);
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1733", "C1733_SnapshotWork", 5);
 }
