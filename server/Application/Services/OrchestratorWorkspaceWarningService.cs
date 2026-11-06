@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -17,13 +18,13 @@ public sealed class OrchestratorWorkspaceWarningService
     public const string FingerprintPrefix = "fp=";
 
     private readonly AppDbContext _db;
-    private readonly OrchestratorWorkspaceFactGatherer _gatherer;
+    private readonly IOrchestratorWorkspaceProbe _gatherer;
     private readonly TimeProvider _time;
     private readonly ILogger<OrchestratorWorkspaceWarningService> _logger;
 
     public OrchestratorWorkspaceWarningService(
         AppDbContext db,
-        OrchestratorWorkspaceFactGatherer gatherer,
+        IOrchestratorWorkspaceProbe gatherer,
         TimeProvider time,
         ILogger<OrchestratorWorkspaceWarningService> logger)
     {

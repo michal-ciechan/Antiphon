@@ -578,6 +578,7 @@ try
     builder.Services.AddScoped<PipelineDefinitionService>();
     builder.Services.AddScoped<PipelineResolution>();
     builder.Services.AddSingleton<OrchestratorWorkspaceFactGatherer>();
+    builder.Services.AddSingleton<IOrchestratorWorkspaceProbe>(sp => sp.GetRequiredService<OrchestratorWorkspaceFactGatherer>());
     builder.Services.AddScoped<OrchestratorWorkspaceWarningService>();
     builder.Services.AddScoped<ProjectSetupService>();
     builder.Services.AddScoped<BoardService>();
@@ -880,6 +881,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Messaging.InboundUnconsumedEventConsumer>();
     }
     builder.Services.AddScoped<AuditService>();
+    builder.Services.AddScoped<IAuditService>(sp => sp.GetRequiredService<AuditService>());
     builder.Services.AddSingleton<AgentTuiRunnerCatalog>();
     builder.Services.AddSingleton<AgentTuiMetrics>();
     builder.Services.AddSingleton<AgentTuiSecretIdempotencyCache>();

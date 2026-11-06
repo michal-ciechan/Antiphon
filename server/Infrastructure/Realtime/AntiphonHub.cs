@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
@@ -14,10 +15,10 @@ namespace Antiphon.Server.Infrastructure.Realtime;
 public class AntiphonHub : Hub
 {
     private static readonly Serilog.ILogger _logger = Log.ForContext<AntiphonHub>();
-    private readonly AuditService _auditService;
+    private readonly IAuditService _auditService;
     private readonly AgentChannelService _agentChannelService;
 
-    public AntiphonHub(AuditService auditService, AgentChannelService agentChannelService)
+    public AntiphonHub(IAuditService auditService, AgentChannelService agentChannelService)
     {
         _auditService = auditService;
         _agentChannelService = agentChannelService;

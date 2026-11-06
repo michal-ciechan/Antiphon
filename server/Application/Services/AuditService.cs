@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
@@ -14,7 +15,7 @@ namespace Antiphon.Server.Application.Services;
 /// relational summary (permanent) and JSONB full content (archivable).
 /// FR47, FR48, FR49, FR50, FR51, FR53, NFR16, NFR17, NFR22, NFR23, NFR24.
 /// </summary>
-public class AuditService
+public class AuditService : IAuditService
 {
     private readonly AppDbContext _db;
     private readonly IOptions<AuditSettings> _auditSettings;

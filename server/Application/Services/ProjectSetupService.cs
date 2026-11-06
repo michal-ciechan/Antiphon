@@ -31,7 +31,7 @@ public sealed class ProjectSetupService
     private readonly AgentService? _agentService;
     private readonly AgentControlService? _agentControlService;
     private readonly IDirectoryWriter? _directoryWriter;
-    private readonly OrchestratorWorkspaceFactGatherer _workspaceGatherer;
+    private readonly IOrchestratorWorkspaceProbe _workspaceGatherer;
 
     public ProjectSetupService(
         AppDbContext db,
@@ -46,7 +46,7 @@ public sealed class ProjectSetupService
         GitWorkspaceService? git = null,
         ProjectReadinessCache? readinessCache = null,
         IServiceScopeFactory? scopeFactory = null,
-        OrchestratorWorkspaceFactGatherer? workspaceGatherer = null,
+        IOrchestratorWorkspaceProbe? workspaceGatherer = null,
         CardTaskFileService? cardFiles = null)
     {
         _db = db;

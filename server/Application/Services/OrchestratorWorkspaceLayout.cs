@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -436,7 +437,7 @@ public sealed record OrchestratorWorkspaceDirectoryFacts(
 /// I/O adapter for <see cref="OrchestratorWorkspaceLayout"/>. Gathers the small fact
 /// record Classify consumes; never shells out to Claude/Codex/Grok.
 /// </summary>
-public sealed class OrchestratorWorkspaceFactGatherer
+public sealed class OrchestratorWorkspaceFactGatherer : IOrchestratorWorkspaceProbe
 {
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(10);
 
