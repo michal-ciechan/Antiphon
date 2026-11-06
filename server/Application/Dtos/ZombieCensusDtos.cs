@@ -43,7 +43,10 @@ public sealed record ZombieCensusTaskRow(
     DateTimeOffset? CompletedAt,
     WorkspaceMode Workspace,
     string WorkingDirectory,
-    string? WorktreePath);
+    string? WorktreePath,
+    DesktopWorkspaceKind DesktopWorkspaceKind = DesktopWorkspaceKind.Checkout,
+    string? RunnerId = null,
+    string? RemoteWorktreePath = null);
 
 public sealed record ZombieCensusDbSnapshot(
     IReadOnlyList<ZombieCensusSessionRow> Sessions,

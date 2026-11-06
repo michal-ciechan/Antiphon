@@ -3774,10 +3774,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     || t.WorktreePath == path
                     || t.WorkingDirectory == path)
                 .OrderByDescending(t => t.CreatedAt)
-                .Select(t => new { t.WorktreePath, t.WorkingDirectory, t.WorktreeBranch, t.RepoPath })
                 .FirstOrDefaultAsync(ct);
             if (task is not null)
             {
+                if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+                {
+                    var context = await new TaskWorkspaceContextResolver(db).RequireRemoteExecutionAsync(task, ct);
+                    if (task.AgentSessionId != session.Id || session.RunnerId != task.RunnerId
+                        || session.RunnerCwd != context.ExecutionDirectory || session.RunnerStoreId is null)
+                        throw new ConflictException("The session has no bound remote execution custody.",
+                            "ref_only_execution_binding_required");
+                }
                 if (!string.IsNullOrWhiteSpace(task.WorktreePath ?? task.WorkingDirectory))
                     path = task.WorktreePath ?? task.WorkingDirectory!;
                 if (!string.IsNullOrWhiteSpace(task.WorktreeBranch))

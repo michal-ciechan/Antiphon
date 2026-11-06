@@ -677,6 +677,13 @@ public sealed partial class AgentTaskDispatcher
             // Old rows can retain the public desktop aliases. Use the canonical null binding
             // before capacity, platform and preparation checks. Persist it before the
             // separate claim context reads the queued row.
+            if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                && (string.IsNullOrWhiteSpace(task.RunnerId) || RunnerRequestIntent.IsDesktopAlias(task.RunnerId)))
+            {
+                heldThisTick.Add((task.Id, HoldKind.RunnerUnavailable));
+                await TraceHeldAsync(task, "ref_only_requires_remote_runner", lastHeld, ct);
+                continue;
+            }
             if (RunnerRequestIntent.IsDesktopAlias(task.RunnerId))
             {
                 task.RunnerId = null;

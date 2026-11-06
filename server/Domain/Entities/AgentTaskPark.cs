@@ -26,6 +26,8 @@ public sealed class AgentTaskPark
     public Guid? WorktreeId { get; set; }
     public string? WorktreePath { get; set; }
     public string? RemoteWorktreePath { get; set; }
+    /// <summary>Immutable recorded RefOnly workspace episode; null for legacy Checkout parks.</summary>
+    public string? WorkspaceSnapshotJson { get; set; }
     public string? FullRef { get; set; }
     public string? BaselineSha { get; set; }
     public string? RepositoryIdentity { get; set; }

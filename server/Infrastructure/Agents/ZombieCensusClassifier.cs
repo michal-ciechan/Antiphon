@@ -289,6 +289,7 @@ public sealed class ZombieCensusClassifier
         {
             foreach (var task in tasks)
             {
+                if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly) continue;
                 var taskLeaf = GetCardTaskLeaf(task.WorktreePath) ?? GetCardTaskLeaf(task.WorkingDirectory);
                 if (taskLeaf == leaf && task.AgentSessionId is { } taskSession)
                     return new Identity(ZombieIdentityMethod.I5, taskSession, RunnerClaimed: false);

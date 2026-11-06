@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -192,6 +193,8 @@ public sealed class AgentTaskService
     {
         /// <summary>Only an orchestrator (or the UI) may create tasks. A worker gets 403.</summary>
         public bool MayDelegate => Task is null || Task.Kind == AgentTaskKind.Orchestrator;
+        public TaskWorkspaceContext? WorkspaceContext { get; init; }
+        public string? FrozenSourceSha { get; init; }
     }
 
     /// <summary>
@@ -207,6 +210,29 @@ public sealed class AgentTaskService
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
         if (task is not null)
         {
+            if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            {
+                var context = await new TaskWorkspaceContextResolver(_db).RequireRemoteExecutionAsync(task, ct);
+                var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+                if (_landingGit is null || !RefOnlyCommittedSource.BaselineMatches(task, context, baseline))
+                    throw new ConflictException("The recorded source cannot be proven.", "ref_only_source_unavailable");
+                TaskWorkspaceContextResolver.RequireRepositoryIdentity(context,
+                    await _landingGit.CommonDirectoryAsync(context.GitWorkingDirectory, ct));
+                if ((await _landingGit.RegistrationsAsync(context.GitWorkingDirectory, ct)).Any(r => r.Branch == context.FullRef))
+                    throw new ConflictException("The source ref has a checkout.", "ref_only_source_checkout_attached");
+                var direct = await _landingGit.RunAsync(context.GitWorkingDirectory, ["symbolic-ref", "-q", context.FullRef], ct);
+                var source = await _landingGit.RunAsync(context.GitWorkingDirectory,
+                    ["rev-parse", "--verify", context.FullRef + "^{commit}"], ct);
+                if (direct.ExitCode != 1 || !source.Succeeded || !GitObjectId.IsFull(source.Output.Trim()))
+                    throw new ConflictException("The recorded source cannot be proven.", "ref_only_source_unavailable");
+                var sha = source.Output.Trim();
+                var ancestor = await _landingGit.RunAsync(context.GitWorkingDirectory,
+                    ["merge-base", "--is-ancestor", context.BaseSha!, sha], ct);
+                if (!ancestor.Succeeded)
+                    throw new ConflictException("The recorded source changed lineage.", "ref_only_source_unavailable");
+                return new Caller(task, task.AgentSessionId, context.ExecutionDirectory!)
+                { WorkspaceContext = context, FrozenSourceSha = sha };
+            }
             // A worktree caller's directory IS its worktree — children it spawns without -Dir must
             // land where it actually works, or their edits bypass its branch entirely.
             var taskDir = task.WorktreePath ?? task.WorkingDirectory;
@@ -301,6 +327,32 @@ public sealed class AgentTaskService
         // caller named excludes the default even when a later step degrades it to a fresh task.
         var runnerIntent = RunnerRequestIntent.Parse(request.RunnerId);
         request = request with { RunnerId = runnerIntent.RemoteRunnerId };
+        TaskWorkspaceContext? refOnlyParent = null;
+        if (caller.Task is { DesktopWorkspaceKind: DesktopWorkspaceKind.RefOnly } recordedParent)
+        {
+            if (!caller.MayDelegate)
+                throw new ForbiddenException("A worker cannot create delegates.");
+            refOnlyParent = await new TaskWorkspaceContextResolver(_db).RequireRemoteExecutionAsync(recordedParent, ct);
+            if (caller.WorkspaceContext != refOnlyParent || !GitObjectId.IsFull(caller.FrozenSourceSha))
+                throw new ConflictException("The caller's recorded source changed.", "ref_only_source_unavailable");
+            if (request.Workspace is WorkspaceMode.Shared or WorkspaceMode.ReadOnly
+                || runnerIntent.Source == RunnerRequestSource.ExplicitLocal
+                || request.AgentId is not null || request.Agent is not null || request.FollowUpOnTask is not null)
+                throw new ConflictException("A ref-only caller must create an independent remote Worktree.",
+                    "ref_only_child_requires_worktree");
+            // A remote execution path is not a desktop filesystem root. Only the bound object
+            // repository is inherited for a fresh child; it grants no Shared edit authority.
+            if (request.WorkingDirectory is null || request.WorkingDirectory == refOnlyParent.ExecutionDirectory)
+                request = request with { WorkingDirectory = refOnlyParent.GitWorkingDirectory };
+            if (request.WorktreeBaseRequestedRef is null && request.WorktreeBaseTask is null
+                && request.RepairSourceTaskId is null && request.SourceLandingOperationId is null && !request.FreshWorktree)
+                request = request with { WorktreeBaseRequestedRef = caller.FrozenSourceSha };
+            if (runnerIntent.Source == RunnerRequestSource.Unset)
+            {
+                runnerIntent = RunnerRequestIntent.Parse(recordedParent.RunnerId);
+                request = request with { RunnerId = runnerIntent.RemoteRunnerId };
+            }
+        }
         var askedForExistingProcess = request.AgentId is not null
             || !string.IsNullOrWhiteSpace(request.Agent)
             || !string.IsNullOrWhiteSpace(request.FollowUpOnTask);
@@ -669,7 +721,7 @@ public sealed class AgentTaskService
                 ? caller.ExtraAllowedRoots ?? []
                 : _settings.AllowedRoots;
             resolved = await _workspace.ResolveAsync(
-                request.WorkingDirectory, caller.WorkingDirectory, allowedRoots, ct);
+                request.WorkingDirectory, refOnlyParent?.GitWorkingDirectory ?? caller.WorkingDirectory, allowedRoots, ct);
         }
         catch (DelegationWorkspaceResolver.RejectedException ex)
         {
@@ -2198,7 +2250,9 @@ public sealed class AgentTaskService
         var card = prior.CardId is not Guid cardId
             ? "[No card binding.]"
             : $"{cardIdentifier ?? "[card no longer exists]"} ({cardId:D})";
-        var worktree = prior.WorktreePath is { Length: > 0 } path && Directory.Exists(path)
+        var worktree = prior.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? $"[ref-only identity: {prior.WorktreePath}]\nBranch: {prior.WorktreeBranch}; runner: {prior.RunnerId}; execution: {prior.RemoteWorktreePath}"
+            : prior.WorktreePath is { Length: > 0 } path && Directory.Exists(path)
             ? $"{path}\nBranch: {prior.WorktreeBranch ?? "[No branch recorded.]"}"
             : "[No surviving worktree directory.]";
 
@@ -4274,6 +4328,8 @@ public sealed class AgentTaskService
         AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct,
         string? landingTarget = null, string? landingRemoteBeforeSha = null)
     {
+        if (conflicted.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return null;
         var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == conflicted.RootTaskId, ct);
         if (siblings >= _settings.MaxTasksPerRoot || conflicted.Depth + 1 > _settings.MaxDepth)
         {

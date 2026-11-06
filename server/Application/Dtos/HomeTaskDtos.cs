@@ -51,7 +51,8 @@ public sealed record HomeTaskWorkerDto(
     DateTime? CompletedAt,
     RequiredPlatform RequiredPlatform = RequiredPlatform.Any,
     string? RunnerId = null,
-    string? ObservedPlatform = null);
+    string? ObservedPlatform = null,
+    DesktopWorkspaceKind DesktopWorkspaceKind = DesktopWorkspaceKind.Checkout);
 
 /// <summary>
 /// One home-rail item: a board card, or an unbound delegation. Bound tasks are never items —
@@ -106,6 +107,7 @@ public sealed record HomeTaskItemDto(
     DateTime? CompletedAt,
     RequiredPlatform? RequiredPlatform = null,
     string? RunnerId = null,
-    string? ObservedPlatform = null);
+    string? ObservedPlatform = null,
+    DesktopWorkspaceKind DesktopWorkspaceKind = DesktopWorkspaceKind.Checkout);
 
 public sealed record HomeTasksDto(DateTime GeneratedAt, IReadOnlyList<HomeTaskItemDto> Items);

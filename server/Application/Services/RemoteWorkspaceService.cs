@@ -1080,6 +1080,27 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     {
         try
         {
+            if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            {
+                if (string.IsNullOrWhiteSpace(task.RunnerId) || RunnerRequestIntent.IsDesktopAlias(task.RunnerId)
+                    || string.IsNullOrWhiteSpace(task.RemoteWorktreePath))
+                    return "ref_only_requires_remote_runner";
+                var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+                if (_refWorkspaces is null || baseline?.SchemaVersion != 2
+                    || park.PublicationReceiptId is null || !GitObjectId.IsFull(park.SourceSha)
+                    || park.FullRef != baseline.Primary.FullRef || park.TaskId != task.Id
+                    || park.WorktreePath != task.WorktreePath || park.RunnerId != task.RunnerId
+                    || park.RemoteWorktreePath != task.RemoteWorktreePath)
+                    return "park_source_missing";
+                try
+                {
+                    if (!await _refWorkspaces.MatchesParkAsync(task, park, task.Attempt == park.Attempt + 1, ct))
+                        return "park_workspace_changed";
+                    var observed = await _refWorkspaces.InspectAsync(task, baseline.Primary, null, ct);
+                    return observed.Sha == park.SourceSha ? null : "park_source_changed";
+                }
+                catch (ConflictException ex) { return ex.Code; }
+            }
             var repo = task.RepoPath;
             var path = park.WorktreePath ?? task.WorktreePath;
             var fullRef = park.FullRef;

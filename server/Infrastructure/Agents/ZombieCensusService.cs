@@ -135,7 +135,8 @@ public sealed class ZombieCensusService
             a.WorkingDirectory)).ToList();
 
         var taskRows = await _db.AgentTasks.AsNoTracking()
-            .Select(t => new { t.Id, t.AgentId, t.AgentSessionId, t.Status, t.CompletedAt, t.Workspace, t.WorkingDirectory, t.WorktreePath })
+            .Select(t => new { t.Id, t.AgentId, t.AgentSessionId, t.Status, t.CompletedAt, t.Workspace, t.WorkingDirectory,
+                t.WorktreePath, t.DesktopWorkspaceKind, t.RunnerId, t.RemoteWorktreePath })
             .ToListAsync(cancellationToken);
         var tasks = taskRows.Select(t => new ZombieCensusTaskRow(
             t.Id,
@@ -145,7 +146,7 @@ public sealed class ZombieCensusService
             t.CompletedAt is { } completed ? new DateTimeOffset(DateTime.SpecifyKind(completed, DateTimeKind.Utc)) : null,
             t.Workspace,
             t.WorkingDirectory,
-            t.WorktreePath)).ToList();
+            t.WorktreePath, t.DesktopWorkspaceKind, t.RunnerId, t.RemoteWorktreePath)).ToList();
 
         return new ZombieCensusDbSnapshot(sessions, agents, tasks);
     }

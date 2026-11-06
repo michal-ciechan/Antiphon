@@ -111,7 +111,12 @@ public sealed class AgentTaskDecisionQuestionService(
         var policy = task.InternalDecisionPolicyJson is null
             ? null : InternalDecisionPolicy.ReadStored(task.InternalDecisionPolicyJson);
         var root = task.WorktreePath ?? task.RepoPath ?? task.WorkingDirectory;
-        var result = InternalDecisionQuestionPolicy.Evaluate(policy, normalized, root);
+        // The current runner protocol cannot prove remote exact-file containment (including
+        // links). Desktop existence, the identity and canonical disk are never substitutes.
+        var result = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? new InternalDecisionQuestionResponse(normalized.RequestId, InternalDecisionDisposition.NeedsHuman,
+                "ref_only_remote_path_verification_required", normalized.GrantId, null)
+            : InternalDecisionQuestionPolicy.Evaluate(policy, normalized, root);
         var now = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime;
         var question = new AgentTaskDecisionQuestion
         {

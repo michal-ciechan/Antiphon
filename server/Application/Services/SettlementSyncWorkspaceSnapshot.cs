@@ -62,4 +62,37 @@ internal sealed record SettlementSyncWorkspaceSnapshot(
         }
         catch (ConflictException) { return false; }
     }
+
+    public static async Task<bool> MatchesParkAsync(AppDbContext db, AgentTask task, AgentTaskPark park,
+        bool resumed, CancellationToken ct)
+    {
+        if (park.WorkspaceSnapshotJson is null)
+            return task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout && task.TaskRefWorkspaceBindingId is null;
+        SettlementSyncWorkspaceSnapshot? snapshot;
+        try { snapshot = JsonSerializer.Deserialize<SettlementSyncWorkspaceSnapshot>(park.WorkspaceSnapshotJson); }
+        catch (JsonException) { return false; }
+        if (snapshot is null || snapshot.Version != 1 || snapshot.Kind != DesktopWorkspaceKind.RefOnly
+            || task.DesktopWorkspaceKind != snapshot.Kind || task.Id != snapshot.TaskId || park.TaskId != snapshot.TaskId
+            || park.Attempt != snapshot.Attempt || park.TaskConcurrencyToken != snapshot.TaskRevision
+            || task.Attempt != snapshot.Attempt + (resumed ? 1 : 0)
+            || !resumed && task.ConcurrencyToken != snapshot.TaskRevision
+            || resumed && (task.ReleasedSeatAnswerReleaseId != park.RunnerSeatReleaseId
+                || task.ReleasedSeatAnswerTargetAttempt != task.Attempt || task.ReleasedSeatAnswerId is null)
+            || task.TaskRefWorkspaceBindingId != snapshot.BindingId
+            || task.ProgressBaselineJson != snapshot.BaselineJson || task.RepoPath != snapshot.RepositoryPath
+            || task.WorktreePath != snapshot.IdentityPath || park.WorktreePath != snapshot.IdentityPath
+            || task.RunnerId != snapshot.RunnerId || park.RunnerId != snapshot.RunnerId
+            || task.RemoteWorktreePath != snapshot.RemoteWorktreePath || park.RemoteWorktreePath != snapshot.RemoteWorktreePath)
+            return false;
+        var baseline = TaskProgressJson.TryReadBaseline(snapshot.BaselineJson);
+        if (baseline is not { SchemaVersion: 2 } || baseline.Primary.FullRef != park.FullRef
+            || baseline.Primary.LocalSha != park.BaselineSha) return false;
+        try
+        {
+            var context = await new TaskWorkspaceContextResolver(db).ResolveCurrentAsync(task, ct);
+            return RefOnlyCommittedSource.BaselineMatches(task, context, baseline)
+                && context.BindingRevision == snapshot.BindingRevision;
+        }
+        catch (ConflictException) { return false; }
+    }
 }
