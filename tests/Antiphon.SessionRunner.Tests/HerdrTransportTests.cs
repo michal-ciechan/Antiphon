@@ -256,6 +256,7 @@ public class HerdrTransportTests
         for (var i = 0; i < 20; i++)
             (await Client(fake.EndpointPath).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
         var after = OperatingSystem.IsLinux() ? Directory.GetFiles("/proc/self/fd").Length : Process.GetCurrentProcess().HandleCount;
+        Console.WriteLine($"C801 native handles: before={before}, after={after}, delta={after - before}");
         (after - before <= 8).ShouldBeTrue($"native handles leaked: before={before}, after={after}");
     }
 
