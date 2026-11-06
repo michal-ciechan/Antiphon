@@ -1,3 +1,4 @@
+using static Antiphon.Tests.TestHelpers.RemoteScriptContractSupport;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
@@ -103,7 +104,7 @@ public sealed class GrokRunnerImageContractTests
             need_uid() { [ "$1" = 1654 ] || exit 2; }
             result() { printf 'C660_ROW grok-version %s %s\n' "$1" "$2"; [ "$1" = ok ] && exit 0; exit 1; }
             """ + "\n" + row;
-        RemoteScriptContractTests.LinuxShell(script).ShouldContain("C660_ROW grok-version " + outcome + " ");
+        LinuxShell(script).ShouldContain("C660_ROW grok-version " + outcome + " ");
     }
 
     private static string GrokRow(string probe)

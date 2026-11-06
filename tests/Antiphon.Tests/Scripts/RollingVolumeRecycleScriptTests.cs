@@ -1,3 +1,4 @@
+using static Antiphon.Tests.TestHelpers.RemoteScriptContractSupport;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -1338,7 +1339,7 @@ public sealed class RollingVolumeRecycleScriptTests
     public void C1594_Antiphon_evidence_gitdir(string variant)
     {
         C1008HostFixture.RequireNativeLinux();
-        var output = RemoteScriptContractTests.LinuxShell(
+        var output = LinuxShell(
             "node \"$repo/scripts/fixtures/c1105-git-audit.cjs\" " + variant
             + " \"$repo/scripts/c590-remote.sh\"\n", "repo");
         output.ShouldContain("PASS " + variant);
@@ -1793,7 +1794,7 @@ public sealed class RollingVolumeRecycleScriptTests
         const string settled = "11111111-1111-1111-1111-111111111111";
         const string unknown = "22222222-2222-2222-2222-222222222222";
         const string unproven = "33333333-3333-3333-3333-333333333333";
-        var report = RemoteScriptContractTests.LinuxShell(C1317HostCensusScript());
+        var report = LinuxShell(C1317HostCensusScript());
         report += await C1317WrapperCensus("wrapper-unknown", unknown, "Working", "Working", null, omitLandRequest: true, pass: false);
         report += await C1317WrapperCensus("wrapper-unproven", unproven, "Dispatched", "Succeeded",
             new JsonObject { ["state"] = "Completed" }, omitLandRequest: false, pass: false);
@@ -1908,7 +1909,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1319_Census_tolerates_a_pass0_settled_task_that_leaves_before_pass1()
     {
-        var report = RemoteScriptContractTests.LinuxShell(C1319HostCensusScript());
+        var report = LinuxShell(C1319HostCensusScript());
         report += await C1319WrapperProbe("settled-vanish", pass: true);
         report += await C1319WrapperProbe("settled-companion", pass: true);
         report += await C1319WrapperProbe("open-vanish", pass: false);
@@ -2145,7 +2146,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1324_Census_tolerates_a_no_land_task_that_appears_in_pass1()
     {
-        var report = RemoteScriptContractTests.LinuxShell(C1324HostCensusScript());
+        var report = LinuxShell(C1324HostCensusScript());
         report += await C1324WrapperProbe("appears-no-land", "pass");
         report += await C1324WrapperProbe("appears-with-landRequest", "unstable");
         report += await C1324WrapperProbe("appears-with-unknown-detail", "land-unknown");
@@ -2369,7 +2370,7 @@ public sealed class RollingVolumeRecycleScriptTests
         // closure. An appearing bound open row with a land timestamp is Unstable in the report census and
         // RecycleLandInFlight on the host; an off-runner one passes. A land-closure appearance is
         // Unstable only for a row bound to the recycled runner and passes for an off-runner row.
-        var report = RemoteScriptContractTests.LinuxShell(C1326HostCensusScript());
+        var report = LinuxShell(C1326HostCensusScript());
         report += await C1326WrapperProbe("appears-with-land-timestamp", "unstable");
         report += await C1326WrapperProbe("appears-with-land-started", "unstable");
         report += await C1326WrapperProbe("appears-in-land-closure-bound", "unstable");
@@ -2553,7 +2554,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands()
     {
-        var report = RemoteScriptContractTests.LinuxShell(C1353HostCensusScript());
+        var report = LinuxShell(C1353HostCensusScript());
         report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
         report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
         foreach (var name in new[]
