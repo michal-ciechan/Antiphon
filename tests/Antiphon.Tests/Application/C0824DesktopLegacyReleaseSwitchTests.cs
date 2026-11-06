@@ -749,7 +749,7 @@ public sealed class C0824DesktopLegacyReleaseSwitchTests
             var release = new TaskWorktreeRetirement
             {
                 Id = Guid.NewGuid(), TaskId = task.Id, TaskAttempt = task.Attempt, TerminalStatus = task.Status,
-                TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = CardDoneArtifactPreservation.Digest(task.Result),
+                TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = Antiphon.Server.Infrastructure.Files.CardDoneArtifactPreservation.Digest(task.Result),
                 ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = TaskWorktreeRetirementService.SystemCallerIdentity,
                 ReleaseReason = "fixture ref-only mirror release", ReleasedAt = w.Now, HandoffDispositionJson = "[]",
                 Active = true, RepositoryPath = task.RepoPath!, CommonDirectory = bound.Common, WorktreePath = bound.Identity,
