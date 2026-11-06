@@ -279,26 +279,34 @@ public class HerdrTransportTests
     public async Task C801_ClientClosesEachRequestConnection()
     {
         await using var endpoint = new FakeHerdrEndpoint();
+        await using var listener = new FakeHerdrTransport(endpoint);
+        listener.Bind();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         for (var i = 0; i < 20; i++)
         {
-            var server = ServeOneAsync(endpoint, async (reader, writer) =>
-            {
-                using var request = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!);
-                var id = request.RootElement.GetProperty("id").GetString();
-                await writer.WriteLineAsync(JsonSerializer.Serialize(new
-                {
-                    id, result = new { type = "pong", version = "0.8.2", protocol = 20 }
-                }).AsMemory(), deadline.Token);
-                // Keep the peer open: EOF must come from the client's disposal, rather
-                // than the fake server closing its normal request connection first.
-                (await reader.ReadAsync(new char[1], deadline.Token)).ShouldBe(0,
-                    $"client must close its request connection, cycle={i}");
-            });
+            var server = ServePingUntilPeerClosesAsync(listener, i, deadline.Token);
             var client = Client(endpoint.Path).ConnectAndValidateAsync(deadline.Token);
             await Task.WhenAll(server, client);
             (await client).Protocol.ShouldBe(20);
         }
+    }
+
+    private static async Task ServePingUntilPeerClosesAsync(
+        FakeHerdrTransport listener, int cycle, CancellationToken cancellationToken)
+    {
+        await using var peer = await listener.AcceptAsync(cancellationToken, () => { });
+        using var reader = new StreamReader(peer, Encoding.UTF8, leaveOpen: true);
+        using var request = JsonDocument.Parse((await reader.ReadLineAsync(cancellationToken))!);
+        var id = request.RootElement.GetProperty("id").GetString();
+        var response = JsonSerializer.Serialize(new
+        {
+            id, result = new { type = "pong", version = "0.8.2", protocol = 20 }
+        });
+        // Write directly so no buffered writer flushes a broken Windows pipe after EOF.
+        await peer.WriteAsync(Encoding.UTF8.GetBytes(response + "\n"), cancellationToken);
+        // Keep the peer open: EOF must come from the client's disposal.
+        (await reader.ReadAsync(new char[1], cancellationToken)).ShouldBe(0,
+            $"client must close its request connection, cycle={cycle}");
     }
 
     private static async Task AssertRepeatedConnectDisposeReleasesHandlesAsync(Action? duringConnections = null)
