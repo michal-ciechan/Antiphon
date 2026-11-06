@@ -49,11 +49,16 @@ Unit historical namespace assembly baseline 25.5 minutes is only a provisional
 ceiling, not a measured Unit p95. Row watchdogs are provisional diagnostic bounds,
 never changes to test assertions/deadlines. Total charged budget 60 minutes.
 
+The S1 manifest at `649d74b7a89921a78cf10277b4cca2e1b803b0c3` produced the
+intended V-1 assertion red (1 failed). The final manifest below reruns CP-1 at S2
+and shares that fresh build with CP-2/CP-3. CP-4 has Repeat=3 and therefore needs
+its own output and stamp, rather than reusing a Repeat=1 build.
+
 ### Checkpoints
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1466-red/` | deterministic-red | `/*/*/AgentSessionCancelledTurnTests*/C1466_EchoWorld_output_precedes_withheld_async_work*` | V-1 | 1 intended assertion failure before S2; green after S2 | 1 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1466-green/` | fixture-guards | `/*/*/(AgentSessionCancelledTurnTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(MechanicalPcContractTests*)/*` | V-1, V-2, V-3, V-4, R-1, R-2 | all listed classes, 0 failed/skipped | 23 | 7 |
-| CP-3 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 12 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1466-repeat/` | c1382-proof | `/*/*/AgentSessionCancelledTurnTests*/C1382_*` | R-4 | all C1382 methods, 3 normal repetitions via --repeat 3, 0 failed | 13 | 4 |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Repeat |
+|---|---|---|---|---|---|---|---:|---:|---:|
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1466-green/` | deterministic-red | `/*/*/AgentSessionCancelledTurnTests*/C1466_EchoWorld_output_precedes_withheld_async_work*` | V-1 | 1 intended assertion failure before S2; green after S2 | 1 | 6 | 1 |
+| CP-2 | S2 | CP-1 | fixture-guards | `/*/*/(AgentSessionCancelledTurnTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(MechanicalPcContractTests*)/*` | V-1, V-2, V-3, V-4, R-1, R-2 | all listed classes, 0 failed/skipped | 23 | 7 | 1 |
+| CP-3 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 12 | 1 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1466-repeat/` | c1382-proof | `/*/*/AgentSessionCancelledTurnTests*/C1382_*` | R-4 | all C1382 methods, 3 normal repetitions via --repeat 3, 0 failed | 13 | 4 | 3 |
