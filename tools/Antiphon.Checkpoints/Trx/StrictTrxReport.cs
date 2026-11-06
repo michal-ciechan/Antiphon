@@ -28,7 +28,7 @@ public static class StrictTrxReport
 {
     public static StrictTrxParseResult Parse(string path, int expectedTotal)
     {
-        try { return ParseText(ReceiptFile.ReadText(path), expectedTotal); }
+        try { return ParseText(ReceiptFile.ReadStrictText(path), expectedTotal); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { return Bad("strict TRX unreadable"); }
     }
@@ -37,10 +37,13 @@ public static class StrictTrxReport
     {
         try
         {
-            using var reader = XmlReader.Create(new StringReader(text), new XmlReaderSettings
+            if (text.Length > 16 * 1024 * 1024) return Bad("strict TRX document limit");
+            // XmlReaderSettings normalizes literal CR/CRLF before exposing Value. The
+            // conditional contract binds the literal reason, so retain those characters.
+            using var reader = new XmlTextReader(new StringReader(text))
             {
-                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 16 * 1024 * 1024,
-            });
+                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, Normalization = false,
+            };
             var doc = XDocument.Load(reader);
             XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
             if (doc.Root?.Name != ns + "TestRun") return Bad("expected TeamTest/2010 TestRun root");

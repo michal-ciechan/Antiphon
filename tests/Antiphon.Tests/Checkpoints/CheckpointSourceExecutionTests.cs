@@ -381,16 +381,61 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var report = CountReport();
         var line = report.Rows.Single().Line!;
         ReportValidator.Validate(report, Sha).ShouldBeNull("C# valid count control");
-        (await ValidateWithScriptAsync(report)).Exit.ShouldBe(0, "PowerShell valid count control");
+        var cases = new List<(string Key, string Raw)> { ("valid", ReportWriter.JsonText(report)) };
         foreach (var (token, value) in new[] { ("passed", "3"), ("failed", "0"), ("skipped", "0"), ("executed", "3") })
         foreach (var replacement in new[] { token + "=99", "", token + "=0" + value })
         {
             report.Rows.Single().Line = line.Replace(token + "=" + value, replacement, StringComparison.Ordinal);
-            var script = await ValidateWithScriptAsync(report);
-            script.Exit.ShouldBe(2, "PowerShell count refusal: " + script.Output);
-            script.Output.ShouldContain("reason=receipt_counts", Case.Sensitive);
-            ReportValidator.Validate(report, Sha).ShouldBe("receipt_counts", "preserved:B-4:" + token + ":" + replacement);
+            cases.Add((token + ":" + replacement, ReportWriter.JsonText(report)));
         }
+        var root = TempDir();
+        var corpus = cases.Select((item, index) => new { key = item.Key, path = Path.Combine(root, index + ".json") }).ToArray();
+        for (var i = 0; i < cases.Count; i++) File.WriteAllText(corpus[i].path, cases[i].Raw);
+        var records = await ValidateCorpusWithScriptAsync(root, corpus);
+        records.Select(r => r.GetProperty("key").GetString()).ShouldBe(cases.Select(c => c.Key));
+        for (var i = 0; i < cases.Count; i++)
+        {
+            var expected = i == 0 ? 0 : 2;
+            var label = "preserved:B-4:" + cases[i].Key;
+            records[i].GetProperty("exit").GetInt32().ShouldBe(expected, label + ": " + records[i]);
+            var tool = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", corpus[i].path, "--expected-source-sha", Sha]);
+            tool.ShouldBe(expected, label + ":C:verdict");
+            if (i > 0)
+            {
+                records[i].GetProperty("output").GetString()!.ShouldContain("reason=receipt_counts", Case.Sensitive);
+                records[i].GetProperty("output").GetString()!.ShouldNotContain("CHECKPOINT SOURCE VALID", Case.Sensitive);
+                ReportValidator.Validate(ReceiptJson.Parse<ReportModel>(cases[i].Raw, ReportWriter.Json), Sha)
+                    .ShouldBe("receipt_counts", label + ":C:reason");
+            }
+            File.ReadAllText(corpus[i].path).ShouldBe(cases[i].Raw, label + ":input unchanged");
+        }
+    }
+
+    private static async Task<JsonElement[]> ValidateCorpusWithScriptAsync(string root, object corpus)
+    {
+        var input = Path.Combine(root, "corpus.json");
+        var output = Path.Combine(root, "results.json");
+        var driver = Path.Combine(root, "validate.ps1");
+        File.WriteAllText(input, JsonSerializer.Serialize(corpus));
+        File.WriteAllText(driver, """
+            param($Corpus, $Result, $Validator, $Sha)
+            $ErrorActionPreference = 'Stop'
+            $records = @(foreach ($case in (Get-Content -Raw -LiteralPath $Corpus | ConvertFrom-Json)) {
+                $global:LASTEXITCODE = 99
+                $text = (& $Validator -Evidence $case.path -ExpectedSourceSha $Sha *>&1 | Out-String)
+                [pscustomobject]@{ key = $case.key; exit = $LASTEXITCODE; output = $text }
+            })
+            [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8))
+            """);
+        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+        foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
+            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha })
+            start.ArgumentList.Add(token);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var result = await CheckpointFixtureProcess.RunAsync(start, timeout.Token);
+        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
+        using var document = JsonDocument.Parse(File.ReadAllText(output));
+        return document.RootElement.EnumerateArray().Select(record => record.Clone()).ToArray();
     }
 
     [Test]
@@ -398,22 +443,35 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     {
         var report = CountReport();
         report.Branch = "BADBYTE";
-        var path = Path.Combine(TempDir(), "report.json");
+        var root = TempDir();
         var raw = ReportWriter.JsonText(report);
-        File.WriteAllText(path, raw);
-        (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", path, "--expected-source-sha", Sha])).ShouldBe(0);
-        (await ValidateFileWithScriptAsync(path)).Exit.ShouldBe(0);
+        var cases = new List<(string Key, byte[] Bytes, int Exit)>();
+        foreach (var encoding in new System.Text.Encoding[]
+        {
+            new System.Text.UTF8Encoding(false, true), new System.Text.UTF8Encoding(true, true),
+            new System.Text.UnicodeEncoding(false, true, true), new System.Text.UnicodeEncoding(true, true, true),
+            new System.Text.UTF32Encoding(false, true, true), new System.Text.UTF32Encoding(true, true, true),
+        })
+            cases.Add((encoding.WebName + ":" + encoding.GetPreamble().Length,
+                encoding.GetPreamble().Concat(encoding.GetBytes(raw)).ToArray(), 0));
         var bytes = System.Text.Encoding.UTF8.GetBytes(raw);
         var offset = bytes.AsSpan().IndexOf("BADBYTE"u8);
         offset.ShouldBeGreaterThan(0);
         bytes[offset] = 0xff;
-        File.WriteAllBytes(path, bytes);
-        var before = System.Security.Cryptography.SHA256.HashData(bytes);
-        var script = await ValidateFileWithScriptAsync(path);
-        var tool = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", path, "--expected-source-sha", Sha]);
-        tool.ShouldBe(2, "preserved:B-1:C:malformed-receipt-encoding");
-        script.Exit.ShouldBe(2, "preserved:B-1:P:malformed-receipt-encoding: " + script.Output);
-        System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)).ShouldBe(before, "validation is read-only");
+        cases.Add(("malformed-utf8", bytes, 2));
+        var corpus = cases.Select((item, index) => new { key = item.Key, path = Path.Combine(root, index + ".json") }).ToArray();
+        for (var i = 0; i < cases.Count; i++) File.WriteAllBytes(corpus[i].path, cases[i].Bytes);
+        var records = await ValidateCorpusWithScriptAsync(root, corpus);
+        records.Select(r => r.GetProperty("key").GetString()).ShouldBe(cases.Select(c => c.Key));
+        for (var i = 0; i < cases.Count; i++)
+        {
+            var tool = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", corpus[i].path, "--expected-source-sha", Sha]);
+            tool.ShouldBe(cases[i].Exit, "preserved:B-1:C:" + cases[i].Key);
+            records[i].GetProperty("exit").GetInt32().ShouldBe(cases[i].Exit, "preserved:B-1:P:" + cases[i].Key + ":" + records[i]);
+            if (cases[i].Exit != 0)
+                records[i].GetProperty("output").GetString()!.ShouldNotContain("CHECKPOINT SOURCE VALID", Case.Sensitive);
+            File.ReadAllBytes(corpus[i].path).ShouldBe(cases[i].Bytes, "validation is read-only");
+        }
     }
 
     private static ReportModel CountReport()
@@ -547,7 +605,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         ReportValidator.Validate(counts, Sha).ShouldBeNull("tool-count-control");
         counts.Rows.Single().Line = counts.Rows.Single().Line!.Replace("executed=1", "executed=2", StringComparison.Ordinal);
-        ReportValidator.Validate(counts, Sha).ShouldBe("receipt_count_disagreement", "tool-receipt-count-disagreement");
+        ReportValidator.Validate(counts, Sha).ShouldBe("receipt_counts", "tool-receipt-count-disagreement");
         var countScript = await ValidateWithScriptAsync(counts);
         countScript.Exit.ShouldBe(2, "script-receipt-count-disagreement: " + countScript.Output);
         countScript.Output.ShouldContain("reason=receipt_counts", Case.Sensitive, "script-receipt-count-disagreement");

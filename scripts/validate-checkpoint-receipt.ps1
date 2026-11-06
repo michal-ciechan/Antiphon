@@ -57,7 +57,7 @@ function Assert-RepeatReceipt {
 try {
     if ($ExpectedSourceSha -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw 'expected_sha_invalid' }
     if ($ExpectedRepeat -lt 1) { throw 'expected_repeat_invalid' }
-    $raw = (Read-CheckpointText ([System.IO.Path]::GetFullPath($Evidence)))
+    $raw = (Read-CheckpointStrictText ([System.IO.Path]::GetFullPath($Evidence)))
     $document = [System.Text.Json.JsonDocument]::Parse($raw)
     try { Assert-NoDuplicateProperties $document.RootElement }
     finally { $document.Dispose() }
