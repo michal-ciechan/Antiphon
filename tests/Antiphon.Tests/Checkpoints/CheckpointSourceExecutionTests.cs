@@ -411,31 +411,82 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         }
     }
 
-    private static async Task<JsonElement[]> ValidateCorpusWithScriptAsync(string root, object corpus)
+    private static async Task<JsonElement[]> ValidateCorpusWithScriptAsync(string root, object corpus, int expectedRepeat = 1)
     {
         var input = Path.Combine(root, "corpus.json");
         var output = Path.Combine(root, "results.json");
         var driver = Path.Combine(root, "validate.ps1");
         File.WriteAllText(input, JsonSerializer.Serialize(corpus));
         File.WriteAllText(driver, """
-            param($Corpus, $Result, $Validator, $Sha)
+            param($Corpus, $Result, $Validator, $Sha, $ExpectedRepeat)
             $ErrorActionPreference = 'Stop'
             $records = @(foreach ($case in (Get-Content -Raw -LiteralPath $Corpus | ConvertFrom-Json)) {
                 $global:LASTEXITCODE = 99
-                $text = (& $Validator -Evidence $case.path -ExpectedSourceSha $Sha *>&1 | Out-String)
+                $text = (& $Validator -Evidence $case.path -ExpectedSourceSha $Sha -ExpectedRepeat $ExpectedRepeat *>&1 | Out-String)
                 [pscustomobject]@{ key = $case.key; exit = $LASTEXITCODE; output = $text }
             })
             [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8))
             """);
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha })
+            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha, expectedRepeat.ToString() })
             start.ArgumentList.Add(token);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var result = await CheckpointFixtureProcess.RunAsync(start, timeout.Token);
         result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
         using var document = JsonDocument.Parse(File.ReadAllText(output));
         return document.RootElement.EnumerateArray().Select(record => record.Clone()).ToArray();
+    }
+
+    [Test]
+    public async Task validators_agree_on_xml_character_references()
+    {
+        var root = TempDir();
+        var template = File.ReadAllText(CheckpointRepeatFixture.WriteTemplate(root, 2, methods: ["alpha"]))
+            .Replace("__NONCE__", "xml-parity", StringComparison.Ordinal)
+            .Replace("failed=\"0\"", "failed=\"0\" notExecuted=\"0\"", StringComparison.Ordinal)
+            .Replace("<Output>", "<Output><DebugTrace>Skipped: fixture capability unavailable</DebugTrace>", StringComparison.Ordinal)
+            .Replace("testName=\"display collision\"", "testName=\"same display\"", StringComparison.Ordinal);
+        var cases = new List<(string Key, string Xml, int Expected)> { ("ordinary", template, 0) };
+        foreach (var (reference, value) in C1217ConditionalSkipFixture.CharacterReferences())
+        foreach (var context in new[] { "text", "attribute", "reason" })
+            cases.Add((context + ":" + reference, C1217ConditionalSkipFixture.WithReference(template, reference, context), value is null ? 2 : 0));
+
+        var corpus = cases.Select((item, index) => new { key = item.Key, path = Path.Combine(root, index + ".json") }).ToArray();
+        for (var i = 0; i < cases.Count; i++)
+        {
+            var path = Path.Combine(root, i + ".trx");
+            File.WriteAllText(path, cases[i].Xml);
+            var report = CountReport();
+            report.SchemaVersion = 3;
+            var row = report.Rows.Single();
+            row.Trx = path;
+            row.Executed = row.Passed = 2;
+            // Bind independently to the intact native-repeat control, never the altered input.
+            var control = Path.Combine(root, "control.trx");
+            File.WriteAllText(control, template);
+            var repeat = RepeatEvidenceValidator.Validate(TrxReport.Parse(control), 2, "xml-parity", 1, []);
+            repeat.Ok.ShouldBeTrue(repeat.Error);
+            row.Repeat = repeat.Evidence;
+            row.Line = row.Line!.Replace("executed=3", "executed=2", StringComparison.Ordinal)
+                .Replace("passed=3", "passed=2", StringComparison.Ordinal) + " repeat=2 repetitions=2/2 hostInvocations=1";
+            File.WriteAllText(corpus[i].path, ReportWriter.JsonText(report));
+        }
+        // Keep the existing 30-second child deadline; one PowerShell host for the corpus.
+        var records = await ValidateCorpusWithScriptAsync(root, corpus, 2);
+        records.Select(record => record.GetProperty("key").GetString()).ShouldBe(cases.Select(item => item.Key));
+        for (var i = 0; i < cases.Count; i++)
+        {
+            var label = "preserved:R2-1:parity:" + cases[i].Key;
+            records[i].GetProperty("exit").GetInt32().ShouldBe(cases[i].Expected, label + ":P:" + records[i]);
+            var path = Path.Combine(root, i + ".trx");
+            StrictTrxReport.ParseText(cases[i].Xml, 2).ExitCode.ShouldBe(cases[i].Expected, label + ":strict-text");
+            TrxReport.ParseStrict(path, 2).ExitCode.ShouldBe(cases[i].Expected, label + ":strict-file");
+            var tool = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", corpus[i].path,
+                "--expected-source-sha", Sha, "--expected-repeat", "2"]);
+            tool.ShouldBe(cases[i].Expected, label + ":C");
+            File.ReadAllText(path).ShouldBe(cases[i].Xml, label + ":input unchanged");
+        }
     }
 
     [Test]
