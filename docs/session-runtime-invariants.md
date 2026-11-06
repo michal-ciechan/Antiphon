@@ -519,6 +519,19 @@ It clears stale worktree registrations for that repository and does not delete c
 Refusals stay park_source_missing, park_ref_changed, park_dirty, park_source_changed, and park_endpoint_changed.
 A reply that arrives before reserve holds the unreleased park as park_reply_before_reserve.
 
+CARD-0824 S5b-2 adds a separate arm for already recorded RefOnly tasks; admission
+remains off. Their park stores an immutable workspace snapshot with the original
+mode, binding revision, baseline and runner coordinates. Publication and debt
+recovery require that snapshot in addition to the existing receipt and episode
+checks. Resume inspects the owned ref in the object repository and never creates,
+prunes or resets a desktop checkout. A contradictory Checkout mode cannot use a
+RefOnly park's snapshot to enter the legacy checkout arm. Disablement preserves
+accepted debt and recorded mode. Drain recorded RefOnly parks, continuations and
+debts before a binary or schema downgrade that cannot read this representation.
+Remote exact-file decision grants currently hold with
+ref_only_remote_path_verification_required because the runner protocol has no
+containment proof; a desktop identity or repository directory supplies no grant.
+
 The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and names that task and Reply only when the Blocked task's current attempt has a confirmed published park whose seat release matches Reply admission, including the settlement revision (CARD-1103).
 When no candidate park of the task is admitted, a confirmed published park whose seat release does not match that admission does not name Reply; that parked answer cannot be continued (CARD-1103).
 HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103).
