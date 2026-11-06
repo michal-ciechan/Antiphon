@@ -1,0 +1,18 @@
+# CARD-1729: first matching rule assigns the future project; namespaces stay unchanged.
+[edges]
+Host -> Core, Persistence, Git, Runners, Integrations, Application
+Application -> Core, Persistence
+Git -> Core
+Runners -> Core
+Integrations -> Core
+Persistence -> Core
+Core ->
+
+[rules]
+server/Program.cs, server/Api/**, server/Composition/**, server/Infrastructure/{Realtime,Security,Messaging,Logging}/**, server/Infrastructure/Agents/HangfireConfiguration.cs, server/Infrastructure/Agents/*Job.cs, server/Infrastructure/Agents/WindowsZombieProcessCensus.cs, server/Infrastructure/Agents/ZombieCensus*.cs Host
+server/Domain/**, server/Application/{Interfaces,Dtos,Exceptions,Settings,Core}/** Core
+server/Infrastructure/Data/**, server/Migrations/**, server/Infrastructure/Resilience/{DatabaseResilienceExecutor,NpgsqlTransientFailureClassifier}.cs Persistence
+server/Infrastructure/Git/**, server/Infrastructure/{WorkspaceHooks,Verification}/**, server/Application/Services/{GitWorkspaceService,ServerGitProcess,GitIndexLock,OrchestratorWorkspaceLayout}.cs Git
+server/Infrastructure/Agents/{Pty,SessionRunner,Tui}/**, server/Infrastructure/Agents/CodexSubmitConfirmation.cs Runners
+server/Infrastructure/Agents/*.cs, server/Infrastructure/Agents/Tools/**, server/Infrastructure/{GitHub,IssueTrackers}/** Integrations
+server/Application/Services/**, server/Infrastructure/{Orchestration,Supervision,Files,FileSystem,ExternalChanges,WorkflowDefinitions}/**, server/Infrastructure/Resilience/** Application
