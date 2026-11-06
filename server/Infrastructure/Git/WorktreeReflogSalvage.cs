@@ -11,9 +11,10 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// never pushed) would become unrecoverable, so before anything moves each such commit gets
 /// <c>refs/antiphon/salvage/&lt;taskId&gt;/&lt;sha&gt;</c>. Reachable means from any branch, tag or remote-tracking
 /// ref. A reflog protects both ids of each entry, so both are read (Review 9222cb00 B-1). A salvage ref is only ever a
-/// direct ref created from nothing; a symbolic or different existing one refuses (B-4). Any read or write failure
-/// refuses the removal (fail closed). The desktop legacy release tick prunes, under the repository lease and the live
-/// switch, only the refs of a task whose every release finished at least the retention ago (B-2, B-3).
+/// direct ref created from nothing; a symbolic (even dangling, Review 39f7bfe1) or different existing one refuses (B-4).
+/// Any read or write failure refuses the removal (fail closed). The desktop legacy release tick prunes, under the
+/// repository lease and the live switch, only the refs of a task whose every release finished at least the retention
+/// ago (B-2, B-3).
 /// </summary>
 public static class WorktreeReflogSalvage
 {
@@ -102,6 +103,14 @@ public static class WorktreeReflogSalvage
         var existing = await git.RunAsync(source.RepositoryPath, ["for-each-ref", RefFormat, namespaceRefs], ct);
         if (!existing.Succeeded) return Failed;
         var held = Lines(existing.Output).ToList();
+        // Review 39f7bfe1 B-4: for-each-ref omits a dangling symbolic ref and a create-only write replaces one, so ask
+        // Git for each name's symbolic identity directly (0 symbolic, dangling or not; 1 direct or absent).
+        foreach (var sha in tips.Order(StringComparer.Ordinal))
+        {
+            var symbolic = await git.RunAsync(source.RepositoryPath, ["symbolic-ref", "-q", namespaceRefs + sha], ct);
+            if (symbolic.ExitCode == 0) return Collision;
+            if (symbolic.ExitCode != 1) return Failed;
+        }
         if (live is not null && await live(ct) is { } refused) return refused;
         string? stopped = null;
         using (LandingGit.GateDestructiveStep(async c => stopped = live is null ? null : await live(c)))
@@ -128,8 +137,8 @@ public static class WorktreeReflogSalvage
     /// <summary>
     /// Review 9222cb00 B-2/B-3/B-4. Deletes each salvage ref of a <paramref name="prunable"/> task scope whose newest
     /// reflog entry is at least <paramref name="keep"/> old. Only a direct ref named after its own object is deleted,
-    /// never through a symbolic ref and only while it still holds that object. A ref with no readable reflog time is
-    /// kept, and a failed read deletes nothing more. <paramref name="live"/> is read before each delete and again as
+    /// never through a symbolic ref and only while it still holds that object; a dangling symbolic ref is never
+    /// listed, so never deleted. A ref with no readable reflog time is kept, and a failed read deletes nothing more. <paramref name="live"/> is read before each delete and again as
     /// its child starts; a refusal deletes nothing more and is returned as <c>Stopped</c>.
     /// </summary>
     public static async Task<(int Pruned, string? Stopped)> PruneAsync(ILandingGit git, string repository, DateTime nowUtc,
