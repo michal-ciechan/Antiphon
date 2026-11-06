@@ -97,7 +97,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
             h.Harness.Queue.IsActive(h.Harness.Fixture.TaskId).ShouldBeFalse();
         }
         var busy = arm is "busy" or "enqueue-failure";
-        if (busy) await caller.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "recipient is working");
+        if (busy) await caller.MarkWorkingAsync();
         h.Clock.Advance(TimeSpan.FromSeconds(1));
         await RunHostedPassAsync(h, LandRequestState.Completed);
         await h.AssertLandedAsync();
@@ -125,7 +125,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
         if (busy)
         {
             caller.Adapter.SubmittedBodies.ShouldBeEmpty("busy recipient must keep the complete obligation owed");
-            await caller.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn);
+            await caller.MarkIdleAsync(stopReason: TranscriptKinds.StopReasons.EndTurn);
             await caller.Queue.OnTurnEndAsync(caller.SessionId, default);
         }
         await ScanNotificationsAsync();
@@ -176,6 +176,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
     {
         var signal = new LandPassSignal(h);
         h.Harness.Events = signal;
+        await h.Harness.SweepAsync(); // the normal sweep re-arms a previously attempted Held request
         using var worker = new AgentTaskLandHostedService(h.Harness.Queue,
             h.Harness.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<AgentTaskLandHostedService>.Instance);
         await worker.StartAsync(default);
