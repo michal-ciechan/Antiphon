@@ -377,7 +377,7 @@ public sealed class TaskWorktreeRetirementService
                 && (owner.RemoteWorkspaceSlotId is null || owner.RemoteWorkspaceSlotReleasedAt is not null)
                 && !await MirrorOwnedByRetentionAsync(owner.Id, ct))
             {
-                await RemoveRemoteMirrorAsync(owner.Id, ct);
+                await RemoveRemoteMirrorAsync(owner.Id, null, ct);
                 await _db.SaveChangesAsync(ct);
             }
             return desktop;
