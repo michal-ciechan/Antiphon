@@ -371,13 +371,19 @@ public sealed class TaskWorktreeRetirementService
         if (await DesktopWorkspaceCleanup.DecideAsync(_db, owner, ct) is { } desktop)
         {
             // No desktop claim, journal or removal is created. A separately owned per-task mirror can still retire.
+            // CARD-0824 S4a integration: a system release reads the S4a switch here too (it has not reached the
+            // lease-time admission below) and again immediately before the remove request is sent.
+            var systemRelease = string.Equals(retirement.CallerIdentity, SystemCallerIdentity, StringComparison.Ordinal);
             if (desktop.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired && endpointId is null
                 && Terminal.Contains(owner.Status) && owner.Attempt == retirement.TaskAttempt
                 && SnapshotStillValid(retirement, owner)
                 && (owner.RemoteWorkspaceSlotId is null || owner.RemoteWorkspaceSlotReleasedAt is not null)
-                && !await MirrorOwnedByRetentionAsync(owner.Id, ct))
+                && !await MirrorOwnedByRetentionAsync(owner.Id, ct)
+                && await StopLegacyContinuationAsync(systemRelease, owner.Id, ct) is null)
             {
-                await RemoveRemoteMirrorAsync(owner.Id, null, ct);
+                await RemoveRemoteMirrorAsync(owner.Id,
+                    systemRelease ? token => new ValueTask<string?>(LegacyReleaseAdmissionAsync(owner.Id, pace: true, token)) : null,
+                    ct);
                 await _db.SaveChangesAsync(ct);
             }
             return desktop;
