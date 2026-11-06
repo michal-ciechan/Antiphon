@@ -376,6 +376,59 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task validators_refuse_changed_count_tokens()
+    {
+        var report = CountReport();
+        var line = report.Rows.Single().Line!;
+        ReportValidator.Validate(report, Sha).ShouldBeNull("C# valid count control");
+        (await ValidateWithScriptAsync(report)).Exit.ShouldBe(0, "PowerShell valid count control");
+        foreach (var (token, value) in new[] { ("passed", "3"), ("failed", "0"), ("skipped", "0"), ("executed", "3") })
+        foreach (var replacement in new[] { token + "=99", "", token + "=0" + value })
+        {
+            report.Rows.Single().Line = line.Replace(token + "=" + value, replacement, StringComparison.Ordinal);
+            var script = await ValidateWithScriptAsync(report);
+            script.Exit.ShouldBe(2, "PowerShell count refusal: " + script.Output);
+            script.Output.ShouldContain("reason=receipt_counts", Case.Sensitive);
+            ReportValidator.Validate(report, Sha).ShouldBe("receipt_counts", "preserved:B-4:" + token + ":" + replacement);
+        }
+    }
+
+    [Test]
+    public async Task validators_refuse_malformed_receipt_encoding()
+    {
+        var report = CountReport();
+        report.Branch = "BADBYTE";
+        var path = Path.Combine(TempDir(), "report.json");
+        var raw = ReportWriter.JsonText(report);
+        File.WriteAllText(path, raw);
+        (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", path, "--expected-source-sha", Sha])).ShouldBe(0);
+        (await ValidateFileWithScriptAsync(path)).Exit.ShouldBe(0);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(raw);
+        var offset = bytes.AsSpan().IndexOf("BADBYTE"u8);
+        offset.ShouldBeGreaterThan(0);
+        bytes[offset] = 0xff;
+        File.WriteAllBytes(path, bytes);
+        var before = System.Security.Cryptography.SHA256.HashData(bytes);
+        var script = await ValidateFileWithScriptAsync(path);
+        var tool = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", path, "--expected-source-sha", Sha]);
+        tool.ShouldBe(2, "preserved:B-1:C:malformed-receipt-encoding");
+        script.Exit.ShouldBe(2, "preserved:B-1:P:malformed-receipt-encoding: " + script.Output);
+        System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)).ShouldBe(before, "validation is read-only");
+    }
+
+    private static ReportModel CountReport()
+    {
+        var report = ValidReport();
+        report.Source.BuildSource = "verified";
+        var row = report.Rows.Single();
+        row.Command = null;
+        row.Executed = row.Passed = 3;
+        row.Failed = row.Skipped = 0;
+        row.Line = $"CHECKPOINT CP-1 commit={Sha} build=ok executed=3 passed=3 failed=0 skipped=0 dirty=0 source={Sha} sourceState=clean buildSource=verified";
+        return report;
+    }
+
+    [Test]
     public async Task validation_requires_complete_consistent_source()
     {
         var valid = ValidReport();

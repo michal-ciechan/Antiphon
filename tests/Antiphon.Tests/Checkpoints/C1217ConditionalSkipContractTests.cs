@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using Antiphon.Checkpoints;
@@ -96,6 +97,54 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
         }
         File.WriteAllText(path, F.UnavailableTrx);
         F.Strict(path, 4).GetProperty("Ok").GetBoolean().ShouldBeFalse("expected total");
+    }
+
+    [Test]
+    public void StrictTrxRefusesMalformedEncoding()
+    {
+        var path = Path.Combine(TempDir(), "encoding.trx");
+        File.WriteAllText(path, F.UnavailableTrx, new UTF8Encoding(false, true));
+        TrxReport.ParseStrict(path, 3).Ok.ShouldBeTrue("valid UTF-8 control");
+        TrxReport.ParseStrict(path + ".missing", 3).Ok.ShouldBeFalse("missing control");
+        var bytes = Encoding.UTF8.GetBytes(F.UnavailableTrx);
+        var marker = Encoding.UTF8.GetBytes("fixture capability unavailable");
+        var offset = bytes.AsSpan().IndexOf(marker);
+        offset.ShouldBeGreaterThan(0);
+        bytes[offset] = 0xff;
+        Should.Throw<DecoderFallbackException>(() => new UTF8Encoding(false, true).GetString(bytes));
+        File.WriteAllBytes(path, bytes);
+        TrxReport.ParseStrict(path, 3).Ok.ShouldBeFalse("preserved:B-1:malformed-encoding-refused");
+        // The diagnostic reader keeps its legacy replacement-decoding behavior.
+        TrxReport.Parse(path).Ok.ShouldBeTrue("legacy diagnostic parser");
+    }
+
+    [Test]
+    public void StrictTrxPreservesLiteralLineEndings()
+    {
+        var path = Path.Combine(TempDir(), "line-endings.trx");
+        foreach (var reason in new[] { "first\nsecond", "first\r\nsecond", "first\rsecond", "café\r\nλ" })
+        {
+            var xml = F.UnavailableTrx.Replace("fixture capability unavailable", reason, StringComparison.Ordinal);
+            File.WriteAllText(path, xml, new UTF8Encoding(false, true));
+            foreach (var parsed in new[] { TrxReport.ParseStrict(path, 3), StrictTrxReport.ParseText(xml, 3) })
+            {
+                parsed.Ok.ShouldBeTrue(parsed.Error);
+                foreach (var result in parsed.Results.Skip(1))
+                {
+                    result.SkipReason.ShouldBe(reason, "preserved:B-2:literal-reason");
+                    result.DebugTrace.ShouldBe("Skipped: " + reason, "preserved:B-2:literal-trace");
+                }
+            }
+        }
+        // Keep XML text semantics (entities/CDATA), while preserving literal newlines.
+        var encoded = F.UnavailableTrx.Replace("fixture capability unavailable", "first&#13;\n<![CDATA[second\rthird]]>", StringComparison.Ordinal);
+        var entityResult = StrictTrxReport.ParseText(encoded, 3);
+        entityResult.Ok.ShouldBeTrue(entityResult.Error);
+        entityResult.Results[1].SkipReason.ShouldBe("first\r\nsecond\rthird");
+        StrictTrxReport.ParseText("<!DOCTYPE TestRun [<!ENTITY reason 'text'>]>" + F.UnavailableTrx, 3)
+            .Ok.ShouldBeFalse("DTD remains prohibited");
+        StrictTrxReport.ParseText(F.UnavailableTrx + new string(' ', 16 * 1024 * 1024), 3)
+            .Ok.ShouldBeFalse("document limit remains bounded");
     }
 
     [Test]
