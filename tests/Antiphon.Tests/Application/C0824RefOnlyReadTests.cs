@@ -36,7 +36,8 @@ public sealed class C0824RefOnlyReadTests
         var probe = new DelegateCheckProbe(db, git, clock, Options.Create(new SupervisionSettings()));
         var baseline = TaskProgressJson.TryReadBaseline(f.Task.ProgressBaselineJson)!;
         await w.RunAsync(w.Desktop, "remote", "remove", "origin");
-        var before = await f.InventoryAsync();
+        async Task<string> RefsAsync() => await w.RunAsync(w.Desktop, "for-each-ref", "--format=%(refname) %(objectname)");
+        var before = await RefsAsync();
         var facts = await probe.GatherAsync(f.Task, default);
         var observed = facts.Git.ShouldNotBeNull("creation-baseline-visible-without-checkout");
         observed.Directory.ShouldBe(w.Desktop);
@@ -46,7 +47,7 @@ public sealed class C0824RefOnlyReadTests
         var digest = DelegateCheckProbe.RenderDigest(facts);
         digest.ShouldContain("creation baseline"); digest.ShouldContain("stale");
         digest.ShouldContain(baseline.CapturedAt.ToString("O"), Case.Sensitive, "check-sha-and-time:baseline");
-        (await f.InventoryAsync()).ShouldBe(before, "Check-never-moves-refs");
+        (await RefsAsync()).ShouldBe(before, "Check-never-moves-refs");
         await w.RunAsync(w.Desktop, "remote", "add", "origin", w.Origin);
         var source = await w.RunnerPushAsync("work.txt", "confirmed bytes");
         var synced = await f.Service().SyncAsync(f.Task, default);
@@ -56,7 +57,7 @@ public sealed class C0824RefOnlyReadTests
         f.Task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(progress.Evidence);
         await f.Db.SaveChangesAsync();
         var index = File.GetLastWriteTimeUtc(Path.Combine(w.Desktop, ".git", "index"));
-        before = await f.InventoryAsync();
+        before = await RefsAsync();
         facts = await probe.GatherAsync(f.Task, default);
         facts.Git.ShouldNotBeNull().Range.ShouldBe(w.Baseline + ".." + source, "check-sha-and-time:confirmed");
         DelegateCheckProbe.RenderDigest(facts).ShouldContain("observed");
@@ -69,7 +70,7 @@ public sealed class C0824RefOnlyReadTests
         ((object?)facts.Git.ChangedFiles).ShouldBeNull();
         ((object?)facts.Git.UntrackedFiles).ShouldBeNull();
         (await w.HasObjectAsync(newer)).ShouldBeFalse("Check-must-not-fetch");
-        (await f.InventoryAsync()).ShouldBe(before, "Check-must-not-pin-or-move-refs");
+        (await RefsAsync()).ShouldBe(before, "Check-must-not-pin-or-move-refs");
         Directory.Exists(f.Identity).ShouldBeFalse();
         await w.RunAsync(w.Desktop, "remote", "set-url", "--add", "--push", "origin", w.Runner);
         await w.RunAsync(w.Desktop, "remote", "set-url", "--add", "--push", "origin", w.Origin);
@@ -95,7 +96,12 @@ public sealed class C0824RefOnlyReadTests
             Directory.CreateDirectory(w.Task.WorktreePath!);
             await w.Git.RunAsync(w.Task.WorktreePath!, "init", "-b", "foreign");
             var source = await w.Git.RunnerPushAsync("only-task.txt", "one task commit");
-            if (state == "pending") await w.MintRefOnlyDebtAsync(RunnerSettlementWorld.Report("Implemented. " + w.Claim(source)));
+            if (state == "pending")
+            {
+                await using (var scope = w.Services.CreateAsyncScope())
+                    (await scope.ServiceProvider.GetRequiredService<RemoteWorkspaceService>().SyncAsync(w.Task, default)).Confirmed.ShouldBeTrue("admitted-source-pin");
+                await w.MintRefOnlyDebtAsync(RunnerSettlementWorld.Report("Implemented. " + w.Claim(source)));
+            }
             else if (state == "refused")
                 await w.RecoverAsync(new([new string('a', source.Length)], null,
                     HeldReport: RunnerSettlementWorld.Report("Held report. " + w.Claim(new string('a', source.Length)))
