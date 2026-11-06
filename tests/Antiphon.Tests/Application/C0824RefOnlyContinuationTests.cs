@@ -228,6 +228,7 @@ public sealed class C0824RefOnlyContinuationTests
     [Test]
     public async Task Runner_redirect_requires_old_custody_and_rejects_desktop()
     {
+        await RefOnlyRedirectWitness.VerifyAsync();
         foreach (var runner in new string?[] { null, "desktop", "local" })
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Queued);

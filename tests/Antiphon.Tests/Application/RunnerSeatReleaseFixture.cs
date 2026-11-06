@@ -714,6 +714,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero));
         public SessionRunnerRuntime Runtime { get; private set; } = null!;
         public ISessionRunnerClient Client { get; private set; } = null!;
+        public ISessionRunnerDirectory PhoneHomeDirectory => _phoneHost!.Directory;
+        public string PhoneHomeRunnerId => _phoneHost!.AllowedRunnerId;
         public NativeChild Child { get; } = new();
         public List<TerminalSeatObservationRequest> Observations { get; } = [];
         public int ConditionalCommands { get; private set; }

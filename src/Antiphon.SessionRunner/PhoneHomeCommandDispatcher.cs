@@ -6,6 +6,8 @@ namespace Antiphon.SessionRunner;
 
 public interface IPhoneHomeRuntimeSurface
 {
+    Task<DecisionPathInspectionResult?> InspectDecisionPathsAsync(DecisionPathInspectionRequest request, CancellationToken ct) =>
+        Task.FromResult<DecisionPathInspectionResult?>(null);
     RunnerWorkspaceUseGate? WorkspaceUseGate => null;
     Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
         CompletedCardWorkspaceInspectRequest request, CancellationToken ct) =>
@@ -365,6 +367,9 @@ public sealed class PhoneHomeCommandDispatcher
             return request.Operation.Value switch
             {
                 PhoneHomeOperation.Capabilities => Result(request, Capabilities()),
+                PhoneHomeOperation.DecisionPathInspect => Result(request, await _runtime.InspectDecisionPathsAsync(
+                    request.Payload?.Deserialize<DecisionPathInspectionRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Decision paths are required."), ct)),
                 PhoneHomeOperation.CompletedCardWorkspaceInspect => await MutateAsync(request, async () =>
                 {
                     RequireCompletedCardCapability();

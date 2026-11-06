@@ -158,6 +158,7 @@ public enum PhoneHomeOperation
     /// origin branch. A checked-out, unpublished or unknown ref refuses; an absent ref is success.
     /// </summary>
     WorkspaceBranchRefsDelete = 48,
+    DecisionPathInspect = 49,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>
