@@ -31,6 +31,9 @@ public sealed class C0824RefOnlyReceiptTests
             var raw = cut == "busy" ? "LONG_HEAD\n" + new string('x', 18000) + "\nLONG_MIDDLE\n" + new string('y', 18000) + "\nLONG_TAIL" : "Immutable caller report " + cut;
             if (review)
             {
+                // The independent author owns S. Seed its object before the existing subject
+                // fixture publishes from desktop; this does not move the task's desktop ref.
+                await w.Git.RunAsync(w.Git.Desktop, "fetch", "origin", w.Git.FullRef);
                 var subject = await w.AddReviewSubjectAsync(source);
                 raw += "\n" + DelegationReportFormatter.FindingToken(w.TaskId, "clean")
                     + $"\n--- review evidence ---\nsubjectTaskId: {subject:D}\nreviewedSourceSha: {source}\nreviewedSourceClean: true\nordinaryScopeCompleted: Full\n";
