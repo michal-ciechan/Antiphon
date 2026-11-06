@@ -141,7 +141,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         int reclaimIntervalSeconds = 120,
         int reclaimHeldBackoffSeconds = 600,
         ReclaimReservationGate? reservationGate = null,
-        RefOnlyDesktopSettings? refOnlySettings = null)
+        RefOnlyDesktopSettings? refOnlySettings = null, bool projectLaunch = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -150,6 +150,11 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         var client = new SessionRunnerHttpClient(http, new ClientFactory(wire),
             Options.Create(new SessionRunnerSettings { BaseUrl = "http://seat.test" }));
         var directory = new SeatDirectory(client);
+        var launchPolicy = projectLaunch ? new PhoneHomeLaunchPolicy(Options.Create(new PhoneHomeRunnerSettings
+        {
+            Enabled = true, AllowedRunnerId = "fixture", AllowDelegatedTasks = true,
+            ClaudeAuthProbeEnabled = false, CallbackOrigin = "http://127.0.0.1:1"
+        })) : null;
         BridgeQueueHarness harness;
         try
         {
@@ -174,6 +179,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     }
                     services.AddLogging(b => b.AddProvider(wire.Logs));
                     services.AddScoped<TaskWorkspaceContextResolver>();
+                    if (launchPolicy is not null) services.AddSingleton(launchPolicy);
                     services.AddSingleton<RemoteSpillCourier>();
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
                     services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
@@ -235,7 +241,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<LaunchRecorder>();
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(
                         new AgentRegistrySettings { DefaultDefinition = "fake", Definitions =
-                            { ["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "fixture-provider" } } }));
+                            { ["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = projectLaunch ? "claude" : "fixture-provider" } } }));
                     services.AddScoped<RemoteWorkspaceService>();
                     if (syncRecovery)
                     {
@@ -259,6 +265,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         sp.GetRequiredService<IDelegateSessionStopper>(), sp.GetRequiredService<IOptions<DelegationSettings>>(),
                         sp.GetRequiredService<IEventBus>(), clock, sp.GetRequiredService<ILogger<AgentTaskDispatcher>>(),
                         modelAvailability: sp.GetRequiredService<ModelAvailability>(),
+                        phoneHome: launchPolicy,
                         dispatchWarnings: sp.GetRequiredService<DispatchBaseWarningIntentService>(),
                         workspaceUse: sp.GetRequiredService<WorkspaceUseAdmission>(),
                         remoteWorkspace: sp.GetRequiredService<RemoteWorkspaceService>(), runners: directory,

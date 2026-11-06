@@ -122,7 +122,8 @@ public sealed class C0824RefOnlyContinuationTests
         }
         // Continue through the production answer/dispatcher/queue callers. The modeled
         // recipient writes a UserPrompt only when the real queue actually submits input.
-        await using var resumed = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, syncRecovery: true);
+        await using var resumed = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
+            syncRecovery: true, projectLaunch: true);
         await resumed.CreateSourceAsync(remote: true);
         await using (var db = resumed.Db())
         {
