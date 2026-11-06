@@ -1,4 +1,6 @@
 using Antiphon.Tests.Layering;
+using Antiphon.Tests.TestHelpers;
+using System.Diagnostics;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Layering.LayeringGuardEngine;
@@ -6,8 +8,14 @@ using static Antiphon.Tests.Layering.LayeringGuardEngine;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
+[ClassDataSource<C1729LayeringRepository>(Shared = SharedType.PerClass)]
 public sealed class C1729LayeringGuardTests
 {
+    private readonly C1729LayeringRepository _repository;
+
+    public C1729LayeringGuardTests(C1729LayeringRepository repository) => _repository = repository;
+
     private const string Edges = """
         [edges]
         Host -> Core, Persistence, Git, Runners, Integrations, Application
@@ -24,9 +32,9 @@ public sealed class C1729LayeringGuardTests
     [Test]
     public void Map_covers_every_server_file_exactly_once()
     {
-        var paths = RepositoryPaths();
+        var paths = _repository.Paths;
         paths.Length.ShouldBeGreaterThan(0, "nonempty-census");
-        var map = MapFiles(Read("layers.txt"), paths);
+        var map = _repository.Analysis.Map;
         map.Errors.ShouldBeEmpty("unmapped-file=0 dead-rule=0: " + string.Join("\n", map.Errors));
         map.Layers.Count.ShouldBe(paths.Length, "mapped=census");
     }
@@ -34,7 +42,7 @@ public sealed class C1729LayeringGuardTests
     [Test]
     public void Layer_of_pinned_files_follows_first_match()
     {
-        var map = MapFiles(Read("layers.txt"), RepositoryPaths());
+        var map = _repository.Analysis.Map;
         (string Path, string Layer)[] pins =
         [
             ("server/Program.cs", "Host"),
@@ -57,7 +65,7 @@ public sealed class C1729LayeringGuardTests
     [Test]
     public void Allowlist_parses_with_grouped_rows_and_a_mode_header()
     {
-        var parsed = ParseAllowlist(Read("allowlist.txt"), RepositoryPaths());
+        var parsed = _repository.Analysis.Allowlist;
         parsed.Errors.ShouldBeEmpty("header-ok rows-grouped no-duplicates paths-exist");
         string[] paths = ["core/Value.cs", "app/Svc.cs"];
         const string row = "core/Value.cs -> Svc @ app/Svc.cs";
@@ -79,8 +87,7 @@ public sealed class C1729LayeringGuardTests
     [Test]
     public void Repository_graph_satisfies_the_committed_allowlist()
     {
-        var files = RepositoryPaths().Select(p => new SourceFile(p, File.ReadAllText(Path.Combine(RepoRoot, p)))).ToArray();
-        var result = Analyze(Read("layers.txt"), Read("allowlist.txt"), files);
+        var result = _repository.Analysis;
         Console.WriteLine(result.Inventory);
         result.Map.Errors.ShouldBeEmpty("map-errors=0: " + string.Join("\n", result.Map.Errors));
         result.ParseErrors.ShouldBeEmpty("parse-errors=0: " + string.Join("\n", result.ParseErrors));
@@ -270,12 +277,57 @@ public sealed class C1729LayeringGuardTests
         syntax.Passes.ShouldBeFalse("syntax-error-fails-in-warn-mode");
     }
 
+}
+
+/// <summary>One tracked census and syntax analysis shared by all real-tree assertions.</summary>
+public sealed class C1729LayeringRepository
+{
+    internal string[] Paths { get; }
+    internal Result Analysis { get; }
+
+    public C1729LayeringRepository()
+    {
+        var clock = Stopwatch.StartNew();
+        Paths = RepositoryPaths();
+        var census = clock.Elapsed;
+        var files = Paths.Select(p => new SourceFile(p, File.ReadAllText(Path.Combine(RepoRoot, p)))).ToArray();
+        var map = Read("layers.txt");
+        var allowlist = Read("allowlist.txt");
+        var read = clock.Elapsed - census;
+        Analysis = Analyze(map, allowlist, files);
+        Console.WriteLine($"LAYERING files={Paths.Length} census={census.TotalSeconds:F3}s read={read.TotalSeconds:F3}s analysis={(clock.Elapsed - census - read).TotalSeconds:F3}s total={clock.Elapsed.TotalSeconds:F3}s");
+    }
+
     private static string Read(string name) => File.ReadAllText(Path.Combine(RepoRoot, "tests/Antiphon.Tests/Layering", name));
-    private static string[] RepositoryPaths() => Directory.EnumerateFiles(Path.Combine(RepoRoot, "server"), "*.cs", SearchOption.AllDirectories)
-        .Select(p => Path.GetRelativePath(RepoRoot, p).Replace('\\', '/'))
+    private static string[] RepositoryPaths()
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = RepoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        foreach (var argument in new[] { "-c", "core.fsmonitor=false", "ls-files", "-z", "--", "server" })
+            start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start git ls-files.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(15_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(5_000);
+            throw new TimeoutException("git ls-files exceeded 15 seconds.");
+        }
+        var paths = output.GetAwaiter().GetResult();
+        var diagnostic = error.GetAwaiter().GetResult();
+        if (process.ExitCode != 0) throw new InvalidOperationException("git ls-files failed: " + diagnostic);
+        return paths.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+        .Where(p => p.EndsWith(".cs", StringComparison.Ordinal))
         .Where(p => !p.StartsWith("server/Migrations/", StringComparison.Ordinal)
             && !p.Split('/').Any(s => s is "bin" or "obj" || s.StartsWith("bin-", StringComparison.Ordinal)))
         .Order(StringComparer.Ordinal).ToArray();
+    }
     private static string RepoRoot
     {
         get

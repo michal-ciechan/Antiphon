@@ -186,15 +186,21 @@ internal static class LayeringGuardEngine
             .Select(u => u.Name?.ToString() ?? "").ToHashSet(StringComparer.Ordinal);
         var violations = new HashSet<Violation>();
         var ambiguous = new Dictionary<string, Ambiguity>(StringComparer.Ordinal);
+        var declarationsByPath = declarations.ToLookup(d => d.Path, StringComparer.Ordinal);
         foreach (var (path, root) in roots)
         {
-            var own = declarations.Where(d => d.Path == path).Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+            var own = declarationsByPath[path].Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+            var ownIdentities = declarationsByPath[path].Select(d => d.Identity).ToHashSet(StringComparer.Ordinal);
             var declaredNames = root.DescendantTokens().Where(IsDeclaredName).Select(t => t.ValueText).ToHashSet(StringComparer.Ordinal);
             foreach (var node in root.DescendantNodes().OfType<SimpleNameSyntax>())
             {
                 if (node.Ancestors().Any(a => a is UsingDirectiveSyntax || a is BaseNamespaceDeclarationSyntax ns && ns.Name.Span.Contains(node.Span))) continue;
+                // Initializers, named arguments, property patterns and named attribute
+                // arguments label members; their names are not references to types.
+                if (node.Parent is NameColonSyntax or NameEqualsSyntax or ExpressionColonSyntax
+                    || node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node
+                        && assignment.Parent is InitializerExpressionSyntax) continue;
                 var name = node.Identifier.ValueText;
-                if (own.Contains(name) || declaredNames.Contains(name)) continue;
                 var attribute = node.Ancestors().OfType<AttributeSyntax>().Any(a => a.Name.Span.Contains(node.Span));
                 if (!index.TryGetValue(name, out var candidates) && !(attribute && index.TryGetValue(name + "Attribute", out candidates))) continue;
                 // A qualified member is a type reference only when the indexed type has that
@@ -214,6 +220,17 @@ internal static class LayeringGuardEngine
                         || attribute && (c.Identity == qualifiedName + "Attribute"
                             || c.Identity.EndsWith("." + qualifiedName + "Attribute", StringComparison.Ordinal))).ToArray();
                     if (candidates.Length == 0) continue;
+                }
+                else
+                {
+                    // Color Color declarations cannot hide their type, nor can a value
+                    // name hide a qualified match above. Only bare expressions name values.
+                    if (!SyntaxFacts.IsInTypeOnlyContext(node) && !attribute
+                        && (own.Contains(name) || declaredNames.Contains(name))) continue;
+                    // An unqualified reference to a type declared here prefers that type.
+                    // Keep foreign qualified references even when a nested type shares its name.
+                    var localTypes = candidates.Where(c => ownIdentities.Contains(c.Identity)).ToArray();
+                    if (localTypes.Length > 0) candidates = localTypes;
                 }
                 if (candidates.Length > 1)
                 {
