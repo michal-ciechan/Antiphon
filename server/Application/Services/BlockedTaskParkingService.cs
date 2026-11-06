@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -214,8 +212,7 @@ public sealed class BlockedTaskParkingService(
     private bool CanOwnTransaction() => db.Database.CurrentTransaction is null
         && System.Transactions.Transaction.Current is null && !db.ChangeTracker.HasChanges();
 
-    internal static string? Digest(string? value) => value is null ? null
-        : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    internal static string? Digest(string? value) => ParkFingerprint.Digest(value);
 
     // A nonreport hold retains the existing transcript through a fixed coordinate. Never
     // manufacture Result/CompletedAt, and never let later ingestion change this checkpoint.

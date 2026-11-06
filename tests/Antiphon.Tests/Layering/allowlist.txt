@@ -112,12 +112,6 @@ server/Application/Services/DelegationWorkspaceResolver.cs -> ServerGitProcess @
 server/Application/Services/DelegationWorktreeService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
 server/Infrastructure/ExternalChanges/ChangeDetectionService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
 
-# slice P0-D
-server/Infrastructure/Git/LandingVerifier.cs -> AgentTaskLandService @ server/Application/Services/AgentTaskLandService.cs
-server/Infrastructure/Git/LandingVerifier.cs -> LandProcessRunner @ server/Application/Services/AgentTaskLandService.cs
-server/Infrastructure/Git/LocalTaskParkPublisher.cs -> BlockedTaskParkingService @ server/Application/Services/BlockedTaskParkingService.cs
-server/Infrastructure/Git/WorktreeHealthHostedService.cs -> WorktreeHealthService @ server/Application/Services/WorktreeHealthService.cs
-
 # slice P0-E
 
 # slice P0-F1
