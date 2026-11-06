@@ -1763,6 +1763,11 @@ public sealed partial class AgentTaskReplyService
 
         task.Status = runnerUnconfirmed ? AgentTaskStatus.Blocked : AgentTaskStatus.Succeeded;
         task.Result = note;
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly && evidence.HeldReport is { Length: > 0 } held)
+        {
+            task.Result = note + "\n\nRetained uncorrelated completion report:\n\n" + held;
+            task.ResultFilePath = await ResolveReportFileAsync(scope.ServiceProvider, task, task.Result, ct);
+        }
         task.FailureReason = null;
         task.CompletedAt = now;
         task.RecoveredAt = now;
@@ -5215,7 +5220,14 @@ public sealed partial class AgentTaskReplyService
             // CARD-0657 D-4. A runner task counts B..S of the prepared commit, never whatever HEAD
             // (or master) happens to name after a sync that did not confirm the checkout.
             var rangeEnd = "HEAD";
-            if (prepared is not null && prepared.State != RemoteSettlementSyncState.NotApplicable)
+            if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            {
+                var source = await RefOnlyCommittedSource.ResolveAsync(db, git, task, ct);
+                if (source is null) return ("base unknown", null);
+                gitBase = source.BaselineSha;
+                rangeEnd = source.Sha;
+            }
+            else if (prepared is not null && prepared.State != RemoteSettlementSyncState.NotApplicable)
             {
                 if (await PendingLocalTipAsync(services, task, prepared, ct) is { } pendingTip)
                     rangeEnd = pendingTip;

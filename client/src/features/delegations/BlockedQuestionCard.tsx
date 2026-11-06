@@ -362,7 +362,7 @@ function SoFar({ blocked, variant }: { blocked: BlockedContextDto; variant: 'ful
   const showDisk =
     progress &&
     !progress.unavailable &&
-    (progress.commits.length > 0 || progress.changedFiles > 0 || progress.untrackedFiles > 0 || progress.branch)
+    (progress.commits.length > 0 || (progress.changedFiles ?? 0) > 0 || (progress.untrackedFiles ?? 0) > 0 || progress.branch)
   const showUnavailable = variant === 'full' && progress?.unavailable
 
   if (!blocked.context && !showDisk && !showUnavailable && blocked.priorRounds.length === 0) return null
@@ -379,12 +379,13 @@ function SoFar({ blocked, variant }: { blocked: BlockedContextDto; variant: 'ful
       )}
       {showDisk && progress && (
         <Box>
-          <Label>On disk</Label>
+          <Label>{progress.changedFiles === null || progress.untrackedFiles === null ? 'Committed source' : 'On disk'}</Label>
           <Text size="sm">
             {progress.branch ? `${progress.branch} · ` : ''}
             {progress.commits.length} commit{progress.commits.length === 1 ? '' : 's'}
             {progress.changedFiles ? ` · ${progress.changedFiles} files changed` : ''}
             {progress.untrackedFiles ? ` · ${progress.untrackedFiles} untracked` : ''}
+            {progress.changedFiles === null || progress.untrackedFiles === null ? ' · runner files unknown' : ''}
           </Text>
           {progress.commits.map((commit) => (
             <Text key={commit} size="xs" c="dimmed" lineClamp={1}>

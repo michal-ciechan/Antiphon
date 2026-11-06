@@ -60,8 +60,10 @@ public sealed class DelegateBindRefusalRecovery
         AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds, CancellationToken ct,
         string? heldReport = null)
     {
-        var commits = await TryGitAsync(task, ct);
-        var (reportedJsonl, unreportedJsonl) = TryScanJsonl(task, session, knownSessionIds);
+        IReadOnlyList<string> commits = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? [] : await TryGitAsync(task, ct);
+        var (reportedJsonl, unreportedJsonl) = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? (null, (string?)null) : TryScanJsonl(task, session, knownSessionIds);
         var held = RemoteWorkspaceService.IsEligible(task) && IsDoneReport(task.Id, heldReport) ? heldReport : null;
 
         DelegateBindRefusalEvidence? recovery = null;
