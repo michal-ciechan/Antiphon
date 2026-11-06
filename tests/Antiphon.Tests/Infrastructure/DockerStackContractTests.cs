@@ -8,6 +8,34 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class DockerStackContractTests
 {
     [Test]
+    public void Server2_workspace_slots_are_opt_in_and_temp_inherits_the_environment()
+    {
+        Env(Server2Runner(), "PhoneHome__WorkspaceSlots__Enabled")
+            .ShouldBe("${PhoneHome__WorkspaceSlots__Enabled:-false}");
+        DockerStackDocuments.Service(Text("docker-compose.server2-runner.temp.yml"), "session-runner")
+            .ShouldNotContain("PhoneHome__WorkspaceSlots__Enabled");
+    }
+
+    [Test]
+    public void Server2_workspace_slot_setting_survives_named_deployment_phases()
+    {
+        var source = Text("scripts/c590-remote.sh");
+        source.ShouldContain("runner_workspace_slots_enabled() {");
+        source.ShouldContain("PhoneHome__WorkspaceSlots__Enabled=\"$(runner_workspace_slots_enabled \"$SERVER2_ENV\")\"");
+        source.ShouldContain("PhoneHome__WorkspaceSlots__Enabled=\"$(runner_workspace_slots_enabled \"$SERVER2_TEMP_ENV\")\"");
+        foreach (var function in new[] { "case_deploy_parent", "case_deploy_temp_runner" })
+        {
+            var start = source.IndexOf(function + "() {", StringComparison.Ordinal);
+            var end = source.IndexOf("\n}", start, StringComparison.Ordinal);
+            var body = source[start..end];
+            body.ShouldContain("workspace_slots_enabled=\"$(runner_workspace_slots_enabled ");
+            body.ShouldContain("PhoneHome__WorkspaceSlots__Enabled=$workspace_slots_enabled");
+            body.IndexOf("workspace_slots_enabled=", StringComparison.Ordinal)
+                .ShouldBeLessThan(body.IndexOf("cat > \"$SERVER2_", StringComparison.Ordinal));
+        }
+    }
+
+    [Test]
     public void Server_project_graph_is_available()
     {
         var stage = Stage("Dockerfile", "server-build");
