@@ -47,6 +47,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
     private BridgeQueueHarness.HarnessOptions? _harnessOptions;
     private readonly List<string> _roots = [];
     public required FakeTimeProvider Clock { get; init; }
+    /// <summary>The clock the services see: <see cref="Clock"/>, with its timers and the fixture's real work
+    /// tracked so <see cref="DriveAsync"/> can jump to the next due timer.</summary>
+    public required JumpingClock Time { get; init; }
     public required SeatWire Wire { get; init; }
     public required SeatDirectory Directory { get; init; }
     public LaunchRecorder Launches => Harness.Provider.GetRequiredService<LaunchRecorder>();
@@ -70,7 +73,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         builder.Services.AddScoped(_ => Db());
         builder.Services.AddScoped(sp => new AttentionService(sp.GetRequiredService<AppDbContext>(),
             new AttentionServiceTests.FakeRunnerClient(), Options.Create(new SupervisionSettings()),
-            Options.Create(new DelegationSettings()), Clock, sp.GetRequiredService<ILogger<AttentionService>>()));
+            Options.Create(new DelegationSettings()), Time, sp.GetRequiredService<ILogger<AttentionService>>()));
         builder.Services.AddSingleton<AttentionSummaryCache>();
         builder.Services.AddMemoryCache();
         await using var app = builder.Build();
@@ -144,8 +147,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         RefOnlyDesktopSettings? refOnlySettings = null, bool projectLaunch = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
-        var wire = new SeatWire();
+        var clock = new JumpingClock(new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero)));
+        var wire = new SeatWire { Clock = clock };
         var http = new HttpClient(wire);
         var client = new SessionRunnerHttpClient(http, new ClientFactory(wire),
             Options.Create(new SessionRunnerSettings { BaseUrl = "http://seat.test" }));
@@ -168,7 +171,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                 Delegation = completionSingleWriteBytes is int writeBytes
                     ? new DelegationSettings { PtySingleChunkBytes = writeBytes, RunnerSyncDebtOnSettlement = syncDebt }
                     : syncDebt ? null : new DelegationSettings { RunnerSyncDebtOnSettlement = false },
-                ConfigureDbContext = configureDb,
+                ConfigureDbContext = b => { b.AddInterceptors(clock.DbInterceptor); configureDb?.Invoke(b); },
                 ConfigureServices = services =>
                 {
                     if (refOnlySettings is not null)
@@ -198,7 +201,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         ReclaimHeldBackoffSeconds = reclaimHeldBackoffSeconds
                     }));
                     services.AddScoped<BlockedTaskParkingService>();
-                    services.AddSingleton<ITaskProgressGit, TaskParkPublicationTests.ParkGit>();
+                    services.AddSingleton<ITaskProgressGit>(_ => new TaskParkPublicationTests.ParkGit { Clock = clock });
                     services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
                         (TaskParkPublicationTests.ParkGit)sp.GetRequiredService<ITaskProgressGit>()));
                     if (reservationGate is null)
@@ -248,7 +251,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         services.AddScoped(sp => new RemoteWorkspaceService(directory,
                             sp.GetRequiredService<ITaskProgressGit>() as ILandingGit ?? throw new InvalidOperationException(),
                             sp.GetRequiredService<ILogger<RemoteWorkspaceService>>(),
-                            new TaskParkPublicationTests.ParkGit(sp.GetRequiredService<IRepositoryMutationLease>()),
+                            new TaskParkPublicationTests.ParkGit(sp.GetRequiredService<IRepositoryMutationLease>()) { Clock = clock },
                             sp.GetRequiredService<IRepositoryMutationLease>(), sp.GetRequiredService<IWorkspaceReservationJournal>(),
                             mirrorPublisher: new SeatMirrorPublisher(),
                             workspaceContexts: sp.GetRequiredService<TaskWorkspaceContextResolver>())
@@ -280,7 +283,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             wire.HarnessOptions = harnessOptions;
         }
         catch { http.Dispose(); await schema.DisposeAsync(); throw; }
-        var f = new RunnerSeatReleaseFixture { Schema = schema, Harness = harness, Clock = clock, Wire = wire, Directory = directory };
+        var f = new RunnerSeatReleaseFixture { Schema = schema, Harness = harness, Clock = clock.Fake, Time = clock, Wire = wire, Directory = directory };
         f._harnessOptions = wire.HarnessOptions;
         f.SessionId = harness.SessionId;
         f.AgentId = harness.AgentId;
@@ -372,7 +375,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
     {
         using var scope = Harness.Provider.CreateScope();
         var directory = legacyDirectory ?? new PhoneHomeRunnerDirectory(Directory.Client,
-            Options.Create(new PhoneHomeRunnerSettings()), Harness.Provider.GetRequiredService<IServiceScopeFactory>(), Clock);
+            Options.Create(new PhoneHomeRunnerSettings()), Harness.Provider.GetRequiredService<IServiceScopeFactory>(), Time);
         return await new RunnerSlotReconcileJob(directory, scope.ServiceProvider.GetRequiredService<AppDbContext>(),
             NullLogger<RunnerSlotReconcileJob>.Instance,
             scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()).ExecuteAsync(default);
@@ -446,7 +449,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
     {
         services.AddScoped(sp => new TerminalRunnerSeatReleaseService(sp.GetRequiredService<AppDbContext>(),
             new TerminalRunnerSeatReleasePolicy(), Harness.Queue, Harness.Provider.GetRequiredService<SessionStateStore>(),
-            Directory, Clock, Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>(),
+            Directory, Time, Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>(),
             Harness.EventBus, sp.GetRequiredService<ILogger<TerminalRunnerSeatReleaseService>>(),
             Harness.Provider.GetRequiredService<TerminalRunnerSeatDiscoveryState>()));
     }
@@ -503,15 +506,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         return await work;
     }
 
-    private async Task DriveAsync(Task work)
-    {
-        while (!work.IsCompleted)
-        {
-            await Task.WhenAny(work, Task.Delay(10));
-            Clock.Advance(TimeSpan.FromMilliseconds(20));
-        }
-        await work;
-    }
+    /// <summary>Runs <paramref name="work"/>, jumping fake time to the next due timer whenever it is parked
+    /// on the clock (<see cref="JumpingClock.DriveAsync"/>).</summary>
+    private Task DriveAsync(Task work) => Time.DriveAsync(work);
 
     public Task FlushAsync(Guid sessionId) => DriveAsync(Harness.Queue.FlushSessionAsync(sessionId, default));
 
@@ -1039,7 +1036,16 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             new(TerminalTranscriptReadStatus.Success, TerminalTranscriptVerdict.Idle,
                 "binding", "file", 100, 12, 12, 11), "issued-token", TimeSpan.FromSeconds(120),
             new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero)); // Runner clock is +24h.
+        /// <summary>Marks each request as real work for the fixture's <see cref="JumpingClock"/>.</summary>
+        public JumpingClock? Clock { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            using var _ = Clock?.BeginRealWork();
+            return await SendCoreAsync(request, ct);
+        }
+
+        private async Task<HttpResponseMessage> SendCoreAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (ForbidFixedEvidence) throw new InvalidOperationException("Real-runtime mode reached fixed evidence wire.");
             Calls.Add(request.RequestUri!.AbsolutePath);

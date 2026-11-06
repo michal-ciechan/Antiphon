@@ -448,6 +448,8 @@ public sealed class TaskParkPublicationTests
         internal ParkGit(IRepositoryMutationLease leases) : base(leases) { }
         public List<string[]> Commands { get; } = [];
         public Func<IReadOnlyList<string>, Task>? Before { get; set; }
+        /// <summary>Marks each git command as real work for a fixture's <see cref="Antiphon.Tests.TestHelpers.JumpingClock"/>.</summary>
+        public Antiphon.Tests.TestHelpers.JumpingClock? Clock { get; set; }
         protected override void ConfigureProcess(ProcessStartInfo start) => Isolate(start);
         public static void Isolate(ProcessStartInfo start)
         {
@@ -463,6 +465,7 @@ public sealed class TaskParkPublicationTests
         {
             Commands.Add(arguments.ToArray());
             if (Before is not null) await Before(arguments);
+            using var _ = Clock?.BeginRealWork();
             return await base.RunAsync(repository, arguments, ct);
         }
     }
