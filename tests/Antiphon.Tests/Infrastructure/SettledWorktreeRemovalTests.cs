@@ -734,7 +734,7 @@ public sealed class SettledWorktreeRemovalTests
     [Arguments("under")]
     public async Task C1714_Path_past_the_delete_limit_refuses_before_the_move(string shape)
     {
-        const int limit = 400;
+        const int limit = WorktreePathLimit.WindowsMaxPath;
         await using var h = await SettledRemovalHarness.CreateAsync(configure: s => s.AddSingleton(new WorktreePathLimit(limit)));
         var source = h.Host.Fixture.Source;
         var growth = WorktreeSetAside.SetAsidePath(source).Length - source.Length;
@@ -749,9 +749,9 @@ public sealed class SettledWorktreeRemovalTests
 
         var result = await h.RemoveAsync();
 
+        Console.WriteLine($"shape={shape}; path-length={file.Length + growth}; residue={result.Residue}; detail={result.Detail}");
         if (shape == "under")
         {
-            Console.WriteLine($"shape={shape}; path-length={file.Length + growth}; residue={result.Residue}; detail={result.Detail}");
             result.IsClean.ShouldBeTrue($"{result.Residue}; {result.Detail}");
             Directory.Exists(source).ShouldBeFalse();
             return;
