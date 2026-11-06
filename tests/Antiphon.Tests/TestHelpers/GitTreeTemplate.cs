@@ -88,12 +88,35 @@ internal sealed class GitTreeTemplate
     /// The template for <paramref name="key"/>, built by <paramref name="build"/> the first time in this process.
     /// <paramref name="build"/> receives an empty root and the token values to build with, and returns values to
     /// record. The template is deleted when the process exits.
+    /// <para>
+    /// With <paramref name="cacheVersion"/> (anything that changes whenever the built tree would: the building
+    /// code and the tools it runs), the template is also kept on disk as an archive under
+    /// <c>%TEMP%/antiphon-gitcache</c>, and a later test process extracts it instead of building again (one
+    /// process writes it, through a temporary file and an atomic move; archives unused for a week are pruned).
+    /// </para>
     /// </summary>
     public static async Task<GitTreeTemplate> BuildOnceAsync(string key, IReadOnlyCollection<string> tokenNames,
-        Func<string, IReadOnlyDictionary<string, string>, Task<Dictionary<string, string>>> build)
+        Func<string, IReadOnlyDictionary<string, string>, Task<Dictionary<string, string>>> build, string? cacheVersion = null)
     {
         var lazy = Built.GetOrAdd(key, _ => new Lazy<Task<GitTreeTemplate>>(async () =>
         {
+            var cached = cacheVersion is null ? null : CachePath(key, cacheVersion);
+            if (cached is not null && File.Exists(cached))
+            {
+                try
+                {
+                    using (TestTrace.Span("git-template cache hit"))
+                    {
+                        File.SetLastAccessTimeUtc(cached, DateTime.UtcNow);
+                        return FromArchive(cached);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException
+                    or UnauthorizedAccessException)
+                {
+                    TryDelete(cached); // A damaged archive is rebuilt.
+                }
+            }
             using var span = TestTrace.Span("git-template build");
             SweepStale();
             var root = Path.Combine(Path.GetTempPath(), "antiphon-gittpl-" + Guid.NewGuid().ToString("N"));
@@ -101,7 +124,9 @@ internal sealed class GitTreeTemplate
             AppDomain.CurrentDomain.ProcessExit += (_, _) => DeleteTree(root);
             var tokens = tokenNames.ToDictionary(n => n, _ => Guid.NewGuid().ToString("N"), StringComparer.Ordinal);
             var values = await build(root, tokens).ConfigureAwait(false);
-            return SaveTo(root, root, tokens, values);
+            var template = SaveTo(root, root, tokens, values);
+            if (cached is not null) template.TryStoreArchive(cached);
+            return template;
         }));
         try
         {
@@ -745,6 +770,35 @@ internal sealed class GitTreeTemplate
 
     /// <summary>A killed test process cannot delete its templates at exit; one older than a day is stale (a live
     /// process builds its own and never outlives that).</summary>
+    private static string CachePath(string key, string version)
+    {
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key + "|" + version)))[..20];
+        var safe = new string(key.Select(c => char.IsAsciiLetterOrDigit(c) || c == '-' ? c : '_').ToArray());
+        return Path.Combine(Path.GetTempPath(), "antiphon-gitcache", safe + "-" + digest + ".zip");
+    }
+
+    /// <summary>Writes the archive beside its final name, then moves it into place; a concurrent writer of the
+    /// same version wins or loses the move harmlessly. Best effort: a failure only means the next process builds.</summary>
+    private void TryStoreArchive(string path)
+    {
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            foreach (var old in System.IO.Directory.EnumerateFiles(Path.GetDirectoryName(path)!))
+                if (File.GetLastAccessTimeUtc(old) < DateTime.UtcNow.AddDays(-7)) TryDelete(old);
+            SaveArchive(temporary);
+            File.Move(temporary, path, overwrite: false);
+        }
+        catch (Exception) { /* best effort */ }
+        finally { TryDelete(temporary); }
+    }
+
+    private static void TryDelete(string file)
+    {
+        try { if (File.Exists(file)) File.Delete(file); } catch (Exception) { /* best effort */ }
+    }
+
     private static void SweepStale()
     {
         try

@@ -72,7 +72,17 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             var builder = new LandingGitFixture(root, Guid.ParseExact(tokens["task"], "N"));
             await builder.BuildAsync();
             return new() { ["seed"] = builder.SeedSha };
-        });
+        }, cacheVersion: CacheVersion.Value);
+
+    /// <summary>What the built template depends on: this test assembly's build (the fixture code) and git's version.</summary>
+    private static readonly Lazy<string> CacheVersion = new(() =>
+    {
+        var start = new ProcessStartInfo("git", "--version") { RedirectStandardOutput = true, UseShellExecute = false };
+        using var process = Process.Start(start)!;
+        var version = process.StandardOutput.ReadToEnd().Trim();
+        process.WaitForExit();
+        return typeof(LandingGitFixture).Assembly.ManifestModule.ModuleVersionId.ToString("N") + "|" + version;
+    });
 
     /// <summary>The fixture built with git processes, never from the template.</summary>
     internal async Task BuildAsync()
