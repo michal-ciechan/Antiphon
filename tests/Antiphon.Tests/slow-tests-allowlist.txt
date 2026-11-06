@@ -414,3 +414,6 @@ Antiphon.Tests.Application.ChannelInputWithheldIncidentTests
 
 # CARD-0824 S5b-1: real Git, isolated PostgreSQL, full desktop consumer matrix and real loopback mirror queue/recovery.
 Antiphon.Tests.Application.C0824RefOnlyCleanupTests
+
+# real Git scratch repositories compare index, commit-tree and blob reads across staging and source set-aside.
+Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
