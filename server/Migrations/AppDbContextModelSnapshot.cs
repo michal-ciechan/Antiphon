@@ -2749,6 +2749,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Workspace")
                         .HasColumnType("integer");
 
+                    b.Property<string>("WorkspaceSnapshotJson")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("WorktreeId")
                         .HasColumnType("uuid");
 
