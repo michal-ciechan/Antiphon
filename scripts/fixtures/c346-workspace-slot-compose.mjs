@@ -81,6 +81,93 @@ sudo() {
   printf 'Filesystem blocks used available capacity mount\\nfixture 99999999 0 99999999 0%% /\\n'
 }
 `;
+// Refusals exercise the complete production phases and wrappers. Every boundary that could
+// start/change anything leaves a marker and exits; checking the fixture tree catches writes too.
+const malformed = [
+  ['empty', key + '='],
+  ['space-only', key + '= '],
+  ['tab-only', key + '=\t'],
+  ['leading-space-key', ' ' + key + '=true'],
+  ['leading-tab-key', '\t' + key + '=true'],
+  ['space-before-equals', key + ' =true'],
+  ['tab-before-equals', key + '\t=true'],
+  ['space-after-equals', key + '= true'],
+  ['tab-after-equals', key + '=\ttrue'],
+  ['trailing-space', key + '=true '],
+  ['trailing-tab', key + '=false\t'],
+  ['crlf', key + '=true\r'],
+  ['uppercase-value', key + '=TRUE'],
+  ['mixed-case-value', key + '=False'],
+  ['lowercase-key', key.toLowerCase() + '=true'],
+  ['mixed-case-key', 'phoneHome__WorkspaceSlots__Enabled=true'],
+  ['export-prefix', 'export ' + key + '=true'],
+  ['quoted-value', key + '="true"'],
+  ['inline-comment', key + '=true # active assignment'],
+  ['comment-without-space', key + '=true#active'],
+  ['indented-duplicate', key + '=true\n ' + key + '=false'],
+  ['tabbed-duplicate', key + '=true\n\t' + key + '=false'],
+  ['spaced-duplicate', key + '=true\n' + key + ' =false'],
+  ['comment-looking-duplicate', key + '=true\n' + key + '=false # active'],
+  ['case-duplicate', key + '=true\n' + key.toUpperCase() + '=false'],
+  ['same-value-duplicate', key + '=true\n' + key + '=true'],
+  ['later-duplicate', key + '=true\nUNRELATED=false\n' + key + '=false'],
+];
+const invalid = [
+  ['invalid-value', key + '=yes'],
+  ['duplicate', key + '=true\n' + key + '=false'],
+  ['shell-value', key + '=$(touch ' + root + '/injected)'],
+  ...malformed,
+];
+function snapshot() {
+  function entries(dir) {
+    return fs.readdirSync(dir).sort().flatMap(name => {
+      const file = path.join(dir, name);
+      return fs.statSync(file).isDirectory() ? [[file, 'directory'], ...entries(file)] : [[file, fs.readFileSync(file)]];
+    });
+  }
+  return entries(root);
+}
+let refusals = 0;
+const failures = [];
+for (const temp of [false, true]) {
+  const file = temp ? env.SERVER2_TEMP_ENV : env.SERVER2_ENV;
+  const other = temp ? env.SERVER2_ENV : env.SERVER2_TEMP_ENV;
+  for (const [shape, assignment] of invalid) {
+    fs.writeFileSync(file, initial + assignment + '\n');
+    save(other, 'true');
+    for (const action of [temp ? 'compose_temp' : 'compose_host',
+      temp ? 'case_deploy_temp_runner' : 'case_deploy_parent']) {
+      const before = snapshot();
+      const effects = ['docker', 'sudo', 'ensure_checkout', 'ensure_runner_boot_files',
+        'c1008_recycle', 'retire_c590_leftovers', 'build_server2_images', 'c849_prepare',
+        'c849_require_ready', 'c849_budget_gate', 'ensure_build_slots_broker',
+        'c1008_record_recreated', 'c1008_rollout_lock', 'c849_no_temp_containers',
+        'c1609_temp_retirement_clearable', 'seed_runner_checkout']
+        .map(name => `${name}() { printf '%s\\n' '${name}' >> "$FIXTURE_ROOT/side-effects"; exit 91; }`).join('\n');
+      const result = cp.spawnSync('bash', [], {input: prelude +
+        '\nrequire_lane() { [ "$1" = host ]; }\n' + effects + '\n' + action + ' config --format json\n',
+        env, cwd: repo, encoding: 'utf8', timeout: 30000});
+      try {
+        assert.equal(result.error, undefined);
+        assert.equal(result.status, 2, 'exact refusal exit code');
+        assert.equal(result.stdout, 'RunnerWorkspaceSlotsSettingInvalid\n', 'exact refusal reason');
+        assert.equal(result.stderr, '', 'no settings or diagnostics leaked');
+        assert.deepEqual(snapshot(), before, 'refusal changed fixture files or started a side effect');
+        refusals++;
+        console.log(`PASS refusal ${action} ${shape}`);
+      } catch (error) {
+        failures.push(`${action} ${shape}: ${error.message}`);
+        console.error(`FAIL refusal ${action} ${shape}: ${error.message}`);
+        // Each diagnostic case owns its fixture state; remove only its known marker.
+        if (fs.existsSync(root + '/side-effects')) fs.unlinkSync(root + '/side-effects');
+      }
+    }
+  }
+}
+assert.equal(failures.length, 0, failures.join('\n'));
+assert.equal(refusals, invalid.length * 4);
+console.log(`PASS refusals=${refusals} original-refusals=12 malformed-refusals=${malformed.length * 4}`);
+if (process.argv.includes('--refusals-only')) process.exit(0);
 let matrices = 0;
 for (const temp of [false, true]) {
   const file = temp ? env.SERVER2_TEMP_ENV : env.SERVER2_ENV;
@@ -88,7 +175,9 @@ for (const temp of [false, true]) {
   const wrapper = temp ? 'compose_temp' : 'compose_host';
   const phase = temp ? 'case_deploy_temp_runner' : 'case_deploy_parent';
   for (const value of [undefined, '', 'false', 'true']) {
-    save(file, value);
+    // Empty ambient interpolation is still false; an empty SAVED assignment is refused above.
+    save(file, value === '' ? undefined : value);
+    if (value === '') env[key] = ''; else delete env[key];
     save(other, value === 'true' ? 'false' : 'true');
     const otherBytes = fs.readFileSync(other);
     const expected = value === 'true' ? 'true' : 'false';
@@ -107,22 +196,6 @@ for (const temp of [false, true]) {
     }
   }
 }
-let refusals = 0;
-for (const temp of [false, true]) {
-  const file = temp ? env.SERVER2_TEMP_ENV : env.SERVER2_ENV;
-  for (const value of ['yes', 'true\n' + key + '=false', '$(touch ' + root + '/injected)']) {
-    save(file, value);
-    const before = fs.readFileSync(file);
-    for (const action of [temp ? 'compose_temp' : 'compose_host',
-      temp ? 'case_deploy_temp_runner' : 'case_deploy_parent']) {
-      const output = bash('require_lane() { [ "$1" = host ]; }\ndocker() { exit 91; }\n' + action + ' config --format json\n', 2);
-      assert.match(output, /RunnerWorkspaceSlotsSettingInvalid/);
-      assert.deepEqual(fs.readFileSync(file), before, 'refusal rewrote settings');
-      refusals++;
-    }
-    assert.equal(fs.existsSync(root + '/injected'), false);
-  }
-}
 // Missing file also defaults false; no env file is sourced.
 assert.equal(bash('runner_workspace_slots_enabled "$FIXTURE_ROOT/nonexistent.env"\n').trim(), 'false');
 save(env.SERVER2_ENV, undefined);
@@ -137,5 +210,4 @@ assert.equal(Object.hasOwn(base.services['session-runner'].environment, key), fa
 delete current.services['session-runner'].environment[key];
 assert.deepEqual(current, base, 'default render changed outside the new false flag');
 assert.equal(matrices, 16);
-assert.equal(refusals, 12);
-console.log('PASS matrices=16 refusals=12 missing-file=1 base-equivalence=1');
+console.log(`PASS matrices=16 refusals=${refusals} missing-file=1 base-equivalence=1`);
