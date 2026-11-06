@@ -53,7 +53,7 @@ Rows use existing derived deadlines; no explicit total override or widened timeo
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-status-red/` | regression-red | `/*/*/StatusSnapshotScriptTests/*` | V-1 | StatusSnapshotScriptTests; expected red before script | 1 | 4 | true | TEMP=/tmp |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-status-final/` | script-pattern | `/*/*/(StatusSnapshotScriptTests)\|(CardRelationshipScriptTests)\|(CardListSearchScriptTests)/*` | V-1, V-2 | all listed, 0 failed | 3 | 4 | true | TEMP=/tmp |
-| CP-3 | S2 | CP-2 | instruction-guards | `/*/*/(AgentContextContractTests)\|(MechanicalPcContractTests)\|(TaskPlatformGuidanceTests)\|(C1729LayeringGuardTests)/*` | V-3, V-4, V-6 | all listed, 0 failed | 4 | 2 | true | TEMP=/tmp |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-status-final/` | script-pattern | `/*/*/(StatusSnapshotScriptTests*)\|(CardRelationshipScriptTests*)\|(CardListSearchScriptTests*)/*` | V-1, V-2 | all listed, 0 failed | 3 | 4 | true | TEMP=/tmp |
+| CP-3 | S2 | CP-2 | instruction-guards | `/*/*/(AgentContextContractTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | V-3, V-4, V-6 | all listed, 0 failed | 4 | 2 | true | TEMP=/tmp |
 | CP-4 | S2 | CP-2 | policy-guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)/*` | V-5 | all listed, 0 failed | 5 | 3 | true | TEMP=/tmp |
 | CP-5 | S2 | CP-2 | whole-unit | `/*/*/*/*[Category=Unit]` | V-7 | >= 1 executed, 0 failed | 1 | 15 | true | TEMP=/tmp |
