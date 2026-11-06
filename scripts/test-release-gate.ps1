@@ -34,6 +34,11 @@ $ShaB = ('b' * 40)
 $ShaC = ('c' * 40)
 $CandidateRef = 'release/rc-20260923T083000Z'
 $CandidateId = 'rc-20260923T083000Z'
+$script:C1731Timing = [ordered]@{
+    fixtureSeconds = 0.0; saveSeconds = 0.0; restoreSeconds = 0.0
+    scanSeconds = 0.0; parentSeconds = 0.0; compareSeconds = 0.0; writeSeconds = 0.0
+    gateSeconds = 0.0; restores = 0; reads = 0; writes = 0; unchanged = 0; parentOperations = 0
+}
 
 function New-C599Root {
     $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
@@ -1373,6 +1378,7 @@ function New-C599PublishFx {
       blob itself. The remote/GitHub stay file-backed recipients behind the seams.
     #>
     param([byte[]]$PolicyBytes = $null, [switch]$NoAuthority, [switch]$LongLivedCandidate, [string]$Repository = 'michal-ciechan/Antiphon')
+    $fixtureWatch = [Diagnostics.Stopwatch]::StartNew()
     $root = New-C599Root
     $co = New-C599PolicyCheckout -Root $root -PolicyBytes $PolicyBytes -Repository $Repository
     $Head = $co.Sha
@@ -1407,6 +1413,7 @@ function New-C599PublishFx {
     Write-NightlyAtomicJson -Path $git.RemotePath -Object $state
     # The release card the receipt names, served by the fake Antiphon API.
     $cardApi = New-C599CardApi -Root $root -Sha $Head -Candidate $CandidateId
+    $script:C1731Timing.fixtureSeconds += $fixtureWatch.Elapsed.TotalSeconds
     return [pscustomobject]@{
         Root = $root; Git = $git; Gh = $gh; ReleaseRoot = $releaseRoot; Checkout = $checkout; Head = $Head; CardApi = $cardApi
         CandidateId = $CandidateId; CandidateRef = $CandidateRef
@@ -2305,31 +2312,65 @@ function Test-C599B_AllChunks {
 
 function Save-C599ASnapshot {
     param($Fx)
+    $saveWatch = [Diagnostics.Stopwatch]::StartNew()
     $files = @{}
     foreach ($f in @(Get-ChildItem -LiteralPath $Fx.ReleaseRoot -Recurse -File -Force)) { $files[$f.FullName] = [System.IO.File]::ReadAllBytes($f.FullName) }
     $absent = @()
     foreach ($p in @($Fx.Git.RemotePath, $Fx.Git.Trace, $Fx.Gh.StorePath, $Fx.CardApi.Store, (Join-Path $Fx.Checkout (Join-Path 'tests' 'test-execution-policy.json')))) {
         if (Test-Path -LiteralPath $p -PathType Leaf) { $files[$p] = [System.IO.File]::ReadAllBytes($p) } else { $absent += $p }
     }
-    return [pscustomobject]@{ Root = $Fx.ReleaseRoot; Files = $files; Absent = $absent }
+    # Resolve immutable bytes, encodings and unique parent metadata just once.
+    $parents = @{}
+    $entries = @(foreach ($p in $files.Keys) {
+        $parents[[IO.Path]::GetDirectoryName($p)] = $true
+        [pscustomobject]@{ Path = $p; Bytes = $files[$p]; Encoded = [Convert]::ToBase64String($files[$p]) }
+    })
+    $script:C1731Timing.saveSeconds += $saveWatch.Elapsed.TotalSeconds
+    return [pscustomobject]@{ Root = $Fx.ReleaseRoot; Files = $files; Absent = $absent; Entries = $entries; Parents = @($parents.Keys) }
 }
 
 function Restore-C599ASnapshot {
     param($Snap)
+    # A failed restore must terminate this case rather than admit contaminated state.
+    $ErrorActionPreference = 'Stop'
+    $restoreWatch = [Diagnostics.Stopwatch]::StartNew()
+    $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
+    $script:C1731Timing.restores++
+    try {
     foreach ($f in @(Get-ChildItem -LiteralPath $Snap.Root -Recurse -File -Force)) {
         if (-not $Snap.Files.ContainsKey($f.FullName)) { Remove-Item -LiteralPath $f.FullName -Force }
     }
     foreach ($p in @($Snap.Absent)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
-    foreach ($p in @($Snap.Files.Keys)) {
-        $parent = Split-Path -Parent $p
-        if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-        [System.IO.File]::WriteAllBytes($p, $Snap.Files[$p])
+    $script:C1731Timing.scanSeconds += $phaseWatch.Elapsed.TotalSeconds
+    $phaseWatch.Restart()
+    foreach ($parent in $Snap.Parents) {
+        if (-not [IO.Directory]::Exists($parent)) { [void][IO.Directory]::CreateDirectory($parent) }
+        $script:C1731Timing.parentOperations++
+    }
+    $script:C1731Timing.parentSeconds += $phaseWatch.Elapsed.TotalSeconds
+    foreach ($entry in $Snap.Entries) {
+        $phaseWatch.Restart()
+        $same = $false
+        if ([IO.File]::Exists($entry.Path)) {
+            $script:C1731Timing.reads++
+            $same = [Convert]::ToBase64String([IO.File]::ReadAllBytes($entry.Path)) -ceq $entry.Encoded
+        }
+        $script:C1731Timing.compareSeconds += $phaseWatch.Elapsed.TotalSeconds
+        if ($same) { $script:C1731Timing.unchanged++; continue }
+        $phaseWatch.Restart()
+        [IO.File]::WriteAllBytes($entry.Path, $entry.Bytes)
+        $script:C1731Timing.writes++
+        $script:C1731Timing.writeSeconds += $phaseWatch.Elapsed.TotalSeconds
+    }
+    } finally {
+        $script:C1731Timing.restoreSeconds += $restoreWatch.Elapsed.TotalSeconds
     }
 }
 
 function Get-C599AGate {
     # publish-release.ps1's pre-write decision, with the remote answer read from the recipient.
     param($Fx)
+    $gateWatch = [Diagnostics.Stopwatch]::StartNew()
     $paths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot '' -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId
     $green = Get-Content -LiteralPath $paths.GreenPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -2338,16 +2379,17 @@ function Get-C599AGate {
         -Repository 'michal-ciechan/Antiphon' -NowUtc $script:C599Now -CardApiBaseUrl $Fx.CardApi.Url
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha -Authority $authority
     $verdict = Get-ReleaseGateCreditVerdict -State $green
+    $script:C1731Timing.gateSeconds += $gateWatch.Elapsed.TotalSeconds
     return [pscustomobject]@{ Ok = [bool]$gate.Ok; Reasons = @(@($gate.Reasons) + @($verdict.Reasons) | ForEach-Object { [string]$_ }); Suites = @($authority.Suites) }
 }
 
 function Invoke-C599AVariant {
     <#
-      Restore the valid control, apply Mutate, and require a refusal naming every
+      Apply Mutate to the valid control, and require a refusal naming every
       Expect token. -Publish drives the real publisher and the observer instead.
     #>
     param($Fx, $Snap, [string]$Label, [scriptblock]$Mutate, [string[]]$Expect, [switch]$Publish, [hashtable]$Extra = $null, [scriptblock]$Cleanup = $null)
-    Restore-C599ASnapshot -Snap $Snap
+    # Save establishes the first control; every prior variant restores it in finally.
     $got = @(); $refused = $false; $err = ''
     try {
         & $Mutate
@@ -2362,8 +2404,8 @@ function Invoke-C599AVariant {
     } catch {
         $err = 'threw: ' + $_.Exception.Message
     } finally {
-        if ($Cleanup) { & $Cleanup }
-        Restore-C599ASnapshot -Snap $Snap
+        try { if ($Cleanup) { & $Cleanup } }
+        finally { Restore-C599ASnapshot -Snap $Snap }
     }
     $absentTokens = @($Expect | Where-Object { $got -notcontains $_ })
     return [pscustomobject]@{
@@ -5025,10 +5067,32 @@ function Clear-C599FixtureReadOnly {
 . (Join-Path $here 'fixtures/c1500-status.ps1')
 . (Join-Path $here 'fixtures/c1731-snapshot.ps1')
 $cases = Get-C487CaseFunctions -Prefix 'C599_'
+$caseWatch = [Diagnostics.Stopwatch]::StartNew()
+$caseStartedUtc = [datetime]::UtcNow
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
-    try { & $fn } finally { Stop-C599CardStub; Clear-C599FixtureReadOnly }
+    try { & $fn } finally {
+        $bodySeconds = $caseWatch.Elapsed.TotalSeconds
+        $teardownWatch = [Diagnostics.Stopwatch]::StartNew()
+        try { Stop-C599CardStub; Clear-C599FixtureReadOnly }
+        finally {
+            if ($env:C1731_TIMING_ROOT) {
+                $timingRoot = $env:C1731_TIMING_ROOT
+                if (-not [IO.Path]::IsPathRooted($timingRoot)) { $timingRoot = Join-Path $repoRoot $timingRoot }
+                [void][IO.Directory]::CreateDirectory($timingRoot)
+                $record = [ordered]@{
+                    case = $Case; source = [string](& git -C $repoRoot rev-parse HEAD)
+                    host = [Environment]::MachineName; platform = [Environment]::OSVersion.Platform.ToString()
+                    startedUtc = $caseStartedUtc.ToString('o'); bodySeconds = $bodySeconds
+                    teardownSeconds = $teardownWatch.Elapsed.TotalSeconds; phases = $script:C1731Timing
+                    externalCalls = 'Filesystem scan/parent/compare/write measured; gate includes fresh Git/HTTP/IO checks. Their individual spans and process startup remain unknown.'
+                }
+                $path = Join-Path $timingRoot ($Case + '-' + [guid]::NewGuid().ToString('N') + '.json')
+                [IO.File]::WriteAllText($path, ($record | ConvertTo-Json -Depth 8))
+            }
+        }
+    }
 } else {
     try { foreach ($fn in $cases) { & $fn } } finally { Stop-C599CardStub; Clear-C599FixtureReadOnly }
 }
