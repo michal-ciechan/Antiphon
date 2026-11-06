@@ -65,3 +65,14 @@ This unlisted, gated diagnostic establishes the new defect before repair; it is 
 The earlier checkpoint was canceled during admission with no build or tests started.
 The same three required rows run at the committed repair SHA; no green row is repeated.
 The link witness uses the existing New-C599AEvidenceLink factory (Windows junction, otherwise symlink).
+
+The 93396a85b checkpoint ran all seven allocator methods green (Fresh 153.342s, Target 77.771s).
+Its new SharedSeed test lost a script-scoped wrapper variable in the publisher scope; the repair
+uses child-process-global references and preserves all three assertions. CP-1 must be rerun at
+the repair SHA. CP-2 had the two inherited C0824 reverse-coverage failures; CP-3 was stopped under
+the task budget with additional unresolved dialog/secret-floor failures and is NOT a completed
+Unit lane. Rerun CP-1/CP-2/CP-3 after the excluded policy repair is present; preserve historical red.
+A gated standalone SharedSeed diagnostic may verify the wrapper repair within the remaining task
+budget; it cannot replace CP-1. No additional checkpoint build is started without time to await it.
+Fresh is slightly above the Debug approximate 150s target; retain 300s and assess qualification
+samples/partitioning, never widen the cap. All PCs remain pending for SourceLanding Mutation.
