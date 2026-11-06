@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.IO.Pipes;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner;
@@ -277,12 +280,30 @@ public class HerdrTransportTests
         await using var fake = new FakeHerdrServer();
         fake.BeforeRequest = _ => duringConnections?.Invoke();
         fake.Start(); await fake.WaitUntilListeningAsync();
-        var before = OperatingSystem.IsLinux() ? Directory.GetFiles("/proc/self/fd").Length : Process.GetCurrentProcess().HandleCount;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         for (var i = 0; i < 20; i++)
-            (await Client(fake.EndpointPath).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
-        var after = OperatingSystem.IsLinux() ? Directory.GetFiles("/proc/self/fd").Length : Process.GetCurrentProcess().HandleCount;
-        Console.WriteLine($"C801 native handles: before={before}, after={after}, delta={after - before}");
-        (after - before <= 8).ShouldBeTrue($"native handles leaked: before={before}, after={after}");
+        {
+            await using var connection = await HerdrTransport.ConnectAsync(fake.EndpointPath, 500, deadline.Token);
+            SafeHandle handle = connection.Stream switch
+            {
+                PipeStream pipe => pipe.SafePipeHandle,
+                NetworkStream network => network.Socket.SafeHandle,
+                _ => throw new InvalidOperationException("Expected a native Herdr pipe or socket.")
+            };
+            handle.IsClosed.ShouldBeFalse($"native handle must be open before disposal, cycle={i}");
+            using (var reader = new StreamReader(connection.Stream, Encoding.UTF8, leaveOpen: true))
+            using (var writer = new StreamWriter(connection.Stream, new UTF8Encoding(false), leaveOpen: true)
+                   { AutoFlush = true })
+            {
+                await writer.WriteLineAsync("""{"id":"handle-check","method":"ping","params":{}}""".AsMemory(), deadline.Token);
+                using var response = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!);
+                response.RootElement.GetProperty("result").GetProperty("protocol").GetInt32().ShouldBe(20);
+            }
+            // Check this connection's handle immediately, while it is still strongly held.
+            // Other tests and finalizers cannot satisfy or invalidate this assertion.
+            await connection.DisposeAsync();
+            handle.IsClosed.ShouldBeTrue($"native handle survived explicit disposal, cycle={i}");
+        }
     }
 
     private static async Task<Exception?> CaptureAsync(Func<Task> action)
