@@ -53,11 +53,12 @@ function Test-C1733_SharedSeed {
     $script:C1733SetupGit = 0
     $b = New-C1339Fixture
     Assert-C487 ($script:C1733SetupGit -eq 0) 'C1733 seed-built-once' ('repeated setup commands=' + $script:C1733SetupGit)
+    $bStore = [IO.File]::ReadAllText($b.Gh.StorePath)
     Add-C1339Tag $a $a.FinalTag $a.Head
-    [IO.File]::WriteAllText($a.Gh.StorePath, '{"releases":[]}')
+    [IO.File]::WriteAllText($a.Gh.StorePath, '{"releases":[{"tagName":"private"}]}')
     [IO.File]::WriteAllText($a.FaultPath, '{"push":"before"}')
     $remote = Invoke-C1339LocalGit $b @('show-ref', '--verify', '--hash', ('refs/tags/' + $b.FinalTag)) -Remote -AllowAbsent
-    Assert-C487 (-not $remote -and -not [IO.File]::Exists($b.FaultPath) -and $a.Root -cne $b.Root -and $a.CardApi.Url -cne $b.CardApi.Url) 'C1733 private-recipients'
+    Assert-C487 ([IO.File]::ReadAllText($b.Gh.StorePath) -ceq $bStore -and -not $remote -and -not [IO.File]::Exists($b.FaultPath) -and $a.Root -cne $b.Root -and $a.CardApi.Url -cne $b.CardApi.Url) 'C1733 private-recipients'
     $valid = Invoke-C1339Publish $b -WhatIf
     Assert-C487 ($valid.ExitCode -eq 0) 'C1733 clone-fresh-authority' $valid.Refusal
 }
@@ -74,4 +75,29 @@ function Test-C1733_ReservationFinally {
     Assert-C487 ($threw -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq [Convert]::ToBase64String($original)) 'C1733 throwing-mutation-restores'
     $next = Invoke-C1339Promote $fx @{ WhatIf = $true }
     Assert-C487 ($next.ExitCode -eq 0) 'C1733 next-variant-valid' $next.Refusal
+}
+
+function Test-C1733_SnapshotWork {
+    $fx = New-C1339Fixture
+    $path = Join-Path $fx.ReleaseRoot 'snapshot/binary.dat'
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+    [IO.File]::WriteAllBytes($path, [byte[]]@(0, 255, 1, 128))
+    $snap = Save-C1339Snapshot $fx
+    $stamp = [datetime]'2001-02-03T04:05:06Z'
+    [IO.File]::SetLastWriteTimeUtc($path, $stamp)
+    Restore-C1339Snapshot $snap
+    Assert-C487 ([IO.File]::GetLastWriteTimeUtc($path) -eq $stamp) 'C1733 unchanged-not-written'
+    [IO.File]::WriteAllBytes($path, [byte[]]@(128, 1, 255, 0))
+    [IO.File]::SetLastWriteTimeUtc($path, $stamp)
+    Restore-C1339Snapshot $snap
+    Assert-C487 ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq 'AP8BgA==') 'C1733 same-stamp-changed-bytes'
+    [IO.File]::Delete($path)
+    [IO.Directory]::Delete([IO.Path]::GetDirectoryName($path))
+    Restore-C1339Snapshot $snap
+    Assert-C487 ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq 'AP8BgA==') 'C1733 missing-parent-restored'
+    [IO.File]::Delete($path)
+    [void][IO.Directory]::CreateDirectory($path)
+    $threw = $false
+    try { Restore-C1339Snapshot $snap } catch { $threw = $true }
+    Assert-C487 $threw 'C1733 restore-failure-terminates'
 }

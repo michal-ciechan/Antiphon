@@ -4164,6 +4164,7 @@ function Test-C599_E2EWatchdog {
 
 # CARD-1339: real local recipients, with a confined transport adapter.
 . (Join-Path $here 'fixtures/c1339-release-git.ps1')
+. (Join-Path $here 'fixtures/c1339-fixture-state.ps1')
 
 function Invoke-C1339LocalGit {
     param($Fx, [string[]]$Arguments, [switch]$Remote, [switch]$AllowAbsent)
@@ -4174,7 +4175,7 @@ function Invoke-C1339LocalGit {
     return [string]$r.Output
 }
 
-function New-C1339Fixture {
+function New-C1339FixtureSeed {
     param([switch]$Stamp, [switch]$NoCandidateRemote)
     # All fixture setup children inherit no task/API/provider credentials, hooks,
     # signing configuration or network protocols. Restore the harness environment.
@@ -4741,7 +4742,8 @@ function Get-C1339RecipientState {
 function Invoke-C1339AuthorityVariant {
     param($Fx, $Snap, [scriptblock]$Mutate, [string]$Reason, [hashtable]$Extra = @{})
     $CandidateId = $Fx.CandidateId
-    Restore-C599ASnapshot $Snap
+    # Save establishes the first control; prior variants restore in finally.
+    try {
     & $Mutate
     $journalPath = Join-Path $Fx.ReleaseRoot 'publications.json'
     $journal = [IO.File]::ReadAllText($journalPath)
@@ -4750,15 +4752,15 @@ function Invoke-C1339AuthorityVariant {
     $check = New-C1339Check ($r.ExitCode -ne 0 -and -not $r.Promoted -and -not $r.Resumed -and
         @($r.Refusal -split ',') -contains $Reason -and (Test-C1339NoWrites $Fx) -and
         (Get-C1339RecipientState $Fx) -ceq $before -and [IO.File]::ReadAllText($journalPath) -ceq $journal) ($Reason + ': ' + $r.Refusal)
-    Restore-C599ASnapshot $Snap
     return $check
+    } finally { Restore-C1339Snapshot $Snap }
 }
 
 function Test-C1339_PromoteAuthorityHash {
     $fx = New-C1339PromotionFixture
     $CandidateId = $fx.CandidateId
     $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
-    $snap = Save-C599ASnapshot $fx
+    $snap = Save-C1339Snapshot $fx
     $hashChecks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
     $auth = Get-Content (Join-Path (Get-C599AuthorityDir $fx) 'authority.json') -Raw | ConvertFrom-Json
     $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 7 -and
@@ -4777,7 +4779,7 @@ function Test-C1339_PromoteAuthorityHash {
         $CandidateId = $fx.CandidateId
         if ($resume) { Add-C1339Tag $fx $fx.FinalTag $fx.Head }
         $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
-        $snap = Save-C599ASnapshot $fx
+        $snap = Save-C1339Snapshot $fx
         $checks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
         foreach ($variant in @(
             @{ reason = 'script-digest-mismatch:promote-release.ps1'; edit = { Update-C599AAuthority $fx { param($a) Set-C599AField $a.scriptHashes 'promote-release.ps1' ('0' * 64) } } },
@@ -4797,7 +4799,7 @@ function Test-C1339_PromoteAuthorityHash {
     }
     $fx = New-C1339PromotionFixture
     $CandidateId = $fx.CandidateId
-    $snap = Save-C599ASnapshot $fx
+    $snap = Save-C1339Snapshot $fx
     $checks = @(Invoke-C1339AuthorityVariant $fx $snap {} 'authority-repository' @{ Repository = 'fixture/foreign' })
     $checks += Invoke-C1339AuthorityVariant $fx $snap {} 'authority-repository' @{ Repository = $null }
     $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
@@ -4819,7 +4821,8 @@ function Test-C1339_PromoteAuthorityHash {
 
 function Invoke-C1339ReservationVariant {
     param($Fx, $Snap, [scriptblock]$Mutate, [string]$Reason)
-    Restore-C599ASnapshot $Snap
+    # Save establishes the first control; prior variants restore in finally.
+    try {
     $path = Join-Path $Fx.ReleaseRoot 'publications.json'
     & $Mutate
     $journal = if (Test-Path $path) { [IO.File]::ReadAllText($path) } else { '<absent>' }
@@ -4829,8 +4832,8 @@ function Invoke-C1339ReservationVariant {
     $check = New-C1339Check ($r.ExitCode -ne 0 -and -not $r.Promoted -and -not $r.Resumed -and
         $r.Refusal -ceq $Reason -and (Test-C1339NoWrites $Fx) -and
         (Get-C1339RecipientState $Fx) -ceq $before -and $after -ceq $journal) ($Reason + ': ' + $r.Refusal)
-    Restore-C599ASnapshot $Snap
     return $check
+    } finally { Restore-C1339Snapshot $Snap }
 }
 
 function Install-C1339WriterFault {
@@ -4907,7 +4910,7 @@ function Invoke-C1339PromotionReservations {
         $fx = New-C1339PromotionFixture
         if ($resume) { Add-C1339Tag $fx $fx.FinalTag $fx.Head }
         $valid = Invoke-C1339Promote $fx @{ WhatIf = $true }
-        $snap = Save-C599ASnapshot $fx
+        $snap = Save-C1339Snapshot $fx
         $resumedChecks = @(New-C1339Check ($valid.ExitCode -eq 0) ('valid control:' + $valid.Refusal))
         foreach ($variant in $variants) {
             $checks = @(New-C1339Check ($valid.ExitCode -eq 0 -and $result.ExitCode -eq 0) 'valid controls')
@@ -5076,7 +5079,7 @@ if ($Case) {
     try { & $fn } finally {
         $bodySeconds = $caseWatch.Elapsed.TotalSeconds
         $teardownWatch = [Diagnostics.Stopwatch]::StartNew()
-        try { Stop-C599CardStub; Clear-C599FixtureReadOnly }
+        try { Complete-C1733FixtureRun }
         finally {
             if ($env:C1731_TIMING_ROOT) {
                 $timingRoot = $env:C1731_TIMING_ROOT
@@ -5095,7 +5098,7 @@ if ($Case) {
         }
     }
 } else {
-    try { foreach ($fn in $cases) { & $fn } } finally { Stop-C599CardStub; Clear-C599FixtureReadOnly }
+    try { foreach ($fn in $cases) { & $fn } } finally { Complete-C1733FixtureRun }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'release-gate-summary' -Body @{
     passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows

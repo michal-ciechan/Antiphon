@@ -3,6 +3,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+// CARD-1733: real Git and authority matrices; remain in explicit integration coverage.
+[Category("Slow")]
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class C1733AllocatorFixtureTests
@@ -22,4 +24,8 @@ public sealed class C1733AllocatorFixtureTests
     [Test]
     public Task Throwing_reservation_mutation_restores_the_control() =>
         ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1733", "C1733_ReservationFinally", 3);
+
+    [Test]
+    public Task Snapshot_bytes_work_and_restore_failures_are_observed() =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1733", "C1733_SnapshotWork", 4);
 }

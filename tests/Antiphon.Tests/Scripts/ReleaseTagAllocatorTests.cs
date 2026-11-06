@@ -3,6 +3,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+// CARD-1733: real Git and authority matrices; remain in explicit integration coverage.
+[Category("Slow")]
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseTagAllocatorTests

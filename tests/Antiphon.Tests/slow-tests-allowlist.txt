@@ -442,3 +442,7 @@ Antiphon.Tests.Application.C0824RefOnlyCleanupTests
 Antiphon.Tests.Application.C0824RefOnlySnapshotMigrationTests
 # real Git scratch repositories compare index, commit-tree and blob reads across staging and source set-aside.
 Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
+# CARD-1733: real Git promotion matrices exceeded 300 seconds before native fixture containment.
+Antiphon.Tests.Scripts.ReleaseTagAllocatorTests
+# CARD-1733: native fixture/isolation regressions spawn PowerShell and real Git; baseline seed witness 48 seconds.
+Antiphon.Tests.Scripts.C1733AllocatorFixtureTests

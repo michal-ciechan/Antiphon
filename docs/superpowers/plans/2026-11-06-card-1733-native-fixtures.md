@@ -30,6 +30,7 @@ V-2: Boundaries_and_changed_links_are_checked_fresh checks missing descendants, 
 changed-after-first-check, dangling links and ancestors above the root using real filesystem metadata.
 V-3: Shared_seed_keeps_recipients_and_authority_private observes no repeated init/commit; modifies
 one clone's tags/fault/store and reads the other recipient; freshly validates the other's authority.
+V-4 also checks unchanged-file timestamps, same-size changed bytes, missing parents and restore failure propagation.
 V-4: Throwing_reservation_mutation_restores_the_control proves first validity, exact bytes after a
 throwing mutation, and next-variant acceptance. Restore errors must propagate.
 V-5: Measure both incident methods once in one lease, retain all assertion rows and unchanged cap.
@@ -50,10 +51,9 @@ See ../mutations/2026-11-06-card-1733-native-fixtures.md.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | S2 | tests/Antiphon.Tests -> bin-c1733-final/ | fixtures | `/*/*/C1733AllocatorFixtureTests/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 4 | 6 | true | TEMP=/tmp;C1733_TIMING_ROOT=.antiphon/c1733/timing |
-| CP-2 | S2 | CP-1 | allocator | `/*/*/ReleaseTagAllocatorTests/*` | V-5,R-1 | all listed, 0 failed | 7 | 8 | true | TEMP=/tmp;C1733_TIMING_ROOT=.antiphon/c1733/timing |
-| CP-3 | S2 | CP-1 | guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all listed, 0 failed | 66 | 2 | true | TEMP=/tmp |
-| CP-4 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 15 | true | TEMP=/tmp |
+| CP-1 | S2 | tests/Antiphon.Tests -> bin-c1733-final/ | allocator-fixtures | `/*/*/(C1733AllocatorFixtureTests*)\|(ReleaseTagAllocatorTests*)/*` | V-1,V-2,V-3,V-4,V-5,R-1 | all listed, 0 failed | 12 | 14 | true | TEMP=/tmp;C1733_TIMING_ROOT=.antiphon/c1733/timing |
+| CP-2 | S2 | CP-1 | guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all listed, 0 failed | 66 | 2 | true | TEMP=/tmp |
+| CP-3 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 15 | true | TEMP=/tmp |
 
 Before CP-1, one native compile and regression red run are explicitly allowed to establish new-test
 sensitivity at unchanged base behavior. They are diagnostic, not clean final receipts. Tool bootstrap
