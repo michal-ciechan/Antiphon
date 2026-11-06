@@ -111,6 +111,32 @@ public sealed class C1729LayeringGuardTests
         attribute.Unlisted.ShouldContain(new Violation("core/Value.cs", "MarkerAttribute", "app/Svc.cs"), "qualified-attribute-suffix");
         attribute.Unlisted.ShouldContain(new Violation("core/Value.cs", "Svc", "app/Svc.cs"), "nameof-counts");
         attribute.Passes.ShouldBeFalse("attribute-and-nameof-verdict");
+
+        (string Label, string Text)[] shadowing =
+        [
+            ("color-color-fires", "class Value { Svc Svc { get; } }"),
+            ("parameter-color-color-fires", "class Value { void M(Svc Svc) {} }"),
+            ("local-color-color-fires", "class Value { void M() { Svc Svc = null; } }"),
+            ("creation-with-shadowing-member-fires", "class Value { object Svc; object M() => new Svc(); }"),
+            ("qualified-with-shadowing-member-fires", "class Value { object Svc; X.App.Svc Other; }"),
+            ("qualified-expression-with-shadowing-member-fires", "class Value { object Svc; void M() { X.App.Svc.Run(); } }"),
+            ("global-qualified-with-shadowing-member-fires", "class Value { object Svc; global::X.App.Svc Other; }"),
+            ("qualified-with-own-nested-type-fires", "class Value { class Svc {} X.App.Svc Other; }")
+        ];
+        var missed = new List<string>();
+        foreach (var (label, text) in shadowing)
+        {
+            var shadowed = Analyze(SyntheticMap, "strict: true",
+            [new("app/Svc.cs", "namespace X.App; class Svc { public static void Run() {} }"),
+             new("core/Value.cs", "using X.App; " + text)]);
+            shadowed.Map.Errors.ShouldBeEmpty(label);
+            shadowed.ParseErrors.ShouldBeEmpty(label);
+            if (shadowed.Unlisted.Length != 1
+                || !shadowed.Unlisted.Contains(new Violation("core/Value.cs", "Svc", "app/Svc.cs"))
+                || shadowed.Passes)
+                missed.Add(label + ": " + shadowed.Inventory + " passes=" + shadowed.Passes);
+        }
+        missed.ShouldBeEmpty("every shadowed type reference must fail strict mode");
     }
 
     [Test]
@@ -139,6 +165,28 @@ public sealed class C1729LayeringGuardTests
         result.Listed.Length.ShouldBe(1, "listed=1");
         result.UnlistedCount.ShouldBe(0, "unlisted=0");
         result.Passes.ShouldBeTrue("verdict=pass");
+
+        (string Label, string Text)[] memberNames =
+        [
+            ("initializer-member", "class Value { object M() => new Holder { Kind = 0 }; }"),
+            ("with-member", "class Value { object M(Holder value) => value with { Status = true }; }"),
+            ("named-argument", "class Value { void M() { F(Active: true); } }"),
+            ("property-pattern", "class Value { bool M(object value) => value is { Status: true }; }"),
+            ("attribute-member", "[Marker(Kind = 0)] class Value {}")
+        ];
+        var falseReferences = new List<string>();
+        foreach (var (label, text) in memberNames)
+        {
+            var members = Analyze(SyntheticMap, "strict: true",
+            [new("app/Members.cs", "class Kind {} class Active {} class Status {}"),
+             new("core/Holder.cs", "record Holder { public int Kind { get; init; } public bool Status { get; init; } } class MarkerAttribute : System.Attribute { public int Kind { get; set; } }"),
+             new("core/Value.cs", text)]);
+            members.Map.Errors.ShouldBeEmpty(label);
+            members.ParseErrors.ShouldBeEmpty(label);
+            if (members.UnlistedCount != 0 || members.Ambiguous.Length != 0 || !members.Passes)
+                falseReferences.Add("findings=0:" + label + ": " + members.Inventory);
+        }
+        falseReferences.ShouldBeEmpty("member labels are not type references");
     }
 
     [Test]
