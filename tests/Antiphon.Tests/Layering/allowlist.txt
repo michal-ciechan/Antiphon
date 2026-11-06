@@ -31,7 +31,6 @@ server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerA
 server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerAbsenceEvidenceValidator @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
 server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerAbsenceExpectation @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
 server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerPlatformProblems @ server/Application/Services/RunnerPlatformProblems.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
 server/Infrastructure/Git/CardFileRepository.cs -> CardTaskFileRenderer @ server/Application/Services/CardTaskFileRenderer.cs
 server/Infrastructure/Git/GitService.cs -> CardFilePreCommitSweep @ server/Application/Services/CardFilePreCommitSweep.cs
 server/Infrastructure/Git/RepositoryMutationLease.cs -> RepositoryLeaseWaiters @ server/Application/Services/RepositoryLeaseWaiters.cs
@@ -143,11 +142,6 @@ server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> Transcri
 server/Infrastructure/Agents/SessionRunner/SessionRuntimeActionHostedService.cs -> SessionRuntimeActionCoordinator @ server/Application/Services/SessionRuntimeActionCoordinator.cs
 server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
 
-# slice P0-F1
-server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs -> DataProtectionApiKeyProtector @ server/Infrastructure/Security/DataProtectionApiKeyProtector.cs
-server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs -> DataProtectionPayload @ server/Infrastructure/Security/DataProtectionPayload.cs
-server/Infrastructure/Data/CardDoneArtifactRoots.cs -> WorktreeSetAside @ server/Infrastructure/Git/WorktreeSetAside.cs
-server/Infrastructure/GitHub/GitHubMonitorService.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
 
 # slice later-phase
 server/Application/Dtos/AgentLaunchSpec.cs -> ProviderEndpoint @ server/Application/Services/ProviderEndpoint.cs
@@ -220,12 +214,6 @@ server/Infrastructure/Data/WorkspaceReservationJournal.cs -> OwnerFacts @ server
 server/Infrastructure/Data/WorkspaceReservationJournal.cs -> WorkspaceReservationLiveness @ server/Application/Services/WorkspaceReservationLiveness.cs
 server/Infrastructure/Data/WorktreeCleanupJournal.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
 server/Infrastructure/Data/WorktreeCleanupJournal.cs -> WorktreeCleanupPresentation @ server/Application/Services/WorktreeCleanupPresentation.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> CardDoneArtifactPreservation @ server/Infrastructure/Files/CardDoneArtifactPreservation.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> CardWorktreeCleanupService @ server/Application/Services/CardWorktreeCleanupService.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> DelegationWorkspaceResolver @ server/Application/Services/DelegationWorkspaceResolver.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> LandApproval @ server/Application/Services/LandApproval.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> VerificationReceiptPolicy @ server/Application/Services/VerificationReceiptPolicy.cs
 server/Infrastructure/Git/CardFileRepository.cs -> GitProcessGate @ server/Application/Services/GitProcessGate.cs
 server/Infrastructure/Git/FileSystemEvidenceRetention.cs -> WorktreeIgnoredContentClassifier @ server/Application/Services/WorktreeIgnoredContentClassifier.cs
 server/Infrastructure/Git/GuardedWorktreeRemoval.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
