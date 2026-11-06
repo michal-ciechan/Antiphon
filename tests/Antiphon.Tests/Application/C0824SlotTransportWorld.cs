@@ -146,7 +146,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         var work = Path.Combine(Root, "target-work");
         Directory.CreateDirectory(work);
         Git(Root, "clone", Origin, repository);
-        var service = new RunnerWorkspaceService(repository, work, Origin, publishedBranch: "main");
+        var service = new RunnerWorkspaceService(repository, work, Origin, psi => Process.Start(psi), publishedBranch: "main");
         var settings = new PhoneHomeSettings { Enabled = true, RunnerId = runnerId, AllowedCwd = work,
             RunnerRepository = repository, RunnerCloneSource = Origin, AllowedCloneSources = [Origin],
             CapacityStatePath = Path.Combine(Root, "target-capacity"), Capacity = 2,
@@ -199,10 +199,17 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         using var process = Process.Start(psi)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(30_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(5_000);
+            throw new TimeoutException("Fixture Git child exceeded 30 seconds.");
+        }
+        if (!Task.WhenAll(stdout, stderr).Wait(TimeSpan.FromSeconds(5)))
+            throw new TimeoutException("Fixture Git output did not drain within 5 seconds.");
         if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr}");
+            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr.GetAwaiter().GetResult()}");
         return stdout.GetAwaiter().GetResult();
     }
 
