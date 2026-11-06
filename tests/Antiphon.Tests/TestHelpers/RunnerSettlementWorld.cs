@@ -144,6 +144,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             OutputDistillerEnabled = false,
             RunnerSyncDebtOnSettlement = _syncDebt,
         }));
+        services.AddSingleton(Options.Create(new RefOnlyDesktopSettings()));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<ApiErrorRecoveryService>();
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
@@ -267,6 +268,9 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public async Task MintRefOnlyDebtAsync(string report)
     {
         if (SyncClock is null) throw new InvalidOperationException("controlled sync clock required");
+        // Code may settle Pending only when exact S is locally readable. Fetch fixture objects
+        // before holding the lease so the behavioral witness reaches the recovery guard.
+        await Git.RunAsync(Git.Desktop, "fetch", "--no-tags", "origin", Git.FullRef);
         var busy = LeaseBusy.Next();
         await using (var lease = await Git.Leases.TryAcquireAsync(Git.Desktop, default))
         {

@@ -169,9 +169,10 @@ public sealed class C0824RefOnlyDebtTests
         var debt = await DebtAsync(w);
         await w.RestartServicesAsync();
         var settings = w.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
-        settings.RefOnlyDesktop.Enabled.ShouldBeFalse();
-        settings.RefOnlyDesktop.RunnerIds.ShouldBeEmpty();
-        settings.RefOnlyDesktop.Roles.ShouldBe("none");
+        var gate = w.Services.GetRequiredService<IOptions<RefOnlyDesktopSettings>>().Value;
+        gate.Enabled.ShouldBeFalse();
+        gate.RunnerIds.ShouldBeEmpty();
+        gate.Roles.ShouldBe("none");
         settings.RunnerSyncDebtOnSettlement = false;
         await using (var db = w.CreateContext())
         {
