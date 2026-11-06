@@ -386,6 +386,65 @@ public sealed class C1708ReflogSalvageTests
         (await w.ReadAsync(w.Fixture.Repository, "symbolic-ref", planted)).Trim().ShouldBe("refs/heads/precious");
     }
 
+    /// <summary>
+    /// Review 39f7bfe1 B-4. A salvage name that is already a DANGLING symbolic ref (its target does not exist, so
+    /// <c>for-each-ref</c> omits it and a create-only write would replace it) refuses the release: the symbolic ref
+    /// stays byte-identical, the tree, registration and branch stay, and no ref is created or moved.
+    /// </summary>
+    [Test]
+    public async Task Dangling_symbolic_salvage_collision_refuses_and_keeps_the_symbolic_ref()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var lost = await RewriteAsync(w, a);
+        var salvage = Prefix + a.Id.ToString("D") + "/" + lost;
+        await w.Fixture.RequiredAsync(w.Fixture.Repository, "symbolic-ref", salvage, "refs/heads/c1708-missing");
+        var file = await RefFileAsync(w, salvage);
+        var bytes = File.ReadAllBytes(file);
+        var refs = await AllRefsAsync(w);
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(a.Path);
+
+        var tick = await w.TickAsync();
+
+        (await w.RowAsync(tick.RunId, a)).ReasonCode.ShouldBe("reflog_salvage_collision");
+        File.ReadAllBytes(file).ShouldBe(bytes, "the dangling symbolic ref is byte-identical");
+        (await w.ReadAsync(w.Fixture.Repository, "symbolic-ref", salvage)).Trim().ShouldBe("refs/heads/c1708-missing");
+        (await AllRefsAsync(w)).ShouldBe(refs, "no ref was created, moved or deleted");
+        (await w.ReadAsync(w.Fixture.Repository, "rev-list", "--all")).ShouldNotContain(lost, Case.Sensitive);
+        (await w.SnapshotAsync(a.Path)).ShouldBe(before, "the tree is byte-intact");
+        (await w.RegisteredAsync(a.Path)).ShouldBeTrue("the registration is intact");
+        (await w.BranchExistsAsync(a)).ShouldBeTrue();
+        (await w.OriginRefsAsync()).ShouldBe(origin);
+    }
+
+    /// <summary>
+    /// Review 39f7bfe1 B-4 (control). A dangling symbolic ref under a finished, aged release's salvage scope is never
+    /// pruned: the scope's real salvage ref goes, the dangling one stays byte-identical.
+    /// </summary>
+    [Test]
+    public async Task Prune_keeps_a_dangling_symbolic_salvage_ref()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var a = await w.AddTaskAsync(ageHours: 60);
+        var lost = await RewriteAsync(w, a);
+        await w.TickAsync();
+        var salvage = Prefix + a.Id.ToString("D") + "/" + lost;
+        (await SalvageRefsAsync(w)).ShouldBe([salvage]);
+        var master = (await w.ReadAsync(w.Fixture.Repository, "rev-parse", "master")).Trim();
+        var planted = Prefix + a.Id.ToString("D") + "/" + master;
+        await w.Fixture.RequiredAsync(w.Fixture.Repository, "symbolic-ref", planted, "refs/heads/c1708-missing");
+        var file = await RefFileAsync(w, planted);
+        var bytes = File.ReadAllBytes(file);
+        w.Clock.Advance(TimeSpan.FromDays(31));
+
+        await w.TickAsync();
+
+        (await SalvageRefsAsync(w)).ShouldBeEmpty("the real salvage ref is past the retention");
+        File.ReadAllBytes(file).ShouldBe(bytes, "the dangling symbolic ref is byte-identical");
+        (await w.ReadAsync(w.Fixture.Repository, "symbolic-ref", planted)).Trim().ShouldBe("refs/heads/c1708-missing");
+    }
+
     /// <summary>Fails the first verification read of <paramref name="a"/>'s salvage scope after a salvage ref write.</summary>
     private static Func<int> FailVerifyAfterWrite(DesktopLegacyWorld w, DesktopLegacyWorld.Handle a)
     {
@@ -415,6 +474,18 @@ public sealed class C1708ReflogSalvageTests
         (await w.ReadAsync(w.Fixture.Repository, "rev-list", "--all")).ShouldNotContain(lost, Case.Sensitive);
         return lost;
     }
+
+    /// <summary>The loose file of <paramref name="name"/> (a symbolic ref is always loose in the files backend).</summary>
+    private static async Task<string> RefFileAsync(DesktopLegacyWorld w, string name)
+    {
+        var path = (await w.ReadAsync(w.Fixture.Repository, "rev-parse", "--path-format=absolute", "--git-path", name)).Trim();
+        File.Exists(path).ShouldBeTrue(path);
+        return path;
+    }
+
+    /// <summary>Every ref Git lists, with its object and symbolic target.</summary>
+    private static Task<string> AllRefsAsync(DesktopLegacyWorld w) =>
+        w.ReadAsync(w.Fixture.Repository, "for-each-ref", "--format=%(refname) %(objectname) %(symref)");
 
     private static async Task<string[]> SalvageRefsAsync(DesktopLegacyWorld w) =>
         (await w.ReadAsync(w.Fixture.Repository, "for-each-ref", "--format=%(refname)", Prefix))
