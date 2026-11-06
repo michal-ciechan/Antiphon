@@ -1,28 +1,28 @@
 # CARD-1731: exercise the actual snapshot/variant helpers, not a substitute gate.
 function Test-C1731_SnapshotIsolation {
-    $fx = New-C599PublishFx
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $binary = Join-Path $fx.ReleaseRoot 'nested/binary.dat'
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($binary))
     [IO.File]::WriteAllBytes($binary, [byte[]]@(0, 255, 1, 128))
     $snap = Save-C599ASnapshot $fx
     $control = Get-C599AGate $fx
     Assert-C487 $control.Ok 'C1731 first variant starts from a valid control'
-    $extra = Join-Path $fx.ReleaseRoot 'unexpected.dat'
+    $c1731UnexpectedPath = Join-Path $fx.ReleaseRoot 'unexpected.dat'
     $absent = $fx.Git.Trace
-    $cleanupCalled = $false
+    $script:C1731CleanupCalled = $false
     $failed = Invoke-C599AVariant $fx $snap 'throw after mutation' -Expect @('unreachable') -Mutate {
         [IO.File]::WriteAllBytes($binary, [byte[]]@(128, 1, 255, 0))
-        [IO.File]::WriteAllText($extra, 'unexpected')
+        [IO.File]::WriteAllText($c1731UnexpectedPath, 'unexpected')
         [IO.File]::WriteAllText($absent, 'recipient trace')
         [IO.File]::Delete($fx.Gh.StorePath)
         throw 'C1731 injected mutation failure'
     } -Cleanup { $script:C1731CleanupCalled = $true }
-    Assert-C487 (-not $failed.Pass -and $failed.Detail.Contains('C1731 injected mutation failure') -and $script:C1731CleanupCalled) 'C1731 throwing mutation fails and runs cleanup'
+    Assert-C487 (-not $failed.Pass -and $failed.Detail.Contains('C1731 injected mutation failure') -and $script:C1731CleanupCalled) 'C1731 throwing mutation fails and runs cleanup' $failed.Detail
     $same = $true
     foreach ($p in $snap.Files.Keys) {
         if (-not [IO.File]::Exists($p) -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($p)) -cne [Convert]::ToBase64String($snap.Files[$p])) { $same = $false }
     }
-    Assert-C487 ($same -and -not [IO.File]::Exists($extra) -and -not [IO.File]::Exists($absent)) 'C1731 finally restores every byte and absence after failure'
+    Assert-C487 ($same -and -not [IO.File]::Exists($c1731UnexpectedPath) -and -not [IO.File]::Exists($absent)) 'C1731 finally restores every byte and absence after failure'
     $next = Get-C599AGate $fx
     Assert-C487 $next.Ok 'C1731 next variant sees a valid isolated control'
     [IO.File]::Delete($binary)
@@ -32,7 +32,7 @@ function Test-C1731_SnapshotIsolation {
 }
 
 function Test-C1731_SnapshotWork {
-    $fx = New-C599PublishFx
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot $fx
     # Count real helper invocations while retaining the original implementation.
     $restoreBody = (Get-Command Restore-C599ASnapshot).ScriptBlock
