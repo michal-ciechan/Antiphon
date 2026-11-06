@@ -21,8 +21,46 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
-public sealed class AgentTaskLandDispatchYieldTests
+public sealed partial class AgentTaskLandDispatchYieldTests
 {
+    [Test]
+    [Arguments("explicit-source")]
+    [Arguments("explicit-descendant")]
+    [Arguments("already-contained")]
+    public async Task C1581_a_runnable_same_card_dispatch_keeps_priority(string arm)
+    {
+        await using var h = await StartAsync();
+        var waiting = await AddWaiterAsync(h, AgentTaskRole.Code);
+        var source = (await h.RequestAsync()).ExpectedSourceSha.ShouldNotBeNull();
+        if (arm == "already-contained")
+            await h.Harness.Fixture.RequiredAsync(h.Harness.Fixture.Repository, "merge", "--ff-only", source);
+        else
+        {
+            waiting.WorktreeBaseRequestedRef = arm == "explicit-descendant"
+                ? await h.Harness.AddDocsOnlySourceAsync() : source;
+            await using var update = h.Harness.CreateContext();
+            await update.AgentTasks.Where(t => t.Id == waiting.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(t => t.WorktreeBaseRequestedRef, waiting.WorktreeBaseRequestedRef));
+        }
+        await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(
+            h.Harness.Schema.ConnectionString, Path.Combine(h.Harness.Fixture.Root, "dispatch-trees"));
+        await using var scope = provider.CreateAsyncScope();
+        var guard = await scope.ServiceProvider.GetRequiredService<CardSiblingInspectionService>()
+            .InspectAsync(waiting, default);
+        guard.Hold.ShouldBeNull("the real sibling guard exempts this runnable dispatch");
+        guard.Reason.ShouldBeNull();
+        (await scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>()
+            .ResolveAsync(waiting, default)).Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+        h.Waiters.Register(await h.CommonAsync(), waiting.Id, RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        var request = await h.RequestAsync();
+        request.Attempt.ShouldBe(0);
+        request.HoldReasonCode.ShouldBe(AgentTaskLandService.LeaseYieldedToDispatchCode);
+        request.HoldDetail.ShouldNotBeNull().ShouldContain(DelegationReportFormatter.Short(waiting.Id));
+        h.Waiters.Snapshot(await h.CommonAsync()).Select(w => w.TaskId).ShouldContain(waiting.Id);
+    }
+
     [Test]
     [Arguments(AgentTaskRole.Code)]
     [Arguments(AgentTaskRole.Investigate)]
@@ -82,7 +120,7 @@ public sealed class AgentTaskLandDispatchYieldTests
         await using (var db = h.Harness.CreateContext())
         {
             var row = await db.AgentTasks.SingleAsync(t => t.Id == waiting.Id);
-            if (arm == "different-card")
+            if (arm is "different-card" or "mixed")
                 row.CardId = (await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-1581-other")).Id;
             else if (arm == "already-cut") row.WorktreePath = h.Harness.Fixture.Source;
             else if (arm == "read-only") row.Workspace = WorkspaceMode.ReadOnly;
@@ -107,16 +145,15 @@ public sealed class AgentTaskLandDispatchYieldTests
     private static async Task<AgentTask> AddWaiterAsync(World h, AgentTaskRole role)
     {
         await using var db = h.Harness.CreateContext();
-        var card = await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-1581");
         var source = await db.AgentTasks.SingleAsync(t => t.Id == h.Harness.Fixture.TaskId);
-        source.CardId = card.Id;
+        source.CardId ??= (await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-1581")).Id;
         var id = Guid.NewGuid();
         var waiting = new AgentTask
         {
             Id = id, RootTaskId = id, Title = "CARD-1581 waiting dispatch", Goal = "continue after land",
             Role = role, AgentKind = AgentKind.ClaudeCode, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = h.Harness.Fixture.Repository, RepoPath = h.Harness.Fixture.Repository,
-            CardId = card.Id, RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Auto,
+            CardId = source.CardId, RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Auto,
             Status = AgentTaskStatus.Queued, ReplyTo = AgentTaskReplyTo.None,
             CreatedAt = h.Clock.GetUtcNow().UtcDateTime,
         };
