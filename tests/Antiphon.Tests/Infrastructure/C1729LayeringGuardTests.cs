@@ -120,7 +120,7 @@ public sealed class C1729LayeringGuardTests
         var result = Analyze(map, "strict: true\n# slice test\napp/Listed.cs -> GitType @ git/GitType.cs",
         [new("host/Entry.cs", "class Entry { GitType g; Runner r; Service s; }"),
          new("core/Value.cs", "class Value {} enum Status { Pending }"),
-         new("core/Member.cs", "class Member { Status status = Status.Pending; dynamic value; object Read() => value.Outcome; }"),
+         new("core/Member.cs", "class Member { Status status = Status.Pending; dynamic value; object Read() { object Outcome() => value.Outcome; return Outcome(); } }"),
          new("core/Comment.cs", "// Service\n/* Service */\n#region Service\nclass Comment {}\n#endregion"),
          new("core/String.cs", "class Text { string s = \"Service\"; char c = 'S'; }"),
          new("core/Nested.cs", "class Outer { class Nested {} Nested field; }"),
