@@ -201,6 +201,15 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 await db.SaveChangesAsync(ct);
                 return;
             }
+            if (TaskCompletionNotification.IsProfiled(note)
+                && (row.AgentSessionId != session || row.ContentDigest != note.ContentDigest
+                    || row.SourceLandNotificationId != note.Id))
+            {
+                note.LastErrorCode = "completion_queue_identity_mismatch";
+                note.LastErrorAt = now;
+                await db.SaveChangesAsync(ct);
+                return;
+            }
             if (row.Status == QueuedMessageStatus.Canceled)
             {
                 note.State = LandNotificationState.Canceled;
@@ -271,6 +280,13 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (row.DeliveryAttempts > 0)
             {
+                if (TaskCompletionNotification.IsProfiled(note) && row.LastDeliveryGeneration is null)
+                {
+                    note.LastErrorCode = "completion_delivery_generation_unknown";
+                    note.LastErrorAt = now;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
                 // A parked delegate's caller may restart while delivery is uncertain. A
                 // prompt from that replacement generation cannot discharge the old attempt.
                 if (note.Kind == LandNotificationKind.ProviderInputWait
