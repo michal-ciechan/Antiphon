@@ -33,17 +33,21 @@ public sealed class RunnerPlatformLaunchTests
     {
         var actual = RunnerPlatformWire.FromOperatingSystem();
         actual.ShouldNotBeNull();
-        await using var matching = Runtime();
-        await AssertAdmittedAsync(matching, actual);
-        await using var any = Runtime();
-        await AssertAdmittedAsync(any, null);
+        await using var matching = Runtime(out var matchingSettings);
+        await AssertAdmittedAsync(matching, actual, matchingSettings);
+        await using var any = Runtime(out var anySettings);
+        await AssertAdmittedAsync(any, null, anySettings);
     }
 
-    private static async Task AssertAdmittedAsync(SessionRunnerRuntime runtime, string? platform)
+    private static async Task AssertAdmittedAsync(SessionRunnerRuntime runtime, string? platform,
+        SessionRunnerSettings settings)
     {
+        var request = Launch(platform);
         try
         {
-            var started = await runtime.StartAsync(Launch(platform), CancellationToken.None);
+            var started = await StartWithHostLogAsync(
+                () => runtime.StartAsync(request, CancellationToken.None),
+                Path.Combine(settings.PtyHostLogDir, $"{request.SessionId:N}.log"));
             started.SessionId.ShouldNotBe(Guid.Empty);
             runtime.List().ShouldContain(session => session.SessionId == started.SessionId);
         }
@@ -56,6 +60,9 @@ public sealed class RunnerPlatformLaunchTests
         }
     }
 
+    internal static Task<RunnerSessionDto> StartWithHostLogAsync(
+        Func<Task<RunnerSessionDto>> start, string hostLogFile) => start();
+
     [Test]
     public async Task Invalid_requirement_is_refused_before_custody()
     {
@@ -66,15 +73,19 @@ public sealed class RunnerPlatformLaunchTests
         runtime.List().ShouldBeEmpty();
     }
 
-    private static SessionRunnerRuntime Runtime() => new(
-        Options.Create(new SessionRunnerSettings
+    private static SessionRunnerRuntime Runtime() => Runtime(out _);
+
+    private static SessionRunnerRuntime Runtime(out SessionRunnerSettings settings)
+    {
+        settings = new SessionRunnerSettings
         {
             SessionLogPath = TestSessionLogRoot.Create("c710-platform"),
             PtyHostLingerHours = 0.02,
             CpuWatchdogEnabled = false,
             PtyBackend = "inbox",
-        }),
-        NullLogger<SessionRunnerRuntime>.Instance);
+        };
+        return new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+    }
 
     private static RunnerLaunchRequest Launch(string? platform)
     {
