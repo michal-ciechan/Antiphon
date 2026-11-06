@@ -105,6 +105,12 @@ public sealed class C1729LayeringGuardTests
         result.Listed.Length.ShouldBe(1, "listed=1");
         result.Listed[0].TypeName.ShouldBe("Svc", "body-reference-listed");
         result.Passes.ShouldBeFalse("verdict=fail");
+        var attribute = Analyze(SyntheticMap, "strict: true",
+        [new("app/Svc.cs", "namespace X; class MarkerAttribute : System.Attribute {} class Svc {}"),
+         new("core/Value.cs", "using X; [X.Marker] class Value { string Name() => nameof(Svc); }")]);
+        attribute.Unlisted.ShouldContain(new Violation("core/Value.cs", "MarkerAttribute", "app/Svc.cs"), "qualified-attribute-suffix");
+        attribute.Unlisted.ShouldContain(new Violation("core/Value.cs", "Svc", "app/Svc.cs"), "nameof-counts");
+        attribute.Passes.ShouldBeFalse("attribute-and-nameof-verdict");
     }
 
     [Test]
@@ -114,11 +120,11 @@ public sealed class C1729LayeringGuardTests
         var result = Analyze(map, "strict: true\n# slice test\napp/Listed.cs -> GitType @ git/GitType.cs",
         [new("host/Entry.cs", "class Entry { GitType g; Runner r; Service s; }"),
          new("core/Value.cs", "class Value {} enum Status { Pending }"),
-         new("core/Member.cs", "class Member { Status status = Status.Pending; dynamic value; object Read() => value.Outcome; }") ,
+         new("core/Member.cs", "class Member { Status status = Status.Pending; dynamic value; object Read() => value.Outcome; }"),
          new("core/Comment.cs", "// Service\n/* Service */\n#region Service\nclass Comment {}\n#endregion"),
          new("core/String.cs", "class Text { string s = \"Service\"; char c = 'S'; }"),
          new("core/Nested.cs", "class Outer { class Nested {} Nested field; }"),
-         new("app/Service.cs", "class Service { Value v; Store s; } class Pending {} class Outcome {}"),
+         new("app/Service.cs", "class Service { Value v; Store s; } class Pending {} class Outcome {} class Nested {}"),
          new("app/Listed.cs", "class Listed { GitType field; }"),
          new("git/GitType.cs", "class GitType { Value v; }"),
          new("runner/Runner.cs", "class Runner {}"), new("data/Store.cs", "class Store {}")]);
@@ -128,6 +134,7 @@ public sealed class C1729LayeringGuardTests
         result.Unlisted.Where(v => v.FromFile == "core/Comment.cs").ShouldBeEmpty("findings=0:comment");
         result.Unlisted.Where(v => v.FromFile == "core/String.cs").ShouldBeEmpty("findings=0:string");
         result.Unlisted.Where(v => v.FromFile == "core/Nested.cs").ShouldBeEmpty("findings=0:own-declaration");
+        result.Ambiguous.Where(v => v.FromFile == "core/Nested.cs").ShouldBeEmpty("own-declaration-not-ambiguous");
         result.Unlisted.Where(v => v.FromFile == "core/Member.cs").ShouldBeEmpty("findings=0:value-members");
         result.Listed.Length.ShouldBe(1, "listed=1");
         result.UnlistedCount.ShouldBe(0, "unlisted=0");
@@ -180,6 +187,11 @@ public sealed class C1729LayeringGuardTests
         partial.Ambiguous.ShouldBeEmpty("partial-is-one-type");
         partial.Unlisted.ShouldContain(new Violation("core/C.cs", "Reader", "app/Reader.cs"), "partial-primary-file");
         partial.Passes.ShouldBeFalse("partial-forbidden-edge");
+        var globalUsing = Analyze(SyntheticMap, "strict: true", [.. declarations,
+            new("app/Usings.cs", "global using X.App;"),
+            new("core/C.cs", "namespace X.Client; class C { Reader field; }")]);
+        globalUsing.Ambiguous.ShouldBeEmpty("global-using-resolved");
+        globalUsing.Unlisted.ShouldContain(new Violation("core/C.cs", "Reader", "app/B.cs"), "global-using-target");
     }
 
     [Test]
@@ -199,6 +211,15 @@ public sealed class C1729LayeringGuardTests
         var dead = Analyze(SyntheticMap + "\nmissing/** Git", "strict: false", files);
         dead.Map.Errors.ShouldContain("dead-rule:missing/**");
         dead.Passes.ShouldBeFalse("dead-rule-fails-in-warn-mode");
+        var split = Analyze(SyntheticMap, "strict: false",
+        [new("core/Reader.cs", "namespace X; partial class Reader {}"),
+         new("app/Reader.cs", "namespace X; partial class Reader {}")]);
+        split.ParseErrors.ShouldContain("split-type:X.Reader", "partial-split-refused");
+        split.Passes.ShouldBeFalse("split-type-fails-in-warn-mode");
+        var syntax = Analyze(SyntheticMap, "strict: false",
+        [new("core/Value.cs", "class Value {"), new("app/Svc.cs", "class Svc {}")]);
+        syntax.ParseErrors.ShouldNotBeEmpty("syntax-error-detected");
+        syntax.Passes.ShouldBeFalse("syntax-error-fails-in-warn-mode");
     }
 
     private static string Read(string name) => File.ReadAllText(Path.Combine(RepoRoot, "tests/Antiphon.Tests/Layering", name));
