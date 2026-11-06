@@ -11,7 +11,9 @@ namespace Antiphon.Tests.Application;
 /// HEAD reflog and the branch reflog. A commit only those reflogs reach (history rewritten locally, never pushed)
 /// gets <c>refs/antiphon/salvage/&lt;taskId&gt;/&lt;sha&gt;</c> before anything moves; a salvage that cannot be
 /// written refuses the removal; the off switch writes no ref; the tick prunes a salvage ref only once it is older
-/// than <c>WorktreeLegacyRelease:SalvageRefRetentionDays</c>.
+/// than <c>WorktreeLegacyRelease:SalvageRefRetentionDays</c>. Review 9222cb00 B-1..B-4: a reflog's old ids, the retention
+/// counted from a finished release under the repository lease, the switch at each prune delete, and salvage-name
+/// collisions.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
