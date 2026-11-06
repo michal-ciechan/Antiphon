@@ -486,7 +486,7 @@ public static class Program
         var expected = Required(options, "expected-source-sha");
         try
         {
-            var raw = ReceiptFile.ReadText(runtime.CleanupContext, path, runtime.CancellationToken);
+            var raw = ReceiptFile.ReadStrictText(runtime.CleanupContext, path, runtime.CancellationToken);
             using var document = JsonDocument.Parse(raw);
             AssertUniqueJson(document.RootElement);
             var report = ReceiptJson.Parse<ReportModel>(raw, ReportWriter.Json);

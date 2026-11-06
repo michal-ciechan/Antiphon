@@ -67,7 +67,16 @@ public static class ReportValidator
                 !fields.TryGetValue("buildSource", out var build) || build != row.Source.BuildSource ||
                 !fields.TryGetValue("commit", out var commit) || commit != expectedSha)
                 return "receipt_source_disagreement";
-            if (row.Executed is int count &&
+            if (expectedRepeat == 1 && row.Command is null)
+            {
+                foreach (var (key, actual) in new[]
+                {
+                    ("executed", row.Executed), ("passed", row.Passed), ("failed", row.Failed), ("skipped", row.Skipped),
+                })
+                    if (!fields.TryGetValue(key, out var written) || written != actual?.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                        return "receipt_counts";
+            }
+            else if (row.Executed is int count &&
                 (!fields.TryGetValue("executed", out var executed) || executed != count.ToString()))
                 return "receipt_count_disagreement";
             if (expectedRepeat > 1)

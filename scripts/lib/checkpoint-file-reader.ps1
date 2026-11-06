@@ -543,3 +543,23 @@ function Read-CheckpointText {
     $reader = [IO.StreamReader]::new([IO.MemoryStream]::new([byte[]]$bytes))
     try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
 }
+
+# Qualification preserves the legacy BOM formats, but never replacement-decodes invalid bytes.
+function Read-CheckpointStrictText {
+    param([string]$Path)
+    [byte[]]$bytes = Read-CheckpointBytes $Path
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $offset = 0
+    if ($bytes.Length -ge 4 -and $bytes[0] -eq 255 -and $bytes[1] -eq 254 -and $bytes[2] -eq 0 -and $bytes[3] -eq 0) {
+        $encoding = [Text.UTF32Encoding]::new($false, $false, $true); $offset = 4
+    } elseif ($bytes.Length -ge 4 -and $bytes[0] -eq 0 -and $bytes[1] -eq 0 -and $bytes[2] -eq 254 -and $bytes[3] -eq 255) {
+        $encoding = [Text.UTF32Encoding]::new($true, $false, $true); $offset = 4
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 255 -and $bytes[1] -eq 254) {
+        $encoding = [Text.UnicodeEncoding]::new($false, $false, $true); $offset = 2
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 254 -and $bytes[1] -eq 255) {
+        $encoding = [Text.UnicodeEncoding]::new($true, $false, $true); $offset = 2
+    } elseif ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) {
+        $offset = 3
+    }
+    return $encoding.GetString($bytes, $offset, $bytes.Length - $offset)
+}

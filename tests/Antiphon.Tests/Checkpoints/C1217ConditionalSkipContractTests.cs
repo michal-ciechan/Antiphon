@@ -103,8 +103,18 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
     public void StrictTrxRefusesMalformedEncoding()
     {
         var path = Path.Combine(TempDir(), "encoding.trx");
-        File.WriteAllText(path, F.UnavailableTrx, new UTF8Encoding(false, true));
-        TrxReport.ParseStrict(path, 3).Ok.ShouldBeTrue("valid UTF-8 control");
+        foreach (var encoding in new Encoding[]
+        {
+            new UTF8Encoding(false, true), new UTF8Encoding(true, true),
+            new UnicodeEncoding(false, true, true), new UnicodeEncoding(true, true, true),
+            new UTF32Encoding(false, true, true), new UTF32Encoding(true, true, true),
+        })
+        {
+            File.WriteAllText(path, F.UnavailableTrx.Replace("fixture capability unavailable", "café λ �", StringComparison.Ordinal), encoding);
+            var parsed = TrxReport.ParseStrict(path, 3);
+            parsed.Ok.ShouldBeTrue("valid Unicode/BOM control: " + encoding.WebName + ": " + parsed.Error);
+            parsed.Results[1].SkipReason.ShouldBe("café λ �", "valid replacement character is not an invalid byte");
+        }
         TrxReport.ParseStrict(path + ".missing", 3).Ok.ShouldBeFalse("missing control");
         var bytes = Encoding.UTF8.GetBytes(F.UnavailableTrx);
         var marker = Encoding.UTF8.GetBytes("fixture capability unavailable");
