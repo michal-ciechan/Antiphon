@@ -59,5 +59,5 @@ totalTimeoutMinutes: 60
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c346-s1/ | red-contract | /*/Antiphon.Tests.Infrastructure/DockerStackContractTests/Server2_workspace_slot* | V-1,V-2 | >= 2 executed, expected 2 assertion failures before S2 | 2 | 3 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c346-s2/ | affected-and-guards | /*/*/(DockerStackContractTests*)\|(DockerStackDocumentationTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/* | V-1,V-2,R-2 | all listed, 0 failed | 20 | 5 |
-| CP-3 | S2 | CP-2 | whole-unit | /*/*/*/*[Category=Unit] | R-2 | >= 1 executed, 0 failed | 1 | 15 |
+| CP-3 | S2 | CP-2 | whole-unit | /*/*/*/*[Category=Unit] | R-2 | >= 1 executed, 0 failed | 1 | 10 |
 | CP-4 | S2 | n/a | compose-matrix | node scripts/fixtures/c346-workspace-slot-compose.mjs | V-3,R-1 | 16 matrix cases and invalid/duplicate refusals, exit 0 | n/a | 1 |

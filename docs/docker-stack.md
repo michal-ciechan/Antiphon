@@ -760,6 +760,28 @@ not take that refusal. Accepting temp remains the live rollback.
 
 ### Runner workspace slots on the volume (CARD-0824 S1)
 
+For the server2 runner, set the non-secret stack env key
+`PhoneHome__WorkspaceSlots__Enabled=true` in `secrets/stack.env` under the server2
+deployment root before `-Phase redeploy-old`. To canary independently, set it in
+`secrets/stack.temp.env` before `-Phase deploy-temp`; create that file if absent.
+The named phases preserve each file's own value when rewriting it. Missing or empty
+means `false`; only literal lowercase `true`/`false` are accepted, and duplicates or
+invalid values refuse with `RunnerWorkspaceSlotsSettingInvalid`. Other saved keys
+are not sourced by this reader. `docker/stack.env.example` lists the key.
+
+The standing Compose environment interpolates this key with a `false` default.
+Compose merges the temp overlay's environment mapping by key: its runner id
+overrides the base, while the workspace-slot entry inherits from the base.
+Each wrapper supplies its own stack file's flag, so temp can be `true` while standing
+remains `false`. A runner container recreation through the named phase is required;
+editing a stack file alone does not change the running process. No additional
+runner-side slot keys are required. The separate server flag
+`Delegation:WorkspaceSlotsEnabled` and role gate must also permit leases; runner-only
+enablement keeps new work on legacy mirrors until that server gate is enabled.
+For rollback with outstanding leases, set server roles to `none` first and keep
+runner support enabled until release finishes, then set the saved flag to `false`
+and recreate the runner.
+
 With `PhoneHome:WorkspaceSlots:Enabled=true` (default false) a runner keeps reusable task directories
 `/work/worktrees/ws-NN` beside the legacy `task-<8hex>` mirrors. A re-homed slot lives at
 `ws-NN-dK`. The ledger is `/work/workspace-slots/ledger.json`; evidence retained before a wipe

@@ -947,7 +947,9 @@ deployed_sha12() {
 }
 
 compose_host() {
-    local sha12
+    local sha12 PhoneHome__WorkspaceSlots__Enabled
+    PhoneHome__WorkspaceSlots__Enabled="$(runner_workspace_slots_enabled "$SERVER2_ENV")" \
+        || write_result false RunnerWorkspaceSlotsSettingInvalid 2
     sha12="$(deployed_sha12)"
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
@@ -956,6 +958,7 @@ compose_host() {
     RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
     RUNNER_GITHUB_TOKEN_DIR="$GITHUB_TOKEN_DIR_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
+    PhoneHome__WorkspaceSlots__Enabled="$PhoneHome__WorkspaceSlots__Enabled" \
     SOURCE_SHA12="$sha12" \
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
     SOURCE_REVISION="$SHA" \
@@ -972,6 +975,9 @@ broker_sha12() {
 }
 
 compose_temp() {
+    local PhoneHome__WorkspaceSlots__Enabled
+    PhoneHome__WorkspaceSlots__Enabled="$(runner_workspace_slots_enabled "$SERVER2_TEMP_ENV")" \
+        || write_result false RunnerWorkspaceSlotsSettingInvalid 2
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
     CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
@@ -979,6 +985,7 @@ compose_temp() {
     RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
     RUNNER_GITHUB_TOKEN_DIR="$GITHUB_TOKEN_DIR_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
+    PhoneHome__WorkspaceSlots__Enabled="$PhoneHome__WorkspaceSlots__Enabled" \
     SOURCE_SHA12="${SHA:0:12}" \
     SOURCE_REVISION="$SHA" \
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
@@ -1081,6 +1088,20 @@ stack_env_value() {
     if [ -f "$SERVER2_ENV" ]; then
         sed -n "s/^$1=//p" "$SERVER2_ENV" | head -n 1
     fi
+}
+
+# Read only this non-secret opt-in, never source the stack file. Keep the two projects independent.
+runner_workspace_slots_enabled() {
+    if [ ! -e "$1" ]; then printf 'false\n'; return 0; fi
+    awk '
+        /^PhoneHome__WorkspaceSlots__Enabled=/ {
+            count++; value=substr($0, index($0, "=") + 1)
+        }
+        END {
+            if (count > 1 || (value != "" && value != "false" && value != "true")) exit 2
+            print value == "" ? "false" : value
+        }
+    ' "$1"
 }
 
 # CARD-0631 D-9 (amended). The runner's git identity is a FILE on server2, mounted read-only at
@@ -9537,6 +9558,9 @@ c1008_recycle() {
 
 case_deploy_parent() {
     require_lane host
+    local workspace_slots_enabled
+    workspace_slots_enabled="$(runner_workspace_slots_enabled "$SERVER2_ENV")" \
+        || write_result false RunnerWorkspaceSlotsSettingInvalid 2
     ensure_checkout
     ensure_runner_boot_files
     if [ "${C1008_CONTEXT:-}" = default ]; then
@@ -9554,6 +9578,7 @@ COMPOSE_PROJECT_NAME=$HOST_PROJECT
 SOURCE_REVISION=$SHA
 SOURCE_SHA12=${SHA:0:12}
 PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
+PhoneHome__WorkspaceSlots__Enabled=$workspace_slots_enabled
 ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
@@ -9788,6 +9813,9 @@ c1609_temp_retirement_clearable() {
 }
 case_deploy_temp_runner() {
     require_lane host
+    local workspace_slots_enabled
+    workspace_slots_enabled="$(runner_workspace_slots_enabled "$SERVER2_TEMP_ENV")" \
+        || write_result false RunnerWorkspaceSlotsSettingInvalid 2
     c1008_rollout_lock
     # Never replace an unverified leftover, including a stopped project container.
     c849_no_temp_containers
@@ -9821,6 +9849,7 @@ COMPOSE_PROJECT_NAME=$TEMP_PROJECT
 SOURCE_REVISION=$SHA
 SOURCE_SHA12=${SHA:0:12}
 PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
+PhoneHome__WorkspaceSlots__Enabled=$workspace_slots_enabled
 ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
