@@ -976,6 +976,10 @@ public sealed partial class RunnerWorkspaceService
         string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
         CancellationToken ct, string[] args, bool inspection)
     {
+        // Same shape as the server's ServerGitProcess spans, so traces attribute runner-side git too.
+        using var span = Antiphon.Observability.AntiphonTrace.Span(
+            "git " + (args.Length > 0 ? args[0] : ""), "git.runner", inspection ? "session-runner-inspection" : "session-runner");
+        span?.SetTag("git.spawned", true);
         var psi = new ProcessStartInfo
         {
             FileName = "git",
