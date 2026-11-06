@@ -23,6 +23,9 @@ public sealed class DeliverableBundleService
 
     private static readonly Regex NamedDocPattern = new(
         "`?(?<path>docs/[\\w./-]+\\.md)`?", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CommittedDocPattern = new(
+        @"`(?<path>[^`\r\n]+\.md)`|(?<![\w./\\:])(?<path>docs/[\p{L}\p{N}_./-]+\.md)(?![\w./\\])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly GitWorkspaceService _git;
     private readonly DeliverablesSettings _settings;
@@ -147,11 +150,14 @@ public sealed class DeliverableBundleService
         CancellationToken ct)
     {
         var log = new StringBuilder();
-        var (documents, omitted) = await CollectDocumentsAsync(task, report, log, ct);
+        var (documents, omitted) = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? await CollectCommittedDocumentsAsync(task, report, db, ct)
+            : await CollectDocumentsAsync(task, report, log, ct);
         if (documents.Count == 0 && omitted.Count == 0)
             return;
 
-        var root = FirstNonEmpty(task.RepoPath, task.WorkingDirectory);
+        var refOnly = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly;
+        var root = refOnly ? await RefOnlyOutputRootAsync(task, ct) : FirstNonEmpty(task.RepoPath, task.WorkingDirectory);
         if (string.IsNullOrWhiteSpace(root))
         {
             log.AppendLine("no RepoPath or WorkingDirectory; skipped");
@@ -159,7 +165,7 @@ public sealed class DeliverableBundleService
         }
 
         var shortId = DelegationReportFormatter.Short(task.Id);
-        var bundleDir = Path.Combine(root, ".antiphon", "deliverables", shortId);
+        var bundleDir = refOnly ? Path.Combine(root, shortId) : Path.Combine(root, ".antiphon", "deliverables", shortId);
         Directory.CreateDirectory(bundleDir);
 
         var identifier = db is null ? null : await CardIdentifierAsync(db, task, ct);
@@ -175,6 +181,92 @@ public sealed class DeliverableBundleService
         task.DeliverablePdfPath = null;
         task.DeliverableFileCount = documents.Count;
         task.DeliverableRenderError = null;
+    }
+
+    private async Task<(List<BundledDocument> Documents, List<OmittedSource> Omitted)> CollectCommittedDocumentsAsync(
+        AgentTask task, string report, AppDbContext? db, CancellationToken ct)
+    {
+        var named = CommittedDocPattern.Matches(report ?? "").Select(m => m.Groups["path"].Value)
+            .Distinct(StringComparer.Ordinal).ToList();
+        var omitted = new List<OmittedSource>();
+        var documents = new List<BundledDocument>();
+        var source = db is null ? null : await RefOnlyCommittedSource.ResolveAsync(db, _git, task, ct);
+        if (source is null)
+            return (documents, named.Select(p => new OmittedSource(p, -1, "committed source unavailable")).ToList());
+        var repo = source.Workspace.GitWorkingDirectory;
+        var changes = await _git.GetCommittedChangesAsync(repo, source.BaselineSha, source.Sha, ct);
+        var producing = changes?.Where(c => c.Status is GitFileStatus.Added or GitFileStatus.Modified or GitFileStatus.Renamed).ToList();
+        var docsOnly = producing is { Count: > 0 } && producing.All(c => c.Path.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+        if (named.Count == 0 && !docsOnly) return (documents, omitted);
+        if (changes is null) omitted.Add(new("<commit-diff>", -1, "committed diff unavailable"));
+        var candidates = named.Concat(docsOnly ? producing!.Select(c => c.Path) : []).Distinct(StringComparer.Ordinal);
+        long remaining = Math.Max(0, _settings.MaxTotalSourceBytes);
+        foreach (var requested in candidates)
+        {
+            var relative = NormalizeRelative(requested);
+            if (relative is null)
+            {
+                omitted.Add(new(requested, -1, "excluded or unsafe source path"));
+                continue;
+            }
+            // Metadata is checked before length/content: a symlink is itself a blob, so
+            // cat-file's blob type alone cannot distinguish it from a regular document.
+            var mode = await _git.GetCommittedModeAsync(repo, relative, source.Sha, ct);
+            if (mode is not ("100644" or "100755"))
+            {
+                omitted.Add(new(relative, -1, mode is null ? "committed blob unavailable" : "non-regular source entry"));
+                continue;
+            }
+            if (BeforeCommittedMemberAsync is not null) await BeforeCommittedMemberAsync(relative, ct);
+            var length = await _git.GetContentLengthAtAsync(repo, relative, source.Sha, ct);
+            if (length is null || length < 0)
+            {
+                omitted.Add(new(relative, -1, "committed blob length unavailable"));
+                continue;
+            }
+            var budget = Math.Min(remaining, Math.Max(0, _settings.MaxSourceBytes));
+            if (length > budget)
+            {
+                omitted.Add(new(relative, length.Value, "source byte budget exceeded"));
+                continue;
+            }
+            var bytes = await _git.GetContentBytesAtAsync(repo, relative, source.Sha, budget, ct);
+            if (bytes is null || bytes.LongLength != length || bytes.LongLength > budget)
+            {
+                omitted.Add(new(relative, length.Value, "committed content unavailable or byte budget exceeded"));
+                continue;
+            }
+            documents.Add(new(relative, bytes)); remaining -= bytes.LongLength;
+        }
+        return (documents, omitted);
+    }
+
+    private async Task<string?> RefOnlyOutputRootAsync(AgentTask task, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.StorageRoot) || !Path.IsPathFullyQualified(_settings.StorageRoot)) return null;
+        var root = Path.GetFullPath(_settings.StorageRoot);
+        bool Within(string candidate, string parent)
+        {
+            var relative = Path.GetRelativePath(parent, candidate);
+            return relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !Path.IsPathRooted(relative);
+        }
+        if (Within(root, Path.GetTempPath()) || task.WorktreePath is not { Length: > 0 } identity
+            || Within(root, Path.GetDirectoryName(identity)!)) return null;
+        DirectoryInfo? existing = new(root);
+        while (existing is not null && !existing.Exists) existing = existing.Parent;
+        if (existing is null) return null;
+        for (var ancestor = existing; ancestor is not null; ancestor = ancestor.Parent)
+            if ((ancestor.Attributes & FileAttributes.ReparsePoint) != 0) return null;
+        var top = await _git.GetRepoToplevelAsync(existing.FullName, ct);
+        if (top is not null)
+        {
+            if (!Directory.Exists(Path.Combine(top, ".git"))) return null;
+            var relative = Path.GetRelativePath(top, root).Replace('\\', '/');
+            var (tracked, files, _) = await _git.RunReadOnlyAsync(top, ct, "ls-files", "-z", "--", relative);
+            var (ignored, _, _) = await _git.RunReadOnlyAsync(top, ct, "check-ignore", "--no-index", "-q", "--", relative);
+            if (tracked != 0 || files.Length != 0 || ignored != 0) return null;
+        }
+        return root;
     }
 
     private async Task<(List<BundledDocument> Documents, List<OmittedSource> Omitted)> CollectDocumentsAsync(
@@ -408,11 +500,12 @@ public sealed class DeliverableBundleService
         return $"{i}-{name}";
     }
 
-    private static string? NormalizeRelative(string? raw)
+    internal static string? NormalizeRelative(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
             return null;
         var n = raw.Replace('\\', '/').Trim();
+        if (n.Any(char.IsControl) || n.Contains(':')) return null;
         while (n.StartsWith("./", StringComparison.Ordinal))
             n = n[2..];
         n = n.TrimStart('/');

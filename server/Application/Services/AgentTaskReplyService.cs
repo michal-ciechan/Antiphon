@@ -3710,10 +3710,18 @@ public sealed partial class AgentTaskReplyService
             var store = services.GetService<IAgentReportStore>();
             if (store is not null)
             {
-                var stored = await store.StoreAsync(task, ct);
-                if (stored.Path is { Length: <= 1000 } path) return path;
+                try
+                {
+                    var stored = await store.StoreAsync(task, ct);
+                    if (stored.Path is { Length: <= 1000 } path) return path;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Canonical report unavailable for task {TaskId}; retaining task result", task.Id);
+                }
             }
         }
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly) return null;
         return await ResolveSpillFileAsync(task, report, ct);
     }
 
@@ -3721,6 +3729,7 @@ public sealed partial class AgentTaskReplyService
     {
         if (report.Length <= ReplyInlineMaxChars)
             return null;
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly) return null;
 
         var relative = Path.Combine(".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}.md");
         var absolute = Path.Combine(task.WorkingDirectory, relative);
@@ -3785,6 +3794,14 @@ public sealed partial class AgentTaskReplyService
         if (string.IsNullOrWhiteSpace(repo))
             return null;
         var parsed = await git.RevParseCommitAsync(repo, prepared.RemoteSha, ct);
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            var pin = prepared.ObservationRef;
+            if (pin is null || !pin.StartsWith("refs/antiphon/progress/" + task.Id.ToString("N") + "/", StringComparison.Ordinal))
+                pin = RemoteWorkspaceService.SettlementPin(task.Id);
+            var pinned = await git.RevParseCommitAsync(repo, pin, ct);
+            if (!pinned.Succeeded || pinned.Sha != prepared.RemoteSha) return null;
+        }
         return parsed.Succeeded ? prepared.RemoteSha : null;
     }
 
@@ -3810,6 +3827,12 @@ public sealed partial class AgentTaskReplyService
             }
 
             var git = services.GetRequiredService<GitWorkspaceService>();
+            if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            {
+                var source = await RefOnlyCommittedSource.ResolveAsync(services.GetRequiredService<AppDbContext>(), git, task, ct);
+                if (source is null) return (null, null);
+                sourceSha = source.Sha;
+            }
             if (!string.IsNullOrWhiteSpace(preferredPath)
                 && await TryResolveDeliverablePathAsync(git, task, preferredPath, sourceSha, ct) is { } preferred)
             {
@@ -3842,6 +3865,13 @@ public sealed partial class AgentTaskReplyService
         if (sourceSha is not null)
         {
             var sourceRepository = task.RepoPath ?? task.WorkingDirectory;
+            if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            {
+                var normalized = DeliverableBundleService.NormalizeRelative(relative);
+                if (normalized is null) return null;
+                relative = normalized;
+                if (await git.GetCommittedModeAsync(sourceRepository, relative, sourceSha, ct) is not ("100644" or "100755")) return null;
+            }
             return await git.GetContentAtAsync(sourceRepository, relative, sourceSha, ct) is not null
                 ? (relative, sourceSha)
                 : null;
@@ -5171,7 +5201,8 @@ public sealed partial class AgentTaskReplyService
                 return ($"uncommitted:{dirtyPaths.Count}", sharedWarning);
             }
 
-            var directory = task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
+            var directory = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly ? task.RepoPath
+                : task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
                 ? wt
                 : task.RepoPath ?? task.WorkingDirectory;
             if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
@@ -5497,6 +5528,15 @@ public sealed partial class AgentTaskReplyService
         var git = services.GetService<GitWorkspaceService>();
         if (git is null)
             return null;
+
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var source = await RefOnlyCommittedSource.ResolveAsync(db, git, task, ct);
+            if (source is null) return null;
+            var (count, _) = await git.CountRangeAsync(source.Workspace.GitWorkingDirectory, source.BaselineSha, source.Sha, ct);
+            return count;
+        }
 
         var directory = task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
             ? wt

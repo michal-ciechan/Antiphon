@@ -181,6 +181,7 @@ public sealed class DelegateCheckProbe
         /// writer, so commit and working-tree evidence is omitted.
         /// </summary>
         SharedWorkspaceUnattributable = 1,
+        RefOnlyCommit = 2,
     }
 
     /// <summary>
@@ -209,9 +210,13 @@ public sealed class DelegateCheckProbe
         CheckGitEvidenceScope Scope,
         string? Range,
         IReadOnlyList<string> Commits,
-        int ChangedFiles,
-        int UntrackedFiles,
-        string? Unavailable);
+        int? ChangedFiles,
+        int? UntrackedFiles,
+        string? Unavailable)
+    {
+        public string? ObservationSource { get; init; }
+        public DateTime? ObservedAt { get; init; }
+    }
 
     public sealed record CheckQueuedMessage(
         long Sequence,
@@ -457,6 +462,8 @@ public sealed class DelegateCheckProbe
     /// </summary>
     private async Task<CheckGitFacts?> GatherGitAsync(AgentTask task, CancellationToken ct)
     {
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return await GatherRefOnlyGitAsync(task, ct);
         var directory = task.WorktreePath ?? task.WorkingDirectory;
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
             return null;
@@ -509,6 +516,36 @@ public sealed class DelegateCheckProbe
             counts?.Changed ?? 0,
             counts?.Untracked ?? 0,
             unavailable);
+    }
+
+    private async Task<CheckGitFacts> GatherRefOnlyGitAsync(AgentTask task, CancellationToken ct)
+    {
+        try
+        {
+            var context = await new TaskWorkspaceContextResolver(_db).ResolveCurrentAsync(task, ct);
+            var baseline = Antiphon.Server.Application.Dtos.TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+            if (!RefOnlyCommittedSource.BaselineMatches(task, context, baseline))
+                return Unknown("ref_only_baseline_invalid");
+            var (commonCode, common, _) = await _git.RunReadOnlyAsync(context.GitWorkingDirectory, ct,
+                "rev-parse", "--path-format=absolute", "--git-common-dir");
+            if (commonCode != 0) return Unknown("repository identity unavailable");
+            TaskWorkspaceContextResolver.RequireRepositoryIdentity(context, common.Trim());
+            var observed = await _git.ObserveRefReadOnlyAsync(context.GitWorkingDirectory, context.FullRef,
+                baseline!.Primary.Remote.EndpointFingerprint, ct);
+            var sha = observed ?? baseline.Primary.LocalSha;
+            var log = await _git.LogOnelineAsync(context.GitWorkingDirectory, baseline.Primary.LocalSha, sha, CommitLimit, null, ct);
+            return new(context.GitWorkingDirectory, CheckGitEvidenceScope.RefOnlyCommit,
+                baseline.Primary.LocalSha + ".." + sha, log ?? [], null, null,
+                log is null ? "commit log unavailable for this observed SHA; runner dirt is unknown" : null)
+            {
+                ObservationSource = observed is null ? "creation baseline (stale; remote tip unavailable)" : "observed remote tip",
+                ObservedAt = observed is null ? baseline.CapturedAt : _timeProvider.GetUtcNow().UtcDateTime,
+            };
+        }
+        catch (Antiphon.Server.Application.Exceptions.ConflictException ex) { return Unknown(ex.Code ?? "binding unavailable"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Unknown("repository unavailable"); }
+        CheckGitFacts Unknown(string why) => new(task.RepoPath ?? "", CheckGitEvidenceScope.RefOnlyCommit,
+            null, [], null, null, why) { ObservationSource = "unavailable" };
     }
 
     private static string? Excerpt(string? text) => Excerpt(text, ExcerptChars);
@@ -618,6 +655,17 @@ public sealed class DelegateCheckProbe
             if (git.Scope == CheckGitEvidenceScope.SharedWorkspaceUnattributable)
             {
                 sb.Append("  ").AppendLine(SharedWorkspaceUnattributableExplanation);
+            }
+            else if (git.Scope == CheckGitEvidenceScope.RefOnlyCommit)
+            {
+                sb.Append("  source=").Append(git.ObservationSource).Append(" at=").Append(git.ObservedAt?.ToString("O")).AppendLine();
+                sb.AppendLine("  runner changed=unknown untracked=unknown");
+                if (git.Unavailable is { } unavailable) sb.Append("  unavailable: ").AppendLine(unavailable);
+                else
+                {
+                    sb.Append("  commits=").Append(git.Commits.Count).AppendLine();
+                    foreach (var commit in git.Commits) sb.Append("  · ").AppendLine(commit);
+                }
             }
             else if (git.Unavailable is { } why)
             {
