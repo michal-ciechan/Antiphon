@@ -3,6 +3,12 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-1731: real PowerShell/Git publication matrices; three Linux methods exhausted the 300s harness budget before snapshot repair.
+Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests
+
+# CARD-1731: real PowerShell/Git snapshot isolation and write-count witnesses; baseline methods measured 22-26s on loaded Linux.
+Antiphon.Tests.Scripts.C599SnapshotTests
+
 # CARD-1610: real queue/runtime receipt round trips and isolated failure-writer restart cuts.
 Antiphon.Tests.Application.TaskSupervisionReceiptTests
 

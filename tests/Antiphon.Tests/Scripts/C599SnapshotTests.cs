@@ -4,6 +4,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class C599SnapshotTests
 {
