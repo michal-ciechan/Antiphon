@@ -35,3 +35,20 @@ CHECKPOINT-TIMING CP-3 waited=60s executed=14.332s wall=74.555s
 BUDGET wall=559.981s execution=499.944s admissionOnly=60.036s
 verdict: RED exit=2
 ```
+
+## C1 red discharged
+
+Exact CP-3 at 0aa0f938fb84e9ea33fcaa2e310c5e4dd721b987 passed 7/7, zero failures/skips. All seven intended methods were inspected in fresh TRX. C1 reached and passed runner-cwd=bound, exact parked source/full-ref prompt, busy deferral, real modeled-recipient UserPrompt count, retained binding/mode and absent desktop worktree assertions. This verifies inherited fix ae201bde0a3c6ccdc3d670d2ffe2f35ce401367e without weakening assertions. Last behavioral red was 7e88a6e3af000edc620db4454103912be7441efc; this is the code-equivalent tested successor. C1 remote-missing/recreation and full Q cuts remain owed; C4 and U2 still have the previously reported incomplete variants.
+
+Receipt validation passed for exact SHA and CP-3. Build slot=granted waited=90s, compiler191.26s, executed307.45s/wall420.12s; row slot=granted waited=195s, execution94.944s. Terminal wall802.670s includes admission-only284.927s and execution517.743s. The executor and wait completed; tool-owned cold output was deleted. Source state clean, producing build verified. No repeat after green is needed.
+
+### 20261106-055034-db81
+
+```text
+source: 0aa0f938fb84e9ea33fcaa2e310c5e4dd721b987 state=clean buildSource=verified
+CHECKPOINT CP-3 commit=0aa0f938fb84e9ea33fcaa2e310c5e4dd721b987 build=ok filter=/*/Antiphon.Tests.Application/(C0824RefOnlyContinuationTests*)|(C0824RefOnlyConsumerTests*)/* executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/task-7d6aabc8/.antiphon/checkpoints/20261106-055034-db81/rows/CP-3/run.trx slot=granted waited=195s dirty=0 source=0aa0f938fb84e9ea33fcaa2e310c5e4dd721b987 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-3 waited=195s executed=94.944s wall=290.118s
+PHASES CP-3 slotWait=285s build=284.4156032s startup=23.8735992s testsWall=64.5757191s teardown=4.217924s hostWall=92.667267s
+BUDGET wall=802.670s execution=517.743s admissionOnly=284.927s
+verdict: GREEN exit=0
+```
