@@ -1,18 +1,5 @@
 strict: false
 
-# slice P0-A1
-server/Application/Dtos/LandingEvidenceDto.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
-server/Application/Exceptions/ConcurrencyLimitException.cs -> DispatchConcurrencyPolicy @ server/Application/Services/DispatchConcurrencyPolicy.cs
-server/Application/Exceptions/ConcurrencyLimitException.cs -> DispatchConstraint @ server/Application/Services/DispatchConcurrencyPolicy.cs
-server/Application/Exceptions/SubscriptionQuotaLowException.cs -> SubscriptionQuotaPolicy @ server/Application/Services/SubscriptionQuotaPolicy.cs
-server/Application/Exceptions/SubscriptionQuotaLowException.cs -> SubscriptionQuotaVerdict @ server/Application/Services/SubscriptionQuotaPolicy.cs
-server/Application/Interfaces/IChannelOutboundFileStore.cs -> ChannelReplyBundleSnapshot @ server/Application/Services/ChannelReplyPreparation.cs
-server/Application/Interfaces/IChannelOutboundFileStore.cs -> ChannelReplyPrepared @ server/Application/Services/ChannelReplyPreparation.cs
-server/Application/Interfaces/ISessionRunnerDirectory.cs -> RunnerState @ server/Application/Services/RunnerState.cs
-server/Application/Interfaces/ISessionStateLoader.cs -> SessionStateSnapshot @ server/Application/Services/SessionStateSnapshot.cs
-server/Application/Settings/AgentTuiSettings.cs -> AntiphonDataPaths @ server/Application/Services/AntiphonDataPaths.cs
-server/Application/Settings/DelegationSettings.cs -> ClaudeLaunchArgs @ server/Application/Services/ClaudeLaunchArgs.cs
-
 # slice P0-A2
 server/Application/Exceptions/ConcurrencyLimitException.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
 server/Application/Services/GitWorkspaceService.cs -> CardFilePreCommitSweep @ server/Application/Services/CardFilePreCommitSweep.cs
@@ -38,6 +25,16 @@ server/Infrastructure/Git/RepositoryMutationLease.cs -> RepositoryLeaseWaiters @
 server/Infrastructure/Git/RepositoryVerificationWindows.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
 
 # slice P0-B
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelContracts @ server/Application/Services/ChannelContracts.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelOutboundService @ server/Application/Services/ChannelOutboundService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelPromptCorrelation @ server/Application/Services/ChannelPromptCorrelation.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelReplyDispatcher @ server/Application/Services/ChannelReplyDispatcher.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChatChannelService @ server/Application/Services/ChatChannelService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> DeliverableBundleService @ server/Application/Services/DeliverableBundleService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> SourceManifest @ server/Application/Services/DeliverableBundleService.cs
+server/Application/Core/DispatchConcurrencyPolicy.cs -> DelegationOpenGate @ server/Application/Services/DelegationOpenGate.cs
+server/Application/Core/PipelineStagesJson.cs -> PipelineHandoff @ server/Application/Services/PipelineHandoff.cs
+server/Application/Core/SubscriptionQuotaPolicy.cs -> SubscriptionUsageSnapshot @ server/Application/Services/SubscriptionUsageReader.cs
 server/Application/Settings/DelegationSettings.cs -> AgentTaskService @ server/Application/Services/AgentTaskService.cs
 
 # slice P0-C1
@@ -103,6 +100,8 @@ server/Infrastructure/Agents/AgentExecutor.cs -> AuditService @ server/Applicati
 server/Infrastructure/Agents/EventEmittingToolWrapper.cs -> AuditService @ server/Application/Services/AuditService.cs
 
 # slice P0-C5
+server/Application/Core/ChannelReplyPreparation.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Core/VerificationReceiptPolicy.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/AgentPinnedInstructionService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/AgentRegistry.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/AgentSupervisorService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
@@ -127,7 +126,6 @@ server/Application/Services/ChannelBridgeService.WithheldIncident.cs -> Kind @ s
 server/Application/Services/ChannelBridgeService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/ChannelOutboundFailureRecorder.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/ChannelOutboundService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
-server/Application/Services/ChannelReplyPreparation.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/CheckCompactionContinuationService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/DelegationWorkspaceResolver.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
 server/Application/Services/DelegationWorktreeService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
@@ -164,7 +162,6 @@ server/Application/Services/StandingSpecialistHealthService.cs -> Kind @ server/
 server/Application/Services/StandingSpecialistSeatService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/TaskCompletionNotification.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/TranscriptUiProjection.cs -> Kind @ server/Application/Services/GitIndexLock.cs
-server/Application/Services/VerificationReceiptPolicy.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 server/Infrastructure/Data/WorkspaceReservationJournal.cs -> Generation @ server/Infrastructure/Git/LandVerificationArtifacts.cs
@@ -208,6 +205,7 @@ server/Infrastructure/Data/CardDoneArtifactRoots.cs -> WorktreeSetAside @ server
 server/Infrastructure/GitHub/GitHubMonitorService.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
 
 # slice later-phase
+server/Application/Core/WorktreeCleanupPresentation.cs -> Status @ server/Application/Services/BootReplyWatch.cs
 server/Application/Dtos/AgentLaunchSpec.cs -> ProviderEndpoint @ server/Application/Services/ProviderEndpoint.cs
 server/Application/Dtos/AgentTaskDtos.cs -> CardWorktreeBaseSelection @ server/Application/Services/AgentTaskWorktreeBaseResolver.cs
 server/Application/Dtos/LandingEvidenceDto.cs -> AgentTaskLandingProtocol @ server/Application/Services/AgentTaskLandingProtocol.cs
@@ -270,38 +268,23 @@ server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs -> PhoneHo
 server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs -> RemoteSpillCourier @ server/Application/Services/RemoteSpillCourier.cs
 server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
 server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> RemoteSpillCourier @ server/Application/Services/RemoteSpillCourier.cs
-server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> RunnerState @ server/Application/Services/RunnerState.cs
 server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs -> ProviderDialogInputRefusedException @ server/Application/Services/ProviderDialogObservationService.cs
 server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs -> ProviderDialogObservationService @ server/Application/Services/ProviderDialogObservationService.cs
 server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
 server/Infrastructure/Agents/WatchdogHostedService.cs -> WatchdogService @ server/Application/Services/WatchdogService.cs
-server/Infrastructure/Data/Seeding/DatabaseSeeder.cs -> PipelineDefinitions @ server/Application/Services/PipelineDefinitions.cs
-server/Infrastructure/Data/Seeding/DatabaseSeeder.cs -> PipelineStagesJson @ server/Application/Services/PipelineStagesJson.cs
-server/Infrastructure/Data/SessionStateLoader.cs -> SessionStateReadiness @ server/Application/Services/SessionStateSnapshot.cs
-server/Infrastructure/Data/SessionStateLoader.cs -> SessionStateSnapshot @ server/Application/Services/SessionStateSnapshot.cs
 server/Infrastructure/Data/WorkspaceReservationJournal.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
-server/Infrastructure/Data/WorkspaceReservationJournal.cs -> OwnerFacts @ server/Application/Services/WorkspaceReservationLiveness.cs
-server/Infrastructure/Data/WorkspaceReservationJournal.cs -> WorkspaceReservationLiveness @ server/Application/Services/WorkspaceReservationLiveness.cs
-server/Infrastructure/Data/WorktreeCleanupJournal.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
-server/Infrastructure/Data/WorktreeCleanupJournal.cs -> WorktreeCleanupPresentation @ server/Application/Services/WorktreeCleanupPresentation.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
 server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> CardDoneArtifactPreservation @ server/Infrastructure/Files/CardDoneArtifactPreservation.cs
 server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> CardWorktreeCleanupService @ server/Application/Services/CardWorktreeCleanupService.cs
 server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> DelegationWorkspaceResolver @ server/Application/Services/DelegationWorkspaceResolver.cs
 server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> LandApproval @ server/Application/Services/LandApproval.cs
-server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> VerificationReceiptPolicy @ server/Application/Services/VerificationReceiptPolicy.cs
 server/Infrastructure/Git/CardFileRepository.cs -> GitProcessGate @ server/Application/Services/GitProcessGate.cs
 server/Infrastructure/Git/FileSystemEvidenceRetention.cs -> WorktreeIgnoredContentClassifier @ server/Application/Services/WorktreeIgnoredContentClassifier.cs
-server/Infrastructure/Git/GuardedWorktreeRemoval.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
 server/Infrastructure/Git/GuardedWorktreeRemoval.cs -> DesktopWorkspaceCleanup @ server/Application/Services/DesktopWorkspaceCleanup.cs
-server/Infrastructure/Git/GuardedWorktreeRemoval.cs -> WorktreeCleanupPresentation @ server/Application/Services/WorktreeCleanupPresentation.cs
 server/Infrastructure/Git/LandingGit.cs -> LandFailureDiagnostic @ server/Application/Services/LandFailureDiagnostic.cs
 server/Infrastructure/Git/LandingGit.cs -> Status @ server/Application/Services/BootReplyWatch.cs
 server/Infrastructure/Git/RepositoryVerificationWindows.cs -> DelegationWorkspaceResolver @ server/Application/Services/DelegationWorkspaceResolver.cs
 server/Infrastructure/Git/WindowsWorktreeLockDiagnostics.cs -> Status @ server/Application/Services/BootReplyWatch.cs
 server/Infrastructure/Git/WorktreeGuardedCleanup.cs -> DesktopWorkspaceCleanup @ server/Application/Services/DesktopWorkspaceCleanup.cs
-server/Infrastructure/Git/WorktreeGuardedCleanup.cs -> WorktreeCleanupPresentation @ server/Application/Services/WorktreeCleanupPresentation.cs
-server/Infrastructure/Git/WorktreeIgnoredContentGate.cs -> WorktreeCleanupPresentation @ server/Application/Services/WorktreeCleanupPresentation.cs
 server/Infrastructure/Git/WorktreeIgnoredContentGate.cs -> WorktreeIgnoredContentClassifier @ server/Application/Services/WorktreeIgnoredContentClassifier.cs
 server/Infrastructure/GitHub/GitHubService.cs -> LandingGit @ server/Infrastructure/Git/LandingGit.cs
 server/Infrastructure/GitHub/GitHubService.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
