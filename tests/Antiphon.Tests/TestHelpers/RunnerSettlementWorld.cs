@@ -267,12 +267,13 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         await ReloadAsync();
     }
 
-    public async Task MintRefOnlyDebtAsync(string report)
+    public async Task MintRefOnlyDebtAsync(string report, bool fetchSourceObjects = true)
     {
         if (SyncClock is null) throw new InvalidOperationException("controlled sync clock required");
         // Code may settle Pending only when exact S is locally readable. Fetch fixture objects
         // before holding the lease so the behavioral witness reaches the recovery guard.
-        await Git.RunAsync(Git.Desktop, "fetch", "--no-tags", "origin", Git.FullRef);
+        if (fetchSourceObjects)
+            await Git.RunAsync(Git.Desktop, "fetch", "--no-tags", "origin", Git.FullRef);
         var busy = LeaseBusy.Next();
         await using (var lease = await Git.Leases.TryAcquireAsync(Git.Desktop, default))
         {

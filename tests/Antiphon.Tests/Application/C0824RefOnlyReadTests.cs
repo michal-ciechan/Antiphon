@@ -82,9 +82,10 @@ public sealed class C0824RefOnlyReadTests
     [Test]
     public async Task Reply_progress_counts_confirmed_range_never_main_head()
     {
-        foreach (var state in new[] { "confirmed", "pending", "refused", "failed" })
+        foreach (var state in new[] { "confirmed", "pending", "pending-unpinned", "pending-unknown", "refused", "failed" })
         {
-            await using var w = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+            await using var w = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true,
+                role: state == "pending-unknown" ? AgentTaskRole.Docs : AgentTaskRole.Code);
             await using (var stageDb = w.CreateContext())
             {
                 var stageTask = await stageDb.AgentTasks.SingleAsync(t => t.Id == w.TaskId);
@@ -102,11 +103,23 @@ public sealed class C0824RefOnlyReadTests
             Directory.CreateDirectory(w.Task.WorktreePath!);
             await w.Git.RunAsync(w.Task.WorktreePath!, "init", "-b", "foreign");
             var source = await w.Git.RunnerPushAsync("only-task.txt", "one task commit");
-            if (state == "pending")
+            if (state.StartsWith("pending", StringComparison.Ordinal))
             {
-                await using (var scope = w.Services.CreateAsyncScope())
-                    (await scope.ServiceProvider.GetRequiredService<RemoteWorkspaceService>().SyncAsync(w.Task, default)).Confirmed.ShouldBeTrue("admitted-source-pin");
-                await w.MintRefOnlyDebtAsync(RunnerSettlementWorld.Report("Implemented. " + w.Claim(source)));
+                if (state == "pending")
+                    await using (var scope = w.Services.CreateAsyncScope())
+                        (await scope.ServiceProvider.GetRequiredService<RemoteWorkspaceService>().SyncAsync(w.Task, default)).Confirmed.ShouldBeTrue("admitted-source-pin");
+                await w.MintRefOnlyDebtAsync(RunnerSettlementWorld.Report("Implemented. " + w.Claim(source)),
+                    fetchSourceObjects: state != "pending-unknown");
+                if (state != "pending")
+                {
+                    (await w.Git.HasObjectAsync(source)).ShouldBe(state == "pending-unpinned", "reached:R2:" + state + ":local-object");
+                    var sync = w.Evidence()!.RemoteSync!;
+                    sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+                    sync.ConfirmedSha.ShouldBeNull("pending-not-confirmed:" + state);
+                    var pin = sync.ObservationRef ?? RemoteWorkspaceService.SettlementPin(w.TaskId);
+                    (await w.Services.GetRequiredService<GitWorkspaceService>().RevParseAsync(w.Git.Desktop, pin, default))
+                        .ShouldBeNull("reached:R2:" + state + ":no-pin");
+                }
             }
             else if (state == "refused")
                 await w.RecoverAsync(new([new string('a', source.Length)], null,
@@ -116,11 +129,19 @@ public sealed class C0824RefOnlyReadTests
                 + DelegationReportFormatter.ReportToken(w.TaskId, "failed"), closingVerdict: false);
             else await w.SettleAsync(RunnerSettlementWorld.Report("Implemented. " + w.Claim(source)));
             var note = (await w.NoteAsync()).ShouldNotBeNull().Body;
-            if (state is "refused" or "failed")
+            if (state is "refused" or "failed" or "pending-unpinned" or "pending-unknown")
             {
-                w.Task.Status.ShouldBe(state == "failed" ? AgentTaskStatus.Failed : AgentTaskStatus.Blocked);
+                w.Task.Status.ShouldBe(state == "failed" ? AgentTaskStatus.Failed
+                    : state.StartsWith("pending", StringComparison.Ordinal) ? AgentTaskStatus.Succeeded : AgentTaskStatus.Blocked);
                 note.ShouldNotContain(DelegationGitFacts.FormatHeader(3, 3), Case.Sensitive, "no-main-HEAD-count");
                 note.ShouldNotContain(DelegationGitFacts.FormatHeader(0, 0), Case.Sensitive, "unknown-is-not-zero");
+                if (state.StartsWith("pending", StringComparison.Ordinal))
+                {
+                    note.ShouldContain("base unknown", Case.Sensitive, "pending-source-count-unavailable:" + state);
+                    await using var db = w.CreateContext();
+                    var outcome = await db.StageOutcomes.AsNoTracking().SingleAsync(o => o.StageTaskId == w.TaskId);
+                    (outcome.Detail ?? "").ShouldNotContain("commits=", Case.Sensitive, "repair-hint-count-unavailable:" + state);
+                }
             }
             else
             {
