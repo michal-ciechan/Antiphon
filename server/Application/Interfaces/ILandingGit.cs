@@ -62,13 +62,23 @@ public interface ILandingGit
     /// one <c>ls-remote</c>. The target is observed only when the source recheck accepted
     /// <paramref name="expectedSourceSha"/>, so a refusal on the source never reads the target.
     /// </summary>
-    async Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository, string sourceFullRef,
+    Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository, string sourceFullRef,
         string expectedSourceSha, string expectedFingerprint, LandingDestination destination, string ancestrySha,
         string observationRef, CancellationToken ct)
+        => ObserveSourceAndTargetAsync(repository, sourceFullRef, expectedSourceSha, expectedFingerprint, destination,
+            ancestrySha, observationRef, null, ct);
+    /// <summary>
+    /// Runs the local source fence after accepting the remote source and before observing or pinning the target.
+    /// A fence refusal propagates without target work; a remote source refusal never calls the fence.
+    /// </summary>
+    async Task<LandingPrePushObservation> ObserveSourceAndTargetAsync(string repository, string sourceFullRef,
+        string expectedSourceSha, string expectedFingerprint, LandingDestination destination, string ancestrySha,
+        string observationRef, Func<Task>? beforeTarget, CancellationToken ct)
     {
         var source = await RecheckSourceRemoteAsync(repository, sourceFullRef, expectedSourceSha, expectedFingerprint, ct);
         if (!source.Accepted || source.Sha != expectedSourceSha || source.Fingerprint != expectedFingerprint)
             return new(source, null);
+        if (beforeTarget is not null) await beforeTarget();
         return new(source, await ObserveAsync(repository, destination, ancestrySha, observationRef, ct));
     }
     /// <summary>
