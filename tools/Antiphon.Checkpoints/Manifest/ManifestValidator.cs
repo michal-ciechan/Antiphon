@@ -14,6 +14,8 @@ public static class ManifestValidator
         if (manifest.SchemaVersion != 1)
             throw new ManifestValidationException("schemaVersion", "schemaVersion must be 1");
 
+        ConditionalSkipContract.ValidateCombinations(manifest);
+
         if (manifest.Timeouts.HardWallMinutes is int wall)
             RunBudgetClock.Validate(TimeSpan.FromMinutes(wall), "hardWallMinutes");
         var root = Path.GetFullPath(worktreeRoot);

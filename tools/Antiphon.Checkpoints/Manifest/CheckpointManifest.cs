@@ -69,6 +69,7 @@ public sealed class CheckpointSpec
     public string? Group { get; set; }
     public string? Filter { get; set; }
     public string? Command { get; set; }
+    public string? ConditionalSkips { get; set; }
     public List<string> Expect { get; set; } = [];
     public string? ExpectText { get; set; }
     public int? MinExecuted { get; set; }

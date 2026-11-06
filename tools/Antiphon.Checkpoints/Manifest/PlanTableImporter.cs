@@ -62,7 +62,7 @@ public static class PlanTableImporter
         if (header.Count < 9 || !header.Take(9).SequenceEqual(Header))
             return Fail("checkpoint table header must be CP, After, Build, Group, Filter, Covers, Expect, Min, EstimatedMinutes");
 
-        var optional = new HashSet<string>(["EstimatedMinutesWindows", "Serial", "Environment", "Repeat"], StringComparer.Ordinal);
+        var optional = new HashSet<string>(["EstimatedMinutesWindows", "Serial", "Environment", "Repeat", "ConditionalSkips"], StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var name in header.Skip(9))
         {
@@ -75,6 +75,7 @@ public static class PlanTableImporter
         var serialColumn = header.IndexOf("Serial");
         var environmentColumn = header.IndexOf("Environment");
         var repeatColumn = header.IndexOf("Repeat");
+        var conditionalColumn = header.IndexOf("ConditionalSkips");
 
         var manifest = new CheckpointManifest { Plan = planProvenance };
         var rowBuilds = new Dictionary<string, (string BuildId, string AfterKey)>(StringComparer.Ordinal);
@@ -101,6 +102,16 @@ public static class PlanTableImporter
                 Group = group,
                 ExpectText = expectText,
             };
+            if (conditionalColumn >= 0)
+            {
+                // Formatting backticks are table syntax; the ID itself is never normalized.
+                var contractId = cells[conditionalColumn];
+                if (contractId.Length >= 2 && contractId[0] == '`' && contractId[^1] == '`')
+                    contractId = contractId[1..^1];
+                if (!ConditionalSkipContract.IsValidId(contractId))
+                    return Fail($"{id}: ConditionalSkips must be a single nonempty contract ID");
+                row.ConditionalSkips = contractId;
+            }
             if (repeatColumn >= 0 && cells[repeatColumn].Trim().Length > 0)
             {
                 if (!int.TryParse(cells[repeatColumn].Trim(), out var repeat) || repeat < 1)
@@ -284,6 +295,8 @@ public static class PlanTableImporter
                 manifest.Timeouts.TotalOverrideReason = directive.Reason;
         }
 
+        try { ConditionalSkipContract.ValidateCombinations(manifest); }
+        catch (ManifestValidationException ex) { return Fail(ex.Message); }
         return new ImportResult { Manifest = manifest, Warnings = warnings, ExitCode = ExitCodes.Green };
     }
 
