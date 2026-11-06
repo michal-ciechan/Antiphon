@@ -40,6 +40,8 @@ internal static class RefOnlyRedirectWitness
             C0824SlotTransportWorld.Git(world.Origin, "remote", "add", "origin", world.Origin);
         foreach (var variant in new[] { "store", "generation", "unknown", "unreadable-reply", "result-generation", "valid" })
         {
+            var targetPreparationsBefore = peer.RequestCount(PhoneHomeOperation.WorkspaceMirror);
+            var oldReleasesBefore = rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease);
             world.RealDesktopGit = false;
             world.Intercept = null;
             rig.Host.Directory.ApplyState(rig.RunnerId, new(false, null, null, null, false, null, null, null));
@@ -111,11 +113,11 @@ internal static class RefOnlyRedirectWitness
                 var held = await rig.ReadTaskAsync(id);
                 held.RunnerId.ShouldBe(rig.RunnerId, "redirect-refused:" + variant);
                 held.RemoteWorkspaceSlotReleasedAt.ShouldBeNull("old-release-unconfirmed:" + variant);
-                peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0, "target-unprepared:" + variant);
+                peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(targetPreparationsBefore, "target-unprepared:" + variant);
                 var old = world.Pool.Ledger().Slot(slot.Id)!;
                 old.State.ShouldBe(variant is "unreadable-reply" or "result-generation" ? WorkspaceSlotStates.Free : WorkspaceSlotStates.Leased,
                     "independent-old-ledger:" + variant);
-                if (variant == "store") rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(0, "wrong-store-zero-release");
+                if (variant == "store") rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(oldReleasesBefore, "wrong-store-zero-release");
                 fault = false;
                 await using (var db = rig.NewDb())
                 {
