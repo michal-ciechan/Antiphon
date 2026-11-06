@@ -167,6 +167,25 @@ zero, tree 404c6f10b83122b3cda2c1ed1f88392d831b0bc9. No merge/rebase/landing occ
 
 ## Unedited checkpoint receipts
 
+Closure: all runs have exited and their leases were released. No captured owned
+test process remained after the Unit deadline cleanup. Owned native bin/obj,
+checkpoint build outputs and temporary baseline bin/obj were removed using exact
+literal absolute paths; the clean detached baseline worktree was removed normally.
+Ignored raw TRX, logs, JSON provenance and checkpoint receipts remain in place.
+No source file was mutated for a positive control and no restoration was needed.
+Tracked worktree status is clean after publication.
+
+At c945442892aa2363ee36ba1809176de2c7b255cd, the full task evidence audit reported
+commits=5 entries=0 violations=0; OS inventory lint completed. Fresh origin/master
+was f8455526033cd36c152338197ea07ea5d4f7f412 and merge-tree exited zero with tree
+3713e046785cbaf172c5ffb0740217733a86250a. These preserve earlier audit history;
+the final full-range audit is additionally retained in
+.antiphon/a342b58a-final-audits.log at the final pushed report tip. The final
+report-only commit does not change any tested source or selection. Actual tested
+SHAs stay 320050108dcf1454d76bb99b8e1b2301e1519aeb (red),
+8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 (targeted green), and
+035eee07fa2732ffe7a0cb9c0f0dff9550b63331 (Unit timeout / CP-94 green).
+
 ```text
 CHECKPOINT CP-1 commit=320050108dcf1454d76bb99b8e1b2301e1519aeb build=ok filter=/*/Antiphon.Tests.Infrastructure/C1729LayeringGuardTests/* executed=9 passed=7 failed=2 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-024412-181a/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=320050108dcf1454d76bb99b8e1b2301e1519aeb sourceState=clean buildSource=verified
 ```
