@@ -17,7 +17,7 @@ public class AgentExecutor : IStageExecutor
     private readonly LlmClientFactory _llmClientFactory;
     private readonly ToolRegistry _toolRegistry;
     private readonly IEventBus _eventBus;
-    private readonly AuditService _auditService;
+    private readonly IAuditService _auditService;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentExecutor> _logger;
 
@@ -27,7 +27,7 @@ public class AgentExecutor : IStageExecutor
         LlmClientFactory llmClientFactory,
         ToolRegistry toolRegistry,
         IEventBus eventBus,
-        AuditService auditService,
+        IAuditService auditService,
         ILoggerFactory loggerFactory,
         ILogger<AgentExecutor> logger)
     {

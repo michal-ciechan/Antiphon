@@ -8,7 +8,7 @@ internal sealed class EventEmittingToolWrapper : IAgentTool
 {
     private readonly IAgentTool _inner;
     private readonly IEventBus _eventBus;
-    private readonly AuditService _auditService;
+    private readonly IAuditService _auditService;
     private readonly string _groupName;
     private readonly Guid _workflowId;
     private readonly Guid _stageId;
@@ -18,7 +18,7 @@ internal sealed class EventEmittingToolWrapper : IAgentTool
     public EventEmittingToolWrapper(
         IAgentTool inner,
         IEventBus eventBus,
-        AuditService auditService,
+        IAuditService auditService,
         string groupName,
         Guid workflowId,
         Guid stageId,
