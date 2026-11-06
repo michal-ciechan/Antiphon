@@ -1,10 +1,6 @@
 {
   "schemaVersion": 4,
-<<<<<<< HEAD
-  "policyHash": "0ac7b7c0dfcf6949ef1714fcfa02d4acd58e6258a8556209248338408f8f46a2",
-=======
-  "policyHash": "50a3778057fcd4f873107086e4776a2296cb7cca76da1505f81a400e0ffdb94a",
->>>>>>> ce49cd02e (fix(tests): register native scratch Git deadline policy and refresh both digests)
+  "policyHash": "2c445d46531ccff2a572e27b5e641e984af40c3b4691c67661dd9a4a360eba72",
   "defaultSuites": [
     "antiphon",
     "session-runner",
