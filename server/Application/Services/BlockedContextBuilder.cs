@@ -200,6 +200,7 @@ internal static class BlockedContextBuilder
     {
         string? lastDigest = null;
         DateTime? lastAt = null;
+        int? unknownCount = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly ? null : 0;
         var check = events.LastOrDefault(e => e.Type == AgentTaskEventType.Check);
         if (check is not null)
         {
@@ -225,7 +226,7 @@ internal static class BlockedContextBuilder
         if (probe is null)
         {
             return new BlockedProgressDto(
-                task.WorktreeBranch, [], 0, 0, lastDigest, lastAt,
+                task.WorktreeBranch, [], unknownCount, unknownCount, lastDigest, lastAt,
                 "git progress was not collected.");
         }
 
@@ -238,7 +239,7 @@ internal static class BlockedContextBuilder
             if (git is null)
             {
                 return new BlockedProgressDto(
-                    task.WorktreeBranch, [], 0, 0, lastDigest, lastAt,
+                    task.WorktreeBranch, [], unknownCount, unknownCount, lastDigest, lastAt,
                     "working directory is not a git repository.");
             }
 
@@ -258,12 +259,12 @@ internal static class BlockedContextBuilder
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             return new BlockedProgressDto(
-                task.WorktreeBranch, [], 0, 0, lastDigest, lastAt, "git probe timed out.");
+                task.WorktreeBranch, [], unknownCount, unknownCount, lastDigest, lastAt, "git probe timed out.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new BlockedProgressDto(
-                task.WorktreeBranch, [], 0, 0, lastDigest, lastAt, ex.Message);
+                task.WorktreeBranch, [], unknownCount, unknownCount, lastDigest, lastAt, ex.Message);
         }
     }
 }
