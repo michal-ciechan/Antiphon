@@ -107,6 +107,7 @@ public class ProcessSpawnLimitTests
     // CARD-1421 Appendix B: strict-roster classes whose only children are git, in fixture-owned repositories.
     private static readonly Type[] GitOnlyClasses =
     [
+        typeof(C0824WorkspaceSlotRoleGateTests),
         typeof(AgentTaskDispatchBaseGuardTests),
         typeof(AgentTaskLandAdmissionTests),
         typeof(AgentTaskLandBoundaryTests),
