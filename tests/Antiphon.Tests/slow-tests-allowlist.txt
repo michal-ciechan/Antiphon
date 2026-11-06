@@ -437,3 +437,6 @@ Antiphon.Tests.Application.ChannelInputWithheldIncidentTests
 
 # CARD-0824 S5b-1: real Git, isolated PostgreSQL, full desktop consumer matrix and real loopback mirror queue/recovery.
 Antiphon.Tests.Application.C0824RefOnlyCleanupTests
+
+# CARD-0824: isolated PostgreSQL Up/Down and recorded-snapshot loss refusal; migrations are the subject.
+Antiphon.Tests.Application.C0824RefOnlySnapshotMigrationTests
