@@ -16,13 +16,14 @@ public sealed class TestLaneCategoryGuardTests
         var missing = new List<string>();
         var both = new List<string>();
         var methodBoth = new List<string>();
-        var testsRoot = Path.Combine(RepoRoot, "tests", "Antiphon.Tests");
+        var testsRoot = Path.Combine(RepoRoot, "tests", typeof(TestLaneCategoryGuardTests).Assembly.GetName().Name!);
+        Directory.Exists(testsRoot).ShouldBeTrue("lane-guard-root-exists");
+        var sourceFiles = Directory.EnumerateFiles(testsRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutput(path)).ToArray();
+        sourceFiles.ShouldNotBeEmpty("root-has-files");
 
-        foreach (var path in Directory.EnumerateFiles(testsRoot, "*.cs", SearchOption.AllDirectories))
+        foreach (var path in sourceFiles)
         {
-            if (IsBuildOutput(path))
-                continue;
-
             var lines = File.ReadAllLines(path);
             var rel = Path.GetRelativePath(RepoRoot, path).Replace('\\', '/');
             for (var i = 0; i < lines.Length; i++)
