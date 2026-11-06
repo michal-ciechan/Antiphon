@@ -31,16 +31,23 @@ public sealed partial class AgentTaskLandPublicationTests
     public async Task C665_CleanupDetailSurvivesNotificationRecoveryAndCompleteCallerPrompt(string detail, bool busy, string cut,
         string? canonicalReason = null)
     {
-        await using var h = new LandingSafetyHarness();
-        // Round A still uses the retention seam. This double actually copies and verifies bytes;
-        // production report-root policy is commissioned in Round B.
+        // Every case starts from the same world: a published land whose cleanup the owned drop refused. It is built
+        // once per process and copied (LandingHarnessSnapshot); the cases differ only after it.
+        await using var h = await LandingHarnessSnapshot.CreateAsync("c665-refused-cleanup",
+            // Round A still uses the retention seam. This double actually copies and verifies bytes;
+            // production report-root policy is commissioned in Round B.
+            configure: harness => harness.ConfigureServices = services => services.AddSingleton<IWorktreeEvidenceRetention>(
+                new CopyingRetention(Path.Combine(harness.Fixture.Root, "retained-evidence"))),
+            setup: async harness =>
+            {
+                await harness.InitializeAsync();
+                await harness.AddSourceAsync();
+                harness.Fixture.Git.BeforeCommand = (_, args) => Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
+                    args[0] == "worktree" && args[1] == "remove" ? new(128, "", "owned drop refusal") : null);
+                await harness.RunAsync();
+                harness.Fixture.Git.BeforeCommand = null;
+            });
         var retainedRoot = Path.Combine(h.Fixture.Root, "retained-evidence");
-        h.ConfigureServices = services => services.AddSingleton<IWorktreeEvidenceRetention>(new CopyingRetention(retainedRoot));
-        await h.InitializeAsync();
-        await h.AddSourceAsync();
-        h.Fixture.Git.BeforeCommand = (_, args) => Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
-            args[0] == "worktree" && args[1] == "remove" ? new(128, "", "owned drop refusal") : null);
-        await h.RunAsync();
         var first = (await h.OperationAsync()).ShouldNotBeNull();
         first.Cleanup.ShouldBe(LandCleanupStatus.Refused);
         await using (var db = h.CreateContext())

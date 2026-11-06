@@ -124,8 +124,15 @@ internal static class PostLandWorldSnapshot
         }
     }
 
-    private static async Task<IsolatedTestSchema> CloneDatabaseAsync(Template template, string token)
+    private static Task<IsolatedTestSchema> CloneDatabaseAsync(Template template, string token) =>
+        CloneDatabaseAsync(template.Database, template.ConnectionString, template.Token, token);
+
+    /// <summary>Clones a frozen template database as <c>test_&lt;token&gt;</c>, replacing <paramref name="oldToken"/> with
+    /// <paramref name="token"/> in every text/json column (shared with <see cref="LandingHarnessSnapshot"/>).</summary>
+    internal static async Task<IsolatedTestSchema> CloneDatabaseAsync(string templateDatabase, string templateConnectionString,
+        string oldToken, string token, params (string Old, string New)[] alsoReplace)
     {
+        var template = (Database: templateDatabase, ConnectionString: templateConnectionString, Token: oldToken);
         var name = "test_" + token;
         await using var maintenance = new NpgsqlConnection(TestDbFixture.MaintenanceConnectionString);
         await maintenance.OpenAsync().ConfigureAwait(false);
@@ -171,6 +178,31 @@ internal static class PostLandWorldSnapshot
                 END $$;
                 """, db);
             await rewrite.ExecuteNonQueryAsync().ConfigureAwait(false);
+            // Values derived from the root that a text swap of the token cannot reach (a hash of a path), as exact pairs.
+            foreach (var (old, @new) in alsoReplace)
+            {
+                await using var extra = new NpgsqlCommand($$"""
+                    DO $$
+                    DECLARE r record;
+                    BEGIN
+                      FOR r IN SELECT c.table_name, c.column_name, c.data_type
+                               FROM information_schema.columns c
+                               JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                               WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.is_generated = 'NEVER'
+                                 AND c.data_type IN ('text', 'character varying', 'json', 'jsonb')
+                      LOOP
+                        IF r.data_type IN ('json', 'jsonb') THEN
+                          EXECUTE format('UPDATE public.%I SET %I = replace(%I::text, %L, %L)::%s WHERE strpos(%I::text, %L) > 0',
+                            r.table_name, r.column_name, r.column_name, '{{old}}', '{{@new}}', r.data_type, r.column_name, '{{old}}');
+                        ELSE
+                          EXECUTE format('UPDATE public.%I SET %I = replace(%I, %L, %L) WHERE strpos(%I, %L) > 0',
+                            r.table_name, r.column_name, r.column_name, '{{old}}', '{{@new}}', r.column_name, '{{old}}');
+                        END IF;
+                      END LOOP;
+                    END $$;
+                    """, db);
+                await extra.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
         }
         return new IsolatedTestSchema(name, connection, TestDbFixture.Lifecycle);
     }
@@ -179,6 +211,23 @@ internal static class PostLandWorldSnapshot
     /// object store and index; read-only attributes are kept. Object files (loose objects and packs)
     /// are hard-linked where the platform allows, as <c>git clone --local</c> does: git writes a new
     /// object file and renames it into place, and never edits one in place.</summary>
+    /// <summary>Freezes a world's database as a template: no pooled connection or backend may hold it open.</summary>
+    internal static async Task FreezeDatabaseAsync(string connectionString)
+    {
+        NpgsqlConnection.ClearPool(new NpgsqlConnection(connectionString));
+        var database = new NpgsqlConnectionStringBuilder(connectionString).Database!;
+        await using var maintenance = new NpgsqlConnection(TestDbFixture.MaintenanceConnectionString);
+        await maintenance.OpenAsync().ConfigureAwait(false);
+        await TestDbFixtureLifecycle.TerminateBackendsAsync(maintenance, database).ConfigureAwait(false);
+    }
+
+    internal static void CopyTree(string from, string to, string oldToken, string newToken) =>
+        CopyTree(from, to, Encoding.ASCII.GetBytes(oldToken), Encoding.ASCII.GetBytes(newToken));
+
+    internal static bool IsPlainTree(string root) => !HasReparsePoint(root);
+
+    internal static void DeleteTreeAtExit(string root) => AppDomain.CurrentDomain.ProcessExit += (_, _) => DeleteTree(root);
+
     private static void CopyTree(string from, string to, byte[] oldToken, byte[] newToken)
     {
         foreach (var dir in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories).Prepend(from))
