@@ -37,9 +37,9 @@ public sealed class AgentTaskLandDispatchYieldTests
         var resolver = scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>();
         (await resolver.ResolveAsync(waiting, default)).Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
-        await using (var db = h.Harness.CreateContext())
+        await using (var heldDb = h.Harness.CreateContext())
         {
-            var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == waiting.Id);
+            var held = await heldDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == waiting.Id);
             held.Status.ShouldBe(AgentTaskStatus.Queued);
             held.WorktreePath.ShouldBeNull();
             held.AgentSessionId.ShouldBeNull();
@@ -99,8 +99,7 @@ public sealed class AgentTaskLandDispatchYieldTests
         request.HoldReasonCode.ShouldBe(AgentTaskLandService.LeaseYieldedToDispatchCode);
         request.HoldDetail.ShouldNotBeNull().ShouldContain(DelegationReportFormatter.Short(waiting.Id));
         if (dependent is not null)
-            request.HoldDetail.ShouldNotContain(DelegationReportFormatter.Short(dependent.Id),
-                "the land yields only to the independent waiter");
+            request.HoldDetail.ShouldNotContain(DelegationReportFormatter.Short(dependent.Id));
         request.Attempt.ShouldBe(0, "independent waiters still get the first turn");
         h.Waiters.Snapshot(await h.CommonAsync()).Select(w => w.TaskId).ShouldContain(waiting.Id);
     }
