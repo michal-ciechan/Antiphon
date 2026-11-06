@@ -67,6 +67,13 @@ accounted gated infrastructure runs. At most three checkpoint rows per invocatio
 | CP-7 | S1-S2 | CP-1 | unit-mp | `/*/*/(M*)\|(N*)\|(O*)\|(P*)/*[Category=Unit]` | R-3 | nonzero, 0 failed/skipped | 1 | 7 | true |
 | CP-8 | S1-S2 | CP-1 | unit-qt | `/*/*/(Q*)\|(R*)\|(S*)\|(T*)/*[Category=Unit]` | R-3 | nonzero, 0 failed/skipped | 1 | 10 | true |
 | CP-9 | S1-S2 | CP-1 | unit-uz | `/*/*/(U*)\|(V*)\|(W*)\|(X*)\|(Y*)\|(Z*)/*[Category=Unit]` | R-3 | nonzero, 0 failed/skipped | 1 | 2 | true |
+| CP-10 | S1 | n/a | baseline-isolation | `pwsh -NoProfile -File scripts/test-release-gate.ps1 -Case C1731_SnapshotIsolation -ResultsDirectory .antiphon/c1731-baseline-isolation` | V-1 | exit 0, five named assertion passes | n/a | 1 | true |
+
+CP-10 is the corrected pre-fix isolation witness. CP-1 at acc9f5f0a recorded the
+intended count/timestamp red, plus a witness naming error ($extra shadowed by
+$Extra) corrected before implementation. CP-10 runs the real unchanged helpers
+without an unnecessary compiler rebuild; its five assertion rows must pass before
+removing the redundant pre-restore. This is a required manual acceptance row.
 
 ## Pending Mutation
 
