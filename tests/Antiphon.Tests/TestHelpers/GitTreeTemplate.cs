@@ -96,8 +96,10 @@ internal sealed class GitTreeTemplate
     /// </para>
     /// </summary>
     public static async Task<GitTreeTemplate> BuildOnceAsync(string key, IReadOnlyCollection<string> tokenNames,
-        Func<string, IReadOnlyDictionary<string, string>, Task<Dictionary<string, string>>> build, string? cacheVersion = null)
+        Func<string, IReadOnlyDictionary<string, string>, Task<Dictionary<string, string>>> build, string? cacheVersion = null,
+        int tokenLength = 32)
     {
+        if (tokenLength is < 8 or > 32) throw new ArgumentOutOfRangeException(nameof(tokenLength), "tokens are 8-32 hex characters");
         var lazy = Built.GetOrAdd(key, _ => new Lazy<Task<GitTreeTemplate>>(async () =>
         {
             var cached = cacheVersion is null ? null : CachePath(key, cacheVersion);
@@ -122,7 +124,7 @@ internal sealed class GitTreeTemplate
             var root = Path.Combine(Path.GetTempPath(), "antiphon-gittpl-" + Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(root);
             AppDomain.CurrentDomain.ProcessExit += (_, _) => DeleteTree(root);
-            var tokens = tokenNames.ToDictionary(n => n, _ => Guid.NewGuid().ToString("N"), StringComparer.Ordinal);
+            var tokens = tokenNames.ToDictionary(n => n, _ => Guid.NewGuid().ToString("N")[..tokenLength], StringComparer.Ordinal);
             var values = await build(root, tokens).ConfigureAwait(false);
             var template = SaveTo(root, root, tokens, values);
             if (cached is not null) template.TryStoreArchive(cached);
@@ -399,6 +401,7 @@ internal sealed class GitTreeTemplate
             if (kind is FileKind.Metadata or FileKind.WorkTree)
             {
                 var bytes = File.ReadAllBytes(file);
+                RequireDelimitedTokens(bytes, relative);
                 hasOld = !ReferenceEquals(SwapBytes(bytes, oldTokens), bytes)
                     || kind == FileKind.Metadata && (!ReferenceEquals(SwapBytes(bytes, oldRoot), bytes)
                         || !ReferenceEquals(SwapBytes(bytes, oldIds), bytes));
@@ -406,6 +409,26 @@ internal sealed class GitTreeTemplate
             files.Add(new PlanFile(relative, kind, hasOld));
         }
         return new Plan(relativeGitDirs, directories, files, affected, homes);
+    }
+
+    /// <summary>
+    /// Every occurrence of a token must stand alone: an ASCII hex digit right before or after it means the bytes may
+    /// be part of an object id or another hex run (likely with a short token), which a rewrite would corrupt. Such a
+    /// template is refused (callers then build without it), never cloned.
+    /// </summary>
+    private void RequireDelimitedTokens(byte[] bytes, string relative)
+    {
+        foreach (var token in Tokens.Values)
+        {
+            var needle = Encoding.ASCII.GetBytes(token);
+            for (var at = IndexOf(bytes, needle, 0, ignoreCase: true); at >= 0; at = IndexOf(bytes, needle, at + 1, ignoreCase: true))
+            {
+                var before = at > 0 && char.IsAsciiHexDigit((char)bytes[at - 1]);
+                var after = at + needle.Length < bytes.Length && char.IsAsciiHexDigit((char)bytes[at + needle.Length]);
+                if (before || after)
+                    throw new InvalidOperationException($"template token is not delimited in {relative}");
+            }
+        }
     }
 
     private static RawObject ReadLoose(string id, string file)

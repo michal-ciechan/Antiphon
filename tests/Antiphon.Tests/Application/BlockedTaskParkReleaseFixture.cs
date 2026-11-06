@@ -9,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 
 namespace Antiphon.Tests.Application;
@@ -47,30 +48,14 @@ internal sealed partial class RunnerSeatReleaseFixture
         var repository = Path.Combine(root, "repo");
         SourceOrigin = Path.Combine(root, "origin.git");
         SourcePath = Path.Combine(root, "task");
-        await GitAsync(root, "init", "--bare", "-b", "master", SourceOrigin);
-        await GitAsync(root, "init", "-b", "master", repository);
-        await GitAsync(repository, "config", "user.name", "park test");
-        await GitAsync(repository, "config", "user.email", "park@example.invalid");
-        await GitAsync(repository, "config", "commit.gpgsign", "false");
-        await File.WriteAllTextAsync(Path.Combine(repository, "source.txt"), "retained source");
-        await GitAsync(repository, "add", "source.txt");
-        await GitAsync(repository, "commit", "-m", "retained baseline");
-        await GitAsync(repository, "remote", "add", "origin", SourceOrigin);
-        await GitAsync(repository, "push", "origin", "master");
-        var sha = await GitAsync(repository, "rev-parse", "HEAD");
         var branch = RemoteWorkspaceService.OwnedBranch(TaskId);
-        await GitAsync(repository, "worktree", "add", "-b", branch, SourcePath, sha);
+        var sha = await SourceTreeAsync(root, TaskId, remote);
         DesktopSourcePath = SourcePath;
         if (remote)
         {
             var runnerRepo = Path.Combine(root, "runner-repo");
             var allowed = Path.Combine(root, "runner");
             SourcePath = Path.Combine(allowed, "worktrees", RemoteWorkspaceService.MirrorName(TaskId));
-            await GitAsync(root, "clone", SourceOrigin, runnerRepo);
-            await GitAsync(runnerRepo, "config", "user.name", "park test");
-            await GitAsync(runnerRepo, "config", "user.email", "park@example.invalid");
-            await GitAsync(runnerRepo, "config", "commit.gpgsign", "false");
-            await GitAsync(runnerRepo, "worktree", "add", "-b", branch, SourcePath, sha);
             Wire.ParkRuntime = new(new RunnerWorkspaceService(runnerRepo, allowed, SourceOrigin, start =>
             {
                 TaskParkPublicationTests.ParkGit.Isolate(start);
@@ -121,19 +106,8 @@ internal sealed partial class RunnerSeatReleaseFixture
         var origin = Path.Combine(root, "origin.git");
         var repository = Path.Combine(root, "repo");
         var checkout = Path.Combine(root, "task");
-        await GitAsync(root, "init", "--bare", "-b", "master", origin);
-        await GitAsync(root, "init", "-b", "master", repository);
-        await GitAsync(repository, "config", "user.name", "park test");
-        await GitAsync(repository, "config", "user.email", "park@example.invalid");
-        await GitAsync(repository, "config", "commit.gpgsign", "false");
-        await File.WriteAllTextAsync(Path.Combine(repository, "source.txt"), "retained source");
-        await GitAsync(repository, "add", "source.txt");
-        await GitAsync(repository, "commit", "-m", "retained baseline");
-        await GitAsync(repository, "remote", "add", "origin", origin);
-        await GitAsync(repository, "push", "origin", "master");
-        var sha = await GitAsync(repository, "rev-parse", "HEAD");
         var branch = RemoteWorkspaceService.OwnedBranch(taskId);
-        await GitAsync(repository, "worktree", "add", "-b", branch, checkout, sha);
+        var sha = await SourceTreeAsync(root, taskId, remote: false);
         if (dirty)
             await File.WriteAllTextAsync(Path.Combine(checkout, "dirty.txt"), "uncommitted");
         var source = new ProgressSourceBaseline(repository, await SourceGit.CommonDirectoryAsync(repository, default),
@@ -154,6 +128,71 @@ internal sealed partial class RunnerSeatReleaseFixture
         await db.SaveChangesAsync();
         Directory.LocalBinding = true;
         return checkout;
+    }
+
+    /// <summary>
+    /// The owned source tree under <paramref name="root"/>: origin.git (bare), repo (one baseline commit, origin,
+    /// pushed master), task (the owned branch's worktree) and, for <paramref name="remote"/>, runner-repo (a clone)
+    /// with the runner mirror worktree. Cloned from a per-process template (GitTreeTemplate: the branch and the mirror
+    /// name carry the task id's first 8 hex digits, the template's token) instead of 10-14 git processes; built with
+    /// git when templates are off or the template is refused. Returns the baseline commit.
+    /// </summary>
+    private async Task<string> SourceTreeAsync(string root, Guid taskId, bool remote)
+    {
+        var token = taskId.ToString("N")[..8];
+        if (GitTreeTemplate.Enabled)
+        {
+            try
+            {
+                var template = await GitTreeTemplate.BuildOnceAsync("c1065-park-source" + (remote ? "-remote" : ""), ["task"],
+                    async (templateRoot, tokens) => new()
+                    {
+                        ["sha"] = await BuildSourceTreeAsync(templateRoot, "feat/card-task-" + tokens["task"],
+                            "task-" + tokens["task"], remote),
+                    }, tokenLength: 8);
+                var clone = template.CloneTo(root, new Dictionary<string, string> { ["task"] = token });
+                return clone.Map(template.Values["sha"]);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException)
+            {
+                Console.Error.WriteLine($"park source template not used: {ex.GetType().Name}: {ex.Message}");
+                foreach (var entry in System.IO.Directory.EnumerateFileSystemEntries(root))
+                {
+                    if (System.IO.Directory.Exists(entry)) GitTreeTemplate.DeleteTree(entry);
+                    else File.Delete(entry);
+                }
+            }
+        }
+        return await BuildSourceTreeAsync(root, RemoteWorkspaceService.OwnedBranch(taskId),
+            RemoteWorkspaceService.MirrorName(taskId), remote);
+    }
+
+    private async Task<string> BuildSourceTreeAsync(string root, string branch, string mirror, bool remote)
+    {
+        var origin = Path.Combine(root, "origin.git");
+        var repository = Path.Combine(root, "repo");
+        await GitAsync(root, "init", "--bare", "-b", "master", origin);
+        await GitAsync(root, "init", "-b", "master", repository);
+        await GitAsync(repository, "config", "user.name", "park test");
+        await GitAsync(repository, "config", "user.email", "park@example.invalid");
+        await GitAsync(repository, "config", "commit.gpgsign", "false");
+        await File.WriteAllTextAsync(Path.Combine(repository, "source.txt"), "retained source");
+        await GitAsync(repository, "add", "source.txt");
+        await GitAsync(repository, "commit", "-m", "retained baseline");
+        await GitAsync(repository, "remote", "add", "origin", origin);
+        await GitAsync(repository, "push", "origin", "master");
+        var sha = await GitAsync(repository, "rev-parse", "HEAD");
+        await GitAsync(repository, "worktree", "add", "-b", branch, Path.Combine(root, "task"), sha);
+        if (remote)
+        {
+            var runnerRepo = Path.Combine(root, "runner-repo");
+            await GitAsync(root, "clone", origin, runnerRepo);
+            await GitAsync(runnerRepo, "config", "user.name", "park test");
+            await GitAsync(runnerRepo, "config", "user.email", "park@example.invalid");
+            await GitAsync(runnerRepo, "config", "commit.gpgsign", "false");
+            await GitAsync(runnerRepo, "worktree", "add", "-b", branch, Path.Combine(root, "runner", "worktrees", mirror), sha);
+        }
+        return sha;
     }
 
     public async Task<string> GitAsync(string path, params string[] arguments)
