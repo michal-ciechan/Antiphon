@@ -189,6 +189,21 @@ V-1/V-2/V-4/V-5/V-7/R-1/R-2 and V-3 remain required. All PC
 variants stay pending SourceLanding Mutation. No OS-selected behavior or startup
 dependency is intentionally changed; inspect any actual fix before rc selection.
 
+S7 refreshes the intent from the locked/reloaded task and a bounded current-default
+read after the rejected claim. The replacement worker now answers the next tick's
+intent rather than being cancelled as obsolete. Claim-time intent/inventory/ref
+fences, waiter Since, lease release and all land fairness/recipient logic are unchanged.
+The adjacent scheduling fixture joins this already-enqueued current observation
+directly, retaining its no-dispatch, metadata and reference assertions; it removes
+the obsolete extra enqueue tick. No assertion is weakened. CP-9 at
+b3982b3146eec7e27cc3aeabc29092b90943b408 was 1 executed/1 intended dispatch assertion
+failure, clean source/verified build. The exact C540 comparison passed at both
+fb7a40f3d5c025d1c5e231232e56401067705255 and 9171383dd80573445727be6deaf3d4934e0b73a7.
+The failing scheduling path and helper are unchanged across the original fairness
+range, and C540 does not call the changed land-yield method: this is a pre-existing
+ordering race, not evidence of an introduced CARD-1581 fairness regression.
+PC-6/current-intent remains pending for method-scoped SourceLanding Mutation.
+
 Performance: CP-8 is provisional 8 minutes including cold build, with the existing
 24-minute derived row cap; historical Review cold builds measured 253/523 seconds.
 CP-6/7 retain their 8/4-minute estimates and existing caps. No full assembly run.

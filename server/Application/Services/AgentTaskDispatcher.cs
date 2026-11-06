@@ -1008,11 +1008,16 @@ public sealed partial class AgentTaskDispatcher
                     _siblingInspections!.Invalidate(task.Id);
                 if (outcome == DispatchOneResult.SiblingObservationStale)
                 {
-                    // CARD-1428 D-3: the same intent is re-inspected at once, and the task's lease
-                    // waiter keeps its turn across this tick (CARD-1427 D-2).
+                    // Reinspect the locked row's current route/default, not the rejected intent.
+                    // An obsolete in-flight entry otherwise blocks the next tick's new intent
+                    // until cancellation joins. The waiter still keeps its turn (CARD-1427 D-2).
                     heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
                     await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
-                    if (!_siblingInspections!.TryEnqueue(siblingIntent!))
+                    if (task.RepoPath is null) continue;
+                    using var refresh = _siblingInspection!.Begin(task.RepoPath, ct);
+                    var fallback = await _siblingInspection.ConfiguredDefaultAsync(task, refresh, ct);
+                    var currentIntent = CardSiblingInspectionIntent.From(task, fallback);
+                    if (!_siblingInspections!.TryEnqueue(currentIntent))
                         await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionCapacity, lastHeld, ct);
                     continue;
                 }

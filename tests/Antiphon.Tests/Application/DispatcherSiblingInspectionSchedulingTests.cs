@@ -123,7 +123,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                     .ShouldBe((await f.Repo.GitReadAsync("rev-parse", "master")).Trim());
         }
         // CARD-1428 D-3/D-4: the rejected claim released the observation it consumed. A claim that
-        // found it stale re-enqueued the same intent at once; a claim that lost the row enqueued nothing.
+        // found it stale re-enqueued the current intent at once; a claim that lost the row enqueued nothing.
         f.Queue.Outstanding.ShouldBe(field is "status" or "task ID" ? 0 : 1,
             "consumed authority cannot survive its rejected claim");
         if (field is "status" or "task ID")
@@ -144,8 +144,8 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         {
             // Reassignment can be ineligible for dispatch; the current intent still has to be
             // independently inspectable and cannot retrieve the old worker's observation.
-            // CARD-1428 D-3: the stale claim re-enqueued its own, stale intent; that owned worker
-            // skips (changed intent) or re-observes (changed inventory) before the next look.
+            // The stale claim already queued the current intent. Join that observation directly;
+            // an additional enqueue tick could consume it and dispatch before these assertions.
             await f.Queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
             if (field == "runner")
             {
@@ -154,9 +154,6 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 f.Queue.TryEnqueue(CardSiblingInspectionIntent.From(reassigned, "master")).ShouldBeTrue();
                 await f.Queue.WhenIdleAsync();
             }
-            // Same intent, changed inventory: the D-3 re-inspection is the replacement observation
-            // (a sibling-land hold, which a tick consumes as before).
-            else if (field is not ("new request" or "request state" or "reviewed source")) await f.ObserveAsync();
             f.Queue.Outstanding.ShouldBe(1);
             if (field is not ("card" or "repository")) f.Git.Calls.Count.ShouldBeGreaterThan(probes);
             await using var read = f.Read();
