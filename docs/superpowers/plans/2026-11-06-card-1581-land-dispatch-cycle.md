@@ -148,10 +148,50 @@ PC-4 (restore the over-broad database-only filter), PC-5 (remove dependent filte
 hosted acceptance) and every original PC variant remain pending SourceLanding
 Mutation; ordinary red-first tests do not discharge them.
 
-### Checkpoints
+### Historical round-2 checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-5 | S3 | tests/Antiphon.Tests -> bin-c1581-r2-red2/ | repair-red | /*/*/AgentTaskLandDispatchYieldTests/(C1581_a_runnable*)\|(C1581_hosted*) | V-4,V-5 | expected priority assertion failures at reviewed production | 7 | 8 | true |
 | CP-6 | S4 | tests/Antiphon.Tests -> bin-c1581-r2-green3/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
 | CP-7 | S4 | CP-6 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |
+
+## Round-3 B-4 diagnosis and repair (Code 839117da)
+
+Round-2 Review: /work/review-evidence/task-11fcfaa1/review.md. Repair range starts
+at 85afeca0155744618d72e01db9e12c542369a83e; original landing owner is unchanged.
+The caller explicitly accepts Interim and excludes R-3/CP-4 (CARD-1720/B-3).
+Unit remains owed; neither this repair nor a guard pass qualifies it as passed.
+Historical red CP-6 was 135/136, with C540_ReducedWarningsKeepBaseDiagnostics
+observing Queued instead of Dispatched. Isolated Review base/tip comparisons were
+green, so attribution remains unresolved until supported by new evidence.
+
+V-6 compares that unchanged exact method at the pre-change parent
+fb7a40f3d5c025d1c5e231232e56401067705255 and the repair tip. The historical
+comparison uses an immutable detached scratch checkout and the same CP-8 row.
+Inspect intent invalidation, frozen-ref revalidation and bounded inspection before
+changing production. Preserve both the stale-default refusal and the subsequent
+Dispatched outcome, with all warning assertions intact. No extra tick, retry,
+assertion relaxation or timeout increase is authorized. If production repair is
+needed, commit its failing witness first, then the smallest demonstrated fix.
+
+After diagnosis/repair run CP-6 once over all 136 affected cases and CP-7 once over
+all eight guard classes. V-1/V-2/V-4/V-5/R-1/R-2 and V-3 remain required. All PC
+variants stay pending SourceLanding Mutation. No OS-selected behavior or startup
+dependency is intentionally changed; inspect any actual fix before rc selection.
+
+Performance: CP-8 is provisional 8 minutes including cold build, with the existing
+24-minute derived row cap; historical Review cold builds measured 253/523 seconds.
+CP-6/7 retain their 8/4-minute estimates and existing caps. No full assembly run.
+One separately gated native checkpoint CLI bootstrap is the only unlisted build.
+Each invocation uses TEMP=/tmp and UseAppHost=false. Checkpoint cold outputs are
+owned by the tool; direct bootstrap uses native bin/obj. Same fixtures and timing
+limitations as above; no p95 claim. No unchanged green selection is repeated.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-8 | S6 | tests/Antiphon.Tests -> bin-c1581-r3-diagnostic/ | c540-diagnostic | /*/*/AgentTaskDispatchBaseGuardTests/C540_ReducedWarningsKeepBaseDiagnostics | V-6 | exact unchanged method, actual outcome retained | 1 | 8 | true |
+| CP-6 | S7 | tests/Antiphon.Tests -> bin-c1581-r3-affected/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
+| CP-7 | S7 | CP-6 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |
