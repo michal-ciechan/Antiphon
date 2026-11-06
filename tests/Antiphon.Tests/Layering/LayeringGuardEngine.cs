@@ -247,6 +247,7 @@ internal static class LayeringGuardEngine
     {
         VariableDeclaratorSyntax n => n.Identifier == token,
         ParameterSyntax n => n.Identifier == token,
+        LocalFunctionStatementSyntax n => n.Identifier == token,
         MemberDeclarationSyntax n => n switch
         {
             MethodDeclarationSyntax m => m.Identifier == token,
