@@ -132,6 +132,18 @@ Rows use isolated checkpoint outputs. Portable service and test changes add no
 OS-selected behavior or startup dependency; server restart after activation,
 runner restart none. Read runtime runner settings; placement stays unpinned.
 
+S5 repairs the acceptance setup after CP-6 at 750bf618: worktree preparation and
+the session-bound claim both use the Dispatched event enum. Assert exactly one
+session-bound claim, exactly one started adapter for that session, one keyed brief
+and one complete UserPrompt. Capture the caller before RequestAsync snapshots
+the immutable recipient; assert that accepted destination before hosted execution.
+The prior full CP-6 was 132 passed/4 failed only at the event oracle; all original
+129 and three new priority cases passed. CP-7 was 75/75 and is not repeated.
+Rerun the red CP-6 closed-list row after S5, preserving its earlier costs/outcomes;
+this is the failure-driven exception to the brief's single ordinary affected run.
+No assertion or timeout is relaxed: the dispatch oracle now keys the real claim
+and actual launched recipient rather than counting unrelated preparation events.
+
 PC-4 (restore the over-broad database-only filter), PC-5 (remove dependent filtering,
 hosted acceptance) and every original PC variant remain pending SourceLanding
 Mutation; ordinary red-first tests do not discharge them.
@@ -141,5 +153,5 @@ Mutation; ordinary red-first tests do not discharge them.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-5 | S3 | tests/Antiphon.Tests -> bin-c1581-r2-red2/ | repair-red | /*/*/AgentTaskLandDispatchYieldTests/(C1581_a_runnable*)\|(C1581_hosted*) | V-4,V-5 | expected priority assertion failures at reviewed production | 7 | 8 | true |
-| CP-6 | S4 | tests/Antiphon.Tests -> bin-c1581-r2-green2/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
+| CP-6 | S4-S5 | tests/Antiphon.Tests -> bin-c1581-r2-green3/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
 | CP-7 | S4 | CP-6 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |

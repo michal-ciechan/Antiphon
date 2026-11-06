@@ -25,7 +25,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
     [Arguments("enqueue-failure")]
     public async Task C1581_hosted_land_and_dispatch_reach_complete_recipient_prompts(string arm)
     {
-        await using var h = await StartAsync();
+        await using var h = await StartAsync(requestLand: false);
         var capture = new MutationDispatchTestsCapture();
         var delivery = new AcceptanceBoundary();
         await using var caller = await ClaudeDialogFixture.CreateBridgeAsync(new()
@@ -79,6 +79,10 @@ public sealed partial class AgentTaskLandDispatchYieldTests
         }
         var runnable = await AddWaiterAsync(h, AgentTaskRole.Code);
         var dependent = await AddWaiterAsync(h, AgentTaskRole.Investigate);
+        await h.Harness.RequestAsync(); // capture the real recipient in the immutable request
+        var accepted = await h.RequestAsync();
+        accepted.ReplyTo.ShouldBe(AgentTaskReplyTo.Session);
+        accepted.ParentSessionId.ShouldBe(caller.SessionId);
         await using (var db = h.Harness.CreateContext())
             await db.AgentTasks.Where(t => t.Id == runnable.Id).ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.WorktreeBaseRequestedRef, (h.Harness.Fixture.SourceRef)));
@@ -169,7 +173,12 @@ public sealed partial class AgentTaskLandDispatchYieldTests
             var prompts = await db.TranscriptEntries.AsNoTracking().Where(t =>
                 t.AgentSessionId == task.AgentSessionId && t.Kind == TranscriptKinds.UserPrompt).ToListAsync();
             prompts.Where(t => t.Text is not null && PromptSubmissionMatch.IsCompleteIn(row.Body, t.Text)).ShouldHaveSingleItem();
-            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(1);
+            // Worktree creation is also logged as Dispatched, without a session. The
+            // session-bound claim, launch adapter and accepted prompt are the dispatch identity.
+            var claim = (await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == id
+                && e.Type == AgentTaskEventType.Dispatched && e.AgentSessionId != null).ToListAsync()).ShouldHaveSingleItem();
+            claim.AgentSessionId.ShouldBe(task.AgentSessionId);
+            capture.Adapters.Where(a => a.StartedSessionId == task.AgentSessionId).ShouldHaveSingleItem();
         }
 
         async Task ScanNotificationsAsync()

@@ -396,7 +396,8 @@ public sealed partial class AgentTaskLandDispatchYieldTests
         await h.AssertLandedAsync();
     }
 
-    private static async Task<World> StartAsync(int maxSeconds = 90, RepositoryLeaseWaiters? shared = null)
+    private static async Task<World> StartAsync(int maxSeconds = 90, RepositoryLeaseWaiters? shared = null,
+        bool requestLand = true)
     {
         var h = new LandingSafetyHarness();
         var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
@@ -406,7 +407,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
             h.ConfigureServices = services => services.AddSingleton(shared);
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        await h.RequestAsync();
+        if (requestLand) await h.RequestAsync();
         return new World(h, clock);
     }
 
