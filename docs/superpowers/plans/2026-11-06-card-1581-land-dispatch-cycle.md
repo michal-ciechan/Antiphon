@@ -18,14 +18,16 @@ budget despite the dispatch being unable to progress until the land finishes.
 S1 commits a failing integration witness against unchanged base production. Real
 Git, the base resolver, dispatcher, database and land protocol demonstrate the
 dependency and eventual publication/dispatch. No sleeps or timeout changes.
-S2 filters only queued, uncut, ordinary same-card Worktree dispatch waiters out of
+The original S2 filtered queued, uncut, ordinary same-card Worktree dispatch waiters out of
 the current land's yield decision. The registry keeps those entries for its owner
 to reconcile; independent waiters, settlements, read-only, already-cut and repair
 tasks retain their turn. A mixed list yields only to independent entries. Exclusion
 is conservative while the same-card pending land exists; it does not change source
 selection, repository lease acquisition, writer exclusion or the maximum yield budget.
 
-This is a product defect proven by the card and the red witness. Review is required.
+Review B-1 found that this original predicate was over-broad; S4 below supersedes it
+with actual sibling-guard dependency proof. This is a product defect proven by the card
+and the red witness. Review is required.
 Read-only Investigate admission semantics are unchanged; the witness also exercises
 an Investigate task using Worktree mode, matching the reported dependency.
 

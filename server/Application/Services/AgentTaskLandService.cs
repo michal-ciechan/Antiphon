@@ -37,6 +37,7 @@ public sealed class AgentTaskLandService
     private readonly GitSettings? _gitSettings;
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
+    private readonly CardSiblingInspectionService? _siblingInspection;
     private LandExecutionIdentity? _execution;
 
     /// <summary>CARD-0672 D-2: the land stood aside at admission for queued dispatches.</summary>
@@ -55,11 +56,13 @@ public sealed class AgentTaskLandService
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
         LandDeliveryBoundary? boundary = null, IOptions<GitSettings>? gitSettings = null,
         WorkspaceUseAdmission? workspaceUse = null,
-        RepositoryLeaseWaiters? leaseWaiters = null, ILandExecutionLease? executionLeases = null)
+        RepositoryLeaseWaiters? leaseWaiters = null, ILandExecutionLease? executionLeases = null,
+        CardSiblingInspectionService? siblingInspection = null)
     {
         _executionLeases = executionLeases ?? (landingGit is null ? null
             : new Infrastructure.Git.LandExecutionLease(landingGit));
         _leaseWaiters = leaseWaiters;
+        _siblingInspection = siblingInspection;
         _workspaceUse = workspaceUse;
         _protocol = protocol;
         _boundary = boundary ?? new LandDeliveryBoundary();
@@ -1699,23 +1702,34 @@ public sealed class AgentTaskLandService
             return null;
         }
 
-        // CARD-1581: an uncut same-card dispatch waits for this pending land at sibling
-        // inspection. Its earlier lease refusal must not make the land yield back to it.
+        // CARD-1581: exclude a dispatch only when sibling inspection proves it waits for
+        // this pending land. Same-card eligibility alone does not establish dependency:
+        // explicit reviewed-source and already-contained bases can run before land finishes.
         // Keep the registry intact: dispatch owns reconciliation, and independent waiters
         // (including settlements, repairs and already-cut tasks) still get their turn.
         var eligibleWaiters = _leaseWaiters.Snapshot(common);
-        if (task.CardId is Guid cardId)
+        if (task.CardId is Guid cardId && _siblingInspection is not null)
         {
             var dispatchIds = eligibleWaiters.Where(w => w.Purpose == RepositoryLeasePurposes.Dispatch)
                 .Select(w => w.TaskId).ToArray();
             if (dispatchIds.Length > 0)
             {
-                var dependentIds = (await _db.AgentTasks.AsNoTracking()
+                var candidates = await _db.AgentTasks.AsNoTracking()
                     .Where(t => dispatchIds.Contains(t.Id) && t.CardId == cardId
                         && t.Status == AgentTaskStatus.Queued && t.Workspace == WorkspaceMode.Worktree
                         && t.WorktreePath == null && t.RepairSourceTaskId == null
                         && t.SourceLandingOperationId == null)
-                    .Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+                    .ToListAsync(ct);
+                var dependentIds = new HashSet<Guid>();
+                // One shared inspection bounds all candidate reads/Git work. Unknown or
+                // exhausted observations retain the waiter and its existing yield budget.
+                using var inspection = _siblingInspection.Begin(task.RepoPath!, ct);
+                foreach (var candidate in candidates)
+                {
+                    var guard = await _siblingInspection.InspectAsync(candidate, inspection, ct);
+                    if (guard.Reason == "pending_land" && guard.Hold?.TaskId == task.Id)
+                        dependentIds.Add(candidate.Id);
+                }
                 eligibleWaiters = eligibleWaiters.Where(w => !dependentIds.Contains(w.TaskId)).ToArray();
             }
         }

@@ -328,7 +328,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), GitOverride ?? Fixture.Git, Boundary,
-            leaseWaiters: Services.GetService<RepositoryLeaseWaiters>());
+            leaseWaiters: Services.GetService<RepositoryLeaseWaiters>(),
+            siblingInspection: services.GetRequiredService<CardSiblingInspectionService>());
     }
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
