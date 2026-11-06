@@ -86,11 +86,13 @@ foreach ($path in $paths) {
     }
 }
 function Get-ManualWorkflowScopeErrors($PolicyObject) {
-$manualWrong = @()
-foreach ($obligation in $manual) {
-    $rows = @($PolicyObject.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })
-    if ($rows.Count -ne 1 -or @($rows[0].methods).Count -ne 1 -or $rows[0].methods[0] -cne $obligation.m -or $rows[0].PSObject.Properties.Name -contains 'platform') { $manualWrong += $obligation.c }
-}
+    $manualWrong = @()
+    foreach ($obligation in $manual) {
+        $rows = @($PolicyObject.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })
+        $methods = @()
+        if ($rows.Count -eq 1) { $methods = @($rows[0].methods | Where-Object { $null -ne $_ }) }
+        if ($rows.Count -ne 1 -or $methods.Count -ne 1 -or $methods[0] -cne $obligation.m -or $rows[0].PSObject.Properties.Name -contains 'platform') { $manualWrong += $obligation.c }
+    }
     return $manualWrong
 }
 $manualWrong = @(Get-ManualWorkflowScopeErrors $policy.Object)
