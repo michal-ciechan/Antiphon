@@ -82,7 +82,7 @@ public sealed class C0824RefOnlyReadTests
     [Test]
     public async Task Reply_progress_counts_confirmed_range_never_main_head()
     {
-        foreach (var state in new[] { "confirmed", "pending", "refused" })
+        foreach (var state in new[] { "confirmed", "pending", "refused", "failed" })
         {
             await using var w = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
             await w.RecordRefOnlyAsync();
@@ -106,11 +106,13 @@ public sealed class C0824RefOnlyReadTests
                 await w.RecoverAsync(new([new string('a', source.Length)], null,
                     HeldReport: RunnerSettlementWorld.Report("Held report. " + w.Claim(new string('a', source.Length)))
                         + DelegationReportFormatter.ReportToken(w.TaskId, "done")));
+            else if (state == "failed") await w.SettleAsync(RunnerSettlementWorld.Report("Failed while working.", "code")
+                + DelegationReportFormatter.ReportToken(w.TaskId, "failed"), closingVerdict: false);
             else await w.SettleAsync(RunnerSettlementWorld.Report("Implemented. " + w.Claim(source)));
             var note = (await w.NoteAsync()).ShouldNotBeNull().Body;
-            if (state == "refused")
+            if (state is "refused" or "failed")
             {
-                w.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
+                w.Task.Status.ShouldBe(state == "failed" ? AgentTaskStatus.Failed : AgentTaskStatus.Blocked);
                 note.ShouldNotContain(DelegationGitFacts.FormatHeader(3, 3), Case.Sensitive, "no-main-HEAD-count");
                 note.ShouldNotContain(DelegationGitFacts.FormatHeader(0, 0), Case.Sensitive, "unknown-is-not-zero");
             }
@@ -133,7 +135,7 @@ public sealed class C0824RefOnlyReadTests
     [Test]
     public async Task Long_report_retains_text_without_materializing_identity()
     {
-        foreach (var storage in new[] { "canonical", "missing", "failure" })
+        foreach (var storage in new[] { "canonical", "missing", "failure", "bind-refusal" })
         {
             using var root = new RefOnlyPersistentRoot();
             await using var w = await RunnerSettlementWorld.CreateAsync();
@@ -151,12 +153,13 @@ public sealed class C0824RefOnlyReadTests
             var identitySpill = Path.Combine(w.Task.WorktreePath!, ".antiphon", "task-" + DelegationReportFormatter.Short(w.TaskId) + ".md");
             Directory.CreateDirectory(Path.GetDirectoryName(identitySpill)!);
             await File.WriteAllTextAsync(identitySpill, "foreign report decoy");
-            await w.SettleAsync(RunnerSettlementWorld.Report(raw + "\n" + w.Claim(source)));
+            if (storage == "bind-refusal") await w.RecoverThroughWatchdogAsync(raw + "\n" + w.Claim(source));
+            else await w.SettleAsync(RunnerSettlementWorld.Report(raw + "\n" + w.Claim(source)));
             w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, "full-report-settles:" + storage);
             await using var db = w.CreateContext();
             var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.TaskId);
             row.Result.ShouldNotBeNull().ShouldContain(raw, Case.Sensitive, "result-full:" + storage);
-            if (storage == "canonical")
+            if (storage is "canonical" or "bind-refusal")
             {
                 row.ResultFilePath.ShouldNotBeNull();
                 (await File.ReadAllTextAsync(row.ResultFilePath!)).ShouldBe(row.Result, "canonical-full-text");
