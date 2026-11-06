@@ -57,6 +57,9 @@ internal static class RefOnlyRedirectWitness
             var source = C0824SlotTransportWorld.Git(slot.Path, "rev-parse", "HEAD").Trim();
             var branch = RemoteWorkspaceService.OwnedBranch(id);
             var fullRef = "refs/heads/" + branch;
+            // Ordinary publication may refresh this task's origin-tracking ref. Seed it
+            // at the independently published S before freezing the complete foreign-ref inventory.
+            C0824SlotTransportWorld.Git(world.Origin, "fetch", "origin", fullRef + ":refs/remotes/origin/" + branch);
             var git = new TaskProgressGit();
             Guid bindingId;
             Guid mirrorId;
