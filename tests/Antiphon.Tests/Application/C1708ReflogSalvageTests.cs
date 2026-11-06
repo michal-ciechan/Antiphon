@@ -30,6 +30,61 @@ public sealed class C1708ReflogSalvageTests
     private const string Prefix = "refs/antiphon/salvage/";
 
     [Test, Timeout(40_000)]
+    public async Task C1737_NoncooperativeTickKeepsPrimaryFailureOnJoinTimeout(CancellationToken ct)
+    {
+        using var body = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var s = await SalvageSourceAsync("W-JOIN-TIMEOUT", branchOnly: false, oldOnly: false, body.Token);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rescue = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var root = s.World.Fixture.Root;
+        var pending = s.TickAsync(policy => policy.DesktopBoundaryAsync = async (boundary, taskId, token) =>
+        {
+            if (boundary != "before:legacy-candidate" || taskId != s.Task.Id) return;
+            entered.TrySetResult();
+            // Deliberately ignore cancellation until the witness's own finally rescues us.
+            await rescue.Task;
+            throw new OperationCanceledException("noncooperative witness rescued", token);
+        });
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            body.Cancel();
+            Exception? observed = null;
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(15), ct); }
+            catch (Exception ex) { observed = ex; }
+
+            var failures = observed.ShouldBeOfType<AggregateException>(
+                "primary:W-JOIN-TIMEOUT:caller-cancellation-and-join-timeout").Flatten().InnerExceptions;
+            failures.Count.ShouldBe(2);
+            var primary = failures[0].ShouldBeAssignableTo<OperationCanceledException>();
+            primary.CancellationToken.ShouldBe(body.Token);
+            primary.StackTrace.ShouldContain(nameof(SalvageSource.TickAsync));
+            failures[1].ShouldBeOfType<TimeoutException>();
+            s.ReleaseTick!.IsCompleted.ShouldBeFalse("the join deadline really expired on a live tick");
+            Directory.Exists(root).ShouldBeTrue("a live tick retains its fixture");
+
+            Exception? disposalFailure = null;
+            try { await s.DisposeAsync(); }
+            catch (Exception ex) { disposalFailure = ex; }
+            ReferenceEquals(disposalFailure, observed).ShouldBeTrue("outer cleanup retains both original failures");
+            Directory.Exists(root).ShouldBeTrue("failed disposal must retain the fixture");
+        }
+        finally
+        {
+            // The cached failed join intentionally refuses disposal. Rescue the real task
+            // first, then dispose the world directly, including on the pre-fix red source.
+            rescue.TrySetResult();
+            try { await s.ReleaseTick!.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (OperationCanceledException) { }
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (Exception) when (pending.IsCompleted) { }
+            s.ClearHooks();
+            await s.World.DisposeAsync();
+        }
+        Directory.Exists(root).ShouldBeFalse("rescue joined and disposed the actual fixture");
+    }
+
+    [Test, Timeout(40_000)]
     [Arguments("cancellation"), Arguments("assertion"), Arguments("exception"), Arguments("return")]
     public async Task C1737_ReleaseTickJoinsBeforeFixtureTeardown(string exit, CancellationToken ct)
     {
