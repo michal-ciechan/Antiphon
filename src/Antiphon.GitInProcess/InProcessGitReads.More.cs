@@ -2,7 +2,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using LibGit2Sharp;
 
-namespace Antiphon.Server.Infrastructure.Git;
+namespace Antiphon.GitInProcess;
 
 /// <summary>
 /// More read-only commands answered in process (same contract as the rest of <see cref="InProcessGitReads"/>: git's
@@ -44,7 +44,7 @@ internal static partial class InProcessGitReads
                 if (!name.StartsWith("refs/", StringComparison.Ordinal)) continue;
                 // ls-remote matches "/<ref>" against "*/<pattern>": the pattern is the whole name or a tail after a '/'.
                 if (!patterns.Any(p => name == p || name.EndsWith("/" + p, StringComparison.Ordinal))) continue;
-                if (reference.ResolveToDirectReference()?.TargetIdentifier is not { } sha || !LandingGit.IsOid(sha)) return null;
+                if (reference.ResolveToDirectReference()?.TargetIdentifier is not { } sha || !GitText.IsOid(sha)) return null;
                 lines.Add((name, sha));
             }
             if (lines.Count == 0) return Exit(2);
@@ -90,7 +90,7 @@ internal static partial class InProcessGitReads
             // Per-worktree refs, and refs git skips as broken (a missing object, a dangling symref), are git's.
             if (name.StartsWith("refs/worktree/", StringComparison.Ordinal) || name.StartsWith("refs/bisect/", StringComparison.Ordinal)
                 || name.StartsWith("refs/rewritten/", StringComparison.Ordinal)) return null;
-            if (reference.ResolveToDirectReference()?.TargetIdentifier is not { } sha || !LandingGit.IsOid(sha)
+            if (reference.ResolveToDirectReference()?.TargetIdentifier is not { } sha || !GitText.IsOid(sha)
                 || !repo.ObjectDatabase.Contains(new ObjectId(sha))) return null;
             lines.Add((name, sha));
         }
@@ -104,7 +104,7 @@ internal static partial class InProcessGitReads
     {
         if (a is not ["diff-tree", "--no-commit-id", "--raw", "-r", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv",
                 "--find-renames", var from, var to, "--"]
-            || !LandingGit.IsOid(from) || !LandingGit.IsOid(to))
+            || !GitText.IsOid(from) || !GitText.IsOid(to))
             return null;
         if (TreeOf(repo, from) is not { } left || TreeOf(repo, to) is not { } right) return null;
         var changes = new List<(string Path, string Line)>();
@@ -166,7 +166,7 @@ internal static partial class InProcessGitReads
 
     private static LandingGitResult? LsTree(Repository repo, IReadOnlyList<string> a)
     {
-        if (a is not ["ls-tree", "-r", "-z", var rev] || !LandingGit.IsOid(rev) || TreeOf(repo, rev) is not { } tree) return null;
+        if (a is not ["ls-tree", "-r", "-z", var rev] || !GitText.IsOid(rev) || TreeOf(repo, rev) is not { } tree) return null;
         var output = new StringBuilder();
         return Walk(tree, "", output) ? Ok(output.ToString()) : null;
     }

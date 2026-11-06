@@ -1,3 +1,4 @@
+using Antiphon.GitInProcess;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    libgit2 answers to read-only git commands, shared by the server and the session runner so both
+    answer the same command shapes the same way (pinned against the real CLI by the LibGit2VsGit* tests).
+  -->
+  <PropertyGroup><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
+    <InternalsVisibleTo Include="Antiphon.Server" />
+    <InternalsVisibleTo Include="Antiphon.SessionRunner" />
+    <InternalsVisibleTo Include="Antiphon.SessionRunner.Tests" />
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,3 +1,4 @@
+using Antiphon.GitInProcess;
 using Antiphon.SessionRunner.Contracts;
 using System.Diagnostics;
 using System.Security.Cryptography;

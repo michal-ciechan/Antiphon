@@ -4,7 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using LibGit2Sharp;
 using Microsoft.Win32.SafeHandles;
 
-namespace Antiphon.Server.Infrastructure.Git;
+namespace Antiphon.GitInProcess;
 
 /// <summary>
 /// Answers a small set of read-only git commands in process with libgit2 (LibGit2Sharp) instead of
@@ -86,8 +86,8 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>
-    /// For runners that hand git's stderr to their callers as well (<see cref="WorktreeManager"/>,
-    /// <see cref="Application.Services.GitWorkspaceService"/>): git's exit code and output only where git writes
+    /// For runners that hand git's stderr to their callers as well (<c>WorktreeManager</c>,
+    /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
     /// <c>symbolic-ref -q</c> and <c>show-ref --verify --quiet</c>. Null runs git.
     /// </summary>
@@ -222,7 +222,7 @@ internal static partial class InProcessGitReads
                 return WorktreeList(repo, nul: false);
 
             // merge-base --is-ancestor <oid> <oid>
-            case "merge-base" when a.Count == 4 && a[1] == "--is-ancestor" && LandingGit.IsOid(a[2]) && LandingGit.IsOid(a[3]):
+            case "merge-base" when a.Count == 4 && a[1] == "--is-ancestor" && GitText.IsOid(a[2]) && GitText.IsOid(a[3]):
             {
                 var ancestor = repo.Lookup<Commit>(a[2]);
                 var descendant = repo.Lookup<Commit>(a[3]);
@@ -314,7 +314,7 @@ internal static partial class InProcessGitReads
         var text = File.ReadAllText(headFile);
         if (text.EndsWith('\n')) text = text[..^1];
         if (text.Contains('\n') || text.Contains('\r')) return false;
-        if (LandingGit.IsOid(text))
+        if (GitText.IsOid(text))
         {
             if (repo.Lookup(text) is null) return false;
             output.Append("HEAD ").Append(text).Append('\0').Append("detached").Append('\0');
@@ -361,7 +361,7 @@ internal static partial class InProcessGitReads
     /// </summary>
     private static LandingGitResult? Commit(Repository repo, string revision, bool peel)
     {
-        if (!(revision == "HEAD" || IsPlainRef(revision) || LandingGit.IsOid(revision)))
+        if (!(revision == "HEAD" || IsPlainRef(revision) || GitText.IsOid(revision)))
             return peel && ShortName(repo, revision) is { } full ? Commit(repo, full, peel) : null;
         if (revision != "HEAD" && IsPlainRef(revision) && repo.Refs[revision] is null) return null;
         var target = repo.Lookup(revision);
@@ -434,7 +434,7 @@ internal static partial class InProcessGitReads
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>
     private static string? Direct(Repository repo, string name) =>
-        IsPlainRef(name) && repo.Refs[name] is DirectReference direct && LandingGit.IsOid(direct.TargetIdentifier)
+        IsPlainRef(name) && repo.Refs[name] is DirectReference direct && GitText.IsOid(direct.TargetIdentifier)
             ? direct.TargetIdentifier : null;
 
     /// <summary>A full ref name git would accept as written (libgit2 normalises some it would refuse).</summary>

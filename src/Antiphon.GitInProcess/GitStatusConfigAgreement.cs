@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using LibGit2Sharp;
 
-namespace Antiphon.Server.Infrastructure.Git;
+namespace Antiphon.GitInProcess;
 
 /// <summary>
 /// Whether libgit2 and a git child read the same values for the config that decides a working-tree status:
@@ -113,7 +113,7 @@ internal static class GitStatusConfigAgreement
     {
         var mine = GlobalSettings.GetConfigSearchPaths(ConfigurationLevel.Xdg)
             .Where(p => !string.IsNullOrEmpty(p)).Select(p => Path.GetFullPath(Path.Combine(p, name))).ToArray();
-        if (childFile is not null && mine.Any(p => LandingGit.PathsEqual(p, childFile))) return true;
+        if (childFile is not null && mine.Any(p => GitText.PathsEqual(p, childFile))) return true;
         return (childFile is null || !File.Exists(childFile)) && !mine.Any(File.Exists);
     }
 

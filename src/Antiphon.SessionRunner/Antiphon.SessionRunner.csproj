@@ -38,4 +38,5 @@
   </ItemGroup>
 
   <ItemGroup><ProjectReference Include="../Antiphon.Observability/Antiphon.Observability.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../Antiphon.GitInProcess/Antiphon.GitInProcess.csproj" /></ItemGroup>
 </Project>

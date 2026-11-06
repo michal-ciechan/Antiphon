@@ -1,3 +1,4 @@
+using Antiphon.GitInProcess;
 using System.Diagnostics;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.TestHelpers;
@@ -232,7 +233,7 @@ public sealed class ServerGitProcessTests
                         && !(id.Parent is ArgumentSyntax argument && argument.Parent?.Parent is InvocationExpressionSyntax call
                             && call.Expression.ToString() is "ConfigureProcess" or "ServerGitProcess.DisableAutoMaintenance"
                                 or "InProcessGitReads.ChildReadsSameRepository"
-                                or "Antiphon.Server.Infrastructure.Git.InProcessGitReads.ChildReadsSameRepository"));
+                                or "Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository"));
                 if (calls.Any(call => LaunchTarget(call) is not null) || escapes)
                     missing.Add(site + ": eligibility probe must never launch or escape to a launch helper");
                 continue;

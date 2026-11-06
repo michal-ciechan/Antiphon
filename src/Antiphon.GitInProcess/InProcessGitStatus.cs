@@ -3,7 +3,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using LibGit2Sharp;
 
-namespace Antiphon.Server.Infrastructure.Git;
+namespace Antiphon.GitInProcess;
 
 /// <summary>
 /// libgit2 (LibGit2Sharp) answers to the working-tree questions the product asks git <c>status</c> and
@@ -11,7 +11,7 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// any index entry flagged. These are verdicts, not git's bytes: callers only test emptiness or compare
 /// path sets. Null means "ask git": every repository shape libgit2 might read differently falls back.
 /// <para>
-/// <see cref="TryAnswer"/> serves <see cref="LandingGit"/>'s runner and keeps its contract of git's exact
+/// <see cref="TryAnswer"/> serves the server's <c>LandingGit</c>'s runner and keeps its contract of git's exact
 /// bytes or nothing: a status or ls-files --others/--unmerged is answered only when it is empty (a dirty
 /// tree still runs git, so every caller that reads the listing gets git's own), and ls-files -v is
 /// rebuilt exactly. A status-like answer also needs the config to agree with the git child's
@@ -228,7 +228,7 @@ internal static class InProcessGitStatus
         {
             using var repo = new Repository(checkout);
             if (repo.Info.IsBare || repo.Info.WorkingDirectory is null || InProcessGitReads.Unusual(repo)) return null;
-            if (!LandingGit.PathsEqual(repo.Info.WorkingDirectory.TrimEnd('\\', '/'), checkout.TrimEnd('\\', '/'))) return null;
+            if (!GitText.PathsEqual(repo.Info.WorkingDirectory.TrimEnd('\\', '/'), checkout.TrimEnd('\\', '/'))) return null;
             if (!PlainIndex(repo.Info.Path)) return null;
             if (repo.Config.Get<bool>("core.sparseCheckout")?.Value == true) return null;
             if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;

@@ -1,3 +1,4 @@
+using Antiphon.GitInProcess;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Collections.Immutable;
@@ -1532,7 +1533,7 @@ public class LandingGit : ILandingGit
     /// Either way the caller reads the pin back and compares it with the advertisement; the remote
     /// read (the observation itself) is the ls-remote that always precedes this.
     /// </summary>
-    internal const string ObservationMessagePrefix = "antiphon observe ";
+    internal const string ObservationMessagePrefix = Antiphon.GitInProcess.GitText.ObservationMessagePrefix;
 
     private async Task<LandingGitResult> PinObservationAsync(string repository, string endpoint, string remoteRef,
         string pin, string advertised, CancellationToken ct)
@@ -1902,8 +1903,7 @@ public class LandingGit : ILandingGit
         return result.Output;
     }
 
-    internal static bool IsOid(string value) => value.Length is 40 or 64
-        && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+    internal static bool IsOid(string value) => Antiphon.GitInProcess.GitText.IsOid(value);
 
     internal static string RetirementPrefix(Guid retirementId) =>
         $"refs/antiphon/retirement/{retirementId:N}/";
@@ -1911,9 +1911,7 @@ public class LandingGit : ILandingGit
     internal static bool IsRetirementPinName(string pinName) =>
         pinName is "source" or "target" or "cleanup-observed" or "target-before";
 
-    internal static bool PathsEqual(string left, string right) => string.Equals(
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    internal static bool PathsEqual(string left, string right) => Antiphon.GitInProcess.GitText.PathsEqual(left, right);
 
     internal static IReadOnlyList<LandingRegistration> ParseRegistrations(string text)
     {

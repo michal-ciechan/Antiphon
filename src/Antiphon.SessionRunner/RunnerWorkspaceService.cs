@@ -972,6 +972,27 @@ public sealed partial class RunnerWorkspaceService
         CancellationToken ct, params string[] args) =>
         RunGitCoreAsync(workingDirectory, startProcess, budget, ct, args, inspection: false);
 
+    private static readonly System.Reflection.MethodInfo ProcessStart =
+        typeof(Process).GetMethod(nameof(Process.Start), [typeof(ProcessStartInfo)])!;
+
+    /// <summary>
+    /// libgit2's answer to a read git would print without writing to stderr (the server's
+    /// <c>InProcessGitReads.TryAnswerSilently</c>: rev-parse, symbolic-ref, merge-base --is-ancestor, a clean status,
+    /// ls-files -v, ls-remote of a local-path remote), or null to start git. Only for the real process starter (a test
+    /// that injects one to fault, hold or count git still sees every command) and only where the child would read
+    /// the repository libgit2 opens. Inspection runs (isolated config, no replace objects) always start git.
+    /// <c>ANTIPHON_GIT_INPROCESS=off</c> turns it off.
+    /// </summary>
+    private static (int ExitCode, string Stdout, string Stderr)? InProcessAnswer(string workingDirectory,
+        Func<ProcessStartInfo, Process?> startProcess, ProcessStartInfo psi, string[] args)
+    {
+        if (!Antiphon.GitInProcess.InProcessGitReads.Enabled || args.Length == 0
+            || startProcess.Target is not null || startProcess.Method != ProcessStart
+            || !Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository(psi)) return null;
+        return Antiphon.GitInProcess.InProcessGitReads.TryAnswerSilently(workingDirectory, args) is { } answer
+            ? (answer.ExitCode, answer.Output, "") : null;
+    }
+
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitCoreAsync(
         string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
         CancellationToken ct, string[] args, bool inspection)
@@ -1032,6 +1053,13 @@ public sealed partial class RunnerWorkspaceService
         // credential and it is BatchMode.
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+
+        if (!inspection && InProcessAnswer(workingDirectory, startProcess, psi, args) is { } answered)
+        {
+            ct.ThrowIfCancellationRequested();
+            span?.SetTag("git.spawned", false);
+            return answered;
+        }
 
         // CARD-0631 D-8: a git that cannot start (missing binary, missing or unreadable cwd, access
         // denial, no process at all) is a named workspace admission the server can answer.

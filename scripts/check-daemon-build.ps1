@@ -18,6 +18,7 @@ $daemons = @(
             'src/Antiphon.SessionRunner',
             'src/Antiphon.SessionRunner.Contracts',
             'src/Antiphon.Observability',
+            'src/Antiphon.GitInProcess',
             'src/Antiphon.Agents.Pty',
             'src/Antiphon.PtyHost',
             'src/Antiphon.PtyHost.Client',

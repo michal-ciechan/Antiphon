@@ -1,3 +1,4 @@
+using Antiphon.GitInProcess;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -1191,8 +1192,8 @@ public class GitWorkspaceService
             var probe = new ProcessStartInfo { FileName = _settings.ExecutableName };
             probe.Environment["GIT_OPTIONAL_LOCKS"] = "0";
             ServerGitProcess.DisableAutoMaintenance(probe);
-            eligible = Antiphon.Server.Infrastructure.Git.InProcessGitReads.Enabled
-                && Antiphon.Server.Infrastructure.Git.InProcessGitReads.ChildReadsSameRepository(probe);
+            eligible = Antiphon.GitInProcess.InProcessGitReads.Enabled
+                && Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository(probe);
         }
         catch (Exception) { eligible = false; }
         _inProcessReads = eligible;
@@ -1214,7 +1215,7 @@ public class GitWorkspaceService
         // Reads git answers without a word on stderr are answered in process when libgit2's answer is git's own
         // (InProcessGitReads, same rules as the land's runner; ANTIPHON_GIT_INPROCESS=off turns it off).
         if (stdin is null && InProcessReadsEligible()
-            && Antiphon.Server.Infrastructure.Git.InProcessGitReads.TryAnswerSilently(workingDirectory, args) is { } answered)
+            && Antiphon.GitInProcess.InProcessGitReads.TryAnswerSilently(workingDirectory, args) is { } answered)
         {
             ct.ThrowIfCancellationRequested();
             span?.SetTag("git.spawned", false);

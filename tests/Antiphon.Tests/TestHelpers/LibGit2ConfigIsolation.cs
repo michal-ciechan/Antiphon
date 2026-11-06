@@ -1,3 +1,4 @@
+using Antiphon.GitInProcess;
 using LibGit2Sharp;
 using TUnit.Core;
 
@@ -7,7 +8,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// The suite's git children are isolated from the machine's config (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL,
 /// a fixture HOME), but libgit2 in this process would still read the system, global and XDG files: Git for
 /// Windows' own system file sets core.autocrlf, and a developer's ~/.config/git/ignore adds ignore rules.
-/// Those differences make <see cref="Antiphon.Server.Infrastructure.Git.GitStatusConfigAgreement"/> send
+/// Those differences make <see cref="Antiphon.GitInProcess.GitStatusConfigAgreement"/> send
 /// every status to git. Pointing libgit2's non-repository search paths at one empty directory makes it read
 /// what the isolated children read; a child that does read the machine's config disagrees and runs git.
 /// Production is untouched: there the children inherit this process's config, and libgit2 reads the same files.
