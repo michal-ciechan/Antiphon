@@ -42,11 +42,12 @@ public sealed class C0824RefOnlyReceiptTests
             var fault = new OnceBoundary(cut);
             w.ConfigureServices = services => services.AddSingleton<LandDeliveryBoundary>(fault);
             await w.RestartServicesAsync();
-            await using var bridge = await ClaudeDialogFixture.CreateBridgeAsync(new()
+            await using var recipient = await RestartableQueueRecipient.CreateAsync(new()
             {
                 AlwaysOn = false, ConnectionString = w.Schema.ConnectionString,
                 AttachSessionId = w.CallerSessionId, AttachAgentId = Guid.NewGuid(),
             });
+            var bridge = recipient.Current;
             await bridge.InsertStoreVisibleTurnAsync("prior caller turn", "prior completed turn");
             if (cut == "busy") await bridge.MarkWorkingAsync();
             if (cut == "busy") await w.MintRefOnlyDebtAsync(report);
@@ -89,6 +90,9 @@ public sealed class C0824RefOnlyReceiptTests
                     .SetProperty(m => m.Status, QueuedMessageStatus.Pending).SetProperty(m => m.SentAt, (DateTime?)null)
                     .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null).SetProperty(m => m.LastDeliveryStartedAt, (DateTime?)null));
             }
+            await recipient.RestartAsync();
+            bridge = recipient.Current;
+            recipient.SubmittedCount.ShouldBe(0, "recipient-graph-rebuilt-before-input");
             if (cut == "busy")
             {
                 await bridge.Queue.FlushIfIdleAsync(w.CallerSessionId, default);
@@ -151,6 +155,8 @@ public sealed class C0824RefOnlyReceiptTests
                 }
             }
             await w.RestartServicesAsync();
+            await recipient.RestartAsync();
+            bridge = recipient.Current;
             await ReconcileAsync(w, bridge, obligation.Id);
             var confirmed = (await w.ObligationsAsync()).Single();
             confirmed.State.ShouldBe(LandNotificationState.Confirmed, "caller-receipt-after-rebuild");
@@ -159,7 +165,7 @@ public sealed class C0824RefOnlyReceiptTests
             confirmed.QueueMessageId.ShouldBe(queued.Id);
             await bridge.Queue.FlushIfIdleAsync(w.CallerSessionId, default);
             await ReconcileAsync(w, bridge, obligation.Id);
-            bridge.Adapter.SubmittedBodies.Count.ShouldBe(1, "recovery-never-retypes");
+            recipient.SubmittedCount.ShouldBe(1, "recovery-never-retypes-across-recipient-graphs");
             (await verify.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == obligation.Id)).ShouldBe(1);
             w.Task.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
             Directory.Exists(w.Task.WorktreePath!).ShouldBeFalse();
