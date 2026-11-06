@@ -357,6 +357,15 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         Remote(task.RunnerId).ReleaseWorkspaceSlotAsync(new PhoneHomeWorkspaceSlotReleaseRequest(
             task.RemoteWorkspaceSlotId!, task.RemoteWorkspaceSlotGeneration ?? 0, task.Id), ct);
 
+    /// <summary>Capture the client before checking the store so reconnect cannot redirect this command to a new store.</summary>
+    public Task<PhoneHomeWorkspaceSlotReleaseResponse> ReleaseSlotAsync(AgentTask task, Guid expectedRunnerStoreId, CancellationToken ct)
+    {
+        var client = Remote(task.RunnerId);
+        if (_runners.GetLiveStoreId(task.RunnerId) != expectedRunnerStoreId)
+            throw new ConflictException("The workspace slot's runner store changed.", "workspace_slot_release_store_changed");
+        return client.ReleaseWorkspaceSlotAsync(new(task.RemoteWorkspaceSlotId!, task.RemoteWorkspaceSlotGeneration ?? 0, task.Id), ct);
+    }
+
 
     /// <summary>
     /// The returned binding matches the committed preparation. This does not look at the desktop filesystem.

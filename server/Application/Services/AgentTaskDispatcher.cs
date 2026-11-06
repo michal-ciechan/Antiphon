@@ -1245,13 +1245,33 @@ public sealed partial class AgentTaskDispatcher
     {
         if (_remoteWorkspace is null)
             return SlotRelease.Pending;
+        var slotId = task.RemoteWorkspaceSlotId;
+        var generation = task.RemoteWorkspaceSlotGeneration;
+        var path = task.RemoteWorktreePath;
+        var attempt = task.Attempt;
+        var token = task.ConcurrencyToken;
+        var desktopBinding = task.TaskRefWorkspaceBindingId;
+        Guid? store = null;
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            store = _runners?.GetLiveStoreId(runnerId);
+            var owners = await _db.TaskWorktreeMirrorBindings.AsNoTracking().Where(b => b.TaskId == task.Id
+                    && b.Attempt == attempt && b.RunnerId == runnerId && b.WorktreePath == path
+                    && b.SourceFullRef == "refs/heads/" + task.WorktreeBranch && b.BindingId != Guid.Empty)
+                .Select(b => b.RunnerStoreId).Take(2).ToListAsync(ct);
+            if (store is null || generation is null or <= 0 || owners.Count != 1
+                || !Guid.TryParse(owners[0], out var recordedStore) || recordedStore != store)
+                return SlotRelease.Pending;
+        }
         var unknown = await WorkspaceSlotReleaseService.UnknownAttemptsAsync(_db, task, ct);
         if (unknown >= WorkspaceSlotReleaseService.UnknownSlotAttempts)
             return SlotRelease.Stuck;
         PhoneHomeWorkspaceSlotReleaseResponse response;
         try
         {
-            response = await _remoteWorkspace.ReleaseSlotAsync(task, ct);
+            response = store is Guid capturedStore
+                ? await _remoteWorkspace.ReleaseSlotAsync(task, capturedStore, ct)
+                : await _remoteWorkspace.ReleaseSlotAsync(task, ct);
         }
         catch (Exception ex) when (WorkspaceSlotReleaseService.IsUnknownSlot(ex))
         {
@@ -1268,7 +1288,15 @@ public sealed partial class AgentTaskDispatcher
             return SlotRelease.Pending;
         }
 
-        if (response.Outcome is not ("released" or "already_free" or "quarantined"))
+        if (response.Outcome is not ("released" or "already_free" or "quarantined")
+            || response.SlotId != slotId || response.Generation != generation)
+            return SlotRelease.Pending;
+        if (store is not null && (_runners?.GetLiveStoreId(runnerId) != store
+            || !await ReloadForDrainRebindAsync(task, ct) || task.Status != AgentTaskStatus.Queued
+            || task.AgentSessionId is not null || task.RunnerId != runnerId || task.Attempt != attempt
+            || task.ConcurrencyToken != token || task.DesktopWorkspaceKind != DesktopWorkspaceKind.RefOnly
+            || task.TaskRefWorkspaceBindingId != desktopBinding || task.RemoteWorkspaceSlotId != slotId
+            || task.RemoteWorkspaceSlotGeneration != generation || task.RemoteWorktreePath != path))
             return SlotRelease.Pending;
         task.RemoteWorkspaceSlotReleasedAt = UtcNow();
         task.RemoteWorktreePath = null;

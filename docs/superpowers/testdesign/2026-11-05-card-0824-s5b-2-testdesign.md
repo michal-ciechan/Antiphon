@@ -885,3 +885,10 @@ minima and row/build caps. Bound additional class groups at the existing 15-minu
 row cap, measured timings retained per method; their initial estimates are provisional.
 No full assembly is selected. Every PC-1..PC-159 and added tuple/path variants remains
 pending SourceLanding Mutation.
+
+The extracted local/remote decision policy also selects full
+AgentTaskDecisionQuestionTests and InternalDecisionPolicyTests (pure Unit) alongside
+the consumer classes. C4 shares one schema/web host/recipient pair per method;
+individual negative variants have distinct tasks/refs and actual fixture-owned target
+release between variants. Rebuilding the old pool/provider is the recovery subject.
+The unreadable-result cut is explicitly distinct from still-owed network-loss evidence.

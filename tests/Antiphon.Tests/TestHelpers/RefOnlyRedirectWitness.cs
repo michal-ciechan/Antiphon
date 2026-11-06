@@ -17,10 +17,8 @@ internal static class RefOnlyRedirectWitness
 {
     public static async Task VerifyAsync()
     {
-        // Each negative first proves an actual old slot lease. Restoring the single
-        // corrupted coordinate must then reach a real target preparation.
-        foreach (var variant in new[] { "store", "generation", "unknown", "lost-reply", "result-generation", "valid" })
-        {
+        // One schema, host and pair of recipients for the whole method. Each variant
+        // leases a distinct task/ref; restoring its single fault must reach target preparation.
             const string target = "redirect-target";
             await using var world = await C0824SlotTransportWorld.StartAsync(runnerSettings: settings =>
             {
@@ -39,6 +37,12 @@ internal static class RefOnlyRedirectWitness
             rig.Host.Directory.MarkRecovered(await rig.Host.WaitLiveAsync(runnerId: target));
             peer.Reply = frame => frame.Operation is PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.Capabilities
                 ? recipient.Runner.DispatchAsync(frame, default).GetAwaiter().GetResult() : null;
+            C0824SlotTransportWorld.Git(world.Origin, "remote", "add", "origin", world.Origin);
+        foreach (var variant in new[] { "store", "generation", "unknown", "unreadable-reply", "result-generation", "valid" })
+        {
+            world.RealDesktopGit = false;
+            world.Intercept = null;
+            rig.Host.Directory.ApplyState(rig.RunnerId, new(false, null, null, null, false, null, null, null));
             var id = await world.SeedAsync();
             await rig.TickAsync();
             await rig.Preparer.WhenIdleAsync();
@@ -53,7 +57,6 @@ internal static class RefOnlyRedirectWitness
             var source = C0824SlotTransportWorld.Git(slot.Path, "rev-parse", "HEAD").Trim();
             var branch = RemoteWorkspaceService.OwnedBranch(id);
             var fullRef = "refs/heads/" + branch;
-            C0824SlotTransportWorld.Git(world.Origin, "remote", "add", "origin", world.Origin);
             var git = new TaskProgressGit();
             Guid bindingId;
             Guid mirrorId;
@@ -82,7 +85,8 @@ internal static class RefOnlyRedirectWitness
             var head = C0824SlotTransportWorld.Git(world.Origin, "rev-parse", "HEAD");
             var index = C0824SlotTransportWorld.Git(world.Origin, "ls-files", "-s");
             var registrations = C0824SlotTransportWorld.Git(world.Origin, "worktree", "list", "--porcelain");
-            var fault = variant is "unknown" or "lost-reply" or "result-generation";
+            var refs = C0824SlotTransportWorld.Git(world.Origin, "for-each-ref", "--format=%(refname) %(objectname)");
+            var fault = variant is "unknown" or "unreadable-reply" or "result-generation";
             world.Intercept = frame =>
             {
                 if (!fault || frame.Operation != PhoneHomeOperation.WorkspaceSlotRelease) return null;
@@ -92,7 +96,7 @@ internal static class RefOnlyRedirectWitness
                     return world.Deliver(frame with { Payload = JsonSerializer.SerializeToElement(request with { SlotId = "ws-9999" }, PhoneHomeFraming.Json) });
                 }
                 var reply = world.Deliver(frame);
-                if (variant == "lost-reply")
+                if (variant == "unreadable-reply")
                     return reply with { Payload = JsonSerializer.SerializeToElement(new { }, PhoneHomeFraming.Json) };
                 var response = reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceSlotReleaseResponse>(PhoneHomeFraming.Json)!;
                 return reply with { Payload = JsonSerializer.SerializeToElement(response with { Generation = response.Generation + 1 }, PhoneHomeFraming.Json) };
@@ -106,7 +110,7 @@ internal static class RefOnlyRedirectWitness
                 held.RemoteWorkspaceSlotReleasedAt.ShouldBeNull("old-release-unconfirmed:" + variant);
                 peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0, "target-unprepared:" + variant);
                 var old = world.Pool.Ledger().Slot(slot.Id)!;
-                old.State.ShouldBe(variant is "lost-reply" or "result-generation" ? WorkspaceSlotStates.Free : WorkspaceSlotStates.Leased,
+                old.State.ShouldBe(variant is "unreadable-reply" or "result-generation" ? WorkspaceSlotStates.Free : WorkspaceSlotStates.Leased,
                     "independent-old-ledger:" + variant);
                 if (variant == "store") rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease).ShouldBe(0, "wrong-store-zero-release");
                 fault = false;
@@ -137,7 +141,13 @@ internal static class RefOnlyRedirectWitness
             C0824SlotTransportWorld.Git(world.Origin, "rev-parse", "HEAD").ShouldBe(head, "main-intact:" + variant);
             C0824SlotTransportWorld.Git(world.Origin, "ls-files", "-s").ShouldBe(index, "index-intact:" + variant);
             C0824SlotTransportWorld.Git(world.Origin, "worktree", "list", "--porcelain").ShouldBe(registrations, "desktop-registry-intact:" + variant);
+            C0824SlotTransportWorld.Git(world.Origin, "for-each-ref", "--format=%(refname) %(objectname)").ShouldBe(refs, "all-source-refs-intact:" + variant);
             Directory.Exists(identity).ShouldBeFalse("no-desktop-worktree:" + variant);
+            // Fixture cleanup uses the actual target release; no following variant inherits a seat.
+            (await recipient.Pool.ReleaseAsync(new(newSlot.Id, newSlot.LeaseGeneration, id), default)).Outcome
+                .ShouldBeOneOf("released", "already_free", "quarantined");
+            await using var finished = rig.NewDb();
+            await finished.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled));
         }
     }
 }
