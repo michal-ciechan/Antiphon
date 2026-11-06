@@ -1,3 +1,4 @@
+using static Antiphon.Tests.TestHelpers.RemoteScriptContractSupport;
 using System.Diagnostics;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
@@ -92,7 +93,7 @@ public sealed class CacheFixtureCompletionTests
 
     private static void Run(string script, string mode, string witness, string argument = "")
     {
-        var output = RemoteScriptContractTests.LinuxShell(
+        var output = LinuxShell(
             "bash \"$repo/scripts/fixtures/" + script + "\" " + mode + " \"$repo\" " + argument +
             "\nprintf 'MODEL_EXIT=%s\\n' \"$?\"\n", "repo");
         output.ShouldContain("MODEL_EXIT=0", customMessage: output);

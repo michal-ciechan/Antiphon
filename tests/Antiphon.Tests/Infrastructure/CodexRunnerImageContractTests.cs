@@ -1,3 +1,4 @@
+using static Antiphon.Tests.TestHelpers.RemoteScriptContractSupport;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
@@ -185,7 +186,7 @@ public sealed class CodexRunnerImageContractTests
         probe.ShouldContain("<UseAppHost>true</UseAppHost>");
         probe.ShouldContain("dotnet build \"$root/project/Offline.csproj\" --no-restore");
         wrapper.ShouldContain("$rows['net9-offline'] = Invoke-Probe 'net9-offline' '1654:1654'");
-        var output = RemoteScriptContractTests.LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" archive \"$repo\"\n", "repo");
+        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" archive \"$repo\"\n", "repo");
         output.ShouldContain("PASS archive-digest-gates-extraction");
         output.ShouldContain("PASS host-pack-public-executable");
     }
@@ -194,7 +195,7 @@ public sealed class CodexRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C913_Net9_probe_rejects_warm_caches_and_missing_packs()
     {
-        var output = RemoteScriptContractTests.LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" probe \"$repo\"\n", "repo");
+        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" probe \"$repo\"\n", "repo");
         output.ShouldContain("PASS sources-and-fallbacks-cleared", customMessage: "sources-and-fallbacks-cleared");
         output.ShouldContain("PASS probe-boundaries-complete");
         output.ShouldNotContain("FAIL ");
@@ -204,7 +205,7 @@ public sealed class CodexRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C913_Image_wrapper_isolates_mounts_and_qualifies_receipts()
     {
-        var output = RemoteScriptContractTests.LinuxShell("pwsh -NoProfile -File \"$repo/scripts/fixtures/c913-image-wrapper.ps1\" -Repo \"$repo\"\n", "repo");
+        var output = LinuxShell("pwsh -NoProfile -File \"$repo/scripts/fixtures/c913-image-wrapper.ps1\" -Repo \"$repo\"\n", "repo");
         output.ShouldContain("PASS package-mount-contract", customMessage: "package-mount-contract");
         output.ShouldContain("PASS wrapper-boundaries-complete");
         output.ShouldNotContain("FAIL ");
@@ -321,7 +322,7 @@ public sealed class CodexRunnerImageContractTests
             "[ -e \"$root/elsewhere/config.toml\" ] || echo symlink-target-untouched",
             "") + "\n";
 
-        var output = RemoteScriptContractTests.LinuxShell(script).Replace("\r\n", "\n");
+        var output = LinuxShell(script).Replace("\r\n", "\n");
         output.ShouldContain("existing exit=0\n");
         output.ShouldContain("home=700\n");
         output.ShouldContain("config=600 regular file\n");
@@ -395,7 +396,7 @@ public sealed class CodexRunnerImageContractTests
             "echo '--- config ---'; cat \"$root/server2-mounted/codex-home/config.toml\"; echo '--- end ---'",
             "") + "\n";
 
-        var output = RemoteScriptContractTests.LinuxShell(harness).Replace("\r\n", "\n");
+        var output = LinuxShell(harness).Replace("\r\n", "\n");
 
         // Base (and the nested child): no mount, no requirement. The volumes are initialized,
         // state-init exits 0 so antiphon and session-runner can start, and no Codex home appears.
@@ -562,7 +563,7 @@ public sealed class CodexRunnerImageContractTests
         var pipeline = command[..command.IndexOf(" > \"$log.txt\"", StringComparison.Ordinal)]
             .Replace("\"$log\"", "-", StringComparison.Ordinal);
         var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(raw));
-        return RemoteScriptContractTests.LinuxShell("printf '%s' '" + encoded + "' | base64 -d | " + pipeline)
+        return LinuxShell("printf '%s' '" + encoded + "' | base64 -d | " + pipeline)
             .TrimEnd(' ', '\n', '\r');
     }
 

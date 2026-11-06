@@ -1,3 +1,4 @@
+using static Antiphon.Tests.TestHelpers.RemoteScriptContractSupport;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -1006,7 +1007,7 @@ internal static class C1361CensusProbes
             var quoted = root.Replace("'", "'\\''");
             var input = "census_root=$(wslpath -u '" + quoted + "') || exit 97\n" +
                 body.Replace(root, "'\"$census_root\"'", StringComparison.Ordinal);
-            return RemoteScriptContractTests.LinuxShellResult(input);
+            return LinuxShellResult(input);
         }
         var file = Path.Combine(root, program == "pwsh" ? "probe.ps1" : "probe.sh"); File.WriteAllText(file, body);
         var psi = new ProcessStartInfo(program) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
