@@ -632,7 +632,7 @@ site, not a nonexistent symbol. Never replace a refusal with another refusal.
 This first table is the **closed portable ordinary scope** (28 new methods, the
 one inherited cleanup method, three retained sync methods and 47 policy results:
 **79 TUnit executions**). All after commits must include the prerequisite S5b-1.
-Run A = CP-1..CP-3, Run B = CP-4..CP-5; **never more than three rows per run**.
+Run A = CP-1..CP-3, Run B = CP-4..CP-6; **never more than three rows per run**.
 One isolated build in each run, same SHA/properties, subsequent rows reuse that
 run's build. A cross-run reference is not binary reuse. The extra cold build is
 intentional per performance Debug P3, not an accidental duplicate build.
@@ -644,9 +644,10 @@ intentional per performance Debug P3, not an accidental duplicate build.
 | CP-3 | S5b-2 | CP-1 | ref2-continuation-consumer | /*/Antiphon.Tests.Application/(C0824RefOnlyContinuationTests*)\|(C0824RefOnlyConsumerTests*)/* | V-5,V-6,R-6 | exactly C1..C4,U1..U3; 7 passed, 0 failed/skipped | 7 | 4 | true |
 | CP-4 | S5b-2 | tests/Antiphon.Tests -> bin-c0824-s5b2-b/ | ref2-advisories-legacy | /*/Antiphon.Tests.Application/(C0824RefOnlyBoundaryTests*)\|(C0824RefOnlyCleanupTests*)\|(RunnerSettlementSyncTests*)/(Legacy_release_keeps_the_classified_revision*)\|(Local_merge_and_checkout_typed_removal_refuse_ref_only_owner*)\|(Incomplete_preparation_refuses_initial_and_resumed_land*)\|(All_desktop_consumers_skip_ref_only_without_deleting_refs*)\|(Pushed_tip_fast_forwards_exact_owned_checkout*)\|(Endpoint_change_is_not_followed*)\|(C1082_SettledDebtSyncOnlyFastForwardsToTheRecordedSource*) | V-7,R-1,R-2,R-3,R-5 | exactly A1..A3 and four listed inherited methods; 7 passed, 0 failed/skipped | 7 | 11 | true |
 | CP-5 | S5b-2 | CP-4 | ref2-classification | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)/* | R-7 | existing roster: 47 passed, 0 failed/skipped; rebind if upstream roster changes | 47 | 3 | true |
+| CP-6 | S5b-2 | CP-4 | ref2-replay-migrations-guards | /*/*/(C0824RefOnlySnapshotMigrationTests*)\|(C1729LayeringGuardTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)/* | replay reply Up/Down/model; architecture/policy/mechanical contracts | 4 migration + 23 guard results, 0 failed/skipped | 27 | 2 | true |
 
 Import this artifact (only its first Checkpoints table), select runs explicitly
-with `--rows CP-1,CP-2,CP-3` and `--rows CP-4,CP-5`. CP-4's class/method Cartesian
+with `--rows CP-1,CP-2,CP-3` and `--rows CP-4,CP-5,CP-6`. CP-4's class/method Cartesian
 filter must yield exactly the seven named methods, no cross-class homonyms; audit
 source suffixes and TRX roster before claiming the Min/Expect. If it widens, amend
 the manifest selection, never silently execute excess scope. Gate every direct
@@ -656,15 +657,15 @@ is run by this TestDesign. Code/Review run check-evidence-diff over base..HEAD.
 
 Manifest pins (import then edit ignored YAML; do not accept importer's 15min/3x
 row defaults): `build.slotWaitMinutes: 12`, `timeouts.rowMinutes: 20` to retain
-20min build ceiling; row caps CP-1=6, CP-2=6, CP-3=6, CP-4=8, CP-5=6 minutes.
+20min build ceiling; row caps CP-1=6, CP-2=6, CP-3=6, CP-4=8, CP-5=6, CP-6=6 minutes.
 Estimated host executions are respectively 3,4,4,4,3 minutes; bounds are provisional
 CARD-0824 pending these new methods' first red/green timings. CP-5 cap is measured
 comparator 2 x 181s rounded to 6min. Build estimate 7min follows Debug p50=431.6s;
 20min cap retains its measured 817.1s max without pretending it is 2x p95.
 Run A charged execution cap **38min** (20+6+6+6), hard wall **86min**
-(38 + 4 acquisitions x12). Run B cap **34min** (20+8+6), hard wall **70min**
-(34 + 3x12). Caps are failure bounds, not expected runtime. These totals are below
-the selected-estimate derivation (Run A 46min, Run B 38min), so supply the explicit
+(38 + 4 acquisitions x12). Run B cap **40min** (20+8+6+6), hard wall **88min**
+(40 + 4x12). Caps are failure bounds, not expected runtime. These totals are below
+the selected-estimate derivation (Run A 46min, Run B 42min), so supply the explicit
 CLI `--total-timeout-override-reason` shown below.
 Do not run the whole table without `--rows` or these per-run manifests.
 
@@ -675,7 +676,7 @@ discard the YAML pins and is not this recipe. Use these exact selections:
 
 ```text
 dotnet run --project tools/Antiphon.Checkpoints --no-build -p:UseAppHost=false -- run <pinned-manifest.yaml> --rows CP-1,CP-2,CP-3 --expected-source-sha <C> --total-timeout 38m --hard-wall-timeout 86m --total-timeout-override-reason "CARD-0824 Debug 5ae98d31 measured build and row caps; bounded Run A"
-dotnet run --project tools/Antiphon.Checkpoints --no-build -p:UseAppHost=false -- run <pinned-manifest.yaml> --rows CP-4,CP-5 --expected-source-sha <C> --total-timeout 34m --hard-wall-timeout 70m --total-timeout-override-reason "CARD-0824 Debug 5ae98d31 measured build and row caps; bounded Run B"
+dotnet run --project tools/Antiphon.Checkpoints --no-build -p:UseAppHost=false -- run <pinned-manifest.yaml> --rows CP-4,CP-5,CP-6 --expected-source-sha <C> --total-timeout 40m --hard-wall-timeout 88m --total-timeout-override-reason "CARD-0824 Debug 5ae98d31 measured build and row caps; bounded Run B"
 ```
 
 The no-build tool invocation assumes a proven tool binary; otherwise account its
@@ -892,3 +893,50 @@ the consumer classes. C4 shares one schema/web host/recipient pair per method;
 individual negative variants have distinct tasks/refs and actual fixture-owned target
 release between variants. Rebuilding the old pool/provider is the recovery subject.
 The unreadable-result cut is explicitly distinct from still-owed network-loss evidence.
+
+## Replay reply: migration qualification, 2026-11-06
+
+The caller explicitly retained both original S5b-2 migrations. Their IDs follow
+master's latest `20261105121558_Card0824RefOnlyDesktopCleanup`: first
+`20261106005946_AddRefOnlySettlementDebtWorkspaceSnapshot`, then
+`20261106032116_AddRefOnlyParkWorkspaceSnapshot`. No ID is renamed. Each Up adds
+one nullable text WorkspaceSnapshotJson column, with no new default/index or row
+rewrite. New Down guards take the affected table's ACCESS EXCLUSIVE lock in the
+migration transaction and refuse SQLSTATE23514 while any nonnull snapshot remains.
+The lock spans the check and removal; clearing/draining belongs to the operator,
+not migration SQL. RefOnly recovery authority must survive a refused downgrade.
+
+CP-6 extends Run B to three rows. Original CP-1..CP-5 filters/minima and all159
+frozen controls remain unchanged. Its four migration results are the full new
+C0824RefOnlySnapshotMigrationTests: linear original IDs and exact snapshot/model,
+legacy raw-SQL insert plus nullable Up/empty Down/re-Up, and independent debt/park
+nonnull-snapshot refusal with exact bytes retained and a subsequently drained
+rollback/re-Up control. Fresh clones are required because migrations are the
+subject; the shared template is never downgraded. The four other CP-6 classes are
+three pre-existing guard classes (9 layering + 3 native-policy + 11 mechanical
+results). This is 27 CP-6 results, not27 migration methods. CP-6's six-minute row
+cap is provisional CARD-0824; collect its first green host/fixture/body timings.
+Original portable total79 plus CP-6's27 =106 executions. Original cost32minutes
+is retained historical design; this extension adds2 estimated minutes (34 total),
+not another build. Run B remains one producing build, now CP-4/CP-5/CP-6, bounded
+40m charged/88m wall with the existing explicit below-derived justification.
+
+The same-source retained Run A build may serve the caller's full affected-class
+closure through checkpoint-tool no-build rows: CORE-A (388 historical results),
+CORE-B (291), PARK (129), REDIRECT (91), CONSUMER (414 plus one native skip).
+Their exact filters and all55 classes are retained in the continuation-4 report.
+Each is a full-class selection with the existing15-minute cap, at most three
+rows per foreground batch, one lease per row. RUNTIME's four SessionRunner.Tests
+classes (72 historical results) need their own producing build. These rows guard
+settlement/ref/debt/read/bundle preservation, durable whole-note delivery, park
+publication/custody/answer recovery, redirect release/preparation ordering and
+RPC/capability/platform compatibility, respectively. Counts are historical
+floors; fresh source/TRX identities determine actual counts. No assembly run is
+selected. Unit remains separately required under CARD-1720; no partial shard or
+native skip constitutes Full. No timeout/assertion is relaxed by this amendment.
+
+New unbound candidates PC-160 (debt Down refusal) and PC-161 (park Down refusal)
+are in docs/superpowers/mutations/2026-11-06-card-0824-s5b-2-migration-unbound.md.
+Original PC-1..PC-159, these two candidates and all variants remain pending
+method-scoped SourceLanding Mutation, including missing-control discovery at the
+transaction/lock boundary. Code's unchanged-source red witnesses are not PCs.
