@@ -129,6 +129,11 @@ public sealed class C0824RefOnlyContinuationTests
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == resumed.TaskId);
             await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, resumed.SourceGit, resumed.Harness.TempRoot);
+            var agent = await db.Agents.SingleAsync(a => a.Id == task.AgentId);
+            agent.RunnerId = task.RunnerId;
+            await db.SaveChangesAsync();
+            resumed.Harness.Provider.GetRequiredService<PhoneHomeLaunchPolicy>().IsRunnerBound(agent)
+                .ShouldBeTrue("reached:C1:recorded-remote-pool-agent");
         }
         var before = await resumed.TaskAsync();
         await resumed.GitAsync(before.RepoPath!, "worktree", "remove", resumed.DesktopSourcePath);
