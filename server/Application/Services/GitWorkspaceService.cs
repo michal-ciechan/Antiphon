@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -39,6 +41,60 @@ public class GitWorkspaceService
     }
 
     public sealed record GitChange(string Path, GitFileStatus Status, string? OldPath);
+
+    /// <summary>Exact read-only remote advertisement; never imports objects or writes a pin.</summary>
+    internal async Task<string?> ObserveRefReadOnlyAsync(string repository, string fullRef, string? fingerprint, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint) || !fullRef.StartsWith("refs/heads/", StringComparison.Ordinal)) return null;
+        var (code, output, _) = await RunReadOnlyAsync(repository, ct, "remote", "get-url", "--push", "--all", "origin");
+        var urls = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (code != 0 || urls.Length != 1 || urls[0].StartsWith('-') || urls[0].Any(char.IsControl)
+            || !string.Equals(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(urls[0]))), fingerprint, StringComparison.OrdinalIgnoreCase)) return null;
+        var (read, advertised, _) = await RunReadOnlyAsync(repository, ct, "ls-remote", "--refs", "--exit-code", urls[0], fullRef);
+        if (read != 0) return null;
+        var lines = advertised.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length != 1) return null;
+        var fields = lines[0].Split('\t');
+        if (fields.Length != 2 || fields[1] != fullRef || !GitObjectId.IsFull(fields[0])) return null;
+        var (after, afterOutput, _) = await RunReadOnlyAsync(repository, ct, "remote", "get-url", "--push", "--all", "origin");
+        return after == 0 && afterOutput.TrimEnd('\r', '\n') == urls[0] ? fields[0] : null;
+    }
+
+    internal async Task<IReadOnlyList<GitChange>?> GetCommittedChangesAsync(string repository, string baseline,
+        string sha, CancellationToken ct)
+    {
+        if (!GitObjectId.IsFull(baseline) || !GitObjectId.IsFull(sha)) return null;
+        var (code, output, _) = await RunReadOnlyAsync(repository, ct, "diff", "--name-status", "-z", "--find-renames", baseline, sha, "--");
+        if (code != 0) return null;
+        var records = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var changes = new List<GitChange>();
+        for (var i = 0; i < records.Length;)
+        {
+            if (i + 1 >= records.Length) return null;
+            var status = records[i++]; var path = records[i++]; string? old = null;
+            if (status[0] is 'R' or 'C')
+            {
+                if (i >= records.Length) return null;
+                old = path; path = records[i++];
+            }
+            changes.Add(new(path, status[0] switch { 'A' => GitFileStatus.Added, 'D' => GitFileStatus.Deleted,
+                'R' or 'C' => GitFileStatus.Renamed, _ => GitFileStatus.Modified }, old));
+        }
+        return changes;
+    }
+
+    internal async Task<string?> GetCommittedModeAsync(string repository, string relative, string sha, CancellationToken ct)
+    {
+        if (!GitObjectId.IsFull(sha)) return null;
+        var (code, output, _) = await RunReadOnlyAsync(repository, ct, "--literal-pathspecs", "ls-tree", "-z", sha, "--", relative);
+        if (code != 0) return null;
+        var entries = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (entries.Length != 1) return null;
+        var tab = entries[0].IndexOf('\t');
+        if (tab < 0 || entries[0][(tab + 1)..] != relative) return null;
+        var header = entries[0][..tab].Split(' ');
+        return header.Length == 3 && header[1] == "blob" ? header[0] : null;
+    }
 
     public async Task<bool> IsRepositoryAsync(string workingDirectory, CancellationToken ct)
     {

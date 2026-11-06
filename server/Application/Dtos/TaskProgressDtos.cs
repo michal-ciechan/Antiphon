@@ -109,6 +109,11 @@ public sealed record RemoteSyncEvidence(
     public DesktopWorkspaceKind DesktopWorkspaceKind { get; init; }
     public Guid? TaskRefWorkspaceBindingId { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ObservationRef { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SourceDescends { get; init; }
+
     public static RemoteSyncEvidence From(int attempt, RemoteSettlementSyncResult result) =>
         new(attempt, result.State, result.FullRef, result.RemoteSha,
             result.Confirmed ? result.DesktopAfterSha : null, result.Reason,
@@ -116,6 +121,8 @@ public sealed record RemoteSyncEvidence(
         {
             DesktopWorkspaceKind = result.DesktopWorkspaceKind,
             TaskRefWorkspaceBindingId = result.TaskRefWorkspaceBindingId,
+            ObservationRef = result.ObservationRef,
+            SourceDescends = result.SourceDescends,
         };
 }
 
