@@ -85,6 +85,16 @@ function detail(blockedOverrides: Partial<BlockedContextDto> = {}): AgentTaskDet
 }
 
 describe('BlockedQuestionCard', () => {
+  it('labels committed source and unknown runner counts without calling it on disk', () => {
+    const progress = { ...blocked().progress!, changedFiles: null as unknown as number, untrackedFiles: null as unknown as number }
+    renderWithProviders(<BlockedQuestionCard detail={detail({ progress })} variant="full" />)
+    const soFar = screen.getByTestId('blocked-so-far')
+    expect(soFar).toHaveTextContent('Committed source')
+    expect(soFar).toHaveTextContent('runner files unknown')
+    expect(soFar).not.toHaveTextContent('On disk')
+    expect(soFar).not.toHaveTextContent('0 files changed')
+  })
+
   it('reads question, then the box, then goal, then so far', () => {
     renderWithProviders(<BlockedQuestionCard detail={detail()} variant="full" />)
 

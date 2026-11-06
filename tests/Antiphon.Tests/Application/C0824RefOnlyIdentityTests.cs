@@ -119,6 +119,28 @@ public sealed class C0824RefOnlyIdentityTests
         (await Should.ThrowAsync<ConflictException>(() => new TaskWorkspaceContextResolver(fresh)
             .RecordPlannedAsync(proposed, binding.CommonDirectory, ScratchRoot(), CancellationToken.None), "legacy-collision-refused"))
             .Code.ShouldBe("ref_only_legacy_ref_owner_conflict");
+
+        // A binding-only owner must be found using the host's canonical path comparer,
+        // including trailing separators. The legacy task-branch fence is deliberately absent.
+        await using var owned = await RefOnlySyncFixture.CreateAsync();
+        await owned.Db.AgentTasks.Where(t => t.Id == owned.Task.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(t => t.WorktreeBranch, (string?)null));
+        await owned.Db.TaskRefWorkspaceBindings.Where(b => b.Id == owned.Binding.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(b => b.RepositoryPath, owned.Git.Desktop + Path.DirectorySeparatorChar));
+        var collisionId = Guid.ParseExact(owned.Task.Id.ToString("N")[..8] + "111111111111111111111111", "N");
+        var collision = new AgentTask
+        {
+            Id = collisionId, RootTaskId = collisionId, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = owned.Git.Desktop, RepoPath = owned.Git.Desktop,
+            RunnerId = owned.Task.RunnerId, WorktreeBranch = owned.Git.Branch, WorktreeBaseSha = owned.Git.Baseline,
+            WorktreeBaseRef = "refs/heads/master", WorktreeBaseSource = WorktreeBaseSource.Explicit,
+        };
+        owned.Db.AgentTasks.Add(collision); await owned.Db.SaveChangesAsync();
+        (await Should.ThrowAsync<ConflictException>(() => new TaskWorkspaceContextResolver(owned.Db)
+            .RecordPlannedAsync(collision, owned.Binding.CommonDirectory, owned.Git.Root, default), "binding-only-canonical-owner"))
+            .Code.ShouldBe("ref_only_binding_owner_conflict");
+        (await owned.Db.TaskRefWorkspaceBindings.AsNoTracking().CountAsync(b => b.FullRef == owned.Git.FullRef)).ShouldBe(1, "one-canonical-ref-owner");
+        Directory.Exists(Path.Combine(owned.Git.Root, ".ref-only", collisionId.ToString("N"))).ShouldBeFalse();
     }
 
     [Test]

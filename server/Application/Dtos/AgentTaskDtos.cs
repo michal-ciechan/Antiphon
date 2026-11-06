@@ -594,8 +594,8 @@ public sealed record BlockedRoundDto(
 public sealed record BlockedProgressDto(
     string? Branch,
     IReadOnlyList<string> Commits,
-    int ChangedFiles,
-    int UntrackedFiles,
+    int? ChangedFiles,
+    int? UntrackedFiles,
     string? LastCheckDigest,
     DateTime? LastCheckAt,
     string? Unavailable);
