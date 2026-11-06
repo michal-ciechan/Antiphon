@@ -210,7 +210,7 @@ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> Remote
 server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> RunnerState @ server/Application/Services/RunnerState.cs
 server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs -> ProviderDialogInputRefusedException @ server/Application/Services/ProviderDialogObservationService.cs
 server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs -> ProviderDialogObservationService @ server/Application/Services/ProviderDialogObservationService.cs
-server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> ResilienceReadClients @ server/Application/Services/ResilienceReadClients.cs
 server/Infrastructure/Agents/WatchdogHostedService.cs -> WatchdogService @ server/Application/Services/WatchdogService.cs
 server/Infrastructure/Data/Seeding/DatabaseSeeder.cs -> PipelineDefinitions @ server/Application/Services/PipelineDefinitions.cs
 server/Infrastructure/Data/Seeding/DatabaseSeeder.cs -> PipelineStagesJson @ server/Application/Services/PipelineStagesJson.cs
@@ -238,9 +238,9 @@ server/Infrastructure/Git/WorktreeGuardedCleanup.cs -> WorktreeCleanupPresentati
 server/Infrastructure/Git/WorktreeIgnoredContentGate.cs -> WorktreeCleanupPresentation @ server/Application/Services/WorktreeCleanupPresentation.cs
 server/Infrastructure/Git/WorktreeIgnoredContentGate.cs -> WorktreeIgnoredContentClassifier @ server/Application/Services/WorktreeIgnoredContentClassifier.cs
 server/Infrastructure/GitHub/GitHubService.cs -> LandingGit @ server/Infrastructure/Git/LandingGit.cs
-server/Infrastructure/GitHub/GitHubService.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
-server/Infrastructure/IssueTrackers/GitHubIssuesTracker.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
-server/Infrastructure/IssueTrackers/JiraTracker.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
+server/Infrastructure/GitHub/GitHubService.cs -> ResilienceReadClients @ server/Application/Services/ResilienceReadClients.cs
+server/Infrastructure/IssueTrackers/GitHubIssuesTracker.cs -> ResilienceReadClients @ server/Application/Services/ResilienceReadClients.cs
+server/Infrastructure/IssueTrackers/JiraTracker.cs -> ResilienceReadClients @ server/Application/Services/ResilienceReadClients.cs
 server/Infrastructure/Orchestration/RunnerAlarmHostedService.cs -> RunnerAlarmSnapshot @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
 server/Infrastructure/Orchestration/RunnerAlarmHostedService.cs -> RunnerAlarmState @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> ChannelReplyAttachmentReader @ server/Infrastructure/Files/ChannelReplyAttachmentReader.cs
