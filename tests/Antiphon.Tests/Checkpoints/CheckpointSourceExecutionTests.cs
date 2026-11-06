@@ -419,6 +419,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     private static ReportModel CountReport()
     {
         var report = ValidReport();
+        report.MarkdownSha256 = new string('c', 64);
         report.Source.BuildSource = "verified";
         var row = report.Rows.Single();
         row.Command = null;
