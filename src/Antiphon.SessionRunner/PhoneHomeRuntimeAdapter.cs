@@ -8,6 +8,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
 {
     internal static IReadOnlyList<string> StaticFeatures { get; } =
     [
+        RunnerCapabilityFeatures.DecisionPathInspectionV1,
         GrokRulesTransport.Capability,
         RunnerCapabilityFeatures.SessionGenerationV1,
         PhoneHomeEventWindowOptions.Capability,
@@ -127,6 +128,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             ? VerificationCustodyBackends.LinuxCgroup : null;
 
     public Guid RunnerStoreId => _runtime.RunnerStoreId;
+    public Task<DecisionPathInspectionResult?> InspectDecisionPathsAsync(DecisionPathInspectionRequest request, CancellationToken ct) =>
+        _runtime.InspectDecisionPathsAsync(request, ct);
     public RunnerWorkspaceUseGate? WorkspaceUseGate => _runtime.WorkspaceUseGate;
     public Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
         CompletedCardWorkspaceInspectRequest request, CancellationToken ct) =>

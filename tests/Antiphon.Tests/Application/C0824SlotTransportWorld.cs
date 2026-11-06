@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,6 +41,8 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     public PhoneHomeCommandDispatcher Runner { get; private set; } = null!;
     public RunnerWorkspaceSlotPool Pool { get; private set; } = null!;
     public PhoneHomeSettings RunnerSettings { get; private set; } = null!;
+    public RunnerWorkspaceService Workspace { get; private set; } = null!;
+    public bool RealDesktopGit { get; set; }
 
     /// <summary>Test seam: answer a frame instead of the runner (null passes it on to the runner).</summary>
     public Func<PhoneHomeFrame, PhoneHomeFrame?>? Intercept { get; set; }
@@ -49,7 +52,8 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     /// <paramref name="configure"/> registers after the world's own services (a role monitor, a gate).
     /// </summary>
     public static async Task<C0824SlotTransportWorld> StartAsync(
-        Action<DelegationSettings>? tweak = null, Action<IServiceCollection>? configure = null)
+        Action<DelegationSettings>? tweak = null, Action<IServiceCollection>? configure = null,
+        Action<PhoneHomeRunnerSettings>? runnerSettings = null)
     {
         var world = new C0824SlotTransportWorld(Path.Combine(Path.GetTempPath(), "c0824-transport-" + Guid.NewGuid().ToString("N")));
         world.BuildRepository();
@@ -67,7 +71,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
                 services.AddSingleton<ILandingGit>(git);
                 services.AddScoped<WorkspaceSlotReleaseService>();
                 configure?.Invoke(services);
-            });
+            }, runnerSettings: runnerSettings);
         world.StartRunner();
         world.Rig.Peer.Reply = world.Answer;
         return world;
@@ -108,6 +112,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         lock (_sync)
         {
             RunnerSettings = settings;
+            Workspace = service;
             Pool = pool;
             Runner = runner;
         }
@@ -133,6 +138,24 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         lock (_sync)
             runner = Runner;
         return runner.DispatchAsync(frame, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public (PhoneHomeCommandDispatcher Runner, RunnerWorkspaceSlotPool Pool) CreatePeerRunner(string runnerId, Guid storeId)
+    {
+        var repository = Path.Combine(Root, "target-repo");
+        var work = Path.Combine(Root, "target-work");
+        Directory.CreateDirectory(work);
+        Git(Root, "clone", Origin, repository);
+        var service = new RunnerWorkspaceService(repository, work, Origin, publishedBranch: "main");
+        var settings = new PhoneHomeSettings { Enabled = true, RunnerId = runnerId, AllowedCwd = work,
+            RunnerRepository = repository, RunnerCloneSource = Origin, AllowedCloneSources = [Origin],
+            CapacityStatePath = Path.Combine(Root, "target-capacity"), Capacity = 2,
+            WorkspaceSlots = new PhoneHomeWorkspaceSlotSettings { Enabled = true, Headroom = 2 } };
+        var pool = new RunnerWorkspaceSlotPool(service, settings.WorkspaceSlots, settings.Capacity);
+        service.SlotPool = pool;
+        var runner = new PhoneHomeCommandDispatcher(new RuntimeStub(storeId), settings);
+        runner.UseWorkspace(service);
+        return (runner, pool);
     }
 
     /// <summary>Seeds a runner-bound task whose owned branch exists on the scratch origin.</summary>
@@ -212,8 +235,9 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     /// <summary>The desktop half: HEAD is the scratch base, origin is the scratch origin, a push is a no-op.</summary>
     private sealed class ScratchLandingGit(C0824SlotTransportWorld world) : ILandingGit
     {
+        private readonly LandingGit _real = new();
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
-            Task.FromResult(arguments[0] switch
+            world.RealDesktopGit ? _real.RunAsync(repository, arguments, ct) : Task.FromResult(arguments[0] switch
             {
                 "rev-parse" => new LandingGitResult(0, world.Base, ""),
                 "remote" => new LandingGitResult(0, world.Origin, ""),
@@ -222,14 +246,15 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
             });
 
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, LandingGitRunOptions options, CancellationToken ct) =>
-            RunAsync(repository, arguments, ct);
+            world.RealDesktopGit ? _real.RunAsync(repository, arguments, options, ct) : RunAsync(repository, arguments, ct);
 
         public Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
         public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct) => throw new NotSupportedException();
-        public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => throw new NotSupportedException();
-        public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) => Task.FromResult(Path.GetFullPath(repository));
+        public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => _real.CanonicalDirectoryAsync(path, ct);
+        public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) => world.RealDesktopGit
+            ? _real.CommonDirectoryAsync(repository, ct) : Task.FromResult(Path.GetFullPath(repository));
         public Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct) => _real.RegistrationsAsync(repository, ct);
         public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct) => throw new NotSupportedException();
         public Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct) => throw new NotSupportedException();
         public Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination, string sourceSha, string observationRef, CancellationToken ct) => throw new NotSupportedException();

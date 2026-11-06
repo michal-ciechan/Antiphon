@@ -16,7 +16,7 @@ namespace Antiphon.SessionRunner;
 /// the runner talks to it over a named pipe. The runner keeps all interpretation (screen render,
 /// transcripts, events) so it can be restarted freely without killing a single session.
 /// </summary>
-public sealed class SessionRunnerRuntime : IAsyncDisposable
+public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 {
     // The enum is the runner's actual dispatch surface. /capabilities derives its list from this
     // rather than a separately-maintained contract list, so a new switch arm cannot be omitted

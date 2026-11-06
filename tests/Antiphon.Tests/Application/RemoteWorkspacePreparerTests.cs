@@ -1158,6 +1158,7 @@ public sealed class RemoteWorkspacePreparerTests
         private Action<DelegationSettings>? _tweak;
         private bool _recovered;
         private Action<IServiceCollection>? _configure;
+        private Action<PhoneHomeRunnerSettings>? _runnerSettings;
 
         public IsolatedTestSchema Schema { get; private set; } = null!;
         public PhoneHomeTestHost Host { get; private set; } = null!;
@@ -1179,11 +1180,12 @@ public sealed class RemoteWorkspacePreparerTests
 
         public static async Task<Rig> StartAsync(
             Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1,
-            Action<IServiceCollection>? configure = null, RunnerCapabilitiesDto? capabilities = null)
+            Action<IServiceCollection>? configure = null, RunnerCapabilitiesDto? capabilities = null,
+            Action<PhoneHomeRunnerSettings>? runnerSettings = null)
         {
-            var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure };
+            var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure, _runnerSettings = runnerSettings };
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock);
+            rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock, configureRunnerSettings: runnerSettings);
             rig.Host.Capacity = capacity;
             rig.Peer = await rig.Host.ConnectPeerAsync(capabilities: capabilities);
             rig.Live = await rig.Host.WaitLiveAsync();
@@ -1395,12 +1397,14 @@ public sealed class RemoteWorkspacePreparerTests
                 WorktreeBasePath = Path.Combine(Path.GetTempPath(), $"antiphon-remote-prep-{Guid.NewGuid():N}"),
             });
             services.AddSingleton<IRepositoryMutationLease>(Lease);
-            services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
+            var runnerSettings = new PhoneHomeRunnerSettings
             {
                 Enabled = true, AllowedRunnerId = Host.AllowedRunnerId, AllowDelegatedTasks = true,
                 HostWorkspaceRoot = @"C:\src\Antiphon", CallbackOrigin = "https://antiphon.desktop.codeperf.net",
                 SharedSecret = "x", ClaudeAuthProbeEnabled = false,
-            }));
+            };
+            _runnerSettings?.Invoke(runnerSettings);
+            services.AddSingleton(Options.Create(runnerSettings));
             services.AddSingleton<PhoneHomeLaunchPolicy>();
             services.AddSingleton<ISessionRunnerDirectory>(Host.Directory);
             services.AddSingleton<ILandingGit, PushOnlyGit>();

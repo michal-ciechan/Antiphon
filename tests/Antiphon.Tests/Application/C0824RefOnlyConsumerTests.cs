@@ -74,6 +74,7 @@ public sealed class C0824RefOnlyConsumerTests
     [Test]
     public async Task Decision_and_control_paths_do_not_grant_identity_file_access()
     {
+        await RefOnlyDecisionWitness.VerifyAsync();
         await using var f = await RefOnlySyncFixture.CreateAsync();
         Directory.CreateDirectory(f.Identity);
         var session = new AgentSession { Id = Guid.NewGuid(), Cwd = f.Identity,

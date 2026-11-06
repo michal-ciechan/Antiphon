@@ -10,6 +10,13 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport, ICompletedCardWorkspaceClient
 {
+    public async Task<DecisionPathInspectionResult?> InspectDecisionPathsAsync(DecisionPathInspectionRequest request, CancellationToken ct)
+    {
+        if ((await GetCapabilitiesAsync(ct))?.Features?.Contains(RunnerCapabilityFeatures.DecisionPathInspectionV1,
+                StringComparer.Ordinal) != true) return null;
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.DecisionPathInspect, request, ct);
+        return frame.Kind == PhoneHomeFrameKind.Error ? null : Read<DecisionPathInspectionResult>(frame);
+    }
     public async Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
         CompletedCardWorkspaceInspectRequest request, CancellationToken ct)
     {
