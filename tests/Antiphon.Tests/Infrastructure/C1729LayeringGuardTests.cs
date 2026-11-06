@@ -128,7 +128,20 @@ public sealed class C1729LayeringGuardTests
             ("qualified-with-shadowing-member-fires", "class Value { object Svc; X.App.Svc Other; }"),
             ("qualified-expression-with-shadowing-member-fires", "class Value { object Svc; void M() { X.App.Svc.Run(); } }"),
             ("global-qualified-with-shadowing-member-fires", "class Value { object Svc; global::X.App.Svc Other; }"),
-            ("qualified-with-own-nested-type-fires", "class Value { class Svc {} X.App.Svc Other; }")
+            ("qualified-with-own-nested-type-fires", "class Value { class Svc {} X.App.Svc Other; }"),
+            ("static-call-shadow-elsewhere-fires", "class Value { void M(int Svc) {} void N() => Svc.Run(); }"),
+            ("property-of-other-class-fires", "class Other { int Svc { get; } } class Value { void M() => Svc.Run(); }"),
+            ("enum-member-elsewhere-fires", "enum Other { Svc } class Value { int M() => Svc.K; }"),
+            ("nameof-shadow-elsewhere-fires", "class Other { int Svc; } class Value { string M() => nameof(Svc); }"),
+            ("not-pattern-shadow-elsewhere-fires", "class Other { int Svc; } class Value { bool M(object o) => o is not Svc; }"),
+            ("or-pattern-shadow-elsewhere-fires", "class Other { int Svc; } class Value { bool M(object o) => o is Svc or string; }"),
+            ("switch-pattern-shadow-elsewhere-fires", "class Other { int Svc; } class Value { int M(object o) => o switch { Svc => 1, _ => 0 }; }"),
+            ("positional-parameter-of-other-record-fires", "class Value { static int M(dynamic h) => h.Kind == Svc.K ? 1 : 0; } record Dto(string Svc);"),
+            ("local-of-other-member-fires", "class Value { void M() { int Svc = 0; } void N() => Svc.Run(); }"),
+            ("local-of-sibling-block-fires", "class Value { void M() { { int Svc = 0; } Svc.Run(); } }"),
+            ("pattern-of-other-member-fires", "class Value { bool M(object o) => o is int Svc; void N() => Svc.Run(); }"),
+            ("lambda-parameter-elsewhere-fires", "class Value { object M() => (int Svc) => Svc; void N() => Svc.Run(); }"),
+            ("type-parameter-elsewhere-fires", "class Other<Svc> {} class Value { Svc field; }")
         ];
         var missed = new List<string>();
         foreach (var (label, text) in shadowing)
@@ -194,6 +207,35 @@ public sealed class C1729LayeringGuardTests
                 falseReferences.Add("findings=0:" + label + ": " + members.Inventory);
         }
         falseReferences.ShouldBeEmpty("member labels are not type references");
+
+        (string Label, string Text)[] scopedValues =
+        [
+            ("same-scope-value-member", "class Value { dynamic Svc; object M() => Svc.Run(); }"),
+            ("same-scope-property", "class Value { dynamic Svc { get; } object M() => Svc.Run(); }"),
+            ("same-scope-parameter", "class Value { object M(dynamic Svc) => Svc.Run(); }"),
+            ("same-scope-local", "class Value { object M() { dynamic Svc = null; return Svc.Run(); } }"),
+            ("same-scope-local-function", "class Value { object M() { int Svc() => 1; return Svc(); } }"),
+            ("same-scope-lambda-parameter", "class Value { object M() => (dynamic Svc) => Svc.Run(); }"),
+            ("same-scope-pattern-variable", "class Value { bool M(object o) => o is int Svc && Svc > 0; }"),
+            ("same-scope-switch-variable", "class Value { int M(object o) => o switch { int Svc => Svc, _ => 0 }; }"),
+            ("same-scope-primary-parameter", "class Value(int Svc) { int M() => Svc; }"),
+            ("same-scope-enum-member", "enum Value { Svc = 1, Other = Svc }"),
+            ("same-scope-foreach-variable", "class Value { void M(int[] xs) { foreach (var Svc in xs) { F(Svc); } } }"),
+            ("same-scope-catch-variable", "class Value { void M() { try {} catch (System.Exception Svc) { F(Svc); } } }"),
+            ("same-scope-generic-type-parameter", "class Value<Svc> { Svc field; object M() => default(Svc); }"),
+            ("same-scope-generic-method-parameter", "class Value { Svc M<Svc>(Svc s) => s; }")
+        ];
+        var falseScopedReferences = new List<string>();
+        foreach (var (label, text) in scopedValues)
+        {
+            var scoped = Analyze(SyntheticMap, "strict: true",
+            [new("app/Svc.cs", "class Svc {}"), new("core/Value.cs", text)]);
+            scoped.Map.Errors.ShouldBeEmpty(label);
+            scoped.ParseErrors.ShouldBeEmpty(label);
+            if (scoped.UnlistedCount != 0 || scoped.Ambiguous.Length != 0 || !scoped.Passes)
+                falseScopedReferences.Add("findings=0:" + label + ": " + scoped.Inventory);
+        }
+        falseScopedReferences.ShouldBeEmpty("only enclosing declarations can name values or type parameters");
     }
 
     [Test]
