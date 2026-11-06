@@ -275,6 +275,32 @@ public class HerdrTransportTests
         }
     }
 
+    [Test]
+    public async Task C801_ClientClosesEachRequestConnection()
+    {
+        await using var endpoint = new FakeHerdrEndpoint();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 20; i++)
+        {
+            var server = ServeOneAsync(endpoint, async (reader, writer) =>
+            {
+                using var request = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!);
+                var id = request.RootElement.GetProperty("id").GetString();
+                await writer.WriteLineAsync(JsonSerializer.Serialize(new
+                {
+                    id, result = new { type = "pong", version = "0.8.2", protocol = 20 }
+                }).AsMemory(), deadline.Token);
+                // Keep the peer open: EOF must come from the client's disposal, rather
+                // than the fake server closing its normal request connection first.
+                (await reader.ReadAsync(new char[1], deadline.Token)).ShouldBe(0,
+                    $"client must close its request connection, cycle={i}");
+            });
+            var client = Client(endpoint.Path).ConnectAndValidateAsync(deadline.Token);
+            await Task.WhenAll(server, client);
+            (await client).Protocol.ShouldBe(20);
+        }
+    }
+
     private static async Task AssertRepeatedConnectDisposeReleasesHandlesAsync(Action? duringConnections = null)
     {
         await using var fake = new FakeHerdrServer();
