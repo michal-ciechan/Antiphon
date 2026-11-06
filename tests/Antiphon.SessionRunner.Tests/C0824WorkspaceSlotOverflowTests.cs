@@ -8,9 +8,11 @@ using static Antiphon.SessionRunner.Tests.C0824SlotScratch;
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>CARD-0824 S1 CP-7. Overflow growth, its count and disk bounds, and idle retirement (fake clock).</summary>
+// CARD-1722: n=5 Linux per-case p95 <= 3.298s; max(60s Git floor, 2*p95).
+// Full measured table: 2026-11-06-ab37b2cf-git-timeout-budgets plan; Windows rc collection pending.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(10_000)]
+[Timeout(60_000)]
 [NativeLinuxOnly("CARD-0824 Linux-only by construction: S1 workspace slots are Linux/server2 only")]
 public sealed class C0824WorkspaceSlotOverflowTests
 {

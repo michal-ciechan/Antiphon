@@ -90,6 +90,8 @@ public sealed class C1677RetentionDispatchTests
     [Arguments("mirror-then-retain")]
     [Arguments("live-session")]
     [Arguments("window-elapsed")]
+    // CARD-1722: n=5 Linux per-case p95 <= 1.543s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Recent_use_by_this_runner_keeps_the_tree(string shape, CancellationToken ct)
     {
         // CARD-1677 D-2 (review c238f9ca). A task re-dispatched after the server's reread: the runner's own

@@ -8,9 +8,11 @@ using static Antiphon.SessionRunner.Tests.C1677RetentionScratch;
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>CARD-1677 S1 CP-1 (portable). The read-only inventory and the unmatched-name refusal (plan §3.4).</summary>
+// CARD-1722: n=5 Linux per-case p95 <= 1.080s; max(60s Git floor, 2*p95).
+// Full measured table: 2026-11-06-ab37b2cf-git-timeout-budgets plan; Windows rc collection pending.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(15_000)]
+[Timeout(60_000)]
 public sealed class C1677RetentionInventoryTests
 {
     [Test]

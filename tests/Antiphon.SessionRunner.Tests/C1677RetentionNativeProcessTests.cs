@@ -14,9 +14,11 @@ namespace Antiphon.SessionRunner.Tests;
 /// incomplete scan while the slot pool's probe stays fail-open (S-3). The test process never holds its own
 /// fixture (the probe skips its own pid), so each case starts a child (M-17).
 /// </summary>
+// CARD-1722: n=5 Linux per-case p95 <= 2.261s; max(60s Git floor, 2*p95).
+// Full measured table: 2026-11-06-ab37b2cf-git-timeout-budgets plan; Windows rc collection pending.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(10_000)]
+[Timeout(60_000)]
 public sealed class C1677RetentionNativeProcessTests
 {
     [Test]
