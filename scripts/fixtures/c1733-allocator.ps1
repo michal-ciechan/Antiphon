@@ -3,9 +3,9 @@ function Test-C1733_NativeMetadata {
     $root = New-C599Root
     $path = Join-Path $root 'missing/child'
     $script:C1733ProviderCalls = 0
-    function Test-Path { $script:C1733ProviderCalls++; Microsoft.PowerShell.Management\Test-Path @args }
-    function Get-Item { $script:C1733ProviderCalls++; Microsoft.PowerShell.Management\Get-Item @args }
-    function Split-Path { $script:C1733ProviderCalls++; Microsoft.PowerShell.Management\Split-Path @args }
+    function Test-Path { param($LiteralPath) $script:C1733ProviderCalls++; Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath }
+    function Get-Item { param($LiteralPath, [switch]$Force) $script:C1733ProviderCalls++; Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force }
+    function Split-Path { param($Parent) $script:C1733ProviderCalls++; Microsoft.PowerShell.Management\Split-Path -Parent $Parent }
     Assert-C1339ContainedPath $root $path
     Assert-C487 ($script:C1733ProviderCalls -eq 0) 'C1733 native-metadata' ('provider calls=' + $script:C1733ProviderCalls)
 }
@@ -58,7 +58,7 @@ function Test-C1733_SharedSeed {
     [IO.File]::WriteAllText($a.FaultPath, '{"push":"before"}')
     $remote = Invoke-C1339LocalGit $b @('show-ref', '--verify', '--hash', ('refs/tags/' + $b.FinalTag)) -Remote -AllowAbsent
     Assert-C487 (-not $remote -and -not [IO.File]::Exists($b.FaultPath) -and $a.Root -cne $b.Root -and $a.CardApi.Url -cne $b.CardApi.Url) 'C1733 private-recipients'
-    $valid = Invoke-C1339Publish $b @{ WhatIf = $true }
+    $valid = Invoke-C1339Publish $b -WhatIf
     Assert-C487 ($valid.ExitCode -eq 0) 'C1733 clone-fresh-authority' $valid.Refusal
 }
 
