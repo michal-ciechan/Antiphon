@@ -1091,15 +1091,27 @@ stack_env_value() {
 }
 
 # Read only this non-secret opt-in, never source the stack file. Keep the two projects independent.
+# Normalize only to recognize malformed attempts; accept only the exact documented assignment.
 runner_workspace_slots_enabled() {
     if [ ! -e "$1" ]; then printf 'false\n'; return 0; fi
     awk '
-        /^PhoneHome__WorkspaceSlots__Enabled=/ {
-            count++; value=substr($0, index($0, "=") + 1)
+        BEGIN { key="PhoneHome__WorkspaceSlots__Enabled" }
+        {
+            candidate=$0
+            sub(/^[[:space:]]*/, "", candidate)
+            if (candidate ~ /^#/) next
+            sub(/^export[[:space:]]+/, "", candidate)
+            lhs=candidate
+            sub(/=.*/, "", lhs)
+            gsub(/[[:space:]]/, "", lhs)
+            if (tolower(lhs) != tolower(key)) next
+            count++
+            if ($0 != key "=true" && $0 != key "=false") invalid=1
+            else value=substr($0, length(key) + 2)
         }
         END {
-            if (count > 1 || (value != "" && value != "false" && value != "true")) exit 2
-            print value == "" ? "false" : value
+            if (invalid || count > 1) exit 2
+            print count == 0 ? "false" : value
         }
     ' "$1"
 }

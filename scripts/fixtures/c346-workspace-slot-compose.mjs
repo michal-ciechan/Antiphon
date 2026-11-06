@@ -127,16 +127,24 @@ function snapshot() {
   }
   return entries(root);
 }
+const selectedShape = process.argv.find(arg => arg.startsWith('--refusal-case='))?.slice('--refusal-case='.length);
+const selectedAction = process.argv.find(arg => arg.startsWith('--refusal-action='))?.slice('--refusal-action='.length);
+assert.ok(!selectedShape || invalid.some(([shape]) => shape === selectedShape), 'unknown refusal case');
+assert.ok(!selectedAction || ['compose_host', 'compose_temp', 'case_deploy_parent', 'case_deploy_temp_runner'].includes(selectedAction), 'unknown refusal action');
+let attempts = 0;
 let refusals = 0;
 const failures = [];
 for (const temp of [false, true]) {
   const file = temp ? env.SERVER2_TEMP_ENV : env.SERVER2_ENV;
   const other = temp ? env.SERVER2_ENV : env.SERVER2_TEMP_ENV;
   for (const [shape, assignment] of invalid) {
+    if (selectedShape && shape !== selectedShape) continue;
     fs.writeFileSync(file, initial + assignment + '\n');
     save(other, 'true');
     for (const action of [temp ? 'compose_temp' : 'compose_host',
       temp ? 'case_deploy_temp_runner' : 'case_deploy_parent']) {
+      if (selectedAction && action !== selectedAction) continue;
+      attempts++;
       const before = snapshot();
       const effects = ['docker', 'sudo', 'ensure_checkout', 'ensure_runner_boot_files',
         'c1008_recycle', 'retire_c590_leftovers', 'build_server2_images', 'c849_prepare',
@@ -165,9 +173,12 @@ for (const temp of [false, true]) {
   }
 }
 assert.equal(failures.length, 0, failures.join('\n'));
-assert.equal(refusals, invalid.length * 4);
-console.log(`PASS refusals=${refusals} original-refusals=12 malformed-refusals=${malformed.length * 4}`);
-if (process.argv.includes('--refusals-only')) process.exit(0);
+assert.ok(attempts > 0);
+assert.equal(refusals, attempts);
+console.log(selectedShape || selectedAction
+  ? `PASS refusals=${refusals} selected-case=${selectedShape ?? '*'} selected-action=${selectedAction ?? '*'}`
+  : `PASS refusals=${refusals} original-refusals=12 malformed-refusals=${malformed.length * 4}`);
+if (process.argv.includes('--refusals-only') || selectedShape || selectedAction) process.exit(0);
 let matrices = 0;
 for (const temp of [false, true]) {
   const file = temp ? env.SERVER2_TEMP_ENV : env.SERVER2_ENV;
@@ -178,6 +189,7 @@ for (const temp of [false, true]) {
     // Empty ambient interpolation is still false; an empty SAVED assignment is refused above.
     save(file, value === '' ? undefined : value);
     if (value === '') env[key] = ''; else delete env[key];
+    fs.appendFileSync(file, '# ' + key + '=true\n  # ' + key + '=false\nUNRELATED=true\n');
     save(other, value === 'true' ? 'false' : 'true');
     const otherBytes = fs.readFileSync(other);
     const expected = value === 'true' ? 'true' : 'false';
