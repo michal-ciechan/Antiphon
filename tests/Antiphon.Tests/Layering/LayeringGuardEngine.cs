@@ -191,7 +191,9 @@ internal static class LayeringGuardEngine
         {
             var own = declarationsByPath[path].Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
             var ownIdentities = declarationsByPath[path].Select(d => d.Identity).ToHashSet(StringComparer.Ordinal);
-            var declaredNames = root.DescendantTokens().Where(IsDeclaredName).Select(t => t.ValueText).ToHashSet(StringComparer.Ordinal);
+            var declaredNames = root.DescendantTokens().Where(IsDeclaredName)
+                .Select(t => (Name: t.ValueText, Scope: DeclarationScope(t), IsTypeParameter: t.Parent is TypeParameterSyntax))
+                .Where(d => d.Scope is not null).ToLookup(d => d.Name, StringComparer.Ordinal);
             foreach (var node in root.DescendantNodes().OfType<SimpleNameSyntax>())
             {
                 if (node.Ancestors().Any(a => a is UsingDirectiveSyntax || a is BaseNamespaceDeclarationSyntax ns && ns.Name.Span.Contains(node.Span))) continue;
@@ -223,10 +225,14 @@ internal static class LayeringGuardEngine
                 }
                 else
                 {
+                    var enclosingDeclarations = declaredNames[name].Where(d => d.Scope!.Span.Contains(node.Span)).ToArray();
+                    // A generic parameter names a type in its owner's scope, including type
+                    // positions. A parameter of another type or method cannot hide this use.
+                    if (enclosingDeclarations.Any(d => d.IsTypeParameter)) continue;
                     // Color Color declarations cannot hide their type, nor can a value
                     // name hide a qualified match above. Only bare expressions name values.
                     if (!SyntaxFacts.IsInTypeOnlyContext(node) && !attribute
-                        && (own.Contains(name) || declaredNames.Contains(name))) continue;
+                        && (own.Contains(name) || enclosingDeclarations.Length > 0)) continue;
                     // An unqualified reference to a type declared here prefers that type.
                     // Keep foreign qualified references even when a nested type shares its name.
                     var localTypes = candidates.Where(c => ownIdentities.Contains(c.Identity)).ToArray();
@@ -260,6 +266,36 @@ internal static class LayeringGuardEngine
 
     private static bool Allowed(Mapping map, string from, string to) => from == to || map.Edges.GetValueOrDefault(from)?.Contains(to) == true;
     private static string NamespaceOf(SyntaxNode node) => string.Join(".", node.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse().Select(n => n.Name.ToString()));
+
+    private static SyntaxNode? DeclarationScope(SyntaxToken token)
+    {
+        var declaration = token.Parent;
+        return declaration switch
+        {
+            TypeParameterSyntax => declaration.Parent?.Parent,
+            ParameterSyntax => declaration.Parent is BaseParameterListSyntax
+                ? declaration.Parent.Parent : declaration.Parent,
+            VariableDeclaratorSyntax => declaration.Parent?.Parent switch
+            {
+                FieldDeclarationSyntax or EventFieldDeclarationSyntax => declaration.Parent.Parent.Parent,
+                ForStatementSyntax or UsingStatementSyntax or FixedStatementSyntax => declaration.Parent.Parent,
+                _ => LocalScope(declaration)
+            },
+            LocalFunctionStatementSyntax => LocalScope(declaration),
+            MemberDeclarationSyntax => declaration.Parent,
+            SingleVariableDesignationSyntax => LocalScope(declaration),
+            ForEachStatementSyntax loop => loop.Statement,
+            CatchDeclarationSyntax => declaration.Parent,
+            _ => null
+        };
+    }
+
+    private static SyntaxNode? LocalScope(SyntaxNode declaration) => declaration.Ancestors().FirstOrDefault(n =>
+        n is BlockSyntax or SwitchSectionSyntax or SwitchExpressionArmSyntax
+            or ForStatementSyntax or ForEachVariableStatementSyntax or WhileStatementSyntax or DoStatementSyntax
+            or UsingStatementSyntax or FixedStatementSyntax or ArrowExpressionClauseSyntax
+            or LambdaExpressionSyntax or MemberDeclarationSyntax or CompilationUnitSyntax);
+
     private static bool IsDeclaredName(SyntaxToken token) => token.Parent switch
     {
         VariableDeclaratorSyntax n => n.Identifier == token,
@@ -273,7 +309,6 @@ internal static class LayeringGuardEngine
             EnumMemberDeclarationSyntax e => e.Identifier == token,
             _ => false
         },
-        LabeledStatementSyntax n => n.Identifier == token,
         SingleVariableDesignationSyntax n => n.Identifier == token,
         TypeParameterSyntax n => n.Identifier == token,
         ForEachStatementSyntax n => n.Identifier == token,
