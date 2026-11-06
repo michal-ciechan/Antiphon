@@ -189,18 +189,21 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
                 sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System));
             services.AddScoped(sp => Git.Service(
                 UseRealSyncClock ? null : SyncClock, sp.GetRequiredService<IWorkspaceReservationJournal>(), LeaseBusy.Observe,
-                _mirrorPublish ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null));
+                _mirrorPublish ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null,
+                sp.GetRequiredService<TaskWorkspaceContextResolver>()));
         }
         else
-            services.AddScoped(_ => Git.Service(UseRealSyncClock ? null : SyncClock, leaseBusy: LeaseBusy.Observe,
+            services.AddScoped(sp => Git.Service(UseRealSyncClock ? null : SyncClock, leaseBusy: LeaseBusy.Observe,
                 publisher: _mirrorPublish
-                    ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null));
+                    ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null,
+                workspaceContexts: sp.GetRequiredService<TaskWorkspaceContextResolver>()));
         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
         services.AddScoped(sp => new TaskCompletionProgressService(
             sp.GetRequiredService<ITaskProgressGit>(),
             sp.GetRequiredService<IWorkspaceProgressProbe>(),
             TimeProvider.System,
-            sp.GetRequiredService<IRemoteSettlementSync>()));
+            sp.GetRequiredService<IRemoteSettlementSync>(),
+            sp.GetRequiredService<TaskWorkspaceContextResolver>()));
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<ModelAvailability>();
         services.AddSingleton<AgentTaskReplyService>();
@@ -222,6 +225,63 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     {
         await Services.DisposeAsync();
         BuildServices();
+    }
+
+    /// <summary>Seed an already recorded mode; this never exercises new-task admission.</summary>
+    public async Task RecordRefOnlyAsync()
+    {
+        await Git.EnsureRunnerAsync();
+        await Git.RunAsync(Git.Desktop, "worktree", "remove", Git.Worktree);
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)!;
+        var binding = new TaskRefWorkspaceBinding
+        {
+            Id = Guid.NewGuid(), TaskId = task.Id, RepositoryPath = task.RepoPath!,
+            CommonDirectory = baseline.Primary.CanonicalCommonDirectory,
+            IdentityPath = Path.Combine(Git.Root, ".ref-only", task.Id.ToString("N")),
+            Branch = task.WorktreeBranch!, FullRef = baseline.Primary.FullRef,
+            SelectedBaseSha = task.WorktreeBaseSha!, SelectedBaseRef = "refs/heads/master",
+            SelectedBaseSource = WorktreeBaseSource.Explicit,
+            PreparationState = TaskRefWorkspacePreparationState.Published, Revision = 1,
+        };
+        task.DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly;
+        task.TaskRefWorkspaceBindingId = binding.Id;
+        task.WorktreePath = binding.IdentityPath;
+        task.WorktreeBaseRef = binding.SelectedBaseRef;
+        task.WorktreeBaseSource = binding.SelectedBaseSource;
+        task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(baseline with
+        {
+            SchemaVersion = 2,
+            Primary = baseline.Primary with
+            {
+                RegisteredCheckout = null, DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly,
+                TaskRefWorkspaceBindingId = binding.Id,
+            },
+        });
+        db.TaskRefWorkspaceBindings.Add(binding);
+        await db.SaveChangesAsync();
+        await ReloadAsync();
+    }
+
+    public async Task MintRefOnlyDebtAsync(string report)
+    {
+        if (SyncClock is null) throw new InvalidOperationException("controlled sync clock required");
+        var busy = LeaseBusy.Next();
+        await using (var lease = await Git.Leases.TryAcquireAsync(Git.Desktop, default))
+        {
+            lease.ShouldNotBeNull("debt producer holds the real repository lease");
+            var settle = SettleAsync(report);
+            (await System.Threading.Tasks.Task.WhenAny(busy, settle).WaitAsync(TimeSpan.FromSeconds(10)))
+                .ShouldBe(busy, "reached:debt:producer:lease-busy");
+            SyncClock.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
+            await settle.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Task.CompletionProgressEvidenceJson);
+        await using var db = CreateContext();
+        var debt = await db.AgentTaskSyncDebts.AsNoTracking().SingleAsync(d => d.TaskId == TaskId);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Pending, "reached:debt:producer:committed");
+        DebtClock.SetUtcNow(DateTimeOffset.UtcNow.AddMinutes(1));
     }
 
     public ServiceProvider AdditionalServices()

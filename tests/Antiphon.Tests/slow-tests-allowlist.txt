@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-0824: exact RefOnly debt producer, restart and claim/save witnesses using shared PostgreSQL templates.
+Antiphon.Tests.Application.C0824RefOnlyDebtTests
+
 # CARD-0824: real Git/lease/schema witnesses for stale release revisions and RefOnly consumer boundaries.
 Antiphon.Tests.Application.C0824RefOnlyBoundaryTests
 
