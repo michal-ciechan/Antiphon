@@ -22,6 +22,8 @@ public sealed class C1677RetentionEngineTests
     private const string Execute = WorkspaceRetainModes.Execute;
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.514s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Clean_pushed_old_mirror_is_removed_without_force_or_prune(CancellationToken ct)
     {
         // V-1 (G-23, G-32, G-33). The positive path: moved aside, removed without force, nothing pruned.
@@ -62,6 +64,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("nested-under-root")]
     [Arguments("symlinked-leaf")]
     [Arguments("leaf-id-mismatch")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.265s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Confinement_refuses_outside_scope(string shape, CancellationToken ct)
     {
         // V-9 (G-1, G-2, G-3). Every other fact is eligible: clean, pushed, branch matches, no holder.
@@ -101,6 +105,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments("ws-leaf")]
     [Arguments("ledger-path")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.313s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Slot_paths_are_refused(string shape, CancellationToken ct)
     {
         // V-10 (G-5 by reason, G-6 on survival: only the ledger names this task-<id8> path).
@@ -123,6 +129,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.267s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Unreadable_slot_ledger_keeps_a_removable_mirror(CancellationToken ct)
     {
         // CARD-0824 S1 mutation survivor X47 (CARD-1677 guard 3b). The mirror is otherwise removable (clean, pushed,
@@ -143,6 +151,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("use-owner")]
     [Arguments("removal-journal")]
     [Arguments("locked")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.379s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Ownership_gates_refuse(string shape, CancellationToken ct)
     {
         // V-11 (G-7 where the gate is installed, M-13; G-8 by reason, M-3).
@@ -183,6 +193,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("other-branch")]
     [Arguments("branch-id-not-leaf")]
     [Arguments("detached")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.429s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Repository_and_branch_must_match(string shape, CancellationToken ct)
     {
         // V-24 (G-9, G-10, G-11).
@@ -239,6 +251,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("untracked-nested-file")]
     [Arguments("non-ignored-nested-repo")]
     [Arguments("status-unavailable")]
+    // CARD-1722: n=5 Linux per-case p95 <= 1.388s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Dirty_tree_is_kept(string shape, CancellationToken ct)
     {
         // V-2, V-3, V-16b (G-12, G-13, G-14). Git would also refuse phase B, but the data must never move (M-4).
@@ -275,6 +289,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments("local-commit")]
     [Arguments("pushed-by-url-tracking-stale")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.342s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Unpushed_commit_is_kept(string shape, CancellationToken ct)
     {
         // V-4, V-4b (G-15). In the second case live origin equals HEAD, so only rev-list refuses (M-5).
@@ -296,6 +312,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("origin-unavailable")]
     [Arguments("origin-reset-behind")]
     [Arguments("origin-advanced-unknown-tip")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.997s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Live_origin_must_hold_the_branch(string shape, CancellationToken ct)
     {
         // V-5, V-5b, V-5c, V-6, V-6b (G-16..G-21). The tracking ref still contains HEAD in every case.
@@ -336,6 +354,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 2.037s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Ls_remote_is_bounded(CancellationToken ct)
     {
         // V-25 (G-22). A stalled ls-remote is cut at its budget and keeps the tree.
@@ -355,6 +375,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments("holder")]
     [Arguments("scan-unknown")]
+    // CARD-1722: n=5 Linux per-case p95 <= 1.145s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Holder_keeps_the_tree(string shape, CancellationToken ct)
     {
         // V-7, V-8 (G-24, G-25).
@@ -375,6 +397,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.390s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Dry_run_reports_would_remove_and_mutates_nothing(CancellationToken ct)
     {
         // V-12 (G-27).
@@ -395,6 +419,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments("holder-appears")]
     [Arguments("file-appears")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.723s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Execute_rechecks_under_the_lock_before_the_move(string change, CancellationToken ct)
     {
         // V-26 (G-28). The dry pass passed; the change lands at phase A entry, before its recheck.
@@ -422,6 +448,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.599s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Phase_b_refusal_keeps_the_moved_tree_registered(CancellationToken ct)
     {
         // V-13 (G-32). A file written into the moved tree after phase A: git refuses, nothing is forced.
@@ -451,6 +479,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.489s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Move_failure_leaves_the_tree_in_place(CancellationToken ct)
     {
         // V-27 (G-31). A failed move never reaches phase B.
@@ -468,6 +498,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.797s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Retiring_residue_is_retried_by_phase_b_only(CancellationToken ct)
     {
         // V-28 (G-34, G-35, S-5).
@@ -503,6 +535,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(WorkspaceRetainModes.DryRun)]
     [Arguments(WorkspaceRetainModes.Execute)]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.434s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Residue_retry_keeps_a_residue_a_live_process_holds(string mode, CancellationToken ct)
     {
         // CARD-1677 D-3 (c) (review c238f9ca, S-5). The holder scan comes first on the residue retry too: a
@@ -530,6 +564,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.298s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Dry_run_on_a_clean_unheld_residue_removes_nothing(CancellationToken ct)
     {
         // CARD-1684 R25 (guard (d), S-5). The leaf is gone and its retiring residue is clean and no process holds
@@ -561,6 +597,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments("with-own-residue")]
     [Arguments("no-own-residue")]
+    // CARD-1722: n=5 Linux per-case p95 <= 1.559s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Residue_retry_never_takes_a_foreign_residue_that_sorts_first(string shape, CancellationToken ct)
     {
         // CARD-1684 R33 (PC-35). Another task's clean, unheld residue task-01677003.* sorts before this task's
@@ -611,6 +649,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(WorkspaceRetainModes.Execute)]
     [Arguments(WorkspaceRetainModes.DryRun)]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.412s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Residue_retry_keeps_a_legitimate_residue_beside_a_stray_entry(string mode, CancellationToken ct)
     {
         // CARD-1677 S1 hardening mutation XR (task cde14651). This leaf's real, clean, registered, unheld residue
@@ -646,6 +686,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(WorkspaceRetainModes.Execute)]
     [Arguments(WorkspaceRetainModes.DryRun)]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.882s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Residue_retry_keeps_an_upper_case_hex_residue(string mode, CancellationToken ct)
     {
         // CARD-1677 S1 hardening mutation PC-C (task cde14651). A real, clean, registered, unheld worktree named
@@ -677,6 +719,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("dryrun")]
     [Arguments("Bogus")]
     [Arguments("")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.463s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Unrecognised_mode_is_kept_before_any_git(string mode, CancellationToken ct)
     {
         // CARD-1684 R26 (guard (d)). Only the two exact constants are modes; anything else (a case variant, an
@@ -694,6 +738,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(WorkspaceRetainModes.DryRun)]
     [Arguments(WorkspaceRetainModes.Execute)]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.306s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Tree_not_registered_at_its_path_is_kept(string mode, CancellationToken ct)
     {
         // CARD-1677 D-3 (b) (review c238f9ca, step 3). A runner-repository worktree moved into the leaf with a
@@ -718,6 +764,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.363s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Cross_device_retiring_root_moves_nothing(CancellationToken ct)
     {
         // V-15 (G-29).
@@ -730,6 +778,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.281s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Retiring_root_inside_the_worktree_root_is_refused(CancellationToken ct)
     {
         // V-29 (G-30).
@@ -742,6 +792,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.431s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Ignored_nested_repo_goes_with_the_tree(CancellationToken ct)
     {
         // V-16. A nested repository under ignored .antiphon/ is CARD-1590 evidence, not a refusal.
@@ -757,6 +809,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.284s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Absent_path_is_already_absent_without_prune(CancellationToken ct)
     {
         // V-17 (G-39).
@@ -824,6 +878,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.655s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Ignored_secret_files_survive_admission_on_dry_run_and_execute(CancellationToken ct)
     {
         // CARD-1718 A-D3 round 2 (review 47d31366 B-1). A clean pushed mirror whose ignored
@@ -856,6 +912,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(".antiphon/seed", ".env")]
     [Arguments("bin/tool", "credentials/token")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.506s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Ignored_nested_repository_secret_keeps_bytes_and_registration(string nested, string secret, CancellationToken ct)
     {
         using var s = Create();
@@ -887,6 +945,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("unreadable")]
     [Arguments("control-name")]
     [NativeLinuxOnly("Uses native Unix permissions, symbolic links and control-character filenames inside a scratch nested repository")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.358s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Doubt_inside_collapsed_ignored_repository_keeps_the_tree(string shape, CancellationToken ct)
     {
         using var s = Create();
@@ -933,6 +993,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.387s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Phase_b_keeps_an_ignored_secret_planted_after_the_move(CancellationToken ct)
     {
         // B-1 removal. The tree was eligible at admission. A secret that appears in the moved
@@ -961,6 +1023,8 @@ public sealed class C1677RetentionEngineTests
     [Test]
     [Arguments(WorkspaceRetainModes.Execute)]
     [Arguments(WorkspaceRetainModes.DryRun)]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.264s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Residue_retry_keeps_an_ignored_secret(string mode, CancellationToken ct)
     {
         // B-1 recovery. The leaf is gone and its retiring residue holds an ignored secret.
@@ -984,6 +1048,8 @@ public sealed class C1677RetentionEngineTests
     }
 
     [Test]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.346s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Unavailable_ignored_list_keeps_the_tree(CancellationToken ct)
     {
         // B-1. A failed ignored-file listing is a doubt. The tree stays; it is not treated as empty.
@@ -1007,6 +1073,8 @@ public sealed class C1677RetentionEngineTests
     [Arguments("phase-b")]
     [Arguments("recovery-dry")]
     [Arguments("recovery-execute")]
+    // CARD-1722: n=5 Linux per-case p95 <= 0.389s; max(60s Git floor, 2*p95); Windows rc collection pending.
+    [Timeout(60_000)]
     public async Task Appsettings_secret_survives_every_retention_boundary(string boundary, CancellationToken ct)
     {
         using var s = Create();

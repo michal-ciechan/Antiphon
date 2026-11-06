@@ -11,6 +11,8 @@ namespace Antiphon.SessionRunner.Tests;
 /// <c>refs/remotes/origin/&lt;b&gt;</c> only at or behind the leased SHA, never for a checked-out, unpublished,
 /// moved or non-delegate branch, and never reads an unknown object as absence. Real git in a scratch repository.
 /// </summary>
+// CARD-1722: n=5 Linux per-case p95 <= 1.603s; max(60s Git floor, 2*p95).
+// Full measured table: 2026-11-06-ab37b2cf-git-timeout-budgets plan; Windows rc collection pending.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class C0824RunnerBranchRefsTests
@@ -20,7 +22,7 @@ public sealed class C0824RunnerBranchRefsTests
     private static string Tracking => "refs/remotes/origin/" + Branch;
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_deletes_local_and_tracking_refs_at_expected_sha(CancellationToken ct)
     {
         using var s = Scratch.Create();
@@ -33,7 +35,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_absent_refs_are_idempotent_success(CancellationToken ct)
     {
         using var s = Scratch.Create();
@@ -46,7 +48,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_checked_out_branch_refuses_and_keeps_refs(CancellationToken ct)
     {
         using var s = Scratch.Create();
@@ -60,7 +62,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     [Arguments("local-branch-ahead")]
     [Arguments("tracking-moved")]
     public async Task C0824_unpublished_local_tip_refuses(string family, CancellationToken ct)
@@ -77,7 +79,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_ancestor_tip_is_deleted(CancellationToken ct)
     {
         using var s = Scratch.Create();
@@ -89,7 +91,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     [Arguments("master")]
     [Arguments("rc/2026-11-01")]
     [Arguments("feat/other")]
@@ -106,7 +108,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_ref_moved_between_read_and_delete_refuses(CancellationToken ct)
     {
         using var s = Scratch.Create();
@@ -130,7 +132,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_missing_expected_object_refuses(CancellationToken ct)
     {
         using var s = Scratch.Create();
@@ -144,7 +146,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_missing_repository_refuses_unavailable(CancellationToken ct)
     {
         // Review 370083f1 A-4: an absent primary (an unmounted volume) is unknown, never "every ref is absent".
@@ -164,7 +166,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_non_repository_directory_refuses_unavailable(CancellationToken ct)
     {
         // An existing directory that is not a repository (an empty mount point) is unknown, never "every ref is absent".
@@ -182,7 +184,7 @@ public sealed class C0824RunnerBranchRefsTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(60_000)]
     public async Task C0824_branch_with_trailing_newline_refused(CancellationToken ct)
     {
         // .NET '$' also matches before a final LF: the delegate-name guard must consume the whole input.
