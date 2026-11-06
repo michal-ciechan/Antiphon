@@ -52,7 +52,7 @@ public sealed class C1729LayeringGuardTests
             ("server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs", "Runners"),
             ("server/Infrastructure/Resilience/DatabaseResilienceExecutor.cs", "Persistence"),
             ("server/Infrastructure/Resilience/NpgsqlTransientFailureClassifier.cs", "Persistence"),
-            ("server/Infrastructure/Resilience/ResilienceReadClients.cs", "Application"),
+            ("server/Application/Services/ResilienceReadClients.cs", "Application"),
             ("server/Application/Services/GitWorkspaceService.cs", "Git"),
             ("server/Application/Services/AgentTaskService.cs", "Application"),
             ("server/Application/Interfaces/ILandingGit.cs", "Core"),
