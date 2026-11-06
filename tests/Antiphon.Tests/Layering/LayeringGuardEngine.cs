@@ -131,7 +131,7 @@ internal static class LayeringGuardEngine
         if (lines[0] is not ("strict: true" or "strict: false")) errors.Add("missing-mode-header");
         var known = paths.ToHashSet(StringComparer.Ordinal);
         var grouped = false;
-        foreach (var raw in lines.Skip(1))
+        foreach (var raw in lines.Skip(lines[0] is "strict: true" or "strict: false" ? 1 : 0))
         {
             var line = raw.Trim();
             if (line.Length == 0) continue;
