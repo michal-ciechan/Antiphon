@@ -351,6 +351,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         _prompts.Add(prompt);
         if (!string.IsNullOrEmpty(PromptOutput))
         {
+            if (SynchronousPromptOutput)
+            {
+                Emit(PromptOutput);
+                _firstPromptOutput.TrySetResult();
+                return;
+            }
+
             _ = Task.Run(async () =>
             {
                 try

@@ -840,6 +840,7 @@ public sealed class AgentSessionCancelledTurnTests
         public static FakeAgentProtocolAdapter CreateAdapter(AgentSessionRuntime? runtime = null) => new()
         {
             RegisterOnStart = runtime,
+            SynchronousPromptOutput = true,
             PromptOutput = "Partial diagnostic response",
             TurnCompleted = false,
             TurnStopReason = TranscriptKinds.StopReasons.Cancelled
