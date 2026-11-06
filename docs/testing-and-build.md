@@ -625,6 +625,14 @@ The `### Cost` block's ordinary Code floor is the sum of the table's `EstimatedM
 
 ### Checkpoint runner tool (CARD-0723)
 
+Pinned TUnit 1.44 reflection discovery rejects an assembly when its full path contains
+the substring `ref` (not just a reference-assembly directory). Keep checkpoint output
+names free of that substring: use `bin-c0824-s5b2-a/`, for example. A rejected entry
+assembly can leave discovery with zero assemblies and throw `SemaphoreSlim`'s
+`maxCount=0` error before any test or TRX. Changing test concurrency does not repair
+this path exclusion. CARD-0824 continuation 3 observed this on the planned
+`bin-c0824-ref2-a/` output; the exact test filter and assertions remain unchanged.
+
 CARD-1531 separates admission from execution. `--total-timeout` is the charged
 execution allowance (existing selected-estimate derivation when omitted).
 A plan may set that allowance with a `totalTimeoutMinutes: N` line in the
