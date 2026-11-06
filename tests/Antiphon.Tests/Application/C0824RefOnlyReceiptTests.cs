@@ -99,6 +99,18 @@ public sealed class C0824RefOnlyReceiptTests
                 && p.Kind == TranscriptKinds.UserPrompt && p.Text != "prior caller turn").ToListAsync()).ShouldHaveSingleItem();
             var delivery = TaskCompletionNotification.TryReadDelivery((await w.ObligationsAsync()).Single().CompletionDeliveryJson)
                 .ShouldNotBeNull("immutable rendering was committed");
+            // The receipt must contain this independently authored report, not merely agree
+            // with a producer rendering that could itself have lost the report/source.
+            delivery.LogicalNote.ShouldContain(source, Case.Sensitive, "caller-source-is-authored-S");
+            delivery.LogicalNote.ShouldContain(DelegationReportFormatter.Short(w.TaskId), Case.Sensitive, "caller-task-identity");
+            if (cut == "busy")
+            {
+                delivery.LogicalNote.ShouldContain("LONG_HEAD", Case.Sensitive, "caller-long-report-head");
+                delivery.LogicalNote.ShouldContain("LONG_TAIL", Case.Sensitive, "caller-long-report-tail");
+                delivery.LogicalNote.ShouldContain("GET /api/agent-tasks/" + w.TaskId, Case.Sensitive, "caller-retained-report-pointer");
+                delivery.LogicalNote.ShouldContain("desktop-sync=pending", Case.Sensitive, "caller-pending-is-not-confirmed");
+            }
+            else delivery.LogicalNote.ShouldContain("Immutable caller report " + cut, Case.Sensitive, "caller-own-report-content");
             PromptSubmissionMatch.Normalize(accepted.Text!).ShouldBe(PromptSubmissionMatch.Normalize(delivery.WireText), "caller-received-once");
             var row = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
             accepted.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence!.Value, "attempt-floor");
