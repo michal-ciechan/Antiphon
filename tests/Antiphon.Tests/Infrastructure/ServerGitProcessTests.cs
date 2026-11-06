@@ -107,9 +107,16 @@ public sealed class ServerGitProcessTests
     }
 
     [Test]
-    public void C1432_scanner_accepts_a_non_launching_probe_and_two_guarded_launches()
+    [Arguments("LandingGit.cs", "InProcessEligible")]
+    [Arguments("WorktreeManager.cs", "InProcessReadsEligible")]
+    [Arguments("GitWorkspaceService.cs", "InProcessReadsEligible")]
+    public void C1432_scanner_accepts_a_non_launching_probe_and_two_guarded_launches(string file, string method)
     {
-        ScanStartSites(ScannerSource, "LandingGit.cs").ShouldBeEmpty();
+        var source = ScannerSource.Replace("InProcessEligible", method);
+        var audit = AuditStartSites(source, file);
+        audit.Constructions.ShouldBe(3);
+        audit.Launches.ShouldBe(2);
+        audit.Failures.ShouldBeEmpty();
     }
 
     [Test]
@@ -157,21 +164,26 @@ public sealed class ServerGitProcessTests
     }
 
     [Test]
-    [Arguments("Process.Start(probe);")]
-    [Arguments("StartProcess(probe);")]
-    [Arguments("var child = new Process(); child.StartInfo = probe; child.Start();")]
-    public void C1432_scanner_rejects_a_launching_probe(string launch)
+    [Arguments("LandingGit.cs", "InProcessEligible")]
+    [Arguments("WorktreeManager.cs", "InProcessReadsEligible")]
+    [Arguments("GitWorkspaceService.cs", "InProcessReadsEligible")]
+    public void C1432_scanner_rejects_a_launching_probe(string file, string method)
     {
-        var source = ScannerSource.Replace("ConfigureProcess(probe);", "ConfigureProcess(probe); " + launch);
-        var failures = ScanStartSites(source, "LandingGit.cs");
-        failures.Count.ShouldBe(1);
-        failures[0].ShouldContain("InProcessEligible");
-        failures[0].ShouldContain("probe");
+        foreach (var launch in new[] { "Process.Start(probe);", "StartProcess(probe);",
+            "var child = new Process(); child.StartInfo = probe; child.Start();", "LaunchElsewhere(probe);", "saved = probe;" })
+        {
+            var source = ScannerSource.Replace("InProcessEligible", method)
+                .Replace("ConfigureProcess(probe);", "ConfigureProcess(probe); " + launch);
+            var failures = ScanStartSites(source, file);
+            failures.Count.ShouldBe(1, launch);
+            failures[0].ShouldContain(method);
+            failures[0].ShouldContain("probe");
+        }
     }
 
     private const string ScannerSource = """
         class LandingGit {
-            bool InProcessEligible() { var probe = new ProcessStartInfo("git"); ConfigureProcess(probe); return probe.FileName == "git"; }
+            bool InProcessEligible() { var probe = new ProcessStartInfo("git"); ConfigureProcess(probe); ServerGitProcess.DisableAutoMaintenance(probe); return InProcessGitReads.ChildReadsSameRepository(probe); }
             void ExecuteProcessAsync() { var start = new ProcessStartInfo("git"); ConfigureProcess(start); ServerGitProcess.DisableAutoMaintenance(start); StartProcess(start); }
             void RunGitInputBytesAsync() { var input = new ProcessStartInfo("git"); ConfigureProcess(input); ServerGitProcess.DisableAutoMaintenance(input); Process.Start(input); }
             // extra site
