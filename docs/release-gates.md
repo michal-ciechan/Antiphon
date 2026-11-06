@@ -337,6 +337,19 @@ or HTTP. `-ProbeListeningPorts` remains a separate portable listener-only probe;
 explicit `-SimpleMode` retains its compose-stack behavior. Neither probe earns RC
 coverage or substitutes for the Windows obligations above.
 
+CARD-1545 assigns `LiveLaneIsolationTests.StartupArgvMatchesProductionApplyOff`
+to its separately commissioned producer/context/consumer parity workflow on both
+platforms. Run `scripts/test-live-lane-isolation.ps1 -CheckpointToolPath <compiled-tool-path>`
+with an owned portable context and a source/run/build-bound PTY producer capture
+receipt; the consumer requires its exact method filter. Other methods in the class
+remain required by RC. The method-only exclusion is no execution credit.
+
+CARD-1605 assigns `AgentReportStoreLoadTests.Store_samples_record_normal_and_contended_phases`
+to its separately commissioned load measurement on both platforms. Commission the
+exact method on native Linux with `ANTIPHON_REPORT_STORE_MEASUREMENTS=1` and retain
+normal and contended phase samples. Enabling the variable on Windows cannot run
+its Linux executable. The method-only exclusion is no execution credit.
+
 ### OptIn is not exclusion in a profile lane
 
 CARD-1561 assigns the 27 named `CardWorktreeMirrorCleanupTests` methods to the
