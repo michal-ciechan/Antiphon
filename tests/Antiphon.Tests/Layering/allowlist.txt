@@ -4,6 +4,7 @@ strict: false
 server/Application/Dtos/LandingEvidenceDto.cs -> AgentTaskLandingState @ server/Application/Services/AgentTaskLandingState.cs
 server/Application/Exceptions/ConcurrencyLimitException.cs -> DispatchConcurrencyPolicy @ server/Application/Services/DispatchConcurrencyPolicy.cs
 server/Application/Exceptions/ConcurrencyLimitException.cs -> DispatchConstraint @ server/Application/Services/DispatchConcurrencyPolicy.cs
+server/Application/Exceptions/ModelDisabledException.cs -> ModelAlias @ server/Application/Services/ModelAlias.cs
 server/Application/Exceptions/SubscriptionQuotaLowException.cs -> SubscriptionQuotaPolicy @ server/Application/Services/SubscriptionQuotaPolicy.cs
 server/Application/Exceptions/SubscriptionQuotaLowException.cs -> SubscriptionQuotaVerdict @ server/Application/Services/SubscriptionQuotaPolicy.cs
 server/Application/Interfaces/IChannelOutboundFileStore.cs -> ChannelReplyBundleSnapshot @ server/Application/Services/ChannelReplyPreparation.cs

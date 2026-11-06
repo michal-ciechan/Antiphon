@@ -33,6 +33,18 @@ Never widen a timeout, loosen an assertion, or replace a method with a class run
 | PC-12 / G-12 | Add one nonexistent violation triple | Repository_graph_satisfies_the_committed_allowlist | pending, requires strict P0-G2; binding-missing now |
 | PC-36 / G-36 | Remove only the new member-label syntax exclusion | Allowed_edges_listed_rows_comments_and_strings_do_not_fire | pending: initializer-member, with-member, named-argument, property-pattern, attribute-member all produce false rows |
 | PC-37 / G-37 | Restore the unconditional own/declared-name exclusion before qualification and type-context resolution | Synthetic_core_file_referencing_an_application_type_fails_in_strict_mode | pending: all eight shadowing variants lose their required exact row / incorrectly pass strict |
+| PC-38 / G-38 | Replace the enclosing-scope predicate with file-wide declaration presence | Synthetic_core_file_referencing_an_application_type_fails_in_strict_mode | pending: twelve out-of-scope value variants lose the exact Svc row; strict incorrectly passes |
+| PC-39 / G-39 | Skip every in-scope declaration even in type positions | Synthetic_core_file_referencing_an_application_type_fails_in_strict_mode | pending: Color Color property, parameter, local and creation variants must fail |
+| PC-40 / G-40 | Remove generic type-parameter suppression in type positions | Allowed_edges_listed_rows_comments_and_strings_do_not_fire | pending: same-scope-generic-type-parameter and same-scope-generic-method-parameter false rows |
+
+Round 2 scope repair Code a3555767 extends L5/L6 in body, preserving all nine
+method names. Design: `docs/superpowers/testdesign/2026-11-06-card-1729-p0g-scope-repair.md`.
+PC-38/39/40 and every new variant are UNBOUND and pending SourceLanding Mutation.
+The type-parameter-elsewhere-fires L5 variant guards the scope of PC-40's
+suppression. Same-scope L6 values cover fields/properties, method/lambda/primary
+parameters, locals/local functions, pattern/switch variables and foreach/catch.
+These additions do not discharge any previous PC. PC-38's file-wide mutant must
+retain the type-position protection so its assertion red isolates B-3.
 
 G-36: member labels cannot become type references. G-37: value/own names cannot
 hide type-position or qualified references. PC-37 variants: color-color-fires,
