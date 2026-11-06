@@ -53,18 +53,56 @@ totalTimeoutOverrideReason: Same bounded build/row ceilings as Review; estimates
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-0 | RED | tests/Antiphon.Tests -> bin-c1737-join-red/ | join-regression-red | /*/*/C1708ReflogSalvageTests/C1737_ReleaseTickJoinsBeforeFixtureTeardown* | V-JOIN baseline | all four exit arguments fail joined assertion | 4 | 15 | true |
+| CP-0 | RED | tests/Antiphon.Tests -> bin-c1737-join-red/ | join-regression-red | /*/*/C1708ReflogSalvageTests/C1737_NoncooperativeTickKeepsPrimaryFailureOnJoinTimeout | V-TIMEOUT baseline | one failure: primary cancellation replaced by timeout | 1 | 15 | true |
 | CP-1 | FIX | tests/Antiphon.Tests -> bin-c1737-join-green/ | r2-source-roots | /*/Antiphon.Tests.Application/C1708ReflogSalvageTests/(C1737_HeadReflogOnlyCommitSurvivesRemoval*)\|(C1737_BranchReflogOnlyCommitSurvivesRemoval*)\|(C1737_MissingVerifiedSalvageRefKeepsTree*)\|(Released_tree_keeps_its_reflog_only_commit_under_a_salvage_ref*)\|(Commit_kept_only_as_a_reflog_old_id_gets_a_salvage_ref*) | V-1,V-2,V-3,R-1,R-2 | exactly 5 passed | 5 | 15 | true |
 | CP-2 | FIX | CP-1 | r2-raw-evidence | /*/Antiphon.Tests.Application/C1708ReflogSalvageTests/(C1737_UnreadableRawReflogKeepsTree*)\|(C1737_MalformedRawReflogKeepsTree*)\|(C1737_MissingRawReflogKeepsTree*)\|(C1737_EmptyRawReflogKeepsTree*) | V-4,V-5,V-6,V-7 | exactly 7 passed including every variant | 7 | 5 | true |
 | CP-3 | FIX | CP-1 | r2-classification-policy | /*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(NativeLinuxPolicyWitnessTests*)\|(LiveLaneRunnerTests*)/(Registry_matches_compiled_metadata*)\|(every_test_class_is_tagged_unit_xor_integration*)\|(Policy_rows_require_pinned_attribute*)\|(WrapperOnlyPaidManifest*) | R-3 | exactly 4 passed | 4 | 4 | true |
-| CP-4 | FIX | CP-1 | full-affected-and-guards | /*/*/(C1708ReflogSalvageTests*)\|(LiveLaneRunnerTests*)\|(SlowTestRegistryMergeTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/* | V-JOIN,full affected class,named guards | all eleven class rosters, 109 passed | 109 | 6 | true |
+| CP-4 | FIX | CP-1 | full-affected-and-guards | /*/*/(C1708ReflogSalvageTests*)\|(LiveLaneRunnerTests*)\|(SlowTestRegistryMergeTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/* | V-JOIN,full affected class,named guards | all eleven class rosters, 110 passed | 110 | 6 | true |
 
-CP-0 is intentionally red, executed only on the test-first commit. CP-1..4 run
+Round-3 CP-0 is intentionally red, executed only on the new test-first commit. CP-1..4 run
 once after the fix. CP-4 includes the regression's four arguments and the 105
 previously selected results. CP-4 is explicitly added by this repair brief to
 the design's closed three-row selection. No green row is repeated for timing.
 
 ## Pending SourceLanding Mutation
+
+## Round 3 B-2R: retain the primary failure on a bounded join failure
+
+Code task `68422abc`, reviewed base `0c3484e064a3c7a1b6e29ac2b2fe13ab78555e67`.
+Invariant: cleanup reports the original caller failure together with a failed
+join, including subsequent caller cleanup/DisposeAsync, and never disposes a
+world while its actual release tick remains live. Production is unchanged.
+
+V-TIMEOUT: `C1737_NoncooperativeTickKeepsPrimaryFailureOnJoinTimeout` holds the
+real scoped policy at before:legacy-candidate on a real Git/Postgres world.
+It deliberately ignores cancellation until its own rescue finally. Cancel the
+caller, await the existing ten-second join deadline, and assert an aggregate
+containing the caller cancellation (token and original TickAsync stack) first
+and the TimeoutException second. Assert the real tick is incomplete, the fixture
+exists, and subsequent disposal propagates that same aggregate without deleting
+the fixture. Finally release the fake boundary, boundedly await both tasks and
+dispose the world directly; this rescue also works at the unchanged owner base.
+The existing forty-second test limit and ten-second join bound stay unchanged.
+One provisional expected ~11-second body; the 40-second limit includes inherited
+shared-world setup/rescue, not a p95 claim. Retain one red and one ordinary green
+sample under CARD-1737; no timing repetitions. No OS-selected behavior or rc
+startup code changes; existing native Windows obligations remain owed.
+
+The round-3 closed selection is CP-0 at test-first source, then CP-1..4 at fix
+source. CP-4 is the single union-filter batch of all full affected/guard classes
+(now 110 results); no separate green guard repetition. The separate mechanical
+script still owes exactly 38 rows. Whole Unit B-1 remains CARD-1720's obligation.
+
+PC-JOIN-TIMEOUT (unbound, pending): restore the reviewed replacement behavior by
+removing the primary-failure aggregation in the SAL join owner only. Run exactly
+`/*/*/C1708ReflogSalvageTests/C1737_NoncooperativeTickKeepsPrimaryFailureOnJoinTimeout`.
+Require the `primary:W-JOIN-TIMEOUT:caller-cancellation-and-join-timeout` assertion
+to fail because only TimeoutException survives; rescue must still join/dispose.
+Restore, rebuild, same method green. Mutation owns that deliberate cycle and
+additional missing-control discovery, including cancellation-callback failures.
+No Code mutation credit is claimed.
+
+### Earlier pending controls
 
 PC-JOIN: in SAL SalvageSource remove cancellation forwarding and both cancel/join
 calls, restoring reviewed behavior; run only
