@@ -16,7 +16,7 @@ existing Git/removal claims. No full assembly or unbounded integration classes.
 Final Unit includes full MechanicalPcContractTests, TaskPlatformGuidanceTests,
 TestClassificationPolicyTests, TestClassificationGuardTests, SlowTestTripwireTests,
 NativeLinuxPolicyWitnessTests and C1729LayeringGuardTests. SlowTestRegistryMergeTests
-is Integration and explicitly selected in F-1. CP-3 separately selects the live-lane
+is Integration and explicitly selected in CP-4. CP-3 separately selects the live-lane
 wrapper's protected-input witness. No redundant green class rerun is required.
 Manual acceptance: inspect production diff empty, policy/marker/hash coupling,
 reflection signatures and real input/outcome binding, full-range evidence guard,
@@ -30,7 +30,7 @@ Debug `86a941a3` (`docs/investigations/2026-11-05-debug-narrower-parent-deadline
 on its task branch) establishes why an explicit 30min run allowance cannot cover
 build plus whole Unit. No timeout or assertion is widened. Estimates below are
 provisional CARD-1737/CARD-1720; first required receipts are the collection sample,
-not measured p95. Unit is estimated 15-30min execution, F-1 1-3min plus 3-12min
+not measured p95. Unit is estimated 15-30min execution, CP-4 1-3min plus 3-12min
 build; any actual >30min selection needs caller performance Debug with its source,
 load and timing evidence. Shared fixtures and process limiter stay unchanged.
 No new delivery path, startup, web host or production runner. Missing subphase
@@ -40,11 +40,11 @@ measurements stay unknown. Source and phase evidence stays ignored.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| F-1 | R1-Final | tests/Antiphon.Tests -> bin-c1737-r1-final/ | full-affected | /*/*/(LandingRemovalPolicyControlTests*)\|(WorktreeGuardedCleanupTests*)\|(WorktreeNoFollowDeleteTests*)\|(SlowTestRegistryMergeTests*)/* | Final integration, policy sweep | every method/argument in these four full classes; platform skips recorded as pending native, no failures | 1 | 14 | true |
-| F-2 | R1-Final | F-1 | full-unit | /*/*/*/*[Category=Unit] | Final Unit, mechanical instruction/platform/policy/layering guards | whole exact Unit predicate, nonzero counts; inherited/native outcomes reported individually | 1 | 15 | true |
+| CP-4 | R1-Final | tests/Antiphon.Tests -> bin-c1737-r1-final/ | full-affected | /*/*/(LandingRemovalPolicyControlTests*)\|(WorktreeGuardedCleanupTests*)\|(WorktreeNoFollowDeleteTests*)\|(SlowTestRegistryMergeTests*)/* | Final integration, policy sweep | every method/argument in these four full classes; platform skips recorded as pending native, no failures | 1 | 14 | true |
+| CP-5 | R1-Final | CP-4 | full-unit | /*/*/*/*[Category=Unit] | Final Unit, mechanical instruction/platform/policy/layering guards | whole exact Unit predicate, nonzero counts; inherited/native outcomes reported individually | 1 | 15 | true |
 
 Run these two rows as their own committed group, through the checkpoint tool,
-with exact expected-source-sha. F-1 timeoutMinutes=12, F-2=45 (provisional existing
+with exact expected-source-sha. CP-4 timeoutMinutes=12, CP-5=45 (provisional existing
 Unit importer allocation); build rowMinutes=28; charged total follows derivation
 `max(30,2*(14+15)+10)=68m`, hard wall 98m (three admissions at 10m).
 At most three rows per run. Do not repeat green rows. Inspect fresh TRX for every
