@@ -249,8 +249,10 @@ After CAS, only identity is checked: HEAD and branch must be the reviewed tip an
 the common directory, registered path, Git directory and symbolic ref must match
 the pre-CAS sample. A missing, redirected or otherwise unprovable registration
 refuses without resetting or repairing metadata. A post-CAS refusal is
-`adopt_local_changed`; it keeps the ref at the reviewed tip, the old index/bytes,
-durable reset intent and recovery pins. Cleanup also samples live registration;
+`adopt_local_changed`, except that an untrusted post-reset status refuses
+`status_untrusted`: "Git status wrote to stderr; worktree cleanliness could not be verified."
+Both refusals retain durable reset intent and recovery pins; a refusal before reset
+also keeps the old index/bytes and the ref at the reviewed tip. Cleanup also samples live registration;
 uncertainty retains the checkout and any already-confirmed publication.
 
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already

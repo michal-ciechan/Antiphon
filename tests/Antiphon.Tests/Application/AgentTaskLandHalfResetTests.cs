@@ -20,6 +20,100 @@ public sealed class AgentTaskLandHalfResetTests
     public Task C1715_Resumed_adoption_preserves_untrusted_status_reason() =>
         AssertUntrustedStatusAfterResetAsync(resume: true);
 
+    [Test]
+    public async Task C1715_Resumed_dirty_checkout_preserves_adopt_local_changed()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        await h.SweepAsync();
+        fixture.Boundary.ThrowConflict = false;
+        var resets = 0;
+        var path = Path.Combine(h.Fixture.Source, "feature.txt");
+        h.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (directory != h.Fixture.Source || args[0] != "reset" || !result.Succeeded) return;
+            resets++;
+            await File.WriteAllTextAsync(path, "resumed post reset edit\n");
+        };
+
+        await h.RunQueuedAsync();
+
+        resets.ShouldBe(1, "reach the resumed post-reset inspection after the interrupted CAS");
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBe("adopt_local_changed");
+        row.RecoveryAdoptedAt.ShouldBeNull();
+        row.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset");
+        (await File.ReadAllTextAsync(path)).ShouldBe("resumed post reset edit\n");
+        (await h.OperationAsync()).ShouldBeNull("the refusal still precedes publication");
+        var refusal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e =>
+            e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused);
+        refusal.Detail.ShouldContain("adopt_local_changed");
+        refusal.Detail.ShouldNotContain("status_untrusted");
+        refusal.Detail.ShouldNotContain("Git status wrote to stderr");
+        h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments[0] == "push"
+            && c.Arguments.Any(a => a.Contains(":refs/heads/master", StringComparison.Ordinal)));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1715_Post_reset_status_error_preserves_diagnostic(bool resume)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        if (resume)
+        {
+            await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+            await h.SweepAsync();
+        }
+        fixture.Boundary.ThrowConflict = false;
+        var resets = 0;
+        var failures = 0;
+        h.Fixture.Git.AfterCommand = (directory, args, result) =>
+        {
+            if (directory == h.Fixture.Source && args[0] == "reset" && result.Succeeded) resets++;
+            return Task.CompletedTask;
+        };
+        h.Fixture.Git.BeforeCommand = (directory, args) =>
+        {
+            if (directory != h.Fixture.Source || GitSubcommand.Of(args) != "status" || resets == 0)
+                return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+            failures++;
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
+                new(128, "", "private-status-error /private/config") { WroteStandardError = true });
+        };
+
+        await h.RunQueuedAsync();
+
+        resets.ShouldBe(1);
+        failures.ShouldBe(1);
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBe("adopt_local_changed");
+        row.SourceDiagnosticCommand.ShouldBe("git status --porcelain=v1");
+        row.SourceDiagnosticExitCode.ShouldBe(128);
+        row.RecoveryAdoptedAt.ShouldBeNull();
+        row.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset");
+        (await h.OperationAsync()).ShouldBeNull();
+        var refusal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e =>
+            e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused);
+        refusal.Detail.ShouldContain("command=git status --porcelain=v1");
+        refusal.Detail.ShouldContain("exit=128");
+        refusal.Detail.ShouldNotContain("Git status wrote to stderr");
+        refusal.Detail.ShouldNotContain("private-status-error");
+        refusal.Detail.ShouldNotContain("/private/config");
+    }
+
     private static async Task AssertUntrustedStatusAfterResetAsync(bool resume)
     {
         await using var fixture = new LandHalfResetFixture();
