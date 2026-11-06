@@ -1,5 +1,11 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Git;
+using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -21,6 +27,359 @@ namespace Antiphon.Tests.Application;
 public sealed class C1708ReflogSalvageTests
 {
     private const string Prefix = "refs/antiphon/salvage/";
+
+    [Test, Timeout(40_000)]
+    public async Task C1737_HeadReflogOnlyCommitSurvivesRemoval(CancellationToken ct) =>
+        await ExclusiveSourceSurvivesAsync("W-U1H", branchOnly: false, ct);
+
+    [Test, Timeout(40_000)]
+    public async Task C1737_BranchReflogOnlyCommitSurvivesRemoval(CancellationToken ct) =>
+        await ExclusiveSourceSurvivesAsync("W-U1B", branchOnly: true, ct);
+
+    [Test, Timeout(60_000)]
+    public async Task C1737_MissingVerifiedSalvageRefKeepsTree(CancellationToken ct)
+    {
+        await using var s = await SalvageSourceAsync("W-U3", branchOnly: false, oldOnly: false, ct);
+        var wrote = false;
+        var cut = 0;
+        var verified = false;
+        s.World.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            s.Observe(directory, args, result);
+            if (s.Match(directory, args, s.World.Fixture.Repository, s.CreateArguments) && result.Succeeded)
+            {
+                (await s.RequiredAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage)).Trim().ShouldBe(s.Lost);
+                wrote = true;
+            }
+            if (wrote && cut == 1 && s.Match(directory, args, s.World.Fixture.Repository, s.VerifyArguments))
+            {
+                result.ExitCode.ShouldBe(0, "the real final enumeration succeeded");
+                LogLines(result.Output).ShouldNotContain(s.Salvage + " " + s.Lost);
+                verified = true;
+                Console.WriteLine("reached:W-U3:successful-verify-missing-ref");
+            }
+        };
+        s.World.Fixture.Git.BeforeCommand = async (directory, args) =>
+        {
+            if (wrote && cut == 0 && s.Match(directory, args, s.World.Fixture.Repository, s.VerifyArguments))
+            {
+                await s.RequiredAsync(s.World.Fixture.Repository, "update-ref", "--no-deref", "-d", s.Salvage, s.Lost);
+                (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage)).ExitCode.ShouldBe(1);
+                cut++;
+            }
+            return null;
+        };
+        DesktopLegacyReleasePolicyService.TickResult tick;
+        try { tick = await s.World.TickAsync().WaitAsync(ct); }
+        finally { s.ClearHooks(); await s.CaptureAsync(); }
+
+        Directory.Exists(s.Task.Path).ShouldBeTrue("preserved:W-U3:source-tree");
+        await s.AssertCustodyAsync(s.HeadBytes, s.HeadLog);
+        (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage)).ExitCode.ShouldBe(1);
+        wrote.ShouldBeTrue();
+        cut.ShouldBe(1);
+        verified.ShouldBeTrue();
+        await s.AssertRefusedAsync(tick);
+    }
+
+    [Test, Timeout(40_000)]
+    [NativeLinuxOnly("Linux-only by construction: mode-000 raw-reflog denial requires an unprivileged Linux process; Windows needs separate permission evidence.")]
+    public async Task C1737_UnreadableRawReflogKeepsTree(CancellationToken ct) =>
+        await RawFaultKeepsTreeAsync("W-U5R", "unreadable", ct);
+
+    [Test, Timeout(40_000)]
+    [Arguments("short-fields"), Arguments("bad-old"), Arguments("bad-new")]
+    public async Task C1737_MalformedRawReflogKeepsTree(string variant, CancellationToken ct) =>
+        await RawFaultKeepsTreeAsync("W-U5P", variant, ct);
+
+    [Test, Timeout(40_000)]
+    public async Task C1737_MissingRawReflogKeepsTree(CancellationToken ct) =>
+        await RawFaultKeepsTreeAsync("W-U5M", "missing", ct);
+
+    [Test, Timeout(40_000)]
+    [Arguments("empty"), Arguments("all-zero-ids")]
+    public async Task C1737_EmptyRawReflogKeepsTree(string variant, CancellationToken ct) =>
+        await RawFaultKeepsTreeAsync("W-U5E", variant, ct);
+
+    private static async Task ExclusiveSourceSurvivesAsync(string caseId, bool branchOnly, CancellationToken ct)
+    {
+        await using var s = await SalvageSourceAsync(caseId, branchOnly, oldOnly: false, ct);
+        s.World.Fixture.Git.AfterCommand = (directory, args, result) =>
+        {
+            s.Observe(directory, args, result);
+            return Task.CompletedTask;
+        };
+        try { await s.World.TickAsync().WaitAsync(ct); }
+        finally { s.ClearHooks(); await s.CaptureAsync(); }
+
+        // Removal is a prerequisite: a retained reflog must not mask an omitted source tuple.
+        Directory.Exists(s.Task.Path).ShouldBeFalse("the source really was removed");
+        Directory.Exists(WorktreeSetAside.SetAsidePath(s.Task.Path)).ShouldBeFalse("no set-aside custody remains");
+        (await s.RegisteredAsync()).ShouldBeFalse();
+        (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Task.FullRef)).ExitCode.ShouldBe(1);
+        File.Exists(s.HeadLog).ShouldBeFalse();
+        File.Exists(s.BranchLog).ShouldBeFalse();
+        var salvage = await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage);
+        salvage.Succeeded.ShouldBeTrue("preserved:" + caseId + ":salvage-ref-present");
+        salvage.Output.Trim().ShouldBe(s.Lost);
+        (await s.RunAsync(s.World.Fixture.Repository, "symbolic-ref", "-q", s.Salvage)).ExitCode.ShouldBe(1, "the salvage root is direct");
+        LogLines(await s.RequiredAsync(s.World.Fixture.Repository, "rev-list", "--all")).ShouldContain(s.Lost);
+        await s.World.AssertRetiredAsync(s.Task, s.Origin);
+        (await s.RequiredAsync(s.World.Fixture.Remote, "show-ref")).ShouldBe(s.Origin);
+        s.Observed.ShouldContain(x => x.Directory == s.World.Fixture.Repository && x.Arguments.SequenceEqual(s.CreateArguments) && x.Exit == 0);
+        s.Observed.Count(x => x.Directory == s.World.Fixture.Repository && x.Arguments.SequenceEqual(s.VerifyArguments) && x.Exit == 0).ShouldBe(2);
+        s.Observed.ShouldContain(x => x.Arguments.Length > 0 && x.Arguments[0] == "rev-list" && x.Arguments.Contains(s.Lost) && LogLines(x.Output).Contains(s.Lost));
+        foreach (var (directory, args) in s.SourceCalls)
+            s.Observed.ShouldContain(x => LandingGit.PathsEqual(x.Directory, directory) && x.Arguments.SequenceEqual(args) && x.Exit == 0);
+    }
+
+    private static async Task RawFaultKeepsTreeAsync(string caseId, string variant, CancellationToken ct)
+    {
+        await using var s = await SalvageSourceAsync(caseId, branchOnly: false, oldOnly: true, ct);
+        var listed = false;
+        var cuts = 0;
+        var installed = s.HeadBytes;
+        var evidence = s.HeadLog;
+        UnixFileMode? originalMode = null;
+        s.World.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            s.Observe(directory, args, result);
+            if (s.Match(directory, args, s.Task.Path, s.HeadShowArguments))
+            {
+                result.Succeeded.ShouldBeTrue();
+                LogLines(result.Output).ShouldBe([s.Pushed]);
+                listed = true;
+            }
+            if (!listed || cuts != 0 || !s.Match(directory, args, s.Task.Path, s.HeadPathArguments)) return;
+            result.Succeeded.ShouldBeTrue();
+            result.Output.Trim().ShouldBe(s.HeadLog);
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "raw-reflog-fault");
+            if (variant == "unreadable")
+            {
+                OperatingSystem.IsLinux().ShouldBeTrue("fixture unavailable outside Linux");
+                var uid = (await File.ReadAllLinesAsync("/proc/self/status", ct)).Single(l => l.StartsWith("Uid:", StringComparison.Ordinal))
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                uint.Parse(uid[2], System.Globalization.CultureInfo.InvariantCulture).ShouldNotBe(0u, "fixture unavailable for root");
+                originalMode = File.GetUnixFileMode(s.HeadLog);
+                File.SetUnixFileMode(s.HeadLog, UnixFileMode.None);
+                File.Exists(s.HeadLog).ShouldBeTrue();
+                Exception? denial = null;
+                try { await File.ReadAllTextAsync(s.HeadLog, ct); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { denial = ex; }
+                denial.ShouldNotBeNull("the same process must really be unable to read mode-000");
+                Console.WriteLine("denied:" + denial.GetType().Name + ":euid=" + uid[2]);
+            }
+            else if (variant == "missing")
+            {
+                evidence = Path.Combine(s.World.Fixture.Root, "c1737-displaced-head.log");
+                File.Move(s.HeadLog, evidence);
+                File.Exists(s.HeadLog).ShouldBeFalse();
+                (await File.ReadAllBytesAsync(evidence, ct)).ShouldBe(s.HeadBytes);
+            }
+            else
+            {
+                var bad = variant switch
+                {
+                    "short-fields" => s.Lost + "\n",
+                    "bad-old" => LogRecord("not-an-oid", s.Lost),
+                    "bad-new" => LogRecord(s.Lost, "not-an-oid"),
+                    "empty" => "",
+                    "all-zero-ids" => LogRecord(s.Zero, s.Zero),
+                    _ => throw new InvalidOperationException("unknown raw-log variant"),
+                };
+                if (caseId == "W-U5P")
+                {
+                    var fields = LogLines(bad).Single().Split(' ', 3);
+                    (fields.Length < 3).ShouldBe(variant == "short-fields");
+                    if (fields.Length == 3)
+                    {
+                        IsFixtureOid(fields[0], s.Pushed.Length).ShouldBe(variant != "bad-old");
+                        IsFixtureOid(fields[1], s.Pushed.Length).ShouldBe(variant != "bad-new");
+                    }
+                    bad += LogRecord(s.Zero, s.Pushed);
+                    RawIds(LogRecord(s.Zero, s.Pushed), s.Pushed.Length).ShouldBe([s.Zero, s.Pushed]);
+                }
+                if (variant == "all-zero-ids") RawIds(bad, s.Pushed.Length).ShouldBe([s.Zero, s.Zero]);
+                installed = Encoding.UTF8.GetBytes(bad);
+                await File.WriteAllBytesAsync(s.HeadLog, installed, ct);
+            }
+            cuts++;
+            Console.WriteLine("reached:" + caseId + ":after-list-before-raw-read:" + variant);
+        };
+        DesktopLegacyReleasePolicyService.TickResult tick;
+        try { tick = await s.World.TickAsync().WaitAsync(ct); }
+        finally
+        {
+            s.ClearHooks();
+            if (originalMode is { } mode && OperatingSystem.IsLinux() && File.Exists(s.HeadLog))
+                File.SetUnixFileMode(s.HeadLog, mode);
+            await s.CaptureAsync(evidence);
+        }
+
+        Directory.Exists(s.Task.Path).ShouldBeTrue("preserved:" + caseId + ":source-tree");
+        await s.AssertCustodyAsync(installed, evidence);
+        if (variant == "missing") File.Exists(s.HeadLog).ShouldBeFalse();
+        cuts.ShouldBe(1);
+        await s.AssertRefusedAsync(tick);
+    }
+
+    private static string[] LogLines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private static string LogRecord(string oldId, string newId) =>
+        oldId + " " + newId + " C1737 Fixture <fixture@example.invalid> 1700000000 +0000\tfixture-message\n";
+    private static bool IsFixtureOid(string value, int width) => value.Length == width && value.All(char.IsAsciiHexDigit);
+    private static string[] RawIds(string text, int width) => LogLines(text).SelectMany(line =>
+    {
+        var fields = line.Split(' ', 3);
+        fields.Length.ShouldBe(3);
+        IsFixtureOid(fields[0], width).ShouldBeTrue();
+        IsFixtureOid(fields[1], width).ShouldBeTrue();
+        return fields.Take(2);
+    }).ToArray();
+
+    private static async Task<SalvageSource> SalvageSourceAsync(string caseId, bool branchOnly, bool oldOnly, CancellationToken ct)
+    {
+        var w = await DesktopLegacyWorld.CreateAsync();
+        try
+        {
+            var a = await w.AddTaskAsync(ageHours: 60);
+            var reader = new LandingGitFixture.FixtureGit(Path.Combine(w.Fixture.Root, "home"), w.Fixture.TaskId);
+            var s = new SalvageSource(w, a, reader, caseId, ct);
+            s.Pushed = (await s.RequiredAsync(a.Path, "rev-parse", "--verify", "HEAD^{commit}")).Trim();
+            s.Lost = await RewriteAsync(w, a);
+            s.Lost.ShouldNotBe(s.Pushed);
+            (await s.RequiredAsync(w.Fixture.Repository, "cat-file", "-t", s.Lost)).Trim().ShouldBe("commit");
+            s.HeadLog = await s.ResolveLogAsync(a.Path, "HEAD");
+            s.BranchLog = await s.ResolveLogAsync(w.Fixture.Repository, a.FullRef);
+            s.HeadLog.ShouldNotBe(s.BranchLog);
+            var selected = oldOnly ? LogRecord(s.Lost, s.Pushed) : LogRecord(s.Zero, s.Lost) + LogRecord(s.Lost, s.Pushed);
+            var other = LogRecord(s.Zero, s.Pushed);
+            await File.WriteAllTextAsync(s.HeadLog, branchOnly ? other : selected, new UTF8Encoding(false), ct);
+            await File.WriteAllTextAsync(s.BranchLog, branchOnly ? selected : other, new UTF8Encoding(false), ct);
+            s.HeadBytes = await File.ReadAllBytesAsync(s.HeadLog, ct);
+            s.BranchBytes = await File.ReadAllBytesAsync(s.BranchLog, ct);
+            var headIds = RawIds(Encoding.UTF8.GetString(s.HeadBytes), s.Pushed.Length);
+            var branchIds = RawIds(Encoding.UTF8.GetString(s.BranchBytes), s.Pushed.Length);
+            (branchOnly ? branchIds : headIds).ShouldContain(s.Lost);
+            (branchOnly ? headIds : branchIds).ShouldNotContain(s.Lost);
+            var headShown = LogLines(await s.RequiredAsync(a.Path, s.HeadShowArguments));
+            var branchShown = LogLines(await s.RequiredAsync(w.Fixture.Repository, s.BranchShowArguments));
+            if (oldOnly) { headShown.ShouldBe([s.Pushed]); branchShown.ShouldBe([s.Pushed]); }
+            else
+            {
+                (branchOnly ? branchShown : headShown).ShouldContain(s.Lost);
+                (branchOnly ? headShown : branchShown).ShouldBe([s.Pushed]);
+            }
+            (await s.RequiredAsync(a.Path, "rev-parse", "--verify", "HEAD^{commit}")).Trim().ShouldBe(s.Pushed);
+            (await s.RequiredAsync(w.Fixture.Repository, "show-ref", "--verify", "--hash", a.FullRef)).Trim().ShouldBe(s.Pushed);
+            LogLines(await s.RequiredAsync(w.Fixture.Repository, "rev-list", "--all")).ShouldNotContain(s.Lost);
+            (await s.RequiredAsync(w.Fixture.Repository, "rev-list", "--all", "--ancestry-path", s.Lost + "..")).ShouldBeEmpty("no ref reaches a descendant of L");
+            // Audit every other existing raw log, including the main checkout and fixture task.
+            var common = (await s.RequiredAsync(w.Fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
+            foreach (var log in Directory.EnumerateFiles(common, "*", SearchOption.AllDirectories)
+                         .Where(p => p.Contains(Path.DirectorySeparatorChar + "logs" + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                             && p != s.HeadLog && p != s.BranchLog))
+                RawIds(await File.ReadAllTextAsync(log, ct), s.Pushed.Length).ShouldNotContain(s.Lost);
+            s.Origin = await s.RequiredAsync(w.Fixture.Remote, "show-ref");
+            s.Snapshot = await w.SnapshotAsync(a.Path);
+            Console.WriteLine("reached:" + caseId + ":exclusive-" + (branchOnly ? "branch" : "head") + (oldOnly ? ":old-id-only" : ""));
+            return s;
+        }
+        catch { await w.DisposeAsync(); throw; }
+    }
+
+    /// <summary>R2-local independent Git observations; never installs hooks on the reader.</summary>
+    private sealed class SalvageSource(DesktopLegacyWorld world, DesktopLegacyWorld.Handle task,
+        LandingGitFixture.FixtureGit reader, string caseId, CancellationToken ct) : IAsyncDisposable
+    {
+        public DesktopLegacyWorld World => world;
+        public DesktopLegacyWorld.Handle Task => task;
+        public string Pushed { get; set; } = "";
+        public string Lost { get; set; } = "";
+        public string HeadLog { get; set; } = "";
+        public string BranchLog { get; set; } = "";
+        public byte[] HeadBytes { get; set; } = [];
+        public byte[] BranchBytes { get; set; } = [];
+        public string Origin { get; set; } = "";
+        public string Snapshot { get; set; } = "";
+        public string Zero => new('0', Pushed.Length);
+        public string Salvage => Prefix + task.Id.ToString("D") + "/" + Lost;
+        public string[] HeadShowArguments => ["reflog", "show", "--no-abbrev", "--format=%H", "HEAD"];
+        public string[] BranchShowArguments => ["reflog", "show", "--no-abbrev", "--format=%H", task.FullRef];
+        public string[] HeadPathArguments => ["rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD"];
+        public string[] VerifyArguments => ["for-each-ref", "--format=%(refname) %(objectname) %(symref)", Prefix + task.Id.ToString("D") + "/"];
+        public string[] CreateArguments => ["update-ref", "--no-deref", "--create-reflog", "-m", "antiphon salvage " + task.Id.ToString("D"), Salvage, Lost, Zero];
+        public (string Directory, string[] Arguments)[] SourceCalls =>
+        [
+            (task.Path, HeadShowArguments), (task.Path, ["rev-parse", "--verify", "HEAD^{commit}"]),
+            (world.Fixture.Repository, BranchShowArguments), (task.Path, HeadPathArguments),
+            (world.Fixture.Repository, ["rev-parse", "--path-format=absolute", "--git-path", "logs/" + task.FullRef]),
+        ];
+        public List<(string Directory, string[] Arguments, int Exit, string Output)> Observed { get; } = [];
+        public bool Match(string directory, IReadOnlyList<string> args, string expectedDirectory, string[] expected) =>
+            LandingGit.PathsEqual(directory, expectedDirectory) && args.SequenceEqual(expected);
+        public void Observe(string directory, IReadOnlyList<string> args, LandingGitResult result)
+        {
+            Observed.Add((directory, args.ToArray(), result.ExitCode, result.Output));
+            Console.WriteLine("source-call:" + JsonSerializer.Serialize(new { directory, args, result.ExitCode, result.Output }));
+        }
+        public async Task<LandingGitResult> RunAsync(string directory, params string[] args)
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+            return await reader.RunAsync(directory, args, deadline.Token);
+        }
+        public async Task<string> RequiredAsync(string directory, params string[] args)
+        {
+            var result = await RunAsync(directory, args);
+            result.Succeeded.ShouldBeTrue("independent Git: " + string.Join(" ", args) + ": " + result.Diagnostic);
+            return result.Output;
+        }
+        public async Task<string> ResolveLogAsync(string directory, string name)
+        {
+            var path = (await RequiredAsync(directory, "rev-parse", "--path-format=absolute", "--git-path", "logs/" + name)).Trim();
+            Path.IsPathFullyQualified(path).ShouldBeTrue();
+            path.ShouldNotContain('\n');
+            File.Exists(path).ShouldBeTrue();
+            var common = (await RequiredAsync(world.Fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
+            path.StartsWith(Path.TrimEndingDirectorySeparator(common) + Path.DirectorySeparatorChar, StringComparison.Ordinal).ShouldBeTrue("raw log is fixture-owned");
+            return path;
+        }
+        public async Task<bool> RegisteredAsync() => LandingGit.ParseRegistrations(
+            await RequiredAsync(world.Fixture.Repository, "worktree", "list", "--porcelain", "-z"))
+            .Any(r => LandingGit.PathsEqual(r.Path, task.Path));
+        public void ClearHooks() { world.Fixture.Git.BeforeCommand = null; world.Fixture.Git.AfterCommand = null; }
+        public async Task AssertCustodyAsync(byte[] expected, string evidence)
+        {
+            (await world.SnapshotAsync(task.Path)).ShouldBe(Snapshot);
+            (await RegisteredAsync()).ShouldBeTrue();
+            (await RequiredAsync(world.Fixture.Repository, "show-ref", "--verify", "--hash", task.FullRef)).Trim().ShouldBe(Pushed);
+            (await RequiredAsync(world.Fixture.Remote, "show-ref")).ShouldBe(Origin);
+            (await File.ReadAllBytesAsync(evidence, ct)).ShouldBe(expected);
+            (await File.ReadAllBytesAsync(BranchLog, ct)).ShouldBe(BranchBytes);
+        }
+        public async Task AssertRefusedAsync(DesktopLegacyReleasePolicyService.TickResult tick)
+        {
+            (await world.RowAsync(tick.RunId, task)).ReasonCode.ShouldBe("reflog_salvage_failed");
+            (await world.ReleasesAsync(task)).Single().State.ShouldNotBe(WorktreeRetirementState.Complete);
+        }
+        public async Task CaptureAsync(string? evidence = null)
+        {
+            // Emit physical state before the preservation assertion can abort a mutant result.
+            Console.WriteLine("post-tick:" + JsonSerializer.Serialize(new
+            {
+                caseId, sourceExists = Directory.Exists(task.Path),
+                asideExists = Directory.Exists(WorktreeSetAside.SetAsidePath(task.Path)),
+                registered = await RegisteredAsync(),
+                sourceRef = await RunAsync(world.Fixture.Repository, "show-ref", "--verify", "--hash", task.FullRef),
+                headLog = File.Exists(HeadLog), branchLog = File.Exists(BranchLog),
+                evidenceExists = File.Exists(evidence ?? HeadLog),
+                evidenceHash = File.Exists(evidence ?? HeadLog) ? Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(evidence ?? HeadLog, ct))) : null,
+                refs = await RequiredAsync(world.Fixture.Repository, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", Prefix),
+                reachable = await RequiredAsync(world.Fixture.Repository, "rev-list", "--all"),
+            }));
+        }
+        public ValueTask DisposeAsync() { ClearHooks(); return world.DisposeAsync(); }
+    }
 
     /// <summary>(i) The rewritten commit is still reachable through its salvage ref once the tree is retired.</summary>
     [Test]

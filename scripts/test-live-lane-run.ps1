@@ -17,7 +17,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = '65629ab0a1f1e75c2dff12df4efb8e60b9000e574486c7764d4ba98a76adee4a'
+$script:PinnedInputDigest = '1b87b54e8b22bbee3ea3c86ca248a925628ea1b0af52589d2e027fa3d37f130c'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
