@@ -8,6 +8,15 @@ Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests
 
 # CARD-1731: real PowerShell/Git snapshot isolation and write-count witnesses; baseline methods measured 22-26s on loaded Linux.
 Antiphon.Tests.Scripts.C599SnapshotTests
+# CARD-0824: real caller queue receipt and settlement/outbox recovery cuts.
+Antiphon.Tests.Application.C0824RefOnlyReceiptTests
+
+# CARD-0824: committed source bytes, NUL diff, immutable bundle source and bounded blob controls.
+Antiphon.Tests.Application.C0824RefOnlyDeliverableTests
+
+# CARD-0824: isolated report-store and exact read/count integration witnesses.
+Antiphon.Tests.Application.C0824RefOnlyReadTests
+
 # CARD-0824: exact RefOnly debt producer, restart and claim/save witnesses using shared PostgreSQL templates.
 Antiphon.Tests.Application.C0824RefOnlyDebtTests
 

@@ -1179,7 +1179,8 @@ public sealed class RunnerSettlementSyncTests
         }
 
         public static async Task<SyncWorld> CreateAsync(
-            bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false, bool cardBranch = false)
+            bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false, bool cardBranch = false,
+            IReadOnlyDictionary<string, string>? initialFiles = null)
         {
             var world = new SyncWorld { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
@@ -1189,6 +1190,12 @@ public sealed class RunnerSettlementSyncTests
             await world.ConfigureAsync(world.Desktop);
             File.WriteAllText(Path.Combine(world.Desktop, "README.md"), "base\n");
             await world.RunAsync(world.Desktop, "add", "README.md");
+            foreach (var file in initialFiles ?? new Dictionary<string, string>())
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(world.Desktop, file.Key))!);
+                await File.WriteAllTextAsync(Path.Combine(world.Desktop, file.Key), file.Value);
+                await world.RunAsync(world.Desktop, "add", "--", file.Key);
+            }
             await world.RunAsync(world.Desktop, "commit", "-m", "base");
             if (extraMasterCommit)
             {
