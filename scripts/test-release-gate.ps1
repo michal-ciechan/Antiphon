@@ -5023,6 +5023,7 @@ function Clear-C599FixtureReadOnly {
 }
 
 . (Join-Path $here 'fixtures/c1500-status.ps1')
+. (Join-Path $here 'fixtures/c1731-snapshot.ps1')
 $cases = Get-C487CaseFunctions -Prefix 'C599_'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
