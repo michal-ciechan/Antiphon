@@ -1,4 +1,46 @@
-Batch 85 remains unlanded: the caller's explicit stop condition reproduced for C599A_ExecutionLedger in the requested isolated rerun.
+Batch 85 landed successfully on master at `0dbd8295a034f8d88f5b98d1e29f14ac82c1890a` under the caller's explicit PUSH decision. Ledger timeouts remain a loud warning; no failed or incomplete verification has been relabelled green.
+
+## Final publication decision and outcome
+
+The final reopened input `.antiphon/inbox/fa3d36d2-8230-47bf-89ca-1cfb28142cea.md` explicitly ordered PUSH, a cheap static reachability check, no further hash-reader run, and a loud inherited-load-sensitivity warning. That instruction superseded the earlier STOP. Publication proceeded under that authority without asking for another approval. The caller stated that a follow-up card will be filed; this delegate did not file one.
+
+- Remote master before publication: `1527c29fef2737bf3eaa49f2293d82d85402265a`.
+- New remote master, confirmed with `git ls-remote`: `0dbd8295a034f8d88f5b98d1e29f14ac82c1890a`.
+- One plain fast-forward push succeeded on its first attempt: `git push origin 0dbd8295a034f8d88f5b98d1e29f14ac82c1890a:refs/heads/master`.
+- Just-in-time `git fetch origin master` confirmed the original base remained current. `git merge-base --is-ancestor origin/master 0dbd8295a034f8d88f5b98d1e29f14ac82c1890a` exited 0, and `git merge-tree --write-tree origin/master 0dbd8295a034f8d88f5b98d1e29f14ac82c1890a` completed without conflict, tree `eff2bf7d73c889f08b827fd4549acbfec566e362`.
+- Master-moved re-pick loops: 0. Push retries: 0. No additional build or test ran in this final continuation, and no hash-reader rerun occurred. No rc ref was pushed and no service was activated.
+- Only the four source-deliverable commits were published to master. Delegate report commits remain on `feat/card-task-973b4d1b`. No source change, conflict resolution, rebase, reset, amend or branch switch was needed.
+
+### Landed commits and patch proof
+
+| Land SHA | Source SHA | Stable patch ID |
+|---|---|---|
+| 8747ca113dcef755481ff8e48fc5b0bd03eaded4 | 19b9e69513551259b7c56eec03b77ef3a4cc861c | 621ddd9593daa920351eea47aaf5179d1b75a31c |
+| 2b6fbb1e227d36e550c23222dd966cdb98b8f254 | 88ed031df17ad9559d830e7cf120faaaddf05b27 | ab1c8d981b07a3a093e4697cb77706ca60184a52 |
+| 2bb8f1a931cea84e1683def56a9baf84c70d1f6e | cc4ab8e31349db759181a2931e8840ec6d79805f | a463ba1cd590e6fd7dfa5aa603ff54c802e7eee8 |
+| 0dbd8295a034f8d88f5b98d1e29f14ac82c1890a | e51d45b7c4678be10912b72b4f74b4bd13ac2b04 | a41f3049d74fc0be1f26be70ad5ce12990e967b8 |
+
+### Cheap static ledger reachability check
+
+`rg` and focused source reads followed all three C# methods through `RunCaseAsync`, `ScriptHarness`, their exact PowerShell case functions, the shared publication fixture and the production authority/publisher. This was a read-only check; no test was run.
+
+- `ReleaseGatePublicationAuthorityTests.cs` lines 79, 102 and 113 route the three named cases to `scripts/test-release-gate.ps1`.
+- That script's exact functions (lines 2851, 3107 and 3223) each call `New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)`.
+- `Get-C599ABasePolicyBytes` (line 2474) reads unchanged `scripts/fixtures/c599-policy-v2.json`. `New-C599PolicyCheckout` accepts those explicit bytes; its read of the live `tests/test-execution-policy.json` at line 319 is only the null-PolicyBytes fallback, bypassed by these three cases.
+- The fixture writes those bytes to its private checkout's `tests/test-execution-policy.json`, commits them, and the production authority reads that pinned blob and computes/validates `policyHash` (`scripts/lib/release-authority.ps1`, `ConvertFrom-ReleaseAuthorityPolicyBytes`, `New-ReleaseGateAuthority` and `Test-ReleaseGateAuthority`). Thus these tests **do read policyHash and a fixture policy at that relative path**; they do not consume the batch's changed policy bytes.
+- No live-lane `PinnedInputDigest`/`test-live-lane-run.ps1` read was found in this exercised path. The authority's script-hash list excludes the live-lane runner. The three other changed Markdown plans, TestDesign document and bundle instruction are not read by this ledger path. The tested C# methods/helper, harness, fixture, authority, policy reader and publisher have no diff from the original base.
+
+### LOUD WARNING: inherited load sensitivity; incomplete reader receipt retained
+
+The caller classified these ledger timeout outcomes as inherited load sensitivity and explicitly accepted publication. The recorded results remain: candidate 0 passed / 3 failed; base 1 passed / 2 failed, with unchanged 300s budgets. Ledger alone passed at base in 258.553s and timed out at candidate in 300.136s; Joins and Markers timed out at both. Static reading does not independently prove scheduling causation. No regression or green result is fabricated from this decision.
+
+The full hash-reader selection still has no clean complete receipt. It was not rerun, as explicitly instructed. Retained successful checks are the solution build (0 errors), policy/contract sweep (76 passed, 0 failed, 0 skipped, all four formerly red witnesses green), exact census (1 passed at each tree), report delivery (2 passed), and both approved 69-record land-graph checks. Exact counts, identities, old/new digests and historical receipts follow below. All owned native outputs/results and the detached base checkout were already removed; this final continuation created no test outputs.
+
+## Historical isolated-rerun report
+
+The following report records the earlier STOP before the final PUSH decision above. Its outcomes and costs are preserved.
+
+Batch 85 remained unlanded at that point: the caller's then-current explicit stop condition reproduced for C599A_ExecutionLedger in the requested isolated rerun.
 
 ## Current outcome and authority
 
@@ -293,6 +335,6 @@ BUILD SLOT released lease=8cc54a73-9e99-4aa8-91a6-cb1cfb45d6e8 held=256s
 
 
 --- next stage ---
-next: merge
-handoff: STOP condition reproduced: Ledger passed at base and timed out at candidate. A caller decision is needed before any further reader execution or master push; the one-shot comparison is complete.
+next: done
+handoff: Master fast-forward confirmed at 0dbd8295a034f8d88f5b98d1e29f14ac82c1890a under the caller's explicit PUSH decision. Retain the ledger-timeout warning and incomplete hash-reader receipt; caller owns the promised follow-up card. No rc publication or activation occurred.
 artifact: .antiphon/task-973b4d1b.md
