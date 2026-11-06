@@ -175,8 +175,17 @@ Dispatched outcome, with all warning assertions intact. No extra tick, retry,
 assertion relaxation or timeout increase is authorized. If production repair is
 needed, commit its failing witness first, then the smallest demonstrated fix.
 
-After diagnosis/repair run CP-6 once over all 136 affected cases and CP-7 once over
-all eight guard classes. V-1/V-2/V-4/V-5/R-1/R-2 and V-3 remain required. All PC
+V-7 adds C1581_ChangedDefaultReinspectionUsesCurrentIntent before the fix. A bounded
+database-read barrier holds the replacement worker across the next enqueue tick;
+the worker is released and joined before consumption. It keeps C540's four total
+ticks and every dispatch/base-warning oracle. CP-9 must fail the dispatch assertion
+at committed pre-fix production, not build/fixture/timeout. The ten-second barrier
+guard is provisional (one subsecond Review failure), not a widened existing timeout.
+
+After diagnosis/repair run CP-6 once over all 136 original affected cases, V-7 and
+the full DispatcherSiblingInspectionSchedulingTests class, protecting stale-intent,
+lease retention and frozen-ref fences; CP-7 once over all eight guard classes.
+V-1/V-2/V-4/V-5/V-7/R-1/R-2 and V-3 remain required. All PC
 variants stay pending SourceLanding Mutation. No OS-selected behavior or startup
 dependency is intentionally changed; inspect any actual fix before rc selection.
 
@@ -193,5 +202,6 @@ limitations as above; no p95 claim. No unchanged green selection is repeated.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-8 | S6 | tests/Antiphon.Tests -> bin-c1581-r3-diagnostic/ | c540-diagnostic | /*/*/AgentTaskDispatchBaseGuardTests/C540_ReducedWarningsKeepBaseDiagnostics | V-6 | exact unchanged method, actual outcome retained | 1 | 8 | true |
-| CP-6 | S7 | tests/Antiphon.Tests -> bin-c1581-r3-affected/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)/* | V-1,V-2,V-4,V-5,R-1 | every named full class; zero failed | 136 | 8 | true |
+| CP-9 | S6-red | tests/Antiphon.Tests -> bin-c1581-r3-red/ | c540-ordered-red | /*/*/AgentTaskDispatchBaseGuardTests/C1581_ChangedDefaultReinspectionUsesCurrentIntent | V-7 | intended dispatch assertion failure at unchanged production | 1 | 8 | true |
+| CP-6 | S7 | tests/Antiphon.Tests -> bin-c1581-r3-affected/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)\|(DispatcherSiblingInspectionSchedulingTests*)/* | V-1,V-2,V-4,V-5,V-7,R-1 | every named full class; zero failed | 137 | 8 | true |
 | CP-7 | S7 | CP-6 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |

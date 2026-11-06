@@ -191,6 +191,53 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
+    public async Task C1581_ChangedDefaultReinspectionUsesCurrentIntent()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var a = await w.AddAsync(); var alias = await w.AddAsync(a, alias: true);
+        var b = await w.AddAsync(a); var c = await w.AddAsync();
+        w.Task.ProjectId = w.Project.Id; w.Project.BaseBranch = "master";
+        var gate = new ReinspectionDefaultReadGate();
+        await w.RunAsync([(b, 2), (c, 0)], onLease: async () =>
+        {
+            await using var db = w.Fresh();
+            await db.Projects.Where(p => p.Id == w.Project.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.BaseBranch, "missing-c540"));
+            gate.Arm();
+        }, diagnostics: [DispatchBaseNotificationPayload.DefaultUnresolvedKey], reobserve: true,
+            reinspectionGate: gate);
+    }
+
+    // Hold the replacement worker's default read across the next enqueue tick. The tick's
+    // context tracks the claim; the owned worker uses a fresh, untracked database scope.
+    private sealed class ReinspectionDefaultReadGate : DbCommandInterceptor
+    {
+        private int _armed;
+        private int _entered;
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken ct = default)
+        {
+            if (Volatile.Read(ref _armed) == 1
+                && command.CommandText.Contains("SELECT p.\"BaseBranch\"", StringComparison.Ordinal)
+                && eventData.Context is AppDbContext context
+                && !context.ChangeTracker.Entries<AgentTask>().Any()
+                && Interlocked.Exchange(ref _entered, 1) == 0)
+            {
+                Entered.TrySetResult();
+                // Cancellation must not let the obsolete worker finish before the tick has
+                // observed it. The test releases and joins it in finally; this guard is bounded.
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            return result;
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
@@ -529,7 +576,8 @@ public partial class AgentTaskDispatchBaseGuardTests
             _siblings.Add(sibling); return sibling;
         }
         public async Task RunAsync((AgentTask Task, int Covered)[] expected, Func<Task>? onLease = null,
-            string[]? diagnostics = null, LandingGit? git = null, bool reobserve = false)
+            string[]? diagnostics = null, LandingGit? git = null, bool reobserve = false,
+            ReinspectionDefaultReadGate? reinspectionGate = null)
         {
             diagnostics ??= [];
             await Db.SaveChangesAsync();
@@ -544,7 +592,8 @@ public partial class AgentTaskDispatchBaseGuardTests
                 await File.WriteAllTextAsync(Path.Combine(sentinel, "README.md"), "dirty tracked sentinel");
                 await File.WriteAllTextAsync(Path.Combine(sentinel, "untracked.txt"), "untracked sentinel");
             }
-            await using var provider = CreateProvider(Connection, Repo.WorktreeRoot, onLeaseAcquired: onLease, git: git);
+            await using var provider = CreateProvider(Connection, Repo.WorktreeRoot, onLeaseAcquired: onLease,
+                git: git, interceptor: reinspectionGate);
             await using var scope = provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
             if (reobserve)
@@ -553,7 +602,25 @@ public partial class AgentTaskDispatchBaseGuardTests
                 // inspected tick observes the edit and dispatches from what it observed.
                 await using (var refused = Fresh())
                     (await refused.AgentTasks.SingleAsync(t => t.Id == Task.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+                if (reinspectionGate is null)
+                    await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+                else
+                {
+                    var queue = provider.GetRequiredService<CardSiblingInspectionQueue>();
+                    var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+                    try
+                    {
+                        await reinspectionGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                        await dispatcher.TickAsync(default);
+                    }
+                    finally
+                    {
+                        reinspectionGate.Release.TrySetResult();
+                        await queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                    }
+                    // Same enqueue/completion/consumption sequence as TickInspectedAsync above.
+                    await dispatcher.TickAsync(default);
+                }
             }
             await using var check = Fresh();
             var dispatched = await check.AgentTasks.SingleAsync(t => t.Id == Task.Id);
