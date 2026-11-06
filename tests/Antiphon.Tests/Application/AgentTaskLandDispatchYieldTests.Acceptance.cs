@@ -57,6 +57,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
         });
         capture.Configure = adapter =>
         {
+            adapter.WithClaudeDialogObservation();
             adapter.RegisterOnStart = caller.Runtime;
             adapter.OnSubmitted = async submitted =>
             {
@@ -110,7 +111,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
         var note = await observer.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n =>
             n.TaskId == h.Harness.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
         note.RequestId.ShouldBe(request.Id);
-        note.SourceEventId.ShouldBe(request.TerminalEventId);
+        note.SourceEventId.ShouldBe(request.TerminalEventId.ShouldNotBeNull());
         if (arm == "enqueue-failure") delivery.Cut = "queue-inserted";
         await ScanNotificationsAsync();
         if (arm == "enqueue-failure")
@@ -141,7 +142,8 @@ public sealed partial class AgentTaskLandDispatchYieldTests
         PromptSubmissionMatch.IsCompleteIn(note.Body, prompt.Text!).ShouldBeTrue();
         caller.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(prompt.Text);
         (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Harness.Fixture.TaskId && e.IsLandTerminal)).ShouldBe(1);
-        h.Harness.Fixture.Git.Trace.Count(a => a[0] == "push").ShouldBe(1);
+        h.Harness.Fixture.Git.Trace.Count(a => a[0] == "push"
+            && a.Any(value => value.EndsWith(":" + h.Harness.Fixture.TargetRef, StringComparison.Ordinal))).ShouldBe(1);
 
         async Task DispatchAndConfirmAsync(Guid id)
         {
@@ -153,7 +155,7 @@ public sealed partial class AgentTaskLandDispatchYieldTests
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
             task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
             var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == id);
-            row.AgentSessionId.ShouldBe(task.AgentSessionId);
+            row.AgentSessionId.ShouldBe(task.AgentSessionId.ShouldNotBeNull());
             row.Body.ShouldContain(DelegationReportFormatter.TaskMarker(id));
             var prompts = await db.TranscriptEntries.AsNoTracking().Where(t =>
                 t.AgentSessionId == task.AgentSessionId && t.Kind == TranscriptKinds.UserPrompt).ToListAsync();
