@@ -45,7 +45,7 @@ public sealed class C0824RefOnlyReadTests
         ((object?)observed.UntrackedFiles).ShouldBeNull("runner-untracked-unknown");
         var digest = DelegateCheckProbe.RenderDigest(facts);
         digest.ShouldContain("creation baseline"); digest.ShouldContain("stale");
-        digest.ShouldContain(baseline.CapturedAt.ToString("O"), "check-sha-and-time:baseline");
+        digest.ShouldContain(baseline.CapturedAt.ToString("O"), Case.Sensitive, "check-sha-and-time:baseline");
         (await f.InventoryAsync()).ShouldBe(before, "Check-never-moves-refs");
         await w.RunAsync(w.Desktop, "remote", "add", "origin", w.Origin);
         var source = await w.RunnerPushAsync("work.txt", "confirmed bytes");
@@ -105,13 +105,13 @@ public sealed class C0824RefOnlyReadTests
             if (state == "refused")
             {
                 w.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
-                note.ShouldNotContain(DelegationGitFacts.FormatHeader(3, 3), "no-main-HEAD-count");
-                note.ShouldNotContain(DelegationGitFacts.FormatHeader(0, 0), "unknown-is-not-zero");
+                note.ShouldNotContain(DelegationGitFacts.FormatHeader(3, 3), Case.Sensitive, "no-main-HEAD-count");
+                note.ShouldNotContain(DelegationGitFacts.FormatHeader(0, 0), Case.Sensitive, "unknown-is-not-zero");
             }
             else
             {
                 w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, w.Task.CompletionProgressEvidenceJson);
-                note.ShouldContain(DelegationGitFacts.FormatHeader(1, 1), "count=B..S:" + state);
+                note.ShouldContain(DelegationGitFacts.FormatHeader(1, 1), Case.Sensitive, "count=B..S:" + state);
                 if (state == "pending")
                 {
                     w.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull("pending-not-confirmed");
@@ -119,7 +119,7 @@ public sealed class C0824RefOnlyReadTests
                 }
                 await using var db = w.CreateContext();
                 var outcome = await db.StageOutcomes.AsNoTracking().SingleAsync(o => o.StageTaskId == w.TaskId);
-                outcome.Detail.ShouldContain("commits=1", "repair-hint-count=B..S:" + state);
+                outcome.Detail.ShouldContain("commits=1", Case.Sensitive, "repair-hint-count=B..S:" + state);
             }
         }
     }
@@ -149,7 +149,7 @@ public sealed class C0824RefOnlyReadTests
             w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, "full-report-settles:" + storage);
             await using var db = w.CreateContext();
             var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.TaskId);
-            row.Result.ShouldNotBeNull().ShouldContain(raw, "result-full:" + storage);
+            row.Result.ShouldNotBeNull().ShouldContain(raw, Case.Sensitive, "result-full:" + storage);
             if (storage == "canonical")
             {
                 row.ResultFilePath.ShouldNotBeNull();
@@ -159,7 +159,7 @@ public sealed class C0824RefOnlyReadTests
             else
             {
                 row.ResultFilePath.ShouldBeNull("canonical-pointer-unavailable:" + storage);
-                (await w.NoteAsync()).ShouldNotBeNull().Body.ShouldContain("GET /api/agent-tasks/" + w.TaskId, "unavailable-file-retains-API-pointer");
+                (await w.NoteAsync()).ShouldNotBeNull().Body.ShouldContain("GET /api/agent-tasks/" + w.TaskId, Case.Sensitive, "unavailable-file-retains-API-pointer");
             }
             File.Exists(mainSpill).ShouldBeFalse("no-spill-write:" + storage);
             (await File.ReadAllTextAsync(identitySpill)).ShouldBe("foreign report decoy", "no-decoy-read-or-write");

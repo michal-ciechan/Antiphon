@@ -60,7 +60,7 @@ public sealed class C0824RefOnlyReceiptTests
             else if (cut is not ("eligible" or "busy" or "receipt-before-save"))
                 fault.Hit.ShouldBeTrue("reached:W1:" + cut);
             w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, w.Task.CompletionProgressEvidenceJson);
-            w.Task.Result.ShouldNotBeNull().ShouldContain(raw, "full-result-retained");
+            w.Task.Result.ShouldNotBeNull().ShouldContain(raw, Case.Sensitive, "full-result-retained");
             var obligation = (await w.ObligationsAsync()).ShouldHaveSingleItem();
             obligation.TaskId.ShouldBe(w.TaskId); obligation.ConfirmedAt.ShouldBeNull();
             var digest = obligation.ContentDigest;
@@ -114,7 +114,7 @@ public sealed class C0824RefOnlyReceiptTests
                 {
                     await using (var db = w.CreateContext())
                     {
-                        if (dimension == "body") await db.TranscriptEntries.Where(p => p.Id == accepted.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Text, delivery.WireText[..(delivery.WireText.Length / 2)]));
+                        if (dimension == "body") await db.TranscriptEntries.Where(p => p.Id == accepted.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Text, delivery.WireText.Substring(0, delivery.WireText.Length / 2)));
                         if (dimension == "kind") await db.TranscriptEntries.Where(p => p.Id == accepted.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Kind, TranscriptKinds.QueuedUserPrompt));
                         if (dimension == "destination") await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.AgentSessionId, w.SessionId));
                         if (dimension == "generation") await db.AgentSessions.Where(s => s.Id == w.CallerSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, row.LastDeliveryGeneration!.Value.AddMinutes(1)));
