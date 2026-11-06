@@ -27,6 +27,11 @@ public sealed class AgentTaskSyncDebt
     public string? SourceSha { get; set; }
     public string? DesktopBeforeSha { get; set; }
     public string? EndpointFingerprint { get; set; }
+    /// <summary>
+    /// Immutable workspace episode accepted with a RefOnly settlement. Null on legacy Checkout
+    /// debt; an absent or invalid snapshot never authorizes RefOnly recovery.
+    /// </summary>
+    public string? WorkspaceSnapshotJson { get; set; }
     public AgentTaskSyncDebtState State { get; set; }
     public string ReasonCode { get; set; } = "runner_sync_lease_busy";
     public int Attempts { get; set; }
