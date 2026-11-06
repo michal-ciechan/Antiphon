@@ -156,7 +156,7 @@ public sealed class C1708ReflogSalvageTests
             using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "raw-reflog-fault");
             if (variant == "unreadable")
             {
-                OperatingSystem.IsLinux().ShouldBeTrue("fixture unavailable outside Linux");
+                if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("fixture unavailable outside Linux");
                 var uid = (await File.ReadAllLinesAsync("/proc/self/status", ct)).Single(l => l.StartsWith("Uid:", StringComparison.Ordinal))
                     .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
                 uint.Parse(uid[2], System.Globalization.CultureInfo.InvariantCulture).ShouldNotBe(0u, "fixture unavailable for root");
@@ -280,7 +280,7 @@ public sealed class C1708ReflogSalvageTests
                              && p != s.HeadLog && p != s.BranchLog))
                 RawIds(await File.ReadAllTextAsync(log, ct), s.Pushed.Length).ShouldNotContain(s.Lost);
             s.Origin = await s.RequiredAsync(w.Fixture.Remote, "show-ref");
-            s.Snapshot = await w.SnapshotAsync(a.Path);
+            s.Snapshot = await s.SnapshotAsync();
             Console.WriteLine("reached:" + caseId + ":exclusive-" + (branchOnly ? "branch" : "head") + (oldOnly ? ":old-id-only" : ""));
             return s;
         }
@@ -348,9 +348,21 @@ public sealed class C1708ReflogSalvageTests
             await RequiredAsync(world.Fixture.Repository, "worktree", "list", "--porcelain", "-z"))
             .Any(r => LandingGit.PathsEqual(r.Path, task.Path));
         public void ClearHooks() { world.Fixture.Git.BeforeCommand = null; world.Fixture.Git.AfterCommand = null; }
+        public async Task<string> SnapshotAsync()
+        {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "source-snapshot");
+            var head = await RequiredAsync(task.Path, "rev-parse", "HEAD");
+            var status = await RequiredAsync(task.Path, "status", "--porcelain=v1", "--untracked-files=all");
+            var files = new List<string>();
+            foreach (var file in Directory.EnumerateFiles(task.Path, "*",
+                         new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }).Order(StringComparer.Ordinal))
+                files.Add(Path.GetRelativePath(task.Path, file) + ":" + Convert.ToHexString(SHA256.HashData(
+                    await File.ReadAllBytesAsync(file, ct).WaitAsync(TimeSpan.FromSeconds(5), ct))));
+            return head + "\n" + status + "\n" + string.Join("\n", files);
+        }
         public async Task AssertCustodyAsync(byte[] expected, string evidence)
         {
-            (await world.SnapshotAsync(task.Path)).ShouldBe(Snapshot);
+            (await SnapshotAsync()).ShouldBe(Snapshot);
             (await RegisteredAsync()).ShouldBeTrue();
             (await RequiredAsync(world.Fixture.Repository, "show-ref", "--verify", "--hash", task.FullRef)).Trim().ShouldBe(Pushed);
             (await RequiredAsync(world.Fixture.Remote, "show-ref")).ShouldBe(Origin);
