@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -89,6 +91,38 @@ public sealed class C0824RefOnlyDeliverableTests
         await w.RestartServicesAsync();
         await using (var db = w.CreateContext()) await f.Bundles.TryBuildAsync(w.Task, "Wrote `docs/b.md`.", db, default);
         (await f.ManifestAsync()).Sources.ShouldHaveSingleItem().Sha256.ShouldBe(Convert.ToHexStringLower(SHA256.HashData(second)));
+        var accepted = w.Evidence().ShouldNotBeNull();
+        var pin = accepted.RemoteSync!.ObservationRef ?? RemoteWorkspaceService.SettlementPin(w.TaskId);
+        foreach (var admission in new[] { "pending", "unpinned", "unconfirmed", "invalid-source" })
+        {
+            var sync = accepted.RemoteSync with { State = admission == "unconfirmed"
+                    ? RemoteSettlementSyncState.Unavailable : RemoteSettlementSyncState.Pending,
+                ConfirmedSha = null, SourceDescends = true };
+            if (admission == "invalid-source") sync = sync with { ObservedSha = new string('f', source.Length) };
+            w.Task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(accepted with { RemoteSync = sync });
+            w.Task.DeliverableBundleDir = null;
+            await using (var db = w.CreateContext())
+                await db.AgentTasks.Where(t => t.Id == w.TaskId).ExecuteUpdateAsync(u =>
+                    u.SetProperty(t => t.CompletionProgressEvidenceJson, w.Task.CompletionProgressEvidenceJson)
+                        .SetProperty(t => t.DeliverableBundleDir, (string?)null));
+            if (admission == "unpinned") await w.Git.RunAsync(w.Git.Desktop, "update-ref", "-d", pin, source);
+            f.Git.ByteReads.Clear(); f.Git.LengthReads.Clear();
+            await using (var db = w.CreateContext()) await f.Bundles.TryBuildAsync(w.Task, "Wrote `docs/b.md`.", db, default);
+            if (admission == "pending")
+            {
+                (await f.ManifestAsync()).Sources.ShouldHaveSingleItem().Sha256
+                    .ShouldBe(Convert.ToHexStringLower(SHA256.HashData(second)), "admitted-pending-members-from=S");
+                f.Git.ByteReads.ShouldAllBe(r => r.Sha == source);
+                w.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull("pending-never-confirmed");
+            }
+            else
+            {
+                w.Task.DeliverableBundleDir.ShouldBeNull("unavailable-source:" + admission);
+                f.Git.ByteReads.ShouldBeEmpty("no-moving-ref-fallback:" + admission);
+                f.Git.LengthReads.ShouldBeEmpty("no-size-read-without-admission:" + admission);
+            }
+            if (admission == "unpinned") await w.Git.RunAsync(w.Git.Desktop, "update-ref", pin, source, new string('0', source.Length));
+        }
     }
 
     [Test]
@@ -176,6 +210,14 @@ public sealed class C0824RefOnlyDeliverableTests
             if (fault == "lying-length") f.Git.ByteReads.ShouldHaveSingleItem().Budget.ShouldBe(8, "streaming-budget-is-enforced");
             else f.Git.ByteReads.ShouldBeEmpty("budget-length-refused-before-allocation");
         }
+        // Reach the actual streaming reader directly, so a caller's length mismatch cannot
+        // mask the independent stdout cap. The positive boundary uses the same real blob.
+        f.Git.LengthOverride = null;
+        (await f.Git.GetContentLengthAtAsync(w.Git.Desktop, "docs/over.md", source, default)).ShouldBe(9);
+        (await f.Git.GetContentBytesAtAsync(w.Git.Desktop, "docs/over.md", source, 8, default))
+            .ShouldBeNull("streaming-cap-rejects-real-overflow");
+        (await f.Git.GetContentBytesAtAsync(w.Git.Desktop, "docs/over.md", source, 9, default))
+            .ShouldBe(Encoding.UTF8.GetBytes("123456789"), "streaming-cap-inclusive-boundary");
         f.Settings.StorageRoot = w.Task.WorktreePath;
         await using (var db = w.CreateContext()) await f.Bundles.TryBuildAsync(w.Task, "Wrote `docs/safe.md`.", db, default);
         Directory.Exists(w.Task.WorktreePath!).ShouldBeFalse("identity-is-never-an-artifact-destination");
