@@ -97,6 +97,15 @@ public sealed partial class AgentTaskLandDispatchYieldTests
             await h.Harness.RestartServicesAsync(); // discard the volatile land queue; durable request replays
             h.Harness.Queue.IsActive(h.Harness.Fixture.TaskId).ShouldBeFalse();
         }
+        // Dispatch reconciles its waiter registry. Reproduce the stale lease refusal at
+        // the second land selection, and prove the real base resolver still needs this land.
+        h.Waiters.Register(await h.CommonAsync(), dependent.Id, RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+        h.Waiters.Snapshot(await h.CommonAsync()).Select(w => w.TaskId).ShouldContain(dependent.Id);
+        await using (var scope = caller.Provider.CreateAsyncScope())
+        {
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>()
+                .ResolveAsync(dependent, default)).Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
+        }
         var busy = arm is "busy" or "enqueue-failure";
         if (busy) await caller.MarkWorkingAsync();
         h.Clock.Advance(TimeSpan.FromSeconds(1));
