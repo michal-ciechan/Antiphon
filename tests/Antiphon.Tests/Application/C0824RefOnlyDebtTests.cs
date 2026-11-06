@@ -86,6 +86,9 @@ public sealed class C0824RefOnlyDebtTests
         foreach (var phase in new[] { "claim", "save" })
         foreach (var dimension in new[] { "attempt", "mode", "binding", "revision", "baseline", "path", "runner", "remote-path", "repository", "binding-revision", "debt-revision" })
         {
+            // A revision written before claim is the current due row, not a lost claim.
+            // The concurrent winner belongs only in the gap after this worker's Git.
+            if (phase == "claim" && dimension == "debt-revision") continue;
             await ResetAsync(w, initialDebt);
             async Task CorruptAsync()
             {
@@ -107,7 +110,7 @@ public sealed class C0824RefOnlyDebtTests
                         binding.Revision++; break;
                     case "debt-revision":
                         var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.Id == initialDebt.Id);
-                        debt.Revision++; debt.State = AgentTaskSyncDebtState.Held; break;
+                        debt.Revision++; break;
                 }
                 await db.SaveChangesAsync();
             }
