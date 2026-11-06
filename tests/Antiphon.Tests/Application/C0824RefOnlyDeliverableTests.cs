@@ -56,7 +56,12 @@ public sealed class C0824RefOnlyDeliverableTests
         var w = f.World;
         var first = Encoding.UTF8.GetBytes("first at S\r\n");
         var second = Encoding.UTF8.GetBytes("second at S\r\n");
-        var source = await f.CommitAsync(new Dictionary<string, byte[]> { ["docs/a.md"] = first, ["docs/b.md"] = second });
+        // A mixed commit makes the report's named paths decisive; a docs-only diff
+        // intentionally auto-includes every document, including on replay.
+        var source = await f.CommitAsync(new Dictionary<string, byte[]>
+        {
+            ["docs/a.md"] = first, ["docs/b.md"] = second, ["mixed.cs"] = Encoding.UTF8.GetBytes("// source companion"),
+        });
         var moved = false;
         string? newer = null;
         f.Bundles.BeforeCommittedMemberAsync = async (relative, _) =>
@@ -132,6 +137,7 @@ public sealed class C0824RefOnlyDeliverableTests
             ["docs/safe.md"] = Encoding.UTF8.GetBytes("small"), ["docs/exact.md"] = Encoding.UTF8.GetBytes("12345678"),
             ["docs/over.md"] = Encoding.UTF8.GetBytes("123456789"), ["docs/cards/secret.md"] = Encoding.UTF8.GetBytes("excluded"),
             [".antiphon/secret.md"] = Encoding.UTF8.GetBytes("excluded"),
+            ["mixed.cs"] = Encoding.UTF8.GetBytes("// named-path budget fixture"),
         });
         f.Settings.MaxSourceBytes = 8; f.Settings.MaxTotalSourceBytes = 13;
         var report = "Wrote `docs/safe.md`, `docs/exact.md`, `docs/over.md`, `docs/link.md`, `docs/missing.md`, `docs/cards/secret.md`, `../docs/safe.md`, `/docs/safe.md`, `.antiphon/secret.md`.";
@@ -155,13 +161,18 @@ public sealed class C0824RefOnlyDeliverableTests
             f.Git.ByteReads.Clear(); f.Git.LengthReads.Clear();
             var path = fault == "total-budget" ? "docs/safe.md" : "docs/over.md";
             f.Settings.MaxTotalSourceBytes = fault == "total-budget" ? 4 : fault == "per-source" ? 100 : 8;
-            f.Git.LengthOverride = fault switch { "lying-length" => _ => 1, "failed-length" => _ => null, _ => null };
+            f.Git.LengthOverride = fault switch
+            {
+                "lying-length" => _ => 1, "failed-length" => _ => null, _ => (Func<string, long?>?)null,
+            };
             await using var db = w.CreateContext();
             await f.Bundles.TryBuildAsync(w.Task, "Wrote `" + path + "`.", db, default);
             var omitted = await f.ManifestAsync();
             omitted.Complete.ShouldBeFalse("omitted:" + fault);
             omitted.Sources.ShouldBeEmpty("overflow-is-not-an-empty-success");
             omitted.Omitted.ShouldContain(m => m.OriginalRelativePath == path);
+            if (fault is "per-source" or "total-budget")
+                omitted.Omitted.ShouldContain(m => m.OriginalRelativePath == path && m.Reason == "source byte budget exceeded", "real-length-reaches-budget:" + fault);
             if (fault == "lying-length") f.Git.ByteReads.ShouldHaveSingleItem().Budget.ShouldBe(8, "streaming-budget-is-enforced");
             else f.Git.ByteReads.ShouldBeEmpty("budget-length-refused-before-allocation");
         }
