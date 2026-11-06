@@ -440,3 +440,5 @@ Antiphon.Tests.Application.C0824RefOnlyCleanupTests
 
 # CARD-0824: isolated PostgreSQL Up/Down and recorded-snapshot loss refusal; migrations are the subject.
 Antiphon.Tests.Application.C0824RefOnlySnapshotMigrationTests
+# real Git scratch repositories compare index, commit-tree and blob reads across staging and source set-aside.
+Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
