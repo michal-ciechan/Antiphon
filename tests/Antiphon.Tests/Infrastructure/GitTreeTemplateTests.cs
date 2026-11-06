@@ -126,6 +126,55 @@ public sealed class GitTreeTemplateTests
         }
     }
 
+    [Test]
+    public async Task ScratchGitRepo_clone_is_the_repository_git_init_makes()
+    {
+        GitTreeTemplate.Enabled.ShouldBeTrue("this compares the template clone with git init");
+        var fresh = Directory.CreateTempSubdirectory("antiphon-scratch-init-").FullName;
+        try
+        {
+            foreach (var args in new[]
+                     {
+                         new[] { "init", "-b", "master" },
+                         ["config", "user.email", "test@antiphon.local"],
+                         ["config", "user.name", "Delegation Tests"],
+                     })
+                (await ScratchGitRepo.GitInAsync(fresh, args)).Ok.ShouldBeTrue();
+            using var cloned = new ScratchGitRepo("antiphon-scratch-clone");
+
+            // Byte for byte the same git directory, apart from the sample hooks git never runs.
+            Listing(Path.Combine(cloned.Path, ".git")).ShouldBe(Listing(Path.Combine(fresh, ".git")));
+            Directory.EnumerateFileSystemEntries(cloned.Path).Select(Path.GetFileName).ShouldBe([".git"]);
+            (await cloned.GitReadAsync("symbolic-ref", "HEAD")).Trim().ShouldBe("refs/heads/master");
+            (await cloned.GitReadAsync("config", "--local", "--list"))
+                .ShouldBe(await ReadAsync(fresh, "config", "--local", "--list"));
+
+            // And it works as one: a commit lands on master; the next scratch repo is separate.
+            await cloned.CommitFileAsync("a.txt", "a\n");
+            (await cloned.GitReadAsync("log", "--format=%an <%ae>", "-1")).Trim().ShouldBe("Delegation Tests <test@antiphon.local>");
+            using var other = new ScratchGitRepo("antiphon-scratch-clone");
+            (await ScratchGitRepo.GitInAsync(other.Path, "rev-parse", "--verify", "--quiet", "HEAD")).Ok.ShouldBeFalse();
+        }
+        finally
+        {
+            GitTreeTemplate.DeleteTree(fresh);
+        }
+
+        static async Task<string> ReadAsync(string dir, params string[] args)
+        {
+            var result = await ScratchGitRepo.GitInAsync(dir, args);
+            result.Ok.ShouldBeTrue();
+            return result.StdOut;
+        }
+
+        static List<string> Listing(string gitDir) =>
+            Directory.EnumerateFileSystemEntries(gitDir, "*", SearchOption.AllDirectories)
+                .Where(p => !(p.EndsWith(".sample", StringComparison.Ordinal)
+                    && Path.GetFileName(Path.GetDirectoryName(p)) == "hooks"))
+                .Select(p => Path.GetRelativePath(gitDir, p) + (Directory.Exists(p) ? "/" : " " + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(p)))))
+                .Order(StringComparer.Ordinal).ToList();
+    }
+
     private static Dictionary<string, string> Tokens(Guid taskId) => new() { ["task"] = taskId.ToString("N") };
 
     private static async Task AssertEquivalentAsync(LandingGitFixture fresh, LandingGitFixture cloned)

@@ -19,9 +19,47 @@ public sealed class ScratchGitRepo : IDisposable
         using var span = TestTrace.Span("git-repo create");
         Path = Directory.CreateTempSubdirectory($"{prefix}-repo").FullName;
         WorktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
-        GitAsync("init", "-b", "master").GetAwaiter().GetResult();
-        GitAsync("config", "user.email", "test@antiphon.local").GetAwaiter().GetResult();
-        GitAsync("config", "user.name", "Delegation Tests").GetAwaiter().GetResult();
+        if (TryCloneTemplate(Path)) return;
+        InitAsync(Path).GetAwaiter().GetResult();
+    }
+
+    /// <summary>The starting repository: <c>git init -b master</c> plus the test identity.</summary>
+    private static async Task InitAsync(string path)
+    {
+        foreach (var args in new[]
+                 {
+                     new[] { "init", "-b", "master" },
+                     ["config", "user.email", "test@antiphon.local"],
+                     ["config", "user.name", "Delegation Tests"],
+                 })
+            (await GitInAsync(path, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");
+    }
+
+    /// <summary>
+    /// Copies the starting repository from a template built once per process by <see cref="InitAsync"/>
+    /// (<see cref="GitTreeTemplate"/>), which saves its three git processes. The empty repository holds no
+    /// path or token, so the clone is a plain copy (less the sample hooks, which git never runs).
+    /// <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c>, or a template that cannot be built, runs git every time.
+    /// </summary>
+    private static bool TryCloneTemplate(string path)
+    {
+        if (!GitTreeTemplate.Enabled) return false;
+        GitTreeTemplate template;
+        try
+        {
+            template = GitTreeTemplate.BuildOnceAsync("scratch-git-repo", [], async (root, _) =>
+            {
+                await InitAsync(root);
+                return [];
+            }).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"git-template disabled for this scratch repo: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+        template.CloneTo(path);
+        return true;
     }
 
     public async Task CommitFileAsync(string relativePath, string content)
