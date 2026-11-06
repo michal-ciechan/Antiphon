@@ -38,7 +38,7 @@ Per-commit stable patch-id proof (git cherry listed each selected source as +; c
 | 955145f83ab717e3467a06cd192401eb13618129 | own signature fix | 9bea744404960d0b46893426d6def43b82a4d336 | — |
 
 
-The first, fixture and registry rows have the explicit resolutions above; other seven source picks match their complete stable patch-ids. The last row is the commissioned signature-only fix. No report-only source commit was picked.
+The first, fixture and registry rows have the explicit resolutions above; other six source picks match their complete stable patch-ids. The last row is the commissioned signature-only fix. No report-only source commit was picked.
 
 Recomputed input identities:
 
