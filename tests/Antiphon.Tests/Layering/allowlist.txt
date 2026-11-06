@@ -196,3 +196,6 @@ server/Application/Services/CardDoneArtifactRoots.cs -> WorktreeSetAside @ serve
 server/Application/Services/DesktopLegacyReleasePolicyService.cs -> WorktreeReflogSalvage @ server/Infrastructure/Git/WorktreeReflogSalvage.cs
 server/Application/Services/RemoteWorkspaceService.cs -> PhoneHomeRequestRefusedException @ server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs
 server/Infrastructure/Git/GuardedWorktreeRemoval.cs -> TaskWorktreeRetirementService @ server/Application/Services/TaskWorktreeRetirementService.cs
+
+# slice S5b-2
+server/Application/Services/RefOnlyCommittedSource.cs -> GitWorkspaceService @ server/Application/Services/GitWorkspaceService.cs
