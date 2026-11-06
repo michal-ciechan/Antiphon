@@ -50,6 +50,12 @@ internal static class RefOnlyDecisionWitness
         var inspected = await recipient.Client.InspectDecisionPathsAsync(new(id, session.RunnerStoreId!.Value,
             generation, root, [relative]), default);
         inspected.ShouldNotBeNull("reached:U2:real-phone-home:inspection").Contained.ShouldBeTrue("runner-file-contained");
+        var inspection = inspected.Binding;
+        foreach (var bad in new[] { inspection with { Root = f.Identity }, inspection with { RunnerStoreId = Guid.NewGuid() },
+            inspection with { AcceptedStartedAt = generation.AddSeconds(1) }, inspection with { SessionId = Guid.NewGuid() },
+            inspection with { Paths = ["../outside.ps1"] } })
+            (await recipient.Client.InspectDecisionPathsAsync(bad, default)).ShouldNotBeNull("inspection-refusal-evidence")
+                .Contained.ShouldBeFalse("runner-inspection-bound-to-session-cwd-store-generation-path");
         var granted = await service.CheckAsync(f.Task.Id, request, caller, default);
         granted.Disposition.ShouldBe(InternalDecisionDisposition.Continue, "grant-root=runner");
         granted.Reason.ShouldBe("dispatch_grant");
