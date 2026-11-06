@@ -85,12 +85,29 @@ foreach ($path in $paths) {
         $nodes += @{ s=$suite; c=$class; m=$method; ClassName=$class; Method=$method; Uid=($class+'.'+$method) }
     }
 }
+function Get-ManualWorkflowScopeErrors($PolicyObject) {
 $manualWrong = @()
 foreach ($obligation in $manual) {
-    $rows = @($policy.Object.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })
+    $rows = @($PolicyObject.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })
     if ($rows.Count -ne 1 -or @($rows[0].methods).Count -ne 1 -or $rows[0].methods[0] -cne $obligation.m -or $rows[0].PSObject.Properties.Name -contains 'platform') { $manualWrong += $obligation.c }
 }
+    return $manualWrong
+}
+$manualWrong = @(Get-ManualWorkflowScopeErrors $policy.Object)
 Assert-C487 ($manualWrong.Count -eq 0) 'CoverageAdmission separate-method-workflows' ($manualWrong -join ',')
+# Exercise both missing-methods variants without changing the shipped policy. A
+# class-wide row must reach the named assertion, rather than throw on a null array.
+$scopeFailures = @()
+foreach ($obligation in $manual) {
+    $fixture = $policy.Object | ConvertTo-Json -Depth 40 | ConvertFrom-Json
+    $row = @($fixture.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })[0]
+    $row.PSObject.Properties.Remove('methods')
+    try {
+        $rejected = @(Get-ManualWorkflowScopeErrors $fixture)
+        if ($rejected.Count -ne 1 -or $rejected[0] -cne $obligation.c) { $scopeFailures += ($obligation.c + ':not-rejected') }
+    } catch { $scopeFailures += ($obligation.c + ':exception:' + $_.Exception.Message) }
+}
+Assert-C487 ($scopeFailures.Count -eq 0) 'CoverageAdmission class-scope-rejected-by-assertion' ($scopeFailures -join ',')
 # Resolve each suite/platform once for this run, as the real planner does.
 $exclusions = @{}
 foreach ($suite in @($nodes.s | Sort-Object -Unique)) {
@@ -130,4 +147,4 @@ Assert-C487 $v.coverageComplete 'CoverageAdmission coverage-sweep' (@($v.reasons
 $terminal += [pscustomobject]@{ Identity='Required.WindowsCapability'; Outcome='NotExecuted' }
 $red = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal @verdictArgs
 Assert-C487 (-not $red.coverageComplete -and (@($red.reasons) -join ',') -like '*Required.WindowsCapability*') 'CoverageAdmission required-skips-stay-incomplete'
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 7
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 8
