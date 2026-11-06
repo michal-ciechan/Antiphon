@@ -764,9 +764,13 @@ For the server2 runner, set the non-secret stack env key
 `PhoneHome__WorkspaceSlots__Enabled=true` in `secrets/stack.env` under the server2
 deployment root before `-Phase redeploy-old`. To canary independently, set it in
 `secrets/stack.temp.env` before `-Phase deploy-temp`; create that file if absent.
-The named phases preserve each file's own value when rewriting it. Missing or empty
-means `false`; only literal lowercase `true`/`false` are accepted, and duplicates or
-invalid values refuse with `RunnerWorkspaceSlotsSettingInvalid`. Other saved keys
+The named phases preserve each file's own value when rewriting it. A missing file or key
+means `false`. A saved assignment must be exactly `PhoneHome__WorkspaceSlots__Enabled=true`
+or `PhoneHome__WorkspaceSlots__Enabled=false`, with LF line endings, at most once.
+Empty assignments, whitespace around/in the key or value, CRLF, different casing,
+export prefixes, quoted values, active inline comments and duplicates (including
+indented duplicates) refuse with `RunnerWorkspaceSlotsSettingInvalid` (exit 2)
+before any deployment side effect. Whole-line comments are ignored. Other saved keys
 are not sourced by this reader. `docker/stack.env.example` lists the key.
 
 The standing Compose environment interpolates this key with a `false` default.
