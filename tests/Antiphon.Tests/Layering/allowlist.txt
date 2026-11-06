@@ -330,6 +330,8 @@ server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeLiveConnection 
 server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeQueuedEvent @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
 server/Application/Services/PhoneHomeRecoveryPump.cs -> TranscriptIncidentReplayGuard @ server/Infrastructure/Agents/SessionRunner/TranscriptIncidentReplayGuard.cs
 server/Application/Services/RunnerAlarmState.cs -> JournalRecordState @ server/Infrastructure/Git/RepositoryChildJournalInspector.cs
+server/Application/Services/CardDoneArtifactRoots.cs -> WorktreeSetAside @ server/Infrastructure/Git/WorktreeSetAside.cs
+server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs -> AgentTuiKeyProtectionReadiness @ server/Infrastructure/Security/DataProtectionAgentTuiSecretProtector.cs
 
 # slice P0-A2
 server/Application/Exceptions/ConcurrencyLimitException.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
