@@ -103,8 +103,7 @@ internal sealed class ReportBudgetWorkspace : IAsyncDisposable
             if (_template is not null && Directory.Exists(Path.Combine(_template, ".git")))
                 return _template;
             var template = Path.Combine(HostRoot(), "template");
-            if (Directory.Exists(template)) Directory.Delete(template, true);
-            Directory.CreateDirectory(template);
+            ResetTemplateDirectory(template);
             await GitAsync(template, "init", "-b", "main");
             await File.WriteAllTextAsync(Path.Combine(template, "seed.txt"), "benign fixture");
             await File.WriteAllTextAsync(Path.Combine(template, ".gitignore"), ".antiphon/\n");
@@ -115,6 +114,14 @@ internal sealed class ReportBudgetWorkspace : IAsyncDisposable
             return template;
         }
         finally { TemplateLock.Release(); }
+    }
+
+    // The delete boundary lets portable witnesses enforce Windows read-only semantics.
+    internal static void ResetTemplateDirectory(string template, Action<string, bool>? delete = null)
+    {
+        if (Directory.Exists(template))
+            (delete ?? Directory.Delete)(template, true);
+        Directory.CreateDirectory(template);
     }
 
     private static async Task GitAsync(string cwd, params string[] args)
