@@ -932,6 +932,7 @@ public sealed class DelegationWorktreeService
         foreach (var a in args) psi.ArgumentList.Add(a);
         ServerGitProcess.DisableAutoMaintenance(psi);
 
+        using var span = ServerGitProcess.Span("delegation", args);
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start git.");
         var stdout = process.StandardOutput.ReadToEndAsync(ct);

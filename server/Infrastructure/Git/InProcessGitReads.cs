@@ -56,7 +56,7 @@ internal static partial class InProcessGitReads
             // open per call: a separate Repository.IsValid probe would open the repository twice.
             using var repo = new Repository(repository);
             if (Unusual(repo)) return null;
-            return Answer(repo, arguments);
+            return Answer(repo, repository, arguments);
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
@@ -66,7 +66,38 @@ internal static partial class InProcessGitReads
 
     private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base"
             or "for-each-ref" or "diff-tree" or "ls-tree"
-        || a is ["worktree", "list", "--porcelain", "-z"];
+        || a is ["worktree", "list", "--porcelain", "-z"] or ["worktree", "list", "--porcelain"];
+
+    /// <summary>
+    /// Whether a git child started from <paramref name="probe"/> (after the runner's own set-up) reads the repository
+    /// libgit2 opens: the plain <c>git</c> executable and no variable that redirects the repository, its objects, refs
+    /// or discovery. Config differences (HOME, GIT_CONFIG_*) do not matter: no answered command reads config.
+    /// </summary>
+    internal static bool ChildReadsSameRepository(System.Diagnostics.ProcessStartInfo probe)
+    {
+        string[] redirects = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE"];
+        return probe.FileName == "git" && !redirects.Any(name =>
+            !string.IsNullOrEmpty(probe.Environment.TryGetValue(name, out var v) ? v : Environment.GetEnvironmentVariable(name)));
+    }
+
+    /// <summary>
+    /// For runners that hand git's stderr to their callers as well (<see cref="WorktreeManager"/>,
+    /// <see cref="Application.Services.GitWorkspaceService"/>): git's exit code and output only where git writes
+    /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
+    /// <c>symbolic-ref -q</c> and <c>show-ref --verify --quiet</c>. Null runs git.
+    /// </summary>
+    internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments)
+    {
+        if (arguments.Count == 0 || arguments[0] == "ls-remote") return null;
+        var answer = TryAnswer(repository, arguments);
+        if (answer is null) return null;
+        var silent = answer.ExitCode == 0
+            || answer.ExitCode == 1 && arguments is ["merge-base", "--is-ancestor", _, _] or ["symbolic-ref", "-q", _]
+                or ["show-ref", "--verify", "--quiet", _];
+        return silent ? (answer.ExitCode, answer.Output) : null;
+    }
 
     /// <summary>
     /// The land's own refs: refs/antiphon/land/&lt;task&gt;/&lt;operation&gt; plus up to two segments, each a
@@ -115,13 +146,17 @@ internal static partial class InProcessGitReads
         return Path.GetFullPath(lines[0], gitDir);
     }
 
-    private static LandingGitResult? Answer(Repository repo, IReadOnlyList<string> a)
+    private static LandingGitResult? Answer(Repository repo, string repository, IReadOnlyList<string> a)
     {
         switch (a[0])
         {
-            // rev-parse --verify <rev>^{commit}  |  rev-parse HEAD
+            // rev-parse --verify [--quiet] <rev>^{commit}  |  rev-parse HEAD  |  rev-parse --is-inside-work-tree
             case "rev-parse" when a.Count == 3 && a[1] == "--verify" && a[2].EndsWith("^{commit}", StringComparison.Ordinal):
                 return Commit(repo, a[2][..^"^{commit}".Length], peel: true);
+            case "rev-parse" when a.Count == 4 && a[1] == "--verify" && a[2] == "--quiet" && a[3].EndsWith("^{commit}", StringComparison.Ordinal):
+                return Commit(repo, a[3][..^"^{commit}".Length], peel: true);
+            case "rev-parse" when a is [_, "--is-inside-work-tree"]:
+                return InsideWorkTree(repo, repository);
             case "rev-parse" when a.Count == 2 && a[1] == "HEAD":
                 return Commit(repo, "HEAD", peel: false);
 
@@ -132,6 +167,12 @@ internal static partial class InProcessGitReads
                 return PathAnswer(CommonDirectory(repo.Info.Path));
             case "rev-parse" when a.Count == 4 && a[1] == "--path-format=absolute" && a[2] == "--git-path" && a[3] == "index.lock":
                 return GitRealPath(repo.Info.Path) is { } dir ? Ok(dir + "/index.lock\n") : null;
+
+            // show-ref --verify --quiet <ref>: 0 for a direct ref; the silent 1 only when no ref of that name exists
+            // anywhere git would look (no packed or loose ref, not even a broken one).
+            case "show-ref" when a.Count == 4 && a[1] == "--verify" && a[2] == "--quiet" && IsPlainRef(a[3]):
+                if (Direct(repo, a[3]) is not null) return Ok("");
+                return repo.Refs[a[3]] is null && !HasLooseRef(repo, a[3]) ? Exit(1) : null;
 
             // show-ref --verify --hash <ref>  |  show-ref --verify <ref>...  |  show-ref --exists <ref>
             case "show-ref" when a.Count == 4 && a[1] == "--verify" && a[2] == "--hash":
@@ -159,9 +200,11 @@ internal static partial class InProcessGitReads
                 return repo.Refs[symbolic.TargetIdentifier] is SymbolicReference ? null : Ok(symbolic.TargetIdentifier + "\n");
             }
 
-            // worktree list --porcelain -z: git's registration listing, from the files git reads.
+            // worktree list --porcelain [-z]: git's registration listing, from the files git reads.
             case "worktree" when a is ["worktree", "list", "--porcelain", "-z"]:
-                return WorktreeList(repo);
+                return WorktreeList(repo, nul: true);
+            case "worktree" when a is ["worktree", "list", "--porcelain"]:
+                return WorktreeList(repo, nul: false);
 
             // merge-base --is-ancestor <oid> <oid>
             case "merge-base" when a.Count == 4 && a[1] == "--is-ancestor" && LandingGit.IsOid(a[2]) && LandingGit.IsOid(a[3]):
@@ -187,8 +230,10 @@ internal static partial class InProcessGitReads
     /// HEAD file; "locked [reason]" from <c>locked</c> (reason trimmed); "prunable" when the gitdir
     /// file points at nothing (list never expires). Every shape git would read through config,
     /// relative paths, unborn or chained HEADs, or a case-dependent order is left to git.
+    /// Without <paramref name="nul"/> each field ends in a newline instead: git prints paths as they are and quotes
+    /// only a lock reason (<c>write_name_quoted</c>), so a reason holding a tab, quote or backslash is git's.
     /// </summary>
-    private static LandingGitResult? WorktreeList(Repository repo)
+    private static LandingGitResult? WorktreeList(Repository repo, bool nul)
     {
         var common = CommonDirectory(repo.Info.Path);
         if (common is null || Path.GetFileName(Path.TrimEndingDirectorySeparator(common)) != ".git" || MovesOrBaresMain(common))
@@ -223,6 +268,7 @@ internal static partial class InProcessGitReads
                 {
                     var reason = File.ReadAllText(lockFile).Trim(' ', '\t', '\n', '\r', '\v', '\f');
                     if (reason.Any(c => c > 0x7e || (c < 0x20 && c != '\t'))) return null;
+                    if (!nul && reason.Any(c => c is '\t' or '"' or '\\')) return null;
                     record.Append(reason.Length == 0 ? "locked" : "locked " + reason).Append('\0');
                 }
                 else if (!File.Exists(gitdir) && !Directory.Exists(gitdir))
@@ -242,7 +288,8 @@ internal static partial class InProcessGitReads
         }
         foreach (var (_, record) in linked.OrderBy(l => l.Path, StringComparer.Ordinal))
             output.Append(record);
-        return Ok(output.ToString());
+        // No field holds a NUL or a newline: paths and reasons with control characters fell back above.
+        return Ok(nul ? output.ToString() : output.Replace('\0', '\n').ToString());
     }
 
     /// <summary>"HEAD &lt;oid&gt;" then "branch &lt;ref&gt;" or "detached", from a HEAD file; false for anything else.</summary>
@@ -293,17 +340,81 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>
-    /// rev-parse of HEAD, a full ref name or a full object id. Short names are git's: git also looks up
-    /// <c>$GIT_DIR/&lt;name&gt;</c> and ambiguity rules libgit2 does not share. Without
-    /// <paramref name="peel"/> the object must itself be a commit (a detached HEAD at a tag is git's).
+    /// rev-parse of HEAD, a full ref name, a full object id or (peeled only) a short name that
+    /// <see cref="ShortName"/> resolves exactly as git would. Without <paramref name="peel"/> the object must itself
+    /// be a commit (a detached HEAD at a tag is git's).
     /// </summary>
     private static LandingGitResult? Commit(Repository repo, string revision, bool peel)
     {
-        if (!(revision == "HEAD" || IsPlainRef(revision) || LandingGit.IsOid(revision))) return null;
+        if (!(revision == "HEAD" || IsPlainRef(revision) || LandingGit.IsOid(revision)))
+            return peel && ShortName(repo, revision) is { } full ? Commit(repo, full, peel) : null;
         if (revision != "HEAD" && IsPlainRef(revision) && repo.Refs[revision] is null) return null;
         var target = repo.Lookup(revision);
         var commit = target as Commit ?? (peel ? target?.Peel<Commit>() : null);
         return commit is null ? null : Ok(commit.Sha + "\n");
+    }
+
+    /// <summary>
+    /// The full name git's <c>ref_rev_parse_rules</c> give a short name (<c>&lt;name&gt;</c>, <c>refs/</c>,
+    /// <c>refs/tags/</c>, <c>refs/heads/</c>, <c>refs/remotes/</c>, <c>refs/remotes/&lt;name&gt;/HEAD</c>), only when
+    /// git can read it no other way: not hex (an abbreviated object id), not all capitals (a pseudo-ref), no
+    /// <c>@</c>, not a per-worktree or other-worktree name, and nothing of that name in the git directories (the
+    /// first rule, <c>$GIT_DIR/&lt;name&gt;</c>); exactly one rule finds a ref and it is direct (so no ambiguity
+    /// warning and no symref to follow), and every other rule's name is absent from libgit2's view and from the
+    /// loose ref files (so no broken-ref warning). Anything else is null and git answers.
+    /// </summary>
+    private static string? ShortName(Repository repo, string name)
+    {
+        if (name.Length == 0 || name.StartsWith("refs/", StringComparison.Ordinal) || name.Contains('@')
+            || !IsPlainRef("refs/heads/" + name)
+            || name.All(char.IsAsciiHexDigit) || name.All(c => c is (>= 'A' and <= 'Z') or '_')
+            || name.Split('/')[0] is "bisect" or "worktree" or "rewritten" or "main-worktree" or "worktrees")
+            return null;
+        var gitDir = repo.Info.Path;
+        var common = CommonDirectory(gitDir);
+        if (common is null) return null;
+        foreach (var dir in new[] { gitDir, common })
+        {
+            var path = Path.Combine(dir, name);
+            if (File.Exists(path) || Directory.Exists(path)) return null;
+        }
+        string? found = null;
+        foreach (var candidate in new[] { "refs/" + name, "refs/tags/" + name, "refs/heads/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" })
+        {
+            var reference = repo.Refs[candidate];
+            if (reference is null)
+            {
+                if (HasLooseRef(repo, candidate)) return null;
+                continue;
+            }
+            if (reference is not DirectReference || found is not null) return null;
+            found = candidate;
+        }
+        return found;
+    }
+
+    /// <summary>Whether a loose ref file of that name exists in the git directory or the common directory.</summary>
+    private static bool HasLooseRef(Repository repo, string name)
+    {
+        var gitDir = repo.Info.Path;
+        var common = CommonDirectory(gitDir);
+        return common is null || File.Exists(Path.Combine(gitDir, name)) || File.Exists(Path.Combine(common, name));
+    }
+
+    /// <summary>
+    /// <c>rev-parse --is-inside-work-tree</c> run at the root of a non-bare checkout: "true". Anywhere else (the git
+    /// directory, a bare repository) and any config that could move or bare the work tree is git's.
+    /// </summary>
+    private static LandingGitResult? InsideWorkTree(Repository repo, string repository)
+    {
+        if (repo.Info.IsBare || repo.Info.WorkingDirectory is not { } work) return null;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(work)), comparison))
+            return null;
+        var common = CommonDirectory(repo.Info.Path);
+        if (common is null || MovesOrBaresMain(common) || File.Exists(Path.Combine(repo.Info.Path, "config.worktree"))) return null;
+        return Ok("true\n");
     }
 
     /// <summary>The commit id a direct, existing ref points at; null for symbolic or missing refs.</summary>

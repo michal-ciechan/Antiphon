@@ -61,6 +61,14 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "symbolic-ref", "-q", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "symbolic-ref", "-q", fixture.TargetRef);
         await CompareAsync(cwd, Expect.Answered, "merge-base", "--is-ancestor", fixture.SeedSha, head);
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", "HEAD^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", fixture.TargetRef + "^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "master^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", "master^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "rev-parse", "--is-inside-work-tree");
+        await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--quiet", fixture.SourceRef);
+        await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--quiet", "refs/heads/no-such-branch");
+        await CompareAsync(cwd, Expect.Answered, "worktree", "list", "--porcelain");
     }
 
     [Test]
@@ -178,19 +186,98 @@ public sealed class LibGit2VsGitDifferentialTests
         string[][] fallbacks =
         [
             ["rev-parse", "--verify", "refs/heads/no-such^{commit}"],
-            ["rev-parse", "--verify", "master^{commit}"],                 // short name: $GIT_DIR/master and ambiguity are git's
+            ["rev-parse", "--verify", "no-such^{commit}"],                // a short name nothing resolves: git's failure
+            ["rev-parse", "--verify", "--quiet", "no-such^{commit}"],
             ["show-ref", "--verify", "--hash", "refs/heads/no-such"],
             ["show-ref", "--verify", "--hash", "refs/heads//master"],    // git refuses, libgit2 would normalise
             ["symbolic-ref", "-q", "refs/heads/no-such"],
             ["remote", "get-url", "--push", "--all", "origin"],          // config is never read in process
             ["status", "--porcelain=v1", "-z"],
-            ["worktree", "list", "--porcelain"],                          // only the -z listing is answered
+            ["worktree", "list"],                                         // only the porcelain listings are answered
         ];
         foreach (var args in fallbacks)
             await CompareAsync(fixture.Repository, Expect.Fallback, args);
         await CompareAsync(Path.Combine(fixture.Repository, "sub-does-not-exist"), Expect.Fallback, "rev-parse", "HEAD");
         Directory.CreateDirectory(Path.Combine(fixture.Repository, "sub"));
         await CompareAsync(Path.Combine(fixture.Repository, "sub"), Expect.Fallback, "rev-parse", "HEAD");
+    }
+
+    [Test]
+    public async Task Short_names_resolve_as_git_resolves_them_or_fall_back()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        var source = fixture.SourceRef["refs/heads/".Length..];
+        foreach (var cwd in new[] { repo, fixture.Source })
+        {
+            await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", source + "^{commit}");
+            await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "--quiet", source + "^{commit}");
+        }
+        await fixture.RequiredAsync(repo, "tag", "light", fixture.SeedSha);
+        await fixture.RequiredAsync(repo, "tag", "-a", "annotated", "-m", "annotated", fixture.SeedSha);
+        await CompareAsync(repo, Expect.Answered, "rev-parse", "--verify", "light^{commit}");
+        await CompareAsync(repo, Expect.Answered, "rev-parse", "--verify", "--quiet", "annotated^{commit}");
+        await fixture.RequiredAsync(repo, "pack-refs", "--all");
+        await CompareAsync(repo, Expect.Answered, "rev-parse", "--verify", "light^{commit}");
+        await CompareAsync(repo, Expect.Answered, "rev-parse", "--verify", "master^{commit}");
+        // A remote-tracking branch, by its short name, in the observer clone.
+        await CompareAsync(fixture.Observer, Expect.Answered, "rev-parse", "--verify", "origin/master^{commit}");
+
+        // Names git would read another way, or more than one way, are git's.
+        await fixture.RequiredAsync(repo, "tag", "dup", fixture.SeedSha);
+        await fixture.RequiredAsync(repo, "branch", "dup", fixture.SeedSha);             // ambiguous: git warns
+        await fixture.RequiredAsync(repo, "branch", "cafe", fixture.SeedSha);            // hex: an abbreviated id?
+        await fixture.RequiredAsync(repo, "branch", "SHOUT", fixture.SeedSha);           // capitals: a pseudo-ref name
+        await fixture.RequiredAsync(repo, "branch", "beside", fixture.SeedSha);
+        await File.WriteAllTextAsync(Path.Combine(repo, ".git", "beside"), fixture.SeedSha + "\n"); // $GIT_DIR/<name>
+        await fixture.RequiredAsync(repo, "branch", "broken", fixture.SeedSha);
+        await File.WriteAllTextAsync(Path.Combine(repo, ".git", "refs", "tags", "broken"), "not a ref\n"); // git warns
+        await fixture.RequiredAsync(repo, "symbolic-ref", "refs/heads/alias", fixture.TargetRef);    // a symref to follow
+        foreach (var name in new[] { "dup", "cafe", "SHOUT", "beside", "broken", "alias", "no-such", "origin", "master@{0}", "bisect/x" })
+        {
+            await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", name + "^{commit}");
+            await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", "--quiet", name + "^{commit}");
+        }
+        await CompareAsync(fixture.Observer, Expect.Fallback, "rev-parse", "--verify", "origin^{commit}"); // origin/HEAD is a symref
+    }
+
+    [Test]
+    public async Task Work_tree_checks_quiet_ref_checks_and_the_plain_worktree_listing_match_git()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        // Inside the git directory or in a bare repository, git's.
+        await CompareAsync(Path.Combine(repo, ".git"), Expect.Fallback, "rev-parse", "--is-inside-work-tree");
+        await CompareAsync(fixture.Remote, Expect.Fallback, "rev-parse", "--is-inside-work-tree");
+
+        // A symref or a broken loose ref is git's to judge; a missing one is a silent 1.
+        await fixture.RequiredAsync(repo, "symbolic-ref", "refs/heads/alias", fixture.TargetRef);
+        await CompareAsync(repo, Expect.Fallback, "show-ref", "--verify", "--quiet", "refs/heads/alias");
+        await File.WriteAllTextAsync(Path.Combine(repo, ".git", "refs", "heads", "broken"), "not a ref\n");
+        await CompareAsync(repo, Expect.Fallback, "show-ref", "--verify", "--quiet", "refs/heads/broken");
+        File.Delete(Path.Combine(repo, ".git", "refs", "heads", "broken"));
+        await fixture.RequiredAsync(repo, "pack-refs", "--all");
+        await CompareAsync(repo, Expect.Answered, "show-ref", "--verify", "--quiet", fixture.SourceRef);
+        await CompareAsync(repo, Expect.Answered, "show-ref", "--verify", "--quiet", "refs/heads/gone");
+
+        // Lock reasons: printed as written without -z unless git would quote them.
+        await fixture.RequiredAsync(repo, "worktree", "lock", "--reason", "held by a land", fixture.Source);
+        await CompareAsync(repo, Expect.Answered, "worktree", "list", "--porcelain");
+        await CompareAsync(repo, Expect.Answered, "worktree", "list", "--porcelain", "-z");
+        await fixture.RequiredAsync(repo, "worktree", "unlock", fixture.Source);
+        await fixture.RequiredAsync(repo, "worktree", "lock", "--reason", "say \"hi\"", fixture.Source);
+        await CompareAsync(repo, Expect.Fallback, "worktree", "list", "--porcelain");
+        await CompareAsync(repo, Expect.Answered, "worktree", "list", "--porcelain", "-z");
+        await fixture.RequiredAsync(repo, "worktree", "unlock", fixture.Source);
+        await fixture.RequiredAsync(repo, "worktree", "lock", fixture.Source);
+        await CompareAsync(repo, Expect.Answered, "worktree", "list", "--porcelain");
+
+        // A work tree moved by config is git's.
+        await fixture.RequiredAsync(repo, "config", "core.worktree", repo);
+        await CompareAsync(repo, Expect.Fallback, "rev-parse", "--is-inside-work-tree");
+        await CompareAsync(repo, Expect.Fallback, "worktree", "list", "--porcelain");
     }
 
     [Test]

@@ -24,6 +24,20 @@ public static class ServerGitProcess
         start.Environment["GIT_CONFIG_COUNT"] = count.ToString(CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// A trace span ("git &lt;verb&gt;") over one git command of <paramref name="runner"/>, tagged
+    /// <c>git.runner</c> and <c>git.spawned</c> (true; a runner that answers the command in process
+    /// sets it false) so a test trace can tell which runner started which processes. The verb only:
+    /// the other arguments carry paths and messages. Free (null) when no listener samples
+    /// <see cref="Antiphon.Observability.AntiphonTrace.SourceName"/>.
+    /// </summary>
+    public static Activity? Span(string runner, IReadOnlyList<string> arguments, string? name = null)
+    {
+        var span = Antiphon.Observability.AntiphonTrace.Span(name ?? "git " + (arguments.Count > 0 ? arguments[0] : ""), "git.runner", runner);
+        span?.SetTag("git.spawned", true);
+        return span;
+    }
+
     private static void Add(ProcessStartInfo start, ref int index, string key, string value)
     {
         var suffix = index.ToString(CultureInfo.InvariantCulture);

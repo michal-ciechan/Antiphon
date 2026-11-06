@@ -255,7 +255,13 @@ internal sealed class LandingGitFixture : IAsyncDisposable
                 ? start.ArgumentList.Count
                 : string.IsNullOrEmpty(start.Arguments) ? 0 : null;
             var exe = string.IsNullOrEmpty(start.FileName) ? "omitted" : Path.GetFileName(start.FileName);
-            System.Diagnostics.Activity.Current?.SetTag("git.spawned", true);
+            // The fixture's "process-wait git <command>" span; the server's own "git <verb>" span may sit inside it.
+            for (var span = System.Diagnostics.Activity.Current; span is not null; span = span.Parent)
+                if (span.DisplayName.StartsWith("process-wait", StringComparison.Ordinal))
+                {
+                    span.SetTag("git.spawned", true);
+                    break;
+                }
             using var spawn = TestTiming.BeginProcess(exe, argc, "process");
             var child = base.StartProcess(start);
             if (child is not null) _children.TryAdd(child.Id, 0);

@@ -1283,8 +1283,19 @@ public sealed class WorktreeManager : IWorktreeManager
         bool throwOnError = true)
     {
         // Verb (and the worktree subcommand) only: arguments carry paths and branch names.
-        using var span = Antiphon.Observability.AntiphonTrace.Span("git " + (arguments.Count == 0 ? ""
+        using var span = ServerGitProcess.Span("worktree", arguments, "git " + (arguments.Count == 0 ? ""
             : arguments[0] == "worktree" && arguments.Count > 1 ? "worktree " + arguments[1] : arguments[0]));
+        var mutating = arguments.Any(a => a is "add" or "remove" or "checkout-index");
+        // Reads git answers without a word on stderr are answered in process when libgit2's answer is git's own
+        // (InProcessGitReads; ANTIPHON_GIT_INPROCESS=off turns it off). A fresh repository handle per call, so
+        // every check before a mutation still reads the repository as it is now.
+        if (!mutating && InProcessReadsEligible()
+            && InProcessGitReads.TryAnswerSilently(workingDirectory, arguments) is { } answered)
+        {
+            ct.ThrowIfCancellationRequested();
+            span?.SetTag("git.spawned", false);
+            return new GitCommandResult(answered.ExitCode, answered.Output, "");
+        }
         var budget = TimeoutFor(arguments);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(budget);
@@ -1309,7 +1320,6 @@ public sealed class WorktreeManager : IWorktreeManager
             workingDirectory,
             budget.TotalSeconds);
 
-        var mutating = arguments.Any(a => a is "add" or "remove" or "checkout-index");
         var journal = mutating ? await RepositoryChildJournal.BeginAsync(workingDirectory, ct) : null;
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start git process.");
@@ -1366,6 +1376,25 @@ public sealed class WorktreeManager : IWorktreeManager
         }
 
         return result;
+    }
+
+    private bool? _inProcessReads;
+
+    /// <summary>Whether this runner's git children (plain <c>git</c>, the server's environment) read the repository
+    /// libgit2 opens; worked out once per instance.</summary>
+    private bool InProcessReadsEligible()
+    {
+        if (_inProcessReads is { } known) return known;
+        bool eligible;
+        try
+        {
+            var probe = new ProcessStartInfo("git");
+            ServerGitProcess.DisableAutoMaintenance(probe);
+            eligible = InProcessGitReads.Enabled && InProcessGitReads.ChildReadsSameRepository(probe);
+        }
+        catch (Exception) { eligible = false; }
+        _inProcessReads = eligible;
+        return eligible;
     }
 
     internal sealed record WorktreePorcelainEntry(

@@ -1,6 +1,10 @@
 using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -120,6 +124,60 @@ public sealed class InProcessGitCommandsTests
             locked.ExitCode.ShouldNotBe(0);
             inProcess.Spawned.ShouldBe(before + 1);
         }
+    }
+
+    /// <summary>
+    /// The worktree manager's and the workspace service's own git runners answer the same read shapes in process:
+    /// creating a worktree reads the repository without a git process except for the add itself, and each answer
+    /// is the one git gives (the created worktree is git's, its registration listed by git and in process alike).
+    /// </summary>
+    [Test]
+    public async Task Worktree_manager_and_workspace_reads_are_answered_in_process()
+    {
+        using var repo = new ScratchGitRepo("antiphon-inproc-runner");
+        await repo.CommitFileAsync("a.txt", "a\n");
+        var spans = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Antiphon.Server" or "Antiphon.Tests.InProcessRunners",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = span => { lock (spans) spans.Add(span); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var traced = new ActivitySource("Antiphon.Tests.InProcessRunners").StartActivity("runner-test");
+        traced.ShouldNotBeNull();
+        var trace = traced.TraceId;
+
+        var manager = new WorktreeManager(Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }),
+            TimeProvider.System, NullLogger<WorktreeManager>.Instance);
+        var info = await manager.CreateAsync(repo.Path, "CARD-1234", "master", CancellationToken.None);
+        var workspace = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance);
+        var inside = await workspace.IsRepositoryAsync(info.Path, CancellationToken.None);
+        var head = await workspace.GetHeadShaAsync(info.Path, CancellationToken.None);
+
+        List<Activity> git;
+        lock (spans) git = spans.Where(s => s.TraceId == trace && s.Source.Name == "Antiphon.Server").ToList();
+        List<string> Names(string runner, bool spawned) => git
+            .Where(s => s.GetTagItem("git.runner") as string == runner && s.GetTagItem("git.spawned") is bool b && b == spawned)
+            .Select(s => s.DisplayName).ToList();
+        Names("worktree", spawned: true).ShouldBe(["git worktree add"], "only the add starts git");
+        // Two work-tree checks, the base ref twice, the new checkout's git dir; the registration listing; the branch check.
+        var reads = Names("worktree", spawned: false);
+        reads.Count(n => n == "git rev-parse").ShouldBe(5, string.Join(", ", reads));
+        reads.Count(n => n == "git worktree list").ShouldBe(1, string.Join(", ", reads));
+        reads.Count(n => n == "git show-ref").ShouldBe(1, string.Join(", ", reads));
+        Names("workspace", spawned: true).ShouldBeEmpty();
+        Names("workspace", spawned: false).ShouldBe(["git rev-parse", "git rev-parse"]);
+
+        inside.ShouldBeTrue();
+        head.ShouldBe((await repo.GitReadAsync("rev-parse", "master")).Trim());
+        (await ScratchGitRepo.GitInAsync(info.Path, "rev-parse", "--abbrev-ref", "HEAD")).StdOut.Trim().ShouldBe(info.Branch);
+        (await ScratchGitRepo.GitInAsync(info.Path, "status", "--porcelain")).StdOut.ShouldBeEmpty();
+        // The listing the manager now reads in process is git's own.
+        var listed = await repo.GitReadAsync("worktree", "list", "--porcelain");
+        InProcessGitReads.TryAnswer(repo.Path, ["worktree", "list", "--porcelain"]).ShouldNotBeNull().Output.ShouldBe(listed);
+        (await manager.ListAsync(repo.Path, CancellationToken.None)).Select(w => w.Path)
+            .ShouldContain(info.Path);
     }
 
     private static string[] DiffTree(string from, string to) =>

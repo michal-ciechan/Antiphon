@@ -239,6 +239,7 @@ public class GitWorkspaceService
             psi.ArgumentList.Add($"{gitRef}:./{relativePath}");
             psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
             ServerGitProcess.DisableAutoMaintenance(psi);
+            using var span = ServerGitProcess.Span("workspace", ["show"]);
             using var lease = await _gate.EnterAsync(ct);
             process = Process.Start(psi);
             if (process is null)
@@ -1121,6 +1122,27 @@ public class GitWorkspaceService
         return matches.Length == 1 && matches[0].Value == value;
     }
 
+    private bool? _inProcessReads;
+
+    /// <summary>Whether this service's git children (the configured executable, the server's environment) read the
+    /// repository libgit2 opens; worked out once per instance. Another executable than plain <c>git</c> never is.</summary>
+    private bool InProcessReadsEligible()
+    {
+        if (_inProcessReads is { } known) return known;
+        bool eligible;
+        try
+        {
+            var probe = new ProcessStartInfo { FileName = _settings.ExecutableName };
+            probe.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+            ServerGitProcess.DisableAutoMaintenance(probe);
+            eligible = Antiphon.Server.Infrastructure.Git.InProcessGitReads.Enabled
+                && Antiphon.Server.Infrastructure.Git.InProcessGitReads.ChildReadsSameRepository(probe);
+        }
+        catch (Exception) { eligible = false; }
+        _inProcessReads = eligible;
+        return eligible;
+    }
+
     protected internal virtual Task<(int Code, string Stdout, string Stderr)> RunAsync(
         string workingDirectory, CancellationToken ct, params string[] args) =>
         RunCoreAsync(workingDirectory, stdin: null, ct, args);
@@ -1132,6 +1154,16 @@ public class GitWorkspaceService
     private async Task<(int Code, string Stdout, string Stderr)> RunCoreAsync(
         string workingDirectory, string? stdin, CancellationToken ct, params string[] args)
     {
+        using var span = ServerGitProcess.Span("workspace", args);
+        // Reads git answers without a word on stderr are answered in process when libgit2's answer is git's own
+        // (InProcessGitReads, same rules as the land's runner; ANTIPHON_GIT_INPROCESS=off turns it off).
+        if (stdin is null && InProcessReadsEligible()
+            && Antiphon.Server.Infrastructure.Git.InProcessGitReads.TryAnswerSilently(workingDirectory, args) is { } answered)
+        {
+            ct.ThrowIfCancellationRequested();
+            span?.SetTag("git.spawned", false);
+            return (answered.ExitCode, answered.Output, "");
+        }
         Process? process = null;
         try
         {

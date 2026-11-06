@@ -100,12 +100,14 @@ public class LandingGit : ILandingGit
             && InProcessGitWrites.TryWrite(repository, arguments, _childEnvironment) is { } pinned)
         {
             Scope?.Profile.InProcessHit(arguments);
+            ServerGitProcess.Span("landing", arguments)?.SetTag("git.spawned", false).Dispose();
             return pinned;
         }
         if (started is null && !IsMutating(arguments) && InProcessAnswer(repository, arguments) is { } inProcess)
         {
             ct.ThrowIfCancellationRequested();
             Scope?.Profile.InProcessHit(arguments);
+            ServerGitProcess.Span("landing", arguments)?.SetTag("git.spawned", false).Dispose();
             return inProcess;
         }
         if (started is null && IsRefFormatCheck(arguments))
@@ -176,11 +178,7 @@ public class LandingGit : ILandingGit
             ConfigureProcess(probe);
             _childEnvironment = new Dictionary<string, string?>(probe.Environment,
                 OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-            string[] redirects = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-                "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE"];
-            eligible = probe.FileName == "git" && !redirects.Any(name =>
-                !string.IsNullOrEmpty(probe.Environment.TryGetValue(name, out var v) ? v : Environment.GetEnvironmentVariable(name)));
+            eligible = InProcessGitReads.ChildReadsSameRepository(probe);
         }
         catch (Exception) { eligible = false; }
         _inProcessEligible = eligible;
@@ -211,6 +209,7 @@ public class LandingGit : ILandingGit
     private async Task<LandingGitResult> ExecuteProcessAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
+        using var span = ServerGitProcess.Span("landing", arguments);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(options.Budget ?? DefaultBudget);
         var start = new ProcessStartInfo("git")
@@ -1172,6 +1171,7 @@ public class LandingGit : ILandingGit
     protected virtual async Task<(int ExitCode, byte[] Output)> RunGitInputBytesAsync(
         string path, IReadOnlyList<string> arguments, byte[] input, CancellationToken ct)
     {
+        using var span = ServerGitProcess.Span("landing", arguments);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromMinutes(5));
         var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false,
