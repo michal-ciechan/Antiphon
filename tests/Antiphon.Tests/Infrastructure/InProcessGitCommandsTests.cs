@@ -51,6 +51,26 @@ public sealed class InProcessGitCommandsTests
     }
 
     [Test]
+    public async Task Park_proof_reads_match_git()
+    {
+        // LocalTaskParkPublisher's identity and remote reads: --show-toplevel, the absolute git dir, ls-remote with "--".
+        await using var f = new LandingGitFixture();
+        await f.InitializeAsync();
+        var (inProcess, git) = Runners(f);
+        foreach (var checkout in new[] { f.Repository, f.Source, f.Observer })
+        {
+            await AssertSameAsync(f, inProcess, git, checkout, ["rev-parse", "--show-toplevel"]);
+            await AssertSameAsync(f, inProcess, git, checkout, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+            await AssertSameAsync(f, inProcess, git, checkout, ["ls-remote", "--refs", "--exit-code", "--", f.Remote, f.SourceRef]);
+        }
+        await AssertSameAsync(f, inProcess, git, f.Repository, ["ls-remote", "--refs", "--exit-code", "--", f.Remote, "refs/heads/missing"]);
+        // Below a checkout root, git searches upward: git's answer.
+        var nested = Path.Combine(f.Repository, "nested");
+        Directory.CreateDirectory(nested);
+        await AssertSpawnsAsync(inProcess, nested, ["rev-parse", "--show-toplevel"]);
+    }
+
+    [Test]
     public async Task For_each_ref_diff_tree_and_ls_tree_match_git()
     {
         await using var f = new LandingGitFixture();

@@ -157,6 +157,13 @@ internal static partial class InProcessGitReads
                 return Commit(repo, a[3][..^"^{commit}".Length], peel: true);
             case "rev-parse" when a is [_, "--is-inside-work-tree"]:
                 return InsideWorkTree(repo, repository);
+            // rev-parse --show-toplevel | rev-parse --path-format=absolute --git-dir, run at a checkout root: the same
+            // checks as --is-inside-work-tree (a root of a non-bare checkout git cannot see moved or bared), then the
+            // work tree's or the git dir's real path as git prints it.
+            case "rev-parse" when a is [_, "--show-toplevel"]:
+                return InsideWorkTree(repo, repository) is null ? null : PathAnswer(repo.Info.WorkingDirectory);
+            case "rev-parse" when a is [_, "--path-format=absolute", "--git-dir"]:
+                return InsideWorkTree(repo, repository) is null ? null : PathAnswer(repo.Info.Path);
             case "rev-parse" when a.Count == 2 && a[1] == "HEAD":
                 return Commit(repo, "HEAD", peel: false);
 

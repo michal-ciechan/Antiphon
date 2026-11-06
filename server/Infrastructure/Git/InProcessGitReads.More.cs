@@ -24,8 +24,11 @@ internal static partial class InProcessGitReads
     private static LandingGitResult? LsRemote(IReadOnlyList<string> a)
     {
         if (a.Count < 5 || a[1] != "--refs" || a[2] != "--exit-code") return null;
-        var endpoint = a[3];
-        var patterns = a.Skip(4).ToList();
+        // An optional "--" only ends the options: ls-remote --refs --exit-code -- <endpoint> <ref>... is the same read.
+        var at = a[3] == "--" ? 4 : 3;
+        if (a.Count < at + 2) return null;
+        var endpoint = a[at];
+        var patterns = a.Skip(at + 1).ToList();
         if (patterns.Any(p => p.Length == 0 || p.StartsWith('-') || p.IndexOfAny(GlobCharacters) >= 0)) return null;
         if (endpoint.Contains("://", StringComparison.Ordinal) || !Path.IsPathFullyQualified(endpoint)
             || !Directory.Exists(endpoint))
