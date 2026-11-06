@@ -191,3 +191,8 @@ server/Application/Services/RunnerAlarmState.cs -> JournalRecordState @ server/I
 server/Application/Services/CardDoneArtifactRoots.cs -> WorktreeSetAside @ server/Infrastructure/Git/WorktreeSetAside.cs
 
 # slice P0-A2
+
+# slice S4a
+server/Application/Services/DesktopLegacyReleasePolicyService.cs -> WorktreeReflogSalvage @ server/Infrastructure/Git/WorktreeReflogSalvage.cs
+server/Application/Services/RemoteWorkspaceService.cs -> PhoneHomeRequestRefusedException @ server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs
+server/Infrastructure/Git/GuardedWorktreeRemoval.cs -> TaskWorktreeRetirementService @ server/Application/Services/TaskWorktreeRetirementService.cs
