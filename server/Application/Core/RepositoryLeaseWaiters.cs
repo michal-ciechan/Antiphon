@@ -207,7 +207,8 @@ public sealed class RepositoryLeaseWaiters(IOptions<DelegationSettings>? setting
     /// writes its one Warning. The budget is never reset by waiter churn; only
     /// <see cref="EndYield"/> (admission or a terminal return) ends it.
     /// </summary>
-    public LandYieldDecision DecideYield(string commonDirectory, Guid requestId, DateTimeOffset now, int maxSeconds)
+    public LandYieldDecision DecideYield(string commonDirectory, Guid requestId, DateTimeOffset now, int maxSeconds,
+        IReadOnlyList<RepositoryLeaseWaiter>? eligibleWaiters = null)
     {
         if (maxSeconds <= 0)
         {
@@ -215,7 +216,7 @@ public sealed class RepositoryLeaseWaiters(IOptions<DelegationSettings>? setting
             return new LandYieldDecision(LandYieldOutcome.Proceed, [], now, false);
         }
 
-        var waiters = Snapshot(commonDirectory);
+        var waiters = eligibleWaiters ?? Snapshot(commonDirectory);
         if (waiters.Count == 0)
         {
             EndYield(requestId);

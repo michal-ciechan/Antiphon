@@ -1699,9 +1699,30 @@ public sealed class AgentTaskLandService
             return null;
         }
 
+        // CARD-1581: an uncut same-card dispatch waits for this pending land at sibling
+        // inspection. Its earlier lease refusal must not make the land yield back to it.
+        // Keep the registry intact: dispatch owns reconciliation, and independent waiters
+        // (including settlements, repairs and already-cut tasks) still get their turn.
+        var eligibleWaiters = _leaseWaiters.Snapshot(common);
+        if (task.CardId is Guid cardId)
+        {
+            var dispatchIds = eligibleWaiters.Where(w => w.Purpose == RepositoryLeasePurposes.Dispatch)
+                .Select(w => w.TaskId).ToArray();
+            if (dispatchIds.Length > 0)
+            {
+                var dependentIds = (await _db.AgentTasks.AsNoTracking()
+                    .Where(t => dispatchIds.Contains(t.Id) && t.CardId == cardId
+                        && t.Status == AgentTaskStatus.Queued && t.Workspace == WorkspaceMode.Worktree
+                        && t.WorktreePath == null && t.RepairSourceTaskId == null
+                        && t.SourceLandingOperationId == null)
+                    .Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+                eligibleWaiters = eligibleWaiters.Where(w => !dependentIds.Contains(w.TaskId)).ToArray();
+            }
+        }
+
         // CARD-1427 D-8: the decision is the registry's; this method owns the database writes.
         var now = _clock.GetUtcNow();
-        var decision = _leaseWaiters.DecideYield(common, request.Id, now, max);
+        var decision = _leaseWaiters.DecideYield(common, request.Id, now, max, eligibleWaiters);
         if (decision.Outcome == LandYieldOutcome.Proceed)
             return null;
         var waiters = decision.Waiters;
