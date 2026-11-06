@@ -470,7 +470,7 @@ public sealed class DesktopLegacyReleasePolicyService
             // G-25/G-26: tracked and untracked changes both count. Debug 52410842: git status exits 0 with nothing
             // listed under a directory it cannot open (past MAX_PATH, unreadable) and only warns, so the listing
             // proves clean only with core.longpaths (Git for Windows) and a silent stderr; a warning holds the tree.
-            var status = await _git.RunAsync(path,
+            var status = await _git.StatusVerdictAsync(path,
                 ["-c", "core.longpaths=true", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
             if (!status.Succeeded || status.Output.Length != 0)
                 return new("source_dirty");

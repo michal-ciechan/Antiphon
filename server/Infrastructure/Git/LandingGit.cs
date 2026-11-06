@@ -214,14 +214,16 @@ public class LandingGit : ILandingGit
         if (!InProcessGitReads.Enabled || !InProcessEligible() || arguments.Count == 0) return null;
         if (arguments[0] is "status" or "ls-files" or "-c")
             return AnswerWorkingTreeReadsInProcess
-                ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment) : null;
+                ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment,
+                    GitTreeVerdict.IsVerdictOnly(arguments)) : null;
         return arguments[0] != "ls-remote" || AnswerRemoteReadsInProcess
             ? InProcessGitReads.TryAnswer(repository, arguments) : null;
     }
 
     /// <summary>
     /// Whether a clean status, an empty ls-files --others/--unmerged and ls-files -v may be answered by
-    /// libgit2 (<see cref="InProcessGitStatus"/>; a dirty tree always runs git). A test that must exercise
+    /// libgit2 (<see cref="InProcessGitStatus"/>; a dirty tree runs git unless the caller asked for a
+    /// <see cref="GitTreeVerdict"/>). A test that must exercise
     /// git's own working-tree reads turns it off.
     /// </summary>
     protected virtual bool AnswerWorkingTreeReadsInProcess => true;
@@ -902,7 +904,8 @@ public class LandingGit : ILandingGit
             // (past MAX_PATH, unreadable) and only warns, so the listing proves clean only with core.longpaths (Git
             // for Windows) and a silent stderr. Lands and the guarded removal's re-check both read this.
             var statusArgs = new[] { "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none" };
-            var status = await RunAsync(snapshot.RegisteredPath, ["-c", "core.longpaths=true", .. statusArgs], ct);
+            // The listing is only tested for emptiness (Status is kept only when it is empty): a verdict.
+            var status = await this.StatusVerdictAsync(snapshot.RegisteredPath, ["-c", "core.longpaths=true", .. statusArgs], ct);
             if (!status.Succeeded)
                 return new(null, "status_error", LandFailureDiagnostic.FromCommand(statusArgs, status.ExitCode));
             var ignoredArgs = new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" };

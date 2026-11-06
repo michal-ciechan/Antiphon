@@ -493,6 +493,8 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["show-ref", "--verify", "--hash", var name] => IsFullRef(name),
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"] => true,
             ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] => true,
+            // CARD-1717: the guarded removal's late-untracked check lists the tracked index.
+            ["ls-files", "-z"] => true,
             ["worktree", "list", "--porcelain", "-z"] => true,
             ["worktree", "remove", "--registration-only", var path] => PathsEqual(path, Source),
             ["worktree", "lock", var path] => PathsEqual(path, Source),

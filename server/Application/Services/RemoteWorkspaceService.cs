@@ -1090,7 +1090,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (await _git.HasActiveSequencerAsync(worktree, ct))
             return Refuse(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.Sequencer);
 
-        var status = await _git.RunAsync(worktree,
+        var status = await _git.StatusVerdictAsync(worktree,
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
         if (!status.Succeeded)
             return Refuse(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.InspectionUnavailable);
@@ -1189,7 +1189,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 .Any(name => File.Exists(Path.Combine(gitDirectory, name)) || Directory.Exists(Path.Combine(gitDirectory, name))))
                 return "park_dirty";
 
-            var status = await _git.RunAsync(path,
+            var status = await _git.StatusVerdictAsync(path,
                 ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
             if (!status.Succeeded) return "park_source_missing";
             if (status.Output.Length != 0) return "park_dirty";

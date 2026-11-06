@@ -578,7 +578,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (reason is not null || checkout is null) return (reason, checkout);
         if (await TryIndexLockRefusalAsync(checkout, ct) is not null) return ("canonical_index_lock", checkout);
         if (await git.HasActiveSequencerAsync(checkout, ct)) return ("canonical_active_sequencer", checkout);
-        var status = await git.RunAsync(checkout,
+        var status = await git.StatusVerdictAsync(checkout,
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
         if (!status.Succeeded || status.Output.Length != 0) return ("canonical_checkout_dirty", checkout);
         return (null, checkout);
@@ -625,7 +625,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (Directory.Exists(land))
         {
             var head = await git.RunAsync(land, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
-            var status = await git.RunAsync(land, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
+            var status = await git.StatusVerdictAsync(land, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
             if (head.Succeeded && head.Output.Trim() == sha && status.Succeeded && status.Output.Length == 0) return land;
         }
         return await PrepareLandWorktreeAsync(op, sha, ct);
@@ -699,7 +699,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var candidate = ticket.Identity.WorktreePath;
         await RequireNoIndexLockAsync(candidate, ct);
         Require(!await git.HasActiveSequencerAsync(candidate, ct), "verification_sequencer_changed");
-        var status = await git.RunAsync(candidate, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
+        var status = await git.StatusVerdictAsync(candidate, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
         Require(status.Succeeded && status.Output.Length == 0, "verification_tracked_tree_changed");
         if (ticket.SourceCanonical is not null)
         {
@@ -724,7 +724,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     {
         if (await TryIndexLockRefusalAsync(source, ct) is { } held) return held.Code;
         if (await git.HasActiveSequencerAsync(source, ct)) return "active_sequencer";
-        var status = await git.RunAsync(source, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
+        var status = await git.StatusVerdictAsync(source, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
         return !status.Succeeded ? "status_error" : status.Output.Length == 0 ? null : "source_dirty";
     }
 

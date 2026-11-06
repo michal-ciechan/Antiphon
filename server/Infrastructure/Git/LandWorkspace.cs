@@ -100,7 +100,7 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
         if (!confirmed.Succeeded || confirmed.Output.Trim() != sha) return Refuse(UnreadyCode, "HEAD is not the requested commit");
         var symbolic = await git.RunAsync(path, ["symbolic-ref", "-q", "HEAD"], ct);
         if (symbolic.ExitCode != 1) return Refuse(UnreadyCode, "HEAD is not detached");
-        var status = await git.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+        var status = await git.StatusVerdictAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
         if (!status.Succeeded || status.Output.Length != 0) return Refuse(UnreadyCode, "the land worktree is not clean");
         if (!Exists(Path.Combine(admin, "locked")))
         {

@@ -111,7 +111,7 @@ public sealed class GuardedVerificationRemoval(ILandingGit git, IRepositoryMutat
             || await git.HasActiveSequencerAsync(root, ct)) return null;
         var head = await git.RunAsync(root, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
         var symbolic = await git.RunAsync(root, ["symbolic-ref", "-q", "HEAD"], ct);
-        var dirty = await git.RunAsync(root, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"], ct);
+        var dirty = await git.StatusVerdictAsync(root, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"], ct);
         var tracked = await git.RunAsync(root, ["ls-files", "-z"], ct);
         if (!head.Succeeded || head.Output.Trim() != request.ExpectedSourceSha || !symbolic.Succeeded || symbolic.Output.Trim() != source.SourceFullRef
             || !dirty.Succeeded || dirty.Output.Length != 0 || !tracked.Succeeded) return null;

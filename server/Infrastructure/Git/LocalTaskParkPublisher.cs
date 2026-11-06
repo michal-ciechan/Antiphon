@@ -143,7 +143,7 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
             .Any(name => File.Exists(Path.Combine(dir.Output.Trim(), name)) || Directory.Exists(Path.Combine(dir.Output.Trim(), name))))
             return (null, Held("park_sequencer_active"));
         var head = await git.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
-        var status = await git.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+        var status = await git.StatusVerdictAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
         var flags = await git.RunAsync(path, ["ls-files", "-v", "-z"], ct);
         if (!head.Succeeded || !GitObjectId.IsFull(head.Output.Trim()) || !status.Succeeded || !flags.Succeeded)
             return (null, Unknown());

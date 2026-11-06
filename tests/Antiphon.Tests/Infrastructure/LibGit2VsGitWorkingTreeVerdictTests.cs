@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -122,6 +124,16 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             File.Delete(r.Full("crlf.txt"));
             await r.GitAsync("checkout", "--", "crlf.txt"); // checked out CRLF
         }),
+        new("crlf-autocrlf-true-after-commit-linked-worktree", async r =>
+        {
+            // The guarded removal's CRLF case (CARD-1717 B-7): an LF blob committed first, autocrlf turned on
+            // afterwards, and the file checked out again in a linked worktree. git: clean.
+            await r.WriteAsync("feature.txt", "feature\n");
+            await r.CommitAllAsync();
+            await r.GitAsync("config", "core.autocrlf", "true");
+            File.Delete(r.Full("feature.txt"));
+            await r.GitAsync("checkout", "--", "feature.txt");
+        }, Linked: true),
         new("crlf-autocrlf-false-rewritten", async r =>
         {
             await r.GitAsync("config", "core.autocrlf", "false");
@@ -233,6 +245,19 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             }
             var git = await Repo.RunGitAsync(checkout, args);
             Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree || scenario.Fallback == Falls.Walk && (untracked || ignored), "status " + form, mine, git, StatusPaths);
+            // A verdict caller's dirty answer (GitTreeVerdict): porcelain-shaped rows over the same paths, so
+            // emptiness is git's wherever the path set is.
+            // The verdict's in-process dirty answer must never call a git-clean tree dirty.
+            if (InProcessGitStatus.VerdictAnswersDirty(checkout, untracked, ignored) == true && git.Output.Length == 0)
+                mismatches.Add($"status {form}: VERDICT answered dirty in process, git clean");
+            var rows = InProcessGitStatus.StatusRows(checkout, untracked, ignored);
+            if (rows is null != mine is null) mismatches.Add($"status {form}: rows {(rows is null ? "fell back" : "answered")}, paths did not");
+            else if (rows is not null && mine is not null)
+            {
+                var listed = StatusPaths(string.Concat(rows.Select(r => r + "\0"))).ToHashSet(StringComparer.Ordinal);
+                if (!listed.SetEquals(mine) || rows.Any(r => r.Length < 4 || r[2] != ' ' || r[..2] == "  "))
+                    mismatches.Add($"status {form}: verdict rows [{string.Join(", ", rows)}] paths [{string.Join(", ", mine.Order())}]");
+            }
         }
         foreach (var ignored in new[] { false, true })
         {
@@ -355,6 +380,89 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         await repo.WriteAsync("loose.txt", "u\n");
         foreach (var args in forms.Where(f => f[0] is "status" or "-c" || f.Contains("--others") && !f.Contains("--ignored")))
             InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldBeNull(string.Join(' ', args) + " on a dirty tree is git's");
+    }
+
+    [Test]
+    public async Task A_verdict_caller_gets_a_dirty_tree_in_process_and_every_other_caller_gets_git()
+    {
+        await using var repo = await Repo.CreateAsync(linked: false);
+        // Certain entries: a staged change and an untracked file.
+        await repo.WriteAsync("a.txt", "dirty\n");
+        await repo.GitAsync("add", "a.txt");
+        await repo.WriteAsync("loose.txt", "u\n");
+        var runner = new SpawnCountingGit();
+        string[] status = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"];
+
+        var plain = await runner.RunAsync(repo.Root, status, CancellationToken.None);
+        runner.StatusSpawns.ShouldBe(1, "an unmarked dirty status is git's bytes");
+        plain.Output.ShouldBe((await Repo.RunGitAsync(repo.Root, status)).Output);
+
+        foreach (var args in StatusForms.Select(f => f.Args))
+        {
+            var before = runner.StatusSpawns;
+            var verdict = await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, args, CancellationToken.None);
+            runner.StatusSpawns.ShouldBe(before, string.Join(' ', args) + " is answered in process");
+            verdict.Succeeded.ShouldBeTrue();
+            var git = await Repo.RunGitAsync(repo.Root, args);
+            (verdict.Output.Length != 0).ShouldBe(git.Output.Length != 0, string.Join(' ', args));
+        }
+        // Only a work-tree edit of a tracked file: libgit2's reading of the bytes is not trusted, git runs.
+        await repo.GitAsync("reset", "-q", "a.txt");
+        File.Delete(repo.Full("loose.txt"));
+        var workTreeOnly = await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, status, CancellationToken.None);
+        runner.StatusSpawns.ShouldBe(2, "a work-tree-only modification is git's verdict");
+        workTreeOnly.Output.ShouldBe((await Repo.RunGitAsync(repo.Root, status)).Output);
+        // Clean again: the verdict is git's empty bytes.
+        await repo.GitAsync("checkout", "--", "a.txt");
+        (await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, status, CancellationToken.None)).Output.ShouldBe("");
+        // A shape libgit2 does not read (an unreadable-or-unusual tree is covered by the scenarios): git runs.
+        (await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, ["status", "--porcelain", "--untracked-files=all"], CancellationToken.None))
+            .Succeeded.ShouldBeTrue();
+        runner.StatusSpawns.ShouldBe(3);
+    }
+
+    [Test]
+    public async Task A_runner_double_sees_the_verdict_call_unchanged_and_the_mark_ends_with_it()
+    {
+        var double_ = new RecordingDouble();
+        string[] status = ["status", "--porcelain=v1", "-z", "--untracked-files=no"];
+        var result = await ((ILandingGit)double_).StatusVerdictAsync("C:/nowhere", status, CancellationToken.None);
+        result.Output.ShouldBe(" M faked\0");
+        double_.Seen.ShouldHaveSingleItem().ShouldBeSameAs(status);
+        double_.MarkedWhileRunning.ShouldBeTrue();
+        GitTreeVerdict.IsVerdictOnly(status).ShouldBeFalse("the mark is scoped to the call");
+        await double_.RunAsync("C:/nowhere", status, CancellationToken.None);
+        double_.MarkedWhileRunning.ShouldBeFalse("an ordinary call with the same list is unmarked");
+    }
+
+    private sealed class RecordingDouble : LandingGit
+    {
+        public List<IReadOnlyList<string>> Seen { get; } = [];
+        public bool MarkedWhileRunning { get; private set; }
+
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            Seen.Add(arguments);
+            MarkedWhileRunning = GitTreeVerdict.IsVerdictOnly(arguments);
+            return Task.FromResult(new LandingGitResult(0, " M faked\0", ""));
+        }
+    }
+
+    /// <summary>The real runner with the suite's isolated children, counting the status children it starts.</summary>
+    private sealed class SpawnCountingGit : LandingGit
+    {
+        public int StatusSpawns;
+
+        protected override void ConfigureProcess(System.Diagnostics.ProcessStartInfo start)
+        {
+            foreach (var (name, value) in Isolation) start.Environment[name] = value;
+        }
+
+        protected override System.Diagnostics.Process? StartProcess(System.Diagnostics.ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Contains("status")) Interlocked.Increment(ref StatusSpawns);
+            return base.StartProcess(start);
+        }
     }
 
     [Test]

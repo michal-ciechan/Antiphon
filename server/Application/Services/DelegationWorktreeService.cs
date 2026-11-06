@@ -578,7 +578,7 @@ public sealed class DelegationWorktreeService
             throw new ConflictException("verification_creation_identity_mismatch");
         var head = await _landingGit.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
         var symbolic = await _landingGit.RunAsync(path, ["symbolic-ref", "-q", "HEAD"], ct);
-        var status = await _landingGit.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"], ct);
+        var status = await _landingGit.StatusVerdictAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"], ct);
         if (!head.Succeeded || head.Output.Trim() != task.SourceLandingSha || !symbolic.Succeeded
             || symbolic.Output.Trim() != "refs/heads/" + task.WorktreeBranch || !status.Succeeded || status.Output.Length != 0)
             throw new ConflictException("verification_snapshot_not_restored");

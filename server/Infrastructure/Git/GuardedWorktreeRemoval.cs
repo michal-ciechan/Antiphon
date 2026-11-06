@@ -487,7 +487,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 if (await git.HasActiveSequencerAsync(checkout, ct)) return "local_target_active_sequencer";
                 var symbolic = await git.RunAsync(checkout, ["symbolic-ref", "-q", "HEAD"], ct);
                 var head = await git.RunAsync(checkout, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
-                var status = await git.RunAsync(checkout, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+                var status = await git.StatusVerdictAsync(checkout, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
                 if (!symbolic.Succeeded || symbolic.Output.Trim() != source.TargetFullRef || !head.Succeeded
                     || head.Output.Trim() != request.ExpectedTargetSha || !status.Succeeded || status.Output.Length != 0)
                     return "local_target_dirty_or_changed";

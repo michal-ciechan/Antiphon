@@ -1242,7 +1242,7 @@ public sealed class WorktreeManager : IWorktreeManager
                 || matching[0].Head != intent.InitialSha || !Directory.Exists(intent.Path)
                 || !PathsEqual(common, await git.CommonDirectoryAsync(intent.Path, CancellationToken.None))) return;
             var head = await git.RunAsync(intent.Path, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None);
-            var status = await git.RunAsync(intent.Path, ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored"], CancellationToken.None);
+            var status = await git.StatusVerdictAsync(intent.Path, ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored"], CancellationToken.None);
             if (!head.Succeeded || head.Output.Trim() != "refs/heads/" + intent.Branch
                 || !status.Succeeded || status.Output.Length != 0) return;
             var remove = await git.RunAsync(intent.RepoPath, ["worktree", "remove", intent.Path], CancellationToken.None);
