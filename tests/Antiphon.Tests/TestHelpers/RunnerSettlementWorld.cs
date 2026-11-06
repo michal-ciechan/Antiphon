@@ -71,9 +71,10 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     /// the pre-debt Blocked settlement reachable.</param>
     public static async Task<RunnerSettlementWorld> CreateAsync(
         AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false,
-        bool controlledSyncClock = false, bool mirrorPublish = false, bool syncDebt = true)
+        bool controlledSyncClock = false, bool mirrorPublish = false, bool syncDebt = true,
+        IReadOnlyDictionary<string, string>? initialFiles = null)
     {
-        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced, controlledSyncClock,
+        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch, initialFiles: initialFiles), fenced, controlledSyncClock,
             mirrorPublish, syncDebt);
         world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         world.BuildServices();
