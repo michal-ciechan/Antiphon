@@ -3,6 +3,12 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-0824: persisted RefOnly continuation, real park publication and dispatcher/queue witnesses.
+Antiphon.Tests.Application.C0824RefOnlyContinuationTests
+
+# CARD-0824: real Git/auth/schema consumer and projection witnesses.
+Antiphon.Tests.Application.C0824RefOnlyConsumerTests
+
 # CARD-0824: real queued mirror publication, exact-ref Git sync and shared database fixtures.
 Antiphon.Tests.Application.C0824RefOnlySyncTests
 
