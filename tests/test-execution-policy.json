@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "f2716a2ed5a3f7e06301acfaea9a1dbf89a2f1aaca4ec2e8e75b014dcd5cbdca",
+  "policyHash": "82b4f28a4197c7aba6c28678e3113afa2b343ccbd84c905e0e7ea790b87c1d1a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1498,6 +1498,16 @@
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: real statx, no-follow directory descriptors and unlinkat are required; Windows has a separate native witness.",
+          "owner": "CARD-1737"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C1708ReflogSalvageTests",
+          "methods": [
+            "C1737_UnreadableRawReflogKeepsTree"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: mode-000 raw-reflog denial requires an unprivileged Linux process; Windows needs separate permission evidence.",
           "owner": "CARD-1737"
         }
       ]
