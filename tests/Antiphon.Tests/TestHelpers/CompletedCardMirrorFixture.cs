@@ -65,6 +65,10 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     // "queued:<operation>", "released:waiters=<n>" (MutationLock waiters observed at release),
     // "holder-resumed", and "entered:<operation>" when a handler starts.
     public List<string> Order { get; } = [];
+    // Child-start observation on the real workspace service, inside the dispatcher's turn.
+    // This is independent of the server's reply and of the publication caller's return value.
+    public bool ObservePublication { get; set; }
+    public int PublicationChildren { get; private set; }
     // Operation id of each CompletedCardWorkspaceRemove handler entry on the runner.
     public List<Guid> EnteredRemovalOperationIds { get; } = [];
     private PhoneHomeCommandDispatcher _dispatcher = null!;
@@ -108,7 +112,15 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         var storePath = Path.Combine(state, "store"); var secretPath = Path.Combine(state, "secret"); _storePath = storePath;
         await File.WriteAllTextAsync(storePath, store.ToString("D"), ct);
         await File.WriteAllTextAsync(secretPath, Wire.Secret, ct);
-        Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote, System.Diagnostics.Process.Start);
+        Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote, start =>
+        {
+            if (ObservePublication && Binding is not null && start.WorkingDirectory == Binding.WorktreePath)
+            {
+                PublicationChildren++;
+                Record("entered:" + PhoneHomeOperation.WorkspacePublish);
+            }
+            return System.Diagnostics.Process.Start(start);
+        });
         Workspace.BindRecipient(Wire.AllowedRunnerId, store);
         // The holder blocks inside MirrorAsync, under the runner dispatcher's MutationLock.
         Workspace.WorkspaceAdmissionForTest = async () =>

@@ -1,9 +1,15 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -261,6 +267,91 @@ public sealed class C0824RefOnlySyncTests
         w.Git.FailCommand = null;
         (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeTrue("valid-counterpart");
         f.AssertNoDesktopCommands();
+    }
+
+    [Test]
+    public async Task Reported_tip_and_mirror_publication_keep_existing_contract()
+    {
+        // The real reply producer first: its mirror is an independent author, never the desktop.
+        await using (var settled = await RunnerSettlementWorld.CreateAsync(mirrorPublish: true))
+        {
+            await settled.RecordRefOnlyAsync();
+            await File.WriteAllTextAsync(Path.Combine(settled.Git.Runner, "unpublished.txt"), "reply publication bytes");
+            await settled.Git.RunAsync(settled.Git.Runner, "add", "unpublished.txt");
+            await settled.Git.RunAsync(settled.Git.Runner, "commit", "-m", "unpublished reply source");
+            var source = await settled.Git.RunAsync(settled.Git.Runner, "rev-parse", "HEAD");
+            await settled.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            settled.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, settled.Task.CompletionProgressEvidenceJson);
+            (await settled.Git.RunAsync(settled.Git.Origin, "rev-parse", settled.Git.FullRef)).ShouldBe(source, "reply-recipient-published=S");
+            (await settled.Git.RevParseAsync(settled.Git.FullRef)).ShouldBe(source);
+            settled.Evidence()!.RemoteSync!.MirrorPushed.ShouldBeTrue();
+            Directory.Exists(settled.Task.WorktreePath!).ShouldBeFalse();
+        }
+
+        // Close the transport seam through the existing real socket/queue/runner fixture.
+        await using var wire = await CompletedCardMirrorFixture.CreateAsync();
+        var g = wire.Card.Host.Fixture;
+        await g.RequiredAsync(g.Repository, "worktree", "remove", wire.Card.Tree);
+        await using var db = wire.Card.Host.CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == wire.Card.TaskId);
+        var progress = new TaskProgressGit(wire.Card.Host.Services.GetRequiredService<IRepositoryMutationLease>());
+        var common = await progress.CommonDirectoryAsync(g.Repository, default);
+        var binding = new TaskRefWorkspaceBinding
+        {
+            Id = Guid.NewGuid(), TaskId = task.Id, RepositoryPath = g.Repository, CommonDirectory = common,
+            IdentityPath = Path.Combine(g.Root, ".ref-only", task.Id.ToString("N")),
+            Branch = task.WorktreeBranch!, FullRef = "refs/heads/" + task.WorktreeBranch,
+            SelectedBaseSha = g.SeedSha, SelectedBaseRef = "refs/heads/master", SelectedBaseSource = WorktreeBaseSource.Explicit,
+            PreparationState = TaskRefWorkspacePreparationState.Published, Revision = 1,
+        };
+        task.DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly; task.TaskRefWorkspaceBindingId = binding.Id;
+        task.WorktreePath = binding.IdentityPath; task.WorkingDirectory = g.Repository; task.RepoPath = g.Repository;
+        task.WorktreeBaseSha = g.SeedSha; task.WorktreeBaseRef = binding.SelectedBaseRef; task.WorktreeBaseSource = binding.SelectedBaseSource;
+        task.RunnerId = wire.Wire.AllowedRunnerId; task.RemoteWorktreePath = wire.Mirror;
+        var fingerprint = await progress.EndpointFingerprintAsync(g.Repository, default);
+        task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(new(2, DateTime.UtcNow, DateTime.UtcNow,
+            new(g.Repository, common, task.Id, null, binding.FullRef, g.SeedSha,
+                new(ProgressRemoteState.Present, g.SeedSha, fingerprint))
+            { DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly, TaskRefWorkspaceBindingId = binding.Id }, null));
+        db.TaskRefWorkspaceBindings.Add(binding); await db.SaveChangesAsync();
+        var main = (await g.RequiredAsync(g.Repository, "rev-parse", "HEAD")).Trim();
+        var index = (await g.RequiredAsync(g.Repository, "write-tree")).Trim();
+        var registry = await g.RequiredAsync(g.Repository, "worktree", "list", "--porcelain");
+        var sync = new RemoteWorkspaceService(wire.Wire.Directory, g.Git, NullLogger<RemoteWorkspaceService>.Instance,
+            progress, wire.Card.Host.Services.GetRequiredService<IRepositoryMutationLease>(),
+            workspaceContexts: new TaskWorkspaceContextResolver(db));
+        foreach (var missing in new[] { false, true })
+        {
+            if (missing) await g.RequiredAsync(g.Repository, "push", "origin", "--delete", task.WorktreeBranch!);
+            var name = missing ? "absent.txt" : "equal.txt";
+            await File.WriteAllTextAsync(Path.Combine(wire.Mirror, name), "queued publication " + name);
+            await g.RequiredAsync(wire.Mirror, "add", name);
+            await g.RequiredAsync(wire.Mirror, "commit", "-m", "recipient " + name);
+            var source = (await g.RequiredAsync(wire.Mirror, "rev-parse", "HEAD")).Trim();
+            var holder = missing ? await wire.HoldMutationTurnAsync() : null;
+            wire.ObservePublication = true;
+            var children = wire.PublicationChildren;
+            var running = sync.SyncForReviewEvidenceAsync(task, null, default);
+            if (holder is not null) await wire.ReleaseWhenQueuedAsync(holder, running, PhoneHomeOperation.WorkspacePublish);
+            var result = await running;
+            result.Confirmed.ShouldBeTrue("recipient-published=S:" + result.Reason);
+            wire.PublicationChildren.ShouldBeGreaterThan(children, "reached:S5:real-recipient-child");
+            (await g.RequiredAsync(g.Remote, "rev-parse", binding.FullRef)).Trim().ShouldBe(source, "recipient-published=S");
+            (await g.RequiredAsync(g.Remote, "show", source + ":" + name)).Trim().ShouldBe("queued publication " + name);
+            (await g.RequiredAsync(g.Repository, "rev-parse", binding.FullRef)).Trim().ShouldBe(source);
+            var after = wire.PublicationChildren;
+            var wrong = await sync.SyncForReviewEvidenceAsync(task, [new string('a', source.Length)], default);
+            wrong.Confirmed.ShouldBeFalse("report-exact-S:wrong");
+            (await sync.SyncForReviewEvidenceAsync(task, [source[..8]], default)).Confirmed.ShouldBeFalse("report-exact-S:short");
+            (await sync.SyncForReviewEvidenceAsync(task, [source], default)).Confirmed.ShouldBeTrue("report-exact-S:full");
+            wire.PublicationChildren.ShouldBe(after, "report-only-recovery-does-not-publish");
+            wire.ObservePublication = false;
+            wire.Order.Clear();
+        }
+        (await g.RequiredAsync(g.Repository, "rev-parse", "HEAD")).Trim().ShouldBe(main, "main-intact");
+        (await g.RequiredAsync(g.Repository, "write-tree")).Trim().ShouldBe(index, "main-index-intact");
+        (await g.RequiredAsync(g.Repository, "worktree", "list", "--porcelain")).ShouldBe(registry, "registry-intact");
+        Directory.Exists(binding.IdentityPath).ShouldBeFalse("no-desktop-source-checkout");
     }
 
     [Test]
