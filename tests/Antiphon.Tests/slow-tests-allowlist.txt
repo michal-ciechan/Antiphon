@@ -8,6 +8,9 @@ Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests
 
 # CARD-1731: real PowerShell/Git snapshot isolation and write-count witnesses; baseline methods measured 22-26s on loaded Linux.
 Antiphon.Tests.Scripts.C599SnapshotTests
+# CARD-0824: exact RefOnly debt producer, restart and claim/save witnesses using shared PostgreSQL templates.
+Antiphon.Tests.Application.C0824RefOnlyDebtTests
+
 # CARD-0824: real Git/lease/schema witnesses for stale release revisions and RefOnly consumer boundaries.
 Antiphon.Tests.Application.C0824RefOnlyBoundaryTests
 
