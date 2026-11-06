@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -27,6 +28,64 @@ namespace Antiphon.Tests.Application;
 public sealed class C1708ReflogSalvageTests
 {
     private const string Prefix = "refs/antiphon/salvage/";
+
+    [Test, Timeout(40_000)]
+    [Arguments("cancellation"), Arguments("assertion"), Arguments("exception"), Arguments("return")]
+    public async Task C1737_ReleaseTickJoinsBeforeFixtureTeardown(string exit, CancellationToken ct)
+    {
+        using var body = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var s = await SalvageSourceAsync("W-JOIN", branchOnly: false, oldOnly: false, body.Token);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = false;
+        var touchedDisposedFixture = false;
+        var root = s.World.Fixture.Root;
+        var pending = s.TickAsync(policy => policy.DesktopBoundaryAsync = async (boundary, taskId, token) =>
+        {
+            if (boundary != "before:legacy-candidate" || taskId != s.Task.Id) return;
+            entered.TrySetResult();
+            try { await release.Task.WaitAsync(token); }
+            finally
+            {
+                touchedDisposedFixture = !Directory.Exists(root);
+                exited = true;
+            }
+            // The red witness must not continue destructive work after its rescue release.
+            throw new OperationCanceledException("witness boundary released", token);
+        });
+        var joinedBeforeDispose = false;
+        Exception? observed = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            try
+            {
+                if (exit == "cancellation") { body.Cancel(); await pending; }
+                if (exit == "assertion") true.ShouldBeFalse("intentional caller assertion");
+                if (exit == "exception") throw new InvalidOperationException("intentional caller exception");
+            }
+            catch (Exception ex) { observed = ex; }
+            finally { await s.DisposeAsync(); }
+            joinedBeforeDispose = s.ReleaseTick!.IsCompleted && exited;
+        }
+        finally
+        {
+            // Rescue the deliberately broken baseline too: never leave a test-owned tick behind.
+            release.TrySetResult();
+            try { await s.ReleaseTick!.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (OperationCanceledException) { }
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (OperationCanceledException) { }
+        }
+
+        joinedBeforeDispose.ShouldBeTrue("joined:W-JOIN:release-tick-completed-before-fixture-dispose");
+        touchedDisposedFixture.ShouldBeFalse("joined:W-JOIN:no-touch-after-fixture-dispose");
+        Directory.Exists(root).ShouldBeFalse("the actual fixture was disposed");
+        if (exit == "cancellation") observed.ShouldBeAssignableTo<OperationCanceledException>();
+        if (exit == "assertion") observed.ShouldBeOfType<ShouldAssertException>();
+        if (exit == "exception") observed.ShouldBeOfType<InvalidOperationException>();
+        if (exit == "return") observed.ShouldBeNull();
+    }
 
     [Test, Timeout(40_000)]
     public async Task C1737_HeadReflogOnlyCommitSurvivesRemoval(CancellationToken ct) =>
@@ -70,7 +129,7 @@ public sealed class C1708ReflogSalvageTests
             return null;
         };
         DesktopLegacyReleasePolicyService.TickResult tick;
-        try { tick = await s.World.TickAsync().WaitAsync(ct); }
+        try { tick = await s.TickAsync(); }
         finally { s.ClearHooks(); await s.CaptureAsync(); }
 
         Directory.Exists(s.Task.Path).ShouldBeTrue("preserved:W-U3:source-tree");
@@ -109,7 +168,7 @@ public sealed class C1708ReflogSalvageTests
             s.Observe(directory, args, result);
             return Task.CompletedTask;
         };
-        try { await s.World.TickAsync().WaitAsync(ct); }
+        try { await s.TickAsync(); }
         finally { s.ClearHooks(); await s.CaptureAsync(); }
 
         // Removal is a prerequisite: a retained reflog must not mask an omitted source tuple.
@@ -207,7 +266,7 @@ public sealed class C1708ReflogSalvageTests
             Console.WriteLine("reached:" + caseId + ":after-list-before-raw-read:" + variant);
         };
         DesktopLegacyReleasePolicyService.TickResult tick;
-        try { tick = await s.World.TickAsync().WaitAsync(ct); }
+        try { tick = await s.TickAsync(); }
         finally
         {
             s.ClearHooks();
@@ -293,6 +352,21 @@ public sealed class C1708ReflogSalvageTests
         LandingGitFixture.FixtureGit reader, string caseId, CancellationToken ct) : IAsyncDisposable
     {
         public DesktopLegacyWorld World => world;
+        public Task<DesktopLegacyReleasePolicyService.TickResult>? ReleaseTick { get; private set; }
+        public async Task<DesktopLegacyReleasePolicyService.TickResult> TickAsync(
+            Action<DesktopLegacyReleasePolicyService>? configure = null)
+        {
+            ReleaseTick = RunTickAsync(configure);
+            return await ReleaseTick.WaitAsync(ct);
+        }
+        private async Task<DesktopLegacyReleasePolicyService.TickResult> RunTickAsync(
+            Action<DesktopLegacyReleasePolicyService>? configure)
+        {
+            await using var scope = world.Host.Services.CreateAsyncScope();
+            var policy = scope.ServiceProvider.GetRequiredService<DesktopLegacyReleasePolicyService>();
+            configure?.Invoke(policy);
+            return await policy.RunTickAsync(CancellationToken.None);
+        }
         public DesktopLegacyWorld.Handle Task => task;
         public string Pushed { get; set; } = "";
         public string Lost { get; set; } = "";
