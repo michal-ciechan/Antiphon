@@ -130,7 +130,11 @@ internal static class RefOnlyRedirectWitness
             }
             await rig.Preparer.WhenIdleAsync();
             var moved = await rig.ReadTaskAsync(id);
-            moved.RunnerId.ShouldBe(target, "remote-redirect:" + variant);
+            var recoveryEvents = await rig.EventsAsync(id, AgentTaskEventType.Warning);
+            moved.RunnerId.ShouldBe(target, "remote-redirect:" + variant + "; status=" + moved.Status
+                + "; release=" + moved.RemoteWorkspaceSlotReleasedAt
+                + "; release-requests=" + rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceSlotRelease)
+                + "; events=" + string.Join(" | ", recoveryEvents.Select(e => e.Detail)));
             moved.TaskRefWorkspaceBindingId.ShouldBe(bindingId, "source-binding-retained:" + variant);
             moved.WorktreeBaseSha.ShouldBe(world.Base, "creation-base-retained:" + variant);
             var oldFree = world.Pool.Ledger().Slot(slot.Id)!;
