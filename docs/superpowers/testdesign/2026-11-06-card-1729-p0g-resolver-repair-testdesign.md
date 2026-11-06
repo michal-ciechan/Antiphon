@@ -71,8 +71,10 @@ name and includes existing script/process tests; it omits delivery, landing,
 lease and persistence integration suites. It is required by the Final profile.
 Historical whole-Unit sample: 2,310.6s host, 3,983 total (task 78dc9321,
 `.antiphon/c1008-evidence-round5/unit-outcome.md`); no measured p95 exists.
-CP-93 estimate 20 minutes is provisional, with a finite 45-minute row cap and
-derived total allowance. Its over-30-minute exposure needs caller Debug triage
+CP-93 estimate 40 minutes is provisional, with a finite 45-minute row cap and
+the derived 90-minute total allowance. The tool also uses that 45-minute cap
+for this row's build; the targeted group's build cap remains 20 minutes.
+These are the initial Unit budgets, not a widened retry. Its over-30-minute exposure needs caller Debug triage
 under R1; this delegate cannot dispatch additional agents. Record actual cost
 and do not repeat a completed green lane. CP-93 runs separately from the three
 targeted rows, so no run exceeds the three-row cap.
@@ -84,4 +86,4 @@ targeted rows, so no run exceeds the three-row cap.
 | CP-1 | repair | tests/Antiphon.Tests -> bin-a342b58a-guard/ | layering-guard | /*/Antiphon.Tests.Infrastructure/C1729LayeringGuardTests/* | V-1, R-1; L1..L9 and new variants | 9 methods, zero failures/skips after repair; inventory printed | 9 | 10 | true | ANTIPHON_TEST_PHASE_GROUP_ID=CP-1 |
 | CP-91 | repair | CP-1 | classification | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)/* | classification and registry | 50 cases, zero failures/skips | 50 | 2 | true | ANTIPHON_TEST_PHASE_GROUP_ID=CP-91 |
 | CP-92 | repair | CP-1 | mechanical-contract | /*/*/(MechanicalPcContract*)/* | mechanical instruction contract | 11 cases, zero failures/skips | 11 | 2 | true | ANTIPHON_TEST_PHASE_GROUP_ID=CP-92 |
-| CP-93 | final | tests/Antiphon.Tests -> bin-a342b58a-unit/ | whole-unit | /*/*/*/*[Category=Unit] | Final whole Unit lane | nonzero executions; every red/skip inspected | 1 | 20 | true | ANTIPHON_TEST_PHASE_GROUP_ID=CP-93 |
+| CP-93 | final | tests/Antiphon.Tests -> bin-a342b58a-unit/ | whole-unit | /*/*/*/*[Category=Unit] | Final whole Unit lane | nonzero executions; every red/skip inspected | 1 | 40 | true | ANTIPHON_TEST_PHASE_GROUP_ID=CP-93 |
