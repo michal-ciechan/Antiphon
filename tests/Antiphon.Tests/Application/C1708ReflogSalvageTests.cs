@@ -64,7 +64,7 @@ public sealed class C1708ReflogSalvageTests
             if (wrote && cut == 0 && s.Match(directory, args, s.World.Fixture.Repository, s.VerifyArguments))
             {
                 await s.RequiredAsync(s.World.Fixture.Repository, "update-ref", "--no-deref", "-d", s.Salvage, s.Lost);
-                (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage)).ExitCode.ShouldBe(1);
+                (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", "--quiet", s.Salvage)).ExitCode.ShouldBe(1);
                 cut++;
             }
             return null;
@@ -75,7 +75,7 @@ public sealed class C1708ReflogSalvageTests
 
         Directory.Exists(s.Task.Path).ShouldBeTrue("preserved:W-U3:source-tree");
         await s.AssertCustodyAsync(s.HeadBytes, s.HeadLog);
-        (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage)).ExitCode.ShouldBe(1);
+        (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", "--quiet", s.Salvage)).ExitCode.ShouldBe(1);
         wrote.ShouldBeTrue();
         cut.ShouldBe(1);
         verified.ShouldBeTrue();
@@ -116,7 +116,7 @@ public sealed class C1708ReflogSalvageTests
         Directory.Exists(s.Task.Path).ShouldBeFalse("the source really was removed");
         Directory.Exists(WorktreeSetAside.SetAsidePath(s.Task.Path)).ShouldBeFalse("no set-aside custody remains");
         (await s.RegisteredAsync()).ShouldBeFalse();
-        (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Task.FullRef)).ExitCode.ShouldBe(1);
+        (await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", "--quiet", s.Task.FullRef)).ExitCode.ShouldBe(1);
         File.Exists(s.HeadLog).ShouldBeFalse();
         File.Exists(s.BranchLog).ShouldBeFalse();
         var salvage = await s.RunAsync(s.World.Fixture.Repository, "show-ref", "--verify", "--hash", s.Salvage);
