@@ -59,6 +59,9 @@ public sealed class C0824RefOnlyContinuationTests
             if (decoy) { Directory.CreateDirectory(f.Identity); await File.WriteAllTextAsync(Path.Combine(f.Identity, "foreign"), "retain"); }
             var source = await f.Git.RunnerPushAsync("park.txt", "parked source");
             (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeTrue();
+            var pushed = await f.Service().PushBranchAsync(f.Task, default);
+            pushed.Pushed.ShouldBeTrue("ref-only-preparation-push");
+            pushed.Sha.ShouldBe(source, "ref-only-push-owned-S");
             var park = new AgentTaskPark { TaskId = f.Task.Id, Attempt = f.Task.Attempt,
                 WorktreePath = f.Identity, RemoteWorktreePath = f.Task.RemoteWorktreePath,
                 RunnerId = f.Task.RunnerId, FullRef = f.Git.FullRef, SourceSha = source,

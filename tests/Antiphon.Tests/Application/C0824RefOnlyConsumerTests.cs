@@ -32,17 +32,21 @@ public sealed class C0824RefOnlyConsumerTests
             Status = SessionStatus.Running, StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow };
         f.Db.AgentSessions.Add(session); f.Task.AgentSessionId = session.Id;
         await f.Db.SaveChangesAsync();
+        var source = await f.Git.RunnerPushAsync("parent.txt", "frozen parent S");
+        (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeTrue();
         var service = Service(f);
         var caller = await service.AuthenticateAsync(token, default);
         caller.WorkingDirectory.ShouldBe(f.Task.RemoteWorktreePath, "caller-remote-context");
         caller.MayDelegate.ShouldBeTrue("reached:U1:orchestrator:authenticated");
+        var later = await f.Git.RunnerPushAsync("later.txt", "parent moved after authentication");
+        (await f.Service().SyncAsync(f.Task, default)).Confirmed.ShouldBeTrue();
+        (await f.TipAsync()).ShouldBe(later, "reached:U1:moved-parent:before-child");
         var child = await service.CreateAsync(new CreateAgentTaskRequest(Goal: "isolated child"), caller, default);
         var row = await f.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == child.Id);
         row.Workspace.ShouldBe(WorkspaceMode.Worktree, "child-own-worktree");
         row.RepoPath.ShouldBe(f.Git.Desktop);
-        row.WorktreeBaseRequestedRef.ShouldBe(f.Git.Baseline, "child-own-worktree-from=S");
-        await f.Git.RunnerPushAsync("later.txt", "parent moved after authentication");
-        row.WorktreeBaseRequestedRef.ShouldBe(f.Git.Baseline, "frozen-child-source");
+        row.WorktreeBaseRequestedRef.ShouldBe(source, "child-own-worktree-from=S");
+        row.RunnerId.ShouldBe(f.Task.RunnerId, "child-remote-runner");
         foreach (var mode in new[] { WorkspaceMode.Shared, WorkspaceMode.ReadOnly })
         {
             var refusal = await Should.ThrowAsync<ConflictException>(() => service.CreateAsync(
