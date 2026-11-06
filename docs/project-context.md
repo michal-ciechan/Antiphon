@@ -75,6 +75,13 @@ This document is the project constitution. All AI coding agents and human develo
 
 ### Backend
 
+CARD-1729's staged solution split uses the ordered, first-match path map in
+[`tests/Antiphon.Tests/Layering/layers.txt`](../tests/Antiphon.Tests/Layering/layers.txt)
+as the future project boundaries; namespaces remain unchanged. `C1729LayeringGuardTests`
+inventories syntax-level references against that map and the grouped `allowlist.txt` beside it.
+The initial `strict: false` mode reports violations and stale rows while still rejecting map
+and parse errors; P0-G2 enables the strict ratchet after the first mechanical wave lands.
+
 ```
 server/
   Domain/           # ZERO infrastructure dependencies (no EF Core, no SignalR, no HTTP)
