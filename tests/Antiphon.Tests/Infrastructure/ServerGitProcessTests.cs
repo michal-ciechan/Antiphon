@@ -78,9 +78,9 @@ public sealed class ServerGitProcessTests
     [
         ("server/Infrastructure/Git/LandingGit.cs", 3, 2),
         ("server/Infrastructure/Git/GitService.cs", 2, 2),
-        ("server/Infrastructure/Git/WorktreeManager.cs", 1, 1),
+        ("server/Infrastructure/Git/WorktreeManager.cs", 2, 1),
         ("server/Infrastructure/Git/CardFileRepository.cs", 1, 1),
-        ("server/Application/Services/GitWorkspaceService.cs", 2, 2),
+        ("server/Application/Services/GitWorkspaceService.cs", 3, 2),
         ("server/Application/Services/DelegationWorktreeService.cs", 1, 1),
         ("server/Application/Services/DelegationWorkspaceResolver.cs", 1, 1),
         ("server/Application/Services/OrchestratorWorkspaceLayout.cs", 1, 1),
@@ -91,7 +91,7 @@ public sealed class ServerGitProcessTests
     [Test]
     public void C1432_every_server_git_start_site_disables_auto_maintenance()
     {
-        Roster.Sum(r => r.Constructions).ShouldBe(14, "thirteen launches plus the non-launching eligibility probe");
+        Roster.Sum(r => r.Constructions).ShouldBe(16, "thirteen launches plus three non-launching eligibility probes");
         Roster.Sum(r => r.Launches).ShouldBe(13, "T-1 names thirteen server git start sites");
         var root = RepositoryRoot();
         var missing = new List<string>();
@@ -218,15 +218,21 @@ public sealed class ServerGitProcessTests
                 continue;
             }
             var calls = method.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();
-            if (Path.GetFileName(file) == "LandingGit.cs" && method.Identifier.ValueText == "InProcessEligible" && target == "probe")
+            if (target == "probe" && (Path.GetFileName(file), method.Identifier.ValueText) is
+                ("LandingGit.cs", "InProcessEligible")
+                or ("WorktreeManager.cs", "InProcessReadsEligible")
+                or ("GitWorkspaceService.cs", "InProcessReadsEligible"))
             {
-                // Only this exact construction is allowed to be non-launching. Forbid launches
-                // anywhere in its method, including through an aliased Process.StartInfo.
+                // Only these exact constructions are allowed to be non-launching. Their shared
+                // eligibility helper only inspects the executable and environment. Forbid launches
+                // anywhere in each method, including through an aliased Process.StartInfo.
                 var escapes = method.DescendantNodes().OfType<IdentifierNameSyntax>()
                     .Where(id => id.Identifier.ValueText == "probe")
                     .Any(id => !(id.Parent is MemberAccessExpressionSyntax member && member.Expression == id)
                         && !(id.Parent is ArgumentSyntax argument && argument.Parent?.Parent is InvocationExpressionSyntax call
-                            && call.Expression.ToString() == "ConfigureProcess"));
+                            && call.Expression.ToString() is "ConfigureProcess" or "ServerGitProcess.DisableAutoMaintenance"
+                                or "InProcessGitReads.ChildReadsSameRepository"
+                                or "Antiphon.Server.Infrastructure.Git.InProcessGitReads.ChildReadsSameRepository"));
                 if (calls.Any(call => LaunchTarget(call) is not null) || escapes)
                     missing.Add(site + ": eligibility probe must never launch or escape to a launch helper");
                 continue;
