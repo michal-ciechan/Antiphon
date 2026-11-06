@@ -104,3 +104,11 @@ zero, tree 404c6f10b83122b3cda2c1ed1f88392d831b0bc9. No merge/rebase/landing occ
 
 ## Unedited checkpoint receipts
 
+```text
+CHECKPOINT CP-1 commit=320050108dcf1454d76bb99b8e1b2301e1519aeb build=ok filter=/*/Antiphon.Tests.Infrastructure/C1729LayeringGuardTests/* executed=9 passed=7 failed=2 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-024412-181a/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=320050108dcf1454d76bb99b8e1b2301e1519aeb sourceState=clean buildSource=verified
+```
+```text
+CHECKPOINT CP-1 commit=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 build=ok filter=/*/Antiphon.Tests.Infrastructure/C1729LayeringGuardTests/* executed=9 passed=9 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-025149-7d0f/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 sourceState=clean buildSource=verified
+CHECKPOINT CP-91 commit=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 build=reused filter=/*/*/(TestClassificationPolicy*)|(TestClassificationGuard*)|(SlowTestRegistryMerge*)|(SlowTestTripwire*)|(NativeLinuxPolicyWitnessTests*)/* executed=50 passed=50 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-025149-7d0f/rows/CP-91/run.trx slot=granted waited=0s dirty=0 source=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 sourceState=clean buildSource=verified
+CHECKPOINT CP-92 commit=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 build=reused filter=/*/*/(MechanicalPcContract*)/* executed=11 passed=11 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-025149-7d0f/rows/CP-92/run.trx slot=granted waited=0s dirty=0 source=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 sourceState=clean buildSource=verified
+```
