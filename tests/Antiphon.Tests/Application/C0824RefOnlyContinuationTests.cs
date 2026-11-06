@@ -48,6 +48,49 @@ public sealed class C0824RefOnlyContinuationTests
         (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready, "park-ready=S:gate-off");
         (await w.GitTextAsync(w.Repository, "rev-parse", w.FullRef)).ShouldBe(source, "park-ready-exact-ref");
         (await w.GitTextAsync(w.Repository, "show", source + ":park-source.txt")).ShouldBe("park-source.txt", "park-ready-exact-bytes");
+        var accepted = await w.RowAsync();
+        foreach (var dimension in new[] { "mode", "binding", "binding-revision", "digest", "store", "generation" })
+        {
+            Guid? originalBinding;
+            Guid? originalStore;
+            DateTime originalGeneration;
+            long originalRevision;
+            await using (var db = w.Fixture.Db())
+            {
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == w.Fixture.TaskId);
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == w.Fixture.SessionId);
+                var park = await db.AgentTaskParks.SingleAsync(p => p.Id == w.ParkId);
+                var binding = await db.TaskRefWorkspaceBindings.SingleAsync(b => b.Id == task.TaskRefWorkspaceBindingId);
+                originalBinding = task.TaskRefWorkspaceBindingId; originalStore = session.RunnerStoreId;
+                originalGeneration = session.StartedAt; originalRevision = binding.Revision;
+                park.SyncState = AgentTaskParkSyncState.Pending; park.SourceReadyAt = null;
+                park.SyncNextAttemptAt = DateTime.UtcNow.AddSeconds(-1);
+                if (dimension == "mode") task.DesktopWorkspaceKind = DesktopWorkspaceKind.Checkout;
+                if (dimension == "binding") task.TaskRefWorkspaceBindingId = Guid.NewGuid();
+                if (dimension == "binding-revision") binding.Revision++;
+                if (dimension == "digest") park.PublicationReceiptDigest = new string('0', 64);
+                if (dimension == "store") session.RunnerStoreId = Guid.NewGuid();
+                if (dimension == "generation") session.StartedAt = session.StartedAt.AddSeconds(1);
+                await db.SaveChangesAsync();
+            }
+            await RecoverAsync(w);
+            (await w.RowAsync()).SyncState.ShouldNotBe(AgentTaskParkSyncState.Ready, "park-not-ready:" + dimension);
+            (await w.GitTextAsync(w.Repository, "rev-parse", w.FullRef)).ShouldBe(source, "source-retained:" + dimension);
+            await using (var db = w.Fixture.Db())
+            {
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == w.Fixture.TaskId);
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == w.Fixture.SessionId);
+                var park = await db.AgentTaskParks.SingleAsync(p => p.Id == w.ParkId);
+                var binding = await db.TaskRefWorkspaceBindings.SingleAsync(b => b.Id == originalBinding);
+                task.DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly; task.TaskRefWorkspaceBindingId = originalBinding;
+                session.RunnerStoreId = originalStore; session.StartedAt = originalGeneration;
+                binding.Revision = originalRevision; park.PublicationReceiptDigest = accepted.PublicationReceiptDigest;
+                park.SyncState = AgentTaskParkSyncState.Pending; park.SyncNextAttemptAt = DateTime.UtcNow.AddSeconds(-1);
+                await db.SaveChangesAsync();
+            }
+            await RecoverAsync(w);
+            (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready, "park-ready=S:restored:" + dimension);
+        }
     }
 
     [Test]
@@ -195,6 +238,16 @@ public sealed class C0824RefOnlyContinuationTests
             (await verify.AgentTaskEvents.Where(e => e.AgentTaskId == f.TaskId).Select(e => e.Detail).ToListAsync())
                 .ShouldContain(d => d.Contains("ref_only_requires_remote_runner", StringComparison.Ordinal));
         }
+    }
+
+    private static async Task<int> RecoverAsync(TaskParkPublicationTests.PublicationWorld w)
+    {
+        await using var db = w.Fixture.Db();
+        var workspace = new RemoteWorkspaceService(w.Directory, w.Git,
+            NullLogger<RemoteWorkspaceService>.Instance, w.Git, w.Leases, w.Reservations,
+            workspaceContexts: new TaskWorkspaceContextResolver(db));
+        return await new BlockedTaskSyncRecoveryService(db, workspace, w.Service(db), new MockEventBus(),
+            TimeProvider.System, NullLogger<BlockedTaskSyncRecoveryService>.Instance).SweepAsync(default);
     }
 
 }
