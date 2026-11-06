@@ -120,7 +120,7 @@ internal sealed class ReportBudgetWorkspace : IAsyncDisposable
     internal static void ResetTemplateDirectory(string template, Action<string, bool>? delete = null)
     {
         if (Directory.Exists(template))
-            (delete ?? Directory.Delete)(template, true);
+            ReadOnlyDirectory.Delete(template, delete ?? Directory.Delete);
         Directory.CreateDirectory(template);
     }
 
