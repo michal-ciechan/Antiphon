@@ -2851,6 +2851,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("WorkspaceSnapshotJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("WorktreePath")
                         .HasColumnType("text");
 
