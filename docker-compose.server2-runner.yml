@@ -62,6 +62,7 @@ services:
       PhoneHome__AllowedCwd: /work
       PhoneHome__PushCredentialPolicyPath: /run/antiphon/push-allow-list
       PhoneHome__Capacity: "10"
+      PhoneHome__WorkspaceSlots__Enabled: ${PhoneHome__WorkspaceSlots__Enabled:-false}
       # CARD-0589 D-4: the host build/test driver budget the runner brokers at /build-slots. Ten seats
       # share four concurrent build or test drivers at six MSBuild nodes each, refused below 16 GB
       # available (24 cores, no cgroup memory cap, other services on the host). Change these and

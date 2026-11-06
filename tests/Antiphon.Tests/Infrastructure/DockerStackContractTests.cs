@@ -21,6 +21,7 @@ public sealed class DockerStackContractTests
     {
         var source = Text("scripts/c590-remote.sh");
         source.ShouldContain("runner_workspace_slots_enabled() {");
+        source.ShouldContain("if (count > 1 || (value != \"\" && value != \"false\" && value != \"true\")) exit 2");
         source.ShouldContain("PhoneHome__WorkspaceSlots__Enabled=\"$(runner_workspace_slots_enabled \"$SERVER2_ENV\")\"");
         source.ShouldContain("PhoneHome__WorkspaceSlots__Enabled=\"$(runner_workspace_slots_enabled \"$SERVER2_TEMP_ENV\")\"");
         foreach (var function in new[] { "case_deploy_parent", "case_deploy_temp_runner" })
