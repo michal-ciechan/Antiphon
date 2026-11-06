@@ -110,14 +110,17 @@ public sealed class C0824RefOnlyReceiptTests
             }
             if (cut == "eligible")
             {
-                foreach (var dimension in new[] { "body", "kind", "destination", "generation", "floor" })
+                foreach (var dimension in new[] { "body", "kind", "destination", "digest", "source-key", "generation", "missing-generation", "floor" })
                 {
                     await using (var db = w.CreateContext())
                     {
                         if (dimension == "body") await db.TranscriptEntries.Where(p => p.Id == accepted.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Text, delivery.WireText.Substring(0, delivery.WireText.Length / 2)));
                         if (dimension == "kind") await db.TranscriptEntries.Where(p => p.Id == accepted.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Kind, TranscriptKinds.QueuedUserPrompt));
                         if (dimension == "destination") await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.AgentSessionId, w.SessionId));
+                        if (dimension == "digest") await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.ContentDigest, "different-digest"));
+                        if (dimension == "source-key") await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.SourceLandNotificationId, (Guid?)Guid.NewGuid()));
                         if (dimension == "generation") await db.AgentSessions.Where(s => s.Id == w.CallerSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, row.LastDeliveryGeneration!.Value.AddMinutes(1)));
+                        if (dimension == "missing-generation") await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.LastDeliveryGeneration, (DateTime?)null));
                         if (dimension == "floor") await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.LastDeliveryBaselineSequence, (long?)accepted.Sequence));
                     }
                     await ReconcileAsync(w, bridge, obligation.Id);
@@ -125,7 +128,9 @@ public sealed class C0824RefOnlyReceiptTests
                     await using (var db = w.CreateContext())
                     {
                         await db.TranscriptEntries.Where(p => p.Id == accepted.Id).ExecuteUpdateAsync(u => u.SetProperty(p => p.Text, accepted.Text).SetProperty(p => p.Kind, TranscriptKinds.UserPrompt));
-                        await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.AgentSessionId, w.CallerSessionId).SetProperty(m => m.LastDeliveryBaselineSequence, row.LastDeliveryBaselineSequence));
+                        await db.SessionQueuedMessages.Where(m => m.Id == queued.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.AgentSessionId, w.CallerSessionId)
+                            .SetProperty(m => m.ContentDigest, row.ContentDigest).SetProperty(m => m.SourceLandNotificationId, row.SourceLandNotificationId)
+                            .SetProperty(m => m.LastDeliveryGeneration, row.LastDeliveryGeneration).SetProperty(m => m.LastDeliveryBaselineSequence, row.LastDeliveryBaselineSequence));
                         await db.AgentSessions.Where(s => s.Id == w.CallerSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, row.LastDeliveryGeneration!.Value));
                     }
                 }
