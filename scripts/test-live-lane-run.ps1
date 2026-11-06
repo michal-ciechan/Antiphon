@@ -17,7 +17,11 @@ $repo = Split-Path $PSScriptRoot -Parent
 $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
+<<<<<<< HEAD
 $script:PinnedInputDigest = 'f510daab843687c8a873d4d3167e01088be50987e796d693729db0418ed16ada'
+=======
+$script:PinnedInputDigest = '54c25a07a3af964554ea2b21a5db75e5195907b2c15e18e1be67952f45452ee3'
+>>>>>>> ce49cd02e (fix(tests): register native scratch Git deadline policy and refresh both digests)
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
