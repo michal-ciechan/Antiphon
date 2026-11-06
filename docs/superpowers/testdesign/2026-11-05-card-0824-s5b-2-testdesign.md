@@ -703,7 +703,7 @@ repository NativeWindows policy; skip on Linux is **not execution credit**.
 
 | Native CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| NCP-1 | separately commissioned S5b-2 native | tests/Antiphon.Tests -> bin-c0824-ref2-native/ | ref2-windows-binding | /*/Antiphon.Tests.Application/C0824RefOnlyBoundaryNativeTests/Windows_case_alias_cannot_own_the_same_ref_twice | N1,A-7,PC-157,PC-158 | 1 passed, 0 failed/skipped on actual Windows | 1 | 9 |
+| NCP-1 | separately commissioned S5b-2 native | tests/Antiphon.Tests -> bin-c0824-s5b2-native/ | ref2-windows-binding | /*/Antiphon.Tests.Application/C0824RefOnlyBoundaryNativeTests/Windows_case_alias_cannot_own_the_same_ref_twice | N1,A-7,PC-157,PC-158 | 1 passed, 0 failed/skipped on actual Windows | 1 | 9 |
 
 N1/PC-157..PC-158 require a separately placed **non-desktop Windows runner**; do not use
 this table to dispatch to the desktop or append S5b-3 lifecycle acceptance. If no
