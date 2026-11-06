@@ -112,6 +112,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// </summary>
     public async Task<RemotePushResult> PushBranchAsync(AgentTask task, CancellationToken ct)
     {
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return await PushRefOnlyBranchAsync(task, ct);
         if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
             return new RemotePushResult(false, null, "the task has no desktop worktree or branch");
 
@@ -134,6 +136,36 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (push.ExitCode != 0)
             return new RemotePushResult(false, sha, "git push failed: " + Tail(push.Diagnostic));
         return new RemotePushResult(true, sha, null, repository);
+    }
+
+    private async Task<RemotePushResult> PushRefOnlyBranchAsync(AgentTask task, CancellationToken ct)
+    {
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson);
+        if (_refWorkspaces is null || _leases is null || baseline?.SchemaVersion != 2
+            || string.IsNullOrWhiteSpace(task.RepoPath) || string.IsNullOrWhiteSpace(task.RunnerId)
+            || RunnerRequestIntent.IsDesktopAlias(task.RunnerId))
+            return new(false, null, "ref_only_preparation_unavailable");
+        await using var lease = await _leases.TryAcquireAsync(task.RepoPath,
+            new RepositoryLeaseOwnerTag(task.Id, RepositoryChildPurposes.RemotePrepPush), ct);
+        if (lease is null) return new(false, null, RemoteSettlementSyncReasons.LeaseBusy);
+        try
+        {
+            var observed = await _refWorkspaces.InspectAsync(task, baseline.Primary, null, ct);
+            var repo = observed.Context.GitWorkingDirectory;
+            var origin = await _git.RunAsync(repo, ["remote", "get-url", "--push", "--all", "origin"], ct);
+            var urls = origin.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            if (!origin.Succeeded || urls.Length != 1 || !RepositoryCloneSource.TryNormalize(urls[0], out var repository))
+                return new(false, observed.Sha, RemoteSettlementSyncReasons.EndpointAmbiguous);
+            // Freeze the owned source under the repository lease. A moving ref or canonical
+            // HEAD cannot select later content, and a non-FF remote refuses the ordinary push.
+            var push = await _git.RunAsync(repo,
+                ["push", "--no-follow-tags", "origin", observed.Sha + ":" + observed.Context.FullRef],
+                new LandingGitRunOptions(TimeSpan.FromMinutes(_remotePrepPushBudgetMinutes),
+                    new RepositoryChildTag(task.Id, RepositoryChildPurposes.RemotePrepPush)), ct);
+            return push.Succeeded ? new(true, observed.Sha, null, repository)
+                : new(false, observed.Sha, "ref_only_push_failed");
+        }
+        catch (ConflictException ex) { return new(false, null, ex.Code); }
     }
 
     /// <summary>
