@@ -1583,6 +1583,7 @@ public sealed partial class AgentTaskReplyService
                 SourceSha = owed.RemoteSha,
                 DesktopBeforeSha = owed.DesktopBeforeSha,
                 EndpointFingerprint = owed.EndpointFingerprint,
+                WorkspaceSnapshotJson = await SettlementSyncWorkspaceSnapshot.CaptureAsync(db, task, ct),
                 State = AgentTaskSyncDebtState.Pending,
                 ReasonCode = RemoteSettlementSyncReasons.LeaseBusy,
                 Attempts = 0,

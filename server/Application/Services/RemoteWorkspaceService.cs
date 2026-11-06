@@ -485,7 +485,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 
     /// <summary>
-    /// CARD-1082 D-5. Fast-forward a settled checkout only to the debt's recorded source.
+    /// CARD-1082 D-5. Advance the settled checkout/ref only to the debt's recorded source.
     /// A mismatched episode refuses <c>settlement_sync_source_changed</c> and touches no Git.
     /// </summary>
     public Task<RemoteSettlementSyncResult> SyncSettledAsync(
@@ -497,9 +497,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             || debt.WorktreePath != task.WorktreePath
             || debt.RemoteWorktreePath != task.RemoteWorktreePath
             || debt.RunnerId != task.RunnerId
+            || debt.RepositoryPath != task.RepoPath
             || baseline is null
             || debt.BaselineSha != baseline.LocalSha
             || debt.FullRef != baseline.FullRef
+            || debt.EndpointFingerprint != baseline.Remote.EndpointFingerprint
             || !GitObjectId.IsFull(debt.SourceSha))
             return Task.FromResult(Outcome(RemoteSettlementSyncState.Refused,
                 RemoteSettlementSyncReasons.SettlementSyncSourceChanged));

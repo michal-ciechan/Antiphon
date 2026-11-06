@@ -106,14 +106,15 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                 if (debt.State != AgentTaskSyncDebtState.Pending || debt.NextAttemptAt is null || debt.NextAttemptAt > due)
                     return null;
                 var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == debt.TaskId, ct);
-                if (!EpisodeMatches(task, debt))
+                if (!EpisodeMatches(task, debt)
+                    || !await SettlementSyncWorkspaceSnapshot.MatchesAsync(db, task!, debt, ct))
                 {
                     await TerminalAsync(debt, AgentTaskSyncDebtState.Held,
                         RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged, due, ct);
                     await tx.CommitAsync(ct);
                     return null;
                 }
-                if (await RegistrationGoneAsync(debt, ct))
+                if (await RegistrationGoneAsync(task!, debt, ct))
                 {
                     await TerminalAsync(debt, AgentTaskSyncDebtState.Superseded,
                         RemoteSettlementSyncReasons.SettlementSyncSuperseded, due, ct);
@@ -161,10 +162,18 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
             || task.Status != claim.Task.Status
             || task.Attempt != claim.Task.Attempt
             || task.ProgressBaselineJson != claim.Task.ProgressBaselineJson
-            || task.WorktreePath != claim.Task.WorktreePath;
+            || task.WorktreePath != claim.Task.WorktreePath
+            || task.DesktopWorkspaceKind != claim.Task.DesktopWorkspaceKind
+            || task.TaskRefWorkspaceBindingId != claim.Task.TaskRefWorkspaceBindingId
+            || task.ConcurrencyToken != claim.Task.ConcurrencyToken
+            || task.RepoPath != claim.Task.RepoPath
+            || task.RunnerId != claim.Task.RunnerId
+            || task.RemoteWorktreePath != claim.Task.RemoteWorktreePath
+            || !await SettlementSyncWorkspaceSnapshot.MatchesAsync(db, task, claim.Debt, ct);
         var superseded = result.Reason == RemoteSettlementSyncReasons.RetirementReserved
-            || (result.Reason == RemoteSettlementSyncReasons.IdentityMismatch && WorktreeMissing(claim.Debt))
-            || await RegistrationGoneAsync(claim.Debt, ct);
+            || (claim.Task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout
+                && result.Reason == RemoteSettlementSyncReasons.IdentityMismatch && WorktreeMissing(claim.Debt))
+            || await RegistrationGoneAsync(claim.Task, claim.Debt, ct);
         var ready = result.Confirmed
             && string.Equals(result.DesktopAfterSha, claim.Debt.SourceSha, StringComparison.Ordinal)
             && string.Equals(result.RemoteSha, claim.Debt.SourceSha, StringComparison.Ordinal)
@@ -284,8 +293,11 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
     /// The recorded worktree is missing, or any retirement row exists for this attempt.
     /// Held re-checks do not call this.
     /// </summary>
-    private async Task<bool> RegistrationGoneAsync(AgentTaskSyncDebt debt, CancellationToken ct)
+    private async Task<bool> RegistrationGoneAsync(AgentTask task, AgentTaskSyncDebt debt, CancellationToken ct)
     {
+        // RefOnly owns a ref and no desktop registration. Neither absence nor foreign bytes
+        // at its identity grants retirement authority. Snapshot/episode drift is Held above.
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly) return false;
         if (WorktreeMissing(debt)) return true;
         return await db.TaskWorktreeRetirements.AsNoTracking()
             .AnyAsync(r => r.TaskId == debt.TaskId && r.TaskAttempt == debt.Attempt, ct);
