@@ -158,6 +158,34 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
     }
 
     [Test]
+    public void StrictTrxRefusesIllegalCharacterReferences()
+    {
+        var path = Path.Combine(TempDir(), "references.trx");
+        foreach (var (reference, value) in F.CharacterReferences())
+        foreach (var context in new[] { "text", "attribute", "reason" })
+        {
+            var xml = F.WithReference(F.UnavailableTrx, reference, context);
+            File.WriteAllText(path, xml, new UTF8Encoding(false, true));
+            foreach (var parsed in new[] { StrictTrxReport.ParseText(xml, 3), TrxReport.ParseStrict(path, 3) })
+            {
+                var label = "preserved:R2-1:" + context + ":" + reference;
+                parsed.Ok.ShouldBe(value is not null, label);
+                parsed.ExitCode.ShouldBe(value is null ? 2 : 0, label + ":code");
+                if (value is not null && context == "reason")
+                {
+                    parsed.Results[1].SkipReason.ShouldBe("first" + value + "second", label + ":decoded-reason");
+                    parsed.Results[1].DebugTrace.ShouldBe("Skipped: first" + value + "second", label + ":decoded-trace");
+                }
+            }
+        }
+        // References in CDATA/comments are literal text, not numeric references.
+        var literal = F.UnavailableTrx.Replace("fixture capability unavailable", "<![CDATA[&#0;]]>", StringComparison.Ordinal);
+        var accepted = StrictTrxReport.ParseText("<!-- &#xD800; -->" + literal, 3);
+        accepted.Ok.ShouldBeTrue(accepted.Error);
+        accepted.Results[1].SkipReason.ShouldBe("&#0;");
+    }
+
+    [Test]
     public void LegacyParsingIsUnchanged()
     {
         var path = Path.Combine(TempDir(), "legacy.trx");
