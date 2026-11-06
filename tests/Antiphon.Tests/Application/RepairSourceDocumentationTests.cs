@@ -92,7 +92,7 @@ public class RepairSourceDocumentationTests
         File.ReadAllText(Path.Combine(root, ".claude", "skills", "antiphon-delegate", "SKILL.md"))
             .ShouldContain("-RepairSource");
         var code = File.ReadAllText(Path.Combine(root, "server", "Bundles", "stage-code.md"));
-        var formatter = File.ReadAllText(Path.Combine(root, "server", "Application", "Services", "DelegationReportFormatter.cs"));
+        var formatter = File.ReadAllText(Path.Combine(root, "server", "Application", "Core", "DelegationReportFormatter.cs"));
         (code.Contains("[antiphon-progress:") || formatter.Contains("[antiphon-progress:")).ShouldBeTrue();
     }
 
