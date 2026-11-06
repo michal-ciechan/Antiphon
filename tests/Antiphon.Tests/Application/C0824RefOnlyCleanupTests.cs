@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -369,7 +370,13 @@ public sealed class C0824RefOnlyCleanupTests
 
         await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = null; t.RemoteWorkspaceSlotGeneration = null; });
         var prior = f.Card.Host.ConfigureServices;
-        f.Card.Host.ConfigureServices = services => { prior?.Invoke(services); services.AddSingleton(remote); };
+        // CARD-0824 S4a integration: the no-claim mirror path below must also honour the S4a switch for a system
+        // release. Execute stays off for the whole method; the caller-filed release afterwards is not gated.
+        f.Card.Host.ConfigureServices = services =>
+        {
+            prior?.Invoke(services); services.AddSingleton(remote);
+            services.PostConfigure<WorktreeLegacyReleaseSettings>(o => o.Execute = false);
+        };
         await f.Card.Host.RestartServicesAsync();
         await using var scope = f.Card.Host.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -379,7 +386,8 @@ public sealed class C0824RefOnlyCleanupTests
         {
             Id = Guid.NewGuid(), TaskId = task.Id, TaskAttempt = task.Attempt, TerminalStatus = task.Status,
             TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = CardDoneArtifactPreservation.Digest(task.Result),
-            ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = "operator", ReleaseReason = "fixture mirror release",
+            ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = TaskWorktreeRetirementService.SystemCallerIdentity,
+            ReleaseReason = "fixture mirror release",
             ReleasedAt = f.Clock.GetUtcNow().UtcDateTime, HandoffDispositionJson = "[]", Active = true,
             RepositoryPath = task.RepoPath!, CommonDirectory = bound.Common, WorktreePath = bound.Identity,
             GitDirectory = "", SourceFullRef = bound.FullRef, SourceSha = f.Binding.CreationBaselineSha,
@@ -387,6 +395,11 @@ public sealed class C0824RefOnlyCleanupTests
             UpdatedAt = f.Clock.GetUtcNow().UtcDateTime
         };
         db.TaskWorktreeRetirements.Add(release); await db.SaveChangesAsync();
+        AssertNotRequired(await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>()
+            .TryRetireAsync(release, null, default), bound.Id, "system-release-switch-off");
+        commands.ShouldBe(0, "s4a-switch-off-sends-no-mirror-remove");
+        Directory.Exists(f.Mirror).ShouldBeTrue("s4a-switch-off-keeps-the-mirror");
+        release.CallerIdentity = "operator"; await db.SaveChangesAsync();
         AssertNotRequired(await scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>()
             .TryRetireAsync(release, null, default), bound.Id, "remote-independent-retirement");
         commands.ShouldBe(1, "remote-action-reached");
