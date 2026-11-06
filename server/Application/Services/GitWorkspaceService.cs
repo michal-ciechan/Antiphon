@@ -209,7 +209,7 @@ public class GitWorkspaceService
     }
 
     /// <summary>Read a committed blob without decoding or normalizing its bytes.</summary>
-    public async Task<long?> GetContentLengthAtAsync(
+    public virtual async Task<long?> GetContentLengthAtAsync(
         string workingDirectory, string relativePath, string gitRef, CancellationToken ct)
     {
         var (code, stdout, _) = await RunAsync(workingDirectory, ct, "cat-file", "-s",
@@ -220,7 +220,7 @@ public class GitWorkspaceService
     }
 
     /// <summary>Read a committed blob without decoding or normalizing its bytes.</summary>
-    public async Task<byte[]?> GetContentBytesAtAsync(
+    public virtual async Task<byte[]?> GetContentBytesAtAsync(
         string workingDirectory, string relativePath, string gitRef, long maxBytes, CancellationToken ct)
     {
         Process? process = null;

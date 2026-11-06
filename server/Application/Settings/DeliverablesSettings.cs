@@ -14,4 +14,10 @@ public sealed class DeliverablesSettings
 
     /// <summary>Maximum uncompressed bytes copied into one source bundle.</summary>
     public long MaxTotalSourceBytes { get; set; } = 64L * 1024 * 1024;
+
+    /// <summary>Per-blob ceiling for recorded RefOnly sources, before and during the read.</summary>
+    public long MaxSourceBytes { get; set; } = 64L * 1024 * 1024;
+
+    /// <summary>Explicit persistent output store for RefOnly bundles; never a source-read fallback.</summary>
+    public string? StorageRoot { get; set; }
 }

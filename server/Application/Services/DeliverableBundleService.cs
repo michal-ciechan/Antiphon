@@ -27,6 +27,7 @@ public sealed class DeliverableBundleService
     private readonly GitWorkspaceService _git;
     private readonly DeliverablesSettings _settings;
     private readonly ILogger<DeliverableBundleService> _logger;
+    internal Func<string, CancellationToken, Task>? BeforeCommittedMemberAsync { get; set; }
 
     public DeliverableBundleService(
         GitWorkspaceService git,
