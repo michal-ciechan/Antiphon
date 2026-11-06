@@ -141,7 +141,7 @@ CP-4 is passed at its actual tested SHA. CP-1/CP-2/CP-3, whole Unit and the impl
 
 Preflight scripts/check-evidence-diff.ps1 over 1527c29fef2737bf3eaa49f2293d82d85402265a..f33c79e9573f7b400751b52476b2771e756021e3 passed: commits=8 entries=0 violations=0. Settlement repeats it over the full task base..final HEAD and reports that result with the final remote SHA.
 All owned native bin/obj outputs were removed using exact literal absolute paths. The checkpoint tool removed its cold output and tool shadow. The historical failed fixture's exact owned GUID root was checked against its fixture-owner marker and removed. No scratch worktree was created. Required ignored TRX/log/JSON/phase evidence is retained under .antiphon. No source mutation remains.
-Native compilation warnings are inherited build output; no timeout or assertion was widened or loosened.
+Native compilation warnings were not baseline-attributed in this task; all listed compiles completed with zero errors. No timeout or assertion was widened or loosened.
 
 ## Original checkpoint reports (unaltered)
 
