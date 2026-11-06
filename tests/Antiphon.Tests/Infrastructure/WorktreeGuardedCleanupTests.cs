@@ -17,6 +17,70 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class WorktreeGuardedCleanupTests
 {
     [Test]
+    [Timeout(60_000)]
+    public async Task C1737_AdvancedBranchSurvivesDeleteCas(CancellationToken ct)
+    {
+        await using var h = await RemovalHarness.CreateAsync();
+        h.CleanFirst = true;
+        var f = h.H.Fixture;
+        var independent = new LandingGitFixture.FixtureGit(Path.Combine(f.Root, "home"), f.TaskId);
+        string? lastRead = null, advanced = null;
+        var deletes = 0;
+        f.Git.AfterCommand = (repo, args, result) =>
+        {
+            if (repo == f.Repository && args.SequenceEqual(new[] { "show-ref", "--verify", "--hash", f.SourceRef })
+                && result.Succeeded) lastRead = result.Output.Trim();
+            return Task.CompletedTask;
+        };
+        async Task<string> ReadAsync(string repository, params string[] args)
+        {
+            using var call = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            call.CancelAfter(TimeSpan.FromSeconds(10));
+            var result = await independent.RunAsync(repository, args, call.Token);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            return result.Output.Trim();
+        }
+        h.OtherCommand = async (repo, args) =>
+        {
+            if (repo != f.Repository || args[0] != "update-ref" || !args.Contains("-d") || !args.Contains(f.SourceRef))
+                return null;
+            (++deletes).ShouldBe(1, "the late-advance hook must run once");
+            Directory.Exists(f.Source).ShouldBeFalse();
+            h.SetAsideTrees().ShouldBeEmpty();
+            f.Git.RegistrationDrops.ShouldContain(f.Source);
+            lastRead.ShouldBe(h.SourceSha, "the real current-OID guard passed before the advance");
+            var tree = await ReadAsync(f.Repository, "rev-parse", h.SourceSha + "^{tree}");
+            advanced = await ReadAsync(f.Repository, "commit-tree", tree, "-p", h.SourceSha, "-m", "c1737-late-child");
+            advanced.Length.ShouldBe(40);
+            advanced.ShouldNotBe(h.SourceSha);
+            await ReadAsync(f.Repository, "update-ref", "--create-reflog", f.SourceRef, advanced, h.SourceSha);
+            (await ReadAsync(f.Repository, "show-ref", "--verify", "--hash", f.SourceRef)).ShouldBe(advanced);
+            var remoteTip = await ReadAsync(f.Remote, "rev-parse", f.TargetRef);
+            using var call = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            call.CancelAfter(TimeSpan.FromSeconds(10));
+            (await independent.RunAsync(f.Repository, ["merge-base", "--is-ancestor", advanced, remoteTip], call.Token))
+                .ExitCode.ShouldBe(1, "the intervening child is unpublished");
+            Console.WriteLine("reached:W-M7:advanced-after-current-read");
+            return null; // Execute the intercepted real delete with its original arguments.
+        };
+
+        var removal = await h.RemoveAsync(ct: ct);
+        using var finalRead = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        finalRead.CancelAfter(TimeSpan.FromSeconds(10));
+        var actual = await independent.RunAsync(f.Repository, ["show-ref", "--verify", "--hash", f.SourceRef], finalRead.Token);
+        actual.Succeeded.ShouldBeTrue("preserved:W-M7:advanced-ref-present");
+        actual.Output.Trim().ShouldBe(advanced, "preserved:W-M7:advanced-ref-oid");
+        var log = await ReadAsync(f.Repository, "rev-parse", "--git-path", "logs/" + f.SourceRef);
+        var logPath = Path.IsPathRooted(log) ? log : Path.Combine(f.Repository, log);
+        File.Exists(logPath).ShouldBeTrue("preserved:W-M7:advanced-ref-reflog");
+        File.ReadLines(logPath).Last().Split(' ')[1].ShouldBe(advanced);
+        removal.Residue.ShouldBe("branch_delete_failed");
+        removal.BranchDeleted.ShouldBeFalse();
+        removal.DirectoryGone.ShouldBeTrue();
+        deletes.ShouldBe(1);
+    }
+
+    [Test]
     public async Task C443_CaptureCommittedBeforeRetry()
     {
         await using var h = await RemovalHarness.CreateAsync();

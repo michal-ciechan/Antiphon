@@ -9,6 +9,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
 using System.Collections.Immutable;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Shouldly;
 using TUnit.Core;
 
@@ -16,9 +17,87 @@ namespace Antiphon.Tests.Infrastructure;
 
 // Each crossed coordinate remains otherwise valid. A mutation-capable downstream
 // fake exposes the first unauthorized deletion even when real Git has another guard.
-[Category("Unit")]
+[Category("Integration")]
 public sealed class LandingRemovalPolicyControlTests
 {
+    [Test]
+    [Timeout(10_000)]
+    public async Task C1737_MatchingContentReplacementIsNotDeleted()
+    {
+        using var timing = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "run");
+        using var f = new RemovalFixture();
+        const string evidence = ".antiphon/checkpoint-note.md";
+        Directory.CreateDirectory(Path.Combine(f.Source, ".antiphon"));
+        File.WriteAllText(Path.Combine(f.Source, evidence), "approved checkpoint evidence\n");
+        f.IgnoredPaths.Add(evidence);
+        f.AfterUnregister = () => throw new IOException("c1737 cut after unregister");
+
+        (await f.RemoveAsync(gate: true)).Residue.ShouldBe("worktree_removal_incomplete");
+        Directory.Exists(f.Source).ShouldBeFalse();
+        f.Registered.ShouldBeFalse();
+        var receipt = WorktreeSetAside.Read(f.Root, f.Source).ShouldNotBeNull();
+        receipt.DirectoryIdentity.ShouldNotBeNullOrEmpty();
+        receipt.EntryManifest.ShouldNotBeNullOrEmpty();
+        var entries = JsonSerializer.Deserialize<WorktreeApprovedEntry[]>(receipt.EntryManifest!)!;
+        entries.Select(e => e.Path).ShouldBe([".antiphon", evidence, "keep.txt"]);
+        var pin = JsonSerializer.Deserialize<EvidencePin[]>(receipt.EvidenceManifest!)!.ShouldHaveSingleItem();
+        pin.Relative.ShouldBe(evidence);
+        var approved = entries.Where(e => e.Kind == "file").ToDictionary(e => e.Path,
+            e => File.ReadAllBytes(Path.Combine(receipt.SetAsidePath, e.Path)), StringComparer.Ordinal);
+        approved.Keys.Order(StringComparer.Ordinal).ShouldBe(new[] { evidence, "keep.txt" });
+        var retained = File.ReadAllBytes(pin.RetainedPath);
+        Convert.ToHexStringLower(SHA256.HashData(retained)).ShouldBe(pin.Sha256);
+        retained.ShouldBe(approved[evidence]);
+
+        f.AfterUnregister = null;
+        var rescue = Path.Combine(f.Root, "rescued-original");
+        Directory.Move(receipt.SetAsidePath, rescue);
+        Directory.CreateDirectory(receipt.SetAsidePath);
+        foreach (var entry in entries.Where(e => e.Kind == "dir"))
+            Directory.CreateDirectory(Path.Combine(receipt.SetAsidePath, entry.Path));
+        foreach (var (relative, bytes) in approved)
+            File.WriteAllBytes(Path.Combine(receipt.SetAsidePath, relative), bytes);
+
+        void AssertApproved(string tree)
+        {
+            var paths = Directory.EnumerateFileSystemEntries(tree, "*", SearchOption.AllDirectories)
+                .Select(p => Path.GetRelativePath(tree, p).Replace(Path.DirectorySeparatorChar, '/'))
+                .Order(StringComparer.Ordinal).ToArray();
+            paths.ShouldBe(entries.Select(e => e.Path));
+            foreach (var entry in entries)
+            {
+                var path = Path.Combine(tree, entry.Path);
+                File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint).ShouldBeFalse();
+                Directory.Exists(path).ShouldBe(entry.Kind == "dir");
+                if (entry.Kind != "file") continue;
+                var bytes = File.ReadAllBytes(path);
+                bytes.ShouldBe(approved[entry.Path]);
+                Convert.ToHexStringLower(SHA256.HashData(bytes)).ShouldBe(entry.Hash);
+            }
+        }
+
+        var replacementIdentity = WorktreeNoFollowDelete.DirectoryIdentity(receipt.SetAsidePath);
+        replacementIdentity.ShouldNotBe(receipt.DirectoryIdentity);
+        WorktreeNoFollowDelete.DirectoryIdentity(rescue).ShouldBe(receipt.DirectoryIdentity);
+        AssertApproved(receipt.SetAsidePath);
+        AssertApproved(rescue);
+        Directory.Exists(f.Source).ShouldBeFalse();
+        f.Registered.ShouldBeFalse();
+        Console.WriteLine("reached:W-U9:pending-unregistered-equal-content");
+
+        var result = await f.RemoveAsync(gate: true);
+        Directory.Exists(receipt.SetAsidePath).ShouldBeTrue("preserved:W-U9:replacement-directory");
+        WorktreeNoFollowDelete.DirectoryIdentity(receipt.SetAsidePath).ShouldBe(replacementIdentity);
+        WorktreeNoFollowDelete.DirectoryIdentity(rescue).ShouldBe(receipt.DirectoryIdentity);
+        AssertApproved(receipt.SetAsidePath);
+        AssertApproved(rescue);
+        File.ReadAllBytes(pin.RetainedPath).ShouldBe(retained);
+        f.BranchPresent.ShouldBeTrue();
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("set_aside_identity_mismatch");
+        WorktreeSetAside.Read(f.Root, f.Source).ShouldBe(receipt);
+    }
+
     [Test]
     [Arguments(1, ".antiphon/report.md")]
     [Arguments(1, ".claude/settings.json")]
