@@ -2614,13 +2614,14 @@ Held row (path, branch, head SHA, origin tip, reason) is the evidence, and remov
 only the tree's HEAD reflog (old or new id of any entry), its HEAD or its branch reflog reaches (no branch, tag or
 remote-tracking ref does) gets `refs/antiphon/salvage/<taskId>/<sha>` (at most 64 per tree after dropping commits
 another one reaches), a direct ref created from nothing and never through a symbolic ref; an existing one with that
-commit is kept. A reflog read or ref write that fails, or a salvage name that is symbolic or names another object,
-refuses the removal (`reflog_salvage_failed`, `reflog_salvage_over_limit`, `reflog_salvage_collision`) while nothing
-has moved; the switch is read before the first write and as each write starts, so an off switch writes no ref. An
-executing tick prunes, under the repository lease (a busy lease keeps everything), only the salvage refs of a task
-whose every release is Complete and finished `WorktreeLegacyRelease:SalvageRefRetentionDays` (30, 1..3650) ago and
-whose own reflog is that old; an unfinished or retried release keeps its refs. The switch is re-read before each
-delete and as it starts, and a refusal stops the tick (Review 9222cb00 B-1..B-4). Dry runs and previews prune nothing.
+commit is kept. A reflog read or ref write that fails, or a salvage name that is symbolic (even dangling, Review
+39f7bfe1) or names another object, refuses the removal (`reflog_salvage_failed`, `reflog_salvage_over_limit`,
+`reflog_salvage_collision`) while nothing has moved; the switch is read before the first write and as each write
+starts, so an off switch writes no ref. An executing tick prunes, under the repository lease (a busy lease keeps
+everything), only the salvage refs of a task whose every release is Complete and finished
+`WorktreeLegacyRelease:SalvageRefRetentionDays` (30, 1..3650) ago and whose own reflog is that old, never a symbolic
+one; an unfinished or retried release keeps its refs. The switch is re-read before each delete and as it starts, and a
+refusal stops the tick (Review 9222cb00 B-1..B-4). Dry runs and previews prune nothing.
 Ignored files go through the CARD-0665 gate. A refused system release whose command removed nothing reopens a
 new attempt on its next due tick (60 min doubling to 24 h, at most `MaxRefusedAttempts` = 5); a caller-filed
 release keeps the one-command rule. A busy repository lease defers without counting. Every pre-check counts
