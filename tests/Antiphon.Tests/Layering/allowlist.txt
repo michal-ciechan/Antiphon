@@ -40,6 +40,16 @@ server/Infrastructure/Git/RepositoryVerificationWindows.cs -> DelegationReportFo
 
 # slice P0-B
 server/Application/Settings/DelegationSettings.cs -> AgentTaskService @ server/Application/Services/AgentTaskService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelContracts @ server/Application/Services/ChannelContracts.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelOutboundService @ server/Application/Services/ChannelOutboundService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelPromptCorrelation @ server/Application/Services/ChannelPromptCorrelation.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChannelReplyDispatcher @ server/Application/Services/ChannelReplyDispatcher.cs
+server/Application/Core/ChannelReplyPreparation.cs -> ChatChannelService @ server/Application/Services/ChatChannelService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> DeliverableBundleService @ server/Application/Services/DeliverableBundleService.cs
+server/Application/Core/ChannelReplyPreparation.cs -> SourceManifest @ server/Application/Services/DeliverableBundleService.cs
+server/Application/Core/DispatchConcurrencyPolicy.cs -> DelegationOpenGate @ server/Application/Services/DelegationOpenGate.cs
+server/Application/Core/PipelineStagesJson.cs -> PipelineHandoff @ server/Application/Services/PipelineHandoff.cs
+server/Application/Core/SubscriptionQuotaPolicy.cs -> SubscriptionUsageSnapshot @ server/Application/Services/SubscriptionUsageReader.cs
 
 # slice P0-C1
 server/Application/Services/AgentFilesService.cs -> GitFileStatus @ server/Application/Services/GitWorkspaceService.cs
@@ -114,6 +124,65 @@ server/Application/Services/AgentTaskReplyService.cs -> ServerGitProcess @ serve
 server/Application/Services/DelegationWorkspaceResolver.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
 server/Application/Services/DelegationWorktreeService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
 server/Infrastructure/ExternalChanges/ChangeDetectionService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
+server/Application/Core/ChannelReplyPreparation.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Core/VerificationReceiptPolicy.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentPinnedInstructionService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentRegistry.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentSupervisorService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentTaskDispatcher.CeilingHold.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentTaskDispatcher.PoolSupervision.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentTaskReplyService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/AgentTuiLaunchResolver.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/BootReplyWatchdogService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/CapacityRecoveryService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/CardRevisionLog.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/CardService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/CardWorktreeCleanupExecutor.cs -> Generation @ server/Infrastructure/Git/LandVerificationArtifacts.cs
+server/Application/Services/CardWorktreeCleanupExecutor.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/CardWorktreeMirrorCleanupService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ChannelBridgeService.WithheldIncident.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ChannelBridgeService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ChannelOutboundFailureRecorder.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ChannelOutboundService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/CheckCompactionContinuationService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/DiagnoseService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/DispatchBaseNotificationPayload.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ExpectationWatchdogPolicy.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ExpectationWatchdogService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/GrokRulesRefreshService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/HerdrSupervisionStateService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/HostBudgetService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/HostMaintenanceService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/LandNotificationPayload.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/LegacyCheckNotePublicationService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ModelAvailability.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/OrchestratorInstructionsService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/OrchestratorWorkspaceWarningService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/OutboundConversionTaskRunner.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/PipelineHandoffActionService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/PlanCatalogService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/PoolDelegateRelease.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ProviderSignInIncident.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ProviderWaitWarningWriter.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/QueuedInputWatchdogService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/RemoteControlRecoveryService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/RunnerRetireService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/RunnerSlotService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/ScheduleService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/SessionReconciliationService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/SpecialistRequestService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/SpecialistTaskRunner.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/StandingBootWarningWriter.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/StandingContinuityState.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/StandingSpecialistHealthService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/StandingSpecialistSeatService.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/TaskCompletionNotification.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Application/Services/TranscriptUiProjection.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Infrastructure/Data/WorkspaceReservationJournal.cs -> Generation @ server/Infrastructure/Git/LandVerificationArtifacts.cs
+server/Infrastructure/Data/WorkspaceReservationJournal.cs -> Kind @ server/Application/Services/GitIndexLock.cs
+server/Infrastructure/Files/ChannelOutboundFileStore.cs -> Kind @ server/Application/Services/GitIndexLock.cs
 
 # slice P0-D
 server/Infrastructure/Git/LandingVerifier.cs -> AgentTaskLandService @ server/Application/Services/AgentTaskLandService.cs
@@ -247,3 +316,12 @@ server/Infrastructure/Orchestration/RunnerAlarmHostedService.cs -> RunnerAlarmSt
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> ChannelReplyAttachmentReader @ server/Infrastructure/Files/ChannelReplyAttachmentReader.cs
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> InterimVerificationPolicy @ server/Application/Services/InterimVerificationPolicy.cs
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> ReviewEvidenceCorrectionService @ server/Application/Services/ReviewEvidenceCorrectionService.cs
+server/Application/Core/WorktreeCleanupPresentation.cs -> Status @ server/Application/Services/BootReplyWatch.cs
+server/Application/Services/AgentTaskService.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Application/Services/CardWorktreeCleanupExecutor.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Application/Services/CardWorktreeMirrorCleanupService.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Application/Services/LandOperationFactory.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Application/Services/TaskWorktreeRetirementService.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Infrastructure/Data/WorkspaceReservationJournal.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Infrastructure/Git/LandingGit.cs -> Status @ server/Application/Services/BootReplyWatch.cs
+server/Infrastructure/Git/WindowsWorktreeLockDiagnostics.cs -> Status @ server/Application/Services/BootReplyWatch.cs
