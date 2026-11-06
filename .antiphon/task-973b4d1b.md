@@ -1,3 +1,103 @@
+Batch 85 remains unlanded: the caller's explicit stop condition reproduced for C599A_ExecutionLedger in the requested isolated rerun.
+
+## Current outcome and authority
+
+The reopened input `.antiphon/inbox/b90dfbed-ef7c-4a06-95d5-4e8b0db0fb12.md` ordered one matched three-method invocation at the candidate and one at the base, with nothing else of ours running, and said: **"if they fail ONLY at the candidate on a rerun, STOP and report."** The complete fresh TRXs show that condition for `C599A_ExecutionLedger`. Master was not pushed. The remaining hash-reader run was not started after this stop condition was established.
+
+- Prepared source candidate: `0dbd8295a034f8d88f5b98d1e29f14ac82c1890a`.
+- Reopened harness build and candidate run HEAD: `04468ab9e8eccbaf7d62eb19e6146c47ad7dfc3a`. The only tracked difference from the prepared candidate is the previous `.antiphon/task-973b4d1b.md` report; production/test/build-definition files are identical.
+- Exact comparison base: `1527c29fef2737bf3eaa49f2293d82d85402265a`.
+- Last confirmed remote master: `1527c29fef2737bf3eaa49f2293d82d85402265a`.
+- New master SHA: none. Master push attempts/retries: 0. Landing/re-pick loops: 0. No rc publication, activation, rebase, reset, amend, branch switch, conflict repair or source fix occurred.
+- Both long-running test drivers completed normally with fresh TRXs and native exit 2. Each held exactly one granted lease, and the candidate invocation exited before the base invocation started. No other owned build/test driver overlapped either comparison.
+
+## Fresh paired result: unchanged 300-second execution budget
+
+The native MTP UID list selected exactly the three requested methods, avoiding the additional methods that an `ExecutionLedger*` prefix would include. Each TRX was checked for a count of 3 and the exact method-name set. The [MTP CLI UID option](https://learn.microsoft.com/en-us/dotnet/core/testing/microsoft-testing-platform-cli-options#platform-options) accepts multiple UIDs; it was used without a simultaneous tree selector.
+
+| Method, prefixed C599A_ | Candidate outcome / seconds | Base outcome / seconds | Existing budget | Classification for this rerun |
+|---|---|---|---:|---|
+| ExecutionLedger | Failed / 300.1359413 | Passed / 258.5532607 | 300s | **Candidate-only timeout: STOP** |
+| ExecutionLedgerJoins | Failed / 300.0370641 | Failed / 300.0855556 | 300s | Timeout occurs at both trees |
+| ExecutionLedgerMarkers | Failed / 300.0885283 | Failed / 300.1434734 | 300s | Timeout occurs at both trees |
+
+| Invocation | Total | Passed | Failed | Skipped | TUnit duration |
+|---|---:|---:|---:|---:|---|
+| Candidate isolated comparison | 3 | 0 | 3 | 0 | 15m10.081s |
+| Base isolated comparison | 3 | 1 | 2 | 0 | 14m25.699s |
+
+All five failures were `TimeoutException` from the unchanged ScriptHarness five-minute execution budget. Candidate Ledger reported `completion root=True stdout=False stderr=False`; base Ledger completed successfully. Candidate Joins reported root=False, base Joins root=True, with stdout/stderr incomplete in both failures. Markers reported root=False and stdout/stderr incomplete at both trees. These observations establish the requested stop pattern; causal attribution to policy changes, host scheduling or stream-drain timing remains unresolved.
+
+No execution timeout, assertion, retry policy, fixture or production file was changed. Each named method ran once per tree in this continuation. Earlier results and costs have not been relabelled. In particular, the newly failing base Markers result is recorded alongside its earlier passing baseline in the historical record below.
+
+## Reproduction and provenance
+
+The harness had been cleaned at the end of the initial pass, so one explicitly necessary native-output rebuild was performed before these comparisons:
+
+```text
+TEMP=/tmp timeout 40m pwsh -NoProfile -File scripts/build-slot.ps1 -Label merge85-reopen-harness-build -- dotnet build tests/Antiphon.Tests -p:UseAppHost=false -m:1 --nologo
+1728 Warning(s)
+0 Error(s)
+Time Elapsed 00:04:27.57
+BUILD SLOT granted lease=cbc8e5d8-1000-43b9-8c29-bccb5d206509 waited=195s maxcpucount=6
+BUILD SLOT released lease=cbc8e5d8-1000-43b9-8c29-bccb5d206509 held=268s
+```
+
+The candidate used `dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false`; the base used `dotnet exec tests/Antiphon.Tests/bin/Debug/net9.0/Antiphon.Tests.dll`. Both received this same UID argument list, plus `--timeout 18m`, fresh results directories and TRX reporting:
+
+```text
+--filter-uid
+Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests.1.1.C599A_ExecutionLedgerMarkers.1.1.0
+Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests.1.1.C599A_ExecutionLedger.1.1.0
+Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests.1.1.C599A_ExecutionLedgerJoins.1.1.0
+```
+
+Each outer invocation had a 35m bound, a 15m slot-admission bound and its own `build-slot.ps1` lease. The 18m overall test bound left room for three unchanged 5m case budgets and cleanup; it did not fire. `TEMP=/tmp`; both checkouts were outside `/tmp`.
+
+The detached base checkout read its own scripts and policy. Its native artifact layout was matched to all 72 candidate-owned bin/obj roots using the same built outputs, with no baseline compilation. Both test DLL copies had SHA-256:
+
+```text
+8a3b2aa90cb563252238a5cfac5f592164de683b07c18b0299c17924462452c1
+```
+
+Both tracked trees were clean after execution. The batch contains no changed C# test/helper source or build definition. Matching the full native artifact layout kept that experimental variable consistent across the two checkouts.
+
+Host samples, with 24 online CPUs, were:
+
+```text
+Candidate, 2026-11-05 23:21:46 UTC: loadavg 57.92 40.02 35.14
+Base,      2026-11-05 23:39:36 UTC: loadavg 32.76 40.24 36.22
+```
+
+These samples show differing host load; they do not prove the cause of any individual timeout. No p95 or complete per-phase cost claim is made.
+
+```text
+BUILD SLOT granted lease=853594d6-a021-48e5-8a88-bb56570e4ecf waited=45s maxcpucount=6
+BUILD SLOT released lease=853594d6-a021-48e5-8a88-bb56570e4ecf held=914s
+BUILD SLOT granted lease=4902548b-867b-4f05-a0a9-0952b21c2ee8 waited=226s maxcpucount=6
+BUILD SLOT released lease=4902548b-867b-4f05-a0a9-0952b21c2ee8 held=867s
+```
+
+## Retained verification and remaining work
+
+The previously completed solution build had 0 errors. The final-tree instruction/classification/platform policy sweep remains 76 passed, 0 failed, 0 skipped, including all four formerly red witnesses. The exact generated-output census passed once at each tree. Report delivery remains 2 passed, 0 failed. Base and final land-graph checks both approved the same 69-record digest. Their full details, original patch-ID proof, exact source/prepared commit table and old/new digests are preserved below.
+
+The current final-tree identity readers were checked again and still returned exactly:
+
+```text
+policyHash=0686a97cccbec3d421b2298b47ff64aaa63d923d654252e2ea44bd3d1532487b
+live-lane input digest=f5151a2a95ed14a8de0a50f9a475d0d45853949ce61c1ed83304c04178bfd73f
+```
+
+The live-lane census pin equals that digest. No selected build-definition record, graph record or target pin changed. No `land-graph -Update` was used. The interrupted hash-reader selection still lacks a complete final-tree receipt; the reply's conditional STOP prevented another reader invocation and master publication after the paired comparison.
+
+Current cleanup is complete. All 72 recreated native bin/obj directories, the detached base worktree and the generated continuation logs/results were removed using literal absolute paths after preserving the essential counters, durations, provenance and lease receipts here. A final directory census found no bin, obj or TestResults directories in the assigned worktree. All comparison drivers are joined and their leases released; no source restoration was necessary. The final report is the only tracked file updated in this continuation. The initial report remains unedited in Git at `04468ab9e8eccbaf7d62eb19e6146c47ad7dfc3a:.antiphon/task-973b4d1b.md`.
+
+## Historical initial attempt
+
+The following initial-attempt sections preserve prior outcomes, costs and recommendations. The current authority and stop decision are the continuation sections above; the current handoff follows the historical evidence.
+
+
 Batch 85 is prepared and pushed, but master publication is blocked by required publication-authority execution failures and an incomplete hash-reader run.
 
 ## Publication and decision
@@ -191,7 +291,8 @@ BUILD SLOT granted lease=8cc54a73-9e99-4aa8-91a6-cb1cfb45d6e8 waited=46s maxcpuc
 BUILD SLOT released lease=8cc54a73-9e99-4aa8-91a6-cb1cfb45d6e8 held=256s
 ```
 
+
 --- next stage ---
-next: debug
-handoff: Diagnose the publication-authority five-minute timeouts, especially the candidate-only Markers and Ledger failures; preserve the inherited Joins result. Obtain complete exact missing verification without replaying valid green rows, then resume Merge from the prepared source picks on the current master. No master publication is authorized by this incomplete verification.
+next: merge
+handoff: STOP condition reproduced: Ledger passed at base and timed out at candidate. A caller decision is needed before any further reader execution or master push; the one-shot comparison is complete.
 artifact: .antiphon/task-973b4d1b.md
