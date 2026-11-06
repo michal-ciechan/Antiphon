@@ -815,6 +815,9 @@ function Test-FFAuthorityConservation {
     $script:C599Rosters=@{client=@('lint','build','vitest');scripts=@('test-release-gate.ps1','test-nightly.ps1')}
     $script:C599ABasePolicy=$null;$script:C599PolicyClones=[Collections.Generic.List[string]]::new();$script:C599ReleaseCardId='5b0e6c1e-8f1c-4c3e-9a55-0c5990c5990a'
     $script:C599Now=[datetime]'2026-09-23T10:00:00Z';$script:C599CardStub=$null
+    # Function-only import skips the release harness's top-level initialization.
+    # New-C599PublishFx and Get-C599AGate both accumulate these timing counters.
+    $script:C1731Timing=[ordered]@{fixtureSeconds=0.0;gateSeconds=0.0}
     $oldMode=$env:ANTIPHON_RELEASE_GATE_TEST_MODE;$env:ANTIPHON_RELEASE_GATE_TEST_MODE='1'
     try{
         $auth=New-C599PublishFx
@@ -1017,7 +1020,11 @@ $NightlySeams=@{
                 $qualifiedCost=Get-QualificationGroupPlannedSeconds $lookup $cid $sid 'actual-run' '1'
             }
             $provenBinding=$active -and $active.sourceDigest -cmatch '^[a-f0-9]{40}$' -and $active.policyDigest -cmatch '^[a-f0-9]{64}$' -and $active.costFileDigest -cmatch '^[a-f0-9]{64}$' -and $active.assemblyDigest -cmatch '^[a-f0-9]{64}$'
-            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter');legacyCost=$legacyCost;qualifiedCost=$qualifiedCost;plannedCost=$group.plannedSeconds;provenBinding=$provenBinding})
+            # With UseAppHost=false the host is dotnet exec <assembly>, so retain
+            # the actual assembly identity as well as its launcher on either OS.
+            $testHost=$FilePath
+            if($ArgumentList.Count -gt 1 -and $ArgumentList[0] -ceq 'exec'){$testHost=[string]$ArgumentList[1]}
+            $global:FFLoopBoundaryState.Launches.Add([pscustomobject]@{suite=$sid;chunk=$cid;key=($sid+'/'+$cid);host=$testHost;launcher=$FilePath;nodes=@($nodes.Uid);filter=(Get-FFArgument $ArgumentList '--treenode-filter');legacyCost=$legacyCost;qualifiedCost=$qualifiedCost;plannedCost=$group.plannedSeconds;provenBinding=$provenBinding})
             $special=($sid -ceq 'antiphon' -and @($group.classes|Where-Object {$_ -clike '*Priority*'}).Count -gt 0)
             $state='Passed';$code=0;$timeout=$false
             if($special -and $global:FFLoopBoundaryState.Variant -ceq 'failure'){$state='Failed';$code=2}

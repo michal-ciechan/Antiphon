@@ -1,5 +1,13 @@
 # Testing and build operations
 
+The FailedFirst conservation fixture deliberately creates directories named
+`dispatch-schedule.json` to exercise best-effort diagnostic writes. Its caught
+`dispatch-schedule-write-failed` warnings are expected, including Windows access
+denials from `File.Replace`; inspect the final exception/assertions for exit 1.
+Its function-only release-gate import must initialize the fixture and gate timing
+counters used by those helpers. `ImportedAuthorityFixtureInitializesTiming` runs
+the real authority conservation checks independently of the full replay.
+
 CARD-1210: `ShellFixtureLineEndingContractTests.Shell_scripts_are_forced_lf_by_gitattributes`
 checks the active repository-wide `*.sh text eol=lf` rule and Git's effective attributes for
 every tracked shell script; `Shell_scripts_have_no_carriage_returns` checks raw working bytes
