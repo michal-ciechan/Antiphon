@@ -410,7 +410,8 @@ public sealed class C1708ReflogSalvageTests
         (await w.RowAsync(tick.RunId, a)).ReasonCode.ShouldBe("reflog_salvage_collision");
         File.ReadAllBytes(file).ShouldBe(bytes, "the dangling symbolic ref is byte-identical");
         (await w.ReadAsync(w.Fixture.Repository, "symbolic-ref", salvage)).Trim().ShouldBe("refs/heads/c1708-missing");
-        (await AllRefsAsync(w)).ShouldBe(refs, "no ref was created, moved or deleted");
+        (await AllRefsAsync(w)).ShouldBe(refs, "no salvage or other ref was created, moved or deleted");
+        refs.ShouldContain(l => l.StartsWith("refs/heads/master ", StringComparison.Ordinal));
         (await w.ReadAsync(w.Fixture.Repository, "rev-list", "--all")).ShouldNotContain(lost, Case.Sensitive);
         (await w.SnapshotAsync(a.Path)).ShouldBe(before, "the tree is byte-intact");
         (await w.RegisteredAsync(a.Path)).ShouldBeTrue("the registration is intact");
@@ -483,9 +484,14 @@ public sealed class C1708ReflogSalvageTests
         return path;
     }
 
-    /// <summary>Every ref Git lists, with its object and symbolic target.</summary>
-    private static Task<string> AllRefsAsync(DesktopLegacyWorld w) =>
-        w.ReadAsync(w.Fixture.Repository, "for-each-ref", "--format=%(refname) %(objectname) %(symref)");
+    /// <summary>
+    /// Every ref Git lists, with its object and symbolic target, except the release's own remote-observation pins
+    /// under <c>refs/antiphon/retirement/</c> (written before the salvage step on every release, refused or not).
+    /// </summary>
+    private static async Task<string[]> AllRefsAsync(DesktopLegacyWorld w) =>
+        (await w.ReadAsync(w.Fixture.Repository, "for-each-ref", "--format=%(refname) %(objectname) %(symref)"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !l.StartsWith("refs/antiphon/retirement/", StringComparison.Ordinal)).ToArray();
 
     private static async Task<string[]> SalvageRefsAsync(DesktopLegacyWorld w) =>
         (await w.ReadAsync(w.Fixture.Repository, "for-each-ref", "--format=%(refname)", Prefix))
