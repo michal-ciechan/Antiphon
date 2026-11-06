@@ -115,7 +115,7 @@ for (const temp of [false, true]) {
     const before = fs.readFileSync(file);
     for (const action of [temp ? 'compose_temp' : 'compose_host',
       temp ? 'case_deploy_temp_runner' : 'case_deploy_parent']) {
-      const output = bash('docker() { exit 91; }\n' + action + ' config --format json\n', 2);
+      const output = bash('require_lane() { [ "$1" = host ]; }\ndocker() { exit 91; }\n' + action + ' config --format json\n', 2);
       assert.match(output, /RunnerWorkspaceSlotsSettingInvalid/);
       assert.deepEqual(fs.readFileSync(file), before, 'refusal rewrote settings');
       refusals++;
