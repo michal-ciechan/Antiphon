@@ -76,6 +76,56 @@ public sealed class C0824RefOnlyContinuationTests
             if (decoy) (await File.ReadAllTextAsync(Path.Combine(f.Identity, "foreign"))).ShouldBe("retain");
             else Directory.Exists(f.Identity).ShouldBeFalse();
         }
+        // Continue through the production answer/dispatcher/queue callers. The modeled
+        // recipient writes a UserPrompt only when the real queue actually submits input.
+        await using var resumed = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await resumed.CreateSourceAsync(remote: true);
+        await using (var db = resumed.Db())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == resumed.TaskId);
+            await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, resumed.SourceGit, resumed.Harness.TempRoot);
+        }
+        var before = await resumed.TaskAsync();
+        await resumed.GitAsync(before.RepoPath!, "worktree", "remove", resumed.DesktopSourcePath);
+        await File.WriteAllTextAsync(Path.Combine(resumed.SourcePath, "resumed.txt"), "independent parked bytes");
+        await resumed.GitAsync(resumed.SourcePath, "add", "resumed.txt");
+        await resumed.GitAsync(resumed.SourcePath, "commit", "-m", "parked remote source");
+        var parkedSha = await resumed.GitAsync(resumed.SourcePath, "rev-parse", "HEAD");
+        using (var scope = resumed.Harness.Provider.CreateScope())
+        {
+            await using var db = resumed.Db();
+            var block = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == resumed.TaskId && e.Type == AgentTaskEventType.Blocked);
+            var parkId = (await scope.ServiceProvider.GetRequiredService<BlockedTaskParkingService>()
+                .RegisterAsync(before.Id, before.Attempt, block.Id, before.ConcurrencyToken, default)).ShouldNotBeNull();
+            (await scope.ServiceProvider.GetRequiredService<TaskParkPublicationService>().PrepareAsync(parkId, default))
+                .Evidence.ShouldNotBeNull("reached:C1:park:published").SourceSha.ShouldBe(parkedSha);
+            (await scope.ServiceProvider.GetRequiredService<BlockedTaskSyncRecoveryService>().SweepAsync(default)).ShouldBe(1);
+        }
+        (await resumed.ParkAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready);
+        await resumed.HandleParkAsync();
+        (await resumed.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, await resumed.ParkDiagnosticAsync());
+        const string answer = "Resume exactly the published source and retain its binding.";
+        await resumed.AnswerAsync(answer);
+        resumed.Launches.OnLaunch = id => resumed.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
+        await resumed.DispatchAsync();
+        resumed.Launches.Calls.ShouldHaveSingleItem().Cwd.ShouldBe(resumed.SourcePath, "runner-cwd=bound");
+        var queued = (await resumed.AnswerQueueAsync()).ShouldNotBeNull("reached:C1:resume:queued");
+        var logical = queued.RemoteSpillBody ?? queued.Body;
+        logical.ShouldContain(answer, Case.Sensitive, "remote-prompt-answer");
+        logical.ShouldContain(parkedSha, Case.Sensitive, "remote-prompt-source-S");
+        logical.ShouldContain("refs/heads/" + before.WorktreeBranch, Case.Sensitive, "remote-prompt-owned-ref");
+        resumed.Submitted.ShouldBeEmpty("busy-recipient-is-not-delivery");
+        await resumed.EndTurnAsync(queued.AgentSessionId);
+        await resumed.FlushAsync(queued.AgentSessionId);
+        await resumed.DispatchAsync();
+        await using var receiptDb = resumed.Db();
+        (await receiptDb.TranscriptEntries.CountAsync(t => t.AgentSessionId == queued.AgentSessionId
+            && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt && t.Text == queued.Body))
+            .ShouldBe(1, "remote-prompt-received");
+        var after = await resumed.TaskAsync();
+        after.TaskRefWorkspaceBindingId.ShouldBe(before.TaskRefWorkspaceBindingId);
+        after.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+        Directory.Exists(after.WorktreePath).ShouldBeFalse("no-desktop-worktree");
     }
 
     [Test]
