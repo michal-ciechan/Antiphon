@@ -131,7 +131,9 @@ public sealed class TaskWorkspaceContextResolver(AppDbContext db)
             .Select(t => new { t.RepoPath, t.WorktreeBranch }).ToListAsync(ct);
         if (owners.Any(t => SamePath(t.RepoPath!, repository) && FullRef(t.WorktreeBranch) == fullRef))
             throw Refuse("ref_only_legacy_ref_owner_conflict");
-        if (await db.TaskRefWorkspaceBindings.AnyAsync(b => b.RepositoryPath == repository && b.FullRef == fullRef, ct))
+        var bindingOwners = await db.TaskRefWorkspaceBindings.AsNoTracking()
+            .Where(b => b.FullRef == fullRef).Select(b => b.RepositoryPath).ToListAsync(ct);
+        if (bindingOwners.Any(path => SamePath(path, repository)))
             throw Refuse("ref_only_binding_owner_conflict");
         var binding = new TaskRefWorkspaceBinding
         {

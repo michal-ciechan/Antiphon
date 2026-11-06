@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-0824: real queued mirror publication, exact-ref Git sync and shared database fixtures.
+Antiphon.Tests.Application.C0824RefOnlySyncTests
+
 # CARD-0824: real caller queue receipt and settlement/outbox recovery cuts.
 Antiphon.Tests.Application.C0824RefOnlyReceiptTests
 

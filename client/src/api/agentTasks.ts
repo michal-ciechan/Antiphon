@@ -268,8 +268,8 @@ export interface BlockedRoundDto {
 export interface BlockedProgressDto {
   branch: string | null
   commits: string[]
-  changedFiles: number
-  untrackedFiles: number
+  changedFiles: number | null
+  untrackedFiles: number | null
   lastCheckDigest: string | null
   lastCheckAt: string | null
   unavailable: string | null
