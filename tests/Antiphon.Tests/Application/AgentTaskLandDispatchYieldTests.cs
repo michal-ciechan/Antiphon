@@ -24,6 +24,109 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandDispatchYieldTests
 {
     [Test]
+    [Arguments(AgentTaskRole.Code)]
+    [Arguments(AgentTaskRole.Investigate)]
+    public async Task C1581_a_same_card_dispatch_waiting_for_land_does_not_make_that_land_yield(AgentTaskRole role)
+    {
+        await using var h = await StartAsync();
+        var waiting = await AddWaiterAsync(h, role);
+        await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(
+            h.Harness.Schema.ConnectionString, Path.Combine(h.Harness.Fixture.Root, "dispatch-trees"),
+            configure: services => services.AddSingleton(h.Waiters));
+        await using var scope = provider.CreateAsyncScope();
+        var resolver = scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>();
+        (await resolver.ResolveAsync(waiting, default)).Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+        await using (var db = h.Harness.CreateContext())
+        {
+            var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == waiting.Id);
+            held.Status.ShouldBe(AgentTaskStatus.Queued);
+            held.WorktreePath.ShouldBeNull();
+            held.AgentSessionId.ShouldBeNull();
+        }
+        await using (var probe = await provider.GetRequiredService<IRepositoryMutationLease>()
+                         .TryAcquireAsync(h.Harness.Fixture.Repository, default))
+            probe.ShouldNotBeNull("waiting for the sibling land leaves the actual repository lease free");
+
+        // Reproduce the order that closes the cycle: dispatch already registered its lease
+        // refusal, then a sibling land arrived, and land admission runs before dispatch's next tick.
+        h.Waiters.Register(await h.CommonAsync(), waiting.Id, RepositoryLeasePurposes.Dispatch,
+            h.Clock.GetUtcNow(), verificationCompatible: true);
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Complete,
+            "a land must not yield to the dispatch that needs it to finish");
+        await h.AssertLandedAsync();
+        (await h.EventsAsync(AgentTaskEventType.Held)).ShouldBeEmpty();
+        (await h.RequestAsync()).Attempt.ShouldBe(1, "the first pass was admitted without consuming the yield budget");
+
+        // The same queued task can now make progress, rather than just hiding the yield detail.
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+        await using var db = h.Harness.CreateContext();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == waiting.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
+        dispatched.WorktreePath.ShouldNotBeNull();
+        dispatched.AgentSessionId.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments("different-card")]
+    [Arguments("already-cut")]
+    [Arguments("read-only")]
+    [Arguments("repair")]
+    [Arguments("settlement")]
+    [Arguments("mixed")]
+    public async Task C1581_an_independent_waiter_keeps_its_dispatch_priority(string arm)
+    {
+        await using var h = await StartAsync();
+        var waiting = await AddWaiterAsync(h, AgentTaskRole.Code);
+        var dependent = arm == "mixed" ? await AddWaiterAsync(h, AgentTaskRole.Code) : null;
+        await using (var db = h.Harness.CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == waiting.Id);
+            if (arm == "different-card")
+                row.CardId = (await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-1581-other")).Id;
+            else if (arm == "already-cut") row.WorktreePath = h.Harness.Fixture.Source;
+            else if (arm == "read-only") row.Workspace = WorkspaceMode.ReadOnly;
+            else if (arm == "repair") row.RepairSourceTaskId = h.Harness.Fixture.TaskId;
+            await db.SaveChangesAsync();
+        }
+        var purpose = arm == "settlement" ? RepositoryLeasePurposes.WorktreeSettlement : RepositoryLeasePurposes.Dispatch;
+        h.Waiters.Register(await h.CommonAsync(), waiting.Id, purpose, h.Clock.GetUtcNow());
+        if (dependent is not null)
+            h.Waiters.Register(await h.CommonAsync(), dependent.Id, RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        var request = await h.RequestAsync();
+        request.HoldReasonCode.ShouldBe(AgentTaskLandService.LeaseYieldedToDispatchCode);
+        request.HoldDetail.ShouldNotBeNull().ShouldContain(DelegationReportFormatter.Short(waiting.Id));
+        if (dependent is not null)
+            request.HoldDetail.ShouldNotContain(DelegationReportFormatter.Short(dependent.Id),
+                "the land yields only to the independent waiter");
+        request.Attempt.ShouldBe(0, "independent waiters still get the first turn");
+        h.Waiters.Snapshot(await h.CommonAsync()).Select(w => w.TaskId).ShouldContain(waiting.Id);
+    }
+
+    private static async Task<AgentTask> AddWaiterAsync(World h, AgentTaskRole role)
+    {
+        await using var db = h.Harness.CreateContext();
+        var card = await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-1581");
+        var source = await db.AgentTasks.SingleAsync(t => t.Id == h.Harness.Fixture.TaskId);
+        source.CardId = card.Id;
+        var id = Guid.NewGuid();
+        var waiting = new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "CARD-1581 waiting dispatch", Goal = "continue after land",
+            Role = role, AgentKind = AgentKind.ClaudeCode, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = h.Harness.Fixture.Repository, RepoPath = h.Harness.Fixture.Repository,
+            CardId = card.Id, RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Auto,
+            Status = AgentTaskStatus.Queued, ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = h.Clock.GetUtcNow().UtcDateTime,
+        };
+        db.AgentTasks.Add(waiting);
+        await db.SaveChangesAsync();
+        return waiting;
+    }
+
+    [Test]
     [Arguments(RepositoryLeasePurposes.Dispatch)]
     [Arguments(RepositoryLeasePurposes.WorktreeSettlement)]
     public async Task C672_a_waiting_dispatch_holds_the_land_at_admission_until_it_clears(string purpose)
