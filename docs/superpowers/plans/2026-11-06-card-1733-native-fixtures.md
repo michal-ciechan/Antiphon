@@ -30,7 +30,7 @@ V-2: Boundaries_and_changed_links_are_checked_fresh checks missing descendants, 
 changed-after-first-check, dangling links and ancestors above the root using real filesystem metadata.
 V-3: Shared_seed_keeps_recipients_and_authority_private observes no repeated init/commit; modifies
 one clone's tags/fault/store and reads the other recipient; freshly validates the other's authority.
-V-4 also checks unchanged-file timestamps, same-size changed bytes, missing parents and restore failure propagation.
+V-4 also checks unchanged-file timestamps, same-size changed bytes, missing parents, absent-directory restoration and restore failure propagation.
 V-4: Throwing_reservation_mutation_restores_the_control proves first validity, exact bytes after a
 throwing mutation, and next-variant acceptance. Restore errors must propagate.
 V-5: Measure both incident methods once in one lease, retain all assertion rows and unchanged cap.
@@ -58,3 +58,10 @@ See ../mutations/2026-11-06-card-1733-native-fixtures.md.
 Before CP-1, one native compile and regression red run are explicitly allowed to establish new-test
 sensitivity at unchanged base behavior. They are diagnostic, not clean final receipts. Tool bootstrap
 is separately gated. Run at most three manifest rows per invocation; never repeat a green row.
+
+Manual inspection found absent-directory contamination after S2. At b8e05d044 the standalone
+C1733_SnapshotWork run asserted 4 passes/1 failure at absent-directory-restored (6 s execution).
+This unlisted, gated diagnostic establishes the new defect before repair; it is not a TUnit count.
+The earlier checkpoint was canceled during admission with no build or tests started.
+The same three required rows run at the committed repair SHA; no green row is repeated.
+The link witness uses the existing New-C599AEvidenceLink factory (Windows junction, otherwise symlink).
