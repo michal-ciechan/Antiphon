@@ -320,6 +320,8 @@ public sealed class C0824RefOnlySyncTests
         var sync = new RemoteWorkspaceService(wire.Wire.Directory, g.Git, NullLogger<RemoteWorkspaceService>.Instance,
             progress, wire.Card.Host.Services.GetRequiredService<IRepositoryMutationLease>(),
             workspaceContexts: new TaskWorkspaceContextResolver(db));
+        await g.RequiredAsync(wire.Mirror, "config", "user.email", "ref-only@example.invalid");
+        await g.RequiredAsync(wire.Mirror, "config", "user.name", "RefOnly publication witness");
         foreach (var missing in new[] { false, true })
         {
             if (missing) await g.RequiredAsync(g.Repository, "push", "origin", "--delete", task.WorktreeBranch!);
