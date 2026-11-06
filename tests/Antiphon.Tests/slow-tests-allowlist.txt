@@ -6,9 +6,6 @@
 # CARD-1610: real queue/runtime receipt round trips and isolated failure-writer restart cuts.
 Antiphon.Tests.Application.TaskSupervisionReceiptTests
 
-# RealToolchain: C488/C494 build and test a generated TUnit project with the real land verifier (dotnet build + test, 8-9 s per run).
-Antiphon.Tests.Application.AgentTaskLandSourceFreshnessTests
-
 # CARD-1537: real Git graph seeding and isolated PostgreSQL landing; native Windows cases take 35-83s.
 Antiphon.Tests.Application.LandNonCodeSkipTests
 

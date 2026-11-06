@@ -79,7 +79,6 @@ public sealed class AgentTaskLandSourceFreshnessTests
     }
 
     [Test]
-    [Category(Antiphon.TestSupport.TestClassificationMetadata.Slow)]
     [Category(Antiphon.TestSupport.TestClassificationMetadata.RealToolchain)]
     public async Task C488_DetachedFollowUpPublishesReviewedFix()
     {
@@ -181,7 +180,6 @@ public sealed class AgentTaskLandSourceFreshnessTests
     }
 
     [Test]
-    [Category(Antiphon.TestSupport.TestClassificationMetadata.Slow)]
     [Category(Antiphon.TestSupport.TestClassificationMetadata.RealToolchain)]
     public async Task C494_DetachedFixVerifierFailurePreventsPublication()
     {
