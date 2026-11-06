@@ -248,9 +248,34 @@ public class HerdrTransportTests
     }
 
     [Test]
-    public async Task C801_RepeatedConnectDisposeReleasesHandles()
+    public async Task C801_RepeatedConnectDisposeReleasesHandles() =>
+        await AssertRepeatedConnectDisposeReleasesHandlesAsync();
+
+    [Test]
+    public async Task C801_RepeatedConnectDisposeIgnoresUnrelatedHandles()
+    {
+        var unrelated = new List<FileStream>();
+        try
+        {
+            await AssertRepeatedConnectDisposeReleasesHandlesAsync(() =>
+            {
+                if (unrelated.Count != 0) return;
+                // Model another test opening files after this test's baseline. Keep them
+                // alive through all connections: none belongs to the Herdr transport.
+                for (var i = 0; i < 32; i++)
+                    unrelated.Add(File.OpenRead(typeof(HerdrTransportTests).Assembly.Location));
+            });
+        }
+        finally
+        {
+            foreach (var file in unrelated) file.Dispose();
+        }
+    }
+
+    private static async Task AssertRepeatedConnectDisposeReleasesHandlesAsync(Action? duringConnections = null)
     {
         await using var fake = new FakeHerdrServer();
+        fake.BeforeRequest = _ => duringConnections?.Invoke();
         fake.Start(); await fake.WaitUntilListeningAsync();
         var before = OperatingSystem.IsLinux() ? Directory.GetFiles("/proc/self/fd").Length : Process.GetCurrentProcess().HandleCount;
         for (var i = 0; i < 20; i++)
