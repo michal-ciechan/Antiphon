@@ -63,6 +63,30 @@ public sealed class C0824RefOnlyConsumerTests
     }
 
     [Test]
+    public async Task Decision_and_control_paths_do_not_grant_identity_file_access()
+    {
+        await using var f = await RefOnlySyncFixture.CreateAsync();
+        Directory.CreateDirectory(f.Identity);
+        var session = new AgentSession { Id = Guid.NewGuid(), Cwd = f.Identity,
+            RunnerId = f.Task.RunnerId, RunnerStoreId = Guid.NewGuid(), RunnerCwd = f.Task.RemoteWorktreePath,
+            Status = SessionStatus.Running, StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow };
+        f.Db.AgentSessions.Add(session); f.Task.AgentSessionId = session.Id; f.Task.Status = AgentTaskStatus.Working;
+        var policy = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(), AgentTaskRole.Code,
+            WorkspaceMode.Worktree, InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        f.Task.InternalDecisionPolicyJson = InternalDecisionPolicy.Serialize(policy);
+        f.Task.InternalDecisionPolicyHash = InternalDecisionPolicy.Hash(f.Task.InternalDecisionPolicyJson);
+        await f.Db.SaveChangesAsync();
+        var caller = new AgentTaskService.Caller(f.Task, session.Id, f.Identity);
+        var request = new InternalDecisionQuestionRequest(Guid.NewGuid(), f.Task.Attempt, "backup-transport",
+            InternalDecisionCategory.ShellTransport, ["scripts/deploy-gym-stat.ps1"], null, null,
+            InternalDecisionImpact.None, "Repair quoting?", "Preserve the command arguments.", "Exact bytes compared.");
+        var result = await new AgentTaskDecisionQuestionService(f.Db).CheckAsync(f.Task.Id, request, caller, default);
+        result.Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman, "identity-never-grants-files");
+        result.Reason.ShouldBe("ref_only_remote_path_verification_required", "remote-proof-unavailable-is-explicit");
+        (await File.ReadAllTextAsync(Path.Combine(f.Git.Desktop, "base.txt"))).ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task Same_repo_tasks_keep_distinct_ownership_and_display_mode()
     {
         await using var f = await RefOnlySyncFixture.CreateAsync();

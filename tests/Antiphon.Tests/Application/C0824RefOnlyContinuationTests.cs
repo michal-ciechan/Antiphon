@@ -68,6 +68,44 @@ public sealed class C0824RefOnlyContinuationTests
     }
 
     [Test]
+    public async Task Blocked_reply_preserves_runner_and_binding_when_gate_closes()
+    {
+        foreach (var busy in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            await f.CreateSourceAsync(remote: true);
+            await using (var db = f.Db())
+            {
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+                await RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
+            }
+            var before = await f.TaskAsync();
+            await f.AttachRecipientAsync(f.SessionId, busy);
+            const string answer = "Keep the bound runner and the immutable source.";
+            await f.AnswerAsync(answer);
+            var queued = (await f.AnswerQueueAsync()).ShouldNotBeNull("reached:C3:live:queue");
+            queued.Body.ShouldContain(answer, Case.Sensitive, "answer-independent-content");
+            if (busy) f.Submitted.ShouldBeEmpty("busy-answer-defers");
+            await f.RestartAsync();
+            await f.AttachRecipientAsync(f.SessionId);
+            await f.EndTurnAsync(f.SessionId);
+            await f.FlushAsync(f.SessionId);
+            var after = await f.TaskAsync();
+            after.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+            after.TaskRefWorkspaceBindingId.ShouldBe(before.TaskRefWorkspaceBindingId);
+            after.RunnerId.ShouldBe(before.RunnerId);
+            await using var verify = f.Db();
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId
+                && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt && t.Text == queued.Body))
+                .ShouldBe(1, "answer-received-once");
+            await f.FlushAsync(f.SessionId);
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId
+                && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt && t.Text == queued.Body))
+                .ShouldBe(1, "answer-received-once:replay");
+        }
+    }
+
+    [Test]
     public async Task Runner_redirect_requires_old_custody_and_rejects_desktop()
     {
         foreach (var runner in new string?[] { null, "desktop", "local" })
