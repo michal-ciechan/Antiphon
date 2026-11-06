@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "0686a97cccbec3d421b2298b47ff64aaa63d923d654252e2ea44bd3d1532487b",
+  "policyHash": "50a3778057fcd4f873107086e4776a2296cb7cca76da1505f81a400e0ffdb94a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -907,6 +907,16 @@
           "class": "C0824WorkspaceSlotProcessScanTests",
           "platform": "windows",
           "reason": "Linux-only by construction: the workspace slot process scan reads /proc/*/cwd and /proc/*/fd of real children. The case remains required on Linux.",
+          "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824TransportGitTests",
+          "methods": [
+            "Scratch_git_deadline_includes_inherited_output_drains"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the inherited output-drain deadline witness uses Git's shell alias and a native sleep child on Linux. The case remains required on Linux.",
           "owner": "CARD-0824"
         },
         {
