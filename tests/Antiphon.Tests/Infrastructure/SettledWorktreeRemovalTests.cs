@@ -751,7 +751,8 @@ public sealed class SettledWorktreeRemovalTests
 
         if (shape == "under")
         {
-            result.IsClean.ShouldBeTrue(result.Residue);
+            Console.WriteLine($"shape={shape}; path-length={file.Length + growth}; residue={result.Residue}; detail={result.Detail}");
+            result.IsClean.ShouldBeTrue($"{result.Residue}; {result.Detail}");
             Directory.Exists(source).ShouldBeFalse();
             return;
         }
