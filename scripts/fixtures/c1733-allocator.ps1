@@ -44,17 +44,17 @@ function Test-C1733_BoundariesAndFreshLinks {
 }
 
 function Test-C1733_SharedSeed {
-    $script:C1733SetupGit = 0
-    $script:C1733OriginalGit = ${function:Invoke-C1339GitProcess}
+    $global:C1733SetupGit = 0
+    $global:C1733OriginalGit = ${function:Invoke-C1339GitProcess}
     function Invoke-C1339GitProcess {
         param($Root, $WorkingDirectory, $Arguments)
-        if ($Arguments[0] -in @('init', 'commit')) { $script:C1733SetupGit++ }
-        & $script:C1733OriginalGit @PSBoundParameters
+        if ($Arguments[0] -in @('init', 'commit')) { $global:C1733SetupGit++ }
+        & $global:C1733OriginalGit @PSBoundParameters
     }
     $a = New-C1339Fixture
-    $script:C1733SetupGit = 0
+    $global:C1733SetupGit = 0
     $b = New-C1339Fixture
-    Assert-C487 ($script:C1733SetupGit -eq 0) 'C1733 seed-built-once' ('repeated setup commands=' + $script:C1733SetupGit)
+    Assert-C487 ($global:C1733SetupGit -eq 0) 'C1733 seed-built-once' ('repeated setup commands=' + $global:C1733SetupGit)
     $bStore = [IO.File]::ReadAllText($b.Gh.StorePath)
     Add-C1339Tag $a $a.FinalTag $a.Head
     [IO.File]::WriteAllText($a.Gh.StorePath, '{"releases":[{"tagName":"private"}]}')
