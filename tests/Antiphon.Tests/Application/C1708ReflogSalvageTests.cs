@@ -276,8 +276,9 @@ public sealed class C1708ReflogSalvageTests
             // Audit every other existing raw log, including the main checkout and fixture task.
             var common = (await s.RequiredAsync(w.Fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
             foreach (var log in Directory.EnumerateFiles(common, "*", SearchOption.AllDirectories)
-                         .Where(p => p.Contains(Path.DirectorySeparatorChar + "logs" + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                             && p != s.HeadLog && p != s.BranchLog))
+                         .Where(p => Path.GetRelativePath(common, p).Split(Path.DirectorySeparatorChar).SkipLast(1)
+                             .Contains("logs", StringComparer.Ordinal)
+                             && !LandingGit.PathsEqual(p, s.HeadLog) && !LandingGit.PathsEqual(p, s.BranchLog)))
                 RawIds(await File.ReadAllTextAsync(log, ct), s.Pushed.Length).ShouldNotContain(s.Lost);
             s.Origin = await s.RequiredAsync(w.Fixture.Remote, "show-ref");
             s.Snapshot = await s.SnapshotAsync();
@@ -341,7 +342,10 @@ public sealed class C1708ReflogSalvageTests
             path.ShouldNotContain('\n');
             File.Exists(path).ShouldBeTrue();
             var common = (await RequiredAsync(world.Fixture.Repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).Trim();
-            path.StartsWith(Path.TrimEndingDirectorySeparator(common) + Path.DirectorySeparatorChar, StringComparison.Ordinal).ShouldBeTrue("raw log is fixture-owned");
+            var relative = Path.GetRelativePath(common, path);
+            Path.IsPathFullyQualified(relative).ShouldBeFalse("raw log is on the fixture's volume");
+            relative.ShouldNotBe("..", "raw log is fixture-owned");
+            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal).ShouldBeFalse("raw log is fixture-owned");
             return path;
         }
         public async Task<bool> RegisteredAsync() => LandingGit.ParseRegistrations(
