@@ -1267,6 +1267,13 @@ public sealed class AgentControlService : ICompactionContinuationResume
 
         var occupant = inspect.Foreground[0];
 
+        if (await _db.AgentTasks.AsNoTracking().AnyAsync(t => t.AgentId == agent.Id
+                && t.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working
+                    || t.Status == AgentTaskStatus.Blocked), ct))
+            throw new ConflictException("A ref-only task cannot adopt a desktop pane.",
+                "ref_only_control_requires_remote_binding");
+
         var cwd = occupant.Cwd is { Length: > 0 } processCwd
             ? Path.GetFullPath(processCwd)
             : Path.GetFullPath(agent.WorkingDirectory);

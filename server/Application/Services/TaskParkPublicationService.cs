@@ -373,7 +373,9 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
             || park.AcceptedStartedAt is null || park.RunnerId is null || park.ReportDigest is null) return null;
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == park.TaskId, ct);
         var baseline = TaskProgressJson.TryReadBaseline(task?.ProgressBaselineJson);
-        if (task is null || baseline?.SchemaVersion != 1) return null;
+        if (task is null || baseline is null
+            || (task.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout ? baseline.SchemaVersion != 1 : baseline.SchemaVersion != 2)
+            || !await SettlementSyncWorkspaceSnapshot.MatchesParkAsync(db, task, park, resumed: false, ct)) return null;
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == park.SessionId, ct);
         var block = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == park.TaskId && e.Type == AgentTaskEventType.Blocked)
             .OrderByDescending(e => e.At).ThenByDescending(e => e.Id).Select(e => e.Id).FirstOrDefaultAsync(ct);

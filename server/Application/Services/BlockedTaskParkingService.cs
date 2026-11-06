@@ -51,6 +51,7 @@ public sealed class BlockedTaskParkingService(
             Workspace = task.Workspace, WorktreeId = task.WorktreeId,
             WorktreePath = task.WorktreePath ?? task.WorkingDirectory ?? task.RepoPath,
             RemoteWorktreePath = task.RemoteWorktreePath,
+            WorkspaceSnapshotJson = await SettlementSyncWorkspaceSnapshot.CaptureAsync(db, task, ct),
             FullRef = task.WorktreeBranch is null ? baseline?.FullRef : "refs/heads/" + task.WorktreeBranch,
             BaselineSha = task.WorktreeBaseSha ?? baseline?.LocalSha, ReportReference = task.ResultFilePath,
             ReportDigest = await HandoffDigestAsync(db, task, floor, ct),

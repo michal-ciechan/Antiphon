@@ -22,6 +22,27 @@ public sealed record TaskWorkspaceContext(DesktopWorkspaceKind Kind, Guid? Bindi
 
 public sealed class TaskWorkspaceContextResolver(AppDbContext db)
 {
+    internal Task<bool> MatchesParkAsync(AgentTask task, AgentTaskPark park, bool resumed, CancellationToken ct) =>
+        SettlementSyncWorkspaceSnapshot.MatchesParkAsync(db, task, park, resumed, ct);
+
+    /// <summary>Validate persisted execution custody without interpreting a remote path on this host.</summary>
+    public async Task<TaskWorkspaceContext> RequireRemoteExecutionAsync(AgentTask task, CancellationToken ct)
+    {
+        var context = await ResolveCurrentAsync(task, ct);
+        if (context.Kind != DesktopWorkspaceKind.RefOnly
+            || context.PreparationState != TaskRefWorkspacePreparationState.Published
+            || string.IsNullOrWhiteSpace(task.RunnerId) || RunnerRequestIntent.IsDesktopAlias(task.RunnerId)
+            || string.IsNullOrWhiteSpace(context.ExecutionDirectory)
+            || context.ExecutionDirectory.Any(char.IsControl) || task.AgentSessionId is null)
+            throw Refuse("ref_only_execution_binding_required");
+        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == task.AgentSessionId, ct);
+        if (session is null || session.RunnerId != task.RunnerId
+            || session.RunnerStoreId is null || session.RunnerStoreId == Guid.Empty
+            || session.RunnerCwd != context.ExecutionDirectory)
+            throw Refuse("ref_only_execution_binding_required");
+        return context;
+    }
+
     /// <summary>Re-read the persisted owner after an I/O/lease gap; a caller's stale row is never authority.</summary>
     public async Task<TaskWorkspaceContext> ResolveCurrentAsync(AgentTask task, CancellationToken ct)
     {

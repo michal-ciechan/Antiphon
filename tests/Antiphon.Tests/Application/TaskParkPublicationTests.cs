@@ -327,7 +327,7 @@ public sealed class TaskParkPublicationTests
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(LocalPath, FullRef, Repository);
 
         public static async Task<PublicationWorld> CreateAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false,
-            bool sourceLanding = false, bool cardBranch = false)
+            bool sourceLanding = false, bool cardBranch = false, bool refOnly = false)
         {
             var w = new PublicationWorld { _cardBranch = cardBranch };
             try
@@ -384,7 +384,9 @@ public sealed class TaskParkPublicationTests
                     w.Directory = new(new ParkClient(runtime), remote
                         ? new SessionRunnerOwner(task.RunnerId!, session.RunnerStoreId!.Value, w.Path) : null);
                     await db.SaveChangesAsync();
+                    if (refOnly) await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, w.Git, w.Root);
                 }
+                if (refOnly) await w.GitTextAsync(w.Repository, "worktree", "remove", w.LocalPath);
                 w.ParkId = (await w.Fixture.RegisterAsync()).ShouldNotBeNull();
                 w.Git.Commands.Clear();
                 return w;
