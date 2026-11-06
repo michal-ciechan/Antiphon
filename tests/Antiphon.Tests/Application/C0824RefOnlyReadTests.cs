@@ -85,6 +85,12 @@ public sealed class C0824RefOnlyReadTests
         foreach (var state in new[] { "confirmed", "pending", "refused", "failed" })
         {
             await using var w = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+            await using (var stageDb = w.CreateContext())
+            {
+                var stageTask = await stageDb.AgentTasks.SingleAsync(t => t.Id == w.TaskId);
+                stageTask.Stage = OrchestrationStage.FollowUp;
+                await stageDb.SaveChangesAsync();
+            }
             await w.RecordRefOnlyAsync();
             for (var i = 0; i < 3; i++)
             {
