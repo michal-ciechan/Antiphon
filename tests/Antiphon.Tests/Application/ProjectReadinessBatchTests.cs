@@ -27,7 +27,9 @@ public class ProjectReadinessBatchTests
         await SkipIfGitUnavailableAsync();
         using var repo = new ScratchGitRepo("antiphon-readiness-batch");
         await repo.CommitFileAsync("readme.md", "ready");
-        using var provider = BuildProvider(out var gate);
+        // This case observes the process gate. A path-qualified executable selects real Git
+        // children instead of the plain-git in-process read optimization, without global state.
+        using var provider = BuildProvider(out var gate, GitExecutableOnPath());
         var ids = await SeedProjectsAsync(provider, repo.Path, 84);
         try
         {
@@ -37,6 +39,9 @@ public class ProjectReadinessBatchTests
 
             first.Count.ShouldBe(84);
             first.Select(row => row.ProjectId).ShouldBe(ids);
+            foreach (var row in first)
+                row.Checks.Single(check => check.Key == ReadinessKeys.GitRepository).Status
+                    .ShouldBe(ReadinessStatus.Ok, $"project {row.ProjectId} must complete its Git readiness check");
             var started = gate.Started;
             started.ShouldBeGreaterThan(0);
             gate.PeakInFlight.ShouldBeLessThanOrEqualTo(4);
@@ -75,7 +80,17 @@ public class ProjectReadinessBatchTests
         }
     }
 
-    private static ServiceProvider BuildProvider(out GitProcessGate gate)
+    private static string GitExecutableOnPath()
+    {
+        var name = OperatingSystem.IsWindows() ? "git.exe" : "git";
+        var path = (Environment.GetEnvironmentVariable("PATH") ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(directory => Path.Combine(directory.Trim('"'), name))
+            .First(File.Exists);
+        return Path.GetFullPath(path);
+    }
+
+    private static ServiceProvider BuildProvider(out GitProcessGate gate, string? gitExecutable = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -86,6 +101,8 @@ public class ProjectReadinessBatchTests
         }));
         services.Configure<DelegationSettings>(_ => { });
         services.Configure<ProjectsSettings>(settings => settings.ReadinessCacheSeconds = 60);
+        if (gitExecutable is not null)
+            services.Configure<GitSettings>(settings => settings.ExecutableName = gitExecutable);
         services.AddMemoryCache();
         gate = new GitProcessGate(8);
         services.AddSingleton(gate);
