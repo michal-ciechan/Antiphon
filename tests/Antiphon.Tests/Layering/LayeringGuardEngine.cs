@@ -209,7 +209,10 @@ internal static class LayeringGuardEngine
                 if (qualifiedName is not null)
                 {
                     qualifiedName = Regex.Replace(qualifiedName.Replace("global::", "", StringComparison.Ordinal), @"<[^<>]*>", "");
-                    candidates = candidates.Where(c => c.Identity == qualifiedName || c.Identity.EndsWith("." + qualifiedName, StringComparison.Ordinal)).ToArray();
+                    candidates = candidates.Where(c => c.Identity == qualifiedName
+                        || c.Identity.EndsWith("." + qualifiedName, StringComparison.Ordinal)
+                        || attribute && (c.Identity == qualifiedName + "Attribute"
+                            || c.Identity.EndsWith("." + qualifiedName + "Attribute", StringComparison.Ordinal))).ToArray();
                     if (candidates.Length == 0) continue;
                 }
                 if (candidates.Length > 1)
@@ -249,10 +252,10 @@ internal static class LayeringGuardEngine
             MethodDeclarationSyntax m => m.Identifier == token,
             PropertyDeclarationSyntax p => p.Identifier == token,
             EventDeclarationSyntax e => e.Identifier == token,
+            EnumMemberDeclarationSyntax e => e.Identifier == token,
             _ => false
         },
         LabeledStatementSyntax n => n.Identifier == token,
-        EnumMemberDeclarationSyntax n => n.Identifier == token,
         SingleVariableDesignationSyntax n => n.Identifier == token,
         TypeParameterSyntax n => n.Identifier == token,
         ForEachStatementSyntax n => n.Identifier == token,
