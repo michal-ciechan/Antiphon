@@ -1918,6 +1918,9 @@ public sealed class AgentTaskLandService
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         => await VerifyWithObserverAsync(worktree, filter, null, ct);
 
+    /// <summary>Spans for the verifier's child processes (no listener, no cost).</summary>
+    private static readonly ActivitySource VerifierTrace = new("Antiphon.Server.LandVerifier");
+
     /// <summary>Starts one verifier child and waits for it; the seam V-8 fakes so nothing is built.</summary>
     internal delegate Task<ProcessResult> LandProcessRunner(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, string[] args);
 
@@ -1925,6 +1928,15 @@ public sealed class AgentTaskLandService
         ILandingChildObserver? observer, CancellationToken ct, IBuildSlotGate? buildSlots = null, LandProcessRunner? runProcess = null, string? artifactsPath = null)
     {
         runProcess ??= (cwd, obs, token, file, args) => RunProcessAsync(cwd, obs, token, file, args);
+        var unwrapped = runProcess;
+        // Each verifier child (dotnet build, dotnet run) is one span, so traces show where a land's verification time goes.
+        runProcess = async (cwd, obs, token, file, args) =>
+        {
+            using var span = VerifierTrace.StartActivity("process-wait " + file + (args.Length > 0 ? " " + args[0] : ""));
+            var result = await unwrapped(cwd, obs, token, file, args);
+            span?.SetTag("process.ok", result.Ok);
+            return result;
+        };
         // CARD-0589 S4: the build and the test run hold one host build slot, like a delegate's
         // checkpoint row. No gate (a verifier built outside DI) keeps the unbudgeted behaviour; an
         // unreachable runner builds unleased at -maxcpucount:4 and is never a land failure.

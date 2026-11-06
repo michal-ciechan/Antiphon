@@ -16,6 +16,9 @@ public static class TestClassificationMetadata
 {
     public const string Slow = "Slow";
     public const string OptIn = "OptIn";
+    /// <summary>The test runs the real .NET toolchain (dotnet build/test of a generated project): seconds per
+    /// run. Filter it out with <c>[Category!=RealToolchain]</c>; nightly runs it.</summary>
+    public const string RealToolchain = "RealToolchain";
     public const string Unit = "Unit";
     public const string Integration = "Integration";
 
