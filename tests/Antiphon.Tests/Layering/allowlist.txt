@@ -142,8 +142,9 @@ server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> Transcri
 server/Infrastructure/Agents/SessionRunner/SessionRuntimeActionHostedService.cs -> SessionRuntimeActionCoordinator @ server/Application/Services/SessionRuntimeActionCoordinator.cs
 server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
 
-
 # slice later-phase
+server/Application/Services/CardDoneArtifactRoots.cs -> WorktreeSetAside @ server/Infrastructure/Git/WorktreeSetAside.cs
+server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs -> AgentTuiKeyProtectionReadiness @ server/Infrastructure/Security/DataProtectionAgentTuiSecretProtector.cs
 server/Application/Dtos/AgentLaunchSpec.cs -> ProviderEndpoint @ server/Application/Services/ProviderEndpoint.cs
 server/Application/Dtos/AgentTaskDtos.cs -> CardWorktreeBaseSelection @ server/Application/Services/AgentTaskWorktreeBaseResolver.cs
 server/Application/Dtos/LandingEvidenceDto.cs -> AgentTaskLandingProtocol @ server/Application/Services/AgentTaskLandingProtocol.cs
