@@ -6,6 +6,8 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface ISessionRunnerClient
 {
+    Task<DecisionPathInspectionResult?> InspectDecisionPathsAsync(DecisionPathInspectionRequest request, CancellationToken ct) =>
+        Task.FromResult<DecisionPathInspectionResult?>(null);
     Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct) =>
         Task.FromResult(new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported"));
     Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>

@@ -10,7 +10,8 @@ using Npgsql;
 namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTaskDecisionQuestionService(
-    AppDbContext db, IEventBus? eventBus = null, TimeProvider? timeProvider = null)
+    AppDbContext db, IEventBus? eventBus = null, TimeProvider? timeProvider = null,
+    ISessionRunnerDirectory? runners = null)
 {
     public async Task<InternalDecisionQuestionResponse> CheckAsync(Guid taskId,
         InternalDecisionQuestionRequest request, AgentTaskService.Caller caller, CancellationToken ct)

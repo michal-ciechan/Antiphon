@@ -858,3 +858,30 @@ with its exact boundary instead of replacing recipient evidence with a mock ack.
 A real human decision goes to `next: decide`; ref-only mode, off defaults and this
 documents-only commission require no further permission. Bind native admission
 through the separate runner commission, without violating the no-desktop rule.
+
+## Continuation 3 caller closure amendment
+
+C4 now uses the real C0824SlotTransportWorld old pool and a second real target pool
+through the production dispatcher, with persisted RefOnly source binding and real
+Git bytes. The named affected scope includes the existing RemoteWorkspacePreparerTests
+and C0824WorkspaceSlotServerTests in full; the new fixture options keep their defaults.
+
+U2 needs a read-only phone-home exact-file containment observation because server-local
+filesystem inspection cannot establish a runner grant. The additive DecisionPathInspect
+operation is bound to the accepted session, store, generation and runtime-owned cwd;
+old clients/surfaces return unsupported/null. This extends the previously server-only
+closure. U2 calls the real PhoneHomeRunnerClient -> command dispatcher -> runtime and
+native filesystem verifier through the existing LiveSeat fixture. No new test method
+count is introduced. The named additional full affected classes are PhoneHomeConnectionTests
+in Antiphon.Tests and PhoneHomeCommandDispatcherTests, PhoneHomeConnectionServiceTests,
+RunnerCapabilitiesTests and RunnerPlatformContractTests in Antiphon.SessionRunner.Tests.
+They protect operation compatibility, capability projection and routing. Other runtime
+methods are unchanged. Native provider input remains manual/native work, and none of
+these witnesses claims it. The full Unit lane remains explicitly NOT RUN under CARD-1720.
+
+These additional full-class runs are ordinary Final caller-closure work, not new CP
+credit or repetition of a green proof. Keep the five closed CP rows, their exact filters,
+minima and row/build caps. Bound additional class groups at the existing 15-minute
+row cap, measured timings retained per method; their initial estimates are provisional.
+No full assembly is selected. Every PC-1..PC-159 and added tuple/path variants remains
+pending SourceLanding Mutation.
