@@ -83,7 +83,7 @@ public sealed class C0824RefOnlyConsumerTests
         var result = await new AgentTaskDecisionQuestionService(f.Db).CheckAsync(f.Task.Id, request, caller, default);
         result.Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman, "identity-never-grants-files");
         result.Reason.ShouldBe("ref_only_remote_path_verification_required", "remote-proof-unavailable-is-explicit");
-        (await File.ReadAllTextAsync(Path.Combine(f.Git.Desktop, "base.txt"))).ShouldNotBeNull();
+        (await File.ReadAllTextAsync(Path.Combine(f.Git.Desktop, "README.md"))).ShouldBe("base\n");
     }
 
     [Test]
@@ -116,5 +116,8 @@ public sealed class C0824RefOnlyConsumerTests
         new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
         Options.Create(new DelegationSettings { MaxDepth = 5, MaxTasksPerRoot = 40 }),
         new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
-        NullLogger<AgentTaskService>.Instance);
+        NullLogger<AgentTaskService>.Instance,
+        landingGit: f.Git.Git,
+        phoneHome: new PhoneHomeLaunchPolicy(Options.Create(new PhoneHomeRunnerSettings
+        { Enabled = true, AllowDelegatedTasks = true, AllowedRunnerId = f.Task.RunnerId!, ClaudeAuthProbeEnabled = false })));
 }

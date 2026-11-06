@@ -112,7 +112,8 @@ public sealed class HomeTaskService
                 t.WorkingDirectory,
                 t.RequiredPlatform,
                 t.RunnerId,
-                t.ObservedPlatform))
+                t.ObservedPlatform,
+                t.DesktopWorkspaceKind))
             .ToListAsync(ct);
 
         return rows
@@ -182,7 +183,8 @@ public sealed class HomeTaskService
                 t.CompletedAt,
                 t.RequiredPlatform,
                 t.RunnerId,
-                t.ObservedPlatform))
+                t.ObservedPlatform,
+                t.DesktopWorkspaceKind))
             .ToListAsync(ct);
 
     private static RankedItem RankCard(
@@ -255,7 +257,8 @@ public sealed class HomeTaskService
             CompletedAt: card.CompletedAt,
             RequiredPlatform: card.RequiredPlatform,
             RunnerId: workerRow?.RunnerId,
-            ObservedPlatform: workerRow?.ObservedPlatform);
+            ObservedPlatform: workerRow?.ObservedPlatform,
+            DesktopWorkspaceKind: workerRow?.DesktopWorkspaceKind ?? DesktopWorkspaceKind.Checkout);
 
         var waitingSince = reason == HomeTaskHumanReason.Question
             ? workerRow?.CompletedAt ?? workerRow?.DispatchedAt ?? workerRow?.CreatedAt ?? card.UpdatedAt
@@ -319,7 +322,8 @@ public sealed class HomeTaskService
             CompletedAt: task.CompletedAt,
             RequiredPlatform: task.RequiredPlatform,
             RunnerId: task.RunnerId,
-            ObservedPlatform: task.ObservedPlatform);
+            ObservedPlatform: task.ObservedPlatform,
+            DesktopWorkspaceKind: task.DesktopWorkspaceKind);
 
         var waitingSince = task.CompletedAt ?? task.DispatchedAt ?? task.CreatedAt;
         var runningAt = task.DispatchedAt ?? task.CreatedAt;
@@ -412,7 +416,8 @@ public sealed class HomeTaskService
         row.CompletedAt,
         row.RequiredPlatform,
         row.RunnerId,
-        row.ObservedPlatform);
+        row.ObservedPlatform,
+        row.DesktopWorkspaceKind);
 
     private static int Compare(RankedItem a, RankedItem b)
     {
@@ -526,7 +531,8 @@ public sealed class HomeTaskService
         string WorkingDirectory,
         RequiredPlatform RequiredPlatform,
         string? RunnerId,
-        string? ObservedPlatform);
+        string? ObservedPlatform,
+        DesktopWorkspaceKind DesktopWorkspaceKind);
 
     private sealed record TaskRow(
         Guid Id,
@@ -551,7 +557,8 @@ public sealed class HomeTaskService
         DateTime? CompletedAt,
         RequiredPlatform RequiredPlatform,
         string? RunnerId,
-        string? ObservedPlatform);
+        string? ObservedPlatform,
+        DesktopWorkspaceKind DesktopWorkspaceKind);
 
     private sealed record RankedItem(
         HomeTaskItemDto Item,

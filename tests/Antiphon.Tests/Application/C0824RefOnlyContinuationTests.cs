@@ -1,10 +1,15 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -19,18 +24,7 @@ public sealed class C0824RefOnlyContinuationTests
     [Test]
     public async Task Pending_park_debt_keeps_exact_publication_and_mode()
     {
-        await using var w = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true);
-        await using (var db = w.Fixture.Db())
-        {
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == w.Fixture.TaskId);
-            await RecordAsync(db, task, w.Git, w.Root);
-            // The original Requested park has not crossed publication. Rebind its identity
-            // to the recorded representation before exercising the producer.
-            var park = await db.AgentTaskParks.SingleAsync(p => p.Id == w.ParkId);
-            park.WorktreePath = task.WorktreePath;
-            await db.SaveChangesAsync();
-        }
-        await w.GitTextAsync(w.Repository, "worktree", "remove", w.LocalPath);
+        await using var w = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true, refOnly: true);
         var source = await w.CommitAsync("park-source.txt");
         var result = await w.PrepareAsync();
         result.Evidence.ShouldNotBeNull("reached:C2:RefOnly:publication").SourceSha.ShouldBe(source);
@@ -42,6 +36,18 @@ public sealed class C0824RefOnlyContinuationTests
         w.Fixture.Options.Enabled = false;
         var verified = await w.VerifyAsync();
         verified.Evidence.ShouldNotBeNull("accepted-park-survives-gate-off").SourceSha.ShouldBe(source);
+        await using (var db = w.Fixture.Db())
+        {
+            var workspace = new RemoteWorkspaceService(w.Directory, w.Git,
+                NullLogger<RemoteWorkspaceService>.Instance, w.Git, w.Leases, w.Reservations,
+                workspaceContexts: new TaskWorkspaceContextResolver(db));
+            var recovery = new BlockedTaskSyncRecoveryService(db, workspace, w.Service(db), new MockEventBus(),
+                TimeProvider.System, NullLogger<BlockedTaskSyncRecoveryService>.Instance);
+            (await recovery.SweepAsync(default)).ShouldBe(1, "reached:C2:accepted-debt:claim");
+        }
+        (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready, "park-ready=S:gate-off");
+        (await w.GitTextAsync(w.Repository, "rev-parse", w.FullRef)).ShouldBe(source, "park-ready-exact-ref");
+        (await w.GitTextAsync(w.Repository, "show", source + ":park-source.txt")).ShouldBe("park-source.txt", "park-ready-exact-bytes");
     }
 
     [Test]
@@ -57,6 +63,8 @@ public sealed class C0824RefOnlyContinuationTests
                 WorktreePath = f.Identity, RemoteWorktreePath = f.Task.RemoteWorktreePath,
                 RunnerId = f.Task.RunnerId, FullRef = f.Git.FullRef, SourceSha = source,
                 PublicationReceiptId = Guid.NewGuid(), EndpointFingerprint = BlockedTaskParkingService.Digest(f.Git.Origin) };
+            park.BaselineSha = f.Git.Baseline; park.TaskConcurrencyToken = f.Task.ConcurrencyToken;
+            park.WorkspaceSnapshotJson = await SettlementSyncWorkspaceSnapshot.CaptureAsync(f.Db, f.Task, default);
             var registry = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
             f.Git.Git.Clear();
             (await f.Service().RefuseParkResumeAsync(f.Task, park, default)).ShouldBeNull("ref-only-resume-at-S");
@@ -77,7 +85,7 @@ public sealed class C0824RefOnlyContinuationTests
             await using (var db = f.Db())
             {
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
-                await RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
+                await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
             }
             var before = await f.TaskAsync();
             await f.AttachRecipientAsync(f.SessionId, busy);
@@ -115,7 +123,7 @@ public sealed class C0824RefOnlyContinuationTests
             await using (var db = f.Db())
             {
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
-                await RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
+                await RefOnlyWorkspaceTestSetup.RecordAsync(db, task, f.SourceGit, f.Harness.TempRoot);
                 task.AgentSessionId = null; task.RunnerId = runner;
                 await db.SaveChangesAsync();
             }
@@ -127,23 +135,4 @@ public sealed class C0824RefOnlyContinuationTests
         }
     }
 
-    internal static async Task RecordAsync(Antiphon.Server.Infrastructure.Data.AppDbContext db, AgentTask task,
-        Antiphon.Server.Application.Interfaces.ITaskProgressGit git, string root)
-    {
-        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)!;
-        var binding = new TaskRefWorkspaceBinding { Id = Guid.NewGuid(), TaskId = task.Id,
-            RepositoryPath = task.RepoPath!, CommonDirectory = await git.CommonDirectoryAsync(task.RepoPath!, default),
-            IdentityPath = Path.Combine(root, ".ref-only", task.Id.ToString("N")), Branch = task.WorktreeBranch!,
-            FullRef = baseline.Primary.FullRef, SelectedBaseSha = task.WorktreeBaseSha!,
-            SelectedBaseRef = "refs/heads/master", SelectedBaseSource = WorktreeBaseSource.Explicit,
-            PreparationState = TaskRefWorkspacePreparationState.Published, Revision = 1 };
-        db.TaskRefWorkspaceBindings.Add(binding);
-        task.DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly; task.TaskRefWorkspaceBindingId = binding.Id;
-        task.WorktreePath = binding.IdentityPath; task.WorktreeBaseRef = binding.SelectedBaseRef;
-        task.WorktreeBaseSource = binding.SelectedBaseSource;
-        task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(baseline with { SchemaVersion = 2,
-            Primary = baseline.Primary with { RegisteredCheckout = null, DesktopWorkspaceKind = DesktopWorkspaceKind.RefOnly,
-                TaskRefWorkspaceBindingId = binding.Id } });
-        await db.SaveChangesAsync();
-    }
 }

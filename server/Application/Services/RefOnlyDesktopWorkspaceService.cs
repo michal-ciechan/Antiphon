@@ -17,6 +17,9 @@ public sealed class RefOnlyDesktopWorkspaceService(
 {
     public sealed record Observation(TaskWorkspaceContext Context, string Sha);
 
+    internal Task<bool> MatchesParkAsync(AgentTask task, AgentTaskPark park, bool resumed, CancellationToken ct) =>
+        contexts.MatchesParkAsync(task, park, resumed, ct);
+
     public async Task<Observation> InspectAsync(AgentTask task, ProgressSourceBaseline baseline,
         TaskWorkspaceContext? expected, CancellationToken ct)
     {
