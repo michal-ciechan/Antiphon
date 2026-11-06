@@ -204,9 +204,25 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             throw new InvalidOperationException("Fixture disposal escaped owned root");
         await CaptureAsync("terminal_image");
         // Fixtures with junctions must remove their own link before this final disposal.
-        foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
-            File.SetAttributes(file, FileAttributes.Normal);
-        Directory.Delete(full, true);
+        // A process the fixture's runner started (a PtyHost's own child host) can still be exiting, holding an image
+        // it loaded from the tree, when its parent has already been reaped: retry for a short while. A process that
+        // never exits still fails the delete, so a real leak stays visible.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
+                    File.SetAttributes(file, FileAttributes.Normal);
+                Directory.Delete(full, true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && DateTime.UtcNow < deadline
+                && Directory.Exists(full))
+            {
+                await Task.Delay(Math.Min(100 * attempt, 500));
+            }
+        }
     }
 
     internal class FixtureGit(string home, Guid taskId) : LandingGit

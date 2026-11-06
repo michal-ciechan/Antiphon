@@ -416,16 +416,63 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     private void CaptureOwnedHosts() => _ownedHosts.CaptureTracked(_runtime.List(), _startRequests);
 
-    public ValueTask DisposeAsync() => new(_ownedHosts.DisposeAsync(KillOnDispose, CaptureOwnedHosts,
-        async ct =>
+    private Task? _disposal;
+    private readonly object _disposalGate = new();
+
+    /// <summary>Idempotent: every call returns the one disposal task.</summary>
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposalGate) return new(_disposal ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        try
         {
-            foreach (var session in _runtime.List())
+            await _ownedHosts.DisposeAsync(KillOnDispose, CaptureOwnedHosts,
+                async ct =>
+                {
+                    foreach (var session in _runtime.List())
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        if (session.Status is "Running" or "Starting")
+                            await _runtime.KillAsync(session.SessionId, TimeSpan.FromSeconds(2), ct);
+                    }
+                }, () => _runtime.DisposeAsync().AsTask());
+        }
+        finally
+        {
+            if (KillOnDispose) await KillHostsRunningFromAsync(_runnerSettings.ResolvedPtyHostDir);
+        }
+    }
+
+    /// <summary>
+    /// The launcher host starts the detached session host and exits; a test that ends before that session host is
+    /// recorded (a fast test, an early teardown) leaves it running, orphaned, holding images from this client's host
+    /// directory. Any PtyHost whose executable lives under that directory (unique to this client) is killed and
+    /// waited for. Never runs when KillOnDispose is off: restart/adoption tests keep their hosts on purpose.
+    /// </summary>
+    private static async Task KillHostsRunningFromAsync(string hostDirectory)
+    {
+        var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(hostDirectory)) + Path.DirectorySeparatorChar;
+        foreach (var process in System.Diagnostics.Process.GetProcessesByName("Antiphon.PtyHost"))
+        {
+            using (process)
             {
-                ct.ThrowIfCancellationRequested();
-                if (session.Status is "Running" or "Starting")
-                    await _runtime.KillAsync(session.SessionId, TimeSpan.FromSeconds(2), ct);
+                string? executable;
+                try { executable = process.MainModule?.FileName; }
+                catch (Exception) { continue; } // exited, or not ours to inspect
+                if (executable is null || !executable.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await process.WaitForExitAsync(deadline.Token);
+                }
+                catch (Exception) { /* exited meanwhile, or the fixture's delete reports what remains */ }
             }
-        }, () => _runtime.DisposeAsync().AsTask()));
+        }
+    }
     private static SessionRunnerEvent? ParseEvent(string eventName, string json)
     {
         if (eventName == SessionRunnerEventNames.SessionOutput)
