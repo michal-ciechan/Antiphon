@@ -10,6 +10,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Admitted HTTP and database read resilience | [docs/resilience.md](docs/resilience.md) |
 | Telegram/channel formatting and gateway settings | [docs/telegram.md](docs/telegram.md) |
 | Cards, delegates, landing, scopes, and tracker orchestration | [docs/orchestration-loop.md](docs/orchestration-loop.md) |
+| Operator status, rc progress, and in-flight work | [antiphon-status-update](.claude/skills/antiphon-status-update/SKILL.md) |
 | Card state versus session state and decision questions | [docs/agent-card-lifecycle.md](docs/agent-card-lifecycle.md) |
 | Inspecting agents, boards, and live sessions over HTTP | [docs/ops-http.md](docs/ops-http.md); full route map [docs/antiphon-api.md](docs/antiphon-api.md) |
 | Retrieving desktop, runner, Hangfire, remote, and transcript logs | [docs/logs.md](docs/logs.md) |

@@ -44,6 +44,11 @@ Script test shares one HTTP fixture and private Git fixture for its text and JSO
 observations, no host/container/DB startup. Each HTTP/Git call has a 20-second bound;
 the test follows the pattern's 60-second child bound pending the first measurement.
 No production timeout is changed. Uninstrumented fixture/IO phases remain unknown.
+CP-1 measured cold build wall 724.778s (driver build 662.25s), slot wait 15s,
+test wall 1.032s; native Linux, source 8c3e7b629382adfb1a33a68c41ed795ef426954d,
+ambient shared-host load, one sample, not p95. CP-2 keeps the same derived build
+deadline inherited from its Unit dependent; no timeout is widened. Guard rows are
+packed into CP-3 so all three S2 rows share a single build in one invocation.
 Unit historical duration is unmeasured and may exceed 30 minutes (CARD-1573,
 CARD-1514); a long run requires Debug with its timing evidence, not repeated proof.
 Rows use existing derived deadlines; no explicit total override or widened timeout.
@@ -54,6 +59,5 @@ Rows use existing derived deadlines; no explicit total override or widened timeo
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-status-red/` | regression-red | `/*/*/StatusSnapshotScriptTests/*` | V-1 | StatusSnapshotScriptTests; expected red before script | 1 | 4 | true | TEMP=/tmp |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-status-final/` | script-pattern | `/*/*/(StatusSnapshotScriptTests*)\|(CardRelationshipScriptTests*)\|(CardListSearchScriptTests*)/*` | V-1, V-2 | all listed, 0 failed | 3 | 4 | true | TEMP=/tmp |
-| CP-3 | S2 | CP-2 | instruction-guards | `/*/*/(AgentContextContractTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | V-3, V-4, V-6 | all listed, 0 failed | 4 | 2 | true | TEMP=/tmp |
-| CP-4 | S2 | CP-2 | policy-guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)/*` | V-5 | all listed, 0 failed | 5 | 3 | true | TEMP=/tmp |
-| CP-5 | S2 | CP-2 | whole-unit | `/*/*/*/*[Category=Unit]` | V-7 | >= 1 executed, 0 failed | 1 | 15 | true | TEMP=/tmp |
+| CP-3 | S2 | CP-2 | instruction-policy-guards | `/*/*/(AgentContextContractTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)/*` | V-3, V-4, V-5, V-6 | all listed, 0 failed | 9 | 5 | true | TEMP=/tmp |
+| CP-4 | S2 | CP-2 | whole-unit | `/*/*/*/*[Category=Unit]` | V-7 | >= 1 executed, 0 failed | 1 | 15 | true | TEMP=/tmp |

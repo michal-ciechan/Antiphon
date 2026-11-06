@@ -12,6 +12,10 @@ An **external** orchestrator (ChatGPT / Codex outside an Antiphon TUI) uses a na
 Capability, not `Delegation:AllowedRoots` and not Codex remote control. The operator procedure and
 the `delegate.ps1 -Capability` UX live in [ops-http.md](ops-http.md).
 
+| Orchestrator skill | Use |
+|---|---|
+| [antiphon-status-update](../.claude/skills/antiphon-status-update/SKILL.md) | Operator status, rc progress, and in-flight work; gathers raw facts with `scripts/status-snapshot.ps1`. |
+
 ## Orchestrator operational autonomy (restart, rollout)
 
 An orchestrator MAY restart or upgrade the AppHost, restart session runners, and run docker-based
