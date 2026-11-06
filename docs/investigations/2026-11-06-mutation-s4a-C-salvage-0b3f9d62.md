@@ -1,5 +1,39 @@
 # S4a C-salvage mutation wave 1 — task 0b3f9d62
 
+**Complete for this two-control slice: S6-oldids and S12-dangling both have the intended red evidence and restored-source green 1/1.** The caller reopened the task to run only the missing S12 restored-green method; it passed. Aggregate: two selector-off baselines passed, two expected mutation failures, two restored greens passed; six executed results, four passed, two failed as expected, zero skipped. Both original builds passed. These are two settled waived ordinary-worktree kills, with no formal SourceLanding or overall-sweep completion claim.
+
+## Authorized continuation, 2026-11-06
+
+Continuation starting HEAD: `0de741e7e1703111c1725ab83ebacb59d19a4f71`; branch `feat/card-task-0b3f9d62`, worktree `/work/worktrees/task-0b3f9d62`. That commit changes only the initial report from tested base `fed5899951daa3c66be3dee31355e6261286dc01`. Source was already restored. Before this run it was rechecked byte-for-byte against the base Git blob, and all retained producer/staged/test DLL hashes matched the completed restored build. No rebuild or new red ran. The selector was explicitly empty/off.
+
+- Exact selection: `/*/*/C1708ReflogSalvageTests*/Dangling_symbolic_salvage_collision_refuses_and_keeps_the_symbolic_ref`.
+- One test lease: `6f02382e-8a4a-4f1c-a6d4-2dfd503387aa`, real BUILD SLOT grant, broker wait 0 seconds, slot held 28 seconds. No unleased run.
+- Command: archived literal argv in `/work/evidence/task-0b3f9d62/green-S12-resume1/invocation.json`; native output with `dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false`, `TEMP=/tmp`, `-SlotWaitMinutes 5`; unchanged three-minute execution cap. One foreground supervised local child, joined to completion.
+- Result: exit 0, executed 1 / passed 1 / failed 0 / skipped 0. Parameterless method `Dangling_symbolic_salvage_collision_refuses_and_keeps_the_symbolic_ref` (args=[]), duration `00:00:05.1185481`.
+- Fresh TRX: `/work/evidence/task-0b3f9d62/green-S12-resume1/run.trx`; run ID `40a8555f-b264-42be-ad51-b05a08525ce8`, execution ID `e613e2fc-4434-4576-86ee-425b1c547310`, test ID `f87233b5-b43e-717f-4a1e-0cb46b52343f`.
+- Restored source SHA-256: `e3064c150e1c863107ea10acbe7d8052915c84d3a177e7c27cb740a8705b1a22`.
+- Restored server DLL SHA-256 (producer and staged copy, unchanged before/after): `e8e24db3000400822ab4060b51e21e63c4184af6af86b1a486fa6a53c1e21d2e`.
+- Restored Antiphon.Tests.dll SHA-256 (unchanged before/after): `22075ace11001d10bf78c2c388e26df8ee7f3574ab89fe723f69ca1196e6a159`.
+
+| Continuation phase | Seconds |
+|---|---:|
+| Observed admission, including wrapper startup | 1.297 |
+| Granted execution envelope | 27.745 |
+| Total driver wall | 29.042 |
+| TRX host wall | 24.905 |
+| Startup/discovery/shared fixture interval | 18.012 |
+| Test-result interval | 5.118 |
+| Post-result host teardown interval | 1.775 |
+| Recorded method process wait | 0.424 |
+| Recorded method DB cleanup | 0.032 |
+| Method unattributed remainder | 4.684 |
+
+Timing JSONL, parsed.json, summary.json, run.log, HTML and the immutable invocation/receipt are in the continuation run directory. Uninstrumented external-call splits remain unknown. The full five-minute admission failure from the original attempt is retained below and in its unchanged evidence directory; this green does not erase that cost. Aggregate driver wall across both attempts: 1143.240 seconds; observed admission 364.392 seconds; execution envelopes 778.848 seconds. There were nine lease requests in total: eight grants and one admission timeout, with six executed method selections and two builds. The continuation added only one exact method selection and no build.
+
+Final product/test source is unchanged; the temporary switch remains removed and retained native outputs remain restored. Only this report is changed by the continuation. The previous report is preserved below as historical: its incomplete/NOT RUN statements describe the first attempt, not the current result.
+
+## Initial attempt, historical report at 0de741e7e1703111c1725ab83ebacb59d19a4f71
+
 **Incomplete: the final S12-dangling restored-green driver timed out before build-slot admission (exit 4 after five minutes).** S6-oldids completed its intended red and restored-green cycle. S12-dangling reached its intended red with observed symbolic-ref replacement, but its required restored green is NOT RUN, so that cycle remains incomplete. Five executed test results: three passed, two expected mutation failures, zero skipped. Both builds passed. No survivor, equivalence or second-guard-masked result occurred; the missing green is an admission gap, not a passing test or a finalized S12 kill.
 
 This is the expressly waived ordinary-worktree informational sweep, following Custom 6569dd36; it is not CARD-0478 SourceLanding evidence and has no invented operation binding. The caller's existing authority covered execution and task-branch publication; no further approval was requested. No product/test repair, desktop execution, landing, activation, rc push or land-graph update occurred.
@@ -89,7 +123,10 @@ The author red records from 935ca9be/bb0a6ce8 were read as precedent, not counte
 
 Reproduction in a separately authorized ordinary worktree: start at the tested base, apply `/work/evidence/task-0b3f9d62/mutants.patch`, choose a new external evidence root in a copy of run.cjs (existing run directories refuse reuse), and repeat the two archived exact baseline/red commands, restore the literal path, rebuild once and repeat the two greens. Keep each lease and timeout unchanged; invocation.json contains literal argv. The report alone has no formal SourceLanding or overall-sweep completion claim.
 
+
+Historical handoff: the initial report requested only the missing S12 restored-green selection before continuing the remaining inventory. This continuation discharged that exact missing selection; no completed red or S6 cycle was repeated.
+
 --- next stage ---
 next: mutation
-handoff: First commission only the missing S12 restored-green exact method with trusted same-source output (or its required fresh build if that output is unavailable). Retain S6 complete and S12 red evidence; no repeat of completed reds. Then commission bounded slices for the remaining C-salvage controls and retain the shared continuation ledger.
+handoff: Retain the settled S6-oldids and S12-dangling waived evidence. Commission bounded slices for the remaining C-salvage controls S1–S5 and S7–S11, including S8's unfinished-release and S10's direct-collision bindings. Preserve the shared continuation ledger; no overall SourceLanding completion is claimed.
 artifact: /work/worktrees/task-0b3f9d62/docs/investigations/2026-11-06-mutation-s4a-C-salvage-0b3f9d62.md
