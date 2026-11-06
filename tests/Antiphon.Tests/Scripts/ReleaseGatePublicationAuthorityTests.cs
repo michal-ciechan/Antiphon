@@ -7,9 +7,9 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-0599 D-15 full V-12 matrix (round B1; ordinary contract is
 /// <see cref="ReleaseGateAuthorityContractTests"/>). Each method runs exactly one <c>Test-C599A_*</c>
 /// case of <c>scripts/test-release-gate.ps1</c> as its own pwsh child under the harness's unchanged
-/// 120-second limit, against the PRODUCTION <c>release-authority.ps1</c> guards and publisher. The
-/// matrix is split so each child stays near 30 s on server2 (review bf928242 finding 3: Windows under
-/// load ran the former multi-hundred-variant children past 120 s).
+/// 300-second limit, against the PRODUCTION <c>release-authority.ps1</c> guards and publisher.
+/// CARD-1731 removes redundant snapshot work; completed phase measurements, rather than
+/// the historical 30-second estimate, determine the recorded cost and budget.
 ///
 /// <para>One real-git B1 fixture per child. Every variant restores that valid control byte for byte,
 /// changes exactly one field, row or handshake and must be refused with the NAMED reason token, so a
@@ -30,6 +30,7 @@ namespace Antiphon.Tests.Scripts;
 /// authority and no tag reservation.</para>
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseGatePublicationAuthorityTests
 {
