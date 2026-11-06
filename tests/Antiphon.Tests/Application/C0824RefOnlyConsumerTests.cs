@@ -3,6 +3,8 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.Extensions.DependencyInjection;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
@@ -108,12 +110,37 @@ public sealed class C0824RefOnlyConsumerTests
         var other = new AgentTask { Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(),
             RepoPath = f.Task.RepoPath, WorkingDirectory = f.Task.WorkingDirectory,
             WorktreePath = Path.Combine(f.Git.Root, ".ref-only", Guid.NewGuid().ToString("N")),
-            WorktreeBranch = "feat/card-task-other", Status = AgentTaskStatus.Queued };
+            WorktreeBaseSha = f.Git.Baseline, RunnerId = f.Task.RunnerId,
+            RemoteWorktreePath = f.Task.RemoteWorktreePath + "-other", Workspace = WorkspaceMode.Worktree,
+            Status = AgentTaskStatus.Queued };
+        other.RootTaskId = other.Id;
+        other.WorktreeBranch = RemoteWorkspaceService.OwnedBranch(other.Id);
+        var baseline = TaskProgressJson.TryReadBaseline(f.Task.ProgressBaselineJson)!;
+        other.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(baseline with
+        { Primary = baseline.Primary with { OwnerTaskId = other.Id, FullRef = "refs/heads/" + other.WorktreeBranch } });
+        f.Db.AgentTasks.Add(other); await f.Db.SaveChangesAsync();
+        await RefOnlyWorkspaceTestSetup.RecordAsync(f.Db, other, f.Git.Git, f.Git.Root);
+        await f.Git.RunAsync(f.Git.Desktop, "update-ref", "refs/heads/" + other.WorktreeBranch, f.Git.Baseline, new string('0', 40));
         var first = WorkspaceReservationKey.ForTask(f.Task.WorktreePath, f.Task.WorkingDirectory,
             f.Task.WorktreeBranch, f.Task.RepoPath);
         var second = WorkspaceReservationKey.ForTask(other.WorktreePath, other.WorkingDirectory,
             other.WorktreeBranch, other.RepoPath);
         first.ShouldNotBe(second, "owners-distinct");
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(f.Schema.ConnectionString)));
+        await using var provider = services.BuildServiceProvider();
+        var journal = new WorkspaceReservationJournal(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        var admission = new WorkspaceUseAdmission(journal, f.Db);
+        var ownerOne = await admission.RequireConsumerAsync(new(first, WorkspaceReservationKind.Launch, f.Task.Id), default);
+        var ownerTwo = await admission.RequireConsumerAsync(new(second, WorkspaceReservationKind.Launch, other.Id), default);
+        ownerOne.TaskId.ShouldBe(f.Task.Id); ownerTwo.TaskId.ShouldBe(other.Id);
+        (await journal.ReadActiveAsync(first, default)).ShouldHaveSingleItem().TaskId.ShouldBe(f.Task.Id, "owners-distinct:admission");
+        (await journal.ReadActiveAsync(second, default)).ShouldHaveSingleItem().TaskId.ShouldBe(other.Id, "owners-distinct:second");
+        var sameRef = WorkspaceReservationKey.For(other.WorktreePath, "refs/heads/" + f.Task.WorktreeBranch, other.RepoPath);
+        var refused = await journal.TryClaimRetirementAsync(new(sameRef, WorkspaceReservationKind.Retirement,
+            other.Id, RetirementId: Guid.NewGuid()), default);
+        refused.Accepted.ShouldBeFalse("same-ref-fenced");
+        refused.Reason.ShouldBe("workspace_in_use");
         item.WorktreePath.ShouldBe(f.Identity, "identity-is-history");
         item.RunnerId.ShouldBe(f.Task.RunnerId);
         Directory.Exists(f.Identity).ShouldBeFalse();
