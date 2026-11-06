@@ -531,6 +531,9 @@ debts before a binary or schema downgrade that cannot read this representation.
 Remote exact-file decision grants currently hold with
 ref_only_remote_path_verification_required because the runner protocol has no
 containment proof; a desktop identity or repository directory supplies no grant.
+RefOnly reservations retain task-unique identities and also fence an exact
+repository/full-ref overlap across identities when either owner is recorded
+RefOnly. Existing reservation liveness and grace checks still apply.
 
 The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and names that task and Reply only when the Blocked task's current attempt has a confirmed published park whose seat release matches Reply admission, including the settlement revision (CARD-1103).
 When no candidate park of the task is admitted, a confirmed published park whose seat release does not match that admission does not name Reply; that parked answer cannot be continued (CARD-1103).
