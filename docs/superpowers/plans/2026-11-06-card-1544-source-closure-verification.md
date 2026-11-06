@@ -17,12 +17,32 @@ The wrapper caller remains portable. No additional roster/helper entry is needed
 The caller is outside the Windows child selection, so child runtime totals do not
 change. Preserve the bidirectional all-source closure assertion unchanged.
 
-This task changes documentation only. Do not recreate a corrected defect to
+The initial slice changes documentation only. Do not recreate a corrected defect to
 manufacture a new Code red/fix pair. The card records historical red at
 `77eb7806d35b3b522d46e3942742e4864c688de3`: 1 executed, 0 passed,
 1 assertion failure naming `Antiphon.Tests.Scripts.C1374CensusProbes.Check`.
 That historical result is attribution from the card, not a fresh run by this task.
 New deliberate mutants belong to SourceLanding Mutation.
+
+The required Unit run at `4034b60bd99619d9f411bddafc360e13ee867581`
+exposed two unrelated stale formatter paths after its existing move from
+`Application/Services` to `Application/Core`. Both were reproduced by exact-method
+checkpoint rows at the unchanged assigned base: one executed/failed each, zero
+skips, source clean and buildSource verified. The retained comparison is
+`/work/test-evidence/card1544-5fb6b1b2/base-checkpoint-20261106-141546-1bb4/`.
+Repair only the file read in `RepairSourceDocumentationTests` and the corresponding
+existing allowlist entry in `SpecialistRoleContractTests`. Keep every assertion,
+allowlist scope, test attribute and timeout unchanged. This follows the same
+formatter class to its current path; it grants no additional exception.
+
+The whole Unit row reached its original 45-minute deadline without a TRX:
+`row-deadline-exceeded`, exit 5, 2701.041 seconds execution, 105 seconds slot wait.
+R-3 remains incomplete. No Unit counts, full-class results from that row, or
+Full qualification are claimed. Required continuation is instrumented performance
+Debug and the exact missing Unit proof, including method-level Unit tags. Do not
+widen the deadline or blindly repeat the broad row. The Code delegate cannot
+sub-delegate; the caller commissions that Debug task. Original run evidence:
+`.antiphon/checkpoints/20261106-135418-c0f0/` (59m51s overall).
 
 ## Verification design
 
@@ -41,6 +61,10 @@ New deliberate mutants belong to SourceLanding Mutation.
 - R-3: whole Unit lane in CP-3, including method-level Unit tags on non-Unit
   classes. This is required by the explicit Final profile. It does not replace
   named integration, delivery, landing, lease or persistence verification.
+- R-4: after the two baseline-confirmed path repairs, run both full touched classes
+  in CP-4: three RepairSourceDocumentationTests and two SpecialistRoleContractTests.
+  This does not discharge the incomplete R-3 or any missing affected-class counts
+  from the timed-out Unit row. CP-1 and CP-2 stay historical green; do not rerun them.
 - Manual: inspect fresh TRX identities and nonzero counts for every intended
   class/method; validate source/build receipts; check full base..HEAD evidence
   history; inspect OS/startup impact; fetch master and run merge-tree; verify the
@@ -67,7 +91,13 @@ One native incremental compile of `tests/Antiphon.Tests` is explicitly required
 by the brief. It also bootstraps the referenced checkpoint tool. Run it once
 through `scripts/build-slot.ps1`, native output, `UseAppHost=false`, `TEMP=/tmp`.
 This is the only non-table build. Checkpoints use their own isolated outputs.
-Run the three-row closed list through the checkpoint tool, passing committed
+The extra two-method baseline checkpoint is a disclosed diagnostic required to
+attribute the Unit reds: one isolated build and two exact filters, no assembly
+baseline. Its 30m59s wall comprises 418.848s execution and 1440.272s admission-only.
+CP-4 requires one new isolated build at the committed repair tip, provisional
+5-7 minutes build plus under one minute for five tests; estimate remains provisional.
+Run CP-1..CP-3 for the initial committed slice and only CP-4 for the repair slice
+through the checkpoint tool, passing committed
 HEAD as `--expected-source-sha`, `--max-wait 50s --heartbeat 30s` and waiting
 until terminal. Never rerun a green row. Preserve failed receipts and rerun only
 red rows for attribution. Do not run an entire assembly to attribute a failure.
@@ -81,6 +111,7 @@ totalTimeoutMinutes: 65
 | CP-1 | all | `tests/Antiphon.Tests -> bin-c1544-closure/` | exact-closure | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates` | V-2 | 1 passed, 0 failed/skipped | 1 | 1 | true |
 | CP-2 | all | CP-1 | named-guards | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/*` | R-1, R-2 | nonzero for every class; only explicit native/capability skips | 40 | 5 | true |
 | CP-3 | all | CP-1 | full-unit | `/*/*/*/*[Category=Unit]` | R-3 | nonzero full Unit receipt; disclose every failure/skip | 1000 | 15 | true |
+| CP-4 | repair | `tests/Antiphon.Tests -> bin-c1544-path-guards/` | formatter-path-guards | `/*/*/(RepairSourceDocumentationTests*)\|(SpecialistRoleContractTests*)/*` | R-4 | 5 passed, 0 failed/skipped | 5 | 3 | true |
 
 ### Positive controls
 
