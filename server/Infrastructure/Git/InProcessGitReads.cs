@@ -39,6 +39,9 @@ internal static partial class InProcessGitReads
     /// <summary>git's own result for <paramref name="arguments"/> run in <paramref name="repository"/>, or null to run git.</summary>
     public static LandingGitResult? TryAnswer(string repository, IReadOnlyList<string> arguments)
     {
+        // --no-optional-locks stops git refreshing (writing) the index during a read. Nothing answered
+        // here writes anything, so the read is the same with or without it.
+        if (arguments.Count > 0 && arguments[0] == "--no-optional-locks") arguments = arguments.Skip(1).ToArray();
         if (!Enabled || arguments.Count < 2) return null;
         // check-ref-format of a land ref we built ourselves needs no repository: every name of
         // this shape is valid under git-check-ref-format(1). Any other name is git's.
@@ -90,7 +93,12 @@ internal static partial class InProcessGitReads
     /// </summary>
     internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments)
     {
+        if (arguments.Count > 0 && arguments[0] == "--no-optional-locks") arguments = arguments.Skip(1).ToArray();
         if (arguments.Count == 0 || arguments[0] == "ls-remote") return null;
+        // Both runners' children inherit this process's environment (plus gc/maintenance keys no status
+        // reads), so the status config is checked against this process's own. Answers are all exit 0.
+        if (arguments[0] is "status" or "ls-files")
+            return InProcessGitStatus.TryAnswer(repository, arguments, null) is { } clean ? (clean.ExitCode, clean.Output) : null;
         var answer = TryAnswer(repository, arguments);
         if (answer is null) return null;
         var silent = answer.ExitCode == 0

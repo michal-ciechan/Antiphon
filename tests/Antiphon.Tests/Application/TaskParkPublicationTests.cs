@@ -451,6 +451,10 @@ public sealed class TaskParkPublicationTests
         {
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             start.Environment["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+            // git's default excludes and attributes files live beside the XDG config whatever GIT_CONFIG_GLOBAL
+            // says: an empty XDG home keeps a developer's ~/.config/git/ignore out of the park's dirty check,
+            // and matches what libgit2 reads in this process (LibGit2ConfigIsolation).
+            start.Environment["XDG_CONFIG_HOME"] = Antiphon.Tests.TestHelpers.LibGit2ConfigIsolation.EmptyDirectory;
             start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         }
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)

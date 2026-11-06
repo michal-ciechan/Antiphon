@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Text;
+using Antiphon.Server.Application.Dtos;
 using LibGit2Sharp;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -9,8 +11,12 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// any index entry flagged. These are verdicts, not git's bytes: callers only test emptiness or compare
 /// path sets. Null means "ask git": every repository shape libgit2 might read differently falls back.
 /// <para>
-/// Not wired into any runner yet. <c>LibGit2VsGitWorkingTreeVerdictTests</c> pins each verdict against
-/// the real CLI, across the repository shapes and argument forms the product uses.
+/// <see cref="TryAnswer"/> serves <see cref="LandingGit"/>'s runner and keeps its contract of git's exact
+/// bytes or nothing: a status or ls-files --others/--unmerged is answered only when it is empty (a dirty
+/// tree still runs git, so every caller that reads the listing gets git's own), and ls-files -v is
+/// rebuilt exactly. A status-like answer also needs the config to agree with the git child's
+/// (<see cref="GitStatusConfigAgreement"/>). <c>LibGit2VsGitWorkingTreeVerdictTests</c> pins each
+/// verdict against the real CLI, across the repository shapes and argument forms the product uses.
 /// </para>
 /// <list type="bullet">
 /// <item>Index version 2 only. git writes version 3 as soon as any entry carries an extended flag
@@ -26,12 +32,71 @@ namespace Antiphon.Server.Infrastructure.Git;
 internal static class InProcessGitStatus
 {
     /// <summary>
+    /// git's exact result for a working-tree read the product runs, or null to run git. Leading
+    /// <c>-c key=value</c> pairs are command-level config. <paramref name="childEnvironment"/> is the git
+    /// child's environment (null: this process's), with which the status config must agree.
+    /// </summary>
+    public static LandingGitResult? TryAnswer(string checkout, IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string?>? childEnvironment)
+    {
+        if (!InProcessGitReads.Enabled) return null;
+        var overrides = new List<KeyValuePair<string, string>>();
+        var at = 0;
+        while (at + 1 < arguments.Count && arguments[at] == "-c")
+        {
+            var pair = arguments[at + 1];
+            var equals = pair.IndexOf('=');
+            if (equals <= 0) return null;
+            overrides.Add(new(pair[..equals], pair[(equals + 1)..]));
+            at += 2;
+        }
+        var a = arguments.Skip(at).ToArray();
+        if (a is ["ls-files", "-v", "-z"])
+        {
+            if (overrides.Count != 0 || IndexTags(checkout) is not { } tags) return null;
+            var output = new StringBuilder();
+            foreach (var (tag, path) in tags) output.Append(tag).Append(' ').Append(path).Append('\0');
+            return Ok(output.ToString());
+        }
+        if (a is ["ls-files", "--unmerged", "-z"])
+            return overrides.Count == 0 && HasUnmerged(checkout) == false ? Ok("") : null;
+        Func<Repository, bool> agrees = repo => GitStatusConfigAgreement.Agrees(repo, childEnvironment, overrides);
+        if (a is ["ls-files", "--others", "--exclude-standard", "-z"] or ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"])
+            return OtherPaths(checkout, ignored: a.Length == 5, agrees) is { Count: 0 } ? Ok("") : null;
+        if (StatusForm(a) is { } form)
+            return StatusPaths(checkout, form.Untracked, form.Ignored, agrees) is { Count: 0 } ? Ok("") : null;
+        return null;
+    }
+
+    /// <summary>
+    /// <c>status --porcelain[=v1] -z --untracked-files=(all|no) [--ignore-submodules=none] [--ignored]</c>.
+    /// Without --ignore-submodules=none git applies submodule ignore config, but any gitlink falls back.
+    /// </summary>
+    private static (bool Untracked, bool Ignored)? StatusForm(string[] a)
+    {
+        if (a.Length < 4 || a[0] != "status" || a[1] is not ("--porcelain" or "--porcelain=v1") || a[2] != "-z") return null;
+        bool untracked;
+        if (a[3] == "--untracked-files=all") untracked = true;
+        else if (a[3] == "--untracked-files=no") untracked = false;
+        else return null;
+        var ignored = false;
+        foreach (var extra in a.Skip(4))
+            if (extra == "--ignore-submodules=none") continue;
+            else if (extra == "--ignored" && untracked && !ignored) ignored = true;
+            else return null;
+        return (untracked, ignored);
+    }
+
+    private static LandingGitResult Ok(string output) => new(0, output, "");
+
+    /// <summary>
     /// The paths <c>git status --porcelain=v1 -z --untracked-files=(all|no) --ignore-submodules=none
     /// [--ignored]</c> lists, with '/' separators and nested repositories as "dir/". Empty is clean.
     /// Renames count as both paths.
     /// </summary>
-    public static IReadOnlySet<string>? StatusPaths(string checkout, bool untracked, bool ignored = false)
-        => Read(checkout, repo =>
+    public static IReadOnlySet<string>? StatusPaths(string checkout, bool untracked, bool ignored = false,
+        Func<Repository, bool>? agrees = null)
+        => Read(checkout, agrees, repo =>
         {
             var options = new StatusOptions
             {
@@ -60,8 +125,8 @@ internal static class InProcessGitStatus
     /// <c>git ls-files --others --exclude-standard -z</c> (<paramref name="ignored"/> false) or
     /// <c>git ls-files --others --ignored --exclude-standard -z</c> (true), as a path set.
     /// </summary>
-    public static IReadOnlySet<string>? OtherPaths(string checkout, bool ignored)
-        => Read(checkout, repo =>
+    public static IReadOnlySet<string>? OtherPaths(string checkout, bool ignored, Func<Repository, bool>? agrees = null)
+        => Read(checkout, agrees, repo =>
         {
             var options = new StatusOptions
             {
@@ -86,7 +151,7 @@ internal static class InProcessGitStatus
     /// assume-unchanged. 'S' (skip-worktree) never appears: such an index is version 3 and falls back.
     /// </summary>
     public static IReadOnlyList<(char Tag, string Path)>? IndexTags(string checkout)
-        => Read(checkout, repo => (IReadOnlyList<(char, string)>)repo.Index
+        => Read(checkout, null, repo => (IReadOnlyList<(char, string)>)repo.Index
             .Select(e =>
             {
                 var tag = e.StageLevel == StageLevel.Staged ? 'H' : 'M';
@@ -96,9 +161,9 @@ internal static class InProcessGitStatus
 
     /// <summary>Whether <c>git ls-files --unmerged -z</c> lists anything.</summary>
     public static bool? HasUnmerged(string checkout)
-        => Read<object>(checkout, repo => repo.Index.Any(e => e.StageLevel != StageLevel.Staged)) is bool any ? any : null;
+        => Read<object>(checkout, null, repo => repo.Index.Any(e => e.StageLevel != StageLevel.Staged)) is bool any ? any : null;
 
-    private static T? Read<T>(string checkout, Func<Repository, T?> answer) where T : class
+    private static T? Read<T>(string checkout, Func<Repository, bool>? agrees, Func<Repository, T?> answer) where T : class
     {
         if (!InProcessGitReads.Enabled) return null;
         try
@@ -109,6 +174,7 @@ internal static class InProcessGitStatus
             if (!PlainIndex(repo.Info.Path)) return null;
             if (repo.Config.Get<bool>("core.sparseCheckout")?.Value == true) return null;
             if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;
+            if (agrees is not null && !agrees(repo)) return null;
             return answer(repo);
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))

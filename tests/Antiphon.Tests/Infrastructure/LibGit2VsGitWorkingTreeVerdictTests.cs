@@ -14,7 +14,8 @@ namespace Antiphon.Tests.Infrastructure;
 /// <see cref="LibGit2VsGitDifferentialTests"/> this compares verdicts, not bytes: the clean/dirty answer
 /// and the path set for status and <c>ls-files --others</c>, and the (tag, path) list for
 /// <c>ls-files -v</c>. Each shape either agrees with git or falls back (null), and the shapes that must
-/// stay with git are pinned as fallbacks. Real temp repositories, git on PATH, inherited git config.
+/// stay with git are pinned as fallbacks. Real temp repositories, git on PATH, and git children isolated the
+/// way libgit2 is in this process (<see cref="LibGit2ConfigIsolation"/>), so both read only the repository's config.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<GitProcessSpawnLimit>]
@@ -306,6 +307,94 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         File.SetLastWriteTimeUtc(r.Full("s.txt"), mtime);
     }
 
+    /// <summary>What the suite's isolated git children see: no system, global or XDG config.</summary>
+    private static readonly (string Name, string? Value)[] Isolation =
+    [
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_GLOBAL", OperatingSystem.IsWindows() ? "NUL" : "/dev/null"),
+        ("XDG_CONFIG_HOME", LibGit2ConfigIsolation.EmptyDirectory),
+    ];
+
+    /// <summary>This process's environment, isolated as <see cref="Isolation"/>, with <paramref name="changes"/> applied.</summary>
+    private static Dictionary<string, string?> ChildEnvironment(params (string Name, string? Value)[] changes)
+        => MachineEnvironment([.. Isolation, .. changes]);
+
+    private static Dictionary<string, string?> MachineEnvironment(params (string Name, string? Value)[] changes)
+    {
+        var env = new Dictionary<string, string?>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables()) env[(string)e.Key] = (string?)e.Value;
+        foreach (var (name, value) in changes) env[name] = value;
+        return env;
+    }
+
+    [Test]
+    public async Task The_runner_answers_clean_and_empty_reads_with_git_bytes_and_leaves_dirty_ones_to_git()
+    {
+        await using var repo = await Repo.CreateAsync(linked: false);
+        string[][] forms =
+        [
+            .. StatusForms.Select(f => f.Args),
+            ["ls-files", "--others", "--exclude-standard", "-z"],
+            ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+            ["ls-files", "--unmerged", "-z"],
+        ];
+        foreach (var args in forms)
+        {
+            var answer = InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment());
+            answer.ShouldNotBeNull(string.Join(' ', args) + " on a clean tree");
+            var git = await Repo.RunGitAsync(repo.Root, args);
+            (answer.ExitCode, answer.Output).ShouldBe((git.ExitCode, git.Output), string.Join(' ', args));
+        }
+        await repo.WriteAsync("dír/naïve.txt", "x\n");
+        await repo.GitAsync("add", "-A");
+        await repo.GitAsync("update-index", "--assume-unchanged", "b.txt");
+        var tags = InProcessGitStatus.TryAnswer(repo.Root, ["ls-files", "-v", "-z"], ChildEnvironment()).ShouldNotBeNull();
+        tags.Output.ShouldBe((await Repo.RunGitAsync(repo.Root, "ls-files", "-v", "-z")).Output);
+
+        await repo.WriteAsync("a.txt", "dirty\n");
+        await repo.WriteAsync("loose.txt", "u\n");
+        foreach (var args in forms.Where(f => f[0] is "status" or "-c" || f.Contains("--others") && !f.Contains("--ignored")))
+            InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldBeNull(string.Join(' ', args) + " on a dirty tree is git's");
+    }
+
+    [Test]
+    public async Task A_status_is_answered_only_where_the_git_child_reads_the_same_config()
+    {
+        await using var repo = await Repo.CreateAsync(linked: false);
+        string[] status = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"];
+        InProcessGitStatus.TryAnswer(repo.Root, status, ChildEnvironment()).ShouldNotBeNull("isolated child, isolated libgit2: same config");
+
+        // A command-level value libgit2 cannot see: from the environment, or from -c on the command line.
+        var countEnv = ChildEnvironment(("GIT_CONFIG_COUNT", "1"), ("GIT_CONFIG_KEY_0", "core.autocrlf"), ("GIT_CONFIG_VALUE_0", "input"));
+        InProcessGitStatus.TryAnswer(repo.Root, status, countEnv).ShouldBeNull("GIT_CONFIG_COUNT changes core.autocrlf");
+        InProcessGitStatus.TryAnswer(repo.Root, ["-c", "core.autocrlf=input", .. status], ChildEnvironment()).ShouldBeNull("-c changes core.autocrlf");
+        // The same value set locally: libgit2 reads it too, so both agree again.
+        await repo.GitAsync("config", "core.autocrlf", "input");
+        InProcessGitStatus.TryAnswer(repo.Root, status, countEnv).ShouldNotBeNull("local and command values agree");
+        // Land inspection's -c core.longpaths=true needs no agreement: libgit2 falls back on any long path.
+        InProcessGitStatus.TryAnswer(repo.Root, ["-c", "core.longpaths=true", .. status], countEnv).ShouldNotBeNull();
+
+        // Another HOME whose default ignore file libgit2 would not read.
+        var home = Path.Combine(repo.Root, "..", "other-home");
+        Directory.CreateDirectory(Path.Combine(home, ".config", "git"));
+        await File.WriteAllTextAsync(Path.Combine(home, ".config", "git", "ignore"), "*.log\n");
+        var otherHome = ChildEnvironment(("HOME", home), ("XDG_CONFIG_HOME", null), ("GIT_CONFIG_GLOBAL", Path.Combine(home, "empty")));
+        InProcessGitStatus.TryAnswer(repo.Root, status, otherHome).ShouldBeNull("the child reads another default ignore file");
+
+        // A child that reads the machine's own config sees what isolated libgit2 does not (on Windows, Git for
+        // Windows' system file sets core.autocrlf): it must disagree whenever git lists such a key.
+        var machine = await Repo.RunGitAsync(Path.GetTempPath(), isolated: false, "config", "--get-regexp", @"^core\.(autocrlf|eol|excludesfile|ignorecase|filemode|symlinks)$");
+        if (machine.ExitCode == 0 && machine.Output.Length != 0)
+        {
+            await Repo.RunGitAsync(repo.Root, "config", "--unset", "core.autocrlf");
+            using var opened = new LibGit2Sharp.Repository(repo.Root);
+            GitStatusConfigAgreement.Disagreement(opened, MachineEnvironment(), []).ShouldNotBeNull(machine.Output);
+        }
+
+        // Parameters git reads that this check does not model are git's.
+        InProcessGitStatus.TryAnswer(repo.Root, status, ChildEnvironment(("GIT_CONFIG_PARAMETERS", "'core.autocrlf'='true'"))).ShouldBeNull();
+    }
+
     private static async Task InitNestedAsync(Repo r, string relative)
     {
         var path = r.Full(relative);
@@ -363,7 +452,10 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             await GitAsync("commit", "-q", "-m", "step");
         }
 
-        public static async Task<(int ExitCode, string Output, string Error)> RunGitAsync(string cwd, params string[] args)
+        public static Task<(int ExitCode, string Output, string Error)> RunGitAsync(string cwd, params string[] args)
+            => RunGitAsync(cwd, isolated: true, args);
+
+        public static async Task<(int ExitCode, string Output, string Error)> RunGitAsync(string cwd, bool isolated, params string[] args)
         {
             var start = new ProcessStartInfo("git")
             {
@@ -371,6 +463,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false),
             };
+            if (isolated) foreach (var (name, value) in Isolation) start.Environment[name] = value;
             foreach (var a in args) start.ArgumentList.Add(a);
             using var p = Process.Start(start)!;
             var output = p.StandardOutput.ReadToEndAsync();

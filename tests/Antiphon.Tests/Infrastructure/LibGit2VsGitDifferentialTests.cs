@@ -69,6 +69,9 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--quiet", fixture.SourceRef);
         await CompareAsync(cwd, Expect.Answered, "show-ref", "--verify", "--quiet", "refs/heads/no-such-branch");
         await CompareAsync(cwd, Expect.Answered, "worktree", "list", "--porcelain");
+        // GitWorkspaceService.RunReadOnlyAsync's prefix: the read is the same without index refresh.
+        await CompareAsync(cwd, Expect.Answered, "--no-optional-locks", "rev-parse", "--path-format=absolute", "--git-common-dir");
+        await CompareAsync(cwd, Expect.Answered, "--no-optional-locks", "rev-parse", "HEAD");
     }
 
     [Test]

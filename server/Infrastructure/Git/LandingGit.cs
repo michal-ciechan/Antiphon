@@ -186,7 +186,9 @@ public class LandingGit : ILandingGit
     /// Whether this instance's git children read the same repository libgit2 opens. A probe start
     /// info is passed through <see cref="ConfigureProcess"/> once: another executable, or any variable
     /// that redirects the repository, turns in-process reads off. Config differences (HOME,
-    /// GIT_CONFIG_*) do not matter: no answered command reads config. A config that would make git
+    /// GIT_CONFIG_*) do not matter to the ref and object reads, which read no config; a status or
+    /// ls-files --others answer is given only where the child's status config agrees with libgit2's
+    /// (<see cref="GitStatusConfigAgreement"/>, against the child environment kept here). A config that would make git
     /// itself fail (broken file, safe.directory refusal) is then seen by the next git command instead,
     /// and every mutation is still a git process.
     /// </summary>
@@ -207,10 +209,22 @@ public class LandingGit : ILandingGit
         return eligible;
     }
 
-    private LandingGitResult? InProcessAnswer(string repository, IReadOnlyList<string> arguments) =>
-        InProcessGitReads.Enabled && InProcessEligible()
-        && (arguments.Count == 0 || arguments[0] != "ls-remote" || AnswerRemoteReadsInProcess)
+    private LandingGitResult? InProcessAnswer(string repository, IReadOnlyList<string> arguments)
+    {
+        if (!InProcessGitReads.Enabled || !InProcessEligible() || arguments.Count == 0) return null;
+        if (arguments[0] is "status" or "ls-files" or "-c")
+            return AnswerWorkingTreeReadsInProcess
+                ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment) : null;
+        return arguments[0] != "ls-remote" || AnswerRemoteReadsInProcess
             ? InProcessGitReads.TryAnswer(repository, arguments) : null;
+    }
+
+    /// <summary>
+    /// Whether a clean status, an empty ls-files --others/--unmerged and ls-files -v may be answered by
+    /// libgit2 (<see cref="InProcessGitStatus"/>; a dirty tree always runs git). A test that must exercise
+    /// git's own working-tree reads turns it off.
+    /// </summary>
+    protected virtual bool AnswerWorkingTreeReadsInProcess => true;
 
     /// <summary>Whether <c>ls-remote</c> of a local-path remote may be answered in process (URL remotes never are).
     /// A test that must exercise git's own ls-remote turns it off.</summary>
