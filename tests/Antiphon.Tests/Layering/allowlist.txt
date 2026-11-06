@@ -94,6 +94,10 @@ server/Application/Services/RunnerStateService.cs -> PhoneHomeRunnerDirectory @ 
 server/Application/Services/RunnerWorktreeRetentionService.cs -> PhoneHomeRunnerClient @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs
 server/Application/Services/SessionRunnerCatalogue.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
 server/Infrastructure/Agents/ExpectationObservationAdapter.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
+server/Application/Services/HostStatsPollService.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeRunnerClient @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
+server/Application/Services/RunnerSlotReconcileJob.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
 
 # slice P0-C4
 server/Application/Services/AgentTaskService.cs -> OrchestratorWorkspaceFactGatherer @ server/Application/Services/OrchestratorWorkspaceLayout.cs
@@ -184,6 +188,7 @@ server/Infrastructure/Git/LandingVerifier.cs -> AgentTaskLandService @ server/Ap
 server/Infrastructure/Git/LandingVerifier.cs -> LandProcessRunner @ server/Application/Services/AgentTaskLandService.cs
 server/Infrastructure/Git/LocalTaskParkPublisher.cs -> BlockedTaskParkingService @ server/Application/Services/BlockedTaskParkingService.cs
 server/Infrastructure/Git/WorktreeHealthHostedService.cs -> WorktreeHealthService @ server/Application/Services/WorktreeHealthService.cs
+server/Infrastructure/Git/LandingVerifier.cs -> LandVerificationWaits @ server/Application/Services/LandVerificationWaits.cs
 
 # slice P0-E
 server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> HostStatsCache @ server/Application/Services/HostStatsCache.cs
@@ -318,3 +323,33 @@ server/Application/Services/TaskWorktreeRetirementService.cs -> Active @ server/
 server/Infrastructure/Data/WorkspaceReservationJournal.cs -> Active @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
 server/Infrastructure/Git/LandingGit.cs -> Status @ server/Application/Services/BootReplyWatch.cs
 server/Infrastructure/Git/WindowsWorktreeLockDiagnostics.cs -> Status @ server/Application/Services/BootReplyWatch.cs
+server/Application/Services/AgentTuiMetrics.cs -> AgentTuiKeyProtectionReadiness @ server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeEventScheduler @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventScheduler.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeLiveConnection @ server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeQueuedEvent @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> TranscriptIncidentReplayGuard @ server/Infrastructure/Agents/SessionRunner/TranscriptIncidentReplayGuard.cs
+server/Application/Services/RunnerAlarmState.cs -> JournalRecordState @ server/Infrastructure/Git/RepositoryChildJournalInspector.cs
+
+# slice P0-A2
+server/Application/Exceptions/ConcurrencyLimitException.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
+server/Application/Services/GitWorkspaceService.cs -> CardFilePreCommitSweep @ server/Application/Services/CardFilePreCommitSweep.cs
+server/Application/Settings/DelegationSettings.cs -> RunnerRequestIntent @ server/Application/Services/DefaultRunnerRoutingPolicy.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs -> RunnerAbsenceAuthentication @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs -> RunnerAbsenceEvidenceValidator @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs -> RunnerPlatformProblems @ server/Application/Services/RunnerPlatformProblems.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> CodexCliObservation @ server/Application/Services/CodexCliObservation.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> OrchestratorInstructionsSignal @ server/Application/Services/OrchestratorInstructionsSignal.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> RunnerPlatformProblems @ server/Application/Services/RunnerPlatformProblems.cs
+server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs -> RunnerRequestIntent @ server/Application/Services/DefaultRunnerRoutingPolicy.cs
+server/Infrastructure/Agents/SessionRunner/RunnerGrokAdapter.cs -> GrokRulesLaunchValidation @ server/Application/Services/GrokRulesLaunchValidation.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> GrokRulesLaunchValidation @ server/Application/Services/GrokRulesLaunchValidation.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> ProviderContractCatalog @ server/Application/Services/ProviderContractCatalog.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerAbsenceAuthentication @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerAbsenceEvidenceValidator @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerAbsenceExpectation @ server/Application/Services/RunnerAbsenceEvidenceValidator.cs
+server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs -> RunnerPlatformProblems @ server/Application/Services/RunnerPlatformProblems.cs
+server/Infrastructure/Data/WorktreeRemovalEvidence.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
+server/Infrastructure/Git/CardFileRepository.cs -> CardTaskFileRenderer @ server/Application/Services/CardTaskFileRenderer.cs
+server/Infrastructure/Git/GitService.cs -> CardFilePreCommitSweep @ server/Application/Services/CardFilePreCommitSweep.cs
+server/Infrastructure/Git/RepositoryMutationLease.cs -> RepositoryLeaseWaiters @ server/Application/Services/RepositoryLeaseWaiters.cs
+server/Infrastructure/Git/RepositoryVerificationWindows.cs -> DelegationReportFormatter @ server/Application/Services/DelegationReportFormatter.cs
