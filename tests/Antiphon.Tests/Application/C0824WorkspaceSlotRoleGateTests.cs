@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,7 +27,8 @@ namespace Antiphon.Tests.Application;
 /// no-feature cases run on the scripted peer, where the request shape is the whole oracle.
 /// </summary>
 [Category("Integration")]
-// Each test builds its own world and the class runs in parallel (CARD-1660 R5). First green TRX on server2, 2026-11-03 at
+[ParallelLimiter<GitProcessSpawnLimit>]
+// Each test builds its own world; scratch Git shares the assembly's Git lane. First green TRX on server2, 2026-11-03 at
 // 2561829864 (load 29-33, 19 cases at once): every case 29-38.6 s, most of it the shared fixture start they all wait on.
 // The budget is 2x that p95; the design's 45 s estimate left under 7 s of headroom.
 [Timeout(80_000)]
