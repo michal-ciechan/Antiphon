@@ -101,6 +101,7 @@ server/Infrastructure/Agents/AgentExecutor.cs -> AuditService @ server/Applicati
 server/Infrastructure/Agents/EventEmittingToolWrapper.cs -> AuditService @ server/Application/Services/AuditService.cs
 
 # slice P0-C5
+server/Application/Services/LandingVerifier.cs -> LandVerificationArtifacts @ server/Infrastructure/Git/LandVerificationArtifacts.cs
 server/Application/Services/AgentTaskLandService.cs -> GitIndexLock @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/AgentTaskLandService.cs -> LandVerificationArtifacts @ server/Infrastructure/Git/LandVerificationArtifacts.cs
 server/Application/Services/AgentTaskLandService.cs -> LandWorkspace @ server/Infrastructure/Git/LandWorkspace.cs
@@ -118,6 +119,7 @@ server/Infrastructure/ExternalChanges/ChangeDetectionService.cs -> ServerGitProc
 
 # slice later-phase
 server/Application/Services/AgentTuiMetrics.cs -> AgentTuiKeyProtectionReadiness @ server/Infrastructure/Security/DataProtectionAgentTuiSecretProtector.cs
+server/Application/Services/LandingVerifier.cs -> RepositoryChildJournal @ server/Infrastructure/Git/RepositoryChildJournal.cs
 server/Application/Dtos/AgentLaunchSpec.cs -> ProviderEndpoint @ server/Application/Services/ProviderEndpoint.cs
 server/Application/Dtos/AgentTaskDtos.cs -> CardWorktreeBaseSelection @ server/Application/Services/AgentTaskWorktreeBaseResolver.cs
 server/Application/Dtos/LandingEvidenceDto.cs -> AgentTaskLandingProtocol @ server/Application/Services/AgentTaskLandingProtocol.cs
