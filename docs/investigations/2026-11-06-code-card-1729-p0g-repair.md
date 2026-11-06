@@ -1,7 +1,7 @@
 # CARD-1729 P0-G resolver repair: Code evidence
 
 Both resolver blockers are repaired and the targeted ordinary verification is green.
-Final whole Unit verification is pending in this committed checkpoint report.
+Final verification is INCOMPLETE: the whole Unit row reached its unchanged 45-minute cap without a TRX. No Full/green Unit credit is claimed.
 
 - Task: a342b58a-f264-4674-925e-d60245dc9409. Original Code task / landing owner:
   742b9c5c-9e25-4fac-910e-799803e461c9. Round: Final; next Review is Claude round 2,
@@ -83,6 +83,69 @@ warn-mode ratchet activation remain advisory/design notes, not repaired claims.
 
 ## Cost and provenance
 
+### Final Unit outcome and required continuation
+
+CP-93 at committed HEAD 035eee07fa2732ffe7a0cb9c0f0dff9550b63331 timed out
+at its initial 45-minute cap, exit 5, with no TRX. Counts are unavailable, not
+zero and not passed. The source/test blobs are unchanged from fix 8c8cd4c5a.
+Run 20261106-030158-7680: wall 3416.164s, charged execution 3055.837s,
+admission-only 360.327s. Build slot waited=285s, test slot waited=75s;
+both granted. CP-93 driver executed 2702.486s, row wall 2777.575s.
+No timeout was widened and no whole-Unit retry was made.
+
+The partial console recorded four RegexMatchTimeoutException failures in
+WorktreeIgnoredContentClassifierTests: Near_miss_names_stay_disposable_on_both_classifiers
+for bin/identity.txt; Both_classifiers_protect_the_secret_floor_under_a_disposable_override
+for bin/cert.pfx/token, bin/store.p12/token and bin/store.p12. It also recorded
+Windows-only skips. These are observed log events, not final TRX counters.
+Both the classifier and those tests have zero diff from the assigned base.
+
+Required failure triage, declared additional runs: the exact two methods (41+9
+cases) passed 50/50 at base 93efbc748def106ce2c2ca15d56589142c46986b and
+50/50 at current source 035eee07fa2732ffe7a0cb9c0f0dff9550b63331. Therefore the
+four full-lane failures are NOT certified inherited; they are unreproduced in
+isolation. The isolated greens do not replace or relabel the timed-out Unit row.
+Current-source CP-94 reused the verified Unit build and validated its clean source
+receipt: slot granted, waited=120s. Fresh TRX contains both intended methods with
+41 and nine passing cases and zero skips/failures. Its tool default deadline was
+15 minutes; execution completed normally. No stability repetition followed green.
+
+Base diagnostic used a clean detached checkout at
+/work/worktrees/task-a342b58a-baseline and byte-verified native baseline outputs
+from the initial compile, stamped 1.0.0+93efbc748def106ce2c2ca15d56589142c46986b.
+Entry assembly SHA256: 57830F4B021CB20DA928D668ADE78DCEBAE48D306896EAD4FBB788BB51A1CA27.
+The first attempt had no obj imports, reported OutputType Library and ran zero
+tests (not a red witness): slot waited=691s, held=2s. Copying the original native
+obj imports corrected the setup without rebuilding or changing source/assertions.
+The corrected diagnostic had a 12-minute admission bound, two-minute test timeout,
+slot waited=60s, held=12s, TUnit duration 8.036s. All 50 cases passed.
+Logs/provenance: .antiphon/a342b58a-base-classifier*.log,
+.antiphon/a342b58a-baseline-provenance.json,
+.antiphon/a342b58a-baseline-dependencies.json; base TRX:
+.antiphon/a342b58a-base-classifier/run.trx. CP-94 evidence:
+.antiphon/checkpoints/CP-94-20261106-034343-5d3f/.
+
+R1 requires caller-commissioned Debug before another whole-Unit qualification.
+This delegate cannot sub-delegate. Use the exact CP-93 filter, source and run above;
+inspect the four regex log failures, missing final TRX and the active-process snapshot
+.antiphon/a342b58a-unit-processes-before-end.json (includes the diagnostic query's
+own processes), plus .antiphon/a342b58a-host-load.log. Observed host loads ranged
+from 9.63 to 53.93; per-case load/cause and unrecorded phase spans remain unknown.
+Do not widen the cap or claim the isolated passes discharge CP-93.
+
+Implementation and V-1/R-1 are complete; ordinaryScopeCompleted=Incomplete because
+CP-93 has no nonzero final roster. Remaining ordinary verification: Debug, then
+the exact whole Unit row once with trustworthy fresh TRX. Windows-only log skips
+also remain disclosed and uncredited. Next stage is Code for this missing
+qualification; Claude round-2 diff-only Review follows when ordinary verification
+is complete. No land/deploy/restart is requested.
+
+Unbound Mutation candidate:
+docs/superpowers/mutations/2026-11-06-card-1729-p0g-resolver-repair.md.
+All PC-1..PC-12 and PC-36/37, including every variant, remain pending there;
+PC-11/12 still await P0-G2. Mutation owns every deliberate cycle and missing-control
+discovery. No mutation was performed in this Code task.
+
 Declared unlisted run: required native baseline incremental compile before edits,
 UseAppHost=false, TEMP=/tmp, native output; zero errors, 1,728 existing warnings,
 179.56s compiler time. Slot granted, waited=195s, held=181s. It also built the
@@ -111,4 +174,11 @@ CHECKPOINT CP-1 commit=320050108dcf1454d76bb99b8e1b2301e1519aeb build=ok filter=
 CHECKPOINT CP-1 commit=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 build=ok filter=/*/Antiphon.Tests.Infrastructure/C1729LayeringGuardTests/* executed=9 passed=9 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-025149-7d0f/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 sourceState=clean buildSource=verified
 CHECKPOINT CP-91 commit=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 build=reused filter=/*/*/(TestClassificationPolicy*)|(TestClassificationGuard*)|(SlowTestRegistryMerge*)|(SlowTestTripwire*)|(NativeLinuxPolicyWitnessTests*)/* executed=50 passed=50 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-025149-7d0f/rows/CP-91/run.trx slot=granted waited=0s dirty=0 source=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 sourceState=clean buildSource=verified
 CHECKPOINT CP-92 commit=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 build=reused filter=/*/*/(MechanicalPcContract*)/* executed=11 passed=11 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/20261106-025149-7d0f/rows/CP-92/run.trx slot=granted waited=0s dirty=0 source=8c8cd4c5a8e8e4a7d6b61f4475a57ce53bdbfce4 sourceState=clean buildSource=verified
+```
+
+```text
+CHECKPOINT CP-93 commit=035eee07fa2732ffe7a0cb9c0f0dff9550b63331 build=ok filter=/*/*/*/*[Category=Unit] executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=45m slot=granted waited=75s dirty=0 source=035eee07fa2732ffe7a0cb9c0f0dff9550b63331 sourceState=clean buildSource=verified
+```
+```text
+CHECKPOINT CP-94 commit=035eee07fa2732ffe7a0cb9c0f0dff9550b63331 build=reused filter=/*/*/WorktreeIgnoredContentClassifierTests/(Both_classifiers_protect_the_secret_floor_under_a_disposable_override)|(Near_miss_names_stay_disposable_on_both_classifiers) executed=50 passed=50 failed=0 skipped=0 trx=/work/worktrees/task-a342b58a/.antiphon/checkpoints/CP-94-20261106-034343-5d3f/run.trx slot=granted waited=120s dirty=0 source=035eee07fa2732ffe7a0cb9c0f0dff9550b63331 sourceState=clean buildSource=verified
 ```
