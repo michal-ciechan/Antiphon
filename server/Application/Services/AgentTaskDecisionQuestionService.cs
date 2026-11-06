@@ -166,7 +166,7 @@ public sealed class AgentTaskDecisionQuestionService(
         {
             observed = await runners.Resolve(task.RunnerId).InspectDecisionPathsAsync(request, linked.Token);
         }
-        catch (Exception ex) when (ex is IOException or HttpRequestException or NotSupportedException
+        catch (Exception ex) when (ex is IOException or HttpRequestException or NotSupportedException or System.Text.Json.JsonException
             or ConflictException or ServiceUnavailableException || ex is OperationCanceledException && !ct.IsCancellationRequested)
         { return Held(); }
         if (observed is not { Contained: true, Reason: null, Binding: { } binding }

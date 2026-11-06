@@ -931,7 +931,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     var reply = await dispatcher.DispatchAsync(frame, ct);
                     if (frame.Operation == PhoneHomeOperation.DecisionPathInspect && DecisionPathRewrite is { } rewrite)
                         reply = reply with { Payload = JsonSerializer.SerializeToElement(rewrite(
-                            reply.Payload!.Value.Deserialize<DecisionPathInspectionResult>(PhoneHomeFraming.Json)!)) };
+                            reply.Payload!.Value.Deserialize<DecisionPathInspectionResult>(PhoneHomeFraming.Json)!), PhoneHomeFraming.Json) };
                     if (frame.Operation == PhoneHomeOperation.ObserveTerminalSeat && ResponseFault == "malformed")
                         reply = reply with { Payload = JsonSerializer.SerializeToElement(new { }) };
                     await PhoneHomeFraming.WriteFrameAsync(_socket!, reply, 16 * 1024 * 1024, ct);
