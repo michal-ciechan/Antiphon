@@ -173,6 +173,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         services.AddSingleton<RefOnlyDesktopGate>();
                     }
                     services.AddLogging(b => b.AddProvider(wire.Logs));
+                    services.AddScoped<TaskWorkspaceContextResolver>();
                     services.AddSingleton<RemoteSpillCourier>();
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
                     services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
