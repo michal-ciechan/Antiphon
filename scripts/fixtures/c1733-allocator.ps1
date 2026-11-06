@@ -25,17 +25,19 @@ function Test-C1733_BoundariesAndFreshLinks {
     # Replace a previously accepted ancestor. Fresh metadata must observe the link.
     [IO.Directory]::Delete($path)
     $target = New-C599Root
-    [void][IO.Directory]::CreateSymbolicLink($path, $target)
+    New-C599AEvidenceLink -Link $path -Target $target
     $refused = $false
     try { Assert-C1339ContainedPath $root (Join-Path $path 'absent/leaf') } catch { $refused = $_.Exception.Message -match 'fixture-linked-path' }
     Assert-C487 $refused 'C1733 changed-ancestor-link'
     $alias = Join-Path (New-C599Root) 'alias'
-    [void][IO.Directory]::CreateSymbolicLink($alias, $root)
+    New-C599AEvidenceLink -Link $alias -Target $root
     $refused = $false
     try { Assert-C1339ContainedPath (Join-Path $alias 'nested') (Join-Path $alias 'nested/absent') } catch { $refused = $_.Exception.Message -match 'fixture-linked-path' }
     Assert-C487 $refused 'C1733 above-root-link'
     $dangling = Join-Path $root 'dangling'
-    [void][IO.File]::CreateSymbolicLink($dangling, (Join-Path $target 'absent'))
+    $danglingTarget = New-C599Root
+    New-C599AEvidenceLink -Link $dangling -Target $danglingTarget
+    [IO.Directory]::Delete($danglingTarget)
     $refused = $false
     try { Assert-C1339ContainedPath $root $dangling } catch { $refused = $_.Exception.Message -match 'fixture-linked-path' }
     Assert-C487 $refused 'C1733 dangling-link'
