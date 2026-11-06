@@ -158,7 +158,7 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
         var result = await git.RunAsync(path, ["remote", "get-url", "--push", "--all", "origin"], ct);
         var lines = result.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         if (!result.Succeeded || lines.Length != 1 || lines[0].StartsWith('-')) return (null, Unknown());
-        return BlockedTaskParkingService.Digest(lines[0]) == fingerprint
+        return ParkFingerprint.Digest(lines[0]) == fingerprint
             ? (lines[0], null) : (null, Held("park_endpoint_changed"));
     }
 
@@ -171,7 +171,7 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
             ? (true, fields[0]) : (false, null);
     }
 
-    internal static string Identity(string common) => BlockedTaskParkingService.Digest(
+    internal static string Identity(string common) => ParkFingerprint.Digest(
         OperatingSystem.IsWindows() ? Path.GetFullPath(common).ToUpperInvariant() : Path.GetFullPath(common))!;
     private static TaskParkPublicationResult Held(string reason) => new(TaskParkPublicationOutcome.Held, reason);
     private static TaskParkPublicationResult Unknown() => new(TaskParkPublicationOutcome.Unknown, "park_inspection_unavailable");
