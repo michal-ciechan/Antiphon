@@ -60,8 +60,32 @@ public sealed class RunnerPlatformLaunchTests
         }
     }
 
-    internal static Task<RunnerSessionDto> StartWithHostLogAsync(
-        Func<Task<RunnerSessionDto>> start, string hostLogFile) => start();
+    internal static async Task<RunnerSessionDto> StartWithHostLogAsync(
+        Func<Task<RunnerSessionDto>> start, string hostLogFile)
+    {
+        try { return await start(); }
+        catch (EndOfStreamException ex)
+        {
+            // The Windows assembly sweep deletes the fixture root. Capture the detached host's
+            // only diagnostic surface in the failure before that teardown can remove it.
+            string log;
+            try
+            {
+                const int tailBytes = 8192;
+                using var stream = new FileStream(hostLogFile, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                stream.Seek(Math.Max(0, stream.Length - tailBytes), SeekOrigin.Begin);
+                var buffer = new byte[tailBytes];
+                var count = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+                log = System.Text.Encoding.UTF8.GetString(buffer, 0, count);
+            }
+            catch (Exception diagnosticFailure)
+            {
+                log = $"host log unavailable ({diagnosticFailure.GetType().Name})";
+            }
+            throw new EndOfStreamException($"{ex.Message} Host log tail ({hostLogFile}): {log}", ex);
+        }
+    }
 
     [Test]
     public async Task Invalid_requirement_is_refused_before_custody()
