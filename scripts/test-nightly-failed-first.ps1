@@ -1386,6 +1386,7 @@ function Test-JournalCustodySurvivesInterleaving {
 }
 
 switch -Exact ($Case) {
+    'ImportedAuthorityFixtureInitializesTiming' { Test-FFAuthorityConservation; $expected=2 }
     'PreviousOrder' { Test-FFPreviousOrder; $expected=1 }
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=4 }
     'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=18 }

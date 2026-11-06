@@ -10,6 +10,12 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcFailedFirstExecutionTests
 {
+    [Test]
+    public Task ImportedAuthorityFixtureInitializesTiming(CancellationToken cancellationToken) =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(ImportedAuthorityFixtureInitializesTiming), 2,
+            ["FF ImportedAuthorityFixtureInitializesTiming.authorityBytes", "FF ImportedAuthorityFixtureInitializesTiming.authorityBinding"],
+            ScriptHarnessOptions.Default, cancellationToken);
+
     // Provisional full replay bound uses S2's measured 156-launch cost (CARD-1514).
     [Test, Timeout(1_140_000)]
     public Task ActualLoopFollowsSchedule(CancellationToken cancellationToken) =>
