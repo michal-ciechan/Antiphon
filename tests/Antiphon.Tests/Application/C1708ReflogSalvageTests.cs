@@ -419,6 +419,7 @@ public sealed class C1708ReflogSalvageTests
         private CancellationTokenSource? _tickCancellation;
         private readonly object _joinGate = new();
         private System.Threading.Tasks.Task? _join;
+        private Exception? _primaryFailure;
         public Task<DesktopLegacyReleasePolicyService.TickResult>? ReleaseTick { get; private set; }
         public async Task<DesktopLegacyReleasePolicyService.TickResult> TickAsync(
             Action<DesktopLegacyReleasePolicyService>? configure = null)
@@ -427,6 +428,7 @@ public sealed class C1708ReflogSalvageTests
             _tickCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
             ReleaseTick = RunTickAsync(configure);
             try { return await ReleaseTick.WaitAsync(ct); }
+            catch (Exception ex) { _primaryFailure = ex; throw; }
             finally { await JoinTickAsync(); }
         }
         private async Task<DesktopLegacyReleasePolicyService.TickResult> RunTickAsync(
@@ -444,13 +446,21 @@ public sealed class C1708ReflogSalvageTests
         private async System.Threading.Tasks.Task CancelAndJoinTickAsync()
         {
             if (ReleaseTick is null) return;
-            _tickCancellation!.Cancel();
-            try { await ReleaseTick.WaitAsync(TimeSpan.FromSeconds(10)); }
-            catch (Exception ex) when (ReleaseTick.IsCompleted)
+            try
             {
-                // TickAsync owns the original outcome. Cleanup must observe completion
-                // without replacing a caller's cancellation, assertion or exception.
-                Console.WriteLine("joined-release-tick:" + ex.GetType().Name);
+                _tickCancellation!.Cancel();
+                try { await ReleaseTick.WaitAsync(TimeSpan.FromSeconds(10)); }
+                catch (Exception ex) when (ReleaseTick.IsCompleted)
+                {
+                    // TickAsync owns the original outcome; cleanup observes completion.
+                    Console.WriteLine("joined-release-tick:" + ex.GetType().Name);
+                }
+            }
+            catch (Exception cleanup) when (_primaryFailure is not null)
+            {
+                // Cache both failures in the join task so caller finally/DisposeAsync
+                // cannot replace the primary failure with a later cleanup exception.
+                throw new AggregateException("Release tick and bounded cleanup both failed", _primaryFailure, cleanup);
             }
             // A join deadline failure propagates: keep the world intact while a tick is live.
         }
