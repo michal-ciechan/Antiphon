@@ -1,14 +1,98 @@
 using System.Runtime.InteropServices;
+using System.Reflection;
+using System.Security.Cryptography;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.TestSupport;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.Win32.SafeHandles;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>CARD-1717 D-5: the Linux no-follow delete must not unlink through a swapped directory entry.</summary>
-[Category("Unit")]
+[Category("Integration")]
 public sealed class WorktreeNoFollowDeleteTests
 {
+    [Test]
+    [Timeout(5_000)]
+    [NativeLinuxOnly("Linux-only by construction: real statx, no-follow directory descriptors and unlinkat are required; Windows has a separate native witness.")]
+    public void C1737_PostHashWriteSurvivesFinalStat()
+    {
+        using var timing = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "run");
+        var boundary = new PostHashBoundary();
+        var root = Path.Combine(Path.GetTempPath(), "c1737-final-stat-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "approved.txt");
+        byte[] original = "approved original bytes"u8.ToArray();
+        byte[] changed = "new bytes written after the completed hash, through the same inode"u8.ToArray();
+        try
+        {
+            File.WriteAllBytes(path, original);
+            using var parent = boundary.Open(root);
+            var listed = boundary.Stat(parent, "approved.txt");
+            var (hash, hashed) = boundary.Hash(parent, "approved.txt", listed);
+            hash.ShouldNotBeNullOrEmpty();
+            hash.ShouldBe(Convert.ToHexStringLower(SHA256.HashData(original)));
+            using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                writer.SetLength(changed.Length);
+                writer.Write(changed);
+                writer.Flush(flushToDisk: true);
+            }
+            var fresh = boundary.Stat(parent, "approved.txt");
+            boundary.SameNode(listed, hashed).ShouldBeTrue();
+            boundary.SameNode(hashed, fresh).ShouldBeTrue();
+            boundary.Size(fresh).ShouldNotBe(boundary.Size(hashed));
+            boundary.SameContent(hashed, fresh).ShouldBeFalse();
+            Console.WriteLine("reached:W-A23:hashed-then-same-inode-write");
+
+            var error = boundary.Unlink(parent, "approved.txt", listed, hashed);
+            File.Exists(path).ShouldBeTrue("preserved:W-A23:post-hash-file");
+            File.ReadAllBytes(path).ShouldBe(changed);
+            error.ShouldBeOfType<ApprovedTreeRejectedException>(error?.ToString()).Reason.ShouldBe("set_aside_content_changed");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // Bind the real private signatures, including their in/out and nullable stat types.
+    // The adapter never fabricates native layouts or replaces the captured hash-ending stat.
+    private sealed class PostHashBoundary
+    {
+        private readonly Type stat = typeof(WorktreeNoFollowDelete).GetNestedType("LinuxStatx", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("LinuxStatx boundary missing");
+        private MethodInfo Bind(string name, params Type[] parameters) =>
+            typeof(WorktreeNoFollowDelete).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static, parameters)
+            ?? throw new InvalidOperationException("native boundary missing: " + name);
+        public SafeFileHandle Open(string path) => (SafeFileHandle)Bind("OpenLinuxDirectory", typeof(string)).Invoke(null, [path])!;
+        public object Stat(SafeFileHandle parent, string name)
+        {
+            var fd = Bind("Fd", typeof(SafeFileHandle)).Invoke(null, [parent]);
+            object?[] args = [fd, name, 0x100, null];
+            ((bool)Bind("TryStat", typeof(int), typeof(string), typeof(int), stat.MakeByRefType()).Invoke(null, args)!)
+                .ShouldBeTrue("real statx must succeed");
+            return args[3].ShouldNotBeNull();
+        }
+        public (string Hash, object Ended) Hash(SafeFileHandle parent, string name, object listed)
+        {
+            object?[] args = [parent, name, listed, null];
+            var hash = (string?)Bind("HashAt", typeof(SafeFileHandle), typeof(string), stat.MakeByRefType(),
+                typeof(Nullable<>).MakeGenericType(stat).MakeByRefType()).Invoke(null, args);
+            return (hash.ShouldNotBeNull(), args[3].ShouldNotBeNull());
+        }
+        public bool SameNode(object a, object b) => Compare("SameNode", a, b);
+        public bool SameContent(object a, object b) => Compare("SameContent", a, b);
+        private bool Compare(string name, object a, object b) =>
+            (bool)Bind(name, stat.MakeByRefType(), stat.MakeByRefType()).Invoke(null, [a, b])!;
+        public ulong Size(object value) => (ulong)stat.GetField("Size")!.GetValue(value)!;
+        public Exception? Unlink(SafeFileHandle parent, string name, object listed, object hashed)
+        {
+            var method = Bind("UnlinkSameNode", typeof(SafeFileHandle), typeof(string), stat, typeof(Nullable<>).MakeGenericType(stat));
+            try { method.Invoke(null, [parent, name, listed, hashed]); return null; }
+            catch (TargetInvocationException ex) when (ex.InnerException is not null) { return ex.InnerException; }
+        }
+    }
+
     [DllImport("libc", SetLastError = true)]
     private static extern int renameat2(int olddirfd, string oldpath, int newdirfd, string newpath, uint flags);
 

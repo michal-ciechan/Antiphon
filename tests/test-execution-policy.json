@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "2c445d46531ccff2a572e27b5e641e984af40c3b4691c67661dd9a4a360eba72",
+  "policyHash": "f2716a2ed5a3f7e06301acfaea9a1dbf89a2f1aaca4ec2e8e75b014dcd5cbdca",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1489,6 +1489,16 @@
           ],
           "reason": "Separate manual CARD-1605 measurement obligation: commission ANTIPHON_REPORT_STORE_MEASUREMENTS=1 on native Linux and retain normal/contended phase samples; enabling it on Windows cannot run its Linux executable.",
           "owner": "CARD-1605"
+        },
+        {
+          "suite": "antiphon",
+          "class": "WorktreeNoFollowDeleteTests",
+          "methods": [
+            "C1737_PostHashWriteSurvivesFinalStat"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: real statx, no-follow directory descriptors and unlinkat are required; Windows has a separate native witness.",
+          "owner": "CARD-1737"
         }
       ]
     }
