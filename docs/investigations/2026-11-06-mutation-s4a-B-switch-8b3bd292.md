@@ -1,6 +1,14 @@
 # S4a B-switch mutation slice: B17 and B18
 
-**Incomplete: both selected mutants failed at their required preservation assertions, but restored-green verification was blocked by a build-slot admission timeout.** The fresh restored-source build passed. The first restored method never launched (exit 4 after five minutes, position 2, occupied 4/4); the second was not requested. Execution stopped on that timeout without retry. There is no restored-green credit.
+**Incomplete after reopening: the two exact restored-green methods cannot run because the prior settlement removed all build outputs, and the continuation explicitly forbids rebuilding.** Both selected mutants previously failed at their required preservation assertions. The fresh restored-source build passed, but its first green method never launched (exit 4 after five minutes, position 2, occupied 4/4); the second was not requested. There is no restored-green credit.
+
+## Reopened continuation, 2026-11-06 10:00 UTC
+
+The caller authorized only the two missing exact selector-off green methods, stated that the restored build exists, and explicitly instructed: "No new reds or rebuilds in this slice." Direct filesystem inspection found `tests/Antiphon.Tests/bin`, `tests/Antiphon.Tests/obj`, `server/bin` and `server/obj` absent. The preceding report and cleanup log already recorded removal of all 72 task-created output roots. No server/test DLL copies were preserved under the external evidence root. The previous build hashes prove the earlier build, not current runnable artifact availability.
+
+No build/test driver or lease was requested on reopening, so there are no new tests, counts, TRX identities or inferred green results. No implicit build, substitute assembly, new red or rebuild was attempted. Source remains restored and unchanged at the tested base; reopening HEAD `789d18cce4b962849b16575ba41bb0ee5c83afb4` adds only this report to that base. The fresh preflight record is `/work/evidence/task-8b3bd292/resume-1-preflight.json`.
+
+**Required caller action:** authorize one fresh restored-source build before the two exact green methods, or provide a complete runnable restored artifact set with verifiable source/build provenance. The explicit no-rebuild constraint prevents finishing this continuation. Preserve the earlier two baseline passes, two intended reds and successful restored-build record as historical evidence. The execution and restoration ledger below is unchanged.
 
 2026-11-06, Custom task 8b3bd292, Linux/server2, ordinary worktree `/work/worktrees/task-8b3bd292`, assigned branch `feat/card-task-8b3bd292`. This is the explicitly **waived ordinary-worktree informational sweep**, not CARD-0478 SourceLanding evidence. No operation identity was invented. The caller's standing authority covered this work; no additional approval was requested. No product/test repair, desktop execution, landing, rc push, activation or land-graph update occurred.
 
@@ -124,11 +132,11 @@ External evidence: `/work/evidence/task-8b3bd292`. It contains `identity.json`, 
 
 ## Required continuation
 
-The caller must recommission **only the missing restored-green execution** once admission is available: a fresh ordinary base-source build if the successor has no retained validated outputs, then separate exact-method green runs for the two literal filters above, each with its own lease and fresh TRX. Preserve these two baseline passes and two intended reds; do not repeat them merely to hide the timeout. This task does not retry because its brief explicitly requires stopping on exit 4.
+The caller must authorize **one fresh restored-source build plus the two missing exact green methods**, since validated outputs were removed and the reopened no-rebuild constraint currently blocks execution. Alternatively, provide the complete validated runnable outputs. Each green method then needs its own lease and fresh TRX. Preserve these two baseline passes and two intended reds; do not repeat them merely to hide the timeout. The initial attempt did not retry because its brief explicitly required stopping on exit 4.
 
 The broader B-switch ledger still contains **23 unselected controls: B1–B16 and B19–B25**. They are continuation inventory, not executed selections. Preserve their investigation classifications, including masked/missing boundary witnesses; no test repair or equivalence claim is inferred here. No overall sweep or SourceLanding completion is claimed.
 
 --- next stage ---
 next: mutation
-handoff: Admission blocked restored-green completion. Recommission the two missing exact green methods after capacity is available; retain both valid reds and the separate 23-control B-switch continuation ledger.
+handoff: Reopening is blocked by absent restored outputs and an explicit no-rebuild constraint. Authorize one restored-source build, then the two missing exact green methods; retain both valid reds and the separate 23-control B-switch continuation ledger.
 artifact: /work/worktrees/task-8b3bd292/docs/investigations/2026-11-06-mutation-s4a-B-switch-8b3bd292.md
