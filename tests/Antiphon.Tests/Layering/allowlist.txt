@@ -210,6 +210,7 @@ server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> RuntimeP
 server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> TranscriptBindingIncidentService @ server/Application/Services/TranscriptBindingIncidentService.cs
 server/Infrastructure/Agents/SessionRunner/SessionRuntimeActionHostedService.cs -> SessionRuntimeActionCoordinator @ server/Application/Services/SessionRuntimeActionCoordinator.cs
 server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
+server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> RunnerRequestIntent @ server/Application/Services/DefaultRunnerRoutingPolicy.cs
 
 # slice P0-F1
 server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs -> DataProtectionApiKeyProtector @ server/Infrastructure/Security/DataProtectionApiKeyProtector.cs
