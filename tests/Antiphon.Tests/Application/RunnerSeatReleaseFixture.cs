@@ -721,6 +721,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public int ConditionalCommands { get; private set; }
         public int ForceCommands { get; private set; }
         public string? ResponseFault { get; set; }
+        public Func<DecisionPathInspectionResult, DecisionPathInspectionResult>? DecisionPathRewrite { get; set; }
         public bool SwallowNextEnter { get; set; }
         public List<string> NativeSubmissions { get; } = [];
         /// <summary>Requests this seat's current HTTP app had served when Client was handed out.</summary>
@@ -928,6 +929,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     if (frame.Operation is PhoneHomeOperation.ReleaseSlot or PhoneHomeOperation.KillGeneration)
                     { ForceCommands++; throw new InvalidOperationException("Unexpected destructive fallback"); }
                     var reply = await dispatcher.DispatchAsync(frame, ct);
+                    if (frame.Operation == PhoneHomeOperation.DecisionPathInspect && DecisionPathRewrite is { } rewrite)
+                        reply = reply with { Payload = JsonSerializer.SerializeToElement(rewrite(
+                            reply.Payload!.Value.Deserialize<DecisionPathInspectionResult>(PhoneHomeFraming.Json)!)) };
                     if (frame.Operation == PhoneHomeOperation.ObserveTerminalSeat && ResponseFault == "malformed")
                         reply = reply with { Payload = JsonSerializer.SerializeToElement(new { }) };
                     await PhoneHomeFraming.WriteFrameAsync(_socket!, reply, 16 * 1024 * 1024, ct);

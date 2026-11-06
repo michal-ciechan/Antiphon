@@ -53,7 +53,16 @@ public static class InternalDecisionQuestionPolicy
     public static InternalDecisionQuestionResponse Evaluate(
         StoredInternalDecisionPolicy? policy,
         InternalDecisionQuestionRequest question,
-        string repositoryRoot)
+        string repositoryRoot) => EvaluateCore(policy, question,
+            path => StaysInRepository(repositoryRoot, path), InternalDecisionPolicy.FileSystemComparer);
+
+    public static InternalDecisionQuestionResponse EvaluateRemote(
+        StoredInternalDecisionPolicy? policy, InternalDecisionQuestionRequest question,
+        IReadOnlySet<string> verifiedPaths) => EvaluateCore(policy, question, verifiedPaths.Contains, StringComparer.Ordinal);
+
+    private static InternalDecisionQuestionResponse EvaluateCore(
+        StoredInternalDecisionPolicy? policy, InternalDecisionQuestionRequest question,
+        Func<string, bool> contained, StringComparer comparer)
     {
         var request = Normalize(question);
         InternalDecisionQuestionResponse Deny(string reason) => new(
@@ -70,8 +79,8 @@ public static class InternalDecisionQuestionPolicy
 
         foreach (var path in request.Paths!)
         {
-            if (!InternalDecisionPolicy.PathIsGranted(path, grant.Paths, InternalDecisionPolicy.FileSystemComparer)
-                || !StaysInRepository(repositoryRoot, path))
+            if (!InternalDecisionPolicy.PathIsGranted(path, grant.Paths, comparer)
+                || !contained(path))
                 return Deny("path_not_granted");
         }
 
@@ -85,9 +94,9 @@ public static class InternalDecisionQuestionPolicy
             foreach (var target in request.AttributeTargets)
             {
                 if (grant.AttributeTargets is null
-                    || !InternalDecisionPolicy.PathIsGranted(target, grant.AttributeTargets, InternalDecisionPolicy.FileSystemComparer)
-                    || !InternalDecisionPolicy.PathIsGranted(target, request.Paths, InternalDecisionPolicy.FileSystemComparer)
-                    || !StaysInRepository(repositoryRoot, target))
+                    || !InternalDecisionPolicy.PathIsGranted(target, grant.AttributeTargets, comparer)
+                    || !InternalDecisionPolicy.PathIsGranted(target, request.Paths, comparer)
+                    || !contained(target))
                     return Deny("attribute_not_granted");
             }
             if (request.Attributes.Any(a => a is not ("text" or "eol")))

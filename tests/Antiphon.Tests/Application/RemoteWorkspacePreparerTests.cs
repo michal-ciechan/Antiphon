@@ -1188,7 +1188,7 @@ public sealed class RemoteWorkspacePreparerTests
             rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock, configureRunnerSettings: runnerSettings);
             rig.Host.Capacity = capacity;
             rig.Peer = await rig.Host.ConnectPeerAsync(capabilities: capabilities);
-            rig.Live = await rig.Host.WaitLiveAsync();
+            rig.Live = await rig.Host.WaitLiveAsync(runnerId: rig.RunnerId);
             if (recovered)
                 rig.Host.Directory.MarkRecovered(rig.Live);
             rig.Provider = rig.BuildProvider();

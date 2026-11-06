@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -112,11 +113,8 @@ public sealed class AgentTaskDecisionQuestionService(
         var policy = task.InternalDecisionPolicyJson is null
             ? null : InternalDecisionPolicy.ReadStored(task.InternalDecisionPolicyJson);
         var root = task.WorktreePath ?? task.RepoPath ?? task.WorkingDirectory;
-        // The current runner protocol cannot prove remote exact-file containment (including
-        // links). Desktop existence, the identity and canonical disk are never substitutes.
         var result = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
-            ? new InternalDecisionQuestionResponse(normalized.RequestId, InternalDecisionDisposition.NeedsHuman,
-                "ref_only_remote_path_verification_required", normalized.GrantId, null)
+            ? await EvaluateRemoteAsync(task, policy, normalized, ct)
             : InternalDecisionQuestionPolicy.Evaluate(policy, normalized, root);
         var now = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime;
         var question = new AgentTaskDecisionQuestion
@@ -142,6 +140,43 @@ public sealed class AgentTaskDecisionQuestionService(
             await eventBus.PublishToAllAsync("AgentTaskChanged",
                 new { taskId, rootId = task.RootTaskId }, ct);
         return result with { QuestionId = question.Id };
+    }
+
+    private async Task<InternalDecisionQuestionResponse> EvaluateRemoteAsync(AgentTask task,
+        StoredInternalDecisionPolicy? policy, InternalDecisionQuestionRequest question, CancellationToken ct)
+    {
+        var context = await new TaskWorkspaceContextResolver(db).RequireRemoteExecutionAsync(task, ct);
+        InternalDecisionQuestionResponse Held() => new(question.RequestId, InternalDecisionDisposition.NeedsHuman,
+            "ref_only_remote_path_verification_required", question.GrantId, null);
+        // The task is already locked. Keep its session custody stable while the bounded,
+        // read-only observation runs; a different accepted generation is never a grant.
+        var session = await db.AgentSessions.FromSqlInterpolated(
+            $"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {task.AgentSessionId} FOR SHARE NOWAIT")
+            .AsNoTracking().SingleOrDefaultAsync(ct);
+        if (session is null || session.Status != SessionStatus.Running
+            || session.RunnerId != task.RunnerId || session.RunnerCwd != context.ExecutionDirectory
+            || session.RunnerStoreId is not Guid store || runners?.GetLiveStoreId(task.RunnerId) != store)
+            return Held();
+        var paths = question.Paths!.Concat(question.AttributeTargets ?? []).Distinct(StringComparer.Ordinal).ToArray();
+        var request = new DecisionPathInspectionRequest(session.Id, store, session.StartedAt, context.ExecutionDirectory!, paths);
+        DecisionPathInspectionResult? observed;
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2), timeProvider ?? TimeProvider.System);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
+        try
+        {
+            observed = await runners.Resolve(task.RunnerId).InspectDecisionPathsAsync(request, linked.Token);
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or NotSupportedException
+            or ConflictException or ServiceUnavailableException || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        { return Held(); }
+        if (observed is not { Contained: true, Reason: null, Binding: { } binding }
+            || binding.SessionId != request.SessionId || binding.RunnerStoreId != store
+            || !SessionGeneration.Equal(binding.AcceptedStartedAt, request.AcceptedStartedAt)
+            || binding.Root != request.Root || binding.Paths is null
+            || !binding.Paths.SequenceEqual(paths, StringComparer.Ordinal)
+            || runners.GetLiveStoreId(task.RunnerId) != store)
+            return Held();
+        return InternalDecisionQuestionPolicy.EvaluateRemote(policy, question, paths.ToHashSet(StringComparer.Ordinal));
     }
 
     private static bool IsLockContention(Exception exception)
