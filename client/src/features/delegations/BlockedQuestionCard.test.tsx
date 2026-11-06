@@ -86,7 +86,7 @@ function detail(blockedOverrides: Partial<BlockedContextDto> = {}): AgentTaskDet
 
 describe('BlockedQuestionCard', () => {
   it('labels committed source and unknown runner counts without calling it on disk', () => {
-    const progress = { ...blocked().progress!, changedFiles: null as unknown as number, untrackedFiles: null as unknown as number }
+    const progress = { ...blocked().progress!, changedFiles: null, untrackedFiles: null }
     renderWithProviders(<BlockedQuestionCard detail={detail({ progress })} variant="full" />)
     const soFar = screen.getByTestId('blocked-so-far')
     expect(soFar).toHaveTextContent('Committed source')

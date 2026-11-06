@@ -8,6 +8,9 @@ Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests
 
 # CARD-1731: real PowerShell/Git snapshot isolation and write-count witnesses; baseline methods measured 22-26s on loaded Linux.
 Antiphon.Tests.Scripts.C599SnapshotTests
+# CARD-0824: real queued mirror publication, exact-ref Git sync and shared database fixtures.
+Antiphon.Tests.Application.C0824RefOnlySyncTests
+
 # CARD-0824: real caller queue receipt and settlement/outbox recovery cuts.
 Antiphon.Tests.Application.C0824RefOnlyReceiptTests
 
