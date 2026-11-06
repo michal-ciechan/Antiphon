@@ -88,6 +88,10 @@ server/Application/Services/RunnerStateService.cs -> PhoneHomeRunnerDirectory @ 
 server/Application/Services/RunnerWorktreeRetentionService.cs -> PhoneHomeRunnerClient @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs
 server/Application/Services/SessionRunnerCatalogue.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
 server/Infrastructure/Agents/ExpectationObservationAdapter.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
+server/Application/Services/HostStatsPollService.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeRunnerClient @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
+server/Application/Services/RunnerSlotReconcileJob.cs -> PhoneHomeRunnerDirectory @ server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs
 
 # slice P0-C4
 server/Application/Services/AgentTaskService.cs -> OrchestratorWorkspaceFactGatherer @ server/Application/Services/OrchestratorWorkspaceLayout.cs
@@ -121,28 +125,6 @@ server/Infrastructure/Git/LandingVerifier.cs -> LandVerificationWaits @ server/A
 server/Infrastructure/Git/LocalTaskParkPublisher.cs -> BlockedTaskParkingService @ server/Application/Services/BlockedTaskParkingService.cs
 server/Infrastructure/Git/WorktreeHealthHostedService.cs -> WorktreeHealthService @ server/Application/Services/WorktreeHealthService.cs
 
-# slice P0-E
-server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> HostStatsCache @ server/Application/Services/HostStatsCache.cs
-server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> HostStatsFailureKind @ server/Application/Services/HostStatsCache.cs
-server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> IHostStatsAntiphonCounters @ server/Application/Services/HostStatsAntiphonCounters.cs
-server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> RunnerRequestIntent @ server/Application/Services/DefaultRunnerRoutingPolicy.cs
-server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs -> SessionRunnerCatalogue @ server/Application/Services/SessionRunnerCatalogue.cs
-server/Infrastructure/Agents/SessionRunner/PhoneHomeRecoveryPump.cs -> AgentSessionRuntime @ server/Application/Services/AgentSessionRuntime.cs
-server/Infrastructure/Agents/SessionRunner/PhoneHomeRecoveryPump.cs -> TranscriptBindingIncidentService @ server/Application/Services/TranscriptBindingIncidentService.cs
-server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs -> JournalRecordState @ server/Infrastructure/Git/RepositoryChildJournalInspector.cs
-server/Infrastructure/Agents/SessionRunner/RunnerRetireJob.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
-server/Infrastructure/Agents/SessionRunner/RunnerRetireJob.cs -> RunnerRetireService @ server/Application/Services/RunnerRetireService.cs
-server/Infrastructure/Agents/SessionRunner/RunnerSlotReconcileJob.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
-server/Infrastructure/Agents/SessionRunner/RunnerSlotReconcileJob.cs -> RunnerSlotService @ server/Application/Services/RunnerSlotService.cs
-server/Infrastructure/Agents/SessionRunner/RunnerSlotReconcileJob.cs -> TerminalRunnerSeatReleaseService @ server/Application/Services/TerminalRunnerSeatReleaseService.cs
-server/Infrastructure/Agents/SessionRunner/SeatOccupancyState.cs -> SeatOccupancySnapshot @ server/Application/Services/SeatOccupancySnapshot.cs
-server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> AgentSessionGroups @ server/Application/Services/AgentSessionRuntime.cs
-server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> AgentSessionRuntime @ server/Application/Services/AgentSessionRuntime.cs
-server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> RuntimePhase @ server/Application/Services/RuntimePhase.cs
-server/Infrastructure/Agents/SessionRunner/SessionRunnerEventPump.cs -> TranscriptBindingIncidentService @ server/Application/Services/TranscriptBindingIncidentService.cs
-server/Infrastructure/Agents/SessionRunner/SessionRuntimeActionHostedService.cs -> SessionRuntimeActionCoordinator @ server/Application/Services/SessionRuntimeActionCoordinator.cs
-server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs -> AppDbContext @ server/Infrastructure/Data/AppDbContext.cs
-
 # slice P0-F1
 server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs -> DataProtectionApiKeyProtector @ server/Infrastructure/Security/DataProtectionApiKeyProtector.cs
 server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs -> DataProtectionPayload @ server/Infrastructure/Security/DataProtectionPayload.cs
@@ -155,14 +137,6 @@ server/Application/Dtos/AgentTaskDtos.cs -> CardWorktreeBaseSelection @ server/A
 server/Application/Dtos/LandingEvidenceDto.cs -> AgentTaskLandingProtocol @ server/Application/Services/AgentTaskLandingProtocol.cs
 server/Application/Exceptions/RemoteLaunchAlreadyExitedException.cs -> SessionExitPolicy @ server/Application/Services/SessionExitPolicy.cs
 server/Application/Services/AgentTaskLandService.cs -> LandExecutionLease @ server/Infrastructure/Git/LandExecutionLease.cs
-server/Application/Services/AgentTaskService.cs -> SeatOccupancyState @ server/Infrastructure/Agents/SessionRunner/SeatOccupancyState.cs
-server/Application/Services/AgentTuiLaunchResolver.cs -> AgentTuiLaunchActivityMode @ server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs
-server/Application/Services/AgentTuiLaunchResolver.cs -> AgentTuiLaunchModelMode @ server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs
-server/Application/Services/AgentTuiLaunchResolver.cs -> AgentTuiMetricOutcome @ server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs
-server/Application/Services/AgentTuiLaunchResolver.cs -> AgentTuiMetrics @ server/Infrastructure/Agents/Tui/AgentTuiMetrics.cs
-server/Application/Services/AttentionService.Alarms.cs -> RunnerAlarmSnapshot @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/AttentionService.cs -> RunnerAlarmState @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/AttentionService.cs -> SeatOccupancyState @ server/Infrastructure/Agents/SessionRunner/SeatOccupancyState.cs
 server/Application/Services/AttentionService.cs -> ZombieCensusState @ server/Infrastructure/Agents/ZombieCensusState.cs
 server/Application/Services/DelegationWorktreeService.cs -> WorktreeRoots @ server/Infrastructure/Git/WorktreeRoots.cs
 server/Application/Services/ExpectationWatchdogStatusService.cs -> ExpectationObservationAdapter @ server/Infrastructure/Agents/ExpectationObservationAdapter.cs
@@ -170,16 +144,8 @@ server/Application/Services/GitWorkspaceService.cs -> GitProcessGate @ server/Ap
 server/Application/Services/LandRequestSourceIdentity.cs -> LandingGit @ server/Infrastructure/Git/LandingGit.cs
 server/Application/Services/OrchestratorWorkspaceLayout.cs -> DelegationWorkspaceResolver @ server/Application/Services/DelegationWorkspaceResolver.cs
 server/Application/Services/ReviewEvidenceCorrectionService.cs -> CheckpointReceiptValidator @ server/Infrastructure/Verification/CheckpointReceiptValidator.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> JournalAlarmRecord @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> JournalFinding @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
 server/Application/Services/RunnerAlarmCoordinator.cs -> JournalInspection @ server/Infrastructure/Git/RepositoryChildJournalInspector.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> NotedAlarmRow @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> PendingRecoveryNote @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
 server/Application/Services/RunnerAlarmCoordinator.cs -> RepositoryChildJournalInspector @ server/Infrastructure/Git/RepositoryChildJournalInspector.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> RunnerAlarmSnapshot @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> RunnerAlarmState @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/RunnerAlarmCoordinator.cs -> RunnerOutageEpisode @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Application/Services/SeatOccupancySampler.cs -> SeatOccupancyState @ server/Infrastructure/Agents/SessionRunner/SeatOccupancyState.cs
 server/Application/Services/TaskParkPublicationService.cs -> LocalTaskParkPublisher @ server/Infrastructure/Git/LocalTaskParkPublisher.cs
 server/Application/Services/TaskWorktreeRetirementService.cs -> WorktreeSetAside @ server/Infrastructure/Git/WorktreeSetAside.cs
 server/Infrastructure/Agents/ExpectationObservationAdapter.cs -> AgentFilesService @ server/Application/Services/AgentFilesService.cs
@@ -241,8 +207,12 @@ server/Infrastructure/GitHub/GitHubService.cs -> LandingGit @ server/Infrastruct
 server/Infrastructure/GitHub/GitHubService.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
 server/Infrastructure/IssueTrackers/GitHubIssuesTracker.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
 server/Infrastructure/IssueTrackers/JiraTracker.cs -> ResilienceReadClients @ server/Infrastructure/Resilience/ResilienceReadClients.cs
-server/Infrastructure/Orchestration/RunnerAlarmHostedService.cs -> RunnerAlarmSnapshot @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
-server/Infrastructure/Orchestration/RunnerAlarmHostedService.cs -> RunnerAlarmState @ server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> ChannelReplyAttachmentReader @ server/Infrastructure/Files/ChannelReplyAttachmentReader.cs
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> InterimVerificationPolicy @ server/Application/Services/InterimVerificationPolicy.cs
 server/Infrastructure/Verification/CheckpointReceiptValidator.cs -> ReviewEvidenceCorrectionService @ server/Application/Services/ReviewEvidenceCorrectionService.cs
+server/Application/Services/AgentTuiMetrics.cs -> AgentTuiKeyProtectionReadiness @ server/Infrastructure/Agents/Tui/DataProtectionAgentTuiSecretProtector.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeEventScheduler @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventScheduler.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeLiveConnection @ server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> PhoneHomeQueuedEvent @ server/Infrastructure/Agents/SessionRunner/PhoneHomeEventDiagnostics.cs
+server/Application/Services/PhoneHomeRecoveryPump.cs -> TranscriptIncidentReplayGuard @ server/Infrastructure/Agents/SessionRunner/TranscriptIncidentReplayGuard.cs
+server/Application/Services/RunnerAlarmState.cs -> JournalRecordState @ server/Infrastructure/Git/RepositoryChildJournalInspector.cs
