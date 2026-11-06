@@ -8,6 +8,6 @@ is not a completed mutation cycle. Bind precise sites and exact methods at lande
 - PC-3 cached successful containment -> Boundaries_and_changed_links_are_checked_fresh.
 - PC-4 shared mutable recipients -> Shared_seed_keeps_recipients_and_authority_private.
 - PC-5 omitted finally restoration -> Throwing_reservation_mutation_restores_the_control.
-- PC-6 suppressed restoration error -> restoration-failure witness; discovery must assess adequacy.
+- PC-6 suppressed restoration error -> Snapshot_bytes_work_and_restore_failures_are_observed.
 
 Keep method-scoped red/restore/green cycles; compiling intended assertion failures only.

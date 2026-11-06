@@ -408,3 +408,8 @@ Antiphon.Tests.Application.ChannelInputWithheldIncidentTests
 
 # CARD-0824 S5b-1: real Git, isolated PostgreSQL, full desktop consumer matrix and real loopback mirror queue/recovery.
 Antiphon.Tests.Application.C0824RefOnlyCleanupTests
+
+# CARD-1733: real Git promotion matrices exceeded 300 seconds before native fixture containment.
+Antiphon.Tests.Scripts.ReleaseTagAllocatorTests
+# CARD-1733: native fixture/isolation regressions spawn PowerShell and real Git; baseline seed witness 48 seconds.
+Antiphon.Tests.Scripts.C1733AllocatorFixtureTests

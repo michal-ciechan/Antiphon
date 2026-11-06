@@ -6,13 +6,24 @@ function Assert-C1339ContainedPath {
     if (-not $full.StartsWith($rootPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal)) {
         throw 'fixture-path-outside-root'
     }
-    $cursor = $full
-    while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            $item = Get-Item -LiteralPath $cursor -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'fixture-linked-path' }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $cursor = $full
+        while ($cursor) {
+            # Query current metadata even after a prior success. GetAttributes also
+            # observes dangling links; missing descendants do not skip ancestors.
+            try {
+                $attributes = [IO.File]::GetAttributes($cursor)
+                if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'fixture-linked-path' }
+            } catch [IO.FileNotFoundException] { }
+              catch [IO.DirectoryNotFoundException] { }
+            $cursor = [IO.Path]::GetDirectoryName($cursor)
         }
-        $cursor = Split-Path -Parent $cursor
+    } finally {
+        if ($null -ne $global:C1733Timing) {
+            $global:C1733Timing.containmentCalls++
+            $global:C1733Timing.containmentSeconds += $watch.Elapsed.TotalSeconds
+        }
     }
 }
 
