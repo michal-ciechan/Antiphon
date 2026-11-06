@@ -1289,8 +1289,11 @@ public sealed class WorktreeManager : IWorktreeManager
         // Reads git answers without a word on stderr are answered in process when libgit2's answer is git's own
         // (InProcessGitReads; ANTIPHON_GIT_INPROCESS=off turns it off). A fresh repository handle per call, so
         // every check before a mutation still reads the repository as it is now.
+        // A caller that throws on failure gets only successes from here: a non-zero answer runs git, so the throw
+        // (and its message, git's stderr) is exactly as before.
         if (!mutating && InProcessReadsEligible()
-            && InProcessGitReads.TryAnswerSilently(workingDirectory, arguments) is { } answered)
+            && InProcessGitReads.TryAnswerSilently(workingDirectory, arguments) is { } answered
+            && (!throwOnError || answered.ExitCode == 0))
         {
             ct.ThrowIfCancellationRequested();
             span?.SetTag("git.spawned", false);
