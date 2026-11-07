@@ -48,33 +48,66 @@ function Get-NightlyExecutionPlatform {
 
 function Get-NightlyProfileExecutionChunks {
     param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
+    # Class-level: one pass buckets the nodes by bare class, and chunk membership
+    # and exclusion rows are resolved once per class rather than once per node
+    # (a full suite is ~19,000 nodes in a few hundred classes). Grouping keeps
+    # Group-Object's semantics by running it over one item per class: keys are
+    # case-insensitive, named by their first node, and ordered as Group-Object
+    # orders them on this PowerShell; nodes keep discovery order within a class.
+    $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $Exclusions
     $index = 0
     foreach ($chunk in $Chunks) {
-        $assigned = @($DiscoveryNodes | Where-Object {
-            Test-NightlyClassAssigned -ClassName $_.ClassName -TypeName $_.Type -RequiredClasses @($chunk.classes)
-        })
-        $tagged = foreach ($node in $assigned) {
-            [pscustomobject]@{ Node = $node; Bare = (Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)) }
+        $required = @($chunk.classes)
+        # Per raw class (ClassName + Type): chunk membership, bare name and exclusion rows.
+        $classes = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+        $buckets = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)
+        $keys = [Collections.Generic.List[object]]::new()
+        foreach ($node in @($DiscoveryNodes)) {
+            $className = [string]$node.ClassName
+            $classKey = $className + [char]0 + [string]$node.Type
+            $class = $null
+            if (-not $classes.TryGetValue($classKey, [ref]$class)) {
+                $class = [pscustomobject]@{
+                    Assigned = [bool](Test-NightlyClassAssigned -ClassName $node.ClassName -TypeName $node.Type -RequiredClasses $required)
+                    Bare = [string](Get-NightlyBareClassIdentity -Name $className)
+                    Exclusion = (Get-NightlyProfileExclusionEntry -Index $exclusionIndex -ClassName $className -Type ([string]$node.Type))
+                }
+                $classes[$classKey] = $class
+            }
+            if (-not $class.Assigned) { continue }
+            $bucket = $null
+            if (-not $buckets.TryGetValue($class.Bare, [ref]$bucket)) {
+                $bucket = [pscustomobject]@{ Nodes = [Collections.Generic.List[object]]::new(); Excludes = $false }
+                $buckets[$class.Bare] = $bucket
+                $keys.Add([pscustomobject]@{ Bare = $class.Bare })
+            }
+            $bucket.Nodes.Add($node)
+            if ($null -ne $class.Exclusion) { $bucket.Excludes = $true }
         }
-        foreach ($group in @($tagged | Group-Object Bare)) {
-            $required = @($group.Group | Where-Object {
-                -not (Test-NightlyDiscoveryExcluded $_.Node $Exclusions -ProfileAware)
-            })
-            if ($required.Count -eq 0) { continue }
+        foreach ($group in @($keys | Group-Object Bare)) {
             $bare = [string]$group.Name
-            if ($required.Count -eq @($group.Group).Count) {
+            $bucket = $buckets[$bare]
+            $members = $bucket.Nodes
+            $requiredNodes = @($members)
+            if ($bucket.Excludes) {
+                $requiredNodes = @(foreach ($node in $members) {
+                    if (-not (Test-NightlyProfileExclusionIndexed -Index $exclusionIndex -Node $node)) { $node }
+                })
+            }
+            if ($requiredNodes.Count -eq 0) { continue }
+            if ($requiredNodes.Count -eq $members.Count) {
                 [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = ''; nodes = @() }
             } else {
                 # Preserve sibling methods without launching the excluded method.
                 # Exact leaves avoid the combined-filter discovery hint ambiguity.
                 # The filter type is the bare metadata name: TUnit does not put
                 # constructor arguments on the treenode path.
-                foreach ($method in @($required | Group-Object { $_.Node.Method })) {
-                    $node = @($method.Group)[0].Node
+                foreach ($method in @($requiredNodes | Group-Object { $_.Method })) {
+                    $node = @($method.Group)[0]
                     $dot = $bare.LastIndexOf('.')
                     if ($dot -lt 1) { throw 'profile-discovery-namespace-required' }
                     $filter = '/*/{0}/{1}/{2}' -f $bare.Substring(0, $dot), $bare.Substring($dot + 1), $node.Method
-                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = $filter; nodes = @($method.Group | ForEach-Object { $_.Node }) }
+                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = $filter; nodes = @($method.Group) }
                 }
             }
         }

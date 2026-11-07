@@ -443,6 +443,66 @@ function Get-NightlyProfileExclusions {
     return $rows
 }
 
+function New-NightlyProfileExclusionIndex {
+    <#
+      Class-level form of Test-NightlyProfileNodeExcluded for callers that test
+      many nodes against the same rows. Which rows match a node depends only on
+      its ClassName and Type, so that is resolved once per class; each node is
+      then one method lookup. Same verdicts as Test-NightlyProfileNodeExcluded.
+    #>
+    param([object[]]$Exclusions)
+    $rows = [Collections.Generic.List[object]]::new()
+    foreach ($row in @($Exclusions)) {
+        if ([string]::IsNullOrWhiteSpace([string]$row.Class)) { continue }
+        $rows.Add($row)
+    }
+    return [pscustomobject]@{
+        Rows = $rows.ToArray()
+        Classes = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    }
+}
+
+function Test-NightlyProfileExclusionIndexed {
+    param($Index, $Node)
+    if ($null -eq $Node) { return $false }
+    $entry = Get-NightlyProfileExclusionEntry -Index $Index -ClassName ([string]$Node.ClassName) -Type ([string]$Node.Type)
+    if ($null -eq $entry) { return $false }
+    return ($entry.All -or $entry.Methods.Contains([string]$Node.Method))
+}
+
+function Get-NightlyProfileExclusionEntry {
+    <# The exclusion rows matching one class, merged: null when none match (no node of the class is excluded),
+       otherwise All (a whole-class row), the excluded Methods, and the matching Rows in policy order. #>
+    param($Index, [string]$ClassName, [string]$Type)
+    $className = $ClassName
+    $type = $Type
+    $key = $className + [char]0 + $type
+    $entry = $null
+    if (-not $Index.Classes.TryGetValue($key, [ref]$entry)) {
+        $simple = Get-NightlyClassNameFromIdentity -ClassName $className
+        if ([string]::IsNullOrWhiteSpace($simple)) { $simple = $type }
+        $all = $false
+        $methods = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $matched = [Collections.Generic.List[object]]::new()
+        foreach ($row in $Index.Rows) {
+            $cls = [string]$row.Class
+            $match = [string]::Equals($cls, $simple, [StringComparison]::OrdinalIgnoreCase) -or
+                     [string]::Equals($cls, $className, [StringComparison]::OrdinalIgnoreCase)
+            if (-not $match) { continue }
+            $matched.Add($row)
+            # As in Test-NightlyProfileNodeExcluded: @() of an absent list is one empty entry, not none.
+            $rowMethods = @($row.Methods)
+            if ($rowMethods.Count -eq 0) { $all = $true; continue }
+            foreach ($m in $rowMethods) { [void]$methods.Add([string]$m) }
+        }
+        $entry = $null
+        # Every matching row sets All or adds at least one method, so a null entry means no row matches.
+        if ($all -or $methods.Count -gt 0) { $entry = [pscustomobject]@{ All = $all; Methods = $methods; Rows = $matched.ToArray() } }
+        $Index.Classes[$key] = $entry
+    }
+    return $entry
+}
+
 function Test-NightlyProfileNodeExcluded {
     <#
       D-5: in a profile lane, OptIn alone is NOT exclusion. Only a declared

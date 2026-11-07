@@ -779,6 +779,48 @@ function Get-NightlyDiscoveryDisposition {
     return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
 }
 
+function Get-NightlyDiscoveryDispositionIndexed {
+    <# Get-NightlyDiscoveryDisposition (profile-aware) against a New-NightlyProfileExclusionIndex: only the rows
+       that match the node's class are walked, in policy order, so the first declaring row still wins. #>
+    param($Index, $Node)
+    $entry = Get-NightlyProfileExclusionEntry -Index $Index -ClassName ([string]$Node.ClassName) -Type ([string]$Node.Type)
+    if ($null -ne $entry) {
+        foreach ($row in $entry.Rows) {
+            $methods = @($row.Methods)
+            if ($methods.Count -eq 0) {
+                return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
+            }
+            foreach ($m in $methods) {
+                if ([string]::Equals([string]$m, [string]$Node.Method, [StringComparison]::OrdinalIgnoreCase)) {
+                    return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
+                }
+            }
+        }
+    }
+    return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
+}
+
+function New-NightlyClassAssignmentCache {
+    <# Test-NightlyClassAssigned depends only on (ClassName, TypeName) for fixed RequiredClasses: a caller that tests
+       many nodes keeps one of these and asks once per class. #>
+    param([string[]]$RequiredClasses = @())
+    return [pscustomobject]@{
+        RequiredClasses = $RequiredClasses
+        Verdicts = [Collections.Generic.Dictionary[string, bool]]::new([StringComparer]::Ordinal)
+    }
+}
+
+function Test-NightlyClassAssignedCached {
+    param($Cache, [string]$ClassName, [string]$TypeName)
+    $key = $ClassName + [char]0 + $TypeName
+    $verdict = $false
+    if (-not $Cache.Verdicts.TryGetValue($key, [ref]$verdict)) {
+        $verdict = [bool](Test-NightlyClassAssigned -ClassName $ClassName -TypeName $TypeName -RequiredClasses $Cache.RequiredClasses)
+        $Cache.Verdicts[$key] = $verdict
+    }
+    return $verdict
+}
+
 function Get-NightlyDiscoveryCensus {
     <#
       D-5: the expanded-UID manifest. Every discovered node gets exactly one
@@ -789,12 +831,16 @@ function Get-NightlyDiscoveryCensus {
     $excluded = [Collections.Generic.List[object]]::new()
     $seen = @{}
     $duplicates = [Collections.Generic.List[object]]::new()
+    # Profile rows are resolved once per class (same dispositions as Get-NightlyDiscoveryDisposition).
+    $exclusionIndex = $null
+    if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
     foreach ($n in @($DiscoveryNodes)) {
         $uid = [string]$n.Uid
         if ([string]::IsNullOrWhiteSpace($uid)) { continue }
         if ($seen.ContainsKey($uid)) { $duplicates.Add($uid); continue }
         $seen[$uid] = $true
-        $d = Get-NightlyDiscoveryDisposition -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+        if ($ProfileAware) { $d = Get-NightlyDiscoveryDispositionIndexed -Index $exclusionIndex -Node $n }
+        else { $d = Get-NightlyDiscoveryDisposition -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware }
         $row = [ordered]@{
             uid = $uid
             class = [string]$n.ClassName
@@ -825,9 +871,14 @@ function Get-NightlyRequiredDiscoveryUids {
     param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @(), $ProfileExclusions = $null, [switch]$ProfileAware)
     $uids = [Collections.Generic.List[object]]::new()
     $seen = @{}
+    $exclusionIndex = $null
+    if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    $assignment = New-NightlyClassAssignmentCache -RequiredClasses $RequiredClasses
     foreach ($n in @($DiscoveryNodes)) {
-        if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) { continue }
-        if (-not (Test-NightlyClassAssigned -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -RequiredClasses $RequiredClasses)) {
+        if ($ProfileAware) {
+            if (Test-NightlyProfileExclusionIndexed -Index $exclusionIndex -Node $n) { continue }
+        } elseif (Test-NightlyDiscoveryExcluded -Node $n) { continue }
+        if (-not (Test-NightlyClassAssignedCached -Cache $assignment -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type))) {
             continue
         }
         $uid = [string]$n.Uid
@@ -885,6 +936,8 @@ function Get-NightlyDiscoveryIndexView {
     if ($ProfileAware) { $policyKey = 'profile:' + (ConvertTo-Json -InputObject $ProfileExclusions -Depth 8 -Compress) }
     if ($Entry.Views.ContainsKey($policyKey)) { return $Entry.Views[$policyKey] }
     $nodes = @($Entry.Document.Nodes)
+    $exclusionIndex = $null
+    if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
     $excluded = New-Object 'bool[]' $nodes.Count
     $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
     $allRequired = [Collections.Generic.List[object]]::new()
@@ -912,7 +965,9 @@ function Get-NightlyDiscoveryIndexView {
             }
             if ($hits.Count -eq 0 -or $hits[$hits.Count - 1] -ne $i) { $hits.Add($i) }
         }
-        if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) {
+        if ($ProfileAware) { $isExcluded = Test-NightlyProfileExclusionIndexed -Index $exclusionIndex -Node $n }
+        else { $isExcluded = Test-NightlyDiscoveryExcluded -Node $n }
+        if ($isExcluded) {
             $excluded[$i] = $true
             continue
         }
@@ -1119,8 +1174,9 @@ function Test-NightlyTrxDiagnosticCrossCheck {
     $trxBag = @{}
     $diagBag = @{}
     $extra = @()
+    $assignment = New-NightlyClassAssignmentCache -RequiredClasses $RequiredClasses
     foreach ($r in @($TrxRows)) {
-        $assigned = Test-NightlyClassAssigned -ClassName ([string]$r.ClassName) -TypeName '' -RequiredClasses $RequiredClasses
+        $assigned = Test-NightlyClassAssignedCached -Cache $assignment -ClassName ([string]$r.ClassName) -TypeName ''
         if (-not $assigned) {
             if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
                 $extra += ('{0}.{1}' -f $r.ClassName, $r.MethodName)
@@ -1132,7 +1188,7 @@ function Test-NightlyTrxDiagnosticCrossCheck {
         $trxBag[$key]++
     }
     foreach ($n in @($TerminalNodes)) {
-        if (-not (Test-NightlyClassAssigned -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -RequiredClasses $RequiredClasses)) {
+        if (-not (Test-NightlyClassAssignedCached -Cache $assignment -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type))) {
             continue
         }
         $method = [string]$n.Method
