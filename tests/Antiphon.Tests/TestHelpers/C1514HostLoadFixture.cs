@@ -167,7 +167,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     }
     public async Task InitializeAsync(bool phoneHome)
     {
-        Directory.CreateDirectory(Root);
+        System.IO.Directory.CreateDirectory(Root);
         var identity = new PhoneHomeProcessIdentity();
         Spool = new(Runner.HistoryPath!, Runner, Clock, identity.BootId);
         Capture = new(Options.Create(Runner), Clock, new C1514Authority(Clock), NullLogger<HostLoadCaptureService>.Instance,
@@ -271,7 +271,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         if (_peer is not null) await _peer.DisposeAsync();
         await Capture.StopAsync(CancellationToken.None); Capture.Dispose(); Sampler.Dispose();
         Services.Dispose(); _sourceHttp.Dispose(); await Schema.DisposeAsync();
-        if (Directory.Exists(Root)) Directory.Delete(Root, true);
+        if (System.IO.Directory.Exists(Root)) System.IO.Directory.Delete(Root, true);
     }
     internal static async Task EventuallyAsync(Func<bool> predicate)
     { using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5)); while (!predicate()) await Task.Delay(5, limit.Token); }

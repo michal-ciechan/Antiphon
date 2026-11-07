@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Application;
 using Microsoft.AspNetCore.Http;
 using Shouldly;
 using TUnit.Core;
