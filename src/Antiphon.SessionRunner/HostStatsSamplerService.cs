@@ -23,7 +23,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly TimeProvider _time;
     private readonly HostStatsSettings _settings;
     private readonly ILogger<HostStatsSamplerService> _logger;
-    private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, DateTimeOffset At)> _last = new();
+    private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, long At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
 
     public HostStatsSamplerService(
@@ -64,8 +64,11 @@ public sealed class HostStatsSamplerService : BackgroundService
             return Task.CompletedTask;
 
         var now = _time.GetUtcNow();
-        var processes = _settings.ProcessSampling ? ReadProcesses(now) : [];
-        _store.Add(read.Value with { At = now, Processes = processes });
+        var processes = _settings.ProcessSampling ? ReadProcesses(_time.GetTimestamp()) : [];
+        var percent = read.Value.CpuPercent;
+        if (percent is { } value && (!double.IsFinite(value) || value < 0 || value > 100))
+            percent = null;
+        _store.Add(read.Value with { At = now, CpuPercent = percent, Processes = processes });
         return Task.CompletedTask;
     }
 
@@ -86,7 +89,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         }
     }
 
-    private List<HostProcessSample> ReadProcesses(DateTimeOffset now)
+    private List<HostProcessSample> ReadProcesses(long now)
     {
         IReadOnlyList<HostStatsProcessTarget> targets;
         try
@@ -122,7 +125,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         return list;
     }
 
-    private HostProcessSample ReadOne(string name, string? sessionId, int pid, DateTime startedAt, DateTimeOffset now)
+    private HostProcessSample ReadOne(string name, string? sessionId, int pid, DateTime startedAt, long now)
     {
         // SamplerProcessQuery keeps the working set from this CPU read for the call below.
         // A later sample always reads again. Maximum extra staleness is zero intervals.
@@ -153,9 +156,13 @@ public sealed class HostStatsSamplerService : BackgroundService
             var key = (pid, startedAt);
             if (_last.TryGetValue(key, out var previous))
             {
-                var wall = (now - previous.At).TotalSeconds;
-                if (wall > 0)
-                    percent = (current - previous.Cpu).TotalSeconds / wall * 100.0;
+                var elapsed = _time.GetElapsedTime(previous.At, now).TotalSeconds;
+                var delta = (current - previous.Cpu).TotalSeconds;
+                if (elapsed > 0 && delta >= 0)
+                {
+                    var calculated = delta / elapsed * 100.0;
+                    if (double.IsFinite(calculated)) percent = calculated;
+                }
             }
 
             _last[key] = (current, now);
