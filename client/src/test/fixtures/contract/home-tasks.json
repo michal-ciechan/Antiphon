@@ -164,8 +164,7 @@
         "requiredPlatform": "Any",
         "runnerId": null,
         "observedPlatform": null,
-        "desktopWorkspaceKind": "Checkout",
-      "desktopWorkspaceKind": "Checkout"
+        "desktopWorkspaceKind": "Checkout"
       },
       "ownerAgentId": null,
       "agentKind": null,
