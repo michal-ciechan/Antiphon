@@ -159,6 +159,7 @@ public enum PhoneHomeOperation
     /// </summary>
     WorkspaceBranchRefsDelete = 48,
     DecisionPathInspect = 49,
+    HostLoadHistory = 50,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>
