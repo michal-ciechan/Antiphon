@@ -191,12 +191,26 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     // max 325.291 ms. Round twice that observed maximum up to one second, including both drains.
     internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(1);
 
+    private static int _scratchGitProcessStarts;
+
+    /// <summary>Scratch git process starts in this test process, including those that hit the deadline.</summary>
+    internal static int ScratchGitProcessStarts => Volatile.Read(ref _scratchGitProcessStarts);
+
+    /// <summary>
+    /// Prepares the process-wide scratch repository. Until that repository is shared,
+    /// each case still runs its own init, commit and clone.
+    /// </summary>
+    internal static void EnsureSharedScratchRepository()
+    {
+    }
+
     public static string Git(string workingDirectory, params string[] args) =>
         RunGit(workingDirectory, args,
             TUnit.Core.TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None, GitBudget);
 
     internal static string RunGit(string workingDirectory, string[] args, CancellationToken ct, TimeSpan budget)
     {
+        Interlocked.Increment(ref _scratchGitProcessStarts);
         using var phase = Antiphon.Tests.TestHelpers.TestTiming.BeginPhase(
             Antiphon.Tests.TestHelpers.TestPhaseKind.ProcessWait, "scratch-git");
         using var span = Antiphon.Tests.TestHelpers.TestTrace.Span("git " + (args.FirstOrDefault() ?? ""));
