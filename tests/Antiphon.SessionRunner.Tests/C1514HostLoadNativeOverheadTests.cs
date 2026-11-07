@@ -10,7 +10,10 @@ using Shouldly;
 using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
-[Category("Integration"), Category("Slow"), Timeout(360_000), ParallelLimiter<ProcessSpawnLimit>]
+// D-1: each child waits 20s, then measures 120s, and the class runs four children.
+// Arithmetic is about 560s plus startup. 720s is under 2x that sum and above it (R5, provisional
+// until this run's wall is known). The 1-point and 25ms limits are unchanged.
+[Category("Integration"), Category("Slow"), Timeout(720_000), ParallelLimiter<ProcessSpawnLimit>]
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
 {
@@ -29,13 +32,17 @@ public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
     {
         for (var pair = 0; pair < 2; pair++)
         {
+            var loadBefore = HostLoad();
             var off = await RunAsync(false); var on = await RunAsync(true);
+            var loadAfter = HostLoad();
             (on.CpuPoints - off.CpuPoints).ShouldBeLessThan(1d, "incremental CPU points of one core; pair=" + pair);
             on.Samples.ShouldBeGreaterThanOrEqualTo(12); on.P95TickMs.ShouldBeLessThan(25d);
             on.Bytes.ShouldBeLessThanOrEqualTo(256L * 1024 * 1024); on.Requests.ShouldBeLessThanOrEqualTo(on.TotalSamples);
             Console.WriteLine("C1514 overhead pair=" + pair + " offCpuPoints=" + off.CpuPoints.ToString("R", CultureInfo.InvariantCulture)
-                + " onCpuPoints=" + on.CpuPoints.ToString("R", CultureInfo.InvariantCulture) + " samples=" + on.Samples + " p95TickMs=" + on.P95TickMs.ToString("R", CultureInfo.InvariantCulture)
-                + " spoolBytes=" + on.Bytes + " authorityRequests=" + on.Requests);
+                + " onCpuPoints=" + on.CpuPoints.ToString("R", CultureInfo.InvariantCulture) + " samples=" + on.Samples
+                + " measuredTicks=" + on.MeasuredTicks + " p95TickMs=" + on.P95TickMs.ToString("R", CultureInfo.InvariantCulture)
+                + " spoolBytes=" + on.Bytes + " authorityRequests=" + on.Requests
+                + " loadBefore=" + loadBefore + " loadAfter=" + loadAfter);
         }
     }
     private async Task<Measurement> RunAsync(bool enabled)
@@ -77,19 +84,24 @@ public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
             started = process.Start(); started.ShouldBeTrue(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
             var address = await listening.Task.WaitAsync(TimeSpan.FromSeconds(20)); address.Port.ShouldNotBe(17204); address.Port.ShouldNotBe(8080);
             using var http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(3) };
-            await Task.Delay(TimeSpan.FromSeconds(15));
+            // The first logged ticks pay logger, spool and authority-refresh JIT. They stay out of the percentile.
+            await Task.Delay(TimeSpan.FromSeconds(20));
+            var warmupTicks = TickValues(lines).Length;
             process.Refresh(); var before = process.TotalProcessorTime; var from = DateTimeOffset.UtcNow; var stopwatch = Stopwatch.StartNew();
-            await Task.Delay(TimeSpan.FromSeconds(60));
+            // 120s at the 5s cadence is at least 20 steady ticks, so ceil(.95*n)-1 is not the maximum.
+            await Task.Delay(TimeSpan.FromSeconds(120));
             process.Refresh(); var cpu = (process.TotalProcessorTime - before).TotalSeconds / stopwatch.Elapsed.TotalSeconds * 100d; var to = DateTimeOffset.UtcNow;
-            if (!enabled) return new(cpu, 0, 0, 0, 0, 0);
+            if (!enabled) return new(cpu, 0, 0, 0, 0, 0, 0);
             var page = (await http.GetFromJsonAsync<HostLoadHistoryPage>("/host-stats/history", PhoneHomeFraming.Json))!;
             var samples = page.Samples.Count(s => s.SampledAt >= from && s.SampledAt < to);
-            var ticks = lines.Select(line => Regex.Match(line, @"HOST_LOAD_TICK elapsedMs=([0-9.]+)"))
-                .Where(m => m.Success).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).Order().ToArray();
-            ticks.Length.ShouldBeGreaterThanOrEqualTo(12, "Production sampler debug timings must be observed, not synthesized.");
-            var p95 = ticks[(int)Math.Ceiling(.95 * ticks.Length) - 1];
+            var arrived = TickValues(lines);
+            var measured = arrived.Skip(warmupTicks).Order().ToArray();
+            measured.Length.ShouldBeGreaterThanOrEqualTo(20, "Steady ticks must be numerous enough that nearest-rank p95 excludes the slowest.");
+            var index = (int)Math.Ceiling(.95 * measured.Length) - 1;
+            index.ShouldBeLessThan(measured.Length - 1, "p95 must not be the single maximum tick");
+            var p95 = measured[index];
             var bytes = Directory.EnumerateFiles(Path.Combine(root, "spool")).Sum(path => new FileInfo(path).Length);
-            return new(cpu, samples, p95, bytes, Volatile.Read(ref requests), page.Samples.Count);
+            return new(cpu, samples, measured.Length, p95, bytes, Volatile.Read(ref requests), page.Samples.Count);
         }
         finally
         {
@@ -101,5 +113,18 @@ public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
             }
         }
     }
-    private sealed record Measurement(double CpuPoints, int Samples, double P95TickMs, long Bytes, int Requests, int TotalSamples);
+    private static double[] TickValues(ConcurrentQueue<string> lines) => lines
+        .Select(line => Regex.Match(line, @"HOST_LOAD_TICK elapsedMs=([0-9.]+)"))
+        .Where(match => match.Success)
+        .Select(match => double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture))
+        .ToArray();
+
+    private static string HostLoad()
+    {
+        if (!OperatingSystem.IsLinux()) return "unavailable";
+        var parts = File.ReadAllText("/proc/loadavg").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 3 ? parts[0] + " " + parts[1] + " " + parts[2] : "unavailable";
+    }
+
+    private sealed record Measurement(double CpuPoints, int Samples, int MeasuredTicks, double P95TickMs, long Bytes, int Requests, int TotalSamples);
 }
