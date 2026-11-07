@@ -495,7 +495,7 @@ public sealed class WorktreeNoFollowDeleteTests
             {
                 writer.Write("later-bytes"u8);
                 writer.Flush();
-                File.ReadAllText(file).ShouldBe("later-bytestes",
+                ReadWhileOpenWriter(file).ShouldBe("later-bytestes",
                     "overwriting through an open handle preserves the earlier tail until truncated");
                 writer.Position = 0;
                 RewriteOpenWriter(writer);
@@ -503,6 +503,23 @@ public sealed class WorktreeNoFollowDeleteTests
             File.ReadAllText(file).ShouldBe("later-bytes");
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
+    public void C1717_B3_OpenWriterReadShareAdmitsTheWriter()
+    {
+        OpenWriterReadShare.HasFlag(FileShare.Write).ShouldBeTrue(
+            "NTFS refuses FileShare.Read while the open writer still has write access");
+    }
+
+    // File.ReadAllText opens FileShare.Read. NTFS refuses that while the writer still has write access.
+    private static FileShare OpenWriterReadShare => FileShare.Read;
+
+    private static string ReadWhileOpenWriter(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, OpenWriterReadShare);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     private static void RewriteOpenWriter(FileStream writer)
