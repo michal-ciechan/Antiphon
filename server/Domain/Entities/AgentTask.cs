@@ -712,6 +712,14 @@ public class AgentTask
 /// </summary>
 public class AgentTaskEvent
 {
+    // CARD-1514. Nullable snapshots preserve historical rows. The telemetry observer never
+    // guesses an old attempt or host from the task's mutable current state.
+    public int? LoadAttempt { get; set; }
+    public string? LoadRunnerId { get; set; }
+    public Guid? LoadSessionId { get; set; }
+    public DateTime? LoadQueuedAt { get; set; }
+    public DateTime? LoadDispatchedAt { get; set; }
+    public AgentTaskStatus? LoadStatus { get; set; }
     public Guid Id { get; set; }
     public Guid AgentTaskId { get; set; }
     /// <summary>Worker session bound by a Dispatched event; null on older and other events.</summary>
