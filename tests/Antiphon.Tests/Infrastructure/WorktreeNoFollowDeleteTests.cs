@@ -513,7 +513,7 @@ public sealed class WorktreeNoFollowDeleteTests
     }
 
     // File.ReadAllText opens FileShare.Read. NTFS refuses that while the writer still has write access.
-    private static FileShare OpenWriterReadShare => FileShare.Read;
+    private static FileShare OpenWriterReadShare => FileShare.ReadWrite | FileShare.Delete;
 
     private static string ReadWhileOpenWriter(string path)
     {
