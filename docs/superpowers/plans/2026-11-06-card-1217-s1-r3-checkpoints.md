@@ -58,8 +58,16 @@ it is generated mechanically from this table before launch and retained as evide
 | CP-R3-8 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatReceiptAndTimings` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-R3-9 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatFailurePartialAndInvalidInput` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-R3-10 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatNoBuildAndLeaseCustody` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-REPAIR | REPAIR | tests/Antiphon.Tests -> bin-c1217-8711-parity/ | r2-1-parity | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests*/*` | CP-SOURCE fixture repair | green | 14 | 3 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 
 The 16 GREEN rows preserve all 166 prior cases and add two tests (168 expected).
+Run CP-REPAIR only after the introduced CP-SOURCE fixture failure: the PowerShell
+XML exception includes a literal surrogate half, which default diagnostic JSON
+serialization cannot write as UTF-8. Escape non-ASCII diagnostic characters in
+the fixture JSON; keep raw XML, verdicts, assertions and the 30-second child
+deadline unchanged. Rerun the full affected integration class once, with its
+existing six-minute cap and a fresh build (28-minute cap). The other 15 green
+rows are retained at their actual tested SHA, not repeated or relabeled.
 PC-1..PC-102 and B-1/TRX, B-1/C, B-1/P, B-2/C, B-4/C remain pending
 SourceLanding Mutation. Additional R2-1 variants: omit validation, validate only
 decimal, validate only hex, normalize CRLF. Binding/cycles/discovery belong to
