@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.TestSupport;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -7,9 +8,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1745. The Linux server SHA gate is off until a config names the server,
-/// and a restart happens only with -Execute. The desktop AppHost scripts stay uncoupled.
+/// CARD-1745. The Linux server SHA gate is off until a config names the server.
+/// -Execute probes first and does not stop a serving container. The desktop
+/// AppHost scripts stay uncoupled. The harness is a Linux shell fake.
 /// </summary>
+[NativeLinuxOnly("Linux-only by construction: the SHA restart gate harness is a #!/bin/sh fake docker plus chmod. The case remains required on Linux.")]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LinuxServerRestartGateTests
