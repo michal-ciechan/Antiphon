@@ -103,6 +103,14 @@ public class C1514HostLoadSpoolTests(C1514HostLoadFixture fixture)
         clock.Advance(TimeSpan.FromMilliseconds(1));
         var expired = new HostLoadSpool(settings.HistoryPath!, settings, clock).ReadHistory(null, 120);
         expired.Samples.ShouldBeEmpty(); expired.Gaps.ShouldNotBeEmpty(); expired.Complete.ShouldBeFalse();
+        var agedSettings = C1514HostLoadFixture.Config(fixture.PrivatePath());
+        var agedClock = new FakeTimeProvider(C1514HostLoadFixture.T0);
+        var aged = new HostLoadSpool(agedSettings.HistoryPath!, agedSettings, agedClock);
+        aged.Append(C1514HostLoadFixture.Sample(aged, 1));
+        agedClock.Advance(TimeSpan.FromHours(24) + TimeSpan.FromMilliseconds(1));
+        aged.Append(C1514HostLoadFixture.Sample(aged, 2) with { SampledAt = agedClock.GetUtcNow() });
+        aged.ReadHistory(null, 120).Samples.Select(s => s.Source.Sequence).ShouldBe([2L], "A fresh append must not join an expired chunk.");
+        aged.ReadHistory(null, 120).Gaps.ShouldContain(g => g.FromSequence == 1 && g.ToSequence == 1);
     }
     [Test]
     public async Task DiskFailurePreservesLiveSampling()
@@ -140,6 +148,27 @@ public class C1514HostLoadSpoolTests(C1514HostLoadFixture fixture)
             var page = capture.ReadHistory(null, 120); page.Samples.Count.ShouldBe(1); page.Gaps.ShouldNotBeEmpty();
         }
         finally { await capture.StopAsync(CancellationToken.None); }
+        // A reader also has bounded acquisition when a real append is held at its disk boundary.
+        var heldSettings = C1514HostLoadFixture.Config(fixture.PrivatePath());
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var heldSpool = new HostLoadSpool(heldSettings.HistoryPath!, heldSettings, clock,
+            appendObservation: (stage, _) => { if (stage == "before-flush") { entered.TrySetResult(); release.Wait(); } });
+        var writer = Task.Run(() => heldSpool.Append(C1514HostLoadFixture.Sample(heldSpool)));
+        Task<bool>? reader = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            reader = Task.Run(() => { try { heldSpool.ReadHistory(null, 120); return false; } catch (IOException) { return true; } });
+            await Task.WhenAny(reader, Task.Delay(200));
+            reader.IsCompleted.ShouldBeTrue("history readers cannot wait indefinitely behind a stalled append");
+            (await reader).ShouldBeTrue();
+        }
+        finally
+        {
+            release.Set(); await writer.WaitAsync(TimeSpan.FromSeconds(2));
+            if (reader is not null) await reader.WaitAsync(TimeSpan.FromSeconds(2));
+        }
     }
     private sealed class MissingCpu : IProcessCpuProbe { public TimeSpan? TryGetTotalCpuTime(int pid, DateTime startedAt) => null; }
     private sealed class UnknownAuthority : IHostAdmissionSnapshotReader

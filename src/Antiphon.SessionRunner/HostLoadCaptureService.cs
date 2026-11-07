@@ -73,8 +73,8 @@ public sealed class HostLoadCaptureService : BackgroundService, IHostLoadHistory
                     var source = new HostLoadIdentity(_settings.RunnerId, spool.RunnerStoreId, _boot).At(item.Sequence);
                     var authority = await _authority.ReadAsync(stoppingToken);
                     spool.Append(HostLoadProjection.Create(item.Sample, source, _settings, authority));
-                    LastAppendedAt = item.Sample.At;
                     SpoolBytes = spool.Bytes;
+                    LastAppendedAt = item.Sample.At;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
                 { NoteLoss(item.Sequence); throw; }

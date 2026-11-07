@@ -71,6 +71,7 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
         using var other = await world.GetAsync("/api/agent-tasks/" + b.Id + "/load"); other.RootElement.GetProperty("taskId").GetGuid().ShouldBe(b.Id);
         (await world.Http.GetAsync("/api/agent-tasks/" + a.Id + "/load?attempt=0")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         using var load = await world.GetAsync("/api/hosts/grok-linux/load"); load.RootElement.GetProperty("current").GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(101);
+        load.RootElement.GetProperty("counters").GetProperty("tasksInFlight").ValueKind.ShouldBe(JsonValueKind.Null);
     }
     [Test, Timeout(10_000)]
     public async Task OldPeersRemainLiveOnly()
