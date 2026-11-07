@@ -1022,6 +1022,25 @@ Scheduled Tasks (`docs/bootstrap.md:251-259`) stay the desktop autostart. They a
 reimplemented as Linux cron in this contract. The embedded `wwwroot` client is the B UI. The
 desktop Vite/serve client remains the rollback UI.
 
+### Linux server SHA restart gate (CARD-1745)
+
+`scripts/restart-linux-server.ps1` is the host-side gate for one configured Linux server
+container. Topology A leaves it off. With no `-Config` and no `ANTIPHON_LINUX_SERVER_CONFIG`,
+the script exits 3, prints that the Linux server is not configured, and does not probe, lock,
+or call docker. `scripts/restart-apphost.ps1` remains the desktop AppHost restart.
+
+A config file supplies `baseUrl`, `container`, and `lockPath`. The default mode is WhatIf:
+`GET /health` and `GET /api/version` against that base URL, with no docker call. Exit 0
+requires HTTP 200 from `/health` and a `version` field equal to `-ExpectedServerSha` (40 or
+64 hex characters). A mismatch, a malformed body, or a version that is not HTTP 200 is exit 5
+and leaves the lock file. `-Execute` is the only mode that inspects, stops, and starts the
+named container, then applies the same check. A mismatch on that path exits 5, leaves the
+lock (including the image id from before the stop), and stops the container again so it is
+left stopped. The script refuses desktop AppHost ports 17200-17209, a short SHA, and container
+names for the runner, Postgres, or the gateway, before any docker call. It does not deploy
+the runner and it does not install a Scheduled Task. The staging compose remains CARD-1742;
+this gate does not create it and it is not the cutover.
+
 ### What `deploy-server2.ps1` deploys
 
 `scripts/deploy-server2.ps1` keeps deploying the **runner** from the desktop until CARD-1744. It
