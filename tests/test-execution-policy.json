@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "82b4f28a4197c7aba6c28678e3113afa2b343ccbd84c905e0e7ea790b87c1d1a",
+  "policyHash": "f7b7f7534ca39270a26e8b7da7b6a171690940fb64d7c6b45f9b0462d99b44e1",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -817,6 +817,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: native Linux custody proof. The case remains required on Linux.",
           "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointTerminalReceiptTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native SIGINT, shell and executor/waiter receipt witnesses. The class remains required on Linux.",
+          "owner": "CARD-1734"
         },
         {
           "suite": "antiphon",
