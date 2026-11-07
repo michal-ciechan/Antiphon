@@ -50,7 +50,7 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
     public async Task FailuresNeverPrintPositiveCapacity()
     {
         await using var world = await fixture.WorldAsync();
-        foreach (var failure in new[] { "http", "not-found", "malformed", "truncated", "defaults", "mandatory" })
+        foreach (var failure in new[] { "http", "not-found", "malformed", "truncated", "defaults", "mandatory", "summary", "source" })
         {
             Recorder(world);
             var normal = world.Override!;
@@ -61,7 +61,10 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
                     if (failure is "http" or "defaults") { c.Response.StatusCode = 503; return; }
                     if (failure == "not-found") { c.Response.StatusCode = 404; return; }
                     if (failure is "malformed" or "truncated") { await c.Response.WriteAsync(failure == "malformed" ? "not-json" : "{\"recommendation\":"); return; }
-                    var payload = JsonSerializer.SerializeToNode(Response("grok-linux", false, false), PhoneHomeFraming.Json)!.AsObject(); payload.Remove("recommendation");
+                    var payload = JsonSerializer.SerializeToNode(Response("grok-linux", false, false), PhoneHomeFraming.Json)!.AsObject();
+                    if (failure == "summary") payload["lastHour"]!.AsObject().Remove("cpuPercent");
+                    else if (failure == "source") payload["current"]!.AsObject().Remove("source");
+                    else payload.Remove("recommendation");
                     await c.Response.WriteAsJsonAsync(payload); return;
                 }
                 await normal(c);

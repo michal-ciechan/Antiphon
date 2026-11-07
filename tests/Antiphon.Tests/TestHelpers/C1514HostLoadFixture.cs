@@ -40,12 +40,12 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
     internal C1514HostLoadWorld Current { get; private set; } = null!;
     internal PhoneHomeTestHost Host => _host.Value.GetAwaiter().GetResult();
     public C1514HostLoadFixture() { _host = new(StartServerAsync); _runner = new(StartRunnerAsync); }
-    internal async Task<C1514HostLoadWorld> WorldAsync(bool phoneHome = false)
+    internal async Task<C1514HostLoadWorld> WorldAsync(bool phoneHome = false, bool advertiseHistory = true)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var world = new C1514HostLoadWorld(this, schema); Current = world;
         await _host.Value; await _runner.Value;
-        await world.InitializeAsync(phoneHome); return world;
+        await world.InitializeAsync(phoneHome, advertiseHistory); return world;
     }
     private async Task<PhoneHomeTestHost> StartServerAsync() => await PhoneHomeTestHost.StartAsync(clock: new CurrentClock(this),
         configureServices: services =>
@@ -156,6 +156,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     public HttpClient Http => _fixture.Host.Http;
     public Uri Api => Http.BaseAddress!;
     public long LastSequence { get; private set; }
+    public int HistoryRequests => _peer?.RequestCount(PhoneHomeOperation.HostLoadHistory) ?? 0;
     public HostLoadSource? LastSource { get; private set; }
     public string ProxyUrl => new Uri(Api, "c1514/" + Id.ToString("N") + "/").ToString();
     public static DateTimeOffset T0 => new(2026, 11, 6, 12, 0, 0, TimeSpan.Zero);
@@ -167,7 +168,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         Settings.Bindings.Add(new() { RunnerId = "grok-linux", PhysicalHostKey = "owned-host", SourceEpoch = Runner.SourceEpoch.Value, Revision = 1 });
         Settings.Bindings.Add(new() { RunnerId = "desktop", PhysicalHostKey = "owned-desktop", SourceEpoch = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), Revision = 1 });
     }
-    public async Task InitializeAsync(bool phoneHome)
+    public async Task InitializeAsync(bool phoneHome, bool advertiseHistory)
     {
         System.IO.Directory.CreateDirectory(Root);
         // Every world is an isolated database/filesystem snapshot of the same owned runner.
@@ -188,7 +189,9 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         var dispatcher = new PhoneHomeCommandDispatcher(new C1514Runtime(), new PhoneHomeSettings(), hostStats: Live, hostLoad: new LimitedHistory(this));
         var oldDispatcher = new PhoneHomeCommandDispatcher(new C1514Runtime(), new PhoneHomeSettings(), hostStats: Live);
         _fixture.Host.Capacity = 8;
-        _peer = await _fixture.Host.ConnectPeerAsync(bootId: identity.BootId, storeId: Spool.RunnerStoreId, capabilities: dispatcher.Capabilities());
+        var capabilities = dispatcher.Capabilities();
+        if (!advertiseHistory) capabilities = capabilities with { Features = capabilities.Features!.Where(f => f != RunnerCapabilityFeatures.HostLoadHistoryV1).ToArray() };
+        _peer = await _fixture.Host.ConnectPeerAsync(bootId: identity.BootId, storeId: Spool.RunnerStoreId, capabilities: capabilities);
         _peer.Reply = frame => frame.Operation is PhoneHomeOperation.HostStats or PhoneHomeOperation.HostStatsSeries or PhoneHomeOperation.HostLoadHistory
             ? (OldPeer ? oldDispatcher : dispatcher).DispatchAsync(frame, CancellationToken.None).GetAwaiter().GetResult() : null;
         _fixture.Host.Directory.MarkRecovered(await _fixture.Host.WaitLiveAsync());
