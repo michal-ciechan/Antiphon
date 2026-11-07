@@ -212,7 +212,7 @@ Each invocation uses TEMP=/tmp and UseAppHost=false. Checkpoint cold outputs are
 owned by the tool; direct bootstrap uses native bin/obj. Same fixtures and timing
 limitations as above; no p95 claim. No unchanged green selection is repeated.
 
-### Checkpoints
+### Historical round-3 checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
@@ -220,3 +220,61 @@ limitations as above; no p95 claim. No unchanged green selection is repeated.
 | CP-9 | S6-red | tests/Antiphon.Tests -> bin-c1581-r3-red/ | c540-ordered-red | /*/*/AgentTaskDispatchBaseGuardTests/C1581_ChangedDefaultReinspectionUsesCurrentIntent | V-7 | intended dispatch assertion failure at unchanged production | 1 | 8 | true |
 | CP-6 | S7 | tests/Antiphon.Tests -> bin-c1581-r3-affected/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)\|(DispatcherSiblingInspectionSchedulingTests*)/* | V-1,V-2,V-4,V-5,V-7,R-1 | every named full class; zero failed | 137 | 8 | true |
 | CP-7 | S7 | CP-6 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |
+
+## B-5 narrow repair (Code c857d442)
+
+Repair base: 91f6d049e5f257ce43a7cf3561bc5e5ecb067bfb. Original landing owner
+remains edc7b76c-0b0e-4c38-8410-41193227cf49. Round-3 Review 523b3039's
+retained API result confirms B-5; its external full report is absent on this runner.
+The explicit repair brief excludes B-3/Unit (CARD-1720): R-3/CP-4 remains owed,
+never passed. This narrow execution cannot qualify Final/Full or authorize land.
+The operator decides whether the round-three cap permits a fourth Review.
+
+V-8 preserves Queued, no claim/session/worktree/Failed event, and the original
+waiter identity/Since after a changed default rejects the claim and its refresh
+throws IO or exhausts the inspection budget. V-9 recovers the read on a later
+tick, then joins inspection and asserts actual dispatch. V-10 keeps the read
+failing across new scoped dispatchers: three failures defer, the fourth fails
+through the ordinary failure/outbox path with an honest default-read reason and
+retires the waiter. Every failed read records a visible Warning event and log.
+The durable warning count is keyed to task attempt, preventing fresh scopes or
+server restart from resetting the bound. One read failure per tick, no inline
+retry. The read catch covers only configured-default IO; real target/source/fence
+rejections retain their existing claim behavior. Host cancellation propagates.
+
+S8 commits these six ordinary witnesses against unchanged base production;
+CP-10 must be assertion-red, not build/fixture/zero-test red. S9 implements the
+bounded retry. CP-11 includes the full original 186-case roster plus these six
+cases in the five full affected classes. CP-12 batches all eight guard classes
+once. CP-13 retains Review's requested C540 3/3 proof in one host; this is the
+only repeated selection, bounded to three normal repetitions. V-1 through V-7,
+R-1/R-2 and V-3 manual evidence/diff/TRX/merge-tree checks remain required.
+No full assembly run; no unbounded shared integration impact. Required recipient
+transcript acceptance remains in CP-11's full land-dispatch class.
+
+Performance: inherit the existing 8/4-minute affected/guard estimates and finite
+24/15-minute row caps. Red and repeated C540 rows each estimate 8 minutes including
+cold build, deriving 24-minute caps. These are provisional, not p95: historical
+CP-6/7 ran in 170/104 seconds with a 284-second cold build on loaded Linux.
+Each committed group has one isolated build; green affected and guards share it.
+Checkpoint CLI bootstrap alone is an unlisted separately gated native build
+(UseAppHost=false, TEMP=/tmp); tool run/wait/validate use --no-build with the same
+property. No test timeout or assertion is widened. Shared assembly DB setup and
+per-case schema/Git isolation are retained. TRX records case durations; receipts
+separate slots/build/host phases; missing DB/external-call subphases stay unknown.
+No OS-selected production branch/helper or rc startup dependency changes; server
+activation restart after landing, runner none; rc startup witness not required.
+Placement reads the live runner defaults/catalogue and stays unpinned.
+
+All original PCs remain pending; PC-7/preserve, PC-8/recover and PC-9/bound each
+have IO and inspection-timeout variants, owned by method-scoped SourceLanding
+Mutation. Code runs no deliberate mutants. Candidates live in the mutation doc.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-10 | S8 | tests/Antiphon.Tests -> bin-c1581-b5-red/ | b5-red | /*/*/AgentTaskDispatchBaseGuardTests/(C1581_DefaultRead*)\|(C1581_PersistentDefaultRead*) | V-8,V-9,V-10 | six intended assertions fail at unchanged production | 6 | 8 | true |
+| CP-11 | S9 | tests/Antiphon.Tests -> bin-c1581-b5-affected/ | affected | /*/*/(AgentTaskLandDispatchYieldTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(DispatcherLeaseSpanTests*)\|(RepositoryLeaseWaitersTests*)\|(DispatcherSiblingInspectionSchedulingTests*)/* | V-1,V-2,V-4,V-5,V-7,V-8,V-9,V-10,R-1 | original 186 and six new cases; zero failed | 192 | 8 | true |
+| CP-12 | S9 | CP-11 | guards | /*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/* | R-2 | every named full class; zero failed | 75 | 4 | true |
+| CP-13 | S9-proof | tests/Antiphon.Tests -> bin-c1581-b5-c540/ | c540-proof | /*/*/AgentTaskDispatchBaseGuardTests/C540_ReducedWarningsKeepBaseDiagnostics | V-6 | --repeat 3; all three pass | 1 | 8 | true |
