@@ -198,9 +198,4 @@ public sealed class HostStatsSamplerService : BackgroundService
     }
 
     internal IProcessCpuProbe CpuProbe => _cpu;
-
-    internal static long? WorkingSet(int pid)
-    {
-        return new SamplerProcessQuery().WorkingSet(pid);
-    }
 }
