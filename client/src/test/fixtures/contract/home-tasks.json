@@ -41,7 +41,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     },
     {
       "key": "task:aaaaaaaa000000000000000000000004",
@@ -83,7 +84,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     },
     {
       "key": "task:aaaaaaaa000000000000000000000002",
@@ -125,7 +127,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     },
     {
       "key": "card:cccccccc000000000000000000000005",
@@ -160,7 +163,9 @@
         "completedAt": null,
         "requiredPlatform": "Any",
         "runnerId": null,
-        "observedPlatform": null
+        "observedPlatform": null,
+        "desktopWorkspaceKind": "Checkout",
+      "desktopWorkspaceKind": "Checkout"
       },
       "ownerAgentId": null,
       "agentKind": null,
@@ -183,7 +188,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     },
     {
       "key": "task:aaaaaaaa000000000000000000000001",
@@ -225,7 +231,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     },
     {
       "key": "card:cccccccc000000000000000000000003",
@@ -267,7 +274,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     },
     {
       "key": "task:aaaaaaaa000000000000000000000005",
@@ -309,7 +317,8 @@
       "completedAt": null,
       "requiredPlatform": "Any",
       "runnerId": null,
-      "observedPlatform": null
+      "observedPlatform": null,
+      "desktopWorkspaceKind": "Checkout"
     }
   ]
 }
