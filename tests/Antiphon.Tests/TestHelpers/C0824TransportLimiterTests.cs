@@ -27,6 +27,7 @@ public sealed class C0824TransportLimiterTests
 
     [Test]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_LeaseRoundTripRealRunner))]
+    [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_LeasedTreeReadSpawnsNoScratchGit))]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_BusyRunnerLeaseSerialisedNotDuplicated))]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_LeaseRecoveryAtEachHandoff))]
     [Arguments(typeof(C0824WorkspaceSlotServerTests), nameof(C0824WorkspaceSlotServerTests.C0824_ReleaseRoundTripRealRunner))]
