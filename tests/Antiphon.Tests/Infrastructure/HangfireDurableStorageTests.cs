@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Tests.TestHelpers;
 using Hangfire;
 using Hangfire.InMemory;
@@ -93,6 +94,66 @@ public sealed class HangfireStorageSelectionTests
     }
 
     [Test]
+    public async Task Disabled_residue_removes_a_previously_registered_job()
+    {
+        await AssertInMemoryRemovalAsync(
+            "antiphon:worktree-residue",
+            manager => HangfireConfiguration.RegisterWorktreeResidueJob(
+                manager, new WorktreeResidueSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterWorktreeResidueJob(
+                manager, new WorktreeResidueSettings { Enabled = false }));
+    }
+
+    [Test]
+    public async Task Disabled_watchdog_removes_a_previously_registered_job()
+    {
+        await AssertInMemoryRemovalAsync(
+            ExpectationWatchdogJob.RecurringJobId,
+            manager => HangfireConfiguration.RegisterExpectationWatchdogJob(
+                manager, new HangfireSettings(), new ExpectationWatchdogSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterExpectationWatchdogJob(
+                manager, new HangfireSettings(), new ExpectationWatchdogSettings { Enabled = false }));
+    }
+
+    [Test]
+    public async Task Disabled_slot_reconcile_removes_a_previously_registered_job()
+    {
+        await AssertInMemoryRemovalAsync(
+            RunnerSlotReconcileJob.RecurringJobId,
+            manager => HangfireConfiguration.RegisterRunnerSlotReconcileJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterRunnerSlotReconcileJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = false }));
+    }
+
+    [Test]
+    public async Task Disabled_retire_removes_a_previously_registered_job()
+    {
+        await AssertInMemoryRemovalAsync(
+            RunnerRetireJob.RecurringJobId,
+            manager => HangfireConfiguration.RegisterRunnerRetireJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterRunnerRetireJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = false }));
+    }
+
+    private static async Task AssertInMemoryRemovalAsync(
+        string jobId, Action<IRecurringJobManager> enable, Action<IRecurringJobManager> disable)
+    {
+        var storage = new InMemoryStorage(HangfireConfiguration.CreateStorageOptions(new HangfireSettings()));
+        var manager = new RecurringJobManager(storage);
+        enable(manager);
+        using (var before = storage.GetConnection())
+            before.GetRecurringJobs().ShouldContain(job => job.Id == jobId);
+
+        disable(manager);
+
+        using var connection = storage.GetConnection();
+        connection.GetRecurringJobs().ShouldNotContain(job => job.Id == jobId);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     [Timeout(20_000)]
     public async Task Unreachable_postgresql_storage_refuses_startup()
     {
@@ -171,6 +232,73 @@ public sealed class HangfirePostgreSqlStorageTests
         var again = HangfireConfiguration.CreateStorage(settings, database.ConnectionString);
         using var connection = again.GetConnection();
         connection.GetRecurringJobs().ShouldNotContain(job => job.Id == "antiphon:zombie-census");
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Disabled_residue_stays_absent_on_a_new_storage_instance()
+    {
+        await AssertDurableRemovalAsync(
+            "antiphon:worktree-residue",
+            manager => HangfireConfiguration.RegisterWorktreeResidueJob(
+                manager, new WorktreeResidueSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterWorktreeResidueJob(
+                manager, new WorktreeResidueSettings { Enabled = false }));
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Disabled_watchdog_stays_absent_on_a_new_storage_instance()
+    {
+        await AssertDurableRemovalAsync(
+            ExpectationWatchdogJob.RecurringJobId,
+            manager => HangfireConfiguration.RegisterExpectationWatchdogJob(
+                manager, new HangfireSettings(), new ExpectationWatchdogSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterExpectationWatchdogJob(
+                manager, new HangfireSettings(), new ExpectationWatchdogSettings { Enabled = false }));
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Disabled_slot_reconcile_stays_absent_on_a_new_storage_instance()
+    {
+        await AssertDurableRemovalAsync(
+            RunnerSlotReconcileJob.RecurringJobId,
+            manager => HangfireConfiguration.RegisterRunnerSlotReconcileJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterRunnerSlotReconcileJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = false }));
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Disabled_retire_stays_absent_on_a_new_storage_instance()
+    {
+        await AssertDurableRemovalAsync(
+            RunnerRetireJob.RecurringJobId,
+            manager => HangfireConfiguration.RegisterRunnerRetireJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = true }),
+            manager => HangfireConfiguration.RegisterRunnerRetireJob(
+                manager, new PhoneHomeRunnerSettings { Enabled = false }));
+    }
+
+    private async Task AssertDurableRemovalAsync(
+        string jobId, Action<IRecurringJobManager> enable, Action<IRecurringJobManager> disable)
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var settings = PostgreSqlSettings();
+        var first = HangfireConfiguration.CreateStorage(settings, database.ConnectionString);
+        enable(new RecurringJobManager(first));
+
+        var restarted = HangfireConfiguration.CreateStorage(settings, database.ConnectionString);
+        using (var seeing = restarted.GetConnection())
+            seeing.GetRecurringJobs().ShouldContain(job => job.Id == jobId);
+
+        disable(new RecurringJobManager(restarted));
+
+        var again = HangfireConfiguration.CreateStorage(settings, database.ConnectionString);
+        using var connection = again.GetConnection();
+        connection.GetRecurringJobs().ShouldNotContain(job => job.Id == jobId);
     }
 
     [Test]
