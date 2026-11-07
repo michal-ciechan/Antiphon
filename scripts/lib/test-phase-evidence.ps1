@@ -161,7 +161,9 @@ function ConvertTo-TestPhaseJsonText {
 }
 
 function Write-TestPhaseTextAtomic {
-    param([string]$Path, [string]$Text)
+    # -Deferred: during a nightly run, written on the background writer (same steps, see nightly-core.ps1).
+    param([string]$Path, [string]$Text, [switch]$Deferred)
+    if ($Deferred -and (Submit-NightlyDeferredEvidenceWrite $Path $Text $true)) { return }
     $identity = Get-TestPhasePathIdentity -Path $Path
     if ($identity.Kind -eq 'unsupported' -or $identity.Kind -eq 'unreadable') { return }
     $dir = Split-Path -Parent $Path
@@ -3808,6 +3810,7 @@ function Read-QualificationSidecar {
         [int]$DeadlineMilliseconds = 200
     )
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    Sync-NightlyDeferredEvidenceWrites $Path
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
@@ -4453,11 +4456,11 @@ function Update-QualificationChunkTiming {
             runWallSeconds = $runWall
         }
         $text = ConvertTo-TestPhaseJsonText -Value $record
-        Write-TestPhaseTextAtomic -Path $path -Text $text
+        Write-TestPhaseTextAtomic -Path $path -Text $text -Deferred
         if (-not [string]::IsNullOrWhiteSpace($timingRootText)) {
             $copy = Join-Path $timingRootText ('{0}-{1}.timing.json' -f $Suite, $Chunk)
             if (([IO.Path]::GetFullPath($copy)) -ne ([IO.Path]::GetFullPath($path))) {
-                Write-TestPhaseTextAtomic -Path $copy -Text $text
+                Write-TestPhaseTextAtomic -Path $copy -Text $text -Deferred
             }
         }
     } catch {
@@ -4514,6 +4517,7 @@ function Invoke-QualificationPostRunAggregation {
 
 function Get-QualificationTimingReport {
     param([string]$LogRoot, [string]$TimingRoot)
+    Sync-NightlyDeferredEvidenceWrites
     $chunks = @()
     if (-not [string]::IsNullOrWhiteSpace($LogRoot) -and (Test-Path -LiteralPath $LogRoot)) {
         foreach ($file in @(Get-ChildItem -LiteralPath $LogRoot -Filter '*.timing.json' -File -ErrorAction SilentlyContinue)) {

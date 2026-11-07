@@ -38,3 +38,39 @@ function Test-NightlyCoreAvailable {
     $script:NightlyCoreAvailable = $true
     return $true
 }
+
+# Background evidence writes (DeferredEvidenceWriter in NightlyCore.cs) for the files a nightly run rewrites
+# several times per batch. Off unless the run turns them on (nightly-tests.ps1), so a script calling the
+# evidence functions directly still reads back what it just wrote. ANTIPHON_NIGHTLY_DEFERRED_WRITES=off keeps
+# every write in line.
+if ($null -eq $script:NightlyDeferEvidenceWrites) { $script:NightlyDeferEvidenceWrites = $false }
+if ($null -eq $script:NightlyDeferredEvidenceUsed) { $script:NightlyDeferredEvidenceUsed = $false }
+
+function Enable-NightlyDeferredEvidenceWrites {
+    if ([string]$env:ANTIPHON_NIGHTLY_DEFERRED_WRITES -ieq 'off') { return }
+    if (Test-NightlyCoreAvailable) { $script:NightlyDeferEvidenceWrites = $true }
+}
+
+function Disable-NightlyDeferredEvidenceWrites {
+    Sync-NightlyDeferredEvidenceWrites
+    $script:NightlyDeferEvidenceWrites = $false
+}
+
+# Queues the atomic write when deferral is on and returns $true; $false means the caller writes in line.
+function Submit-NightlyDeferredEvidenceWrite([string]$Path, [string]$Text, [bool]$SkipLinks) {
+    if (-not $script:NightlyDeferEvidenceWrites) { return $false }
+    [Antiphon.Nightly.DeferredEvidenceWriter]::Enqueue($Path, $Text, $SkipLinks)
+    $script:NightlyDeferredEvidenceUsed = $true
+    return $true
+}
+
+# Read barrier for the deferred files: waits for the queued writes (of -Path only, when given), so this
+# process reads what it wrote.
+function Sync-NightlyDeferredEvidenceWrites([string]$Path = '') {
+    if (-not $script:NightlyDeferredEvidenceUsed) { return }
+    if ($Path) { $failures = [Antiphon.Nightly.DeferredEvidenceWriter]::Flush($Path) }
+    else { $failures = [Antiphon.Nightly.DeferredEvidenceWriter]::Flush() }
+    foreach ($failure in $failures) {
+        Write-Warning -WarningAction Continue ('deferred-evidence-write-failed: ' + $failure)
+    }
+}

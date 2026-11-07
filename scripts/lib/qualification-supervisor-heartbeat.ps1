@@ -38,6 +38,7 @@ function ConvertFrom-QualificationHeartbeatTime {
 
 function Get-QualificationGroupPlannedSeconds {
     param([string]$Path, [string]$ChunkId, [string]$SuiteId, [string]$RunId, [string]$Attempt)
+    Sync-NightlyDeferredEvidenceWrites
     try {
         if(-not $Path -or -not $ChunkId){throw 'missing-path-or-chunk'}
         if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular' -or [IO.Path]::GetFileName($Path) -cnotmatch '^groups-planned(?:-index|-[a-z0-9][a-z0-9-]{0,40})?\.json$'){throw 'supplied-plan-unavailable'}
@@ -137,6 +138,7 @@ function Read-QualificationActiveChunkIdentity {
     param([string]$Directory)
     try {
         $path=Join-Path $Directory 'active-chunk.json'
+        Sync-NightlyDeferredEvidenceWrites $path
         $digest=Get-NightlyFileSha256 $path
         $record=Read-QualificationPlanJson $path
         foreach($field in @('format','state','runId','attempt','suite','chunk','planFile','planDigest','sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
@@ -190,7 +192,9 @@ function Write-QualificationActiveChunkIdentity {
         $generation=1;if($old -and $old.runId -ceq $RunId -and $old.attempt -ceq $Attempt){$generation=[long]$old.generation+1}
         $record=[ordered]@{format='antiphon-qualification-active-chunk-v1';state=$State;generation=$generation;runId=$RunId;attempt=$Attempt;suite=$SuiteId;chunk=$ChunkId;planFile=$file;planDigest=$snapshot.Digest}
         foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){if([string]$rows[0].$field -cne [string]$plan.$field){throw ('active-plan-'+$field)};$record[$field]=[string]$plan.$field}
-        Write-NightlyAtomicJson -Path (Join-Path $Directory 'active-chunk.json') -Object $record
+        # Rewritten at every batch start and end: on the background writer during a run (nightly-core.ps1).
+        $activePath=Join-Path $Directory 'active-chunk.json'
+        if(-not (Submit-NightlyDeferredEvidenceWrite $activePath ($record|ConvertTo-Json -Depth 12) $false)){Write-NightlyAtomicJson -Path $activePath -Object $record}
         return $true
     } catch {
         Write-Warning -WarningAction Continue ('active-identity-unavailable: '+$_.Exception.Message)

@@ -109,7 +109,11 @@ $invoke = @{
     WhatIf = $WhatIf
 }
 
-$result = Invoke-AntiphonNightlyTests @invoke
+# Timing sidecars and the active-batch identity are written on a background thread during the run
+# (nightly-core.ps1); every queued write is on disk before this script returns or exits.
+Enable-NightlyDeferredEvidenceWrites
+try { $result = Invoke-AntiphonNightlyTests @invoke }
+finally { Disable-NightlyDeferredEvidenceWrites }
 if ($PassThru) { return $result }
 $code = 1
 if ($null -ne $result -and $null -ne $result.ExitCode) { $code = [int]$result.ExitCode }

@@ -164,6 +164,8 @@ function Export-NightlyStoppedRunSeed {
     [CmdletBinding()]
     param([string]$RunDirectory,[string]$OutputPath,[string]$SourceRunId='',
         [string]$SourceCandidateId='', [string]$SourceSha='', [string]$TimingRoot='', [switch]$PassThru)
+    # A seed read in the same process as the run waits for its queued timing writes (nightly-core.ps1).
+    if(Get-Command Sync-NightlyDeferredEvidenceWrites -ErrorAction SilentlyContinue){Sync-NightlyDeferredEvidenceWrites}
     if([string]::IsNullOrWhiteSpace($RunDirectory) -or [string]::IsNullOrWhiteSpace($OutputPath)){throw 'seed-path-required'}
     Reset-NightlyHistoryLinkCache
     $root=ConvertTo-NightlyHistoryFull $RunDirectory

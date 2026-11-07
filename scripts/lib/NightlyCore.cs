@@ -1209,4 +1209,145 @@ namespace Antiphon.Nightly
             WriteString(sb, PsValue.Str(value));
         }
     }
+
+    /// <summary>
+    /// Background writes for the evidence files a nightly run rewrites several times per batch (the timing
+    /// sidecars and the active-batch identity). Each write is the same temporary-file-then-replace as the
+    /// PowerShell writers, so a reader never sees a torn file; it only lands a little later. A path queued again
+    /// before its earlier text was written replaces that text and moves to the back of the queue, so files land
+    /// in the order the run produced them and only the newest text of each is written. Flush waits for the
+    /// queue; the process waits for it on exit. A crash can lose the writes still queued.
+    /// </summary>
+    public static class DeferredEvidenceWriter
+    {
+        private static readonly object Gate = new object();
+        private static readonly LinkedList<string> Queue = new LinkedList<string>();
+        private static readonly Dictionary<string, KeyValuePair<LinkedListNode<string>, string[]>> Pending =
+            new Dictionary<string, KeyValuePair<LinkedListNode<string>, string[]>>(StringComparer.Ordinal);
+        private static readonly List<string> Failures = new List<string>();
+        private static bool running;
+        private static int busy;
+        private static string writing;
+        private static bool exitHooked;
+
+        /// <summary>Queues a write. skipLinks: leave an existing directory or link alone, as Write-TestPhaseTextAtomic does.</summary>
+        public static void Enqueue(string path, string text, bool skipLinks)
+        {
+            string full = System.IO.Path.GetFullPath(path);
+            lock (Gate)
+            {
+                KeyValuePair<LinkedListNode<string>, string[]> old;
+                if (Pending.TryGetValue(full, out old)) Queue.Remove(old.Key);
+                LinkedListNode<string> node = Queue.AddLast(full);
+                Pending[full] = new KeyValuePair<LinkedListNode<string>, string[]>(node, new[] { text, skipLinks ? "1" : "" });
+                if (!exitHooked)
+                {
+                    exitHooked = true;
+                    AppDomain.CurrentDomain.ProcessExit += (sender, args) => Flush();
+                }
+                if (!running)
+                {
+                    running = true;
+                    var thread = new System.Threading.Thread(Run);
+                    thread.IsBackground = false;
+                    thread.Name = "antiphon-evidence-writer";
+                    thread.Start();
+                }
+            }
+        }
+
+        /// <summary>Waits until every queued write is on disk; returns (and forgets) the writes that failed.</summary>
+        public static string[] Flush()
+        {
+            lock (Gate)
+            {
+                while (Queue.Count > 0 || busy > 0) System.Threading.Monitor.Wait(Gate);
+                string[] failed = Failures.ToArray();
+                Failures.Clear();
+                return failed;
+            }
+        }
+
+        /// <summary>Waits until the queued write of one path is on disk; returns (and forgets) failed writes.</summary>
+        public static string[] Flush(string path)
+        {
+            string full = System.IO.Path.GetFullPath(path);
+            lock (Gate)
+            {
+                while (Pending.ContainsKey(full) || string.Equals(writing, full, StringComparison.Ordinal)) System.Threading.Monitor.Wait(Gate);
+                string[] failed = Failures.ToArray();
+                Failures.Clear();
+                return failed;
+            }
+        }
+
+        private static void Run()
+        {
+            while (true)
+            {
+                string path;
+                string[] item;
+                lock (Gate)
+                {
+                    if (Queue.Count == 0)
+                    {
+                        running = false;
+                        System.Threading.Monitor.PulseAll(Gate);
+                        return;
+                    }
+                    path = Queue.First.Value;
+                    Queue.RemoveFirst();
+                    item = Pending[path].Value;
+                    Pending.Remove(path);
+                    writing = path;
+                    busy++;
+                }
+                try { WriteAtomic(path, item[0], item[1].Length > 0); }
+                catch (Exception ex) { lock (Gate) { Failures.Add(path + ": " + ex.Message); } }
+                finally
+                {
+                    lock (Gate)
+                    {
+                        busy--;
+                        writing = null;
+                        System.Threading.Monitor.PulseAll(Gate);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Write-TestPhaseTextAtomic / Write-NightlyAtomicJson: temporary file, then replace or move.</summary>
+        public static void WriteAtomic(string path, string text, bool skipLinks)
+        {
+            bool exists = true;
+            System.IO.FileAttributes attrs = 0;
+            try { attrs = System.IO.File.GetAttributes(path); }
+            catch (System.IO.FileNotFoundException) { exists = false; }
+            catch (System.IO.DirectoryNotFoundException) { exists = false; }
+            if (exists && skipLinks && (attrs & (System.IO.FileAttributes.Directory | System.IO.FileAttributes.ReparsePoint)) != 0) return;
+            string dir = System.IO.Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+            string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            System.IO.File.WriteAllText(tmp, text, new UTF8Encoding(false));
+            if (exists)
+            {
+                string bak = path + ".bak";
+                System.IO.File.Replace(tmp, path, bak);
+                try
+                {
+                    if (System.IO.File.Exists(bak))
+                    {
+                        System.IO.File.SetAttributes(bak, System.IO.FileAttributes.Normal);
+                        System.IO.File.Delete(bak);
+                    }
+                }
+                catch (System.IO.IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            else
+            {
+                System.IO.File.Move(tmp, path);
+            }
+        }
+    }
 }
