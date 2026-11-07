@@ -28,6 +28,8 @@ internal static class TerminalReceipt
             throw new IOException("refused: terminal receipt identity/source mismatching");
 
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
+        var previousSourceState = state.Source.State;
+        var previouslyObservedEnd = state.Source.End is not null;
         var source = new SourceRunGuard(request.RepoRoot, state.Source, runtime.SourceCapture);
         try { source.Observe(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -37,6 +39,10 @@ internal static class TerminalReceipt
             state.Source.End = null;
             state.Source.State = "unknown";
         }
+        // SourceRunGuard's refusal is sticky across observations. A new guard
+        // after executor teardown must not erase that durable history on restore.
+        if (previousSourceState == "changed" || previousSourceState == "unknown" && previouslyObservedEnd)
+            state.Source.State = previousSourceState;
         state.Source.BuildSource = selected.All(row => row.IsCommand) ? "notApplicable"
             : selected.Where(row => !row.IsCommand).All(row => state.Builds.Any(build =>
                 build.Id == row.Build && build.Source.BuildSource == "verified")) ? "verified" : "unknown";
