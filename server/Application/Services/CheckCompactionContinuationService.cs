@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -124,7 +127,7 @@ public sealed class CheckCompactionContinuationService
         var scope = await BuildScopeAsync(seatId, ct);
         if (scope is null)
             return;
-        var entries = await LoadFactsAsync(scope.SessionId, ct);
+        var entries = await LoadFactsAsync(scope.SessionId, scope.AcceptedStartedAt, ct);
         var verdict = CompactionContinuationPolicy.Evaluate(
             scope, entries, _settings.CheckCompactionContinuationWaitMinutes, UtcNow());
         if (!verdict.Overdue || verdict.NativeBoundaryIdentity is null || verdict.NativeContinuationIdentity is null)
@@ -137,7 +140,7 @@ public sealed class CheckCompactionContinuationService
             || !string.Equals(observation.NativeContinuationId, verdict.NativeContinuationIdentity, StringComparison.Ordinal))
             return;
 
-        var again = await LoadFactsAsync(scope.SessionId, ct);
+        var again = await LoadFactsAsync(scope.SessionId, scope.AcceptedStartedAt, ct);
         var confirmed = CompactionContinuationPolicy.Evaluate(
             scope, again, _settings.CheckCompactionContinuationWaitMinutes, UtcNow());
         if (!confirmed.Overdue
@@ -284,7 +287,7 @@ public sealed class CheckCompactionContinuationService
             return;
         }
 
-        var facts = await LoadFactsAsync(episode.SessionId, ct);
+        var facts = await LoadFactsAsync(episode.SessionId, scope.AcceptedStartedAt, ct);
         var verdict = CompactionContinuationPolicy.Evaluate(
             scope, facts, episode.ConfiguredThresholdMinutes, UtcNow());
         if (verdict.Reason == "progress")
@@ -1026,18 +1029,13 @@ public sealed class CheckCompactionContinuationService
         };
     }
 
-    internal async Task<IReadOnlyList<CompactionTranscriptFact>> LoadFactsAsync(Guid sessionId, CancellationToken ct)
+    internal async Task<IReadOnlyList<CompactionTranscriptFact>> LoadFactsAsync(
+        Guid sessionId, DateTime acceptedStartedAt, CancellationToken ct)
     {
-        var rows = await _db.TranscriptEntries.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId)
-            .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Kind, t.Text, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId })
-            .ToListAsync(ct);
         var checkIds = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId && t.Role == StandingSpecialistSeatPolicy.Role)
             .Select(t => t.Id)
             .ToListAsync(ct);
-        var tokens = checkIds.SelectMany(id => new[] { id.ToString("D"), id.ToString("N"), DelegationReportFormatter.TaskMarker(id) }).ToArray();
         // A prompt a PERSON put in this session. The owning-prompt predicate needs it: a human who
         // re-types or pastes a Check brief owns that turn, and its silence is a human's to break,
         // not this mechanism's. The evidence is the delivered queue row behind the prompt - the
@@ -1053,21 +1051,116 @@ public sealed class CheckCompactionContinuationService
         // A body too short to identify makes IsCompleteIn vacuously true, which would stamp every
         // prompt in the session as human. Only bodies that can actually be matched count.
         var humanMatchable = humanBodies.Where(PromptSubmissionMatch.RequiresTextMatch).ToArray();
-        return rows.Select(row => new CompactionTranscriptFact(
-            row.Sequence,
-            row.Kind,
-            row.Text,
-            row.Timestamp,
-            row.CreatedAt,
-            row.Uuid,
-            row.ToolUseId,
-            IsCorrelatedCheck: row.Kind == TranscriptKinds.UserPrompt
-                && row.Text is not null
-                && tokens.Any(token => row.Text.Contains(token, StringComparison.Ordinal)),
-            IsHumanOrigin: row.Kind == TranscriptKinds.UserPrompt
-                && row.Text is not null
-                && humanMatchable.Any(body => PromptSubmissionMatch.IsCompleteIn(body, row.Text)))).ToArray();
+        var stamp = await TranscriptStampAsync(sessionId, ct);
+        // Rows are immutable. The stamp, the Check set and the matchable human bodies are the
+        // inputs a later pass can disagree on. Human bodies are part of the key because a sent
+        // queue row changes IsHumanOrigin without a new transcript sequence.
+        var fingerprint = FactFingerprint(acceptedStartedAt, stamp, checkIds, humanMatchable);
+        if (CompactionFactCache.TryGet(sessionId, fingerprint, out var cached))
+            return cached;
+
+        var facts = await LoadJudgedFactsAsync(sessionId, acceptedStartedAt, checkIds, humanMatchable, ct);
+        CompactionFactCache.Store(sessionId, fingerprint, facts);
+        return facts;
     }
+
+    private async Task<TranscriptStamp> TranscriptStampAsync(Guid sessionId, CancellationToken ct)
+    {
+        var query = _db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId);
+        var count = await query.CountAsync(ct);
+        if (count == 0)
+            return new TranscriptStamp(0, -1, 0);
+        var max = await query.MaxAsync(t => t.Sequence, ct);
+        // length() only. A null check here becomes CASE WHEN "Text", which the load witness
+        // counts as projecting the column. length(NULL) is NULL and SUM skips it.
+        var chars = await query.SumAsync(t => (long?)t.Text!.Length, ct) ?? 0L;
+        return new TranscriptStamp(count, max, chars);
+    }
+
+    private async Task<CompactionTranscriptFact[]> LoadJudgedFactsAsync(
+        Guid sessionId,
+        DateTime acceptedStartedAt,
+        IReadOnlyList<Guid> checkIds,
+        IReadOnlyList<string> humanMatchable,
+        CancellationToken ct)
+    {
+        var slim = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.Kind, t.Timestamp, t.CreatedAt, t.Uuid, t.ToolUseId })
+            .ToListAsync(ct);
+        if (slim.Count == 0)
+            return [];
+
+        // The policy reads compact-boundary text, interrupt prefixes, and user-prompt text
+        // after the last effective end. Assistant, thinking and tool text cannot change a verdict.
+        var text = new Dictionary<long, string?>();
+        var boundaries = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.CompactBoundary)
+            .Select(t => new { t.Sequence, t.Text })
+            .ToListAsync(ct);
+        foreach (var row in boundaries)
+            text[row.Sequence] = row.Text;
+
+        var interruptPrefix = TranscriptKinds.InterruptedPromptPrefix;
+        var interrupts = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null
+                && t.Text.Contains(interruptPrefix))
+            .Select(t => new { t.Sequence, t.Text })
+            .ToListAsync(ct);
+        foreach (var row in interrupts)
+        {
+            if (TranscriptKinds.IsInterruptPrompt(TranscriptKinds.UserPrompt, row.Text))
+                text[row.Sequence] = row.Text;
+        }
+
+        var classified = new CompactionFactInput[slim.Count];
+        for (var i = 0; i < slim.Count; i++)
+            classified[i] = Input(slim[i].Sequence, slim[i].Kind, slim[i].Timestamp, slim[i].CreatedAt, slim[i].Uuid, slim[i].ToolUseId, text);
+
+        var start = CompactionTranscriptFacts.OpenUserPromptStartExclusive(classified, acceptedStartedAt);
+        var prompts = start == long.MinValue
+            ? _db.TranscriptEntries.AsNoTracking().Where(t =>
+                t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+            : _db.TranscriptEntries.AsNoTracking().Where(t =>
+                t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > start);
+        var promptRows = await prompts.Select(t => new { t.Sequence, t.Text }).ToListAsync(ct);
+        foreach (var row in promptRows)
+            text[row.Sequence] = row.Text;
+
+        var inputs = new CompactionFactInput[slim.Count];
+        for (var i = 0; i < slim.Count; i++)
+            inputs[i] = Input(slim[i].Sequence, slim[i].Kind, slim[i].Timestamp, slim[i].CreatedAt, slim[i].Uuid, slim[i].ToolUseId, text);
+        return CompactionTranscriptFacts.Build(inputs, checkIds, humanMatchable);
+    }
+
+    private static CompactionFactInput Input(
+        long sequence, string kind, DateTime? timestamp, DateTime createdAt, string? uuid, string? toolUseId,
+        Dictionary<long, string?> text)
+    {
+        text.TryGetValue(sequence, out var rowText);
+        return new CompactionFactInput(sequence, kind, rowText, timestamp, createdAt, uuid, toolUseId);
+    }
+
+    private static string FactFingerprint(
+        DateTime accepted, TranscriptStamp stamp, IReadOnlyList<Guid> checkIds, IReadOnlyList<string> humans)
+    {
+        var builder = new StringBuilder();
+        builder.Append(accepted.Ticks).Append('|').Append(stamp.Count).Append('|')
+            .Append(stamp.MaxSequence).Append('|').Append(stamp.TextChars).Append('|');
+        foreach (var id in checkIds.Order())
+            builder.Append(id.ToString("N")).Append(',');
+        builder.Append('|');
+        foreach (var body in humans.Order(StringComparer.Ordinal))
+            builder.Append(body.Length).Append(':').Append(body).Append('\n');
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
+    }
+
+    private readonly record struct TranscriptStamp(int Count, long MaxSequence, long TextChars);
 
     private async Task<CompactionTailObservation?> ObserveAsync(Guid sessionId, CancellationToken ct)
     {
@@ -1162,5 +1255,34 @@ public sealed class CheckCompactionContinuationService
     {
         var now = _time.GetUtcNow().UtcDateTime;
         return now.Kind == DateTimeKind.Utc ? now : DateTime.SpecifyKind(now, DateTimeKind.Utc);
+    }
+}
+
+/// <summary>
+/// Process-wide facts for a seat that has not changed since the last pass. One entry per session.
+/// </summary>
+internal static class CompactionFactCache
+{
+    private sealed record Entry(string Fingerprint, CompactionTranscriptFact[] Facts);
+
+    private static readonly ConcurrentDictionary<Guid, Entry> Sessions = new();
+
+    internal static bool TryGet(Guid sessionId, string fingerprint, out CompactionTranscriptFact[] facts)
+    {
+        if (Sessions.TryGetValue(sessionId, out var entry) && entry.Fingerprint == fingerprint)
+        {
+            facts = entry.Facts;
+            return true;
+        }
+
+        facts = [];
+        return false;
+    }
+
+    internal static void Store(Guid sessionId, string fingerprint, CompactionTranscriptFact[] facts)
+    {
+        Sessions[sessionId] = new Entry(fingerprint, facts);
+        if (Sessions.Count > 256)
+            Sessions.Clear();
     }
 }

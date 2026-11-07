@@ -33,7 +33,7 @@ public class CheckCompactionFactLoadTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var seeded = await SeedAsync(schema.ConnectionString);
         await using var db = NewDb(schema.ConnectionString);
-        var loaded = await Service(db).LoadFactsAsync(seeded.SessionId, CancellationToken.None);
+        var loaded = await Service(db).LoadFactsAsync(seeded.SessionId, seeded.Accepted, CancellationToken.None);
         var legacy = LegacyFacts(seeded.Rows, seeded.CheckIds, seeded.HumanBodies);
         var scope = CompactionScopeSnapshot.EligibleSeat(seeded.SessionId, seeded.Accepted);
         var when = seeded.ContinuationAt.AddMinutes(10);
@@ -49,7 +49,7 @@ public class CheckCompactionFactLoadTests
         var seeded = await SeedAsync(schema.ConnectionString);
         var capture = new CommandCapture();
         await using var db = NewDb(schema.ConnectionString, capture);
-        var loaded = await Service(db).LoadFactsAsync(seeded.SessionId, CancellationToken.None);
+        var loaded = await Service(db).LoadFactsAsync(seeded.SessionId, seeded.Accepted, CancellationToken.None);
 
         loaded.Any(f => f.Text != null && f.Text.Contains(HistoricalAssistant, StringComparison.Ordinal))
             .ShouldBeFalse();
@@ -69,9 +69,9 @@ public class CheckCompactionFactLoadTests
         var capture = new CommandCapture();
         await using var db = NewDb(schema.ConnectionString, capture);
         var service = Service(db);
-        await service.LoadFactsAsync(seeded.SessionId, CancellationToken.None);
+        await service.LoadFactsAsync(seeded.SessionId, seeded.Accepted, CancellationToken.None);
         capture.Commands.Clear();
-        await service.LoadFactsAsync(seeded.SessionId, CancellationToken.None);
+        await service.LoadFactsAsync(seeded.SessionId, seeded.Accepted, CancellationToken.None);
 
         capture.Commands.Where(ProjectsTranscriptText).ShouldBeEmpty();
     }
@@ -251,10 +251,10 @@ public class CheckCompactionFactLoadTests
 
     private static bool TextProjectionIsRestricted(string sql)
     {
-        var whereAt = sql.IndexOf(" WHERE ", StringComparison.OrdinalIgnoreCase);
-        if (whereAt < 0)
+        var whereAt = Regex.Match(sql, @"\bWHERE\b", RegexOptions.IgnoreCase);
+        if (!whereAt.Success)
             return false;
-        var where = sql[whereAt..];
+        var where = sql[whereAt.Index..];
         return where.Contains("\"Kind\"", StringComparison.Ordinal)
             || where.Contains("\"Sequence\"", StringComparison.Ordinal);
     }
