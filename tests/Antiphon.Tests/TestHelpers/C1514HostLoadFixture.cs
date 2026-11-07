@@ -294,8 +294,12 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         Services.Dispose(); _sourceHttp.Dispose(); await Schema.DisposeAsync();
         if (System.IO.Directory.Exists(Root)) System.IO.Directory.Delete(Root, true);
     }
+    // Fixture poll for spool readiness, not the product history-read deadline. Review run
+    // 20261107-155611-da81 cancelled the previous 5s cap once inside SeedPrefixAsync while two
+    // foreign Unit lanes held the host. Provisional (R5): that exceedance was not timed, so 15s
+    // is three times the missed floor until a loaded p95 exists. Outcome assertions stay put.
     internal static async Task EventuallyAsync(Func<bool> predicate)
-    { using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5)); while (!predicate()) await Task.Delay(5, limit.Token); }
+    { using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(15)); while (!predicate()) await Task.Delay(5, limit.Token); }
     internal HostLoadHistoryPage ReadHistory(string? after, int limit) => History.ReadHistory(after, Math.Min(limit, ReadLimit));
     private sealed class LimitedHistory(C1514HostLoadWorld world) : IHostLoadHistorySource
     { public HostLoadHistoryPage ReadHistory(string? after, int limit) => world.ReadHistory(after, limit); }
