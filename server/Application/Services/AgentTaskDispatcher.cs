@@ -902,8 +902,17 @@ public sealed partial class AgentTaskDispatcher
                 if (_siblingInspection is null || _siblingInspections is null)
                     throw new InvalidOperationException("Sibling inspection worker is not registered.");
                 // No Git runs here. Durable Held precedes advisory enqueue, so restart re-arms safely.
-                using var intentBudget = _siblingInspection.Begin(task.RepoPath ?? "", ct);
-                var fallback = await _siblingInspection.ConfiguredDefaultAsync(task, intentBudget, ct);
+                var (fallback, defaultReadFailed) = await ReadSiblingDefaultForDispatchAsync(task, ct);
+                if (fallback is null)
+                {
+                    if (defaultReadFailed) failures++;
+                    else
+                    {
+                        heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
+                        await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
+                    }
+                    continue;
+                }
                 if (task.RepoPath is null) continue;
                 siblingIntent = CardSiblingInspectionIntent.From(task, fallback);
                 // CARD-1428 D-4: a read does not consume the result; a lease refusal below reuses it.
@@ -1014,8 +1023,12 @@ public sealed partial class AgentTaskDispatcher
                     heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
                     await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
                     if (task.RepoPath is null) continue;
-                    using var refresh = _siblingInspection!.Begin(task.RepoPath, ct);
-                    var fallback = await _siblingInspection.ConfiguredDefaultAsync(task, refresh, ct);
+                    var (fallback, defaultReadFailed) = await ReadSiblingDefaultForDispatchAsync(task, ct);
+                    if (fallback is null)
+                    {
+                        if (defaultReadFailed) failures++;
+                        continue;
+                    }
                     var currentIntent = CardSiblingInspectionIntent.From(task, fallback);
                     if (!_siblingInspections!.TryEnqueue(currentIntent))
                         await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionCapacity, lastHeld, ct);
@@ -1161,6 +1174,43 @@ public sealed partial class AgentTaskDispatcher
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, 0,
             skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, 0, skippedCapacityWait,
             heldOnLease.Count, heldOnRunner);
+    }
+
+    // Only the advisory default read is retried. Claim-time target/source/fence refusals keep
+    // their existing semantics. Events retain the finite budget across scoped ticks and restart.
+    private async Task<(string? Default, bool Failed)> ReadSiblingDefaultForDispatchAsync(
+        AgentTask task, CancellationToken ct)
+    {
+        try
+        {
+            using var inspection = _siblingInspection!.Begin(task.RepoPath ?? "", ct);
+            return (await _siblingInspection.ConfiguredDefaultAsync(task, inspection, ct), false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            const int maxDeferredFailures = 3;
+            var prefix = $"sibling_default_read_retry: attempt={task.Attempt};";
+            var failures = 1 + await _db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning && e.Detail.StartsWith(prefix), ct);
+            var reason = $"Sibling default read failed {failures} times before a session existed: {DispatchFailureDetail(ex)}";
+            _logger.LogWarning(ex, "Task {ShortId}: {Reason}; deferred failure limit {Limit}",
+                DelegationReportFormatter.Short(task.Id), reason, maxDeferredFailures);
+            if (failures > maxDeferredFailures)
+            {
+                await FailAndNotifyAsync(task, reason, "dispatch", ct);
+                return (null, true);
+            }
+
+            var detail = $"{prefix} {reason}. Preserving Queued and its lease waiter; "
+                + $"retry inspection on a later tick (limit: {maxDeferredFailures} deferred failures).";
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
+                Detail = detail.Length <= 4000 ? detail : detail[..4000], At = UtcNow(),
+            });
+            await _db.SaveChangesAsync(ct);
+            return (null, false);
+        }
     }
 
     /// <summary>

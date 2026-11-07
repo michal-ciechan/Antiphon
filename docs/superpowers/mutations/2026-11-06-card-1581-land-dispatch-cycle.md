@@ -12,6 +12,9 @@ Mutation, which owns exact binding, deliberate mutants and red/restore/green evi
 | PC-4 | explicit-source, explicit-descendant, already-contained | Restore the over-broad database-only filter, excluding candidates without a proven pending_land hold on this exact task | AgentTaskLandDispatchYieldTests.C1581_a_runnable_same_card_dispatch_keeps_priority | real sibling guard permits dispatch; expected Held, actual Complete, Attempt must remain zero and waiter identity retained |
 | PC-5 | eligible, busy, restart, enqueue-failure | Remove dependent filtering so the second hosted pass yields to the dispatch that needs publication | AgentTaskLandDispatchYieldTests.C1581_hosted_land_and_dispatch_reach_complete_recipient_prompts | expected second pass Completed, actual Held; joined task/request/event/note/queue identities and complete recipient UserPrompt, single target publication and dispatch required |
 | PC-6 | current-intent | Re-enqueue the rejected siblingIntent instead of the current route/default after a stale claim | AgentTaskDispatchBaseGuardTests.C1581_ChangedDefaultReinspectionUsesCurrentIntent | bounded replacement-worker barrier; expected Dispatched, actual Queued, with all C540 base/sibling warning assertions retained |
+| PC-7 | IO, inspection-timeout | Restore refresh catch-all terminalization instead of deferring the failed read | AgentTaskDispatchBaseGuardTests.C1581_DefaultReadFailureKeepsQueuedAndWaiter | zero tick failures, Queued/no session/checkout/Failed event, warning and original waiter Since |
+| PC-8 | IO, inspection-timeout | Stop retrying the failed read on later ticks (leave the default-read hold permanently pending) | AgentTaskDispatchBaseGuardTests.C1581_DefaultReadRecoveryDispatchesOnLaterTick | recovered read enqueues a real inspection and later consumption dispatches exactly once |
+| PC-9 | IO, inspection-timeout | Drop the finite deferred-failure bound | AgentTaskDispatchBaseGuardTests.C1581_PersistentDefaultReadFailureIsBounded | first three failures retain Queued/waiter; fourth fails once with a clear reason and normal notification, retires waiter |
 
 Review round-1 repair ordinary red: a4f79174cda92bb664470832bd3b2d1ba61e847e,
 CP-5 run 20261106-202610-6cf1, 7/7 failed at the priority assertion, clean source
@@ -26,3 +29,8 @@ Round-3 ordinary pre-fix witness: b3982b3146eec7e27cc3aeabc29092b90943b408,
 CP-9 run 20261106-224130-24b4, 1/1 intended dispatch assertion failure, clean source
 and verified build. PC-6 and every earlier variant remain pending; Code ran no
 deliberate mutation cycle.
+
+B-5 Code c857d442 adds PC-7/8/9 as unbound candidates. Both argument variants of
+each remain pending method-scoped SourceLanding Mutation; ordinary red-first
+execution does not discharge any deliberate red/restore/green cycle. Mutation
+also owns missing-control discovery. No timeout widening or assertion loosening.
