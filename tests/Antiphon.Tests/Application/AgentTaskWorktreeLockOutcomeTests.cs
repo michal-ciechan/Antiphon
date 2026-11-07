@@ -1,7 +1,9 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Infrastructure;
@@ -37,6 +39,39 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
     [Arguments(true, "inbox")] [Arguments(false, "inbox")]
     public Task C443_D9_RecipientGetsSummarizedSiblingsAndDiagnostics(bool busy, string backend) =>
         DeliverAsync(busy, true, backend, sibling: true, siblingCount: 4, longBranches: true);
+
+    /// <summary>
+    /// The harness-built land service must use <see cref="GitSettings.WorktreeBaseInspectionTimeoutSeconds"/>
+    /// (5). The service falls back to 2 only when <c>IOptions&lt;GitSettings&gt;</c> is omitted.
+    /// 3 seconds is inside that gap: the long sibling token survives the production default and
+    /// disappears when the argument is removed (PC-1).
+    /// </summary>
+    [Test]
+    [Timeout(120_000)]
+    public async Task HarnessBuiltLandKeepsLongSiblingInsideProductionInspectionDeadline()
+    {
+        new GitSettings().WorktreeBaseInspectionTimeoutSeconds.ShouldBe(5);
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var marker = await AddUnlandedSiblingAsync(h, 1, longBranches: true);
+        var token = marker["unlanded-sibling=".Length..];
+        var verified = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim();
+        var slowed = 0;
+        h.Fixture.Git.BeforeCommand = async (_, _) =>
+        {
+            if (Interlocked.Exchange(ref slowed, 1) == 0)
+                await Task.Delay(TimeSpan.FromSeconds(3));
+            return null;
+        };
+        await using var scope = h.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var land = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId);
+        var (siblings, warnings) = await land.CollectUnlandedSiblingsAsync(
+            task, h.Fixture.Repository, CancellationToken.None, verified);
+        siblings.ShouldContain(token);
+        warnings.ShouldNotContain(w => w.Contains("inspection_timeout", StringComparison.Ordinal));
+    }
 
     private static async Task DeliverAsync(bool busy, bool owners, string backend, bool sibling = false,
         int siblingCount = 1, bool longBranches = false)
