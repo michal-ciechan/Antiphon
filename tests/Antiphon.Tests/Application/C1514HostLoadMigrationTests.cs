@@ -52,7 +52,7 @@ public sealed class C1514HostLoadMigrationTests
     public void UpgradeOperationsAreAdditiveAndPreserveReplayKeys()
     {
         var first = Migration(Telemetry).UpOperations;
-        first.ShouldAllBe(op => op is AddColumnOperation or CreateTableOperation or CreateIndexOperation);
+        first.ShouldAllBe(op => op is AddColumnOperation || op is CreateTableOperation || op is CreateIndexOperation);
         first.OfType<CreateTableOperation>().Select(t => t.Name).ShouldBe([
             "AgentTaskLoadWindows", "HostLoadHourlyRollups", "HostLoadIngestCursors", "HostLoadObservedEvents",
             "HostLoadSampleIdentities", "HostLoadSamples", "HostLoadTaskMetricBuckets"]);

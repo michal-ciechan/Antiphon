@@ -78,7 +78,7 @@ included because this packet adds a test class. Whole Unit is explicitly owed.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
-| CP-4 | FIXTURE | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-f1a/ | s1-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44 | full affected classes, including all 11 H3 cuts | 28 | 4 | true |
+| CP-4 | FIXTURE | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-f1b/ | s1-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44 | full affected classes, including all 11 H3 cuts | 28 | 4 | true |
 | CP-5 | FIXTURE | CP-4 | s1-surfaces | `/*/*/(C1514HostLoadAggregateTests*)\|(C1514HostLoadRecommendationTests*)\|(C1514HostLoadScriptTests*)\|(HostStatsCacheTests*)\|(HostStatsPollServiceTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-28..30,V-36..40,V-45..48,R-1..4 | full frozen row after common world setup repair | 40 | 2 | true |
 | CP-M1 | FIXTURE | CP-4 | migration-behavior | `/*/*/C1514HostLoadMigrationTests*/*` | additive migration chain and durable downgrade refusal | all six results, zero failed/skipped | 6 | 3 | true |
 | CP-OLD | HISTORICAL-RED | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-old/ | historical-red | `/*/*/C0824RefOnlySnapshotMigrationTests*/*` | historical fixture incompatibility before repair | retain exact assertion/Down failures separately from green packets | 4 | 2 | true |
