@@ -165,6 +165,63 @@ public class Card1761RunnerReadPollTests
     }
 
     [Test]
+    public async Task Card1761_Empty_screen_live_snapshot_still_reads_the_ansi_tail()
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new CountingRunner { Screen = " \t", Raw = "raw", Ansi = "ANSI-TAIL" };
+        var runtime = Runtime(client);
+
+        var snapshot = await runtime.TryGetLiveSnapshotAsync(
+            sessionId, CancellationToken.None, LiveAnsiTail.WhenScreenEmpty);
+
+        snapshot.ShouldNotBeNull();
+        snapshot.Buffer.ShouldBe("ANSI-TAIL");
+        client.SnapshotReads.ShouldBe(1);
+        client.BufferReads.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Card1761_Occupied_screen_live_snapshot_skips_the_ansi_tail()
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new CountingRunner { Screen = "rendered", Raw = "raw", Ansi = "ANSI-TAIL" };
+        var runtime = Runtime(client);
+
+        var snapshot = await runtime.TryGetLiveSnapshotAsync(
+            sessionId, CancellationToken.None, LiveAnsiTail.WhenScreenEmpty);
+
+        snapshot.ShouldNotBeNull();
+        snapshot.RenderedScreen.ShouldBe("rendered");
+        snapshot.Buffer.ShouldBe(string.Empty);
+        client.SnapshotReads.ShouldBe(1);
+        client.BufferReads.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card1761_Included_live_snapshot_reads_the_ansi_tail()
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new CountingRunner { Screen = "rendered", Raw = "raw", Ansi = "ANSI-TAIL" };
+        var runtime = Runtime(client);
+
+        var snapshot = await runtime.TryGetLiveSnapshotAsync(
+            sessionId, CancellationToken.None, LiveAnsiTail.Include);
+
+        snapshot.ShouldNotBeNull();
+        snapshot.Buffer.ShouldBe("ANSI-TAIL");
+        client.SnapshotReads.ShouldBe(1);
+        client.BufferReads.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Card1761_Watchdog_asks_for_the_tail_only_when_the_screen_is_empty()
+    {
+        var text = await File.ReadAllTextAsync(RepoFile("server/Application/Services/WatchdogService.cs"));
+
+        text.ShouldContain("TryGetLiveSnapshotAsync(sessionId, ct, LiveAnsiTail.WhenScreenEmpty)");
+    }
+
+    [Test]
     public async Task Card1761_Dialog_read_still_asks_the_runner_for_a_snapshot()
     {
         var sessionId = Guid.NewGuid();
@@ -177,6 +234,20 @@ public class Card1761RunnerReadPollTests
         client.SnapshotReads.ShouldBe(1);
         client.BufferReads.ShouldBe(0);
         client.SessionGets.ShouldBe(0);
+    }
+
+    private static string RepoFile(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate) && File.Exists(Path.Combine(dir.FullName, "AGENTS.md")))
+                return candidate;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(relative);
     }
 
     private static AgentSessionRuntime Runtime(CountingRunner client)
