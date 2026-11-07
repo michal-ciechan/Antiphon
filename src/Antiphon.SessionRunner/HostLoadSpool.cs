@@ -66,6 +66,9 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
         lock (_gate)
         {
             Validate(sample);
+            // Retire expired chunks before selecting an append target. Otherwise a fresh
+            // sample appended to the oldest chunk is immediately evicted with its old peers.
+            EnforceCaps();
             var prior = _chunks.SelectMany(c => c.Entries).FirstOrDefault(e => e.Sample.Source == sample.Source);
             if (prior is not null)
             {
@@ -107,7 +110,8 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
     public HostLoadHistoryPage ReadHistory(string? after, int limit)
     {
         if (limit is < 1 or > 120) throw new ArgumentException("invalid_host_load_query");
-        lock (_gate)
+        if (!Monitor.TryEnter(_gate)) throw new IOException("host_load_history_busy");
+        try
         {
             EnforceCaps();
             if (after is not null)
@@ -138,6 +142,7 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
             }
             return Page(selected, next, selected.Count < pending.Length);
         }
+        finally { Monitor.Exit(_gate); }
     }
 
     private HostLoadHistoryPage Page(List<Entry> selected, string? cursor, bool more) =>

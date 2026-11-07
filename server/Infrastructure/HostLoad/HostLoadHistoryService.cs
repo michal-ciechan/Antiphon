@@ -116,7 +116,7 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
         var task = await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId).Select(t => new { t.Attempt }).SingleOrDefaultAsync(ct)
             ?? throw new NotFoundException("Agent task", taskId.ToString());
         var attempt = requestedAttempt ?? task.Attempt;
-        if (attempt < 1 || attempt > task.Attempt) throw new ValidationException("attempt", "Invalid task attempt.");
+        if (attempt < 1 || attempt > task.Attempt) throw new HostLoadQueryException("attempt", "Invalid task attempt.");
         var rows = await db.AgentTaskLoadWindows.AsNoTracking().Where(w => w.TaskId == taskId && w.Attempt == attempt)
             .OrderBy(w => w.WindowOrdinal).ToListAsync(ct);
         var ids = rows.Select(w => w.Id).ToArray();
@@ -194,6 +194,6 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
         catch (Exception ex) when (ex is FormatException or JsonException) { throw InvalidCursor(); }
     }
     private static string EncodeCursor(Cursor cursor) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(cursor, PhoneHomeFraming.Json));
-    private static ValidationException InvalidQuery() => new("history", "Invalid host load history window, resolution or limit.");
-    private static ValidationException InvalidCursor() => new("cursor", "Invalid host load history cursor.");
+    private static HostLoadQueryException InvalidQuery() => new("history", "Invalid host load history window, resolution or limit.");
+    private static HostLoadQueryException InvalidCursor() => new("cursor", "Invalid host load history cursor.", "invalid_host_load_cursor");
 }

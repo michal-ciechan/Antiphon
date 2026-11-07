@@ -68,8 +68,10 @@ internal sealed class Boundary(Config config)
     public void Committed() { if ((Phase == "ingest" && config.Cut == "ingest-after-commit") || (DerivedWrite && config.Cut == "derive-after-commit")) Ready(); }
     public void Ready()
     {
-        using (var file = new FileStream(config.ReadyPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+        var temporary = config.ReadyPath + ".tmp";
+        using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         { file.Write(JsonSerializer.SerializeToUtf8Bytes(new { config.Nonce, config.Cut, config.Sample.Source }, PhoneHomeFraming.Json)); file.Flush(true); }
+        File.Move(temporary, config.ReadyPath);
         using var forever = new ManualResetEventSlim(); forever.Wait();
     }
 }
