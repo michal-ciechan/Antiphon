@@ -58,6 +58,29 @@ function Get-NightlyProfileExecutionChunks {
     $index = 0
     foreach ($chunk in $Chunks) {
         $required = @($chunk.classes)
+        if (Test-NightlyCoreAvailable) {
+            # Compiled first pass (NightlyCore.cs); Group-Object stays here for its ordering.
+            $bucketList = [Antiphon.Nightly.NightlyDiscovery]::BucketByBareClass(@($DiscoveryNodes), [string[]]$required, $exclusionIndex)
+            foreach ($group in @($bucketList | Group-Object Bare)) {
+                $bare = [string]$group.Name
+                $bucket = @($group.Group)[0]
+                $members = $bucket.Nodes
+                $requiredNodes = @($bucket.Required)
+                if ($requiredNodes.Count -eq 0) { continue }
+                if ($requiredNodes.Count -eq $members.Count) {
+                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = ''; nodes = @() }
+                } else {
+                    foreach ($method in @($requiredNodes | Group-Object { $_.Method })) {
+                        $node = @($method.Group)[0]
+                        $dot = $bare.LastIndexOf('.')
+                        if ($dot -lt 1) { throw 'profile-discovery-namespace-required' }
+                        $filter = '/*/{0}/{1}/{2}' -f $bare.Substring(0, $dot), $bare.Substring($dot + 1), $node.Method
+                        [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = $filter; nodes = @($method.Group) }
+                    }
+                }
+            }
+            continue
+        }
         # Per raw class (ClassName + Type): chunk membership, bare name and exclusion rows.
         $classes = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
         $buckets = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)

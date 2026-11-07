@@ -4,6 +4,7 @@
 
 if ($script:AntiphonNightlyPolicyLoaded) { return }
 $script:AntiphonNightlyPolicyLoaded = $true
+. (Join-Path $PSScriptRoot 'nightly-core.ps1')
 
 # CARD-0599 D-5: schema v2 adds profiles.nightly / profiles.rc. v1 stays readable so an
 # older checked-out policy still loads; only v2 can name an rc profile.
@@ -451,6 +452,7 @@ function New-NightlyProfileExclusionIndex {
       then one method lookup. Same verdicts as Test-NightlyProfileNodeExcluded.
     #>
     param([object[]]$Exclusions)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.ProfileExclusionIndex]::new($Exclusions) }
     $rows = [Collections.Generic.List[object]]::new()
     foreach ($row in @($Exclusions)) {
         if ([string]::IsNullOrWhiteSpace([string]$row.Class)) { continue }
@@ -465,6 +467,7 @@ function New-NightlyProfileExclusionIndex {
 function Test-NightlyProfileExclusionIndexed {
     param($Index, $Node)
     if ($null -eq $Node) { return $false }
+    if (Test-NightlyCoreAvailable) { return $Index.Excluded($Node) }
     $entry = Get-NightlyProfileExclusionEntry -Index $Index -ClassName ([string]$Node.ClassName) -Type ([string]$Node.Type)
     if ($null -eq $entry) { return $false }
     return ($entry.All -or $entry.Methods.Contains([string]$Node.Method))
@@ -474,6 +477,7 @@ function Get-NightlyProfileExclusionEntry {
     <# The exclusion rows matching one class, merged: null when none match (no node of the class is excluded),
        otherwise All (a whole-class row), the excluded Methods, and the matching Rows in policy order. #>
     param($Index, [string]$ClassName, [string]$Type)
+    if (Test-NightlyCoreAvailable) { return $Index.Entry($ClassName, $Type) }
     $className = $ClassName
     $type = $Type
     $key = $className + [char]0 + $type

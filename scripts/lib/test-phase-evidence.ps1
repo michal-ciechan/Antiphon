@@ -18,6 +18,7 @@ $script:TestPhaseEvidenceLoading = $true
 if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'nightly-common.ps1')
 }
+. (Join-Path $PSScriptRoot 'nightly-core.ps1')
 
 $script:TestPhaseVariableNames = @(
     'ANTIPHON_TEST_PHASE_ROOT',
@@ -96,6 +97,7 @@ function ConvertTo-TestPhaseMarkdownCell {
 
 function ConvertTo-TestPhaseJsonString {
     param([string]$Text)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseJson]::String($Text) }
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append('"')
     foreach ($ch in $Text.ToCharArray()) {
@@ -114,6 +116,7 @@ function ConvertTo-TestPhaseJsonString {
 # Hand-built so a one-element array stays an array on Windows PowerShell 5.1.
 function ConvertTo-TestPhaseJsonText {
     param($Value, [int]$Depth = 0)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseJson]::Text($Value, $Depth) }
     if ($Depth -gt 24) { return 'null' }
     if ($null -eq $Value) { return 'null' }
     if ($Value -is [bool]) {

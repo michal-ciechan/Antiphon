@@ -4,6 +4,7 @@
 
 if ($script:AntiphonNightlyCoverageLoaded) { return }
 $script:AntiphonNightlyCoverageLoaded = $true
+. (Join-Path $PSScriptRoot 'nightly-core.ps1')
 
 $script:NightlyDiscoveryFormat = 'antiphon-tunit-discovery-v1'
 $script:NightlyExecutionFormat = 'antiphon-tunit-execution-v1'
@@ -704,6 +705,7 @@ function Get-NightlyClassNameFromIdentity {
 function Test-NightlyClassAssigned {
     param([string]$ClassName, [string]$TypeName, [string[]]$RequiredClasses)
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $true }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::Assigned($ClassName, $TypeName, $RequiredClasses) }
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($ClassName)) {
         $candidates += $ClassName
@@ -783,6 +785,7 @@ function Get-NightlyDiscoveryDispositionIndexed {
     <# Get-NightlyDiscoveryDisposition (profile-aware) against a New-NightlyProfileExclusionIndex: only the rows
        that match the node's class are walked, in policy order, so the first declaring row still wins. #>
     param($Index, $Node)
+    if (Test-NightlyCoreAvailable) { return $Index.Disposition($Node) }
     $entry = Get-NightlyProfileExclusionEntry -Index $Index -ClassName ([string]$Node.ClassName) -Type ([string]$Node.Type)
     if ($null -ne $entry) {
         foreach ($row in $entry.Rows) {
@@ -804,6 +807,7 @@ function New-NightlyClassAssignmentCache {
     <# Test-NightlyClassAssigned depends only on (ClassName, TypeName) for fixed RequiredClasses: a caller that tests
        many nodes keeps one of these and asks once per class. #>
     param([string[]]$RequiredClasses = @())
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.ClassAssignment]::new($RequiredClasses) }
     return [pscustomobject]@{
         RequiredClasses = $RequiredClasses
         Verdicts = [Collections.Generic.Dictionary[string, bool]]::new([StringComparer]::Ordinal)
@@ -812,6 +816,7 @@ function New-NightlyClassAssignmentCache {
 
 function Test-NightlyClassAssignedCached {
     param($Cache, [string]$ClassName, [string]$TypeName)
+    if (Test-NightlyCoreAvailable) { return $Cache.Assigned($ClassName, $TypeName) }
     $key = $ClassName + [char]0 + $TypeName
     $verdict = $false
     if (-not $Cache.Verdicts.TryGetValue($key, [ref]$verdict)) {
@@ -834,6 +839,13 @@ function Get-NightlyDiscoveryCensus {
     # Profile rows are resolved once per class (same dispositions as Get-NightlyDiscoveryDisposition).
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    if (Test-NightlyCoreAvailable) {
+        $rows = [Antiphon.Nightly.NightlyDiscovery]::CensusRows(@($DiscoveryNodes), $exclusionIndex)
+        foreach ($row in $rows.Required) { $required.Add($row) }
+        foreach ($row in $rows.Excluded) { $excluded.Add($row) }
+        foreach ($uid in $rows.Duplicates) { $duplicates.Add($uid) }
+        $DiscoveryNodes = @()
+    }
     foreach ($n in @($DiscoveryNodes)) {
         $uid = [string]$n.Uid
         if ([string]::IsNullOrWhiteSpace($uid)) { continue }
@@ -873,6 +885,9 @@ function Get-NightlyRequiredDiscoveryUids {
     $seen = @{}
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    if (Test-NightlyCoreAvailable) {
+        return [Antiphon.Nightly.NightlyDiscovery]::RequiredUids(@($DiscoveryNodes), $RequiredClasses, $exclusionIndex)
+    }
     $assignment = New-NightlyClassAssignmentCache -RequiredClasses $RequiredClasses
     foreach ($n in @($DiscoveryNodes)) {
         if ($ProfileAware) {
@@ -938,6 +953,19 @@ function Get-NightlyDiscoveryIndexView {
     $nodes = @($Entry.Document.Nodes)
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    if (Test-NightlyCoreAvailable) {
+        $pass = [Antiphon.Nightly.NightlyDiscovery]::IndexView($nodes, $exclusionIndex)
+        $view = [pscustomobject]@{
+            Nodes = $nodes
+            Excluded = $pass.Excluded
+            ByClass = $pass.ByClass
+            RequiredUids = $pass.RequiredUids
+            Classes = $pass.Classes
+            Census = (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
+        }
+        $Entry.Views[$policyKey] = $view
+        return $view
+    }
     $excluded = New-Object 'bool[]' $nodes.Count
     $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
     $allRequired = [Collections.Generic.List[object]]::new()
