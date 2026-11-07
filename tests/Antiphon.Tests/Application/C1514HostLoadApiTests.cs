@@ -97,6 +97,9 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
         var broker = new BuildSlotBroker(Options.Create(new BuildSlotSettings { MaxConcurrent = 1, MinAvailableMemoryMb = 0 }), new SystemProcessLivenessProbe(), new Memory(), world.Clock, NullLogger<BuildSlotBroker>.Instance);
         broker.TryAcquire(new(process.Id, process.StartTime.ToUniversalTime(), "owned shadow test"), out _).ShouldBeTrue();
         var baseline = world.Directory.Status("grok-linux");
+        for (var i = 12; i >= 1; i--)
+            await world.ProduceAsync(C1514HostLoadWorld.T0.AddSeconds(-5 * i), 5);
+        await world.TransferAsync();
         foreach (var cpu in new[] { 5d, 95d, double.NaN })
         {
             await world.ProduceAsync(C1514HostLoadWorld.T0.AddSeconds(cpu == 5 ? 0 : cpu == 95 ? 5 : 10), cpu); await world.TransferAsync();
@@ -105,7 +108,12 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
             broker.List().Budget.ShouldBe(1); broker.List().Occupied.ShouldBe(1); (await budgets.EffectiveAsync("grok-linux", CancellationToken.None)).Effective.ShouldBe(1);
             var pipeline = new AgentTaskPipelineStatusService(db, options, new AreaMapLoader(options, NullLogger<AreaMapLoader>.Instance), world.Clock,
                 budgets: budgets, directory: world.Directory, hostLoad: world.ApiServices.GetRequiredService<HostLoadShadowCache>());
-            var result = await pipeline.GetAsync(CancellationToken.None); result.Hosts.Single(h => h.HostId == "grok-linux").EffectiveLimit.ShouldBe(1);
+            var result = await pipeline.GetAsync(CancellationToken.None); var host = result.Hosts.Single(h => h.HostId == "grok-linux"); host.EffectiveLimit.ShouldBe(1);
+            var expected = cpu == 5 ? "eligible" : cpu == 95 ? "hold" : "unknown";
+            host.Load.ShouldNotBeNull().Decision.Command.ShouldBe(expected);
+            var runner = result.Runners.Single(r => r.RunnerId == "grok-linux");
+            runner.Load.ShouldNotBeNull().Decision.Dispatch.ShouldBe(expected);
+            runner.Available.ShouldBe(baseline.Available); runner.DispatchEligible.ShouldBe(baseline.DispatchEligible); runner.Draining.ShouldBe(baseline.Draining);
         }
         (await db.AgentTasks.CountAsync()).ShouldBe(0);
     }
