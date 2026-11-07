@@ -88,9 +88,10 @@ public static class ReportWriter
         var write = new CheckpointWrite(context);
         var ownership = write.Under(runDirectory, model.RunId, WriteKind.ToolOwnedReplaceable);
         // Refuse either foreign destination before replacing either half.
+        // Name the refused file: the pre-check and the write refusal share one message shape.
         foreach (var path in new[] { Path.Combine(runDirectory, "report.md"), Path.Combine(runDirectory, "report.json") })
             if (write.Refusal(path, ownership) is string refusal)
-                throw new IOException("refused: required report receipt-write-failed: " + refusal);
+                throw new IOException("refused: required " + Path.GetFileName(path) + " receipt-write-failed: " + refusal);
         var markdownRefusal = write.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
         var jsonRefusal = write.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
         if (markdownRefusal is not null || jsonRefusal is not null)
