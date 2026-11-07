@@ -13,7 +13,8 @@ public sealed class HostLoadCapacityReader(AppDbContext db, HostBudgetService bu
     public async Task<HostLoadCapacityInput> ReadAsync(string runnerId, Guid? projectId, AgentTaskRole? role, CancellationToken ct)
     {
         var canonical = HostLoadCounterCache.Canonical(runnerId);
-        var open = await db.AgentTasks.AsNoTracking().Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+        var open = await db.AgentTasks.AsNoTracking().Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+            && !t.CapacityWaitRetained)
             .Select(t => new { t.RunnerId, t.ProjectId, t.Role }).ToListAsync(ct);
         var host = await budgets.EffectiveAsync(canonical == "desktop" ? "local" : canonical, ct);
         var hostOccupied = open.Count(t => HostLoadCounterCache.Canonical(t.RunnerId ?? "desktop") == canonical);
