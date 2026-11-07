@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -24,25 +23,31 @@ internal static class C1514HostLoadCrashCases
             else { await world.SeedPrefixAsync(); sample = await world.ProduceAsync(C1514HostLoadWorld.T0); }
             var nonce = Guid.NewGuid().ToString("N"); var ready = Path.Combine(world.Root, "ready"); var config = Path.Combine(world.Root, "probe-config.json");
             File.WriteAllText(config, JsonSerializer.Serialize(new { world.Root, SourceUrl = world.ProxyUrl, ConnectionString = world.Schema.ConnectionString, Now = C1514HostLoadWorld.T0, Cut = cut, Nonce = nonce, ReadyPath = ready, Sample = sample }, PhoneHomeFraming.Json));
-            // This is a .NET crash worker, not a script witness. Avoid paying for a
-            // PowerShell interpreter before every owned process boundary.
-            var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-            start.ArgumentList.Add(probe); start.ArgumentList.Add(config);
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("Crash probe did not start.");
-            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+            // Keep the ScriptHarness supervisor/group custody and bounded drain.
+            // Linux can exec the staged .NET worker without another interpreter.
+            string? executable = null;
+            if (OperatingSystem.IsLinux())
+            {
+                executable = Path.Combine(world.Root, "launch-probe.sh");
+                static string Quote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+                File.WriteAllText(executable, "#!/bin/sh\nexec dotnet " + Quote(probe) + " " + Quote(config) + "\n");
+                File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-host-load.ps1"); using var cancel = new CancellationTokenSource();
+            var owned = ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514-crash", "Probe", script,
+                new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, ExecutablePath: executable,
+                    AdditionalArguments: ["-ProbePath", probe, "-ProbeConfig", config]), cancel.Token);
             try
             {
-                await C1514HostLoadWorld.EventuallyAsync(() => File.Exists(ready) || process.HasExited);
-                File.Exists(ready).ShouldBeTrue(cut + ": probe did not reach the selected boundary");
+                await C1514HostLoadWorld.EventuallyAsync(() => File.Exists(ready) || owned.IsCompleted);
+                File.Exists(ready).ShouldBeTrue(cut + ": " + (owned.IsCompletedSuccessfully ? owned.Result.Stderr : "probe did not reach the selected boundary"));
                 using var receipt = JsonDocument.Parse(File.ReadAllText(ready)); receipt.RootElement.GetProperty("nonce").GetString().ShouldBe(nonce);
                 receipt.RootElement.GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(101);
             }
             finally
             {
-                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync(cleanup.Token);
-                await Task.WhenAll(stdout, stderr).WaitAsync(cleanup.Token);
+                cancel.Cancel();
+                try { await owned; } catch (OperationCanceledException) { }
             }
             if (cut.StartsWith("append-", StringComparison.Ordinal)) world.History = new HostLoadSpool(world.Runner.HistoryPath!, world.Runner, world.Clock);
             world.RecreateServices(); await world.TransferAsync();
