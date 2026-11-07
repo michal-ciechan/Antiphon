@@ -74,14 +74,16 @@ Only the existing Linux-selected test build target changes. Witnesses execute it
 real Exec command on Linux with native/artifact inputs and assert native bytes,
 payload staging and terminal receipts. No new Windows-selected runtime behavior;
 the Windows branch continues to omit this target. Startup-path census: none;
-restart server/runner: none. Tests policy JSON and pinned hashes remain unchanged.
+restart server/runner: none. The original cold-build slice leaves policy hashes
+unchanged; the B-1 repair registers its new native class in Windows exclusions
+and refreshes policyHash and the live-lane PinnedInputDigest together.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | all | `tests/Antiphon.Tests -> bin-c1734-final-main/` | cold-build | `/*/*/CheckpointColdBuildTests/*` | V-1, V-2, R-1 | all 3 cases, 0 failed/skipped after S2; S1 expects both cold-build variants RED at snapshot assertion | 3 | 5 |
-| CP-2 | all | CP-1 | touched | `/*/*/(C1307CliCancellationTests*)\|(WaitCommandTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointStatePublicationTests*)\|(CheckpointAppTests*)\|(ReportWriterTests*)\|(CheckpointSourceExecutionTests*)\|(RunCheckpointSourceScriptTests*)/*` | R-5 | all full affected classes, 0 failed | 1 | 5 |
+| CP-2 | all | CP-1 | touched | `/*/*/(C1307CliCancellationTests*)\|(WaitCommandTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointStatePublicationTests*)\|(CheckpointAppTests*)\|(ReportWriterTests*)\|(CheckpointSourceExecutionTests*)\|(RunCheckpointSourceScriptTests*)/*` | R-5, R-8 | all full affected classes, 0 failed | 1 | 5 |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/*` | R-2 scoped, R-3 | 70 guards plus 5 registry cases, 0 failed | 75 | 4 |
 | CP-4 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1734-runner/` | runner-policy | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | R-4 | all listed, 0 failed/skipped | 1 | 3 |
 | CP-5 | all | CP-1 | terminal | `/*/*/CheckpointTerminalReceiptTests/*` | V-3, V-4, V-5, V-6, R-6, R-7 | supported stop, cancel, executor/build failure and timeout reach a real waiter; partial counts and provisional-report custody are retained | 10 | 3 |
@@ -109,6 +111,20 @@ not relabel the recorded history clean. Both cases must go red before the repair
 This uses external-observation/log-failure seams through the real CheckpointApp
 and SourceRunGuard; no OS branch or product host is involved. New case bound 30s,
 provisional expected <=3s, collect one red/green sample, no loaded repetition.
+The exact R-8 red selection at 9557ce38604d1067ccfe0d8349e5b10463b12f7a
+executed 2 cases, both failed because adverse history became clean; test body
+1.622s total, producing build 489.541s, slot wait 0s. Its derived ignored manifest
+narrows CP-2 to that exact method for red-first proof, not ordinary class credit.
+
+The 1a1fa9011ea9c1b069800d053583a1c265777a84 ordinary baseline retained CP-1
+3/3 green and CP-2 64/64 green. CP-3 was 73/75 (new native marker needed a pinned
+row), CP-4 refused an owned interrupted build root before testing, CP-5 was 9/10
+(bare-project build timeout exited 2). Repair the policy plus paired hashes,
+remove the proven owned partial runner root, and use an SDK CoreCompile target
+whose failure text and actual deadline are asserted. No assertion/budget is
+relaxed. Final repair selection is CP-2, CP-3, CP-4, CP-5; CP-2 adds the two R-8
+cases to its full classes, and the already green CP-1 is not rerun. The full
+baseline and all historical red/canceled costs remain evidence, never relabeled.
 V-5/V-6 additionally drive real cold MSBuild failure/timeout targets. The timeout
 uses the existing one-minute row override; no timeout or assertion is relaxed.
 Green eligibility also refuses a terminal failure reason in both validators,
