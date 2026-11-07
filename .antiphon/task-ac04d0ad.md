@@ -1,12 +1,12 @@
 # Merge batch 112 and rc/2026-11-09
 
-Master landed. `rc/2026-11-09` was not created.
+Master and `rc/2026-11-09` are both `0e7aef0379a073c206e8398dcaed539bc33eaf9b`. The group-79 fix `aa22def08257992c6c2200bbfd11f3b48205c3e6` is on that pin. Candidate id `rc-2026-11-09-0e7aef0379a0`. No tag, publish, or promote.
 
-origin/master and origin/feat/card-task-ac04d0ad were both `0e7aef0379a073c206e8398dcaed539bc33eaf9b` before this report commit. The group-79 fix `aa22def08257992c6c2200bbfd11f3b48205c3e6` is on that master. The rc ref was still absent at the stop. `Test-ReleaseGateCandidateRef -Ref rc/2026-11-09` returned Ok, Kind=long-lived. No script refused the name. The candidate id that would have been cut is `rc-2026-11-09-0e7aef0379a0`. It was not published.
+`Test-ReleaseGateCandidateRef -Ref rc/2026-11-09` returned Ok, Kind=long-lived. No script refused the name. Immediately before the push, `git ls-remote origin refs/heads/master` was the pin and `refs/heads/rc/2026-11-09` was empty. The plain push created the ref. After the push, `git ls-remote` shows both master and `rc/2026-11-09` at `0e7aef0379a073c206e8398dcaed539bc33eaf9b`.
 
-## Why the cut stopped
+## Ledger overrun, then the authorized cut
 
-`C599A_ExecutionLedger` exceeded its 5-minute harness budget. The run was once, as required. Five sibling methods passed. Four of five required rows in the failed method had already passed (`V-12`, `G-226`, `G-287`, `G-288`); the budget expired before `G-289`. Host slots were full for much of the run. This method was not edited by batch 112. The cut recipe allows the push only when the tree checks pass, so `git push origin 0e7aef0379a073c206e8398dcaed539bc33eaf9b:refs/heads/rc/2026-11-09` was not run.
+`C599A_ExecutionLedger` exceeded its 5-minute harness budget on the first and only run. Five sibling methods passed. Four of five required rows in the failed method had already passed (`V-12`, `G-226`, `G-287`, `G-288`); the budget expired before `G-289`. The host was carrying other tasks. This method was not edited by batch 112. The first report held the cut. The orchestrator then ordered the cut at this pin: the overrun is the known load-sensitive publication-ledger test (CARD-1731), the other five methods passed, and the Windows failed-first run will exercise the ledger natively. It was not rerun. The overrun stays owed.
 
 Durations versus 300s:
 
@@ -50,7 +50,7 @@ Checks at `0e7aef0379a073c206e8398dcaed539bc33eaf9b`:
 
 ## Part 2 prechecks at the pin
 
-- A1: `git ls-remote origin refs/heads/rc/2026-11-09` was empty immediately before the decision not to push, and still empty after the ledger failure.
+- A1: `git ls-remote origin refs/heads/rc/2026-11-09` was empty immediately before the plain push. After the push it equals `0e7aef0379a073c206e8398dcaed539bc33eaf9b`.
 - A2: `git cherry 0e7aef0379a073c206e8398dcaed539bc33eaf9b` against `origin/rc/2026-11-08` (`d164e93ae47a79ed175beeb9367212f7a7d5d1d5`), `origin/rc/2026-11-07` (`1038d07e66a54b630a1bc1d394923bc7049b73dd`), and `origin/rc/2026-11-06` (`5a95ae7a5611eedb56c3bea023bb7a4b4fb6683a`) each reported plus=0 minus=0.
 - A3: stored `policyHash`, `Read-NightlyExecutionPolicy`, `Get-NightlyPolicyHash -Object`, and `test-live-lane-manifest.ps1 -Case EmitPolicyHash` are all `f7b7f7534ca39270a26e8b7da7b6a171690940fb64d7c6b45f9b0462d99b44e1`. Stored `PinnedInputDigest` and `scripts/test-live-lane-run.ps1 -PrintInputDigest` are both `84003c9c0020549a4ad33e1cf2b480500bb17023fef9952e7794a0287ce57edc`.
 - A4: the `-Check` above, exit 0, digest `7DB56208B8BA199080B89E0F499C5487BC659D761535B5BFB7DFA9E74FEAEEF1`, count 70.
@@ -74,8 +74,8 @@ Tree smokes at the same SHA, `--no-build`, `UseAppHost=false`. The solution buil
 
 ## Owed
 
-Whole Unit lane. Windows rerun of `CardFileGitFailureAcceptanceTests` after the native lock frees. CARD-1406 operator drill. Positive controls for any new tests. Advisories A-11 through A-24 were named by the brief and were not present on the four subject tips, so this report does not invent their text.
+`C599A_ExecutionLedger` overrun: 00:05:00.202 against the 300s budget (CARD-1731, load-sensitive; not rerun). Whole Unit lane. Windows rerun of `CardFileGitFailureAcceptanceTests` after the native lock frees. CARD-1406 operator drill. Positive controls for any new tests. Advisories A-11 through A-24 were named by the brief and were not present on the four subject tips, so this report does not invent their text.
 
 ## Next
 
-Do not commission the Windows failed-first run against `rc/2026-11-09`. That ref does not exist. Host activation is a separate decision. The open choice is a rerun of `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` alone, or an explicit decision to cut `rc/2026-11-09` at `0e7aef0379a073c206e8398dcaed539bc33eaf9b` despite that budget miss.
+Deploy is the Windows failed-first run commission against `rc/2026-11-09` at `0e7aef0379a073c206e8398dcaed539bc33eaf9b`. Host activation is a separate decision.
