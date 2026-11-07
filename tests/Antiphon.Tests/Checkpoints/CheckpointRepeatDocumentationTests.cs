@@ -47,6 +47,6 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-1753 points a batch's own land-graph mismatch at #land-graph-refresh and drops
         // three standing-rule clauses so the pointer fits: normalised body 11,493 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("7a655221735d4f385d002b339f5aaf1f5ec0ae90534a51cb1b08690a220ac124", "orchestrator-approved-bytes");
+            .ShouldBe("bd6d28093f3492da7885aa3f3e09f26e4bc8634641ce5c686d9fef9bdb4a85e0", "orchestrator-approved-bytes");
     }
 }
