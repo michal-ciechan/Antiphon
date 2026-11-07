@@ -55,3 +55,35 @@ totalTimeoutOverrideReason: Historical red rows and GREEN are separate runs; the
 | CP-R3-8 | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatReceiptAndTimings` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-R3-9 | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatFailurePartialAndInvalidInput` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-R3-10 | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatNoBuildAndLeaseCustody` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+
+## Repair evidence and shared boundary
+
+CP-RED2 and CP-XML-RED at 668b70c93b9bea9b29abd50e529aa4d34e9136a0
+executed 5 tests, all failing intended assertions, with zero skips and clean verified
+build provenance. The parity test reported all four exact review disagreements plus
+used internal/external, parameter and expansion declarations (8 disagreements).
+The 4 added unit tests independently failed on diagnostic DTD acceptance, repeat
+project acceptance, coverage project acceptance and missing diagnostic size bound.
+The earlier CP-RED fixture error remains historical and is not defect-red credit.
+
+Every XML consumer now calls SecureXml.Parse: TrxReport (diagnostic/qualification),
+StrictTrxReport (strict text/file), RepeatRequest (project), ProjectWriteRoots
+(reference closure), CoverageCommand (project source discovery). Shared settings
+prohibit DTDs, disable the resolver, check characters, set MaxCharactersFromEntities
+explicitly to 0 and bound MaxCharactersInDocument to 16 Mi characters. With DTDs
+prohibited, no custom entity expansion is admitted. The literal projection validates
+with these settings before its non-normalizing XmlTextReader, then wraps that reader
+with the same settings. Predefined entities and valid numeric references remain XML
+text semantics. Diagnostic structural tolerance and strict literal CR/LF remain.
+No independent XDocument.Parse/XmlDocument/XmlSerializer path remains.
+
+The 16 GREEN rows preserve the original 168 distinct cases and add the full
+XmlInputSecurityTests and PlanCoverageCommandTests classes in CP-2. The invariant
+is shared lexical refusal without weakening diagnostic structure, repeat or coverage
+behavior. No unbounded class/assembly selection is commissioned. R3-1 and R2-1
+lexical parity are guarded by 326 independent inputs through both real validators.
+Full conditional V-5..17, R-2/R-5/R-6, complete CP-20 and Windows/rc/manual acceptance,
+whole Unit and 405 Scripts obligations retain their earlier pending status. V-1..4
+and the selected R-1/R-3/R-4 witnesses are in this repair's closed selection; this
+does not relabel the original feature's Final gate as complete. All mutation
+candidates, including resolver-equivalence discovery, remain pending Mutation.
