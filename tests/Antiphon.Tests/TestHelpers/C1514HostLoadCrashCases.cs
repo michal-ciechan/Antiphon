@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -14,6 +15,8 @@ internal static class C1514HostLoadCrashCases
         var probe = Path.Combine(AppContext.BaseDirectory, "host-load-probe", "Antiphon.HostLoad.Probe.dll"); File.Exists(probe).ShouldBeTrue("The probe is staged by the checkpoint build, never built inside a test.");
         foreach (var cut in new[] { "append-before-flush", "append-after-flush", "ingest-before-enqueue", "ingest-after-enqueue", "ingest-before-save", "ingest-before-commit", "ingest-after-commit", "derive-before-call", "derive-before-save", "derive-after-write", "derive-after-commit" })
         {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "host-load crash " + cut);
+            Console.WriteLine("c1514 crash cut=" + cut);
             await using var world = await fixture.WorldAsync(phoneHome: true);
             HostLoadSample sample;
             if (cut.StartsWith("append-", StringComparison.Ordinal)) sample = new() { Source = new("grok-linux", world.Spool.RunnerStoreId, world.Spool.BootId, 101), SampledAt = C1514HostLoadWorld.T0,
@@ -21,20 +24,25 @@ internal static class C1514HostLoadCrashCases
             else { await world.SeedPrefixAsync(); sample = await world.ProduceAsync(C1514HostLoadWorld.T0); }
             var nonce = Guid.NewGuid().ToString("N"); var ready = Path.Combine(world.Root, "ready"); var config = Path.Combine(world.Root, "probe-config.json");
             File.WriteAllText(config, JsonSerializer.Serialize(new { world.Root, SourceUrl = world.ProxyUrl, ConnectionString = world.Schema.ConnectionString, Now = C1514HostLoadWorld.T0, Cut = cut, Nonce = nonce, ReadyPath = ready, Sample = sample }, PhoneHomeFraming.Json));
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-host-load.ps1"); using var cancel = new CancellationTokenSource();
-            var owned = ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514-crash", "Probe", script,
-                new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, AdditionalArguments: ["-ProbePath", probe, "-ProbeConfig", config]), cancel.Token);
+            // This is a .NET crash worker, not a script witness. Avoid paying for a
+            // PowerShell interpreter before every owned process boundary.
+            var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            start.ArgumentList.Add(probe); start.ArgumentList.Add(config);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Crash probe did not start.");
+            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
             try
             {
-                await C1514HostLoadWorld.EventuallyAsync(() => File.Exists(ready) || owned.IsCompleted);
-                File.Exists(ready).ShouldBeTrue(cut + ": " + (owned.IsCompletedSuccessfully ? owned.Result.Stderr : "probe did not reach the selected boundary"));
+                await C1514HostLoadWorld.EventuallyAsync(() => File.Exists(ready) || process.HasExited);
+                File.Exists(ready).ShouldBeTrue(cut + ": probe did not reach the selected boundary");
                 using var receipt = JsonDocument.Parse(File.ReadAllText(ready)); receipt.RootElement.GetProperty("nonce").GetString().ShouldBe(nonce);
                 receipt.RootElement.GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(101);
             }
             finally
             {
-                cancel.Cancel();
-                try { await owned; } catch (OperationCanceledException) { }
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(cleanup.Token);
+                await Task.WhenAll(stdout, stderr).WaitAsync(cleanup.Token);
             }
             if (cut.StartsWith("append-", StringComparison.Ordinal)) world.History = new HostLoadSpool(world.Runner.HistoryPath!, world.Runner, world.Clock);
             world.RecreateServices(); await world.TransferAsync();
