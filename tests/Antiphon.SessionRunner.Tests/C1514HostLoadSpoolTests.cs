@@ -117,10 +117,23 @@ public class C1514HostLoadSpoolTests(C1514HostLoadFixture fixture)
         var store = new HostStatsStore(settings, clock);
         using var sampler = new HostStatsSamplerService(new ScriptedHostStatsProbe(), store, new MissingCpu(), () => [], _ => null,
             clock, Options.Create(settings), NullLogger<HostStatsSamplerService>.Instance, capture);
-        await sampler.SampleOnceAsync(); clock.Advance(TimeSpan.FromSeconds(5)); await sampler.SampleOnceAsync();
-        clock.Advance(TimeSpan.FromSeconds(5)); await sampler.SampleOnceAsync();
-        store.Latest().ShouldNotBeNull().At.ShouldBe(clock.GetUtcNow()); capture.DroppedSamples.ShouldBeGreaterThan(0);
-        Volatile.Write(ref available, true); await Task.Delay(20); clock.Advance(TimeSpan.FromSeconds(5));
+        var ticks = Task.Run(async () =>
+        {
+            await sampler.SampleOnceAsync(); clock.Advance(TimeSpan.FromSeconds(5)); await sampler.SampleOnceAsync();
+            clock.Advance(TimeSpan.FromSeconds(5)); await sampler.SampleOnceAsync();
+        });
+        try
+        {
+            await Task.WhenAny(ticks, Task.Delay(200));
+            ticks.IsCompleted.ShouldBeTrue("preserved:PC-20:live-progress before releasing unavailable disk");
+            await ticks;
+            store.Latest().ShouldNotBeNull().At.ShouldBe(clock.GetUtcNow()); capture.DroppedSamples.ShouldBeGreaterThan(0);
+        }
+        finally
+        {
+            Volatile.Write(ref available, true); await Task.Delay(20); clock.Advance(TimeSpan.FromSeconds(5));
+            await ticks.WaitAsync(TimeSpan.FromSeconds(2));
+        }
         try
         {
             await C1514HostLoadFixture.EventuallyAsync(() => capture.LastAppendedAt is not null);

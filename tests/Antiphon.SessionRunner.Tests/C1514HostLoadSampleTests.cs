@@ -33,6 +33,8 @@ public class C1514HostLoadSampleTests
         sample.Cores.ShouldBe(24, "preserved:PC-1:host-denominator");
         sample.EffectiveCoreLimit.ShouldBe(2d);
         sample.IoWaitPercent.ShouldBe(10d);
+        var projected = HostLoadProjection.Create(sample, new("owned", Guid.NewGuid(), Guid.NewGuid(), 1), new(), HostAdmissionSnapshot.Unknown());
+        projected.CpuPercent.ShouldBe(50d); projected.BusyCoreEquivalent.ShouldBe(12d); projected.LoadPerCore.ShouldBe(1d);
         (sample.CpuPercent * sample.Cores / 100d).ShouldBe(12d);
         (sample.Load1 / sample.Cores).ShouldBe(1d);
         WindowsHostStatsProbe.CpuPercent(0, 0, 0, 600, 800, 200).ShouldBe(40d);
@@ -45,12 +47,18 @@ public class C1514HostLoadSampleTests
     [Test]
     public async Task UnknownMetricsStayNull()
     {
-        var windows = new WindowsHostStatsProbe(() => (0, 0, 0), () => (1024, 512, 2048, 1024), _ => null, [], () => 24);
+        var winTimes = new Queue<(long, long, long)?>([(0, 0, 0), (600, 800, 200), (0, 0, 0), null]);
+        var windows = new WindowsHostStatsProbe(() => winTimes.Dequeue(), () => (1024, 512, 2048, 1024), _ => null, [], () => 24);
         var first = HostLoadProjection.Create(windows.Read().ShouldNotBeNull(),
             new("owned", Guid.NewGuid(), Guid.NewGuid(), 1), new(), HostAdmissionSnapshot.Unknown());
         first.CpuPercent.ShouldBeNull("preserved:PC-2:first-delta");
         first.UnknownReasons["cpuPercent"].ShouldBe("first-delta");
         first.Load1.ShouldBeNull("preserved:PC-3:windows-load"); first.UnknownReasons["load1"].ShouldBe("unsupported");
+        windows.Read().ShouldNotBeNull().CpuPercent.ShouldBe(40d);
+        var reset = HostLoadProjection.Create(windows.Read().ShouldNotBeNull(), first.Source, new(), HostAdmissionSnapshot.Unknown());
+        reset.CpuPercent.ShouldBeNull(); reset.UnknownReasons["cpuPercent"].ShouldBe("counter-reset");
+        var failed = HostLoadProjection.Create(windows.Read().ShouldNotBeNull(), first.Source, new(), HostAdmissionSnapshot.Unknown());
+        failed.CpuPercent.ShouldBeNull(); failed.UnknownReasons["cpuPercent"].ShouldBe("read-failed");
         var invalid = HostLoadProjection.Create(new ScriptedHostStatsProbe().Read().ShouldNotBeNull() with { CpuPercent = -1 },
             first.Source, new(), HostAdmissionSnapshot.Unknown());
         invalid.CpuPercent.ShouldBeNull(); invalid.UnknownReasons["cpuPercent"].ShouldBe("invalid");
@@ -84,6 +92,9 @@ public class C1514HostLoadSampleTests
         await sampler.SampleOnceAsync();
         store.Latest().ShouldNotBeNull().CpuPercent.ShouldBe(40d);
         store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBe(250d);
+        var history = HostLoadProjection.Create(store.Latest()!.Value, new("owned", Guid.NewGuid(), Guid.NewGuid(), 1), new(), HostAdmissionSnapshot.Unknown());
+        history.CpuPercent.ShouldBe(40d); history.Processes.Single().CpuPercent.ShouldBe(250d);
+        history.Processes.Single().WorkingSetBytes.ShouldBeNull();
         time.Advance(TimeSpan.FromSeconds(5));
         await sampler.SampleOnceAsync();
         store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBeNull();
@@ -112,7 +123,9 @@ public class C1514HostLoadSampleTests
         store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBe(50d);
         var cadenceClock = new SeparateClocks(); var cadenceProbe = new CountingProbe();
         using var ticking = Sampler(cadenceProbe, new(new(), cadenceClock), cadenceClock, new CpuSequence(), []);
-        await ticking.StartAsync(CancellationToken.None); cadenceProbe.Reads.ShouldBe(1);
+        await ticking.StartAsync(CancellationToken.None);
+        await C1514HostLoadFixture.EventuallyAsync(() => cadenceProbe.Reads == 1 && cadenceClock.TimerCreations == 1);
+        cadenceProbe.Reads.ShouldBe(1);
         cadenceClock.Utc += TimeSpan.FromHours(3); cadenceProbe.Reads.ShouldBe(1);
         cadenceClock.Advance(TimeSpan.FromMilliseconds(4999)); cadenceProbe.Reads.ShouldBe(1);
         cadenceClock.Advance(TimeSpan.FromMilliseconds(1));
@@ -121,7 +134,9 @@ public class C1514HostLoadSampleTests
         var disabledProbe = new CountingProbe();
         using var disabled = new HostStatsSamplerService(disabledProbe, new(new(), cadenceClock), new CpuSequence(), () => [], _ => null,
             cadenceClock, Options.Create(new HostStatsSettings { Enabled = false }), NullLogger<HostStatsSamplerService>.Instance);
-        await disabled.StartAsync(CancellationToken.None); cadenceClock.Advance(TimeSpan.FromMinutes(1)); disabledProbe.Reads.ShouldBe(0);
+        await disabled.StartAsync(CancellationToken.None);
+        await Task.WhenAny(disabled.ExecuteTask!, Task.Delay(100)); disabled.ExecuteTask!.IsCompletedSuccessfully.ShouldBeTrue();
+        cadenceClock.Advance(TimeSpan.FromMinutes(1)); disabledProbe.Reads.ShouldBe(0);
         await disabled.StopAsync(CancellationToken.None);
     }
 
@@ -183,12 +198,14 @@ public class C1514HostLoadSampleTests
     private sealed class SeparateClocks : TimeProvider
     {
         private readonly FakeTimeProvider _timers = new(C1514HostLoadFixture.T0);
+        public int TimerCreations;
         public DateTimeOffset Utc { get; set; } = new(2026, 11, 6, 12, 0, 0, TimeSpan.Zero);
         private long _timestamp;
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override DateTimeOffset GetUtcNow() => Utc;
         public override long GetTimestamp() => _timestamp;
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => _timers.CreateTimer(callback, state, dueTime, period);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        { var timer = _timers.CreateTimer(callback, state, dueTime, period); Interlocked.Increment(ref TimerCreations); return timer; }
         public void Advance(TimeSpan elapsed) { _timestamp += elapsed.Ticks; Utc += elapsed; _timers.Advance(elapsed); }
     }
     private sealed class CountingProbe : IHostStatsProbe
