@@ -44,7 +44,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // docs/orchestration-loop.md#standing-operating-rules): normalised body 11,389 of 11,500.
         // CARD-1469 repair (Review 6bebf489 F1) rewrites rule 6 and adds its no-Reply-to-a-sync-blocked-report
         // prohibition to the pointer paragraph: normalised body 11,477 of 11,500.
+        // CARD-1753 points a batch's own land-graph mismatch at #land-graph-refresh and drops
+        // three standing-rule clauses so the pointer fits: normalised body 11,493 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("ded83f88b39699663c0a7a7434d52eb040d420a8497124438a5c564d8e7a556a", "orchestrator-approved-bytes");
+            .ShouldBe("7a655221735d4f385d002b339f5aaf1f5ec0ae90534a51cb1b08690a220ac124", "orchestrator-approved-bytes");
     }
 }

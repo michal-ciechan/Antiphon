@@ -35,6 +35,8 @@ public static class Program
     {
         AppDomain.CurrentDomain.ProcessExit += static (_, _) => CanaryRepository.DeleteActive();
         if (PrintBudget(args, out var budgetExit)) return budgetExit;
+        // --print-pins is not an evaluation and not an approval. Exit 0 here only prints rows.
+        if (PrintPins(args, out var pinsExit)) return pinsExit;
 
         string? repo = null;
         string? solution = null;
@@ -161,6 +163,40 @@ public static class Program
         Console.Out.WriteLine($"total={total.ToString(CultureInfo.InvariantCulture)}");
         Console.Out.WriteLine($"grace={grace.ToString(CultureInfo.InvariantCulture)}");
         Console.Out.WriteLine($"ceiling={(total + grace).ToString(CultureInfo.InvariantCulture)}");
+        return true;
+    }
+
+    private static bool PrintPins(string[] args, out int exitCode)
+    {
+        exitCode = Approved;
+        if (args.Length == 0 || args[0] != "--print-pins") return false;
+        string? repo = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--repo" && i + 1 < args.Length)
+            {
+                repo = args[++i];
+                continue;
+            }
+
+            exitCode = Fail($"unknown or incomplete argument '{args[i]}'");
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(repo))
+        {
+            exitCode = Fail("usage: --print-pins --repo <dir>");
+            return true;
+        }
+
+        repo = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo));
+        if (!Directory.Exists(repo))
+        {
+            exitCode = Fail($"repository '{repo}' does not exist");
+            return true;
+        }
+
+        TargetPins.Print(repo, Console.Out);
         return true;
     }
 

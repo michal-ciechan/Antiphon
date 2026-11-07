@@ -5,6 +5,9 @@
 # CARD-1528: -Update also refuses unobserved filesystem/unsupported evaluation functions.
 # CARD-1540: timestamp metadata and unreviewed environment properties refuse; knob reads need exact pins.
 # Land itself only compares the definition digest; it never runs this evaluator.
+# -LandRefresh is only for scripts/land-graph-land-refresh.ps1. It lets that script
+# stage pins beside the manifest for one land-graph commit. A bare -Update still
+# refuses with "commit source and pins before auditing".
 # Build the DLL through scripts/build-slot.ps1, with -c Release and
 # --property:OutputPath=bin-land-audit/Release/net10.0/, or supply a built -ToolPath.
 # No implicit build and no pre-check-only mode. Any evaluation error refuses (exit 1).
@@ -22,6 +25,7 @@
 param(
     [switch]$Check,
     [switch]$Update,
+    [switch]$LandRefresh,
     [string]$ToolPath,
     [int]$EvaluationBudgetSeconds = 0)
 
@@ -129,12 +133,14 @@ function Assert-SelectableSdk([string]$Version) {
     }
 }
 
-function Assert-HeadSource([string]$Head) {
+function Assert-HeadSource([string]$Head, [bool]$AllowPendingPins = $false) {
     if ((Get-GitValue @('rev-parse', 'HEAD')) -cne $Head) { throw 'HEAD changed during audit' }
     # Evaluation reads disk, while the pre-check hashes HEAD. Bind the two.
     # Generated records are the only tracked paths permitted to differ.
-    $run = Invoke-AuditChild 'git' @('diff', '--quiet', 'HEAD', '--', '.',
-        (':(exclude)' + $ManifestRelative), (':(exclude)' + $EvaluationRelative))
+    # Pending pins are allowed only for scripts/land-graph-land-refresh.ps1.
+    $exclude = @(':(exclude)' + $ManifestRelative, (':(exclude)' + $EvaluationRelative))
+    if ($AllowPendingPins) { $exclude += (':(exclude)' + $PinsRelative) }
+    $run = Invoke-AuditChild 'git' (@('diff', '--quiet', 'HEAD', '--', '.') + $exclude)
     if ($run.Code -ne 0) { throw 'source differs from HEAD; commit source and pins before auditing' }
 }
 
@@ -190,7 +196,8 @@ $temporaryEvaluation = $null
 try {
     if ($Check -and $Update) { throw 'Specify -Check or -Update, not both.' }
     $head = Get-GitValue @('rev-parse', 'HEAD')
-    Assert-HeadSource $head
+    $allowPendingPins = $Update.IsPresent -and $LandRefresh.IsPresent
+    Assert-HeadSource $head $allowPendingPins
     $powershell = (Get-Process -Id $PID).Path
     $precheck = Join-Path $PSScriptRoot 'audit-land-verification-precheck.ps1'
     $arguments = @('-NoProfile', '-NonInteractive', '-File', $precheck)
@@ -203,7 +210,8 @@ try {
     if ($pre.Text.Length -gt 0) { Write-Output $pre.Text.TrimEnd() }
     if ($pre.Code -ne 0) { throw 'land graph pre-check refused' }
 
-    $pins = Get-GitValue @('rev-parse', ('HEAD:' + $PinsRelative))
+    if ($allowPendingPins) { $pins = Get-GitValue @('hash-object', $PinsPath) }
+    else { $pins = Get-GitValue @('rev-parse', ('HEAD:' + $PinsRelative)) }
     if ($pins -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw 'pins blob SHA is invalid' }
     $sdkRun = Invoke-AuditChild 'dotnet' @('--version')
     if ($sdkRun.Code -ne 0 -or $sdkRun.Text.Trim() -cnotmatch $StableSdkPattern) {
@@ -217,7 +225,7 @@ try {
 
     if ($Update) {
         Assert-EvaluatedGraph $ToolPath
-        Assert-HeadSource $head
+        Assert-HeadSource $head $allowPendingPins
         $temporaryEvaluation = Join-Path $RecordDirectory ('.land-evaluation-' + [Guid]::NewGuid().ToString('N'))
         [System.IO.File]::WriteAllText($temporaryEvaluation, ($expected -join "`n") + "`n", [System.Text.Encoding]::ASCII)
         # Publish the manifest last: an interrupted write cannot approve a new graph early.
