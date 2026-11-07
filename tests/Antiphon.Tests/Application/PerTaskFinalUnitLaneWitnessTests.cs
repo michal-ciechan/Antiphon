@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Application;
 /// Nightly and rc documents on <see cref="Allowlist"/> may still describe the lane as their run.
 /// PC-1 restores the sentence "ordinary scope: the whole Unit lane" in
 /// <c>DelegationReportFormatter.VerificationProfileBlock</c>.
+/// Restoring "Unit plus the named affected integration classes" on the stage-code SCOPE line is the same failure.
 /// </summary>
 [Category("Unit")]
 public sealed class PerTaskFinalUnitLaneWitnessTests
@@ -28,6 +29,7 @@ public sealed class PerTaskFinalUnitLaneWitnessTests
         "run the Unit lane",
         "Whole-Unit and affected-class ordinary V/R stay in Final.",
         "(a whole Unit lane)",
+        "Unit plus the named affected integration classes",
     ];
 
     /// <summary>Task-facing instructions and templates. Historical plans and investigations are not in this list.</summary>
