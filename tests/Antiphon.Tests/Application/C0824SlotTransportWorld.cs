@@ -165,25 +165,18 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     public async Task<Guid> SeedAsync()
     {
         var id = await Rig.SeedAsync();
-        Git(Origin, "branch", "-f", RemoteWorkspaceService.OwnedBranch(id), Base);
+        WriteLooseBranch(Origin, RemoteWorkspaceService.OwnedBranch(id), Base);
         return id;
     }
 
     private void BuildRepository()
     {
-        Directory.CreateDirectory(Origin);
+        var shared = SharedScratchRepository.Value;
+        CopyTree(shared.Origin, Origin);
+        CopyTree(shared.ClonePath, Clone);
+        RewriteOriginUrl(Path.Combine(Clone, ".git", "config"), shared.Origin, Origin);
         Directory.CreateDirectory(Work);
-        Git(Origin, "init", "--initial-branch=main");
-        Git(Origin, "config", "user.email", "c0824@localhost");
-        Git(Origin, "config", "user.name", "c0824");
-        File.WriteAllText(Path.Combine(Origin, "README.md"), "c0824 transport");
-        File.WriteAllText(Path.Combine(Origin, ".gitignore"), "bin/\nobj/\n.antiphon/\n");
-        Git(Origin, "add", "-A");
-        Git(Origin, "commit", "-m", "base");
-        Base = Git(Origin, "rev-parse", "HEAD").Trim();
-        Git(Root, "clone", Origin, Clone);
-        Git(Clone, "config", "user.email", "c0824@localhost");
-        Git(Clone, "config", "user.name", "c0824");
+        Base = shared.Base;
     }
 
     // Scratch commands share the existing custodied runner's single start/exit/drain deadline.
@@ -192,17 +185,200 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(1);
 
     private static int _scratchGitProcessStarts;
+    private static readonly AsyncLocal<GitCount?> ScratchGitScope = new();
 
     /// <summary>Scratch git process starts in this test process, including those that hit the deadline.</summary>
     internal static int ScratchGitProcessStarts => Volatile.Read(ref _scratchGitProcessStarts);
 
-    /// <summary>
-    /// Prepares the process-wide scratch repository. Until that repository is shared,
-    /// each case still runs its own init, commit and clone.
-    /// </summary>
-    internal static void EnsureSharedScratchRepository()
+    /// <summary>Counts scratch git starts on this execution context only, so a neighbour case cannot move the total.</summary>
+    internal static ScratchGitCount BeginScratchGitCount() => ScratchGitCount.Open();
+
+    /// <summary>Builds the one scratch origin and clone for this process. Later cases copy that tree.</summary>
+    internal static void EnsureSharedScratchRepository() => _ = SharedScratchRepository.Value;
+
+    private static readonly Lazy<SharedScratch> SharedScratchRepository = new(BuildSharedScratch, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static SharedScratch BuildSharedScratch()
     {
+        var root = Path.Combine(Path.GetTempPath(), "c0824-shared-scratch-" + Guid.NewGuid().ToString("N"));
+        var origin = Path.Combine(root, "origin");
+        var clone = Path.Combine(root, "clone");
+        Directory.CreateDirectory(origin);
+        Git(origin, "init", "--initial-branch=main");
+        Git(origin, "config", "user.email", "c0824@localhost");
+        Git(origin, "config", "user.name", "c0824");
+        File.WriteAllText(Path.Combine(origin, "README.md"), "c0824 transport");
+        File.WriteAllText(Path.Combine(origin, ".gitignore"), "bin/\nobj/\n.antiphon/\n");
+        Git(origin, "add", "-A");
+        Git(origin, "commit", "-m", "base");
+        var baseSha = Git(origin, "rev-parse", "HEAD").Trim();
+        Git(root, "clone", origin, clone);
+        Git(clone, "config", "user.email", "c0824@localhost");
+        Git(clone, "config", "user.name", "c0824");
+        return new SharedScratch(origin, clone, baseSha);
     }
+
+    private static void CopyTree(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target);
+        }
+    }
+
+    private static void RewriteOriginUrl(string configPath, string templateOrigin, string destinationOrigin)
+    {
+        var text = File.ReadAllText(configPath);
+        var stored = ReadOriginUrl(text);
+        var rewritten = EncodeOriginUrl(templateOrigin, stored, destinationOrigin);
+        var needle = "url = " + stored;
+        var index = text.IndexOf(needle, StringComparison.Ordinal);
+        if (index < 0 || text.IndexOf(needle, index + needle.Length, StringComparison.Ordinal) >= 0)
+            throw new InvalidOperationException("shared scratch clone origin url was not unique");
+        File.WriteAllText(configPath, text.Replace(needle, "url = " + rewritten));
+    }
+
+    private static string ReadOriginUrl(string config)
+    {
+        var inOrigin = false;
+        foreach (var raw in config.Split('\n'))
+        {
+            var line = raw.Trim().TrimEnd('\r');
+            if (line.StartsWith('['))
+            {
+                inOrigin = line.Equals("[remote \"origin\"]", StringComparison.Ordinal);
+                continue;
+            }
+
+            if (inOrigin && line.StartsWith("url = ", StringComparison.Ordinal))
+                return line["url = ".Length..];
+        }
+
+        throw new InvalidOperationException("shared scratch clone has no origin url");
+    }
+
+    private static string EncodeOriginUrl(string templateOrigin, string stored, string destinationOrigin)
+    {
+        if (stored == templateOrigin)
+            return destinationOrigin;
+        if (stored == templateOrigin.Replace('\\', '/'))
+            return destinationOrigin.Replace('\\', '/');
+        if (stored == templateOrigin.Replace("\\", "\\\\", StringComparison.Ordinal))
+            return destinationOrigin.Replace("\\", "\\\\", StringComparison.Ordinal);
+        throw new InvalidOperationException("shared scratch origin url is not the template path");
+    }
+
+    private static void WriteLooseBranch(string repository, string branch, string sha)
+    {
+        if (branch.Length == 0 || branch.Contains("..", StringComparison.Ordinal)
+            || branch.StartsWith('/') || branch.EndsWith('/') || branch.Contains('\\', StringComparison.Ordinal))
+            throw new InvalidOperationException("owned branch is not a loose ref");
+        var refPath = Path.Combine(repository, ".git", "refs", "heads", branch.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(refPath)!);
+        File.WriteAllText(refPath, sha.Trim() + "\n");
+    }
+
+    /// <summary>The commit <c>git rev-parse HEAD</c> would print, including a linked worktree.</summary>
+    internal static string RevParseHead(string workingDirectory)
+    {
+        var (gitDir, head) = ReadHead(workingDirectory);
+        if (!head.StartsWith("ref: ", StringComparison.Ordinal))
+            return head;
+        return ReadRef(gitDir, head["ref: ".Length..].Trim());
+    }
+
+    /// <summary><c>git symbolic-ref HEAD</c>. A detached HEAD fails with <see cref="InvalidOperationException"/>.</summary>
+    internal static string SymbolicRefHead(string workingDirectory)
+    {
+        var (_, head) = ReadHead(workingDirectory);
+        if (!head.StartsWith("ref: ", StringComparison.Ordinal))
+            throw new InvalidOperationException("HEAD is detached");
+        return head["ref: ".Length..].Trim();
+    }
+
+    private static (string GitDir, string Head) ReadHead(string workingDirectory)
+    {
+        var gitDir = ResolveGitDir(workingDirectory);
+        var head = File.ReadAllText(Path.Combine(gitDir, "HEAD")).Trim();
+        return (gitDir, head);
+    }
+
+    private static string ResolveGitDir(string workingDirectory)
+    {
+        var dotGit = Path.Combine(workingDirectory, ".git");
+        if (Directory.Exists(dotGit))
+            return dotGit;
+        var text = File.ReadAllText(dotGit).Trim();
+        const string prefix = "gitdir: ";
+        if (!text.StartsWith(prefix, StringComparison.Ordinal))
+            throw new InvalidOperationException("HEAD is not a git directory");
+        var gitDir = text[prefix.Length..].Trim();
+        return Path.IsPathRooted(gitDir) ? gitDir : Path.GetFullPath(Path.Combine(workingDirectory, gitDir));
+    }
+
+    private static string ReadRef(string gitDir, string refName)
+    {
+        var common = gitDir;
+        var commonFile = Path.Combine(gitDir, "commondir");
+        if (File.Exists(commonFile))
+        {
+            var relative = File.ReadAllText(commonFile).Trim();
+            common = Path.GetFullPath(Path.Combine(gitDir, relative));
+        }
+
+        foreach (var root in new[] { common, gitDir })
+        {
+            var loose = Path.Combine(root, refName.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(loose))
+                return File.ReadAllText(loose).Trim();
+            var packed = Path.Combine(root, "packed-refs");
+            if (!File.Exists(packed))
+                continue;
+            foreach (var line in File.ReadLines(packed))
+            {
+                if (line.Length == 0 || line[0] is '#' or '^')
+                    continue;
+                var space = line.IndexOf(' ');
+                if (space > 0 && line[(space + 1)..] == refName)
+                    return line[..space];
+            }
+        }
+
+        throw new InvalidOperationException("missing ref " + refName);
+    }
+
+    private sealed class GitCount
+    {
+        public int Starts;
+        public GitCount? Previous;
+    }
+
+    internal sealed class ScratchGitCount : IDisposable
+    {
+        private readonly GitCount _count;
+        private ScratchGitCount(GitCount count) => _count = count;
+
+        internal static ScratchGitCount Open()
+        {
+            var count = new GitCount { Previous = ScratchGitScope.Value };
+            ScratchGitScope.Value = count;
+            return new ScratchGitCount(count);
+        }
+
+        internal int Starts => _count.Starts;
+        public void Dispose()
+        {
+            if (ScratchGitScope.Value == _count)
+                ScratchGitScope.Value = _count.Previous;
+        }
+    }
+
+    private sealed record SharedScratch(string Origin, string ClonePath, string Base);
 
     public static string Git(string workingDirectory, params string[] args) =>
         RunGit(workingDirectory, args,
@@ -211,6 +387,8 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     internal static string RunGit(string workingDirectory, string[] args, CancellationToken ct, TimeSpan budget)
     {
         Interlocked.Increment(ref _scratchGitProcessStarts);
+        if (ScratchGitScope.Value is { } scope)
+            Interlocked.Increment(ref scope.Starts);
         using var phase = Antiphon.Tests.TestHelpers.TestTiming.BeginPhase(
             Antiphon.Tests.TestHelpers.TestPhaseKind.ProcessWait, "scratch-git");
         using var span = Antiphon.Tests.TestHelpers.TestTrace.Span("git " + (args.FirstOrDefault() ?? ""));
