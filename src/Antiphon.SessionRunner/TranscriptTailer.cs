@@ -36,7 +36,18 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 internal sealed class TranscriptTailer : ITranscriptTailer
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
+    // CARD-1756: a bound session polls at <see cref="PollInterval"/> while bytes or input are
+    // arriving, and backs off to <see cref="QuietPollCap"/> once the file is quiet (or the child
+    // has exited and completion has settled). The identity handle opens only when length or
+    // mtime changed, or when <see cref="IdentityRecheckInterval"/> has elapsed.
+    // Maximum staleness for a replacement that keeps both length and mtime is
+    // <see cref="IdentityStaleness"/>: the recheck interval, plus one quiet poll waiting to run it.
+    // A length or mtime change is visible on the next poll, which is at most <see cref="QuietPollCap"/>
+    // once the tailer has backed off. Readiness snapshots still identify the file themselves.
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
+    internal static readonly TimeSpan QuietPollCap = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan IdentityRecheckInterval = TimeSpan.FromSeconds(4);
+    internal static readonly TimeSpan IdentityStaleness = IdentityRecheckInterval + QuietPollCap;
     private static readonly TimeSpan LocatePollInterval = TimeSpan.FromMilliseconds(250);
     // CARD-1624: the FULL discovery scan (every transcript under the root) backs off from one
     // poll to this cap while nothing relevant changes. The per-poll watch (our input log, the
@@ -101,6 +112,14 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private long _seq;
     private DateTime? _childExitedAtUtc;
     private readonly TerminalTranscriptCompletion _completion = new();
+    private TimeSpan _boundPollDelay = PollInterval;
+    private int _boundIdentityDrift;
+
+    /// <summary>CARD-1756: delay the bound loop will wait after the poll that set it.</summary>
+    internal TimeSpan CurrentBoundPollDelay => _boundPollDelay;
+
+    /// <summary>CARD-1756: a bound poll has observed that the open file is no longer the bound inode.</summary>
+    internal bool BoundIdentityDrift => Volatile.Read(ref _boundIdentityDrift) != 0;
     private DateTime? _firstInputObservedUtc;
     private string? _unboundReason;
     private string? _readinessBindingId;
@@ -516,8 +535,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                                 _pendingBytes = pending.Count;
                                 _reading = false;
                             }
+                            var currentFile = TerminalObservation.IsCurrentFile(path);
+                            if (!currentFile)
+                                Interlocked.Exchange(ref _boundIdentityDrift, 1);
                             _completion.Observe(path, offset, pending.Count, _childExitedAtUtc, ChildExitSettle,
-                                TerminalObservation.IsCurrentFile(path));
+                                currentFile);
                         }
                         catch (IOException)
                         {
@@ -527,7 +549,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     }
                     finally { TerminalObservation.ReadGate.Release(); }
 
-                    await Task.Delay(PollInterval, ct);
+                    _boundPollDelay = PollInterval;
+                    await Task.Delay(_boundPollDelay, ct);
                 }
 
                 if (!dropped)
