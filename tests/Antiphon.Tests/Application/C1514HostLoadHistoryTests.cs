@@ -78,7 +78,9 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
     public async Task IdentityConflictsNeverOverwriteStoredSamples()
     {
         await using var world = await fixture.WorldAsync(); await world.SeedPrefixAsync();
-        var sample = await world.ProduceAsync(C1514HostLoadWorld.T0); var page = world.History.ReadHistory(null, 120);
+        var sample = await world.ProduceAsync(C1514HostLoadWorld.T0);
+        await using var before = world.Db(false); var committed = (await before.HostLoadIngestCursors.SingleAsync()).Cursor;
+        var page = world.History.ReadHistory(committed, 120);
         await world.TransferAsync(); world.Pump.TryEnqueue(new("grok-linux", null, page)).ShouldBeTrue();
         var replay = await world.Pump.ProcessOneAsync(CancellationToken.None); replay.Inserted.ShouldBe(0); replay.Duplicates.ShouldBe(1);
         world.Pump.TryEnqueue(new("grok-linux", replay.CommittedCursor, page with { Samples = [sample with { CpuPercent = 99, BusyCoreEquivalent = 23.76 }] })).ShouldBeTrue();

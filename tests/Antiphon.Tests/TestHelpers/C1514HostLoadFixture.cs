@@ -197,6 +197,11 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
             : new SessionRunnerHttpClient(_sourceHttp, new NoReadFactory(), Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
                 { BaseUrl = _sourceHttp.BaseAddress!.ToString() }), time: Clock);
         RecreateServices();
+        // Each world has a new database/pool. Warm its real connection outside the
+        // production history-read deadline; the deadline is part of the witness.
+        await using var ready = Db(false);
+        await ready.Database.OpenConnectionAsync();
+        _ = await ready.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == "grok-linux").Select(c => c.Cursor).SingleOrDefaultAsync();
     }
     public void RecreateServices()
     {
