@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.HostLoad;
@@ -10,6 +12,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 namespace Antiphon.Tests.Application;
@@ -195,11 +198,81 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
         probe.Commands.Count(sql => sql.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal)).ShouldBe(1); await world.TransferAsync();
         using var page = await world.GetAsync("/api/hosts/grok-linux/load/history?limit=2000"); page.RootElement.GetProperty("items").GetArrayLength().ShouldBeLessThanOrEqualTo(2000);
     }
+    [Test, Timeout(60_000)]
+    public async Task OneRetentionPassReclaimsMoreThanOneBatch()
+    {
+        await using var world = await fixture.WorldAsync();
+        var task = await world.StartTaskAsync(C1514HostLoadWorld.T0);
+        await world.FinishTaskAsync(task.Id, C1514HostLoadWorld.T0.AddSeconds(1));
+        await world.DeriveAsync();
+        world.Clock.Utc = C1514HostLoadWorld.T0.AddDays(91);
+        var store = Guid.NewGuid(); var boot = Guid.NewGuid(); var aged = C1514HostLoadWorld.T0;
+        await using (var db = world.Db())
+        {
+            for (var i = 0; i < 800; i++) db.HostLoadSamples.Add(new()
+            {
+                RunnerStoreId = store, BootId = boot, Sequence = i + 1, RunnerId = "grok-linux", PhysicalHostKey = "owned-host",
+                SampledAt = aged, IngestedAt = aged, DerivedAt = aged, IsPrimary = true, PayloadJson = "{}",
+            });
+            for (var i = 0; i < 3; i++) db.HostLoadSamples.Add(new()
+            {
+                RunnerStoreId = store, BootId = boot, Sequence = 10_000 + i, RunnerId = "grok-linux", PhysicalHostKey = "owned-host",
+                SampledAt = aged, IngestedAt = aged, IsPrimary = true, PayloadJson = "{}",
+            });
+            for (var i = 0; i < 800; i++) db.HostLoadSampleIdentities.Add(new()
+            {
+                RunnerStoreId = store, BootId = boot, Sequence = i + 1, PayloadHash = "aged", IngestedAt = aged,
+            });
+            (await db.HostLoadObservedEvents.CountAsync()).ShouldBeGreaterThan(0);
+            await db.SaveChangesAsync();
+        }
+        await world.RetainAsync();
+        await using var after = world.Db(false);
+        (await after.HostLoadSamples.CountAsync(r => r.DerivedAt == null)).ShouldBe(3);
+        var expiredLeft = await after.HostLoadSamples.CountAsync(r => r.DerivedAt != null);
+        var identitiesLeft = await after.HostLoadSampleIdentities.CountAsync();
+        var observedLeft = await after.HostLoadObservedEvents.CountAsync();
+        (expiredLeft + identitiesLeft + observedLeft).ShouldBe(0, "expired=" + expiredLeft + " identities=" + identitiesLeft + " observed=" + observedLeft);
+    }
+    [Test, Timeout(10_000)]
+    public async Task FullSeatsRecommendNothingWhenTaskRowsAreEmpty()
+    {
+        await using var world = await fixture.WorldAsync();
+        await using var db = world.Db();
+        var directory = new FullSeatDirectory(world.Clock.GetUtcNow());
+        var budgets = new HostBudgetService(db, directory, Options.Create(new DelegationSettings { MaxConcurrentTasks = 8 }), world.Clock);
+        var reader = new HostLoadCapacityReader(db, budgets, directory, world.Clock);
+        var capacity = await reader.ReadAsync("grok-linux", null, null, CancellationToken.None);
+        capacity.RunnerSeatsRemaining.ShouldBe(0);
+        capacity.HostRemaining.ShouldBe(3);
+        var now = world.Clock.GetUtcNow();
+        var advice = new HostLoadRecommendation().Evaluate(
+            new HostLoadPressureInput("owned-host", "owned-host", now, 10, 10, 10), capacity, [], now, false, false);
+        advice.Recommendation.RecommendedAdditionalTasks.ShouldBe(0);
+    }
     private static async Task AddTasksAsync(C1514HostLoadWorld world, int count)
     {
         await using var db = world.Db();
         for (var i = 0; i < count; i++) db.AgentTasks.Add(new() { Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "owned count", Goal = "owned", Role = AgentTaskRole.Code,
             AgentKind = AgentKind.Codex, RunnerId = "grok-linux", Status = AgentTaskStatus.Working, CreatedAt = C1514HostLoadWorld.T0.UtcDateTime });
         await db.SaveChangesAsync();
+    }
+    private sealed class FullSeatDirectory(DateTimeOffset observed) : ISessionRunnerDirectory
+    {
+        public ISessionRunnerClient Local => null!;
+        public ISessionRunnerClient Resolve(string? runnerId) => null!;
+        public IReadOnlyList<string> KnownRunnerIds => ["grok-linux"];
+        public Guid? GetLiveStoreId(string? runnerId) => null;
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(null);
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => Task.FromResult<RunnerInventory>(new RunnerInventory.Available(
+        [
+            new SessionRunnerSessionDto(Guid.NewGuid(), 11, observed.UtcDateTime, "Running", null, AgentExitReason.Unknown, 0),
+            new SessionRunnerSessionDto(Guid.NewGuid(), 12, observed.UtcDateTime, "Starting", null, AgentExitReason.Unknown, 0),
+            new SessionRunnerSessionDto(Guid.NewGuid(), 13, observed.UtcDateTime, "AwaitingInput", null, AgentExitReason.Unknown, 0),
+        ]));
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) => Task.FromResult<RunnerDescriptor?>(
+            new("grok-linux", "grok-linux", "linux", observed, true, true, false, 3, null));
+        public int? DeclaredCapacity(string runnerId) => 3;
     }
 }
