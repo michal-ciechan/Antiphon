@@ -469,16 +469,45 @@ public sealed class WorktreeNoFollowDeleteTests
                 try { WorktreeNoFollowDelete.Delete(tree, preserveNestedRepositories: true); }
                 catch (Exception ex) { error = ex; }
                 finally { RemovalApproval.Current.Value = previous; }
-                writer.Write("later-bytes"u8);
+                RewriteOpenWriter(writer);
             }
             error.ShouldBeAssignableTo<IOException>(error?.ToString());
             File.Exists(file).ShouldBeTrue("a file open for writing is not deleted");
-            File.ReadAllText(file).ShouldEndWith("later-bytes");
+            File.ReadAllText(file).ShouldBe("later-bytes");
         }
         finally
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Test]
+    public void C1717_B3_OpenWriterRewriteTruncatesEarlierBytes()
+    {
+        using var timing = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "run");
+        var root = Path.Combine(Path.GetTempPath(), "c1717-b3-writer-bytes-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, "held.txt");
+        try
+        {
+            File.WriteAllText(file, "approved-bytes");
+            using (var writer = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                writer.Write("later-bytes"u8);
+                writer.Flush();
+                File.ReadAllText(file).ShouldBe("later-bytestes",
+                    "overwriting through an open handle preserves the earlier tail until truncated");
+                writer.Position = 0;
+                RewriteOpenWriter(writer);
+            }
+            File.ReadAllText(file).ShouldBe("later-bytes");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static void RewriteOpenWriter(FileStream writer)
+    {
+        writer.Write("later-bytes"u8);
     }
 
     private const int InNonBlock = 0x800;
