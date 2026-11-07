@@ -116,6 +116,12 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
         note.QueueMessageId.ShouldNotBeNull();
         note.ConcurrencyToken.ShouldNotBe(staleToken);
         _observer.NoteSelects(note.Id).Count.ShouldBe(1, _observer.Describe(note.Id));
+        await using var check = new AppDbContext(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+        var saved = await check.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        saved.State.ShouldBe(note.State);
+        saved.LastErrorCode.ShouldBe(note.LastErrorCode);
+        saved.QueueMessageId.ShouldBe(note.QueueMessageId);
+        saved.ConcurrencyToken.ShouldBe(note.ConcurrencyToken);
     }
 
     [Test]
