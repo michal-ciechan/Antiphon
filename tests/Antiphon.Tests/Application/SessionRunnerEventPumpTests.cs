@@ -224,6 +224,8 @@ public class SessionRunnerEventPumpTests
             h.Adapter.BeforeInput = async (input, ct) =>
             {
                 if (!input.Contains(body, StringComparison.Ordinal)) return;
+                using var delay = clock.CreateTimer(_ => bodyRelease.TrySetResult(), null,
+                    TimeSpan.FromSeconds(5), Timeout.InfiniteTimeSpan);
                 bodyEntered.TrySetResult();
                 await bodyRelease.Task.WaitAsync(ct);
             };
@@ -267,25 +269,13 @@ public class SessionRunnerEventPumpTests
             if (delayedBody)
             {
                 await bodyEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                // Spend the old driver's entire virtual budget before composer timers can exist.
-                clock.Advance(TimeSpan.FromSeconds(5));
                 submitted.Task.IsCompleted.ShouldBeFalse("the held body cannot have submitted");
-                bodyRelease.TrySetResult();
             }
-            // Advance registered composer timers, not a fixed wall-clock polling window.
-            // Stop at the pre-Enter delay: confirmation and its retries keep a frozen clock.
-            var afterTimer = 0;
-            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            // Original driver retained for the red-first delayed-timer witness.
+            for (var i = 0; i < 100 && !submitted.Task.IsCompleted; i++)
             {
-                while (true)
-                {
-                    var timer = await clock.WaitForTimerAsync(e => e.Action == "create"
-                        && (e.DueTime == TimeSpan.FromMilliseconds(250)
-                            || e.DueTime == TimeSpan.FromMilliseconds(20)), afterTimer, deadline.Token);
-                    afterTimer = timer.Sequence;
-                    clock.AdvanceTo(timer.Deadline);
-                    if (timer.DueTime == TimeSpan.FromMilliseconds(20)) break;
-                }
+                clock.Advance(TimeSpan.FromMilliseconds(50));
+                await Task.Delay(20);
             }
             await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await read.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
