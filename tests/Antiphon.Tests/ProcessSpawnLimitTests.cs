@@ -102,6 +102,8 @@ public class ProcessSpawnLimitTests
         typeof(AgentTaskLandHoldVisibilityTests),
         // CARD-1610 S4a: runs scripts/delegate.ps1 under pwsh per case.
         typeof(TaskCeilingScriptTests),
+        // CARD-1745: each witness starts pwsh for the Linux SHA gate harness.
+        typeof(LinuxServerRestartGateTests),
     ];
 
     // CARD-1421 Appendix B: strict-roster classes whose only children are git, in fixture-owned repositories.
