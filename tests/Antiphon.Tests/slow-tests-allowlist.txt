@@ -440,6 +440,8 @@ Antiphon.Tests.Application.C0824RefOnlyCleanupTests
 
 # CARD-0824: isolated PostgreSQL Up/Down and recorded-snapshot loss refusal; migrations are the subject.
 Antiphon.Tests.Application.C0824RefOnlySnapshotMigrationTests
+# CARD-1514: isolated historical PostgreSQL baselines, additive host-load Up and exact durable-byte preservation on refused Down.
+Antiphon.Tests.Application.C1514HostLoadMigrationTests
 # real Git scratch repositories compare index, commit-tree and blob reads across staging and source set-aside.
 Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
 # CARD-1733: real Git promotion matrices exceeded 300 seconds before native fixture containment.

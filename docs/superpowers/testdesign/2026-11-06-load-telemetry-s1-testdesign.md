@@ -1004,7 +1004,7 @@ checkpoints:
     group: s1b-delivery
     filter: "/*/*/(C1514HostLoadHistoryTests*)|(C1514TaskLoadWindowTests*)|(C1514HostLoadApiTests*)/*"
     expect: ["C1514HostLoadHistoryTests","C1514TaskLoadWindowTests","C1514HostLoadApiTests"]
-    minExecuted: 18
+    minExecuted: 28
     estimatedMinutes: 16
     timeoutMinutes: 8
     serial: true

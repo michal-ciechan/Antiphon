@@ -202,9 +202,13 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         RecreateServices();
         // Each world has a new database/pool. Warm its real connection outside the
         // production history-read deadline; the deadline is part of the witness.
-        await using var ready = Db(false);
+        await using var readyScope = Services.CreateAsyncScope();
+        var ready = readyScope.ServiceProvider.GetRequiredService<AppDbContext>();
         await ready.Database.OpenConnectionAsync();
-        _ = await ready.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == "grok-linux").Select(c => c.Cursor).SingleOrDefaultAsync();
+        // Use the pump's real Npgsql options and parameterized query shape. Db(false)
+        // has different provider options and a literal query does not warm this plan.
+        var canonical = HostLoadCounterCache.Canonical(Runner.RunnerId);
+        _ = await ready.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == canonical).Select(c => c.Cursor).SingleOrDefaultAsync();
     }
     public void RecreateServices()
     {
