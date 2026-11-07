@@ -41,12 +41,12 @@ public sealed class LinuxServerRestartGateTests
         => await AssertCase("W4", "W4-exit-1", "W4-no-lock", "W4-no-docker", "W4-not-verified");
 
     [Test]
-    public async Task Execute_match_restarts_only_the_named_container()
-        => await AssertCase("W5", "W5-exit-0", "W5-verified-execute", "W5-docker-order", "W5-no-runner", "W5-lock-cleared");
+    public async Task Execute_match_reports_already_at_expected_sha_without_stopping()
+        => await AssertCase("W5", "W5-exit-0", "W5-already", "W5-verified-execute", "W5-no-docker", "W5-lock-cleared");
 
     [Test]
-    public async Task Execute_mismatch_stops_container_and_keeps_lock()
-        => await AssertCase("W6", "W6-exit-5", "W6-left-stopped", "W6-lock-remains", "W6-lock-records-rollback", "W6-stopped-after-start");
+    public async Task Execute_mismatch_refuses_before_stopping()
+        => await AssertCase("W6", "W6-exit-5", "W6-nothing-restarted", "W6-left-running", "W6-recovery", "W6-lock-remains", "W6-lock-records-image", "W6-inspected-same-image", "W6-no-stop", "W6-not-left-stopped");
 
     [Test]
     public async Task Malformed_sha_refuses_before_docker()
@@ -67,6 +67,22 @@ public sealed class LinuxServerRestartGateTests
     [Test]
     public async Task Malformed_version_exits_5_and_leaves_lock()
         => await AssertCase("W13", "W13-exit-5", "W13-lock-remains", "W13-lock-malformed", "W13-no-docker");
+
+    [Test]
+    public async Task Execute_health_failure_exits_5_without_docker()
+        => await AssertCase("W14", "W14-exit-5", "W14-left-running", "W14-nothing-restarted", "W14-lock-remains", "W14-lock-health", "W14-no-docker");
+
+    [Test]
+    public async Task Execute_unknown_version_exits_5_without_docker()
+        => await AssertCase("W15", "W15-exit-5", "W15-nothing-restarted", "W15-lock-remains", "W15-lock-unavailable", "W15-no-docker");
+
+    [Test]
+    public async Task Execute_malformed_version_exits_5_without_docker()
+        => await AssertCase("W16", "W16-exit-5", "W16-left-running", "W16-lock-remains", "W16-lock-malformed", "W16-no-docker");
+
+    [Test]
+    public async Task Execute_moved_image_refuses_before_stopping()
+        => await AssertCase("W17", "W17-exit-5", "W17-image-moved", "W17-names-new-image", "W17-no-recreate", "W17-left-running", "W17-nothing-restarted", "W17-recovery", "W17-lock-remains", "W17-lock-records-running-image", "W17-no-stop");
 
     [Test]
     public void AppHost_files_do_not_reference_the_linux_gate()
@@ -91,6 +107,9 @@ public sealed class LinuxServerRestartGateTests
         text.ShouldContain("WhatIf");
         text.ShouldContain("exit 5");
         text.ShouldContain("not configured");
+        text.ShouldContain("already at expected SHA");
+        text.ShouldContain("left running");
+        text.ShouldContain("docker start");
     }
 
     private static async Task AssertCase(string caseName, params string[] rows)
