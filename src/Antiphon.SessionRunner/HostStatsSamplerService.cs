@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -26,6 +28,9 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly HostLoadCaptureService? _history;
     private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, long At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
+    private static int _selfPid;
+    private static DateTime _selfStartedUtc;
+    private static bool _selfCached;
 
     public HostStatsSamplerService(
         IHostStatsProbe probe,
@@ -139,7 +144,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         TimeSpan? cpu = null;
         try
         {
-            cpu = _cpu.TryGetTotalCpuTime(pid, startedAt);
+            cpu = ReadProcessCpu(pid, startedAt);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -196,8 +201,16 @@ public sealed class HostStatsSamplerService : BackgroundService
         var list = new List<HostStatsProcessTarget>();
         try
         {
-            using var self = Process.GetCurrentProcess();
-            list.Add(new HostStatsProcessTarget(null, self.Id, null, self.StartTime.ToUniversalTime()));
+            // The runner pid and start do not change. Opening the process every five seconds
+            // was the dominant sample cost on Linux.
+            if (!_selfCached)
+            {
+                using var self = Process.GetCurrentProcess();
+                _selfPid = self.Id;
+                _selfStartedUtc = self.StartTime.ToUniversalTime();
+                _selfCached = true;
+            }
+            list.Add(new HostStatsProcessTarget(null, _selfPid, null, _selfStartedUtc));
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -216,4 +229,140 @@ public sealed class HostStatsSamplerService : BackgroundService
     }
 
     internal IProcessCpuProbe CpuProbe => _cpu;
+
+    private TimeSpan? ReadProcessCpu(int pid, DateTime startedAt)
+    {
+        if (OperatingSystem.IsLinux() && LinuxProcessFacts.Trusted && LinuxProcessFacts.TryCpu(pid, startedAt, out var read))
+            return read;
+        return _cpu.TryGetTotalCpuTime(pid, startedAt);
+    }
+}
+
+/// <summary>Linux sampler facts from /proc. A recycled pid stays null and never falls open onto another process.</summary>
+internal static class LinuxProcessFacts
+{
+    private static readonly TimeSpan PidReuseTolerance = TimeSpan.FromMinutes(2);
+    private static long _bootSeconds = long.MinValue;
+    private static long _ticksPerSecond;
+    private static int _trusted; // 0 unknown, 1 yes, -1 no
+
+    internal static bool Trusted
+    {
+        get
+        {
+            if (_trusted != 0) return _trusted > 0;
+            try
+            {
+                using var self = Process.GetCurrentProcess();
+                _trusted = TryCpu(self.Id, self.StartTime.ToUniversalTime(), out var cpu)
+                    && cpu is { } value && (value - self.TotalProcessorTime).Duration() < TimeSpan.FromSeconds(2) ? 1 : -1;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+            {
+                _trusted = -1;
+            }
+            return _trusted > 0;
+        }
+    }
+
+    internal static bool TryWorkingSet(int pid, out long? bytes)
+    {
+        bytes = null;
+        try
+        {
+            var text = File.ReadAllText("/proc/" + pid.ToString() + "/statm");
+            var span = text.AsSpan().Trim();
+            var first = span.IndexOf(' ');
+            if (first <= 0) return false;
+            var rest = span[(first + 1)..];
+            var second = rest.IndexOf(' ');
+            var token = second < 0 ? rest : rest[..second];
+            if (!long.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var pages) || pages < 0)
+                return false;
+            bytes = pages * Environment.SystemPageSize;
+            return true;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>False means the caller should use the process API. True with a null span is a recycled pid.</summary>
+    internal static bool TryCpu(int pid, DateTime startedAt, out TimeSpan? cpu)
+    {
+        cpu = null;
+        if (pid <= 0 || !TryFields(pid, out var utime, out var stime, out var startTicks) || !TryBoot(out var boot, out var hz))
+            return false;
+        var started = DateTime.UnixEpoch.AddSeconds(boot + startTicks / (double)hz);
+        if (started > startedAt.ToUniversalTime() + PidReuseTolerance)
+            return true;
+        cpu = TimeSpan.FromSeconds((utime + stime) / (double)hz);
+        return true;
+    }
+
+    private static bool TryFields(int pid, out long utime, out long stime, out long startTicks)
+    {
+        utime = stime = startTicks = 0;
+        try
+        {
+            var stat = File.ReadAllText("/proc/" + pid.ToString() + "/stat");
+            var close = stat.LastIndexOf(')');
+            if (close < 0 || close + 2 >= stat.Length) return false;
+            var fields = stat.AsSpan(close + 2);
+            return Field(fields, 11, out utime) && Field(fields, 12, out stime) && Field(fields, 19, out startTicks);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool Field(ReadOnlySpan<char> fields, int index, out long value)
+    {
+        value = 0;
+        var seen = -1;
+        var start = 0;
+        for (var i = 0; i <= fields.Length; i++)
+        {
+            if (i != fields.Length && fields[i] != ' ') continue;
+            if (i > start)
+            {
+                seen++;
+                if (seen == index)
+                    return long.TryParse(fields[start..i], NumberStyles.None, CultureInfo.InvariantCulture, out value);
+            }
+            start = i + 1;
+        }
+        return false;
+    }
+
+    private static bool TryBoot(out long bootSeconds, out long ticksPerSecond)
+    {
+        if (_ticksPerSecond > 0 && _bootSeconds != long.MinValue)
+        {
+            bootSeconds = _bootSeconds;
+            ticksPerSecond = _ticksPerSecond;
+            return true;
+        }
+        bootSeconds = 0;
+        ticksPerSecond = Sysconf(2);
+        if (ticksPerSecond <= 0) return false;
+        foreach (var line in File.ReadLines("/proc/stat"))
+        {
+            if (!line.StartsWith("btime ", StringComparison.Ordinal)) continue;
+            if (!long.TryParse(line.AsSpan(6), NumberStyles.None, CultureInfo.InvariantCulture, out bootSeconds)) return false;
+            _bootSeconds = bootSeconds;
+            _ticksPerSecond = ticksPerSecond;
+            return true;
+        }
+        return false;
+    }
+
+    [DllImport("libc", EntryPoint = "sysconf")]
+    private static extern long Sysconf(int name);
 }

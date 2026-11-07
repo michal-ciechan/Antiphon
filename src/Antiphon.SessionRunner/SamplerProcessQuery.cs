@@ -78,14 +78,21 @@ internal sealed class SamplerProcessQuery : IProcessCpuProbe
 
     private static Reading ReadLinux(int pid, DateTime startedAt)
     {
+        // One /proc read pair supplies CPU and the resident set. WorkingSet reuses that
+        // resident value, so a sample does not open the process again.
+        if (LinuxProcessFacts.Trusted
+            && LinuxProcessFacts.TryCpu(pid, startedAt, out var cpu)
+            && LinuxProcessFacts.TryWorkingSet(pid, out var workingSet))
+            return new Reading(cpu, workingSet);
+
         using var process = Process.GetProcessById(pid);
         if (process.HasExited)
             return Reading.Missing;
 
-        TimeSpan? cpu = null;
+        TimeSpan? fallbackCpu = null;
         if (process.StartTime.ToUniversalTime() <= startedAt.ToUniversalTime() + PidReuseTolerance)
-            cpu = process.TotalProcessorTime;
-        return new Reading(cpu, process.WorkingSet64);
+            fallbackCpu = process.TotalProcessorTime;
+        return new Reading(fallbackCpu, process.WorkingSet64);
     }
 
     private static Reading ReadWindows(int pid, DateTime startedAt)
