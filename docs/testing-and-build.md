@@ -706,6 +706,16 @@ remove it on exit; repeated interrupts cancel the same token. Internal `hold`,
 Canceling `run` or `wait` stops that observer; the detached executor continues.
 Keep the printed run ID for a later `wait --run <run>` or explicit `stop`.
 Direct `row` cancellation reaches slot probing, acquisition and its driver.
+A supported `stop` holds the run's terminal-publication gate while joining the
+executor, rereads its last progress, and publishes a canceled `phase=done`
+receipt with exit 130 and reason `supported-stop` before releasing a waiter.
+The stop command itself returns 0 on successful teardown/publication. Completed
+TRX counts remain known; unavailable counts remain null. Direct executor failure
+and cancellation reconstruct the same manifest/source/build identity fields.
+Reports carry run ownership markers so a stopper can replace its own provisional
+report pair; either foreign destination refuses before either half is replaced.
+Existing unmarked completed receipts remain readable. Both green-source
+validators reject a terminal failure reason even if exit/verdict are forged green.
 A directly canceled executor joins scheduler/driver and lease cleanup before
 attempting non-green terminal state/report publication with exit 130 and reason
 `caller-requested`. Receipt write refusals remain diagnostic failures; an exit

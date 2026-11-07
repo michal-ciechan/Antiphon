@@ -72,9 +72,24 @@ public sealed class WaitCommand
                 || stateRefusal.Contains("receipt-identity:", StringComparison.Ordinal)))
             { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }
             var observed = cleanup.ObserveExecutor(runDirectory, cancellationToken);
+            Stream? publication = null;
+            if (observed.Verdict == ProcessVerdict.Dead)
+            {
+                try
+                {
+                    if (!TerminalPublicationGate.TryEnter(_context, runDirectory, out publication))
+                        observed = new ProcessObservation(ProcessVerdict.Unknown, "terminal-publication-in-progress");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    output.WriteLine("refused: terminal-publication-gate: " + ex.Message);
+                    return ExitCodes.Invalid;
+                }
+            }
+            using var held = publication;
             // Completion can precede output cleanup; only executor death releases the waiter.
             // Re-read after observing death to include the last publication.
-            if (observed.Verdict == ProcessVerdict.Dead && state?.Phase != "done")
+            if (observed.Verdict == ProcessVerdict.Dead)
                 state = _store.TryRead(statePath, out _, cancellationToken);
             if (state?.Phase == "done" && observed.Verdict == ProcessVerdict.Dead)
             {

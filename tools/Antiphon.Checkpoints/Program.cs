@@ -341,6 +341,17 @@ public static class Program
             output.WriteLine("refused: state-receipt-source-unreadable");
             return ExitCodes.Invalid;
         }
+        if (options.Get("expected-source-sha") is string expected && state.Source.Start.Commit != expected)
+        {
+            output.WriteLine("refused: receipt-source-SHA-mismatching");
+            return ExitCodes.Invalid;
+        }
+        if (!TerminalPublicationGate.TryEnter(context, run, out var publication))
+        {
+            output.WriteLine("stop incomplete " + Path.GetFileName(run) + " terminal-publication-busy");
+            return ExitCodes.StillRunning;
+        }
+        using var held = publication;
         if (state.Phase == "done")
         {
             var required = RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"), context, runtime.CancellationToken);
@@ -373,22 +384,21 @@ public static class Program
             }
         }
 
-        if (state is not null)
+        // The executor may have completed rows or sealed the run while stop was
+        // joining it. Never replace that progress with the pre-kill snapshot.
+        state = store.TryRead(Path.Combine(run, "state.json"));
+        if (state is null)
         {
-            var requested = Path.GetFileName(Path.GetFullPath(run));
-            if (state.ToolOwner != SafeWrite.Marker || !string.Equals(state.RunId, requested, StringComparison.Ordinal))
-            {
-                output.WriteLine("refused: foreign_state");
-                return ExitCodes.Invalid;
-            }
-
-            state.Phase = "stopped";
-            var refusal = store.Write(Path.Combine(run, "state.json"), state);
-            if (refusal is not null)
-            {
-                output.WriteLine("refused: " + refusal);
-                return ExitCodes.Invalid;
-            }
+            output.WriteLine("refused: state-receipt-unreadable: " + run);
+            return ExitCodes.Invalid;
+        }
+        if (state.Phase != "done")
+            TerminalReceipt.Publish(run, ExitCodes.Canceled, "supported-stop", runtime, state.StartedAt);
+        else if (RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"), context,
+            CancellationToken.None) is string terminalRefusal)
+        {
+            output.WriteLine("refused: " + terminalRefusal);
+            return ExitCodes.Invalid;
         }
 
         var receipt = cleanup.Remove(run, runtime.CancellationToken);

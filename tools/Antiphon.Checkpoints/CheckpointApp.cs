@@ -67,6 +67,7 @@ public static class CheckpointApp
     {
         runtime ??= new Runtime();
         var context = runtime.CleanupContext;
+        var startedAt = context.Time.GetUtcNow();
         var write = new CheckpointWrite(context);
         var refusal = write.Preflight(runDirectory, [Path.GetFullPath(runDirectory)], runtime.GitExecutable);
         if (refusal is not null)
@@ -92,36 +93,9 @@ public static class CheckpointApp
                 : "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message
                 + (ex.InnerException is null ? "" : " <- " + ex.InnerException.ToString().Replace("\n", " | "));
             var output = runtime.Output ?? Console.Error;
-            var statePath = Path.Combine(runDirectory, "state.json");
-            var store = new RunStateStore(context);
-            var state = store.TryRead(statePath) ?? new RunState { RunId = Path.GetFileName(runDirectory) };
-            state.Phase = "done";
-            state.ExitCode = exit;
-            state.Reason = reason;
-            state.EndedAt = context.Time.GetUtcNow();
-            var model = new ReportModel
-            {
-                RunId = state.RunId,
-                Commit = state.Source.Start.Commit ?? "",
-                StartedAt = state.StartedAt,
-                EndedAt = state.EndedAt.Value,
-                ExitCode = exit,
-                Reason = reason,
-                Verdict = "RED",
-                Budget = state.Budget,
-                Rows = state.Rows.Select(row => new ReportRow { Id = row.Id, State = row.State, ExitCode = row.ExitCode,
-                    Slot = row.Slot, SlotReason = row.SlotReason, WaitedSeconds = row.WaitedSeconds,
-                    ExecutedSeconds = row.ExecutedSeconds, WallSeconds = row.WallSeconds,
-                    TerminalReason = row.TerminalReason, Line = row.Line }).ToList(),
-                Source = state.Source,
-                Evidence = Path.Combine(runDirectory, "report.md"),
-            };
             try
             {
-                ReportWriter.WriteFiles(context, runDirectory, model);
-                var persisted = store.Write(statePath, state);
-                if (persisted is not null)
-                    output.WriteLine("refused: " + persisted);
+                TerminalReceipt.Publish(runDirectory, exit, reason, runtime, startedAt);
             }
             catch (Exception persistence)
             {
@@ -559,7 +533,7 @@ public static class CheckpointApp
         await logWriter.FlushAsync().ConfigureAwait(false);
         await logWriter.DisposeAsync().ConfigureAwait(false);
         state.Reason = model.Reason;
-        try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context); }
+        try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context, model.EndedAt); }
         catch (StatePublicationException ex)
         { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
         return model.ExitCode;
@@ -761,11 +735,12 @@ public static class CheckpointApp
         }
     }
 
-    public static void Finish(RunState state, int exitCode, Action publish, Action cleanup, Action<string> note, CheckpointCleanupContext? context = null)
+    public static void Finish(RunState state, int exitCode, Action publish, Action cleanup, Action<string> note,
+        CheckpointCleanupContext? context = null, DateTimeOffset? endedAt = null)
     {
         context ??= CheckpointCleanupDefaults.Context;
         state.Phase = "done";
-        state.EndedAt = context.Time.GetUtcNow();
+        state.EndedAt = endedAt ?? context.Time.GetUtcNow();
         state.ExitCode = exitCode;
         publish();
         try
