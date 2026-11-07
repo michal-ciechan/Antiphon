@@ -1826,6 +1826,24 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("LandingPublication")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("LoadAttempt")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LoadDispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LoadQueuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LoadRunnerId")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("LoadSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("LoadStatus")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("ModelLevel")
                         .HasColumnType("integer");
 
@@ -1840,6 +1858,10 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("AgentTaskId", "At")
                         .HasDatabaseName("IX_AgentTaskEvents_AgentTaskId_At");
+
+                    b.HasIndex("At", "Id")
+                        .HasDatabaseName("IX_AgentTaskEvents_LoadObservation")
+                        .HasFilter("\"LoadAttempt\" IS NOT NULL");
 
                     b.ToTable("AgentTaskEvents", (string)null);
                 });
@@ -2584,6 +2606,60 @@ namespace Antiphon.Server.Migrations
 
                             t.HasCheckConstraint("CK_AgentTaskLandings_V2ApprovalEquality", "\"SchemaVersion\" <> 2 OR \"ReviewedSourceSha\" = \"OriginalSourceSha\"");
                         });
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskLoadWindow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Complete")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("DetailsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("EndEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PhysicalHostKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("RunnerBootId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("StartEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("WindowOrdinal")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EndedAt");
+
+                    b.HasIndex("PhysicalHostKey", "StartedAt", "EndedAt");
+
+                    b.HasIndex("TaskId", "Attempt", "PhysicalHostKey", "RunnerBootId", "WindowOrdinal")
+                        .IsUnique();
+
+                    b.ToTable("AgentTaskLoadWindows");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskPark", b =>
@@ -6382,6 +6458,200 @@ namespace Antiphon.Server.Migrations
                         {
                             t.HasCheckConstraint("CK_HostCleanupRuns_Budget", "\"AttemptLimit\" > 0 AND \"ByteLimit\" > 0 AND \"Attempts\" >= 0 AND \"Attempts\" <= \"AttemptLimit\" AND \"ReservedBytes\" >= 0 AND \"ReservedBytes\" <= \"ByteLimit\" AND \"ReclaimedBytes\" >= 0 AND \"EligibleWorktreeBytes\" >= 0");
                         });
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadHourlyRollup", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("HistogramJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("HourUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Metric")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("PhysicalHostKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("SourceEpoch")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("StatisticsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PhysicalHostKey", "HourUtc", "Id");
+
+                    b.HasIndex("PhysicalHostKey", "SourceEpoch", "HourUtc", "Metric")
+                        .IsUnique();
+
+                    b.ToTable("HostLoadHourlyRollups");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadIngestCursor", b =>
+                {
+                    b.Property<string>("RunnerId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CommittedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Complete")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Cursor")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GapsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("RunnerStoreId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("RunnerId");
+
+                    b.ToTable("HostLoadIngestCursors");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadObservedEvent", b =>
+                {
+                    b.Property<Guid>("EventId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("EventId");
+
+                    b.HasIndex("ObservedAt");
+
+                    b.ToTable("HostLoadObservedEvents");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadSampleIdentity", b =>
+                {
+                    b.Property<Guid>("RunnerStoreId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BootId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("IngestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("RunnerStoreId", "BootId", "Sequence");
+
+                    b.HasIndex("IngestedAt");
+
+                    b.ToTable("HostLoadSampleIdentities");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadSampleRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("BootId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CountersJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("DerivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("IngestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsPrimary")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PhysicalHostKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RunnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("RunnerStoreId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("SampledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("SourceEpoch")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Id")
+                        .HasDatabaseName("IX_HostLoadSamples_PendingDerived")
+                        .HasFilter("\"DerivedAt\" IS NULL");
+
+                    b.HasIndex("PhysicalHostKey", "SampledAt", "Id");
+
+                    b.HasIndex("RunnerStoreId", "BootId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("HostLoadSamples");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadTaskMetricBucket", b =>
+                {
+                    b.Property<Guid>("WindowId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("HourUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Metric")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("HistogramJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("WindowId", "HourUtc", "Metric");
+
+                    b.ToTable("HostLoadTaskMetricBuckets");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostMaintenanceActivity", b =>
@@ -11492,6 +11762,15 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Run");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadTaskMetricBucket", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTaskLoadWindow", null)
+                        .WithMany()
+                        .HasForeignKey("WindowId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.KeepSixOrchestrator", b =>
