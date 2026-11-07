@@ -85,7 +85,8 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
             await waiter.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(90), cancellationToken);
             waiter.ExitCode.ShouldBe(exit);
             File.Exists(Path.Combine(run, "report.md")).ShouldBeTrue("the receipt must exist when wait returns");
-            AssertReceipt(run, exit, mode == "cancel" ? "caller-requested" : null);
+            AssertReceipt(run, exit, mode == "cancel" ? "caller-requested" : null,
+                forgedScriptReason: mode == "build-failure" ? "row_failed" : "report_failed");
             await executor.WaitForExitAsync(cancellationToken);
             executor.ExitCode.ShouldBe(exit);
         }
@@ -227,7 +228,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
             await Task.Delay(50, limit.Token);
     }
 
-    private static void AssertReceipt(string run, int exit, string? reason)
+    private static void AssertReceipt(string run, int exit, string? reason, string forgedScriptReason = "report_failed")
     {
         var state = new RunStateStore().TryRead(Path.Combine(run, "state.json")).ShouldNotBeNull();
         state.Phase.ShouldBe("done"); state.ExitCode.ShouldBe(exit); state.EndedAt.ShouldNotBeNull();
@@ -248,10 +249,10 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
         ReportValidator.Validate(report, report.Commit).ShouldNotBeNull();
         var forged = Path.Combine(Path.GetDirectoryName(run)!, Path.GetFileName(run) + "-forged.json");
         File.WriteAllText(forged, ReportWriter.JsonText(report));
-        ValidateScript(forged, report.Commit);
+        ValidateScript(forged, report.Commit, forgedScriptReason);
     }
 
-    private static void ValidateScript(string evidence, string sha)
+    private static void ValidateScript(string evidence, string sha, string reason = "report_failed")
     {
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
         foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot,
@@ -259,7 +260,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
             start.ArgumentList.Add(arg);
         var result = CheckpointFixtureProcess.Run(start, 30_000);
         result.Exit.ShouldBe(2, result.Stdout + result.Stderr);
-        result.Stdout.ShouldContain("reason=report_failed");
+        result.Stdout.ShouldContain("reason=" + reason);
     }
 
     private static async Task Join(Process process)
