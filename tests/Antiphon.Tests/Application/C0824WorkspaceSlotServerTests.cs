@@ -383,8 +383,8 @@ public sealed class C0824WorkspaceSlotServerTests
         await world.Rig.TickAsync().WaitAsync(Bound);
         await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
         var (task, slot) = await LeasedAsync(world, taskId);
-        Git(slot.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
-        Git(slot.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
+        C0824SlotTransportWorld.RevParseHead(slot.Path).ShouldBe(world.Base);
+        C0824SlotTransportWorld.SymbolicRefHead(slot.Path).ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
         task.RemoteWorktreePath.ShouldBe(slot.Path);
         task.RemoteWorkspaceSlotId.ShouldBe(slot.Id);
         task.RemoteWorkspaceSlotGeneration.ShouldBe(slot.LeaseGeneration);
@@ -403,8 +403,8 @@ public sealed class C0824WorkspaceSlotServerTests
         await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
         var (_, slot) = await LeasedAsync(world, taskId);
         using var counted = C0824SlotTransportWorld.BeginScratchGitCount();
-        Git(slot.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
-        Git(slot.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
+        C0824SlotTransportWorld.RevParseHead(slot.Path).ShouldBe(world.Base);
+        C0824SlotTransportWorld.SymbolicRefHead(slot.Path).ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
         counted.Starts.ShouldBe(0, "leased tree reads start no scratch git");
     }
 
@@ -512,7 +512,7 @@ public sealed class C0824WorkspaceSlotServerTests
         free.LastTaskId.ShouldBe(taskId);
         if (mode == "reply-lost")
             free.IdleSince.ShouldBe(idle, "the resend did not reset the slot a second time");
-        C0824SlotTransportWorld.Git(free.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
+        C0824SlotTransportWorld.RevParseHead(free.Path).ShouldBe(world.Base);
         var task = await world.Rig.ReadTaskAsync(taskId);
         task.RemoteWorktreePath.ShouldBeNull();
         task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
@@ -537,8 +537,6 @@ public sealed class C0824WorkspaceSlotServerTests
         slot.PreparationId.ShouldBe(preparation);
         return (await world.Rig.ReadTaskAsync(taskId), slot);
     }
-
-    private static string Git(string directory, params string[] args) => C0824SlotTransportWorld.Git(directory, args);
 
     private static async Task<PhoneHomeFrame> WaitForAsync(PhoneHomeScriptedPeer peer, PhoneHomeOperation operation, int count)
     {
