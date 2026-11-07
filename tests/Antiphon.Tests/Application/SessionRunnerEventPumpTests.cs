@@ -14,7 +14,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Time.Testing;
 using Antiphon.Server.Infrastructure.Data;
 using Shouldly;
 using TUnit.Core;
@@ -168,11 +167,15 @@ public class SessionRunnerEventPumpTests
     [Arguments("live")]
     [Arguments("startup")]
     [Arguments("subscription-ready")]
+    [Arguments("live-delayed-body")]
+    [Arguments("subscription-ready-delayed-body")]
     public async Task C1259_confirming_prompt_and_other_session_progress_before_confirmation(string ingress)
     {
+        var delayedBody = ingress.EndsWith("-delayed-body", StringComparison.Ordinal);
+        ingress = ingress.Replace("-delayed-body", "", StringComparison.Ordinal);
         await using var store = await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedSessionRunnerClient();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        var clock = new ControlledTimeProvider(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
         var read = new ConfirmReadBarrier();
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
@@ -215,6 +218,15 @@ public class SessionRunnerEventPumpTests
         var b = new[] { Entry(second, 1, TranscriptKinds.UserPrompt, "other prompt"),
             Entry(second, 2, TranscriptKinds.AssistantText, "other answer"),
             Entry(second, 3, TranscriptKinds.TurnEnd, null) };
+        var bodyEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bodyRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (delayedBody)
+            h.Adapter.BeforeInput = async (input, ct) =>
+            {
+                if (!input.Contains(body, StringComparison.Ordinal)) return;
+                bodyEntered.TrySetResult();
+                await bodyRelease.Task.WaitAsync(ct);
+            };
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Adapter.OnSubmitted = actual =>
         {
@@ -252,11 +264,18 @@ public class SessionRunnerEventPumpTests
                     foreach (var row in b) runner.Produce(row);
                 }
             }
+            if (delayedBody)
+                await bodyEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             // Drive only pre-submit composer settling. Confirmation time stays below its first retry.
             for (var i = 0; i < 100 && !submitted.Task.IsCompleted; i++)
             {
                 clock.Advance(TimeSpan.FromMilliseconds(50));
                 await Task.Delay(20);
+            }
+            if (delayedBody)
+            {
+                submitted.Task.IsCompleted.ShouldBeFalse("the held body cannot have submitted");
+                bodyRelease.TrySetResult();
             }
             await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await read.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -312,6 +331,7 @@ public class SessionRunnerEventPumpTests
         }
         finally
         {
+            bodyRelease.TrySetResult();
             read.Release.TrySetResult();
             await pump.StopAsync(CancellationToken.None);
         }
