@@ -50,7 +50,10 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
         var authority = current?.Authority ?? HostAdmissionSnapshot.Unknown(host);
         var age = current is null || current.SampledAt > now.AddSeconds(1) ? (double?)null : Math.Max(0, (now - current.SampledAt).TotalSeconds);
         return new(1, runner, host, now, current, age, lastHour, lastHour["cpuPercent"].Coverage,
-            new(authority.Mode, authority.Revision), authority, advice.Decision, advice.Recommendation);
+            new(authority.Mode, authority.Revision), authority, advice.Decision, advice.Recommendation)
+        { Counters = latestRow?.CountersJson is { } countersJson
+            ? JsonSerializer.Deserialize<HostLoadCounters>(countersJson, PhoneHomeFraming.Json)!
+            : new(null, null, null, null, null, null, null, null, null, null) };
     }
 
     public async Task<HostLoadHistoryDto> HistoryAsync(string hostId, string? fromText, string? toText,
