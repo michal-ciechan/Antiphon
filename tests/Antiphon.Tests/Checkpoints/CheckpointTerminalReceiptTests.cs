@@ -176,7 +176,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
         Directory.CreateDirectory(root);
         var git = CheckpointFixtureGitEnvironment.Create(TempDir());
         git.Git(root, "init", "-b", "terminal-receipt");
-        File.WriteAllText(Path.Combine(root, ".gitignore"), ".antiphon/\n");
+        File.WriteAllText(Path.Combine(root, ".gitignore"), ".antiphon/\nbin-*/\nbin/\nobj/\n");
         if (build is not null)
             File.WriteAllText(Path.Combine(root, "probe.csproj"), "<Project><Target Name=\"Restore\" /><Target Name=\"Build\">"
                 + (build == "build-failure" ? "<Error Text=\"C1734 expected build failure\" />" : "<Exec Command=\"sleep 120\" />")
