@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-1734: real executor/observer processes, joined stop barrier and one existing one-minute row deadline; fresh startup/teardown is the subject.
+Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests
+
 # CARD-1731: real PowerShell/Git publication matrices; three Linux methods exhausted the 300s harness budget before snapshot repair.
 Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests
 
