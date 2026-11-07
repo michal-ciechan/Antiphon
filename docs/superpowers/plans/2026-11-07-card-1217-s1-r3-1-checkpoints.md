@@ -32,6 +32,7 @@ class because project XML discovery now uses the shared reader. No broad assembl
 ### Checkpoints
 
 totalTimeoutMinutes: 55
+totalTimeoutOverrideReason: Historical red rows and GREEN are separate runs; the retained 55-minute cap exceeds the selected group derivation and measured 18-minute GREEN run.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
