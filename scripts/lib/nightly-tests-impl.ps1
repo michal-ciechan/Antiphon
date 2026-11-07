@@ -167,6 +167,7 @@ function New-NightlyClassGroupFilter {
 function Test-NightlyClassGroupFilter {
     param([string[]]$Classes, [string]$GroupFilter)
     if ([string]::IsNullOrWhiteSpace($GroupFilter)) { return $false }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($Classes, $GroupFilter) }
     $matched = [regex]::Match($GroupFilter, '^/\*/([A-Za-z_][A-Za-z0-9_.]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))*)/\*$')
     if (-not $matched.Success) { return $false }
     $ns = $matched.Groups[1].Value
@@ -265,6 +266,11 @@ function Get-NightlyLaunchNodeSeconds {
 
 function Get-NightlyLaunchClassCost {
     param([object[]]$Nodes, [string]$TypeName, [string]$Bare = '')
+    if (Test-NightlyCoreAvailable) {
+        return [Antiphon.Nightly.NightlyLaunchPlan]::ClassCost($Nodes, $TypeName, $Bare, (Get-NightlyClassCostTable),
+            [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
+            [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
+    }
     $heavy = Test-NightlyHeavyFamilyType -TypeName $TypeName
     $lane = (-not [string]::IsNullOrEmpty($TypeName)) -and ($TypeName.IndexOf('Land', [StringComparison]::Ordinal) -ge 0 -or $TypeName.IndexOf('Delivery', [StringComparison]::Ordinal) -ge 0)
     $table = Get-NightlyClassCostTable
@@ -396,7 +402,14 @@ function ConvertTo-NightlyProfileLaunchGroups {
     $classItems = New-Object System.Collections.ArrayList
     $oversized = New-Object System.Collections.ArrayList
     $nodesByBare = @{}
-    foreach ($node in @($DiscoveryNodes)) {
+    $indexed = $null
+    if (Test-NightlyCoreAvailable) {
+        # Compiled passes over the discovery (NightlyCore.cs): nodes by bare class and types by namespace.
+        $indexed = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes)
+        $nodesByBare = $indexed.NodesByBare
+        $DiscoveryNodesForIndex = @()
+    } else { $DiscoveryNodesForIndex = @($DiscoveryNodes) }
+    foreach ($node in $DiscoveryNodesForIndex) {
         if ($null -eq $node) { continue }
         $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
         if ([string]::IsNullOrWhiteSpace($bare)) { continue }
@@ -439,13 +452,14 @@ function ConvertTo-NightlyProfileLaunchGroups {
 
     $byNs = @{}
     $universe = @{}
+    if ($null -ne $indexed) { $universe = $indexed.Universe }
     foreach ($item in @($classItems)) {
         if (-not $byNs.ContainsKey($item.Namespace)) {
             $byNs[$item.Namespace] = New-Object System.Collections.ArrayList
         }
         [void]$byNs[$item.Namespace].Add($item)
     }
-    foreach ($node in @($DiscoveryNodes)) {
+    foreach ($node in $DiscoveryNodesForIndex) {
         $parts = Get-NightlyBareTypeParts -ClassName ([string]$node.ClassName)
         if ($null -eq $parts) { continue }
         if (-not $universe.ContainsKey($parts.Namespace)) {

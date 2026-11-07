@@ -803,6 +803,134 @@ namespace Antiphon.Nightly
         }
     }
 
+    /// <summary>Launch packing helpers from nightly-tests-impl.ps1 that ran once per discovered test or class pair.</summary>
+    public static class NightlyLaunchPlan
+    {
+        /// <summary>Get-NightlyBareTypeParts: { Bare, Namespace, Type } of a class name, or null.</summary>
+        public static PSObject BareTypeParts(string className)
+        {
+            var bare = NightlyClassNames.Bare(className);
+            if (string.IsNullOrWhiteSpace(bare)) return null;
+            var dot = bare.LastIndexOf('.');
+            if (dot < 1) return null;
+            var o = new PSObject();
+            o.Properties.Add(new PSNoteProperty("Bare", bare));
+            o.Properties.Add(new PSNoteProperty("Namespace", bare.Substring(0, dot)));
+            o.Properties.Add(new PSNoteProperty("Type", bare.Substring(dot + 1)));
+            return o;
+        }
+
+        /// <summary>
+        /// Get-NightlyLaunchClassCost: { NodeCount, Seconds, MeasuredPerNode, Heavy } with the per-node model of
+        /// Get-NightlyLaunchNodeSeconds, summed in node order (so the double sum is the PowerShell one).
+        /// </summary>
+        public static PSObject ClassCost(object nodes, string typeName, string bare, IDictionary costTable,
+            double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor)
+        {
+            var heavy = !string.IsNullOrEmpty(typeName) && (typeName.IndexOf("Land", StringComparison.Ordinal) >= 0
+                || typeName.IndexOf("Delivery", StringComparison.Ordinal) >= 0 || typeName.IndexOf("Check", StringComparison.Ordinal) >= 0);
+            var lane = !string.IsNullOrEmpty(typeName) && (typeName.IndexOf("Land", StringComparison.Ordinal) >= 0
+                || typeName.IndexOf("Delivery", StringComparison.Ordinal) >= 0);
+            object measured = null;
+            if (!string.IsNullOrEmpty(bare) && costTable != null && costTable.Contains(bare))
+                measured = (double)LanguagePrimitives.ConvertTo(costTable[bare], typeof(double), CultureInfo.InvariantCulture);
+            double NodeCost(object node)
+            {
+                if (measured != null) return (double)measured;
+                var unit = nodeSeconds;
+                foreach (var category in PsValue.AsArray(PsValue.Prop(node, "Categories")))
+                    if (string.Equals(PsValue.Str(category), "Slow", StringComparison.Ordinal)) { unit = lane ? laneSlowNodeSeconds : slowNodeSeconds; break; }
+                if (heavy) unit = unit * heavyFactor;
+                return unit;
+            }
+            var count = 0;
+            var seconds = 0.0;
+            foreach (var node in PsValue.AsArray(nodes))
+            {
+                if (node == null) continue;
+                count++;
+                seconds += NodeCost(node);
+            }
+            if (count == 0) { count = 1; seconds = NodeCost(null); }
+            var o = new PSObject();
+            o.Properties.Add(new PSNoteProperty("NodeCount", count));
+            o.Properties.Add(new PSNoteProperty("Seconds", seconds));
+            o.Properties.Add(new PSNoteProperty("MeasuredPerNode", measured));
+            o.Properties.Add(new PSNoteProperty("Heavy", heavy));
+            return o;
+        }
+
+        private static readonly Regex GroupFilterShape = new Regex(@"^/\*/([A-Za-z_][A-Za-z0-9_.]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))*)/\*$");
+        private static readonly Regex GroupFilterOperand = new Regex(@"\(([A-Za-z_][A-Za-z0-9_]*)\*\)");
+
+        /// <summary>
+        /// Test-NightlyClassGroupFilter: the filter names exactly the launch's classes, one operand each, in one
+        /// namespace, and no operand is a prefix of another (a prefix operand would also select its extensions).
+        /// </summary>
+        public static bool ClassGroupFilter(string[] classes, string groupFilter)
+        {
+            if (string.IsNullOrWhiteSpace(groupFilter)) return false;
+            var matched = GroupFilterShape.Match(groupFilter);
+            if (!matched.Success) return false;
+            var ns = matched.Groups[1].Value;
+            var operands = new List<string>();
+            foreach (Match op in GroupFilterOperand.Matches(matched.Groups[2].Value)) operands.Add(op.Groups[1].Value);
+            var classList = classes ?? new string[] { null };
+            if (operands.Count < 2 || classList.Length != operands.Count) return false;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var op in operands) if (!seen.Add(op)) return false;
+            for (var i = 0; i < operands.Count; i++)
+                for (var j = i + 1; j < operands.Count; j++)
+                    if (IsPrefix(operands[i], operands[j]) || IsPrefix(operands[j], operands[i])) return false;
+            var have = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in classList)
+            {
+                var parts = BareTypeParts(c ?? "");
+                if (parts == null || !string.Equals((string)parts.Properties["Namespace"].Value, ns, StringComparison.Ordinal)) return false;
+                var type = (string)parts.Properties["Type"].Value;
+                have[type] = (have.TryGetValue(type, out var n) ? n : 0) + 1;
+            }
+            foreach (var op in operands) if (!have.TryGetValue(op, out var n) || n != 1) return false;
+            return true;
+        }
+
+        /// <summary>Test-NightlyTypeNamePrefixes: <paramref name="left"/> is a strict ordinal prefix of <paramref name="right"/>.</summary>
+        private static bool IsPrefix(string left, string right) =>
+            !string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right) && left.Length < right.Length
+            && right.StartsWith(left, StringComparison.Ordinal);
+
+        /// <summary>
+        /// ConvertTo-NightlyProfileLaunchGroups' two passes over the discovery: { NodesByBare, Universe } - nodes by
+        /// bare class (ArrayList values), and each namespace's type names in node order (List[string] values).
+        /// Both are @{}-style hashtables (OrdinalIgnoreCase).
+        /// </summary>
+        public static PSObject IndexNodes(object discoveryNodes)
+        {
+            var nodesByBare = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            var universe = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            foreach (var node in PsValue.AsArray(discoveryNodes))
+            {
+                if (node == null) continue;
+                var className = PsValue.Str(PsValue.Prop(node, "ClassName"));
+                var bare = NightlyClassNames.Bare(className);
+                if (!string.IsNullOrWhiteSpace(bare))
+                {
+                    if (!(nodesByBare[bare] is ArrayList list)) nodesByBare[bare] = list = new ArrayList();
+                    list.Add(node);
+                }
+                var parts = BareTypeParts(className);
+                if (parts == null) continue;
+                var ns = (string)parts.Properties["Namespace"].Value;
+                if (!(universe[ns] is List<string> types)) universe[ns] = types = new List<string>();
+                types.Add((string)parts.Properties["Type"].Value);
+            }
+            var o = new PSObject();
+            o.Properties.Add(new PSNoteProperty("NodesByBare", nodesByBare));
+            o.Properties.Add(new PSNoteProperty("Universe", universe));
+            return o;
+        }
+    }
+
     /// <summary>Per-row helpers of the test-phase summary in test-phase-evidence.ps1.</summary>
     public static class TestPhaseSummary
     {

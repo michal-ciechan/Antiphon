@@ -216,9 +216,27 @@ function Test-NCVerdictsMatchFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains(' trx=')) 'verdicts' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
+function Test-NCLaunchPlanMatchesFallback {
+    $cases = @(
+        @(@('N.S.Alpha', 'N.S.Beta'), '/*/N.S/(Alpha*)|(Beta*)/*'),
+        @(@('N.S.Alpha', 'N.S.AlphaTwo'), '/*/N.S/(Alpha*)|(AlphaTwo*)/*'),
+        @(@('N.S.Alpha(ctor)', 'N.S.Beta'), '/*/N.S/(Alpha*)|(Beta*)/*'),
+        @(@('N.S.Alpha', 'M.S.Beta'), '/*/N.S/(Alpha*)|(Beta*)/*'),
+        @(@('N.S.Alpha', 'N.S.alpha'), '/*/N.S/(Alpha*)|(alpha*)/*'),
+        @(@('N.S.Alpha'), '/*/N.S/(Alpha*)|(Beta*)/*'),
+        @(@('N.S.Alpha', 'N.S.Beta', 'N.S.Gamma'), '/*/N.S/(Alpha*)|(Beta*)|(Gamma*)/*'),
+        @(@('N.S.Alpha', 'N.S.Beta'), '/*/N.S/(Alpha*)/*'),
+        @(@('N.S.Alpha', 'N.S.Beta'), '/*/N.S/Alpha*|Beta*/*'),
+        @(@('N.S.Alpha', 'N.S.Alpha'), '/*/N.S/(Alpha*)|(Beta*)/*'),
+        @($null, '/*/N.S/(Alpha*)|(Beta*)/*'),
+        @(@('N.S.Alpha', 'N.S.Beta'), ''))
+    $r = Invoke-NCBothWays { @(foreach ($c in $cases) { [bool](Test-NightlyClassGroupFilter -Classes $c[0] -GroupFilter $c[1]) }) }
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('true') -and $r.Fallback.Contains('false')) 'groupFilter' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; $expected = 9 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; $expected = 10 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

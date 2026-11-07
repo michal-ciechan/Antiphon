@@ -358,6 +358,21 @@ function ConvertFrom-NightlyJsonMap {
     return $map
 }
 
+# Path helpers for the atomic writers, called several times per chunk: .NET calls with the same answers as
+# Test-Path -LiteralPath, New-Item -ItemType Directory -Force and Remove-Item -Force -ErrorAction
+# SilentlyContinue, without each cmdlet's per-call cost.
+function Test-NightlyPathExists([string]$Path) {
+    return ([System.IO.File]::Exists($Path) -or [System.IO.Directory]::Exists($Path))
+}
+
+function Remove-NightlyFileQuietly([string]$Path) {
+    if (-not [System.IO.File]::Exists($Path)) { return }
+    try {
+        [System.IO.File]::SetAttributes($Path, [System.IO.FileAttributes]::Normal)
+        [System.IO.File]::Delete($Path)
+    } catch { }
+}
+
 function Write-NightlyAtomicJson {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -365,18 +380,16 @@ function Write-NightlyAtomicJson {
     )
     $json = $Object | ConvertTo-Json -Depth 12
     $dir = Split-Path -Parent $Path
-    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    if ($dir -and -not (Test-NightlyPathExists $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
     $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     $bak = $Path + '.bak'
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($tmp, $json, $utf8)
-    if (Test-Path -LiteralPath $Path) {
+    if (Test-NightlyPathExists $Path) {
         [System.IO.File]::Replace($tmp, $Path, $bak)
-        if (Test-Path -LiteralPath $bak) {
-            Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue
-        }
+        Remove-NightlyFileQuietly $bak
     } else {
         [System.IO.File]::Move($tmp, $Path)
     }

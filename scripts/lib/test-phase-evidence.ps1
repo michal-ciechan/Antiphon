@@ -165,8 +165,8 @@ function Write-TestPhaseTextAtomic {
     $identity = Get-TestPhasePathIdentity -Path $Path
     if ($identity.Kind -eq 'unsupported' -or $identity.Kind -eq 'unreadable') { return }
     $dir = Split-Path -Parent $Path
-    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    if ($dir -and -not (Test-NightlyPathExists $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
     $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -174,7 +174,7 @@ function Write-TestPhaseTextAtomic {
     if ($identity.Kind -eq 'regular') {
         $bak = $Path + '.bak'
         [System.IO.File]::Replace($tmp, $Path, $bak)
-        if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue }
+        Remove-NightlyFileQuietly $bak
     } else {
         [System.IO.File]::Move($tmp, $Path)
     }
