@@ -20,6 +20,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     private const string Park = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
     private const string Telemetry = "20261107034430_HostLoadTelemetryS1";
     private const string Membership = "20261107040142_HostLoadSnapshotMembership";
+    private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
     private IsolatedTestSchema? _historical;
 
     [Before(Class)]
@@ -50,7 +51,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
         var chain = db.Database.GetMigrations().ToArray();
-        chain.TakeLast(5).ShouldBe(new[] { Previous, Debt, Park, Telemetry, Membership }, "linear-after-master-with-original-ids");
+        chain.TakeLast(5).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup }, "linear-after-master-with-original-ids");
         db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
     }
 
