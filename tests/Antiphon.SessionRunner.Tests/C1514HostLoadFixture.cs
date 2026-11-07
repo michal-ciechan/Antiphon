@@ -20,6 +20,7 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "c1514-runner-" + Guid.NewGuid().ToString("N"));
     public C1514HostLoadFixture() => _app = new(StartAsync);
     public HostStatsSettings Settings { get; private set; } = null!;
+    public async Task<BuildSlotBroker> BrokerAsync() => (await _app.Value).Services.GetRequiredService<BuildSlotBroker>();
     public async Task<Uri> AddressAsync()
     {
         var app = await _app.Value;
@@ -38,11 +39,17 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Test" });
         builder.WebHost.UseUrls("http://127.0.0.1:0"); builder.Logging.ClearProviders();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
-        { ["SessionRunner:HostStats:HistoryPath"] = Root });
+        { ["SessionRunner:HostStats:HistoryPath"] = Root,
+            ["SessionRunner:HostStats:PhysicalHostKey"] = "owned-host", ["SessionRunner:HostStats:AuthorityId"] = "shared",
+            ["SessionRunner:BuildSlots:MinAvailableMemoryMb"] = "0", ["SessionRunner:BuildSlots:MaxConcurrent"] = "6" });
+        var liveness = new BuildSlotBrokerTests.FakeLiveness();
+        for (var pid = 101; pid <= 104; pid++) liveness.Start(pid, T0.UtcDateTime);
+        builder.Services.AddSingleton<IProcessLivenessProbe>(liveness);
+        builder.Services.AddBuildSlotBroker(builder.Configuration);
         builder.Services.AddSingleton<IHostStatsProbe>(new ScriptedHostStatsProbe());
         builder.Services.AddHostStats(builder.Configuration, startSampler: false);
         builder.Services.AddSingleton<IHostLoadHistorySource>(_history);
-        var app = builder.Build(); app.MapHostStatsRoutes();
+        var app = builder.Build(); app.MapHostStatsRoutes(); app.MapBuildSlotRoutes();
         app.MapGet("/authority/{id}", async (string id, HttpContext context) => await _authorities[id](context));
         await app.StartAsync();
         Settings = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<HostStatsSettings>>().Value;

@@ -24,6 +24,23 @@ public class C1514HostLoadAuthorityTests(C1514HostLoadFixture fixture)
         settings.AuthorityEndpoint = null;
         using var local = new HostAdmissionSnapshotClient(http, settings, clock, () => Local(2));
         (await local.ReadAsync(CancellationToken.None)).Occupied.ShouldBe(2);
+        // The same production route is available in BuildSlotsOnly mode; the old listing
+        // remains unchanged and the additive snapshot carries the configured identity.
+        var broker = await fixture.BrokerAsync(); var leases = new List<Guid>();
+        try
+        {
+            for (var pid = 101; pid <= 104; pid++)
+            {
+                broker.TryAcquire(new(pid, C1514HostLoadFixture.T0.UtcDateTime, "owned authority witness"), out var outcome).ShouldBeTrue();
+                leases.Add(((BuildSlotOutcome.Granted)outcome).Grant.LeaseId!.Value);
+            }
+            settings.AuthorityEndpoint = new Uri(await fixture.AddressAsync(), "build-slots/host-load").ToString();
+            using var realRoute = new HostAdmissionSnapshotClient(http, settings, TimeProvider.System, () => Local(0));
+            var observed = await realRoute.ReadAsync(CancellationToken.None);
+            observed.Id.ShouldBe("shared"); observed.PhysicalHostKey.ShouldBe("owned-host"); observed.Occupied.ShouldBe(4);
+            observed.Budget.ShouldBe(6); observed.Waiters.ShouldBe(0); observed.Mode.ShouldBe("Lease");
+        }
+        finally { foreach (var lease in leases) broker.Release(lease); }
     }
     [Test]
     public async Task AuthorityFailureRemainsUnknown()
