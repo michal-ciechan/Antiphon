@@ -79,11 +79,11 @@ restart server/runner: none. Tests policy JSON and pinned hashes remain unchange
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1734-main/` | cold-build | `/*/*/CheckpointColdBuildTests/*` | V-1, V-2, R-1 | all 3 cases, 0 failed/skipped after S2; S1 expects both cold-build variants RED at snapshot assertion | 3 | 5 |
-| CP-2 | all | CP-1 | touched | `/*/*/(C1307CliCancellationTests*)\|(WaitCommandTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointStatePublicationTests*)\|(CheckpointAppTests*)/*` | R-5 | all full affected classes, 0 failed | 1 | 5 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1734-main-repair/` | cold-build | `/*/*/CheckpointColdBuildTests/*` | V-1, V-2, R-1 | all 3 cases, 0 failed/skipped after S2; S1 expects both cold-build variants RED at snapshot assertion | 3 | 5 |
+| CP-2 | all | CP-1 | touched | `/*/*/(C1307CliCancellationTests*)\|(WaitCommandTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointStatePublicationTests*)\|(CheckpointAppTests*)\|(ReportWriterTests*)\|(CheckpointSourceExecutionTests*)\|(RunCheckpointSourceScriptTests*)/*` | R-5 | all full affected classes, 0 failed | 1 | 5 |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/*` | R-2 scoped, R-3 | 70 guards plus 5 registry cases, 0 failed | 75 | 4 |
 | CP-4 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1734-runner/` | runner-policy | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | R-4 | all listed, 0 failed/skipped | 1 | 3 |
-| CP-5 | all | CP-1 | terminal | `/*/*/CheckpointTerminalReceiptTests/*` | V-3, V-4, V-5, V-6 | supported stop, cancel, executor failure and timeout reach a real waiter with valid non-passing receipts | 4 | 3 |
+| CP-5 | all | CP-1 | terminal | `/*/*/CheckpointTerminalReceiptTests/*` | V-3, V-4, V-5, V-6, R-6, R-7 | supported stop, cancel, executor/build failure and timeout reach a real waiter; partial counts and provisional-report custody are retained | 10 | 3 |
 
 ## B-1 repair (Code bfe680c4, Review round 2 input)
 
@@ -98,6 +98,11 @@ publication. V-4/V-5/V-6 are the cancel/failure/timeout variants of
 `C1734_Executor_terminal_receipt_reaches_a_real_waiter`. Each validates terminal
 identity, times, source, report digest and non-passing eligibility; a forged green
 must still be refused. R-5 runs the full named adjacent classes in CP-2.
+R-6 is `C1734_Partial_counts_survive_failure_and_cancel` (both variants), with
+two known passed fixture results before interruption and unknown unrun counts.
+R-7 is `C1734_Stop_replaces_only_its_bound_provisional_reports` (owned/foreign).
+V-5/V-6 additionally drive real cold MSBuild failure/timeout targets. The timeout
+uses the existing one-minute row override; no timeout or assertion is relaxed.
 Fresh process startup, cancellation and teardown are the subject, so each case
 needs its own executor/waiter. No DB, service or production runner is started.
 One-minute existing row deadline is retained for the timeout witness; the new

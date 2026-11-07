@@ -9,6 +9,16 @@ Every control below is pending; ordinary red/green does not discharge Mutation.
 | PC-1/tool | Native obj byte preservation, staged helper, valid terminal report | Remove `_PtyHostArtifactsArguments` from the shipped target's Exec command | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
 | PC-1/script | Same property forwarding through run-checkpoint.ps1 | Same mutant; the two argument cases may share one red/restore/green cycle | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
 | PC-2 | Real tracked tampering remains refused with diagnostic and valid RED report | Suppress BuildConfinement's changed-path tampering classification; a source-changed exit alone must not satisfy the exact JSON refusal assertion | `/*/*/CheckpointColdBuildTests/C1734_Real_tampering_keeps_a_red_terminal_report` |
+| PC-3/stop | Stop publishes a canceled terminal receipt | Omit the stop terminal write | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_publishes_before_the_executor_waiter_returns` |
+| PC-3/cancel | Cancellation publishes its non-passing receipt | Omit cancellation fallback publication | `/*/*/CheckpointTerminalReceiptTests/C1734_Executor_terminal_receipt_reaches_a_real_waiter` |
+| PC-4 | Cancellation cannot qualify as passed | Write GREEN/exit 0 on cancellation; separately retain canceled reason with forged green | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_replaces_only_its_bound_provisional_reports` |
+| PC-5 | Waiter cannot outrun stop publication | Omit the waiter terminal gate | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_publishes_before_the_executor_waiter_returns` |
+| PC-6 | Completed counts survive interrupted execution | Discard known TRX results in fallback | `/*/*/CheckpointTerminalReceiptTests/C1734_Partial_counts_survive_failure_and_cancel` |
+| PC-7 | Provisional-report replacement retains custody | Permit replacement of foreign receipt bytes | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_replaces_only_its_bound_provisional_reports` |
+
+Review-proposed publication/digest controls remain pending for Mutation's missing-
+control discovery. Every row/variant above remains pending, including after Code
+ordinary greens. SourceLanding Mutation owns deliberate mutants/red/restore/green.
 
 The fixture executes a verbatim copy of the shipped MSBuild target. The first
 ordinary run on S1 proved both PC-1 variants fail at the native obj snapshot.
