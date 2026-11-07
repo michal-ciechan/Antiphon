@@ -87,7 +87,11 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
         }
     }
     [Test, Timeout(60_000)]
-    public async Task RecoveryAtEveryHandoffPreservesReceipt() => await C1514HostLoadCrashCases.RunAsync(fixture);
+    [Arguments("append-before-flush"), Arguments("append-after-flush")]
+    [Arguments("ingest-before-enqueue"), Arguments("ingest-after-enqueue"), Arguments("ingest-before-save")]
+    [Arguments("ingest-before-commit"), Arguments("ingest-after-commit")]
+    [Arguments("derive-before-call"), Arguments("derive-before-save"), Arguments("derive-after-write"), Arguments("derive-after-commit")]
+    public async Task RecoveryAtEveryHandoffPreservesReceipt(string cut, CancellationToken ct) => await C1514HostLoadCrashCases.RunAsync(fixture, cut, ct);
     [Test, Timeout(10_000)]
     public async Task IdentityConflictsNeverOverwriteStoredSamples()
     {
