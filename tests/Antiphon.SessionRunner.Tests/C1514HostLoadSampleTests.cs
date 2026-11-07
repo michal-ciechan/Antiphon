@@ -12,10 +12,11 @@ public class C1514HostLoadSampleTests
     public void CpuPercentUsesHostDenominator()
     {
         var reads = 0;
+        var hostCores = 24;
         var probe = new LinuxHostStatsProbe(path => path switch
         {
             "/proc/stat" => new[] { reads++ == 0 ? "cpu 0 0 0 0 0 0 0 0" : "cpu 50 0 0 40 10 0 0 0" }
-                .Concat(Enumerable.Range(0, 24).Select(i => "cpu" + i + " 0 0 0 0 0 0 0 0")).ToArray(),
+                .Concat(Enumerable.Range(0, hostCores).Select(i => "cpu" + i + " 0 0 0 0 0 0 0 0")).ToArray(),
             "/proc/meminfo" => ["MemTotal: 100 kB", "MemAvailable: 50 kB"],
             "/proc/loadavg" => ["24 12 6 1/10 11"],
             _ => throw new IOException(),
@@ -27,6 +28,10 @@ public class C1514HostLoadSampleTests
         (sample.CpuPercent * sample.Cores / 100d).ShouldBe(12d);
         (sample.Load1 / sample.Cores).ShouldBe(1d);
         WindowsHostStatsProbe.CpuPercent(0, 0, 0, 600, 800, 200).ShouldBe(40d);
+        // A second topology is deliberately different from the executing process. On a
+        // 24-core host the first vector alone cannot expose Environment.ProcessorCount.
+        hostCores = Environment.ProcessorCount + 1;
+        probe.Read().ShouldNotBeNull().Cores.ShouldBe(hostCores, "preserved:PC-1:host-topology");
     }
 
     [Test]
@@ -37,7 +42,7 @@ public class C1514HostLoadSampleTests
         var probe = new ScriptedHostStatsProbe { Cpu = double.NaN };
         using var sampler = Sampler(probe, store, time, new CpuSequence(null, null), []);
         await sampler.SampleOnceAsync();
-        store.Latest().ShouldNotBeNull().CpuPercent.ShouldBeNull("preserved:PC-6:nonfinite");
+        store.Latest().ShouldNotBeNull().CpuPercent.ShouldBeNull("preserved:PC-4:nonfinite");
         probe.Cpu = double.PositiveInfinity;
         await sampler.SampleOnceAsync();
         store.Latest().ShouldNotBeNull().CpuPercent.ShouldBeNull();
@@ -83,7 +88,7 @@ public class C1514HostLoadSampleTests
         time.Advance(TimeSpan.FromSeconds(5));
         time.Utc = time.Utc.AddHours(-1);
         await sampler.SampleOnceAsync();
-        store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBe(50d, "preserved:PC-7:monotonic");
+        store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBe(50d, "preserved:PC-6:monotonic");
         time.Advance(TimeSpan.FromSeconds(5));
         time.Utc = time.Utc.AddHours(2);
         await sampler.SampleOnceAsync();
