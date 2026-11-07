@@ -74,3 +74,11 @@ public sealed class HostLoadObservedEvent
     public Guid EventId { get; set; }
     public DateTimeOffset ObservedAt { get; set; }
 }
+
+/// <summary>One row. A restart continues a backlog instead of waiting out an in-memory hour.</summary>
+public sealed class HostLoadRetentionState
+{
+    public int Id { get; set; }
+    public bool Backlog { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}

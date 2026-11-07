@@ -153,7 +153,16 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
                 && w.StartedAt < end && (w.EndedAt == null || w.EndedAt > row.StartedAt), ct);
             result.Add(details with { WindowOrdinal = row.WindowOrdinal, RunnerBootId = row.RunnerBootId, During = metrics, OverlapCount = overlap });
         }
-        var complete = rows.Count > 0 && rows.All(w => w.Complete);
+        var durableLoss = await db.HostLoadIngestCursors.AsNoTracking().AnyAsync(c => c.GapsJson != "[]" && c.GapsJson != "", ct);
+        var complete = !durableLoss && rows.Count > 0;
+        for (var i = 0; complete && i < rows.Count; i++)
+        {
+            var window = result[i];
+            var covered = window.State == "closed" && window.Start.State == "known" && window.End is { State: "known" }
+                && window.During.TryGetValue("cpuPercent", out var cpu)
+                && (cpu.ExpectedCount == 0 ? rows[i].Complete : cpu.Complete && cpu.ValidCount >= cpu.ExpectedCount);
+            complete = covered;
+        }
         return new(1, taskId, attempt, result, complete, complete ? [] : ["event-or-sample-gap"]);
     }
 

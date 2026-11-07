@@ -16,6 +16,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string Previous = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
     private const string Telemetry = "20261107034430_HostLoadTelemetryS1";
     private const string Membership = "20261107040142_HostLoadSnapshotMembership";
+    private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -45,6 +46,8 @@ public sealed class C1514HostLoadMigrationTests
         var previous = Array.IndexOf(chain, Previous);
         previous.ShouldBeGreaterThanOrEqualTo(0);
         chain.Skip(previous).Take(3).ShouldBe([Previous, Telemetry, Membership], "linear-after-current-master");
+        chain[previous + 3].ShouldBe(Catchup, "retention-catchup-follows-membership");
+        (chain.Length - previous).ShouldBe(4, "no-migration-after-retention-catchup");
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
@@ -68,16 +71,21 @@ public sealed class C1514HostLoadMigrationTests
         columns.Select(c => c.Table).ShouldBe(["HostLoadSamples", "HostLoadHourlyRollups"]);
         columns.ShouldAllBe(c => c.Name == "CreatedTransactionId" && !c.IsNullable && c.ColumnType == "bigint"
             && c.DefaultValueSql == "pg_current_xact_id()::text::bigint");
+        var catchup = Migration(Catchup).UpOperations;
+        catchup.ShouldAllBe(op => op is CreateTableOperation || op is CreateIndexOperation);
+        catchup.OfType<CreateTableOperation>().Select(t => t.Name).ShouldBe(["HostLoadRetentionStates"]);
+        catchup.OfType<CreateIndexOperation>().Select(i => i.Name).Order().ShouldBe([
+            "IX_HostLoadHourlyRollups_Age", "IX_HostLoadSamples_DerivedAge"]);
     }
 
-    [Test, Arguments(Telemetry), Arguments(Membership)]
+    [Test, Arguments(Telemetry), Arguments(Membership), Arguments(Catchup)]
     public void BothDownOperationsRefuseDestructiveDowngrade(string migration)
     {
         var error = Should.Throw<NotSupportedException>(() => _ = Migration(migration).DownOperations);
         error.Message.ShouldContain("cannot be discarded by a downgrade");
     }
 
-    [Test, Arguments(Telemetry, Previous), Arguments(Membership, Telemetry)]
+    [Test, Arguments(Telemetry, Previous), Arguments(Membership, Telemetry), Arguments(Catchup, Membership)]
     public async Task UpgradeAndRefusedDowngradePreserveDurableRows(string target, string previous, CancellationToken ct)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(_schema!.ConnectionString));
@@ -105,7 +113,7 @@ public sealed class C1514HostLoadMigrationTests
             .ShouldBe(payload, "refused-down-preserves-exact-durable-bytes");
         (await db.Database.SqlQueryRaw<string>("SELECT \"ReasonCode\" AS \"Value\" FROM \"AgentTaskSyncDebts\" WHERE \"Id\" = {0}", id).SingleAsync(ct))
             .ShouldBe("legacy-telemetry-migration", "additive-upgrade-preserves-legacy-row");
-        if (target == Membership)
+        if (target is Membership or Catchup)
             (await db.Database.SqlQueryRaw<long>("SELECT \"CreatedTransactionId\" AS \"Value\" FROM \"HostLoadSamples\" WHERE \"RunnerStoreId\" = {0}", id).SingleAsync(ct))
                 .ShouldBeGreaterThan(0, "old-writer-gets-membership-default");
     }

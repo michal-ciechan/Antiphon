@@ -19,8 +19,16 @@ public sealed class HostLoadCapacityReader(AppDbContext db, HostBudgetService bu
         var host = await budgets.EffectiveAsync(canonical == "desktop" ? "local" : canonical, ct);
         var hostOccupied = open.Count(t => HostLoadCounterCache.Canonical(t.RunnerId ?? "desktop") == canonical);
         var descriptor = await directory.DescribeAsync(canonical, ct);
-        var runnerRemaining = descriptor is { Available: true, DispatchEligible: true, Stale: false, Capacity: { } capacity }
-            ? Math.Max(0, capacity - hostOccupied) : (int?)null;
+        var declared = directory.DeclaredCapacity(canonical);
+        if (declared is null && descriptor is { Available: true, DispatchEligible: true, Stale: false, Capacity: { } described })
+            declared = described;
+        int? runnerRemaining = null;
+        if (declared is int seats)
+        {
+            var inventory = await directory.GetInventoryAsync(canonical, ct);
+            if (inventory is RunnerInventory.Available available)
+                runnerRemaining = Math.Max(0, seats - available.Sessions.Count(s => RunnerSlotService.OccupiesCapacity(s.Status)));
+        }
         int? projectRemaining = null, stageRemaining = null;
         if (projectId is { } project && role is { } selected && concurrency is not null)
         {
