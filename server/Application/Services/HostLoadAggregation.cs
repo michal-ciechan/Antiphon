@@ -16,7 +16,7 @@ public sealed class HostLoadAggregation
     public HostLoadMetricSummary Exact(IEnumerable<HostLoadMetricPoint> points, DateTimeOffset from, DateTimeOffset to)
     {
         var values = points.Where(p => p.At >= from && p.At < to).DistinctBy(p => p.Identity)
-            .Select(p => p.Value).Where(v => v is { } n && double.IsFinite(n) && n >= 0).Select(v => v!.Value).Order().ToArray();
+            .Select(p => p.Observation).Where(v => v is { } n && double.IsFinite(n) && n >= 0).Select(v => v!.Value).Order().ToArray();
         var expected = ExpectedCount(from, to);
         if (values.Length == 0) return new(null, null, null, null, null, 0, expected, 0, false, false, null);
         var sum = values.Sum(); var count = values.LongLength;

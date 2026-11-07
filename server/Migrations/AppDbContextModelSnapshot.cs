@@ -6499,6 +6499,9 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("HourUtc", "Id")
+                        .HasDatabaseName("IX_HostLoadHourlyRollups_Age");
+
                     b.HasIndex("PhysicalHostKey", "HourUtc", "Id");
 
                     b.HasIndex("PhysicalHostKey", "SourceEpoch", "HourUtc", "Metric")
@@ -6548,6 +6551,22 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("ObservedAt");
 
                     b.ToTable("HostLoadObservedEvents");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadRetentionState", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Backlog")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("HostLoadRetentionStates");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostLoadSampleIdentity", b =>
@@ -6634,6 +6653,10 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("Id")
                         .HasDatabaseName("IX_HostLoadSamples_PendingDerived")
                         .HasFilter("\"DerivedAt\" IS NULL");
+
+                    b.HasIndex("SampledAt", "Id")
+                        .HasDatabaseName("IX_HostLoadSamples_DerivedAge")
+                        .HasFilter("\"DerivedAt\" IS NOT NULL");
 
                     b.HasIndex("PhysicalHostKey", "SampledAt", "Id");
 

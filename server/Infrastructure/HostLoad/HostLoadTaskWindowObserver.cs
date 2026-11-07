@@ -35,9 +35,11 @@ public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoa
                 await CloseAsync(window, ev.Id, at, ct);
             if (ev.Type == AgentTaskEventType.Dispatched && ev.AgentSessionId is { } sid && ev.LoadSessionId == sid
                 && sessions.TryGetValue(sid, out var session) && session.StartedAt != default
-                && ev.LoadDispatchedAt is { } dispatchedAt && session.StartedAt >= dispatchedAt)
+                && ev.LoadDispatchedAt is { } dispatchedAt)
             {
-                var startAt = Utc(session.StartedAt);
+                // A warm or standing seat was born before this attempt. Acceptance is the dispatch,
+                // not process birth. A fresh seat still starts at the session birth the fixtures pin.
+                var startAt = session.StartedAt >= dispatchedAt ? Utc(session.StartedAt) : Utc(dispatchedAt);
                 var binding = ResolveHost(ev.LoadRunnerId!, startAt);
                 if (binding is not null && !existing.Any(w => w.StartEventId == ev.Id))
                 {
@@ -139,7 +141,18 @@ public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoa
     }
     private async Task CloseAsync(AgentTaskLoadWindow window, Guid eventId, DateTimeOffset at, CancellationToken ct)
     {
-        if (at < window.StartedAt) { window.Complete = false; return; }
+        if (at < window.StartedAt)
+        {
+            // A backwards terminal still ends the attempt. Leaving it open consumes the event and
+            // never tries again. The boundary is unknown, so the window cannot claim coverage.
+            window.EndedAt = at; window.EndEventId = eventId; window.Complete = false;
+            var skewed = Read(window);
+            window.DetailsJson = JsonSerializer.Serialize(skewed with
+            {
+                EndedAt = at, State = "closed", End = new(eventId, at, null, null, null, "missing"),
+            }, PhoneHomeFraming.Json);
+            return;
+        }
         window.EndedAt = at; window.EndEventId = eventId;
         var end = await BoundaryAsync(window.PhysicalHostKey, eventId, at, ct);
         var details = Read(window); window.Complete &= end.State == "known";
