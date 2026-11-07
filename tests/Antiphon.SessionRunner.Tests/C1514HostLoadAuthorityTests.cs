@@ -72,13 +72,19 @@ public class C1514HostLoadAuthorityTests(C1514HostLoadFixture fixture)
             using var reader = new HostAdmissionSnapshotClient(http, settings, clock, () => Local(0));
             using var caller = new CancellationTokenSource();
             var read = reader.ReadAsync(caller.Token);
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            if (callerCancellation) caller.Cancel(); else clock.Advance(TimeSpan.FromSeconds(3));
-            if (callerCancellation) await Should.ThrowAsync<OperationCanceledException>(() => read.WaitAsync(TimeSpan.FromSeconds(2)));
-            else
+            try
             {
-                var answer = await read.WaitAsync(TimeSpan.FromSeconds(2));
-                answer.State.ShouldBe("unknown"); answer.Occupied.ShouldBeNull();
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                if (callerCancellation) caller.Cancel(); else clock.Advance(TimeSpan.FromSeconds(3));
+                await Task.WhenAny(read, Task.Delay(200));
+                read.IsCompleted.ShouldBeTrue(callerCancellation ? "preserved:PC-102:caller-cancel" : "preserved:PC-87:deadline");
+                if (callerCancellation) await Should.ThrowAsync<OperationCanceledException>(() => read);
+                else { var answer = await read; answer.State.ShouldBe("unknown"); answer.Occupied.ShouldBeNull(); }
+            }
+            finally
+            {
+                caller.Cancel(); http.CancelPendingRequests();
+                try { await read.WaitAsync(TimeSpan.FromSeconds(2)); } catch (OperationCanceledException) { }
             }
         }
     }

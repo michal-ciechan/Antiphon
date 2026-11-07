@@ -48,6 +48,7 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
         builder.Services.AddBuildSlotBroker(builder.Configuration);
         builder.Services.AddSingleton<IHostStatsProbe>(new ScriptedHostStatsProbe());
         builder.Services.AddHostStats(builder.Configuration, startSampler: false);
+        builder.Services.AddSingleton<IHostMemoryProbe>(new BuildSlotBrokerTests.FakeMemory { AvailableBytes = 64L * 1024 * 1024 * 1024 });
         builder.Services.AddSingleton<IHostLoadHistorySource>(_history);
         var app = builder.Build(); app.MapHostStatsRoutes(); app.MapBuildSlotRoutes();
         app.MapGet("/authority/{id}", async (string id, HttpContext context) => await _authorities[id](context));
