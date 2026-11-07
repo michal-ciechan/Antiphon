@@ -1,6 +1,6 @@
 Implement landed plan, verification design and tests.
 
-SCOPE: Unit plus the named affected integration classes. Unit omits delivery, landing, leases, persistence. Before full-assembly runs name invariant, unbounded classes, cost.
+SCOPE: Closed rows plus the named affected integration classes; the Unit lane is nightly/rc. Unit omits delivery, landing, leases, persistence. Before full-assembly runs name invariant, unbounded classes, cost.
 
 CHECKPOINTS: Run the ### Checkpoints closed list via checkpoint tool per committed group. Wait; inspect fresh TRX for each intended class/method and nonzero counts. Rerun red rows. Explain unlisted builds/tests; report slot= and waited=. Tests must fail on guarded defects; self-compare or constant is a stub, not done.
 

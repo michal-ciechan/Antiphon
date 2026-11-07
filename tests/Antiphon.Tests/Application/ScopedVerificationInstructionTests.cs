@@ -16,7 +16,7 @@ public sealed class ScopedVerificationInstructionTests
     {
         var code = Compose(AgentTaskRole.Code);
         code.ShouldNotContain("skip the Unit lane");
-        code.ShouldContain("Unit plus the named affected");
+        code.ShouldContain("Closed rows plus the named affected integration classes; the Unit lane is nightly/rc.");
         File.ReadAllText(Path.Combine(RepoRoot, "docs", "testing-and-build.md"))
             .ShouldContain("does not activate that plan's reduced-dispatch policy");
     }
@@ -33,7 +33,7 @@ public sealed class ScopedVerificationInstructionTests
     [Test]
     public void C487_G129()
     {
-        Compose(AgentTaskRole.Code).ShouldContain("Unit plus the named affected integration classes");
+        Compose(AgentTaskRole.Code).ShouldContain("Closed rows plus the named affected integration classes; the Unit lane is nightly/rc.");
         Compose(AgentTaskRole.Review).ShouldContain("Read-only");
     }
 

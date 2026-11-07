@@ -22,7 +22,7 @@ public sealed class VerificationRoundInstructionTests
         var code = Compose(AgentTaskRole.Code);
         foreach (var required in new[]
                  {
-                     "Unit plus the named affected integration classes",
+                     "Closed rows plus the named affected integration classes; the Unit lane is nightly/rc.",
                      "Final (default, first round): closed rows, named classes, not the whole lane, every ordinary V/R, required manual work.",
                      "Run required V-n/R-n; report every ID and actual outcome.",
                  })

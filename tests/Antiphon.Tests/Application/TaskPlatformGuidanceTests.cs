@@ -94,7 +94,7 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("Follow the brief's verification profile");
         text.ShouldContain("Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures.");
         text.ShouldContain("Acceptance needs matching complete UserPrompt transcript evidence");
-        text.ShouldContain("Re-run the claimed Unit and named integration checks");
+        text.ShouldContain("Re-run the claimed rows and named class checks");
         text.ShouldContain("Reject missing tests or evidence.");
         text.ShouldContain("code when there are defects (name them in `handoff:`)");
     }
@@ -123,7 +123,7 @@ public sealed class TaskPlatformGuidanceTests
         foreach (var baseLine in new[]
         {
             "You are reviewing the build against its plan.",
-            "SCOPE: Re-run the claimed Unit and named integration checks in one checkpoint-tool run; PCs may remain pending. Match Code's CP-n lines to ### Checkpoints. Defects: missing row, zero count, unlisted build/test run without a reason, build or test driver outside the slot gate, broad run without named invariant/cost, adequacy; cannot go red (self-compare, constant, no outcome assertion).",
+            "SCOPE: Re-run the claimed rows and named class checks in one checkpoint-tool run; PCs may remain pending. Match Code's CP-n lines to ### Checkpoints. Defects: missing row, zero count, unlisted build/test run without a reason, build or test driver outside the slot gate, broad run without named invariant/cost, adequacy; cannot go red (self-compare, constant, no outcome assertion).",
             "Use the checkpoint tool for repeated class runs. Before destructive cleanup, reject empty variables, quote expansions, and confine the resolved target to the scratch root before `rm`.",
             "ROUND: Follow the brief's verification profile. Final Review reruns the complete ordinary scope, including Interim deferrals. Require fresh identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending; nightly green cannot satisfy manual or PC checks.",
             "INVARIANTS: Read-only, including PCs; fix nothing. PCs stay pending. Reject missing tests or evidence. Carry the original Code landing owner. Defects: Where/Failure/Why/Fix.",
