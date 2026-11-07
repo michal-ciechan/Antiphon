@@ -16,6 +16,14 @@ the same five virtual seconds while held, release the body, then use the same dr
 cases. Keep complete prompt, ordered other-session persistence, held read, verdict, baseline,
 exact input shape and single-attempt assertions.
 
+S3 strengthens the witness after S2's 10/10 green class: the held body owns an independent
+five-second virtual timer. Restore the original driver for this committed red-first witness.
+Its last tick releases the body, leaving no ticks for composer delays. S4 restores timer-driven
+advancement and also consumes that registered stall timer. The witness is now identical for
+both drivers; the candidate mutant changes only the driver. The S2 run was deliberately
+stopped during CP-3 to make this repair; CP-3 is canceled, CP-4 not run, never passed.
+Final acceptance is CP-6/CP-7/CP-8 at S4. Preserve earlier costs and outcomes separately.
+
 ## Performance budget
 
 Provisional bounds reuse existing guards: streaming/body/submission/read 5 seconds,
@@ -62,3 +70,7 @@ the gated witnesses or any assertions. Mutation owns deliberate red/restore/gree
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1736-green/ | pump-full | /*/Antiphon.Tests.Application/SessionRunnerEventPumpTests/* | V-2, R-1 | all 10 cases, 0 failed/skipped | 10 | 3 | true |
 | CP-3 | S2 | CP-2 | unit-full | /*/*/*/*[Category=Unit] | R-2 | >= 1 executed, 0 failed | 1 | 15 | true |
 | CP-4 | S2 | CP-2 | registry-full | /*/Antiphon.Tests.Infrastructure/SlowTestRegistryMergeTests/* | R-3 | all methods, 0 failed/skipped | 1 | 2 | true |
+| CP-5 | S3 | tests/Antiphon.Tests -> bin-c1736-stall-red/ | registered-stall-red | /*/Antiphon.Tests.Application/SessionRunnerEventPumpTests/C1259_confirming_prompt_and_other_session_progress_before_confirmation* | V-1 | five cases, delayed-body submission timeouts | 5 | 3 | true |
+| CP-6 | S4 | tests/Antiphon.Tests -> bin-c1736-stall-green/ | final-pump-full | /*/Antiphon.Tests.Application/SessionRunnerEventPumpTests/* | V-2, R-1 | all 10 cases, 0 failed/skipped | 10 | 3 | true |
+| CP-7 | S4 | CP-6 | final-unit-full | /*/*/*/*[Category=Unit] | R-2 | >= 1 executed, 0 failed | 1 | 15 | true |
+| CP-8 | S4 | CP-6 | final-registry-full | /*/Antiphon.Tests.Infrastructure/SlowTestRegistryMergeTests/* | R-3 | all methods, 0 failed/skipped | 1 | 2 | true |
