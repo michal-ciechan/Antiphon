@@ -271,11 +271,22 @@ public class SessionRunnerEventPumpTests
                 await bodyEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 submitted.Task.IsCompleted.ShouldBeFalse("the held body cannot have submitted");
             }
-            // Original driver retained for the red-first delayed-timer witness.
-            for (var i = 0; i < 100 && !submitted.Task.IsCompleted; i++)
+            // Advance registered timers, including the injected body stall, rather than
+            // spending a fixed number of ticks before asynchronous work can register them.
+            // Stop at the pre-Enter delay so confirmation and retries keep a frozen clock.
+            var afterTimer = 0;
+            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
             {
-                clock.Advance(TimeSpan.FromMilliseconds(50));
-                await Task.Delay(20);
+                while (true)
+                {
+                    var timer = await clock.WaitForTimerAsync(e => e.Action == "create"
+                        && (e.DueTime == TimeSpan.FromMilliseconds(250)
+                            || e.DueTime == TimeSpan.FromMilliseconds(20)
+                            || delayedBody && e.DueTime == TimeSpan.FromSeconds(5)), afterTimer, deadline.Token);
+                    afterTimer = timer.Sequence;
+                    clock.AdvanceTo(timer.Deadline);
+                    if (timer.DueTime == TimeSpan.FromMilliseconds(20)) break;
+                }
             }
             await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await read.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
