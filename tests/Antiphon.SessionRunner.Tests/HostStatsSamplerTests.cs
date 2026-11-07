@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -66,7 +70,7 @@ public class HostStatsSamplerTests
     {
         var root = RepoRoot();
         var sampler = File.ReadAllText(Path.Combine(root, "src/Antiphon.SessionRunner/HostStatsSamplerService.cs"));
-        var workingSet = MethodBody(sampler, "WorkingSet");
+        var workingSet = MethodBody(sampler, "long? WorkingSet(");
         workingSet.ShouldNotContain("GetProcessById");
         workingSet.ShouldNotContain("WorkingSet64");
         workingSet.ShouldNotContain("GetProcesses");
@@ -75,7 +79,7 @@ public class HostStatsSamplerTests
         var queryPath = Path.Combine(root, "src/Antiphon.SessionRunner/SamplerProcessQuery.cs");
         File.Exists(queryPath).ShouldBeTrue();
         var query = File.ReadAllText(queryPath);
-        var windows = MethodBody(query, "ReadWindows");
+        var windows = MethodBody(query, "Reading ReadWindows(");
         windows.ShouldContain("OpenProcess");
         windows.ShouldContain("K32GetProcessMemoryInfo");
         windows.ShouldContain("GetProcessTimes");
@@ -83,6 +87,83 @@ public class HostStatsSamplerTests
         windows.ShouldNotContain("WorkingSet64");
         windows.ShouldNotContain("GetProcesses");
         windows.ShouldNotContain("NtQuerySystemInformation");
+
+        using var provider = HostStatsServices();
+        provider.GetRequiredService<IProcessCpuProbe>().ShouldBeOfType<SystemProcessCpuProbe>();
+        provider.GetRequiredService<HostStatsSamplerService>().CpuProbe.ShouldBeOfType<SamplerProcessQuery>();
+    }
+
+    [Test]
+    public async Task Production_query_reads_this_process_once()
+    {
+        using var provider = HostStatsServices();
+        provider.GetRequiredService<HostStatsSamplerService>().CpuProbe.ShouldBeOfType<SamplerProcessQuery>();
+
+        var pid = Environment.ProcessId;
+        var start = Process.GetCurrentProcess().StartTime.ToUniversalTime();
+        var query = new SamplerProcessQuery();
+        var before = query.Queries;
+        var cpu = query.TryGetTotalCpuTime(pid, start.AddMinutes(-1));
+        var workingSet = query.WorkingSet(pid);
+        (query.Queries - before).ShouldBe(1);
+        cpu.ShouldNotBeNull();
+        cpu.Value.ShouldBeGreaterThan(TimeSpan.Zero);
+        workingSet.ShouldNotBeNull();
+        workingSet.Value.ShouldBeGreaterThan(0);
+        var direct = Process.GetCurrentProcess().WorkingSet64;
+        Math.Abs(workingSet.Value - direct).ShouldBeLessThan(Math.Max(direct / 2, 8 * 1024 * 1024));
+
+        query.TryGetTotalCpuTime(pid, start.AddMinutes(-2)).ShouldNotBeNull();
+        var reused = new SamplerProcessQuery();
+        var reusedBefore = reused.Queries;
+        reused.TryGetTotalCpuTime(pid, start.AddMinutes(-3)).ShouldBeNull();
+        var reusedSet = reused.WorkingSet(pid);
+        (reused.Queries - reusedBefore).ShouldBe(1);
+        reusedSet.ShouldNotBeNull();
+        reusedSet.Value.ShouldBeGreaterThan(0);
+
+        var missing = new SamplerProcessQuery();
+        var missingBefore = missing.Queries;
+        missing.TryGetTotalCpuTime(int.MaxValue, DateTime.UtcNow).ShouldBeNull();
+        missing.WorkingSet(int.MaxValue).ShouldBeNull();
+        (missing.Queries - missingBefore).ShouldBe(1);
+        new SamplerProcessQuery().TryGetTotalCpuTime(0, DateTime.UtcNow).ShouldBeNull();
+
+        var sampled = new SamplerProcessQuery();
+        var targets = new List<HostStatsProcessTarget>
+        {
+            new("self", pid, int.MaxValue - 1, start),
+        };
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var sampler = Sampler(
+            new ScriptedHostStatsProbe(),
+            store,
+            time,
+            new HostStatsSettings(),
+            sampled,
+            () => targets,
+            sampled.WorkingSet);
+        var sampledBefore = sampled.Queries;
+        await sampler.SampleOnceAsync();
+        (sampled.Queries - sampledBefore).ShouldBe(2);
+        var first = store.Latest().ShouldNotBeNull().Processes;
+        first.Count.ShouldBe(2);
+        first.Single(process => process.SessionId == "self" && process.Name == "session").WorkingSetBytes.ShouldBeGreaterThan(0);
+        first.Single(process => process.Name == "pty-host").WorkingSetBytes.ShouldBe(0);
+        time.Advance(TimeSpan.FromSeconds(5));
+        await sampler.SampleOnceAsync();
+        (sampled.Queries - sampledBefore).ShouldBe(4);
+        store.Latest().ShouldNotBeNull().Processes.Single(process => process.Name == "session").CpuPercent.ShouldNotBeNull();
+    }
+
+    private static ServiceProvider HostStatsServices()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddHostStats(configuration, startSampler: false);
+        return services.BuildServiceProvider();
     }
 
     [Test]
@@ -170,9 +251,9 @@ public class HostStatsSamplerTests
         return dir.FullName;
     }
 
-    private static string MethodBody(string source, string name)
+    private static string MethodBody(string source, string signature)
     {
-        var start = source.IndexOf(" " + name + "(", StringComparison.Ordinal);
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);
         var open = source.IndexOf('{', start);
         open.ShouldBeGreaterThanOrEqualTo(0);
@@ -189,7 +270,7 @@ public class HostStatsSamplerTests
             }
         }
 
-        throw new InvalidOperationException($"unterminated method {name}");
+        throw new InvalidOperationException($"unterminated method {signature}");
     }
 
     private sealed class QueueCpu : IProcessCpuProbe

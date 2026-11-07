@@ -31,6 +31,7 @@ public static class HostStatsRoutes
             .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IProcessCpuProbe, SystemProcessCpuProbe>();
+        services.AddSingleton<SamplerProcessQuery>();
         services.TryAddSingleton<IHostStatsProbe>(sp =>
             new SystemHostStatsProbe(sp.GetRequiredService<IOptions<HostStatsSettings>>().Value));
         // Beats BuildSlotRoutes' TryAddSingleton either way, so the broker and the page share one probe.
@@ -40,15 +41,19 @@ public static class HostStatsRoutes
             sp.GetRequiredService<TimeProvider>(),
             sp.GetService<BuildSlotBroker>()));
         services.AddSingleton<IHostStatsSource>(sp => sp.GetRequiredService<HostStatsStore>());
-        services.AddSingleton(sp => new HostStatsSamplerService(
-            sp.GetRequiredService<IHostStatsProbe>(),
-            sp.GetRequiredService<HostStatsStore>(),
-            sp.GetRequiredService<IProcessCpuProbe>(),
-            () => HostStatsSamplerService.ReadTargets(sp),
-            HostStatsSamplerService.WorkingSet,
-            sp.GetRequiredService<TimeProvider>(),
-            sp.GetRequiredService<IOptions<HostStatsSettings>>(),
-            sp.GetRequiredService<ILogger<HostStatsSamplerService>>()));
+        services.AddSingleton(sp =>
+        {
+            var processes = sp.GetRequiredService<SamplerProcessQuery>();
+            return new HostStatsSamplerService(
+                sp.GetRequiredService<IHostStatsProbe>(),
+                sp.GetRequiredService<HostStatsStore>(),
+                processes,
+                () => HostStatsSamplerService.ReadTargets(sp),
+                processes.WorkingSet,
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<IOptions<HostStatsSettings>>(),
+                sp.GetRequiredService<ILogger<HostStatsSamplerService>>());
+        });
         if (startSampler)
             services.AddHostedService(sp => sp.GetRequiredService<HostStatsSamplerService>());
         return services;

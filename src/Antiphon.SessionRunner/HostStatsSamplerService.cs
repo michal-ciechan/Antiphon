@@ -124,6 +124,8 @@ public sealed class HostStatsSamplerService : BackgroundService
 
     private HostProcessSample ReadOne(string name, string? sessionId, int pid, DateTime startedAt, DateTimeOffset now)
     {
+        // SamplerProcessQuery keeps the working set from this CPU read for the call below.
+        // A later sample always reads again. Maximum extra staleness is zero intervals.
         TimeSpan? cpu = null;
         try
         {
@@ -195,18 +197,10 @@ public sealed class HostStatsSamplerService : BackgroundService
         return list;
     }
 
+    internal IProcessCpuProbe CpuProbe => _cpu;
+
     internal static long? WorkingSet(int pid)
     {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            if (process.HasExited)
-                return null;
-            return process.WorkingSet64;
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            return null;
-        }
+        return new SamplerProcessQuery().WorkingSet(pid);
     }
 }
