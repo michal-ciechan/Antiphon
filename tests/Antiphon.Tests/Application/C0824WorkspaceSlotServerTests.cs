@@ -392,6 +392,24 @@ public sealed class C0824WorkspaceSlotServerTests
 
     [Test]
     [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    public async Task C0824_LeasedTreeReadSpawnsNoScratchGit()
+    {
+        // The 1 s scratch-git deadline is per process start. A leased tree read has to
+        // use the file form, not start rev-parse and symbolic-ref once per case.
+        C0824SlotTransportWorld.EnsureSharedScratchRepository();
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        var taskId = await world.SeedAsync();
+        await world.Rig.TickAsync().WaitAsync(Bound);
+        await world.Rig.Preparer.WhenIdleAsync().WaitAsync(Bound);
+        var (_, slot) = await LeasedAsync(world, taskId);
+        using var counted = C0824SlotTransportWorld.BeginScratchGitCount();
+        Git(slot.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
+        Git(slot.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
+        counted.Starts.ShouldBe(0, "leased tree reads start no scratch git");
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public async Task C0824_BusyRunnerLeaseSerialisedNotDuplicated()
     {
         // V-41 (D-A). A slow recipient: ticks while the lease is outstanding send no second request and grow nothing.
