@@ -15,10 +15,10 @@ public static class HostLoadEndpoints
         {
             Guid? project = null; AgentTaskRole? role = null;
             if (http.Request.Query.TryGetValue("projectId", out var text))
-            { if (!Guid.TryParse(text, out var id)) throw new ValidationException("projectId", "Invalid project id."); project = id; }
+            { if (text.Count != 1 || !Guid.TryParse(text, out var id)) throw new HostLoadQueryException("projectId", "Invalid project id."); project = id; }
             if (http.Request.Query.TryGetValue("role", out text))
             {
-                if (!Enum.TryParse<AgentTaskRole>(text, true, out var selected) || !Enum.IsDefined(selected)) throw new ValidationException("role", "Invalid task role.");
+                if (text.Count != 1 || !Enum.TryParse<AgentTaskRole>(text, true, out var selected) || !Enum.IsDefined(selected)) throw new HostLoadQueryException("role", "Invalid task role.");
                 role = selected;
             }
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5), time);
@@ -29,7 +29,7 @@ public static class HostLoadEndpoints
             HostLoadHistoryService history, TimeProvider time, CancellationToken ct) =>
         {
             string? Read(string name) => http.Request.Query.TryGetValue(name, out var value) && value.Count == 1
-                ? value[0] : http.Request.Query.ContainsKey(name) ? throw new ValidationException(name, "A scalar is required.") : null;
+                ? value[0] : http.Request.Query.ContainsKey(name) ? throw new HostLoadQueryException(name, "A scalar is required.") : null;
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5), time);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
             return Results.Ok(await history.HistoryAsync(hostId, Read("from"), Read("to"), Read("resolution"), Read("limit"), Read("cursor"), linked.Token));
@@ -42,7 +42,7 @@ public static class HostLoadEndpoints
             await tasks.GetAsync(taskId, ct, caller?.SessionId);
             int? attempt = null;
             if (http.Request.Query.TryGetValue("attempt", out var value))
-            { if (value.Count != 1 || !int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed < 1) throw new ValidationException("attempt", "Invalid task attempt."); attempt = parsed; }
+            { if (value.Count != 1 || !int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed < 1) throw new HostLoadQueryException("attempt", "Invalid task attempt."); attempt = parsed; }
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5), time);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
             return Results.Ok(await history.TaskAsync(taskId, attempt, linked.Token));

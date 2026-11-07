@@ -14,3 +14,4 @@ if ($Project) { $parameters.Project = $Project }
 if ($Role) { $parameters.Role = $Role }
 if ($JsonMode) { $parameters.Json = $true }
 & (Join-Path $PSScriptRoot 'host-load.ps1') @parameters
+exit $LASTEXITCODE

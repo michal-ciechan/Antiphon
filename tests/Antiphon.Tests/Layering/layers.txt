@@ -15,4 +15,4 @@ server/Infrastructure/Data/**, server/Migrations/**, server/Infrastructure/Resil
 server/Infrastructure/Git/**, server/Infrastructure/{WorkspaceHooks,Verification}/**, server/Application/Services/{GitWorkspaceService,ServerGitProcess,GitIndexLock,OrchestratorWorkspaceLayout}.cs Git
 server/Infrastructure/Agents/{Pty,SessionRunner,Tui}/**, server/Infrastructure/Agents/CodexSubmitConfirmation.cs Runners
 server/Infrastructure/Agents/*.cs, server/Infrastructure/Agents/Tools/**, server/Infrastructure/{GitHub,IssueTrackers}/** Integrations
-server/Application/Services/**, server/Infrastructure/{Orchestration,Supervision,Files,FileSystem,ExternalChanges,WorkflowDefinitions}/**, server/Infrastructure/Resilience/** Application
+server/Application/Services/**, server/Infrastructure/{Orchestration,Supervision,Files,FileSystem,ExternalChanges,WorkflowDefinitions,HostLoad}/**, server/Infrastructure/Resilience/** Application
