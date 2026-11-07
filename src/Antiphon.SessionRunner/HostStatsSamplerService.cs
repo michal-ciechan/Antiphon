@@ -275,7 +275,10 @@ public sealed class HostStatsSamplerService : BackgroundService
 
     private TimeSpan? ReadProcessCpu(int pid, DateTime startedAt)
     {
-        if (OperatingSystem.IsLinux() && LinuxProcessFacts.Trusted && LinuxProcessFacts.TryCpu(pid, startedAt, out var read))
+        // /proc replaces only the production process probe. A fixture probe owns its pid, including
+        // one that currently belongs to a live process whose start is newer than the fixture clock.
+        if (_cpu is SystemProcessCpuProbe && OperatingSystem.IsLinux() && LinuxProcessFacts.Trusted
+            && LinuxProcessFacts.TryCpu(pid, startedAt, out var read))
             return read;
         return _cpu.TryGetTotalCpuTime(pid, startedAt);
     }

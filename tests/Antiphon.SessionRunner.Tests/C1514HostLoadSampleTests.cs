@@ -124,12 +124,13 @@ public class C1514HostLoadSampleTests
         var cadenceClock = new SeparateClocks(); var cadenceProbe = new CountingProbe();
         using var ticking = Sampler(cadenceProbe, new(new(), cadenceClock), cadenceClock, new CpuSequence(), []);
         await ticking.StartAsync(CancellationToken.None);
-        await C1514HostLoadFixture.EventuallyAsync(() => cadenceProbe.Reads == 1 && cadenceClock.TimerCreations == 1);
-        cadenceProbe.Reads.ShouldBe(1);
-        cadenceClock.Utc += TimeSpan.FromHours(3); cadenceProbe.Reads.ShouldBe(1);
-        cadenceClock.Advance(TimeSpan.FromMilliseconds(4999)); cadenceProbe.Reads.ShouldBe(1);
+        // ExecuteAsync takes one unlogged warmup sample, then the first logged sample, before the timer.
+        await C1514HostLoadFixture.EventuallyAsync(() => cadenceProbe.Reads == 2 && cadenceClock.TimerCreations == 1);
+        cadenceProbe.Reads.ShouldBe(2);
+        cadenceClock.Utc += TimeSpan.FromHours(3); cadenceProbe.Reads.ShouldBe(2);
+        cadenceClock.Advance(TimeSpan.FromMilliseconds(4999)); cadenceProbe.Reads.ShouldBe(2);
         cadenceClock.Advance(TimeSpan.FromMilliseconds(1));
-        await C1514HostLoadFixture.EventuallyAsync(() => cadenceProbe.Reads == 2);
+        await C1514HostLoadFixture.EventuallyAsync(() => cadenceProbe.Reads == 3);
         await ticking.StopAsync(CancellationToken.None);
         var disabledProbe = new CountingProbe();
         using var disabled = new HostStatsSamplerService(disabledProbe, new(new(), cadenceClock), new CpuSequence(), () => [], _ => null,
