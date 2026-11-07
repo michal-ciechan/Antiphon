@@ -18,15 +18,28 @@ internal sealed class TerminalTranscriptCompletion
     // Called after processing the bytes, under the tailer's read gate. Missing files, unread
     // suffixes, partial lines and parser faults remain incomplete, even after the exit grace.
     internal bool Observe(string path, long consumed, int pending, DateTime? exitedAt, TimeSpan settle,
-        bool currentFile)
+        bool currentFile, bool? probedExists = null, long probedLength = 0)
     {
         _complete = false;
         if (exitedAt is null || DateTime.UtcNow - exitedAt < settle) return false;
         try
         {
-            var file = new FileInfo(path);
-            _complete = currentFile && !_parseFailed && pending == 0 && file.Exists && file.Length == consumed;
-            return !file.Exists || file.Length <= consumed;
+            bool fileExists;
+            long fileLength;
+            if (probedExists is { } known)
+            {
+                fileExists = known;
+                fileLength = known ? probedLength : 0;
+            }
+            else
+            {
+                var file = new FileInfo(path);
+                fileExists = file.Exists;
+                fileLength = fileExists ? file.Length : 0;
+            }
+
+            _complete = currentFile && !_parseFailed && pending == 0 && fileExists && fileLength == consumed;
+            return !fileExists || fileLength <= consumed;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return true;

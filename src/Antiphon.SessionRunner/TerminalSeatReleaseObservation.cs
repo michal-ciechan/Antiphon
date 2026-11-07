@@ -159,6 +159,29 @@ internal sealed class TerminalSeatReleaseObservation
         { return false; }
     }
 
+    /// <summary>
+    /// CARD-1756. One identity handle when the file is present. A sharing violation or other
+    /// identity IO fault is <see cref="BoundIdentityMatch.Unavailable"/>, not an inode change.
+    /// </summary>
+    internal BoundIdentityMatch MatchBoundFile(string path)
+    {
+        try
+        {
+            var stamp = CaptureFile(path);
+            if (stamp is null)
+                return _boundFileIdentity is null ? BoundIdentityMatch.Unavailable : BoundIdentityMatch.Changed;
+            if (_boundFileIdentity is null)
+                return BoundIdentityMatch.Unavailable;
+            return stamp.Identity == _boundFileIdentity
+                ? BoundIdentityMatch.Current
+                : BoundIdentityMatch.Changed;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return BoundIdentityMatch.Unavailable;
+        }
+    }
+
     internal async Task<TerminalTranscriptObservation> ObserveAsync(
         Func<(string Path, string Identity)?> captureBinding,
         Func<string, IReadOnlyList<TranscriptPart>> normalize,
@@ -321,6 +344,8 @@ internal sealed class TerminalSeatReleaseObservation
         else throw new PlatformNotSupportedException("Native transcript identity is unavailable.");
         return new(identity, File.GetLastWriteTimeUtc(handle), RandomAccess.GetLength(handle));
     }
+
+    internal enum BoundIdentityMatch { Current, Changed, Unavailable }
 
     private sealed record NativeFileIdentity(ulong Volume, ulong Low, ulong High);
     private sealed record FileStamp(NativeFileIdentity Identity, DateTime Written, long Length);

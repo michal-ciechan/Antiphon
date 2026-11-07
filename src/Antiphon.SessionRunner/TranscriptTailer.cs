@@ -114,6 +114,14 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly TerminalTranscriptCompletion _completion = new();
     private TimeSpan _boundPollDelay = PollInterval;
     private int _boundIdentityDrift;
+    private long _boundInputVersion;
+    private bool _boundStatSeen;
+    private bool _boundStatExists;
+    private long _boundStatLength;
+    private DateTime _boundStatWriteUtc;
+    private DateTime _lastIdentityCheckUtc;
+    private bool _identityCurrent;
+    private string? _boundStatPath;
 
     /// <summary>CARD-1756: delay the bound loop will wait after the poll that set it.</summary>
     internal TimeSpan CurrentBoundPollDelay => _boundPollDelay;
@@ -174,6 +182,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _refusalFaultRepeat = refusalFaultRepeat ?? DefaultRefusalFaultRepeat;
         _claims = claims;
         _inputLog = inputLog;
+        _boundInputVersion = inputLog?.Version ?? 0;
         _firstInputUtc = firstInputUtc;
         _childStartUtc = childStartUtc;
         _agentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName;
@@ -504,10 +513,15 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
                         try
                         {
+                            // One stat for the read, the identity decision and completion.
                             var info = new FileInfo(path);
-                            if (info.Exists && info.Length < offset)
+                            var exists = info.Exists;
+                            var length = exists ? info.Length : 0L;
+                            var writeUtc = exists ? info.LastWriteTimeUtc : default;
+                            var grew = false;
+                            if (exists && length < offset)
                                 lock (_gate) _readinessBindingInvalidated = true;
-                            if (info.Exists && info.Length > offset)
+                            if (exists && length > offset)
                             {
                                 byte[] buffer;
                                 int read;
@@ -515,13 +529,14 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                                     path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                                 {
                                     fs.Seek(offset, SeekOrigin.Begin);
-                                    var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
+                                    var len = (int)Math.Min(length - offset, MaxReadChunkBytes);
                                     buffer = new byte[len];
                                     read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
                                 }
 
                                 if (read > 0)
                                 {
+                                    grew = true;
                                     if (ReadinessAfterRead is { } afterRead) await afterRead(ct);
                                     offset += read;
                                     TerminalObservation.RecordConsumed(offset);
@@ -535,11 +550,10 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                                 _pendingBytes = pending.Count;
                                 _reading = false;
                             }
-                            var currentFile = TerminalObservation.IsCurrentFile(path);
-                            if (!currentFile)
-                                Interlocked.Exchange(ref _boundIdentityDrift, 1);
+                            var currentFile = ResolveBoundIdentity(path, exists, length, writeUtc);
                             _completion.Observe(path, offset, pending.Count, _childExitedAtUtc, ChildExitSettle,
-                                currentFile);
+                                currentFile, exists, length);
+                            _boundPollDelay = NextBoundPollDelay(grew);
                         }
                         catch (IOException)
                         {
@@ -549,8 +563,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     }
                     finally { TerminalObservation.ReadGate.Release(); }
 
-                    _boundPollDelay = PollInterval;
-                    await Task.Delay(_boundPollDelay, ct);
+                    await Task.Delay(_boundPollDelay, _time, ct);
                 }
 
                 if (!dropped)
@@ -565,6 +578,52 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             _logger.LogWarning(ex, "Transcript tailer failed for session {SessionId}", _sessionId);
         }
         finally { lock (_gate) _reading = true; }
+    }
+
+    // Opens the identity handle only when this poll's stat differs from the last successful
+    // check, or when IdentityRecheckInterval has elapsed. An IO fault does not move that
+    // snapshot, so the next poll tries again, and it does not stick as an inode change.
+    private bool ResolveBoundIdentity(string path, bool exists, long length, DateTime writeUtc)
+    {
+        var statChanged = !_boundStatSeen
+            || !string.Equals(_boundStatPath, path, StringComparison.OrdinalIgnoreCase)
+            || exists != _boundStatExists
+            || length != _boundStatLength
+            || writeUtc != _boundStatWriteUtc;
+        var intervalDue = _lastIdentityCheckUtc == default
+            || UtcNow - _lastIdentityCheckUtc >= IdentityRecheckInterval;
+        if (!statChanged && !intervalDue)
+            return _identityCurrent;
+
+        var match = TerminalObservation.MatchBoundFile(path);
+        if (match == TerminalSeatReleaseObservation.BoundIdentityMatch.Unavailable)
+            return false;
+
+        _identityCurrent = match == TerminalSeatReleaseObservation.BoundIdentityMatch.Current;
+        if (!_identityCurrent)
+            Interlocked.Exchange(ref _boundIdentityDrift, 1);
+        _lastIdentityCheckUtc = UtcNow;
+        _boundStatSeen = true;
+        _boundStatPath = path;
+        _boundStatExists = exists;
+        _boundStatLength = length;
+        _boundStatWriteUtc = writeUtc;
+        return _identityCurrent;
+    }
+
+    private TimeSpan NextBoundPollDelay(bool grew)
+    {
+        var inputVersion = _inputLog?.Version ?? 0;
+        var inputChanged = inputVersion != _boundInputVersion;
+        _boundInputVersion = inputVersion;
+        if (grew || inputChanged)
+            return PollInterval;
+        // The child is gone but the last flush has not settled: stay fast.
+        if (_childExitedAtUtc is not null && !_completion.IsComplete)
+            return PollInterval;
+        if (_childExitedAtUtc is not null && _completion.IsComplete)
+            return QuietPollCap;
+        return TimeSpan.FromTicks(Math.Min(_boundPollDelay.Ticks * 2, QuietPollCap.Ticks));
     }
 
     private void HandleClaimRevoked(string path)
