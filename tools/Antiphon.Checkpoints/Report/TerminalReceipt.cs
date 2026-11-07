@@ -29,7 +29,14 @@ internal static class TerminalReceipt
 
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
         var source = new SourceRunGuard(request.RepoRoot, state.Source, runtime.SourceCapture);
-        source.Observe();
+        try { source.Observe(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A failed observation cannot suppress the failure receipt or certify
+            // an earlier end observation as the terminal source state.
+            state.Source.End = null;
+            state.Source.State = "unknown";
+        }
         state.Source.BuildSource = selected.All(row => row.IsCommand) ? "notApplicable"
             : selected.Where(row => !row.IsCommand).All(row => state.Builds.Any(build =>
                 build.Id == row.Build && build.Source.BuildSource == "verified")) ? "verified" : "unknown";
