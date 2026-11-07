@@ -617,7 +617,8 @@ public class AgentTaskLandRequestTests
             new MockEventBus(),
             clock,
             Options.Create(new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            gitSettings: Options.Create(new GitSettings()));
     }
 
     private static FakeTimeProvider Frozen(DateTime utc) =>

@@ -139,7 +139,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
             tasks, Queue, Messages!, Events, Clock,
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
-            Services.GetRequiredService<IRepositoryMutationLease>(), git);
+            Services.GetRequiredService<IRepositoryMutationLease>(), git,
+            gitSettings: Options.Create(new GitSettings()));
     }
 
     public ILandingGit RegisteredGit => Services.GetRequiredService<ILandingGit>();

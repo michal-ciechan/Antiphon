@@ -129,7 +129,8 @@ public sealed class PostLandMutationWorktreeTests
             scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>(), tasks, world.Host.Queue, bridge.Queue,
             world.Host.Events, TimeProvider.System, Options.Create(new DelegationSettings()), world.Host.Logger,
             scope.ServiceProvider.GetRequiredService<AgentTaskLandingProtocol>(),
-            world.Host.Services.GetRequiredService<IRepositoryMutationLease>(), world.Host.Fixture.Git);
+            world.Host.Services.GetRequiredService<IRepositoryMutationLease>(), world.Host.Fixture.Git,
+            gitSettings: Options.Create(new GitSettings()));
         var ex = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(world.TaskId, null, default));
         ex.Code.ShouldBe("verification_publication_forbidden");
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == world.TaskId)).ShouldBe(0);

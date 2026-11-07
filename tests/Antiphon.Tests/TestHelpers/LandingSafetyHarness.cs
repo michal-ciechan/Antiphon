@@ -328,6 +328,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), GitOverride ?? Fixture.Git, Boundary,
+            gitSettings: Options.Create(new GitSettings()),
             leaseWaiters: Services.GetService<RepositoryLeaseWaiters>());
     }
 
