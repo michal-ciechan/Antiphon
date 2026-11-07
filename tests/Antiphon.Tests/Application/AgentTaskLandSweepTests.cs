@@ -239,7 +239,8 @@ public class AgentTaskLandSweepTests
             new MockEventBus(),
             clock,
             Options.Create(settings ?? new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            gitSettings: Options.Create(new GitSettings()));
     }
 
     private static AppDbContext CreateContext(IsolatedTestSchema schema) =>

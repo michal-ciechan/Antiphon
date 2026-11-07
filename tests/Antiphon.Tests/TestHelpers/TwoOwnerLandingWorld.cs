@@ -225,7 +225,8 @@ internal sealed class TwoOwnerLandingWorld : IAsyncDisposable
             tasks, Queue, null!, new MockEventBus(), TimeProvider.System,
             Options.Create(new DelegationSettings()), NullLogger<AgentTaskLandService>.Instance,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
-            Services.GetRequiredService<IRepositoryMutationLease>(), Git);
+            Services.GetRequiredService<IRepositoryMutationLease>(), Git,
+            gitSettings: Options.Create(new GitSettings()));
     }
 
     private static void DeleteOwned(string root)
