@@ -92,6 +92,7 @@
     <ProjectReference Include="..\Antiphon.Checkpoints.GitFixture\Antiphon.Checkpoints.GitFixture.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.HostLoad.Probe\Antiphon.HostLoad.Probe.csproj" ReferenceOutputAssembly="false" />
     <!-- CARD-1483: net10.0 (the SDK MSBuild runtime), so it is built for its own framework. -->
     <ProjectReference Include="..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" ReferenceOutputAssembly="false" Private="false"
                       SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net10.0" />
@@ -116,6 +117,7 @@
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" Folder="custody-child" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" Folder="script-harness-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" Folder="channel-outbound-probe" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.HostLoad.Probe\Antiphon.HostLoad.Probe.csproj" Folder="host-load-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" Folder="checkpoint-lifecycle-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />

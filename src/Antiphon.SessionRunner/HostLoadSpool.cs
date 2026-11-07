@@ -29,18 +29,21 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
     private Ledger _ledger;
     private long _sequence;
     private readonly Guid _boot;
+    private readonly Action<string, HostLoadSource>? _appendObservation;
     public Guid RunnerStoreId => _ledger.Store;
     public Guid BootId => _boot;
     public long LostSamples { get { lock (_gate) return _ledger.Gaps.Sum(g => g.ToSequence - g.FromSequence + 1); } }
     public long Bytes { get { lock (_gate) return Files().Sum(f => f.Length); } }
     public HostLoadSource NextSource() => new(_settings.RunnerId, RunnerStoreId, _boot, Interlocked.Increment(ref _sequence));
 
-    public HostLoadSpool(string path, HostStatsSettings settings, TimeProvider time, Guid? boot = null)
+    public HostLoadSpool(string path, HostStatsSettings settings, TimeProvider time, Guid? boot = null,
+        Action<string, HostLoadSource>? appendObservation = null)
     {
         _root = Path.GetFullPath(path);
         _settings = settings;
         _time = time;
         _boot = boot ?? Guid.NewGuid();
+        _appendObservation = appendObservation;
         Directory.CreateDirectory(_root);
         if ((File.GetAttributes(_root) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("host_load_spool_link");
@@ -85,7 +88,9 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
             {
                 stream.Write(bytes);
                 stream.WriteByte((byte)'\n');
+                _appendObservation?.Invoke("before-flush", sample.Source);
                 stream.Flush(flushToDisk: true);
+                _appendObservation?.Invoke("after-flush", sample.Source);
             }
             last.Entries.Add(entry); // Never advertise a record before its durable append boundary.
             _ledger = _ledger with { Next = entry.Ordinal };
