@@ -80,6 +80,40 @@ restart server/runner: none. Tests policy JSON and pinned hashes remain unchange
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | all | `tests/Antiphon.Tests -> bin-c1734-main/` | cold-build | `/*/*/CheckpointColdBuildTests/*` | V-1, V-2, R-1 | all 3 cases, 0 failed/skipped after S2; S1 expects both cold-build variants RED at snapshot assertion | 3 | 5 |
-| CP-2 | all | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-2 | >= 1 executed, all required Unit guard classes present, 0 failed | 1 | 12 |
-| CP-3 | all | CP-1 | registry | `/*/*/SlowTestRegistryMergeTests/*` | R-3 | all listed, 0 failed | 1 | 1 |
+| CP-2 | all | CP-1 | touched | `/*/*/(C1307CliCancellationTests*)\|(WaitCommandTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointStatePublicationTests*)\|(CheckpointAppTests*)/*` | R-5 | all full affected classes, 0 failed | 1 | 5 |
+| CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/*` | R-2 scoped, R-3 | 70 guards plus 5 registry cases, 0 failed | 75 | 4 |
 | CP-4 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1734-runner/` | runner-policy | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | R-4 | all listed, 0 failed/skipped | 1 | 3 |
+| CP-5 | all | CP-1 | terminal | `/*/*/CheckpointTerminalReceiptTests/*` | V-3, V-4, V-5, V-6 | supported stop, cancel, executor failure and timeout reach a real waiter with valid non-passing receipts | 4 | 3 |
+
+## B-1 repair (Code bfe680c4, Review round 2 input)
+
+Invariant: supported stop and direct executor cancellation/failure/timeout publish
+truthful source-bound terminal receipts after joined teardown and before a waiting
+process returns. Completed counts stay known; unrun/unknown counts stay null.
+Do not weaken receipt validators or native custody.
+
+V-3 is `C1734_Stop_publishes_before_the_executor_waiter_returns`: a real executor
+and separate CLI waiter, with a stopper barrier after joined death but before
+publication. V-4/V-5/V-6 are the cancel/failure/timeout variants of
+`C1734_Executor_terminal_receipt_reaches_a_real_waiter`. Each validates terminal
+identity, times, source, report digest and non-passing eligibility; a forged green
+must still be refused. R-5 runs the full named adjacent classes in CP-2.
+Fresh process startup, cancellation and teardown are the subject, so each case
+needs its own executor/waiter. No DB, service or production runner is started.
+One-minute existing row deadline is retained for the timeout witness; the new
+180-second test bound follows the existing cold fixture bound. Provisional sample
+plan: one red and one green, no loaded repetition; record TRX durations and slot/
+build phases. CLI/filesystem spans unavailable in the process fixture remain
+unknown. No full assembly run is selected.
+
+The repair brief explicitly excludes historical whole-Unit R-2/old CP-2. Its
+36-minute timeout, two inherited receipt fixture failures (CARD-1739 owner
+68c34eea), and observed intermittent probe failure remain incomplete; CARD-1720/
+1728 own lane completion/performance. CP-3 is the single requested guard/registry
+batch. This scoped repair never claims whole-Unit qualification.
+
+Additional pending Mutation controls (method-scoped, unbound): PC-3 omit stop/
+cancellation receipt write; PC-4 forge passed on cancel; PC-5 let the waiter
+return before stop publication. Original PC-1/tool, PC-1/script, PC-2 and Review's
+report-publication/digest candidates also remain pending. Code does no deliberate
+mutations. Restart: server/runner none; no OS-selected production branch changes.
