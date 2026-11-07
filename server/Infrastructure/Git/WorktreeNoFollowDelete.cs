@@ -227,6 +227,21 @@ internal static class WorktreeNoFollowDelete
         return GitBlobOf(stream);
     }
 
+    /// <summary>
+    /// Receipt SHA-256 and git blob id from one no-follow read. Null when absent; both strings empty
+    /// when the entry exists and is not a regular file. The two digests are of those same bytes.
+    /// </summary>
+    internal static ReceiptDigest? ReadReceipt(string path)
+    {
+        if (OperatingSystem.IsLinux()) return LinuxReadReceipt(path);
+        if (OperatingSystem.IsWindows()) return WindowsReadReceipt(path);
+        if (!File.Exists(path)) return null;
+        using var stream = File.OpenRead(path);
+        return DigestOf(stream);
+    }
+
+    internal readonly record struct ReceiptDigest(string Sha256, string GitBlob);
+
     internal readonly record struct EntryStamp(string Kind, long Length, long MtimeTicks);
 
     // CARD-1717 B-3: under a receipt each directory's listing is checked once against it, and each entry
@@ -467,6 +482,23 @@ internal static class WorktreeNoFollowDelete
         return GitBlobOf(stream);
     }
 
+    private static ReceiptDigest? LinuxReadReceipt(string path)
+    {
+        var raw = openat(AtFdCwd, path, ORdOnly | ONoFollow | OCloExec);
+        if (raw < 0)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error is ENoEnt or ENotDir) return null;
+            if (error == ELoop) return new("", "");
+            throw Failure("open", path, error);
+        }
+        using var handle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
+        if (!TryStat(Fd(handle), "", AtEmptyPath, out var stat)) throw Failure("stat", path);
+        if ((stat.Mode & 0xF000) != SIfReg) return new("", "");
+        using var stream = new FileStream(handle, FileAccess.Read);
+        return DigestOf(stream);
+    }
+
     private static string WindowsDirectoryIdentity(string path)
     {
         using var handle = OpenNoFollow(path);
@@ -513,6 +545,25 @@ internal static class WorktreeNoFollowDelete
         }
     }
 
+    private static ReceiptDigest? WindowsReadReceipt(string path)
+    {
+        var handle = CreateFileW(path, 0x80000000, 0x1 | 0x2 | 0x4, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            handle.Dispose();
+            if (error is 2 or 3) return null;
+            throw Failure("open", path, error);
+        }
+        using (handle)
+        {
+            if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
+            if ((info.FileAttributes & 0x400) != 0 || (info.FileAttributes & 0x10) != 0) return new("", "");
+            using var stream = new FileStream(handle, FileAccess.Read);
+            return DigestOf(stream);
+        }
+    }
+
     internal static string GitBlobOf(Stream stream)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
@@ -522,6 +573,23 @@ internal static class WorktreeNoFollowDelete
         int read;
         while ((read = stream.Read(buffer)) != 0) hash.AppendData(buffer.AsSpan(0, read));
         return Convert.ToHexStringLower(hash.GetHashAndReset());
+    }
+
+    private static ReceiptDigest DigestOf(Stream stream)
+    {
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        using var git = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        git.AppendData(Encoding.ASCII.GetBytes("blob "
+            + stream.Length.ToString(CultureInfo.InvariantCulture) + "\0"));
+        var buffer = new byte[81920];
+        int read;
+        while ((read = stream.Read(buffer)) != 0)
+        {
+            var slice = buffer.AsSpan(0, read);
+            sha.AppendData(slice);
+            git.AppendData(slice);
+        }
+        return new(Convert.ToHexStringLower(sha.GetHashAndReset()), Convert.ToHexStringLower(git.GetHashAndReset()));
     }
 
     private static int Fd(SafeFileHandle handle) => handle.DangerousGetHandle().ToInt32();
