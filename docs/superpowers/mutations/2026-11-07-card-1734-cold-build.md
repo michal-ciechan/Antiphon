@@ -15,6 +15,7 @@ Every control below is pending; ordinary red/green does not discharge Mutation.
 | PC-5 | Waiter cannot outrun stop publication | Omit the waiter terminal gate | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_publishes_before_the_executor_waiter_returns` |
 | PC-6 | Completed counts survive interrupted execution | Discard known TRX results in fallback | `/*/*/CheckpointTerminalReceiptTests/C1734_Partial_counts_survive_failure_and_cancel` |
 | PC-7 | Provisional-report replacement retains custody | Permit replacement of foreign receipt bytes | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_replaces_only_its_bound_provisional_reports` |
+| PC-8/changed, PC-8/unknown | Terminal recovery preserves adverse observed source history after restoration | Omit source-history preservation in fallback | `/*/*/CheckpointSourceExecutionTests/C1734_Failure_receipt_preserves_observed_source_history` |
 
 Review-proposed publication/digest controls remain pending for Mutation's missing-
 control discovery. Every row/variant above remains pending, including after Code
