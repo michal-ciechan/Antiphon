@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Scripts;
+using Antiphon.Tests.Application;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 namespace Antiphon.Tests.TestHelpers;
