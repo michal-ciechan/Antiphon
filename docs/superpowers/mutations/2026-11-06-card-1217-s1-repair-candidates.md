@@ -26,3 +26,23 @@ The PowerShell conditional TRX projection and new-envelope qualification remain
 S2 work: S1 has no such projection to mutate. Both legacy validators retain
 their blanket skip refusal. The future PowerShell reason controls in the frozen
 102-PC plan remain pending; no surrogate XML probe is credited for them.
+
+## R2-1 repair candidates (task 8711a7d0)
+
+All four variants remain unbound/pending SourceLanding Mutation. Code's committed
+old-source red is ordinary regression evidence, not a deliberate mutation cycle.
+
+| Variant | Candidate defect | Exact method filter | Required observation |
+|---|---|---|---|
+| R2-1/no-validation | Remove the strict validation read before literal projection. | `/*/*/C1217ConditionalSkipContractTests/StrictTrxRefusesIllegalCharacterReferences` | `preserved:R2-1:text:&#0;` fails because an illegal reference is accepted. |
+| R2-1/decimal-only | In the validation read only, escape hex numeric references so they are not validated; retain the original text for projection. | `/*/*/C1217ConditionalSkipContractTests/StrictTrxRefusesIllegalCharacterReferences` | Valid decimal controls hold; an illegal hex reference fails its independently expected refusal. |
+| R2-1/hex-only | In the validation read only, escape decimal numeric references so they are not validated; retain the original text for projection. | `/*/*/C1217ConditionalSkipContractTests/StrictTrxRefusesIllegalCharacterReferences` | Valid hex controls hold; an illegal decimal reference fails its independently expected refusal. |
+| R2-1/normalize-CRLF | Set the projection reader's `Normalization` to `true`. | `/*/*/C1217ConditionalSkipContractTests/StrictTrxPreservesLiteralLineEndings` | LF control holds; literal CRLF/CR reason fails `preserved:B-2:literal-reason`. |
+
+The integration observer is
+`/*/*/CheckpointSourceExecutionTests/validators_agree_on_xml_character_references`.
+It drives the same 99-reference corpus through strict text/file projection and
+both real validator entry points using otherwise valid native-repeat receipts.
+It does not discharge S2 conditional eligibility or future PowerShell strict-skip
+projection controls. Mutation owns exact landed-source binding, compiling patches,
+consumed-site/expected-assertion proof, method-scoped red/restore/green, and discovery.

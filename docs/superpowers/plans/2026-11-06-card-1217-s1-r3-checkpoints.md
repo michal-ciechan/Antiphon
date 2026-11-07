@@ -41,23 +41,23 @@ it is generated mechanically from this table before launch and retained as evide
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-RED | RED | tests/Antiphon.Tests -> bin-c1217-8711-red/ | r2-1-red | `/*/Antiphon.Tests.Checkpoints/C1217ConditionalSkipContractTests*/StrictTrxRefusesIllegalCharacterReferences` | R2-1 red | red | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-1 | GREEN | tests/Antiphon.Tests -> bin-c1217-8711-green/ | r2-1 | `/*/Antiphon.Tests.Checkpoints/C1217ConditionalSkipContractTests*/*` | V-1..4; R2-1 | green | 8 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-2 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/(CheckpointManifestTests*)\|(CheckpointImportTests*)\|(TrxReportTests*)/*` | R-1 | green | 48 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-3 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointRepeatConfigurationTests*/*` | R-1 | green | 5 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-GUARDS | GREEN | CP-1 | r2-1 | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(CheckpointToolProjectContractTests*)/*` | R-4 | green | 80 | 3 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-SOURCE | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests*/*` | R-3; R2-1 parity | green | 14 | 3 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-REPEAT | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointRepeatHostTests*/*` | R-3 | green | 3 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-1 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C1035_ChildCwdMatchesCertifiedRoot` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-2 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_DiagnosticReceipts` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-3 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_StrictAdmission` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-4 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_DriftAndReuse` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-5 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_TerminalEvidence` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-6 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_ReceiptValidation` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-7 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatBuildAndSingleRun` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-8 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatReceiptAndTimings` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-9 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatFailurePartialAndInvalidInput` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
-| CP-R3-10 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatNoBuildAndLeaseCustody` | R-3 | green | 1 | 1 | true | TEMP=/tmp TMP=/tmp TMPDIR=/tmp |
+| CP-RED | RED | tests/Antiphon.Tests -> bin-c1217-8711-red/ | r2-1-red | `/*/Antiphon.Tests.Checkpoints/C1217ConditionalSkipContractTests*/StrictTrxRefusesIllegalCharacterReferences` | R2-1 red | red | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-1 | GREEN | tests/Antiphon.Tests -> bin-c1217-8711-green/ | r2-1 | `/*/Antiphon.Tests.Checkpoints/C1217ConditionalSkipContractTests*/*` | V-1..4; R2-1 | green | 8 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-2 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/(CheckpointManifestTests*)\|(CheckpointImportTests*)\|(TrxReportTests*)/*` | R-1 | green | 48 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-3 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointRepeatConfigurationTests*/*` | R-1 | green | 5 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-GUARDS | GREEN | CP-1 | r2-1 | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(CheckpointToolProjectContractTests*)/*` | R-4 | green | 80 | 3 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-SOURCE | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests*/*` | R-3; R2-1 parity | green | 14 | 3 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-REPEAT | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointRepeatHostTests*/*` | R-3 | green | 3 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-1 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C1035_ChildCwdMatchesCertifiedRoot` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-2 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_DiagnosticReceipts` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-3 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_StrictAdmission` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-4 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_DriftAndReuse` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-5 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_TerminalEvidence` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-6 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/C835_ReceiptValidation` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-7 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatBuildAndSingleRun` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-8 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatReceiptAndTimings` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-9 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatFailurePartialAndInvalidInput` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-R3-10 | GREEN | CP-1 | r2-1 | `/*/Antiphon.Tests.Scripts/RunCheckpointRepeatScriptTests*/C885_RepeatNoBuildAndLeaseCustody` | R-3 | green | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 
 The 16 GREEN rows preserve all 166 prior cases and add two tests (168 expected).
 PC-1..PC-102 and B-1/TRX, B-1/C, B-1/P, B-2/C, B-4/C remain pending

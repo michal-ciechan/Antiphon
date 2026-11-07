@@ -38,6 +38,18 @@ public static class StrictTrxReport
         try
         {
             if (text.Length > 16 * 1024 * 1024) return Bad("strict TRX document limit");
+            // The non-normalizing XmlTextReader below also admits illegal numeric
+            // character references. Validate the original XML with the strict reader
+            // first; discard its normalized values, retaining the original text for
+            // projection. A checking wrapper around XmlTextReader does not restore
+            // validation of references that reader has already expanded.
+            using (var validation = XmlReader.Create(new StringReader(text), new XmlReaderSettings
+            {
+                CheckCharacters = true, DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+            }))
+            {
+                while (validation.Read()) { }
+            }
             // XmlReaderSettings normalizes literal CR/CRLF before exposing Value. The
             // conditional contract binds the literal reason, so retain those characters.
             using var reader = new XmlTextReader(new StringReader(text))
