@@ -35,8 +35,8 @@ paths must refuse before losing durable sample bytes, migration history or a
 legacy row. The new migration tests inspect registered migrations and exercise
 the real PostgreSQL migrator on private historical databases.
 
-The full adjacent `C0824RefOnlySnapshotMigrationTests` class is selected before
-repair: it assumes its three migrations are last and starts historical Down
+The full adjacent `C0824RefOnlySnapshotMigrationTests` class is selected in a
+separate expected-red packet before repair: it assumes its three migrations are last and starts historical Down
 round trips from the newest template. New irreversible telemetry migrations
 make that fixture invalid. Preserve that red before repairing the fixture to
 start at its actual historical migration. Do not bypass either Down guard.
@@ -59,10 +59,10 @@ seconds supports the unchanged 28-minute build allowance.
 
 Use a source-qualified checkpoint YAML per committed group, at most three
 rows, one isolated build with `UseAppHost=false`, row caps CP-4=8 minutes,
-CP-5=6 minutes, CP-M1/CP-M2=6 minutes and CP-G=6 minutes. Build allowance stays
+CP-5=6 minutes, CP-M1/CP-OLD/CP-M2=6 minutes and CP-G=6 minutes. Build allowance stays
 28 minutes, admission 10 minutes per acquisition. Group FIXTURE uses execution
 allowance 50 minutes and hard wall 90 minutes; group MIGRATION-REPAIR uses 42
-and 72 minutes. These phase sums include settlement and retain separate
+and 72 minutes; HISTORICAL-RED uses 36 and 56 minutes. These phase sums include settlement and retain separate
 admission accounting; the manifest records a total override reason. Expected
 ordinary wall without queue waits is below 30 minutes per group; a run above
 30 minutes requires bounded performance Debug before repeating it.
@@ -78,9 +78,10 @@ included because this packet adds a test class. Whole Unit is explicitly owed.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
-| CP-4 | FIXTURE | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-f1/ | s1-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44 | full affected classes, including all 11 H3 cuts | 28 | 4 | true |
+| CP-4 | FIXTURE | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-f1a/ | s1-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44 | full affected classes, including all 11 H3 cuts | 28 | 4 | true |
 | CP-5 | FIXTURE | CP-4 | s1-surfaces | `/*/*/(C1514HostLoadAggregateTests*)\|(C1514HostLoadRecommendationTests*)\|(C1514HostLoadScriptTests*)\|(HostStatsCacheTests*)\|(HostStatsPollServiceTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-28..30,V-36..40,V-45..48,R-1..4 | full frozen row after common world setup repair | 40 | 2 | true |
-| CP-M1 | FIXTURE | CP-4 | migration-red | `/*/*/(C1514HostLoadMigrationTests*)\|(C0824RefOnlySnapshotMigrationTests*)/*` | additive migration chain and historical compatibility | new class 6; adjacent class 4; retain actual red | 10 | 3 | true |
+| CP-M1 | FIXTURE | CP-4 | migration-behavior | `/*/*/C1514HostLoadMigrationTests*/*` | additive migration chain and durable downgrade refusal | all six results, zero failed/skipped | 6 | 3 | true |
+| CP-OLD | HISTORICAL-RED | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-old/ | historical-red | `/*/*/C0824RefOnlySnapshotMigrationTests*/*` | historical fixture incompatibility before repair | retain exact assertion/Down failures separately from green packets | 4 | 2 | true |
 | CP-M2 | MIGRATION-REPAIR | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-f2/ | migration-green | `/*/*/C0824RefOnlySnapshotMigrationTests*/*` | repair historical migration fixture | all four results, zero failed/skipped | 4 | 2 | true |
 | CP-G | MIGRATION-REPAIR | CP-M2 | named-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-5 and explicit mechanical/platform/layering guards | prior named packet 75 plus one adjacent category census, zero failed/skipped | 76 | 3 | true |
 
