@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A write-behind decorator for System.IO.Abstractions: whole-file writes return at once and land on disk
+    in the background, while reads through the same IFileSystem see them immediately. Kept free of
+    Antiphon dependencies so it can be published on its own.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Antiphon.IO.WriteBehind</PackageId>
+    <Description>Write-behind IFileSystem decorator: buffered whole-file writes with read-your-writes, flushed atomically on a background thread.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Abstractions" Version="22.1.0" />
+    <InternalsVisibleTo Include="Antiphon.IO.WriteBehind.Tests" />
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+  </ItemGroup>
+</Project>

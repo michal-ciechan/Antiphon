@@ -86,6 +86,8 @@
     <ProjectReference Include="..\..\tools\Antiphon.Checkpoints\Antiphon.Checkpoints.csproj" />
     <ProjectReference Include="..\..\tools\Antiphon.TimeoutAudit\Antiphon.TimeoutAudit.csproj" />
     <Compile Include="..\Antiphon.TimeoutAudit.Tests\TimeoutAuditTests.cs" Link="Scripts\TimeoutAuditTests.cs" />
+    <ProjectReference Include="..\..\src\Antiphon.IO.WriteBehind\Antiphon.IO.WriteBehind.csproj" />
+    <Compile Include="..\Antiphon.IO.WriteBehind.Tests\WriteBehindFileSystemTests.cs" Link="IO\WriteBehindFileSystemTests.cs" />
     <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "822a7dd1e0279291e68b6028de5f96d854fe6922872f6240afdab34f98feb38d",
+  "policyHash": "7e54681b56c7925bef082d528cde3285ec579a13d51f34625c8c3aad1ee2dbb0",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1880,6 +1880,14 @@
       ],
       "role": "child",
       "project": "tests/Antiphon.TimeoutAudit.Tests/Antiphon.TimeoutAudit.Tests.csproj"
+    },
+    {
+      "reason": "Standalone tests for the publishable write-behind file system library; the same WriteBehindFileSystemTests source is compiled into primary Antiphon.Tests for ordinary qualification.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.IO.WriteBehind.Tests/Antiphon.IO.WriteBehind.Tests.csproj"
     },
     {
       "reason": "Existing CARD-1514 timing probe is an explicit child host launched by the primary timing lifecycle tests and staged by Antiphon.Tests.",
