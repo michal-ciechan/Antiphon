@@ -66,6 +66,17 @@ public static class BuildSlotRoutes
                 : Problem(StatusCodes.Status404NotFound, BuildSlotProblemTypes.Unknown, $"no lease {leaseId}"));
 
         app.MapGet("/build-slots", (BuildSlotBroker broker) => Results.Ok(broker.List()));
+        // Additive observation surface, including for the shared BuildSlotsOnly authority.
+        // Configuration identifies the physical host; an unbound legacy authority stays unknown.
+        app.MapGet("/build-slots/host-load", (BuildSlotBroker broker, IConfiguration configuration, TimeProvider time) =>
+        {
+            var host = configuration["SessionRunner:HostStats:PhysicalHostKey"];
+            var id = configuration["SessionRunner:HostStats:AuthorityId"];
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(id)) return Results.Ok(HostAdmissionSnapshot.Unknown(host));
+            var listing = broker.List();
+            return Results.Ok(new HostAdmissionSnapshot(id, host, configuration.GetValue<long?>("SessionRunner:HostStats:BindingRevision") ?? 1,
+                time.GetUtcNow(), "known", "Lease", listing.Occupied, listing.Budget, listing.Waiters.Count));
+        });
         app.MapGet("/build-slots/metrics", (BuildSlotBroker broker) => Results.Ok(broker.Metrics()));
         return app;
     }
