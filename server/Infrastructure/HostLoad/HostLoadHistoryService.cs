@@ -63,7 +63,8 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
         if (limitText is not null && (!int.TryParse(limitText, NumberStyles.None, CultureInfo.InvariantCulture, out limit) || limit <= 0)) throw InvalidQuery();
         limit = Math.Min(limit, 2000);
         if (resolution is not ("raw" or "hour") || to <= from || to - from > TimeSpan.FromDays(resolution == "raw" ? 7 : 90)) throw InvalidQuery();
-        var query = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(runner + "|" + from.ToString("O") + "|" + to.ToString("O") + "|" + resolution)));
+        var query = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(runner + "|" + binding?.PhysicalHostKey + "|" + binding?.SourceEpoch
+            + "|" + binding?.Revision + "|" + from.ToString("O") + "|" + to.ToString("O") + "|" + resolution)));
         Cursor? cursor = cursorText is null ? null : DecodeCursor(cursorText, query);
         if (binding is null) return new(1, runner, from, to, resolution, [], null, false, ["binding-unknown"]);
         // Capture actual transaction membership as well as a keyset frontier. A sequence allocated
@@ -71,13 +72,15 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
         var snapshot = cursor?.Snapshot ?? await db.Database.SqlQueryRaw<string>("SELECT pg_current_snapshot()::text AS \"Value\"").SingleAsync(ct);
         if (snapshot.Length > 2048) throw InvalidCursor();
         var host = binding.PhysicalHostKey;
-        var items = new List<object>(); string? next = null; bool more;
+        var items = new List<object>(); string? next = null; bool more; bool covered;
         if (resolution == "raw")
         {
             var rows = db.HostLoadSamples.FromSqlInterpolated($"SELECT * FROM \"HostLoadSamples\" WHERE pg_visible_in_snapshot(\"CreatedTransactionId\"::text::xid8, {snapshot}::pg_snapshot)")
                 .AsNoTracking().Where(s => s.IsPrimary && s.PhysicalHostKey == host && s.SampledAt >= from && s.SampledAt < to);
             var maximum = cursor?.MaxId ?? await rows.Select(s => (long?)s.Id).MaxAsync(ct) ?? 0;
             rows = rows.Where(s => s.Id <= maximum);
+            var distinctTimes = await rows.Select(s => s.SampledAt).Distinct().LongCountAsync(ct);
+            covered = distinctTimes >= HostLoadAggregation.ExpectedCount(from, to);
             if (cursor is not null) rows = rows.Where(s => s.SampledAt > cursor.At || (s.SampledAt == cursor.At && s.Id > cursor.Id));
             var page = await rows.OrderBy(s => s.SampledAt).ThenBy(s => s.Id).Take(limit + 1).ToListAsync(ct);
             more = page.Count > limit; page = page.Take(limit).ToList();
@@ -95,10 +98,15 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
             more = page.Count > limit; page = page.Take(limit).ToList();
             items.AddRange(page.Select(s => (object)new { s.PhysicalHostKey, s.SourceEpoch, s.HourUtc, s.Metric,
                 Summary = JsonSerializer.Deserialize<HostLoadMetricSummary>(s.StatisticsJson, PhoneHomeFraming.Json) }));
+            // A paged summary is explicitly partial; do not claim one sparse bucket covers
+            // a whole requested interval merely because the spool had no known losses.
+            covered = cursor is null && page.Where(s => s.Metric == "cpuPercent").Sum(s =>
+                JsonSerializer.Deserialize<HostLoadMetricSummary>(s.StatisticsJson, PhoneHomeFraming.Json)!.ValidCount)
+                >= HostLoadAggregation.ExpectedCount(from, to);
             if (more) { var last = page[^1]; next = EncodeCursor(new(query, snapshot, maximum, last.HourUtc, last.Id)); }
         }
         var cursors = await db.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == runner).ToListAsync(ct);
-        var complete = items.Count > 0 && cursors is [{ Complete: true }] && !more;
+        var complete = items.Count > 0 && covered && cursors is [{ Complete: true }] && !more;
         return new(1, runner, from, to, resolution, items, next, complete,
             complete ? [] : items.Count == 0 ? ["missing"] : ["partial"]);
     }
@@ -170,7 +178,8 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
     private static DateTimeOffset ParseTime(string? text, DateTimeOffset fallback)
     {
         if (text is null) return fallback;
-        if (!DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var result)) throw InvalidQuery();
+        if (!Regex.IsMatch(text, @"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})\z", RegexOptions.CultureInvariant)
+            || !DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var result)) throw InvalidQuery();
         return result.ToUniversalTime();
     }
     private static Cursor DecodeCursor(string text, string query)
