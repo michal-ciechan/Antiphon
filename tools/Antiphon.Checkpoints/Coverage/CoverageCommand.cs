@@ -156,7 +156,7 @@ public sealed class CoverageCommand
         Walk(directory);
         foreach (var project in Directory.EnumerateFiles(directory, "*.csproj"))
         {
-            foreach (var include in XDocument.Parse(read(Confined(root, project))).Descendants("Compile").Attributes("Include"))
+            foreach (var include in SecureXml.Parse(read(Confined(root, project))).Descendants("Compile").Attributes("Include"))
             {
                 var value = include.Value.Replace('\\', Path.DirectorySeparatorChar);
                 if (value.Contains('*') || value.Contains('$')) throw new InvalidDataException("unsupported linked source requires literal scope");

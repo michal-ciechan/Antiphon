@@ -1,5 +1,4 @@
 using System.Xml;
-using System.Xml.Linq;
 
 namespace Antiphon.Checkpoints;
 
@@ -130,13 +129,7 @@ public static class ProjectWriteRoots
     private static bool TryReadReferences(string projectFile, out List<string> includes)
     {
         includes = [];
-        var settings = new XmlReaderSettings
-        {
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null,
-        };
-        using var reader = XmlReader.Create(new StringReader(ReceiptFile.ReadText(projectFile)), settings);
-        var document = XDocument.Load(reader);
+        var document = SecureXml.Parse(ReceiptFile.ReadText(projectFile));
         foreach (var element in document.Descendants())
         {
             if (!string.Equals(element.Name.LocalName, "ProjectReference", StringComparison.Ordinal))
