@@ -34,6 +34,8 @@ export interface HomeTaskWorkerDto {
   requiredPlatform?: 'Any' | 'Windows' | 'Linux'
   runnerId?: string | null
   observedPlatform?: string | null
+  /** CARD-0824. Checkout is the stored default; RefOnly is a read-only desktop workspace. */
+  desktopWorkspaceKind?: 'Checkout' | 'RefOnly'
 }
 
 export interface HomeTaskItemDto {
@@ -85,6 +87,8 @@ export interface HomeTaskItemDto {
   requiredPlatform?: 'Any' | 'Windows' | 'Linux' | null
   runnerId?: string | null
   observedPlatform?: string | null
+  /** CARD-0824. Checkout when no bound worker says otherwise. */
+  desktopWorkspaceKind?: 'Checkout' | 'RefOnly'
 }
 
 export interface HomeTasksDto {
