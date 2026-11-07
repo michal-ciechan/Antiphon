@@ -6468,6 +6468,11 @@ namespace Antiphon.Server.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<long>("CreatedTransactionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValueSql("pg_current_xact_id()::text::bigint");
+
                     b.Property<string>("HistogramJson")
                         .IsRequired()
                         .HasColumnType("text");
@@ -6584,6 +6589,11 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<string>("CountersJson")
                         .HasColumnType("text");
+
+                    b.Property<long>("CreatedTransactionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValueSql("pg_current_xact_id()::text::bigint");
 
                     b.Property<DateTimeOffset?>("DerivedAt")
                         .HasColumnType("timestamp with time zone");
