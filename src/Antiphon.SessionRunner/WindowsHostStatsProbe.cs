@@ -57,10 +57,15 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
             var memory = _readMemoryStatus();
             var times = _readSystemTimes();
             double? cpu = null;
+            var cpuReason = "read-failed";
             if (times is { } current)
             {
                 if (_previous is { } previous)
+                {
                     cpu = CpuPercent(previous.Idle, previous.Kernel, previous.User, current.Idle, current.Kernel, current.User);
+                    cpuReason = cpu is null ? "counter-reset" : "known";
+                }
+                else cpuReason = "first-delta";
                 _previous = current;
             }
 
@@ -92,7 +97,8 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
                 memory is { } swapFree ? (long)swapFree.AvailPageFile : null,
                 disks,
                 null,
-                []) { LoadUnsupported = true, EffectiveCoreLimit = Environment.ProcessorCount };
+                []) { LoadUnsupported = true, EffectiveCoreLimit = Environment.ProcessorCount,
+                    CpuUnknownReason = cpuReason };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ExternalException)
         {

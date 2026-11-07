@@ -26,11 +26,12 @@ public static class HostStatsRoutes
                         : [Directory.GetCurrentDirectory(), log];
                 }
 
-                settings.Validate();
                 settings.HistoryPath ??= Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "antiphon", "host-load");
-                settings.AuthorityEndpoint ??= configuration["ANTIPHON_BUILD_SLOTS_URL"];
+                if (settings.AuthorityEndpoint is null && configuration["ANTIPHON_BUILD_SLOTS_URL"] is { } brokerUrl)
+                    settings.AuthorityEndpoint = brokerUrl.TrimEnd('/') + "/host-load";
                 settings.RunnerId = configuration["PhoneHome:RunnerId"] ?? settings.RunnerId;
+                settings.Validate();
             })
             .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
