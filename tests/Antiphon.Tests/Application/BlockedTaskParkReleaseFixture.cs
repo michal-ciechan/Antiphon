@@ -176,6 +176,11 @@ internal sealed partial class RunnerSeatReleaseFixture
         await GitAsync(repository, "config", "user.name", "park test");
         await GitAsync(repository, "config", "user.email", "park@example.invalid");
         await GitAsync(repository, "config", "commit.gpgsign", "false");
+        // The runner's git children inherit this process's environment, so they read the machine's config (Git for
+        // Windows' system core.autocrlf=true, the user's ~/.config/git/ignore) while libgit2 here is isolated from
+        // it and this fixture's own git reads none of it. Pinned locally, every reader sees the same status config,
+        // and the runner's clean-status reads are answered in process as they are in production. Worktrees share it.
+        await PinStatusConfigAsync(root, repository);
         await File.WriteAllTextAsync(Path.Combine(repository, "source.txt"), "retained source");
         await GitAsync(repository, "add", "source.txt");
         await GitAsync(repository, "commit", "-m", "retained baseline");
@@ -190,9 +195,19 @@ internal sealed partial class RunnerSeatReleaseFixture
             await GitAsync(runnerRepo, "config", "user.name", "park test");
             await GitAsync(runnerRepo, "config", "user.email", "park@example.invalid");
             await GitAsync(runnerRepo, "config", "commit.gpgsign", "false");
+            await PinStatusConfigAsync(root, runnerRepo);
             await GitAsync(runnerRepo, "worktree", "add", "-b", branch, Path.Combine(root, "runner", "worktrees", mirror), sha);
         }
         return sha;
+    }
+
+    private async Task PinStatusConfigAsync(string root, string repository)
+    {
+        var empty = Path.Combine(root, "status-config-empty").Replace('\\', '/');
+        if (!File.Exists(empty)) await File.WriteAllTextAsync(empty, "");
+        await GitAsync(repository, "config", "core.autocrlf", "false");
+        await GitAsync(repository, "config", "core.excludesFile", empty);
+        await GitAsync(repository, "config", "core.attributesFile", empty);
     }
 
     public async Task<string> GitAsync(string path, params string[] arguments)
