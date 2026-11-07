@@ -65,7 +65,7 @@ public sealed class WatchdogService
         foreach (var session in activeSessions)
         {
             var sessionId = session.Id;
-            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct, LiveAnsiTail.WhenScreenEmpty) is not { } snapshot)
                 continue;
 
             if (string.IsNullOrWhiteSpace(snapshot.RenderedScreen)

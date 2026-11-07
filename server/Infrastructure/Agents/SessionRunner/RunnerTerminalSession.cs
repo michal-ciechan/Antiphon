@@ -16,6 +16,7 @@ internal sealed class RunnerTerminalSession
     private Guid _sessionId;
     private bool _started;
     private DateTime? _acceptedGeneration;
+    private string? _backend;
     private ClaudeEffortIntent _effortIntent = new();
 
     public RunnerTerminalSession(ISessionRunnerClient client)
@@ -50,6 +51,7 @@ internal sealed class RunnerTerminalSession
         _effortIntent = ClaudeEffortIntent.Read(spec.Args);
         var session = await _client.StartAsync(sessionId, spec, ct);
         StartedAt = session.StartedAt;
+        _backend = session.Backend;
         Pid = session.Pid;
         ExitReason = session.ExitReason;
         Exited = WaitForExitAsync(sessionId, _watcher.Token);
@@ -94,6 +96,7 @@ internal sealed class RunnerTerminalSession
 
         _sessionId = sessionId;
         StartedAt = session.StartedAt;
+        _backend = session.Backend;
         _acceptedGeneration = session.AcceptedStartedAt;
         Pid = session.Pid;
         ExitReason = session.ExitReason;
@@ -222,7 +225,9 @@ internal sealed class RunnerTerminalSession
     public async Task<long> GetLastSequenceAsync(CancellationToken ct)
     {
         EnsureStarted();
-        return (await _client.GetBufferAsync(_sessionId, ct)).LastSequence;
+        // CARD-1761: the session record already carries LastSequence. The buffer route
+        // re-reads the ANSI tail and throws that text away.
+        return (await _client.GetAsync(_sessionId, ct)).LastSequence;
     }
 
     public async Task<bool> WaitForOutputAsync(
@@ -230,10 +235,35 @@ internal sealed class RunnerTerminalSession
         TimeSpan timeout,
         CancellationToken ct)
     {
+        EnsureStarted();
         var deadline = DateTime.UtcNow + timeout;
+        // A pty frame moves with LastSequence under one lock, so holding it until the
+        // next session read is not a time cache. Herdr's screen is a pane.read, and an
+        // old runner omits Backend: both keep a snapshot on every poll.
+        var sequenceTracksFrame = string.Equals(_backend, SessionBackends.PtyHost, StringComparison.Ordinal);
+        long? heldSequence = null;
+        string? heldText = null;
         while (DateTime.UtcNow < deadline)
         {
-            if (predicate(await SnapshotTextAsync(ct)))
+            string text;
+            if (sequenceTracksFrame)
+            {
+                var session = await _client.GetAsync(_sessionId, ct);
+                if (heldText is null || session.LastSequence != heldSequence)
+                {
+                    var frame = await GetSnapshotAsync(ct);
+                    heldText = frame.RawOutput;
+                    heldSequence = frame.LastSequence;
+                }
+
+                text = heldText;
+            }
+            else
+            {
+                text = await SnapshotTextAsync(ct);
+            }
+
+            if (predicate(text))
                 return true;
 
             try { await Task.Delay(50, ct); }

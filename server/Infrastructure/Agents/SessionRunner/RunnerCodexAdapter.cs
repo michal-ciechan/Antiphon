@@ -254,10 +254,10 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
 
             if (!screenDone)
             {
-                var rawText = await _terminal.SnapshotTextAsync(ct);
-                var screen = await _terminal.SnapshotScreenAsync(ct);
-                var sequence = await _terminal.GetLastSequenceAsync(ct);
-                if (tracker.Observe(screen, rawText, sequence, DateTime.UtcNow))
+                // CARD-1761: one snapshot is one frame. Text, screen and sequence used to
+                // come from two snapshots plus the ANSI tail.
+                var frame = await _terminal.GetSnapshotAsync(ct);
+                if (tracker.Observe(frame.RenderedScreen, frame.RawOutput, frame.LastSequence, DateTime.UtcNow))
                 {
                     screenDone = true;
                     // The screen can beat the row; give it a short grace so the verdict (and the

@@ -2145,7 +2145,15 @@ public sealed partial class AgentSessionRuntime
     /// rethrows instead, so a cancelled sweep records no decision. Snapshot and buffer share one
     /// deadline (D-2).
     /// </summary>
-    public async Task<AgentSessionLiveSnapshot?> TryGetLiveSnapshotAsync(Guid sessionId, CancellationToken ct)
+    public Task<AgentSessionLiveSnapshot?> TryGetLiveSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+        TryGetLiveSnapshotAsync(sessionId, ct, LiveAnsiTail.Omit);
+
+    /// <summary>
+    /// CARD-1761: <see cref="LiveAnsiTail.Omit"/> does not read the ANSI log. The snapshot,
+    /// including a herdr <c>pane.read</c>, still happens on this call. There is no retained tail.
+    /// </summary>
+    public async Task<AgentSessionLiveSnapshot?> TryGetLiveSnapshotAsync(
+        Guid sessionId, CancellationToken ct, LiveAnsiTail ansiTail)
     {
         try
         {
@@ -2164,12 +2172,17 @@ public sealed partial class AgentSessionRuntime
             using (linked)
             {
                 var runnerSnapshot = await _runnerClient.GetSnapshotAsync(sessionId, linked.Token).WaitAsync(linked.Token);
-                var buffer = await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+                var readTail = ansiTail == LiveAnsiTail.Include
+                    || (ansiTail == LiveAnsiTail.WhenScreenEmpty
+                        && string.IsNullOrWhiteSpace(runnerSnapshot.RenderedScreen));
+                var buffer = readTail
+                    ? (await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token)).Buffer
+                    : string.Empty;
                 return new AgentSessionLiveSnapshot(
                     sessionId,
                     runnerSnapshot.RawOutput,
                     runnerSnapshot.RenderedScreen,
-                    buffer.Buffer,
+                    buffer,
                     runnerSnapshot.LastSequence,
                     runnerSnapshot.AcceptedStartedAt,
                     runnerSnapshot.Dialog);
@@ -2462,8 +2475,8 @@ public sealed partial class AgentSessionRuntime
             using (deadline)
             using (linked)
             {
-                var buffer = await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token);
-                return buffer.LastSequence;
+                var session = await _runnerClient.GetAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+                return session.LastSequence;
             }
         }
         catch
@@ -2872,6 +2885,17 @@ public sealed partial class AgentSessionRuntime
 }
 
 public sealed record AgentSessionRuntimeBufferSnapshot(string Buffer, long LastSequence);
+
+/// <summary>
+/// CARD-1761. <see cref="Omit"/> skips the ANSI log. <see cref="WhenScreenEmpty"/> reads it
+/// only for the watchdog's empty-screen fallback. Nothing here is cached for a later call.
+/// </summary>
+public enum LiveAnsiTail
+{
+    Omit = 0,
+    Include = 1,
+    WhenScreenEmpty = 2,
+}
 
 public sealed record AgentSessionLiveSnapshot(
     Guid SessionId,
