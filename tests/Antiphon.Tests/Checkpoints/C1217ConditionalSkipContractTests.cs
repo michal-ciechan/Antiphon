@@ -207,8 +207,9 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
     {
         var root = TempDir();
         // Qualification clones inherit core.autocrlf, so this raw string is CRLF there.
+        // The command splice below searches for an LF line break, so normalize first.
         var windowsYaml = F.Yaml.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
-        var conditional = windowsYaml + "\n    conditionalSkips: c1217-fixture-v1";
+        var conditional = windowsYaml.Replace("\r\n", "\n").Replace("\r", "\n") + "\n    conditionalSkips: c1217-fixture-v1";
         foreach (var (key, yaml) in new[]
         {
             ("command", conditional.Replace("    filter: /*/Fixture/Cases/*\n    minExecuted: 1", "    command: echo fixture", StringComparison.Ordinal)),
