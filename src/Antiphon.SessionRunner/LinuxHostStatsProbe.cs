@@ -55,10 +55,19 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
             var loadLine = _readLines("/proc/loadavg").FirstOrDefault();
             var load = loadLine is null ? null : ParseLoadAvg(loadLine);
             double? cpu = null;
+            double? ioWait = null;
+            var cpuReason = "invalid";
             if (statLine is not null && ParseProcStat(statLine) is { } current)
             {
                 if (_previous is { } previous)
+                {
                     cpu = CpuPercent(previous, current);
+                    var totalDelta = current.Total - previous.Total;
+                    var ioDelta = current.IoWait - previous.IoWait;
+                    if (totalDelta > 0 && ioDelta >= 0 && ioDelta <= totalDelta) ioWait = 100d * ioDelta / totalDelta;
+                    cpuReason = cpu is null ? "counter-reset" : "known";
+                }
+                else cpuReason = "first-delta";
                 _previous = current;
             }
 
@@ -75,7 +84,7 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
                 memory.SwapFreeBytes,
                 ReadDisks(),
                 load?.ProcessCount,
-                []) { EffectiveCoreLimit = Environment.ProcessorCount };
+                []) { EffectiveCoreLimit = EffectiveCoreLimit(), IoWaitPercent = ioWait, CpuUnknownReason = cpuReason };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -83,7 +92,28 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
         }
     }
 
-    internal readonly record struct ProcStatTotals(long Idle, long Total);
+    internal readonly record struct ProcStatTotals(long Idle, long Total, long IoWait = 0);
+
+    private double EffectiveCoreLimit()
+    {
+        // cgroup quota is diagnostic only. Host utilization keeps its /proc/stat denominator.
+        try
+        {
+            var parts = _readLines("/sys/fs/cgroup/cpu.max").FirstOrDefault()?.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts is { Length: 2 } && double.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var quota)
+                && double.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var period)
+                && quota > 0 && period > 0 && double.IsFinite(quota / period)) return Math.Min(Environment.ProcessorCount, quota / period);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        try
+        {
+            var quota = long.Parse(_readLines("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").First(), CultureInfo.InvariantCulture);
+            var period = long.Parse(_readLines("/sys/fs/cgroup/cpu/cpu.cfs_period_us").First(), CultureInfo.InvariantCulture);
+            if (quota > 0 && period > 0) return Math.Min(Environment.ProcessorCount, (double)quota / period);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or OverflowException or InvalidOperationException) { }
+        return Environment.ProcessorCount;
+    }
 
     // Aggregate /proc/stat is host-scoped even when this process has a cgroup/affinity cap.
     // A missing topology stays unknown (0 in the legacy DTO; null in history).
@@ -114,14 +144,17 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
         Span<long> cols = stackalloc long[8];
         for (var i = 0; i < 8; i++)
         {
-            if (!long.TryParse(parts[index + i], NumberStyles.Integer, CultureInfo.InvariantCulture, out cols[i]))
+            if (!long.TryParse(parts[index + i], NumberStyles.Integer, CultureInfo.InvariantCulture, out cols[i]) || cols[i] < 0)
                 return null;
         }
 
         long total = 0;
         for (var i = 0; i < 8; i++)
+        {
+            if (total > long.MaxValue - cols[i]) return null;
             total += cols[i];
-        return new ProcStatTotals(cols[3] + cols[4], total);
+        }
+        return new ProcStatTotals(cols[3] + cols[4], total, cols[4]);
     }
 
     internal static double? CpuPercent(ProcStatTotals previous, ProcStatTotals current)

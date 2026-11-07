@@ -68,9 +68,10 @@ public sealed class HostStatsSamplerService : BackgroundService
         var now = _time.GetUtcNow();
         var processes = _settings.ProcessSampling ? ReadProcesses(_time.GetTimestamp()) : [];
         var percent = read.Value.CpuPercent;
+        var reason = read.Value.CpuUnknownReason;
         if (percent is { } value && (!double.IsFinite(value) || value < 0 || value > 100))
-            percent = null;
-        var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes };
+        { percent = null; reason = "invalid"; }
+        var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes, CpuUnknownReason = reason };
         _store.Add(sample);
         _history?.TryCapture(sample);
         return Task.CompletedTask;
