@@ -967,3 +967,50 @@ Continue and Extend refuse. An operator may add `-OperatorExtend -ExtendMinutes
 one request and fails closed with `operator_token_unavailable:` before any
 request. Otherwise use `POST /api/agent-tasks/{id}/cancel`. A hold is never
 killed or parked automatically.
+
+## Host load telemetry (CARD-1514 S1)
+
+`pwsh -NoProfile -File scripts/host-load.ps1 -Json` reads the live global runner
+preference and catalogue, then `GET /api/hosts/{runnerId}/load`. `-HostId` selects
+an explicit catalogue entry; `-Project <guid> -Role Code` requests scoped advice.
+The script issues GETs only. It inherits `ANTIPHON_API` and forwards the task token
+in its header. JSON stdout contains one value; errors leave stdout empty and
+return nonzero. Human output labels the recommendation as **MORE tasks**.
+
+The current response contains the original sample identity/time, age, last-hour
+avg/min/max/p95 and coverage, authority identity/counts, provisional thresholds
+(command 85%, dispatch 75%), and advisory additional capacity. Unknown/stale or
+partial pressure yields zero advice with reasons. An omitted project/role is
+`hostOnly` and names the missing constraints. This shadow projection does not
+change task admission, the build-slot broker, runner eligibility or budgets.
+
+History is `GET /api/hosts/{runnerId}/load/history?from=<ISO8601>&to=<ISO8601>&resolution=raw|hour&limit=720`.
+Raw windows are at most seven days; hourly windows at most 90 days. The page cap
+is 2,000 and `nextCursor` binds the host binding, interval and resolution. Keep
+the original query when continuing a page. Raw source identities survive retries;
+missing history/coverage is explicit. Hourly and long-task histograms retain exact
+sum/count/min/max and declare approximate p95/error after raw expiry.
+
+`GET /api/agent-tasks/{id}/load?attempt=<n>` uses the existing task-status read
+scope and reports ambient host load at accepted session start, during and at end.
+Overlapping windows do not claim exclusive task CPU. Historical events without
+snapshots and reused sessions without a new accepted start remain incomplete.
+
+Runner settings live under `SessionRunner:HostStats`: `HistoryEnabled`,
+`HistoryPath` (a durable private state volume outside checkout/worktrees),
+`RunnerId`, `PhysicalHostKey`, `BindingRevision`, `SourceEpoch`, `AuthorityId` and
+`AuthorityEndpoint`. An absent history path uses local application data; an empty
+path is invalid. Configure server `HostLoadHistory:Bindings` with the matching
+runner, physical key, revision, source epoch, primary flag and half-open validity
+interval. Only one collector is primary for a physical host/epoch. Raw retention
+is seven days, hourly/terminal-task retention 90 days; open windows remain.
+
+The actual shared broker exposes additive `GET /build-slots/host-load`, including
+in `BuildSlotsOnly` mode. Configure its physical key/authority ID under the same
+HostStats section. Missing identity remains unknown. A runner with inherited
+`ANTIPHON_BUILD_SLOTS_URL` reads that URL plus `/host-load`; an explicit
+`AuthorityEndpoint` is used verbatim. Failure never substitutes the local count.
+The runner's separate `GET /host-stats/history` and phone-home operation 50 carry
+at most 120 records/1 MiB. Receipt acknowledgement follows the committed server
+cursor; bounded spool eviction leaves persistent gap evidence. Existing v1 live
+host-stat routes and operation ordinals are retained.

@@ -1413,3 +1413,34 @@ accept only their exact current layout and permitted key. The existing explicit
 interactive input route is separate. Missing capability/metadata refuses guarded
 writes. Runtime and server activation must both precede use; a land alone does
 not activate the guard. Native Windows and Unix watchdog qualification is separate.
+
+### Host load history and shadow advice (CARD-1514 S1)
+
+```text
+GET /api/hosts/{hostId}/load                       ?projectId=<guid>&role=<AgentTaskRole>
+GET /api/hosts/{hostId}/load/history               ?from=<ISO8601>&to=<ISO8601>&resolution=raw|hour&limit=720&cursor=<opaque>
+GET /api/agent-tasks/{id:guid}/load                ?attempt=<positive integer>
+```
+
+`HostLoadCurrentDto`, `HostLoadHistoryDto` and `HostLoadTaskDto` in
+`server/Application/Dtos/HostLoadDtos.cs` own these additive schemas. The task
+route reuses the existing task-status polling caller policy. Invalid history
+queries/cursors return typed 400; unknown hosts/tasks return 404. Raw windows are
+bounded to seven days, hourly to 90 days, pages to 2,000 records. Cursor membership
+excludes rows whose transaction had not committed when the first page was read.
+The physical binding is part of cursor identity. Missing history is incomplete,
+not an invented empty success. Task windows retain event/sample identities and
+explicit boundary age, per-metric coverage and ambient attribution.
+
+Current advice uses the maximum of latest, 15-second average and 60-second average
+CPU. Load average and process CPU are separate diagnostics. Startup debt and the
+independent known host/seat/project/stage bounds clamp **additional** tasks; an
+unknown required input produces zero advice with reasons. Responses expose
+provisional 85% command and 75% dispatch thresholds and `shadow: true`. Nullable
+`load` additions on runner/pipeline status do not alter admission decisions.
+
+The runner separately serves `GET /host-stats/history?after=<committed cursor>&limit=120`
+and phone-home `HostLoadHistory` operation 50 with `hostLoadHistoryV1` capability.
+The shared build-slot authority serves read-only `GET /build-slots/host-load`;
+its existing acquire/release/renew/list routes retain their behavior. Configuration
+and script usage are in [the operator HTTP guide](ops-http.md#host-load-telemetry-card-1514-s1).
