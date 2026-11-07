@@ -1,9 +1,14 @@
+using System.Net.Sockets;
 using Antiphon.Server.Application.Settings;
 using Hangfire;
 using Hangfire.InMemory;
+using Hangfire.PostgreSql;
+using Hangfire.PostgreSql.Factories;
 using Hangfire.Storage;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace Antiphon.Server.Infrastructure.Agents;
 
@@ -130,28 +135,163 @@ internal static class HangfireConfiguration
     {
         if (census.Enabled)
             AddOrUpdateCensusJob(manager, census);
+        else
+            manager.RemoveIfExists(census.RecurringJobId);
     }
 
+    /// <summary>
+    /// CARD-1743. Unset storage stays on <see cref="InMemoryStorage"/>. PostgreSql registration
+    /// does not open the database; <see cref="PreparePostgreSqlStorage"/> installs the schema
+    /// after the server has created it.
+    /// </summary>
     public static void ConfigureStorage(
         IGlobalConfiguration configuration, HangfireSettings settings, string? connectionString)
     {
-        configuration.UseInMemoryStorage(CreateStorageOptions(settings));
+        if (!settings.UsesPostgreSql)
+        {
+            configuration.UseInMemoryStorage(CreateStorageOptions(settings));
+            return;
+        }
+
+        configuration.UsePostgreSqlStorage(
+            bootstrap => bootstrap.UseNpgsqlConnection(connectionString ?? string.Empty),
+            CreatePostgreSqlOptions(settings));
     }
 
-    public static JobStorage CreateStorage(HangfireSettings settings, string? connectionString) =>
-        new InMemoryStorage(CreateStorageOptions(settings));
+    public static JobStorage CreateStorage(HangfireSettings settings, string? connectionString)
+    {
+        if (!settings.UsesPostgreSql)
+            return new InMemoryStorage(CreateStorageOptions(settings));
 
+        PreparePostgreSqlStorage(settings, connectionString);
+        var options = CreatePostgreSqlOptions(settings);
+        return new PostgreSqlStorage(
+            new NpgsqlConnectionFactory(connectionString ?? string.Empty, options),
+            options);
+    }
+
+    /// <summary>
+    /// CARD-1743. Installs the Hangfire schema or refuses startup. No retry and no in-memory fallback.
+    /// </summary>
     public static void PreparePostgreSqlStorage(HangfireSettings settings, string? connectionString)
     {
+        if (!settings.UsesPostgreSql)
+            return;
+
+        using var connection = OpenProbe(connectionString);
+        try
+        {
+            PostgreSqlObjectsInstaller.Install(connection, settings.SchemaName);
+        }
+        catch (Exception ex) when (IsConnectivityFailure(ex))
+        {
+            throw Unreachable();
+        }
     }
 
-    public static HangfireWorkerLease AcquireSingleWorkerLease(string? connectionString) => new();
+    public static HangfireWorkerLease AcquireSingleWorkerLease(string? connectionString)
+    {
+        var connection = OpenProbe(connectionString);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT pg_try_advisory_lock(@lockClass, @lockId)";
+            command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer)
+            {
+                Value = HangfireWorkerLease.ClassId
+            });
+            command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer)
+            {
+                Value = HangfireWorkerLease.LockId
+            });
+            if (command.ExecuteScalar() is true)
+                return new HangfireWorkerLease(connection);
+
+            connection.Dispose();
+            throw new InvalidOperationException(
+                "Hangfire refused to start a second worker against this database.");
+        }
+        catch (Exception ex) when (IsConnectivityFailure(ex))
+        {
+            connection.Dispose();
+            throw Unreachable();
+        }
+    }
+
+    private static PostgreSqlStorageOptions CreatePostgreSqlOptions(HangfireSettings settings) =>
+        new()
+        {
+            SchemaName = settings.SchemaName,
+            PrepareSchemaIfNecessary = false,
+            StartupConnectionMaxRetries = 0,
+            AllowDegradedModeWithoutStorage = false
+        };
+
+    private static NpgsqlConnection OpenProbe(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException(
+                "Hangfire PostgreSQL storage refused startup because ConnectionStrings:DefaultConnection is missing.");
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString)
+        {
+            Timeout = 5,
+            Pooling = false
+        };
+        var connection = new NpgsqlConnection(builder.ConnectionString);
+        try
+        {
+            connection.Open();
+            return connection;
+        }
+        catch (Exception ex) when (IsConnectivityFailure(ex))
+        {
+            connection.Dispose();
+            throw Unreachable();
+        }
+    }
+
+    private static bool IsConnectivityFailure(Exception ex) =>
+        ex is NpgsqlException or TimeoutException or SocketException or ArgumentException
+        || (ex is InvalidOperationException && !ex.Message.StartsWith("Hangfire ", StringComparison.Ordinal));
+
+    private static InvalidOperationException Unreachable() =>
+        new("Hangfire PostgreSQL storage refused startup because the database is not reachable.");
 }
 
-/// <summary>CARD-1743. One held lease is the only Hangfire worker for a database.</summary>
+/// <summary>CARD-1743. One held session lock is the only Hangfire worker for a database.</summary>
 internal sealed class HangfireWorkerLease : IDisposable
 {
+    internal const int ClassId = 1743;
+    internal const int LockId = 1;
+
+    private NpgsqlConnection? _connection;
+
+    internal HangfireWorkerLease(NpgsqlConnection connection) => _connection = connection;
+
     public void Dispose()
     {
+        var connection = Interlocked.Exchange(ref _connection, null);
+        if (connection is null)
+            return;
+
+        try
+        {
+            if (connection.State == System.Data.ConnectionState.Open)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT pg_advisory_unlock(@lockClass, @lockId)";
+                command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer) { Value = ClassId });
+                command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer) { Value = LockId });
+                command.ExecuteScalar();
+            }
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException)
+        {
+        }
+        finally
+        {
+            connection.Dispose();
+        }
     }
 }

@@ -54,7 +54,7 @@ setting.
 
 ## Hangfire jobs and failures
 
-Hangfire is in-process and uses `Hangfire.InMemory`. The dashboard at `http://localhost:17202/hangfire` needs the operator token; open it with `scripts/hangfire-dashboard.ps1` (or check it with `scripts/logs.ps1 -Source hangfire`, which sends the token) and inspect **Failed** and **Recurring Jobs**. Job/history expiration is eight days (`Hangfire:HistoryRetentionDays`); a server restart loses it immediately. There is no durable Hangfire file log or supported API export. Correlate a job failure with `desktop-server` while it exists.
+Hangfire is in-process. Hangfire:Storage defaults to InMemory (`Hangfire.InMemory`). The dashboard at `http://localhost:17202/hangfire` needs the operator token; open it with `scripts/hangfire-dashboard.ps1` (or check it with `scripts/logs.ps1 -Source hangfire`, which sends the token) and inspect **Failed** and **Recurring Jobs**. Job/history expiration for that default store is eight days (`Hangfire:HistoryRetentionDays`); a server restart loses it immediately. PostgreSql is opt-in (`Hangfire:Storage`, schema `Hangfire:SchemaName`): recurring jobs survive a process restart, an unreachable database refuses startup, and a second worker against that database is refused. There is no durable Hangfire file log or supported API export. Correlate a job failure with `desktop-server` while it exists.
 
 The 2026-09-27 desktop follow-up retrieved the dashboard (HTTP 200). Proposed durability fix: use durable Hangfire storage or export failure summaries if history must survive server restarts.
 

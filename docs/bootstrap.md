@@ -534,14 +534,16 @@ logging survives any future turn-down of `Default`. Do not remove that override.
 
 In-process Hangfire dashboard: `http://localhost:17202/hangfire` (operator token; open it with
 `scripts/hangfire-dashboard.ps1`). Recurring jobs
-register at process start when `Hangfire:ServerEnabled` is true. "Trigger now" on the dashboard is
+register at process start when `Hangfire:ServerEnabled` is true. Hangfire:Storage defaults to
+InMemory. PostgreSql storage keeps those registrations across a process restart and refuses a
+second worker against that database. "Trigger now" on the dashboard is
 the one-shot rollout pass.
 
 | Id | Cron (Europe/London) | Default | What it does |
 |---|---|---|---|
 | `antiphon:zombie-census` | `30 9 * * *` | report-only | Local Windows OS-process census (CARD-0298/0691). The latest successful result feeds `ZombieCensusReport` on attention; absent until a successful run, retained with its original timestamp after failure, reset at server restart. Remote `PoolDelegateUnreleased` and session rows come from DB plus confirmed inventory. No execute switch. |
 | `antiphon:worktree-residue` | `0 10 * * *` | `WorktreeResidue:Execute = false` | CARD-0459: inventories settled-task and confirmed-publication residue, persists a run, and (only when Execute is true) retires released clean trees or queues cleanup-only landing retries. Preview: `POST /api/agent-tasks/worktree-residue/preview`. Release: `POST /api/agent-tasks/{id}/worktree-retirement`. Operator script: `scripts/worktree-residue.ps1`. Shortening TTL or calling `PruneStaleAsync` does not grant authority. CARD-0664: every run (daily and preview, even with Execute false) and server startup first release orphaned workspace-use `Launch` rows (owner ended or missing, older than `WorktreeResidue:LaunchGraceMinutes`, default 15, minimum 1); startup logs `Workspace reservations reconciled: released N orphaned Launch rows`. |
-| `antiphon:expectation-watchdog` | `* * * * *` UTC | disabled | CARD-0650: observes configured boards, prompts the standing agent directly and publishes due operator pages. Requires both `Hangfire:ServerEnabled` and `ExpectationWatchdog:Enabled`; a dedicated one-worker `expectations` queue keeps it independent of the default worker. Startup triggers one catch-up sweep. PostgreSQL retains clocks and outbox state across process restarts; the in-memory Hangfire schedule does not. Inspect `GET /api/expectation-watchdog?boardId=<guid>` for scan freshness before treating the protection as active. |
+| `antiphon:expectation-watchdog` | `* * * * *` UTC | disabled | CARD-0650: observes configured boards, prompts the standing agent directly and publishes due operator pages. Requires both `Hangfire:ServerEnabled` and `ExpectationWatchdog:Enabled`; a dedicated one-worker `expectations` queue keeps it independent of the default worker. Startup triggers one catch-up sweep. PostgreSQL retains clocks and outbox state across process restarts. The Hangfire schedule survives a restart only when Hangfire:Storage is PostgreSql; the default in-memory schedule does not. Inspect `GET /api/expectation-watchdog?boardId=<guid>` for scan freshness before treating the protection as active. |
 | `antiphon:keep-six` | `* * * * *` UTC | on with the server worker | CARD-1320: each minute, reminds an enabled standing orchestrator when its project is under the keep-six target. The per-agent toggle is the switch; the job does nothing when every row is off. The server reminds only and does not dispatch. There is no second enabled flag and no startup trigger. |
 
 ### Start the frontend (React/Vite — port 17282)

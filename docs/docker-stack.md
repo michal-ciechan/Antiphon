@@ -929,7 +929,7 @@ host. They assume the desktop process owns runner state.
 
 ### One database writer
 
-One database writer. Hangfire has one in-memory worker and no leader election. Phone-home has one
+One database writer. Hangfire:Storage defaults to InMemory, which has one worker and no leader election. When Hangfire:Storage is PostgreSql, the process holds a Postgres advisory lock and a second worker against that database is refused. Phone-home has one
 `PhoneHome__ServerOrigin` (`docker-compose.server2-runner.yml:54`). Runner capacity, custody, and
 the data-protection key ring are single-server state. Two servers on one database would
 double-fire retention and legacy release. A second server on the production database is forbidden
@@ -938,7 +938,7 @@ database and not registering Hangfire is a future idea, not this contract.
 
 Desktop legacy release is on and executing (`server/appsettings.json:230-232`,
 `WorktreeLegacyReleaseSettings.cs:8-21`). Hangfire registers it whenever the worker is on and the
-flag is true (`Program.cs:1187-1190`). A Linux server with the worker on must set
+flag is true (`Program.cs:1196-1199`). A Linux server with the worker on must set
 `WorktreeLegacyRelease__Enabled` false until cutover, or it becomes a second releaser. Runner
 worktree retention is also on, for runner `server2` (`server/appsettings.json:243-247`). Same
 single-worker rule.
@@ -956,8 +956,8 @@ the decision's disposition and owner card.
 | Service | Base compose | Desktop today | Disposition | Blocker | Owner card |
 |---|---|---|---|---|---|
 | Check interpreter, diagnose, output distiller | `Delegation__CheckInterpreterEnabled`, `DiagnoseEnabled`, `OutputDistillerEnabled` false (`docker-compose.yml:41-43`) | On. Hosted services no-op unless the flag is true (`AgentTaskCheckHostedService.cs:84`, `DiagnoseHostedService.cs:36`, `OutputDistillationHostedService.cs:36`). Code defaults are true (`DelegationSettings.cs:813`, `:877`, `:959`). | Supported on Linux | Tracked working directories are `C:\logs\antiphon\check-interpreter` and `C:\logs\antiphon\diagnose` (`server/appsettings.json:362-363`). The Linux stack must override them, as the root compose does at `:39-40`. | CARD-1742 (staging compose). No port card. |
-| Hangfire worker | `Hangfire__ServerEnabled` false (`:44`) | On (`server/appsettings.json:185-187`). Storage is always in-memory (`server/Program.cs:990-994`). Jobs register only when the worker is on (`:1169-1205`). | Supported on Linux as a process. Durable schedules are not supported on either host. | A container recreate drops recurring registrations. Census must stay unregistered or the WMI job throws. | CARD-1743. Do not enable the worker against the production database from a second server. |
-| Zombie census | `ZombieCensus__Enabled` false (`:45`) | On (`server/appsettings.json:208-209`). `Program.cs:622` always registers `WindowsZombieProcessCensus`. `SnapshotAsync` throws off Windows (`WindowsZombieProcessCensus.cs:17-18`). The job is added only when both the worker and `census.Enabled` are true (`Program.cs:1172-1173`). | Not supported | WMI snapshot. Enabling the flag on Linux throws. | CARD-1222 (Backlog). Stays off in every Linux compose until that card lands. |
+| Hangfire worker | `Hangfire__ServerEnabled` false (`:44`) | On (`server/appsettings.json:185-187`). Hangfire:Storage defaults to InMemory (`server/Program.cs:989-993`). Jobs register only when the worker is on (`:1177-1212`). | Supported on Linux as a process. PostgreSql storage is opt-in and keeps recurring jobs across a process restart. | Census must stay unregistered or the WMI job throws. The base compose does not set Hangfire__Storage and keeps the worker off. | CARD-1743. Do not enable the worker against the production database from a second server. |
+| Zombie census | `ZombieCensus__Enabled` false (`:45`) | On (`server/appsettings.json:208-209`). `Program.cs:622` always registers `WindowsZombieProcessCensus`. `SnapshotAsync` throws off Windows (`WindowsZombieProcessCensus.cs:17-18`). The job is added only when both the worker and `census.Enabled` are true (`Program.cs:1177-1180`). When the worker is on and the census flag is false, the stored recurring row is removed. | Not supported | WMI snapshot. Enabling the flag on Linux throws. | CARD-1222 (Backlog). Stays off in every Linux compose until that card lands. |
 | Worktree residue | `WorktreeResidue__Enabled` false (`:46`) | On (`server/appsettings.json:218-219`). Sweep path compare is platform-aware (`WorktreeResidueSweepService.cs:755-758`). No WMI call. | Supported on Linux | Needs the Hangfire worker, and must sweep only worktrees that server can see. | CARD-1742 for a scratch server. Not a second worker on the production database. |
 | Schedules | `Schedules__Enabled` false (`:47`) | On (`server/appsettings.json:413-414`). `ScheduleSweepHostedService.cs:35-38` returns when disabled. This sweep is not a Hangfire job. | Supported on Linux | None in code. Off in the application core by configuration. | CARD-1742. |
 | Channel bridge | `ChannelBridge__Enabled` false (`:48`) | Forced on by AppHost (`Antiphon.AppHost/Program.cs:73`). Tracked `server/appsettings.json:391-392` is false. Hosted service starts only when enabled (`Program.cs:878-880`). | Supported on Linux once a broker is reachable. Not supported inside the four-service stack. | No broker in root compose. Port 19092 was not measured on 2026-10-21. Desktop `:17202` from server2 timed out that day (`docs/investigations/2026-10-21-card-1401-postgres-server2-and-snapshots.md:64`). | CARD-1746. |
