@@ -115,8 +115,7 @@ These directions override the cited standing rules in
    skip Windows to hide a failure. Keep one red witness plus a narrow green; no
    whole-lane reruns. Record every owed native rerun by test class and exact command,
    to execute only after the live run releases its native lock. A Linux green does
-   not discharge Windows evidence. Fixers never run native tests, tags, or land
-   graph `-Update`. Commit and push each repair slice; report full SHAs and counts.
+   not discharge Windows evidence. Fixers never run native tests, tags, or land graph `-Update`. Commit and push each repair slice; report full SHAs and counts.
 
 4. **Integrate repairs through a serial fix pipeline.** Debug fix -> Opus Review
    (`-Kind ClaudeCode -Level High`) for product/dispatcher/watchdog changes -> Merge.
