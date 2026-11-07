@@ -44,6 +44,13 @@ No full assembly selection. Integration class estimate 3 minutes, registry merge
 cold compile 3 minutes each, bootstrap compile 5 minutes. Slot waits are separate. No repeats
 after green. Do not change the execution policy, nightly policyHash or live pinned digest.
 
+Measured build phase corrections (shared 24-core Linux): CP-1 547.614 seconds,
+CP-2 399.45 seconds, CP-5 478.493 seconds. The initial three-minute cold estimates
+were low; preserve them as historical estimates and report these actual costs. Keep
+the existing 15-minute build caps. CP-1 host phases: startup 21.826 seconds, tests
+41.991 seconds, teardown 3.101 seconds. CP-5: startup 15.602 seconds, tests 26.224
+seconds, teardown 4.517 seconds. These are small samples, not a measured p95.
+
 ## Verification design
 
 V-1: delayed live and subscription-ready submission must complete after release; full C1259
