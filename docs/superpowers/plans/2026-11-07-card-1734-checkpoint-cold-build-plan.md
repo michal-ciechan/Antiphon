@@ -52,7 +52,8 @@ required preparatory build. Tool bootstrap is produced by that project reference
 
 CP-1 estimated 5 minutes including build; CP-2 Unit estimated 12 minutes (provisional
 historical Unit sample has no current p95); CP-3 1 minute; CP-4 3 minutes including
-the SessionRunner build. No full-assembly run. Run at most three rows per run,
+the SessionRunner build. No full-assembly run. B-1 repair uses its five exact rows
+in one committed group, sharing one producing build per project, with
 serial builds, fresh outputs, committed expected SHA. Each run's total derives
 from selected estimates; checkpoint importer floor is retained as an existing
 tooling exception, not a widened test timeout. Any observed run over 30 minutes
@@ -103,6 +104,22 @@ two known passed fixture results before interruption and unknown unrun counts.
 R-7 is `C1734_Stop_replaces_only_its_bound_provisional_reports` (owned/foreign).
 V-5/V-6 additionally drive real cold MSBuild failure/timeout targets. The timeout
 uses the existing one-minute row override; no timeout or assertion is relaxed.
+Green eligibility also refuses a terminal failure reason in both validators,
+including when all test rows completed before cancellation during finalization.
+Report ownership metadata is additive/read-only; old completed receipts remain
+readable. Foreign report bytes and strict receipt/source/digest checks retain
+their refusal behavior. Stop/wait share a safe-write OS file gate; the real Linux
+ProcessControl and CLI waiter drive it. No OS predicate or host startup changes.
+
+Repair red sample (1459e5d6ea269c7370b50996af6ddebffd20c1b6; production tool
+identical to 9747a6f9a): CP-5 4 executed/0 passed/4 failed; build 553.027s,
+row execution 171.918s, row/build admission wait 0s. Stop failed on early waiter
+exit; executor failure on missing branch provenance; timeout on inconsistent
+report/state terminal time. The SIGINT case timed out due to inherited ignored
+signal disposition, so it is harness evidence only, corrected by native `env
+--default-signal=INT` before exec. The tests retain their original assertions and
+deadlines. The expanded fixture roots keep test-root metadata outside the Git
+repository and bind ExpectedSourceSha to its real committed HEAD.
 Fresh process startup, cancellation and teardown are the subject, so each case
 needs its own executor/waiter. No DB, service or production runner is started.
 One-minute existing row deadline is retained for the timeout witness; the new
