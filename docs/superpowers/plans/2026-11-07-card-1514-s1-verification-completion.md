@@ -41,6 +41,15 @@ round trips from the newest template. New irreversible telemetry migrations
 make that fixture invalid. Preserve that red before repairing the fixture to
 start at its actual historical migration. Do not bypass either Down guard.
 
+The separate run `20261107-073709-5238` at
+`87cf5fd6ae717c6f9b5b4f32a3a7d23aa3444f37` executed all four old cases red:
+the tail assertion saw the two new migration IDs, and the round trips hit the
+new membership Down refusal before reaching their historical subject. Repair
+keeps the strict tail assertion, now including all five known IDs, preserves
+the exact old Postgres refusal and stored-byte assertions, and applies current
+Up migrations before the existing no-pending/model checks. Neither a timeout
+nor a destructive-downgrade guard is relaxed.
+
 ## Performance and evidence
 
 One assembly container/template per run. Migration baselines use fresh private
@@ -67,6 +76,12 @@ admission accounting; the manifest records a total override reason. Expected
 ordinary wall without queue waits is below 30 minutes per group; a run above
 30 minutes requires bounded performance Debug before repeating it.
 
+The final group also reruns exact CP-6 with its unchanged six-minute cap because
+the new Slow class/registry changes its compiled-metadata inputs. It shares the
+same build with CP-M2/CP-G, keeping three rows and the existing 42-minute charged
+and 72-minute hard-wall budgets. CP-G and CP-6 have five cheap guard executions
+in common; retain both closed filters and do not count this overlap as a PC.
+
 Store raw TRX, unchanged CHECKPOINT lines, clean source receipts and verified
 build provenance under ignored `.antiphon/checkpoints/`. Inspect every intended
 class/method and nonzero count. Never rerun unchanged green rows. CP-M2 is only
@@ -84,6 +99,7 @@ included because this packet adds a test class. Whole Unit is explicitly owed.
 | CP-OLD | HISTORICAL-RED | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-old/ | historical-red | `/*/*/C0824RefOnlySnapshotMigrationTests*/*` | historical fixture incompatibility before repair | retain exact assertion/Down failures separately from green packets | 4 | 2 | true |
 | CP-M2 | MIGRATION-REPAIR | tests/Antiphon.Tests -> bin-c1514-7e3e6bcc-f2/ | migration-green | `/*/*/C0824RefOnlySnapshotMigrationTests*/*` | repair historical migration fixture | all four results, zero failed/skipped | 4 | 2 | true |
 | CP-G | MIGRATION-REPAIR | CP-M2 | named-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-5 and explicit mechanical/platform/layering guards | prior named packet 75 plus one adjacent category census, zero failed/skipped | 76 | 3 | true |
+| CP-6 | MIGRATION-REPAIR | CP-M2 | s1b-guards | `/*/*/(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)\|(TestLaneCategoryGuardTests*)\|(LiveLaneRunnerTests*)/(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)\|(every_test_class_is_tagged_unit_xor_integration*)\|(WrapperOnlyPaidManifest*)` | R-5 after new class/registry | all six frozen guard methods, zero failed/skipped | 6 | 2 | true |
 
 ## Policy resolution
 

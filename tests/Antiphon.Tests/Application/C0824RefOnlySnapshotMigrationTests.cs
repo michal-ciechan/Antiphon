@@ -18,6 +18,31 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     private const string Previous = "20261105121558_Card0824RefOnlyDesktopCleanup";
     private const string Debt = "20261106005946_AddRefOnlySettlementDebtWorkspaceSnapshot";
     private const string Park = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
+    private const string Telemetry = "20261107034430_HostLoadTelemetryS1";
+    private const string Membership = "20261107040142_HostLoadSnapshotMembership";
+    private IsolatedTestSchema? _historical;
+
+    [Before(Class)]
+    public static Task WarmDatabase() => TestDbFixture.Lifecycle.EnsureReadyAsync();
+
+    [Before(Test)]
+    public async Task PrepareHistoricalBaseline()
+    {
+        var name = TestContext.Current!.Metadata.TestDetails.TestName;
+        if (name == nameof(Migration_chain_is_linear_and_snapshot_matches_the_final_model)) return;
+        // These round trips exercise the historical migrations. Starting from
+        // the current template would first hit the later telemetry Down guard.
+        using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        _historical = await MigrationTestDatabase.CreateAsync(
+            name.StartsWith(nameof(Additive_upgrade_and_empty_downgrade_preserve_legacy_rows), StringComparison.Ordinal) ? Previous : Park,
+            setup.Token);
+    }
+
+    [After(Test)]
+    public async Task ReleaseHistoricalBaseline()
+    {
+        if (_historical is not null) await _historical.DisposeAsync();
+    }
 
     [Test]
     public void Migration_chain_is_linear_and_snapshot_matches_the_final_model()
@@ -25,7 +50,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
         var chain = db.Database.GetMigrations().ToArray();
-        chain.TakeLast(3).ShouldBe(new[] { Previous, Debt, Park }, "linear-after-master-with-original-ids");
+        chain.TakeLast(5).ShouldBe(new[] { Previous, Debt, Park, Telemetry, Membership }, "linear-after-master-with-original-ids");
         db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
     }
 
@@ -33,7 +58,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     public async Task Additive_upgrade_and_empty_downgrade_preserve_legacy_rows(CancellationToken ct)
     {
         // A fresh migrated clone is necessary: Up/Down are the subject, never the shared template.
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var schema = _historical!;
         await using var db = NewDb(schema);
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(Previous, ct);
@@ -52,6 +77,9 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         (await SnapshotColumnCountAsync(db, ct)).ShouldBe(0, "empty-snapshot-columns-can-be-removed");
         await AssertLegacyRowsAsync(db, id, ct);
         await migrator.MigrateAsync(Park, ct);
+        // Finish at the current model before the existing no-pending assertion.
+        // Only Up follows the historical round trip; no newer Down is bypassed.
+        await migrator.MigrateAsync(cancellationToken: ct);
         (await db.Database.GetPendingMigrationsAsync(ct)).ShouldBeEmpty();
         db.Database.HasPendingModelChanges().ShouldBeFalse();
         await AssertLegacyRowsAsync(db, id, ct);
@@ -62,7 +90,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     [Arguments("park")]
     public async Task Downgrade_refuses_recorded_snapshot_and_preserves_its_bytes(string kind, CancellationToken ct)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var schema = _historical!;
         await using var db = NewDb(schema);
         var id = await InsertLegacyRowsAsync(db, ct);
         var table = kind == "debt" ? "AgentTaskSyncDebts" : "AgentTaskParks";
@@ -91,6 +119,8 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         (await SnapshotColumnCountAsync(db, ct)).ShouldBe(0);
         await AssertLegacyRowsAsync(db, id, ct);
         await db.GetService<IMigrator>().MigrateAsync(Park, ct);
+        await db.GetService<IMigrator>().MigrateAsync(cancellationToken: ct);
+        (await db.Database.GetPendingMigrationsAsync(ct)).ShouldBeEmpty();
         db.Database.HasPendingModelChanges().ShouldBeFalse();
     }
 
