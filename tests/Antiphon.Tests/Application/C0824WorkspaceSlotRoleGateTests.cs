@@ -38,6 +38,19 @@ public sealed class C0824WorkspaceSlotRoleGateTests
     private const string DecisionPrefix = "workspace_slot_decision: ";
 
     [Test]
+    public async Task Case_reuses_one_scratch_repository_and_spawns_no_git()
+    {
+        // The 1 s scratch-git deadline is per process start. Sharing the repository has to
+        // remove init, commit, clone and branch from the case, not widen that deadline.
+        C0824SlotTransportWorld.EnsureSharedScratchRepository();
+        var before = C0824SlotTransportWorld.ScratchGitProcessStarts;
+        await using var world = await C0824SlotTransportWorld.StartAsync();
+        await world.SeedAsync();
+        (C0824SlotTransportWorld.ScratchGitProcessStarts - before).ShouldBe(0,
+            "init, commit, clone and branch-f are once per process, not once per case");
+    }
+
+    [Test]
     public async Task Listed_role_leases_a_slot_on_the_real_runner()
     {
         // V-10 (G-3, P-A). A listed role leases: the ledger, the tree and the row agree, with one recorded decision.
