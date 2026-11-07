@@ -97,10 +97,18 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 {
                     await using var scope = scopes.CreateAsyncScope();
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var query = db.AgentTaskLandNotifications.AsNoTracking().Where(n =>
-                        n.State != LandNotificationState.Confirmed && n.State != LandNotificationState.NotRequired && n.State != LandNotificationState.LegacyUnverified);
-                    if (cursor is Guid after) query = query.Where(n => n.Id.CompareTo(after) > 0);
-                    var ids = await query.OrderBy(n => n.Id).Select(n => n.Id).Take(128).ToListAsync(stoppingToken);
+                    // CARD-1759. Skip a null-queue note whose next attempt is still ahead: reconcile
+                    // returns before writing. A provider-input wait aimed anywhere but a session writes
+                    // first, so it stays in the page. The clock is this page's read. A note that becomes
+                    // due after it waits out the rest of this scan and the 5-second period below.
+                    // The compiled page caches the plan, not the rows.
+                    var now = (scope.ServiceProvider.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+                    var ids = new List<Guid>(128);
+                    var page = cursor is Guid after
+                        ? LandNotificationReconcileQueries.DueNoteIdsAfter(db, now, after)
+                        : LandNotificationReconcileQueries.DueNoteIds(db, now);
+                    await foreach (var id in page.WithCancellation(stoppingToken))
+                        ids.Add(id);
                     foreach (var id in ids)
                     {
                         try

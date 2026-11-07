@@ -55,8 +55,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     /// </param>
     public async Task ReconcileAsync(Guid id, CancellationToken ct, ISet<Guid>? busySessions = null)
     {
-        var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
-        await db.Entry(note).ReloadAsync(ct);
+        var note = await LoadNoteAsync(id, ct);
         if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired or LandNotificationState.LegacyUnverified)
         {
             scanCache?.Invalidate(note.Id);
@@ -79,8 +78,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             // CARD-1121 A-1: the one destination SELECT also projects the status and generation the
             // receipt scan cache binds; it adds no command.
             var destination = note.ParentSessionId is Guid parent
-                ? await db.AgentSessions.Where(s => s.Id == parent)
-                    .Select(s => new { s.Status, s.StartedAt }).SingleOrDefaultAsync(ct)
+                ? await LandNotificationReconcileQueries.SessionScanById(db, parent, ct)
                 : null;
             if (note.ParentSessionId is not Guid session || destination is null)
             {
@@ -95,8 +93,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             // Recover that evidence even if the caller has since stopped; status gates new input only.
             if (note.QueueMessageId is null)
             {
-                var existing = await db.SessionQueuedMessages.AsNoTracking()
-                    .SingleOrDefaultAsync(m => m.SourceLandNotificationId == note.Id, ct);
+                var existing = await LandNotificationReconcileQueries.MessageBySourceNotification(db, note.Id, ct);
                 if (existing is not null)
                 {
                     if (existing.AgentSessionId != session || existing.ContentDigest != note.ContentDigest)
@@ -118,7 +115,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (note.QueueMessageId is null)
             {
-                var destinationStatus = await db.AgentSessions.Where(s => s.Id == session).Select(s => s.Status).SingleAsync(ct);
+                var destinationStatus = await LandNotificationReconcileQueries.SessionStatusById(db, session, ct);
                 if (destinationStatus is SessionStatus.Stopped or SessionStatus.Failed)
                 {
                     note.State = LandNotificationState.DestinationUnavailable;
@@ -161,7 +158,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 var conversationKey = legacyCheck
                     ? $"check:{note.TaskId:N}"
                     : IsCompletionNoteKind(note.Kind)
-                    ? $"task:{await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RootTaskId).SingleAsync(ct):N}"
+                    ? $"task:{await LandNotificationReconcileQueries.RootTaskIdById(db, note.TaskId, ct):N}"
                     : note.Kind == LandNotificationKind.ProviderInputWait ? $"provider-wait:{note.Id:N}" : $"land:{note.Id:N}";
                 await messages.EnqueueAsync(session, note.Body, MessageSendMode.WhenIdle, ct,
                     legacyCheck ? QueuedMessageOrigin.Check : QueuedMessageOrigin.Delegation, conversationKey, note.TaskId, note.ContentDigest,
@@ -178,14 +175,17 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 note.State = LandNotificationState.AwaitingReceipt;
                 note.LastErrorCode = null;
                 await db.SaveChangesAsync(ct);
-                var created = await db.SessionQueuedMessages.AsNoTracking()
-                    .SingleAsync(m => m.Id == note.QueueMessageId, ct);
+                var created = note.QueueMessageId is Guid createdId
+                    ? await LandNotificationReconcileQueries.MessageById(db, createdId, ct)
+                    : throw new InvalidOperationException("Sequence contains no elements.");
                 if (boundary is not null)
                     await boundary.ReachedAsync("queue-committed-before-wakeup", note.TaskId, created.Id, ct);
                 if (Actionable(created, MaxAttempts()) && boundary?.DropWakeup("completion", note.Id) != true)
                     flushes.TryEnqueue(session);
             }
-            var row = await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == note.QueueMessageId, ct);
+            var row = note.QueueMessageId is Guid queuedId
+                ? await LandNotificationReconcileQueries.MessageOrDefaultById(db, queuedId, ct)
+                : null;
             if (row is null)
             {
                 note.LastErrorCode = "keyed_queue_row_missing";
@@ -259,8 +259,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     var saved = row.RemoteSpillBody;
                     if (saved is null)
                     {
-                        var cwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session)
-                            .Select(s => s.Cwd).SingleAsync(ct);
+                        var cwd = await LandNotificationReconcileQueries.SessionCwdById(db, session, ct);
                         if (!string.IsNullOrWhiteSpace(cwd))
                         {
                             var path = TypedBodySpill.InboxAbsolutePath(cwd, row.Id.ToString("D"));
@@ -298,7 +297,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     return;
                 }
                 if (note.Kind == LandNotificationKind.TaskCompletion && row.LastDeliveryGeneration is DateTime deliveredGeneration
-                    && await db.AgentSessions.Where(s => s.Id == session).Select(s => s.StartedAt).SingleAsync(ct) != deliveredGeneration)
+                    && await LandNotificationReconcileQueries.SessionStartedAtById(db, session, ct) != deliveredGeneration)
                 {
                     note.LastErrorCode = "completion_delivery_generation_changed";
                     note.LastErrorAt = now;
@@ -313,8 +312,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 var scanStartedAt = destination.StartedAt;
                 if (ReceiptScanTarget.FollowsQueueDestination(note, row, expected))
                 {
-                    var followed = await db.AgentSessions.Where(s => s.Id == row.AgentSessionId)
-                        .Select(s => new { s.Status, s.StartedAt }).SingleOrDefaultAsync(ct);
+                    var followed = await LandNotificationReconcileQueries.SessionScanById(db, row.AgentSessionId, ct);
                     if (followed is not null)
                         (scanSession, scanStatus, scanStartedAt) = (row.AgentSessionId, followed.Status, followed.StartedAt);
                 }
@@ -382,7 +380,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (boundary is not null) await boundary.ReachedAsync("receipt-before-save", note.TaskId, note.Id, ct);
                     if (note.Kind == LandNotificationKind.ProviderInputWait)
                     {
-                        var receiptGeneration = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session).Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
+                        var receiptGeneration = await LandNotificationReconcileQueries.SessionStartedAtOrDefaultById(db, session, ct);
                         if (row.LastDeliveryGeneration is not DateTime attempted || receiptGeneration is not DateTime generation
                             || !SessionGeneration.Equal(attempted, generation)) return;
                     }
@@ -413,7 +411,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
         {
             // An insert can have committed even when its acknowledgement failed. Keep its key.
             db.ChangeTracker.Clear();
-            note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
+            note = await LoadNoteAsync(id, ct);
             if (note.ConfirmedAt is not null) return;
             note.EnqueueAttempts++;
             note.ConcurrencyToken = Guid.NewGuid();
@@ -423,6 +421,23 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             note.NextAttemptAt = now.AddSeconds(RetrySeconds(note.EnqueueAttempts));
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    /// <summary>
+    /// One fresh tracked read. A context that does not already track the note (the hosted scan's
+    /// per-note scope) uses the compiled query. A caller that already tracks it keeps that instance:
+    /// reloading it is the single fresh read, so a stale concurrency token is not written back.
+    /// </summary>
+    private async Task<AgentTaskLandNotification> LoadNoteAsync(Guid id, CancellationToken ct)
+    {
+        var tracked = db.AgentTaskLandNotifications.Local.FirstOrDefault(n => n.Id == id);
+        if (tracked is not null)
+        {
+            await db.Entry(tracked).ReloadAsync(ct);
+            return tracked;
+        }
+
+        return await LandNotificationReconcileQueries.NoteById(db, id, ct);
     }
 
     /// <summary>
