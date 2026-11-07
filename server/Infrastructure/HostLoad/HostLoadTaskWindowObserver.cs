@@ -19,7 +19,8 @@ public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoa
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({"host-load:events"}))", ct);
         var events = await db.AgentTaskEvents.Where(e => e.LoadAttempt != null
-            && !db.HostLoadObservedEvents.Any(o => o.EventId == e.Id)).OrderBy(e => e.At).ThenBy(e => e.Id).Take(120).ToListAsync(ct);
+            && !db.HostLoadObservedEvents.Any(o => o.EventId == e.Id)).OrderBy(e => e.At)
+            .ThenBy(e => e.Type == AgentTaskEventType.Dispatched ? 0 : 1).ThenBy(e => e.Id).Take(120).ToListAsync(ct);
         var taskIds = events.Select(e => e.AgentTaskId).Distinct().ToArray();
         var sessionIds = events.Where(e => e.LoadSessionId != null).Select(e => e.LoadSessionId!.Value).Distinct().ToArray();
         var sessions = await db.AgentSessions.AsNoTracking().Where(s => sessionIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, ct);
@@ -30,11 +31,11 @@ public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoa
             var terminal = ev.LoadStatus is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled;
             foreach (var window in existing.Where(w => w.TaskId == ev.AgentTaskId && w.EndedAt == null
                 && (w.Attempt != attempt || terminal || (ev.Type == AgentTaskEventType.Dispatched
-                    && ev.LoadRunnerId is not null && ResolveHost(ev.LoadRunnerId, at)?.PhysicalHostKey != w.PhysicalHostKey))).ToArray())
+                    && ev.AgentSessionId is not null && w.StartEventId != ev.Id))).ToArray())
                 await CloseAsync(window, ev.Id, at, ct);
-            if (ev.Type == AgentTaskEventType.Dispatched && ev.LoadSessionId is { } sid
+            if (ev.Type == AgentTaskEventType.Dispatched && ev.AgentSessionId is { } sid && ev.LoadSessionId == sid
                 && sessions.TryGetValue(sid, out var session) && session.StartedAt != default
-                && ev.LoadQueuedAt is { } queued && session.StartedAt >= queued)
+                && ev.LoadDispatchedAt is { } dispatchedAt && session.StartedAt >= dispatchedAt)
             {
                 var startAt = Utc(session.StartedAt);
                 var binding = ResolveHost(ev.LoadRunnerId!, startAt);
@@ -48,7 +49,7 @@ public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoa
                         WindowOrdinal = existing.Where(w => w.TaskId == ev.AgentTaskId && w.Attempt == attempt).Select(w => w.WindowOrdinal).DefaultIfEmpty().Max() + 1,
                         StartEventId = ev.Id, StartedAt = startAt, Complete = boundary.State == "known",
                         DetailsJson = JsonSerializer.Serialize(new HostLoadTaskWindowDto(ev.AgentTaskId, attempt, binding.PhysicalHostKey,
-                            boundary.SampleIdentity?.BootId ?? Guid.Empty, 0, Utc(queued), ev.LoadDispatchedAt is { } dispatch ? Utc(dispatch) : null,
+                            boundary.SampleIdentity?.BootId ?? Guid.Empty, 0, ev.LoadQueuedAt is { } queued ? Utc(queued) : null, Utc(dispatchedAt),
                             startAt, null, "open", boundary, null, new Dictionary<string, HostLoadMetricSummary>(), 1), PhoneHomeFraming.Json),
                     };
                     db.AgentTaskLoadWindows.Add(window); existing.Add(window);

@@ -37,7 +37,7 @@ public sealed record HostLoadHistoryDto(int SchemaVersion, string HostId, DateTi
 public sealed record HostLoadBoundary(Guid EventId, DateTimeOffset EventAt, HostLoadSource? SampleIdentity,
     DateTimeOffset? SampleAt, double? AgeSeconds, string State);
 public sealed record HostLoadTaskWindowDto(Guid TaskId, int Attempt, string PhysicalHostKey, Guid RunnerBootId,
-    int WindowOrdinal, DateTimeOffset QueuedAt, DateTimeOffset? DispatchedAt, DateTimeOffset StartedAt,
+    int WindowOrdinal, DateTimeOffset? QueuedAt, DateTimeOffset? DispatchedAt, DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt, string State, HostLoadBoundary Start, HostLoadBoundary? End,
     IReadOnlyDictionary<string, HostLoadMetricSummary> During, int OverlapCount, string Attribution = "ambientHost");
 public sealed record HostLoadTaskDto(int SchemaVersion, Guid TaskId, int Attempt,

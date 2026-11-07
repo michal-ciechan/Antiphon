@@ -68,7 +68,7 @@ public partial class AppDbContext
             row.LoadAttempt ??= task.Attempt;
             row.LoadRunnerId ??= string.IsNullOrWhiteSpace(task.RunnerId) || task.RunnerId == "local" ? "desktop" : task.RunnerId;
             row.LoadSessionId ??= row.AgentSessionId ?? task.AgentSessionId;
-            row.LoadQueuedAt ??= task.CreatedAt;
+            row.LoadQueuedAt ??= task.Attempt == 1 ? task.CreatedAt : row.Type == AgentTaskEventType.Retried ? row.At : null;
             row.LoadDispatchedAt ??= task.DispatchedAt;
             row.LoadStatus ??= task.Status;
         }
