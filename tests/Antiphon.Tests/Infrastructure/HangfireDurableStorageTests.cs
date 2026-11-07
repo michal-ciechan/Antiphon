@@ -4,6 +4,8 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Tests.TestHelpers;
 using Hangfire;
 using Hangfire.InMemory;
+using Hangfire.PostgreSql;
+using Hangfire.PostgreSql.Factories;
 using Hangfire.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -166,6 +168,47 @@ public sealed class HangfireStorageSelectionTests
         var missing = Should.Throw<InvalidOperationException>(() =>
             HangfireConfiguration.PreparePostgreSqlStorage(settings, connectionString: null));
         missing.Message.ShouldContain("ConnectionStrings:DefaultConnection");
+
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.PreparePostgreSqlStorage(settings, unreachable));
+        refused.Message.ShouldContain("not reachable");
+        refused.ToString().ShouldNotContain(password);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(20_000)]
+    public async Task PostgreSql_bootstrap_resolves_storage_and_refuses_an_unreachable_database()
+    {
+        const string password = "hangfire-bootstrap-secret";
+        var unreachable =
+            "Host=127.0.0.1;Port=1;Database=antiphon;Username=antiphon;Password="
+            + password + ";Timeout=2;Pooling=false";
+        var settings = new HangfireSettings
+        {
+            Storage = HangfireSettings.PostgreSqlStorageName,
+            SchemaName = "hangfire_card1743"
+        };
+
+        var services = new ServiceCollection();
+        services.AddHangfire(config => HangfireConfiguration.ConfigureStorage(config, settings, unreachable));
+        await using var provider = services.BuildServiceProvider();
+        var storage = provider.GetRequiredService<JobStorage>().ShouldBeOfType<PostgreSqlStorage>();
+        var options = (PostgreSqlStorageOptions)storage.GetType()
+            .GetProperty("Options", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(storage)!;
+        options.SchemaName.ShouldBe("hangfire_card1743");
+        options.PrepareSchemaIfNecessary.ShouldBeFalse();
+        options.StartupConnectionMaxRetries.ShouldBe(0);
+        options.AllowDegradedModeWithoutStorage.ShouldBeFalse();
+
+        var factory = storage.GetType()
+            .GetField("_connectionFactory", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(storage)
+            .ShouldBeOfType<NpgsqlConnectionFactory>();
+        factory.ConnectionString.Host.ShouldBe("127.0.0.1");
+        factory.ConnectionString.Port.ShouldBe(1);
+        factory.ConnectionString.Database.ShouldBe("antiphon");
 
         var refused = Should.Throw<InvalidOperationException>(() =>
             HangfireConfiguration.PreparePostgreSqlStorage(settings, unreachable));

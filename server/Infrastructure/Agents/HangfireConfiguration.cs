@@ -139,10 +139,16 @@ internal static class HangfireConfiguration
             manager.RemoveIfExists(census.RecurringJobId);
     }
 
+    /// <summary>
+    /// CARD-1743. A disabled flag removes the recurring row. PostgreSql keeps that row
+    /// across a process restart unless startup removes it.
+    /// </summary>
     public static void RegisterWorktreeResidueJob(IRecurringJobManager manager, WorktreeResidueSettings settings)
     {
         if (settings.Enabled)
             AddOrUpdateWorktreeResidueJob(manager, settings);
+        else
+            manager.RemoveIfExists(settings.RecurringJobId);
     }
 
     public static void RegisterExpectationWatchdogJob(
@@ -150,6 +156,8 @@ internal static class HangfireConfiguration
     {
         if (ExpectationWatchdogJob.ShouldRun(hangfire, watchdog))
             AddOrUpdateExpectationWatchdogJob(manager);
+        else
+            manager.RemoveIfExists(ExpectationWatchdogJob.RecurringJobId);
     }
 
     public static void RegisterRunnerSlotReconcileJob(
@@ -157,12 +165,16 @@ internal static class HangfireConfiguration
     {
         if (settings.Enabled)
             AddOrUpdateRunnerSlotReconcileJob(manager, settings);
+        else
+            manager.RemoveIfExists(RunnerSlotReconcileJob.RecurringJobId);
     }
 
     public static void RegisterRunnerRetireJob(IRecurringJobManager manager, PhoneHomeRunnerSettings settings)
     {
         if (settings.Enabled)
             AddOrUpdateRunnerRetireJob(manager, settings);
+        else
+            manager.RemoveIfExists(RunnerRetireJob.RecurringJobId);
     }
 
     /// <summary>
@@ -184,16 +196,21 @@ internal static class HangfireConfiguration
             CreatePostgreSqlOptions(settings));
     }
 
+    /// <summary>
+    /// CARD-1743. Test twin of Program's <c>AddHangfire</c> call. PostgreSql installs the schema
+    /// first; both branches then resolve <see cref="JobStorage"/> through <see cref="ConfigureStorage"/>.
+    /// The provider is retained: disposing it would dispose the storage the caller still uses.
+    /// </summary>
     public static JobStorage CreateStorage(HangfireSettings settings, string? connectionString)
     {
-        if (!settings.UsesPostgreSql)
-            return new InMemoryStorage(CreateStorageOptions(settings));
+        if (settings.UsesPostgreSql)
+            PreparePostgreSqlStorage(settings, connectionString);
 
-        PreparePostgreSqlStorage(settings, connectionString);
-        var options = CreatePostgreSqlOptions(settings);
-        return new PostgreSqlStorage(
-            new NpgsqlConnectionFactory(connectionString ?? string.Empty, options),
-            options);
+        var services = new ServiceCollection();
+        services.AddHangfire(config => ConfigureStorage(config, settings, connectionString));
+        var provider = services.BuildServiceProvider();
+        ConfiguredStorageProviders.Add(provider);
+        return provider.GetRequiredService<JobStorage>();
     }
 
     /// <summary>
@@ -243,6 +260,8 @@ internal static class HangfireConfiguration
             throw Unreachable();
         }
     }
+
+    private static readonly System.Collections.Concurrent.ConcurrentBag<ServiceProvider> ConfiguredStorageProviders = [];
 
     private static PostgreSqlStorageOptions CreatePostgreSqlOptions(HangfireSettings settings) =>
         new()
