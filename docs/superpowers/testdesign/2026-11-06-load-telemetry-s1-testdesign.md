@@ -364,8 +364,8 @@ alone replace owned service graphs/processes because restart is the subject.
 | V-48 / J4 | `C1514HostLoadScriptTests.TokenStaysInHeaders` | Owned token sentinel; success/error-echo; human/JSON output | Header forwarded; sentinel absent from stdout/stderr/logs; real child HTTP |
 | V-49 / N1 | `C1514HostLoadNativeTests.Linux_ProductionFactoryPreservesHostSamples` | Native AddHostStats/SystemHostStatsProbe/Linux arm,independent /proc/core read,native spool reopen | Finite delta/online host cores/memory/load/exact K; actual factory object recorded |
 | V-50 / N2 | `C1514HostLoadNativeTests.Windows_ProductionFactoryPreservesHostSamples` | Native AddHostStats/SystemHostStatsProbe/Windows arm,all-group core API,spool reopen | Finite delta/host cores/memory/commit/load null/exact K; actual factory object |
-| V-51 / N3 | `C1514HostLoadNativeOverheadTests.Linux_SamplerOverheadStaysWithinBudget` | Two off/on60s pairs,warmup15s,isolated full history runner/loopback authority | Incremental CPU<1 point of one core,>=12 samples/pair,tick p95<25ms,bounded spool/cadence |
-| V-52 / N4 | `C1514HostLoadNativeOverheadTests.Windows_SamplerOverheadStaysWithinBudget` | Same native Windows owned-child experiment | Same measured budgets and receipts on Windows; no Linux substitution |
+| V-51 / N3 | `C1514HostLoadNativeOverheadTests.Linux_SamplerOverheadStaysWithinBudget` | Two off/on120s pairs after20s warmup,isolated full history runner/loopback authority | Incremental CPU<1 point of one core,samples floor24,nearest-rank p95 over at least20 ticks,tick p95<25ms,bounded spool/cadence |
+| V-52 / N4 | `C1514HostLoadNativeOverheadTests.Windows_SamplerOverheadStaysWithinBudget` | Same 120s pairs after20s warmup on Windows | Same measured budgets and receipts on Windows; no Linux substitution |
 
 #### Boundary wiring and preservation assertions
 
@@ -792,8 +792,8 @@ all rows require zero failed/skipped and source-qualified receipts.
 | CP-4 | S1B | tests/Antiphon.Tests -> bin-c1514-s1b/ | s1b-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44,R-3,R-6 | 18 methods / 28 executions (H3 has 11 arguments); 0 failed/skipped | 28 | 16 | true |
 | CP-5 | S1B | CP-4 | s1b-surfaces | `/*/*/(C1514HostLoadAggregateTests*)\|(C1514HostLoadRecommendationTests*)\|(C1514HostLoadScriptTests*)\|(HostStatsCacheTests*)\|(HostStatsPollServiceTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-28..30,V-36..40,V-45..48,R-1..4 | 12 new +28 existing methods; 0 failed/skipped | 40 | 4 | true |
 | CP-6 | S1B | CP-4 | s1b-guards | `/*/*/(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)\|(TestLaneCategoryGuardTests*)\|(LiveLaneRunnerTests*)/(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)\|(every_test_class_is_tagged_unit_xor_integration*)\|(WrapperOnlyPaidManifest*)` | R-5 | 6 exact guard methods; 0 failed/skipped | 6 | 2 | true |
-| CP-7 | S1B | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1l/ | s1-linux | `/*/*/(C1514HostLoadNativeTests*)\|(C1514HostLoadNativeOverheadTests*)\|(HostStatsProbeLiveTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/(Linux_*)\|(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)` | V-49,V-51,R-1,R-6,R-5 | 3 Linux witnesses +4 shared guards at final source; 0 failed/skipped | 7 | 8 | true |
-| CP-8 | S1B | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1w/ | s1-windows | `/*/*/(C1514HostLoadNativeTests*)\|(C1514HostLoadNativeOverheadTests*)\|(HostStatsProbeLiveTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/(Windows_*)\|(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)` | V-50,V-52,R-1,R-6,R-5 | 3 Windows witnesses +4 shared guards at final source; 0 failed/skipped | 7 | 9 | true |
+| CP-7 | S1B | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1l/ | s1-linux | `/*/*/(C1514HostLoadNativeTests*)\|(C1514HostLoadNativeOverheadTests*)\|(HostStatsProbeLiveTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/(Linux_*)\|(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)` | V-49,V-51,R-1,R-6,R-5 | 3 Linux witnesses +4 shared guards at final source; 0 failed/skipped | 7 | 10 | true |
+| CP-8 | S1B | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1w/ | s1-windows | `/*/*/(C1514HostLoadNativeTests*)\|(C1514HostLoadNativeOverheadTests*)\|(HostStatsProbeLiveTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/(Windows_*)\|(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)` | V-50,V-52,R-1,R-6,R-5 | 3 Windows witnesses +4 shared guards at final source; 0 failed/skipped | 7 | 10 | true |
 
 S1A=CP-1..3 (54 results); S1B=CP-4..6 (74); Linux=CP-7 (7);
 Windows=CP-8 (7). **142 total expected executions: 128 portable, 6 native
@@ -804,7 +804,7 @@ partial classes or changes names, amend the roster/filter/floor together before
 running. Do not count internal cut loops or script PASS lines as TUnit results.
 
 The historical Plan S1 floor of four rows/30 minutes is replaced by four bounded
-packets/eight rows/47 minutes. Reuse is explicit and each packet has one build.
+packets/eight rows/50 minutes. Reuse is explicit and each packet has one build.
 S1A and S1B are portable default-placement packets; N1/N3 require native Linux,
 N2/N4 native Windows on an eligible isolated worker. **Nothing runs on the desktop.**
 A missing native worker leaves that packet pending and S1 acceptance incomplete;
@@ -814,6 +814,10 @@ it does not stop disjoint Code and is not a green skip.
 #### Code amendment: H3 process initialization and independent cut cases
 
 At Code 924f8ae2, H3 retains one method and its exact filter, but expands to 11 named Arguments: append-before-flush, append-after-flush, ingest-before-enqueue, ingest-after-enqueue, ingest-before-save, ingest-before-commit, ingest-after-commit, derive-before-call, derive-before-save, derive-after-write and derive-after-commit. Each case retains Timeout(60_000), ScriptHarness execution 60 seconds and cleanup 10 seconds. Cold process/EF connection/model initialization is an explicit fixture phase, acknowledged by an atomic nonce-bound initialized receipt; the guarded operation receipt still has the original five-second deadline. Case/child budgets include initialization. No prior deadline value or outcome assertion is relaxed. The four derive cases also persist a real task/session/terminal ledger and assert one restored task window, K101 at start/end and count/sum/min/max/p95 1/40/40/40/40 through the public task API. CP-4 now has 28 executions, the portable packet 128 and the complete packet 142. Earlier 18/118/132 receipts remain historical facts. A repair run may select only the previously red exact H3 method (11 executions), reusing the 17 unchanged green methods from the full CP-4 receipt at 6ccd0322eec472819b1170c773d948a7dc2d1316; this is a targeted red-row repair, not a green-row repetition.
+
+#### Docs amendment: native overhead budgets (CARD-1765)
+
+At master `9e7ff34988cd8c273d94db3c002975d93ea26f9e` the landed N3/N4 body is two off/on 120s measurement pairs after a 20s warmup. Nearest-rank p95 uses only ticks that arrive after that warmup, ordered, with index `ceil(.95*n)-1`, and requires at least 20 steady ticks so the percentile is not the maximum. The samples floor is 24, which is what 120s at the 5s cadence yields. The proving run recorded 24 history samples and 24 steady ticks (Code branch `e62f9f0ca1`, run `20261107-164542-efc7`; landed witness `70ddb266c9`). The history-sample assertion in that test still accepts 12; this design floor is 24. Both limits stay under 1 CPU point of one core and under 25ms. CP-7 and CP-8 estimatedMinutes are 10 and timeoutMinutes are 20. Twenty minutes is the R5 row cap for one measured sample of 575-578s (testsWall 570.066s, executed 578.406s, wall 578.445s). The class timeout is 720s, provisional on that one sample until measured more: the method floor is 560s (four children times about 140s), and 720s is above that floor and under 2x the measured body. The row timeout now exceeds the 15-minute build floor, so the scheduler's build deadline for these packets is 20 minutes. Each charged ceiling is 20+20+2=42 and each hard wall is 62. Earlier 60s pairs, 15s warmup and 10-minute row figures remain historical. This amendment does not change product code.
 
 #### Exact inherited method roster
 
@@ -1041,10 +1045,10 @@ build:
   slotWaitMinutes: 10
 parallel: { maxRows: 1 }
 timeouts:
-  rowMinutes: 15
-  explicitTotalMinutes: 27
+  rowMinutes: 20
+  explicitTotalMinutes: 42
   totalOverrideReason: "CARD-1514 S1 phase budget: one isolated build, exact row caps, two-minute settlement; admission charged separately"
-  hardWallMinutes: 47
+  hardWallMinutes: 62
 builds:
   - id: bin-c1514-s1l
     project: tests/Antiphon.SessionRunner.Tests
@@ -1057,8 +1061,8 @@ checkpoints:
     filter: "/*/*/(C1514HostLoadNativeTests*)|(C1514HostLoadNativeOverheadTests*)|(HostStatsProbeLiveTests*)|(TestClassificationGuardTests*)|(NativeLinuxPolicyWitnessTests*)/(Linux_*)|(Registry_matches_compiled_metadata*)|(Policy_rows_require_pinned_attribute*)|(Pinned_attribute_contract_matches_native_platform*)|(Markers_do_not_expand_policy_exclusions*)"
     expect: ["Linux_ProductionFactoryPreservesHostSamples","Linux_SamplerOverheadStaysWithinBudget","Linux_probe_reads_live_proc","Registry_matches_compiled_metadata","Policy_rows_require_pinned_attribute","Pinned_attribute_contract_matches_native_platform","Markers_do_not_expand_policy_exclusions"]
     minExecuted: 7
-    estimatedMinutes: 8
-    timeoutMinutes: 10
+    estimatedMinutes: 10
+    timeoutMinutes: 20
     serial: true
 ```
 
@@ -1073,10 +1077,10 @@ build:
   slotWaitMinutes: 10
 parallel: { maxRows: 1 }
 timeouts:
-  rowMinutes: 15
-  explicitTotalMinutes: 27
+  rowMinutes: 20
+  explicitTotalMinutes: 42
   totalOverrideReason: "CARD-1514 S1 phase budget: one isolated build, exact row caps, two-minute settlement; admission charged separately"
-  hardWallMinutes: 47
+  hardWallMinutes: 62
 builds:
   - id: bin-c1514-s1w
     project: tests/Antiphon.SessionRunner.Tests
@@ -1089,8 +1093,8 @@ checkpoints:
     filter: "/*/*/(C1514HostLoadNativeTests*)|(C1514HostLoadNativeOverheadTests*)|(HostStatsProbeLiveTests*)|(TestClassificationGuardTests*)|(NativeLinuxPolicyWitnessTests*)/(Windows_*)|(Registry_matches_compiled_metadata*)|(Policy_rows_require_pinned_attribute*)|(Pinned_attribute_contract_matches_native_platform*)|(Markers_do_not_expand_policy_exclusions*)"
     expect: ["Windows_ProductionFactoryPreservesHostSamples","Windows_SamplerOverheadStaysWithinBudget","Windows_probe_reads_live_system_times","Registry_matches_compiled_metadata","Policy_rows_require_pinned_attribute","Pinned_attribute_contract_matches_native_platform","Markers_do_not_expand_policy_exclusions"]
     minExecuted: 7
-    estimatedMinutes: 9
-    timeoutMinutes: 10
+    estimatedMinutes: 10
+    timeoutMinutes: 20
     serial: true
 ```
 
@@ -1108,8 +1112,11 @@ spool checks use the actual filesystem and same compiled HostLoadSpool, not a mo
 For N3/N4 launch a staged real runner with phone-home/Herdr/watchdog disabled,
 loopback ephemeral port, private state root and inherited live-runner settings
 scrubbed. Keep the sampler/authority/spool path enabled in on pairs. Never bind
-17204/8080 or capture real session payload. Two off/on60s pairs with15s warmup
-and joined cleanup are the Plan's minimum measurement, not a load stress test.
+17204/8080 or capture real session payload. Two off/on 120s measurement pairs
+after a 20s warmup, with a samples floor of 24 and nearest-rank p95 over at
+least 20 ticks, plus joined cleanup, are the measurement, not a load stress test.
+The class timeout is 720s, provisional on one sample (575-578s measured, method
+floor 560s).
 Compare runner CPU time/wall *100 (one-core units), retain both pairs, on sample
 count, tick spans, spool bytes and shared authority request count. Do not normalize
 process CPU by host cores or auto-repeat a noisy failure until green. A measured
@@ -1130,7 +1137,7 @@ basis for the28min build allowance and10min admission allowance, not a new p95.
 | DB case | 0.1-2s body | 10s plus separately measured shared setup; one transaction/page |
 | Owned crash/script method | 1-30s | 60s body +10s joined cleanup; internal cuts have5s barrier/readiness observations; no nested build |
 | Native factory method | 1-5s | 15s provisional; native prerequisite absence is not pass |
-| Native overhead method | 5min | 10min row cap, fixed4x60s+warmup/startup/teardown; new p95 unknown |
+| Native overhead method | 10min | 20min row cap, about 2x one 575-578s sample (R5, provisional); class timeout 720s provisional on that sample (method floor 560s); fixed 4x(20s warmup+120s) plus startup/teardown; duration p95 unknown |
 | RT isolated build | 3min Linux /4min Windows | Tool's15min build floor applies; Plan6min proposal cannot be represented by row-local budgets without also changing row deadlines |
 | AT isolated build with staged probe | 12min | 28min from2x817.1s rounded up; measure staging separately |
 | Parent test host/discovery | 10-30s | Included in each row; source/roster/phase receipt required |
@@ -1140,14 +1147,14 @@ basis for the28min build allowance and10min admission allowance, not a new p95.
 The RT15min importer floor is an explicit provisional tool constraint tracked
 under CARD-1720/CARD-1514, not a fabricated2x measurement. Narrow it through the
 existing tool policy when measured/available; do not pass --row-timeout to inflate
-all short rows. Row-specific timeoutMinutes remain4/4/2,8/6/6,10,10 as manifested.
+all short rows. Row-specific timeoutMinutes remain4/4/2,8/6/6,20,20 as manifested.
 
 | Packet | Expected minutes (table sum) | Charged ceiling | Hard wall | Outer admissions |
 |---|---:|---:|---:|---:|
 | S1A, CP-1..3 | 8 | 15+4+4+2+2=27 | 67 | 4 |
 | S1B, CP-4..6 | 22 | 28+8+6+6+2=50 | 90 | 4 |
-| Linux, CP-7 | 8 | 15+10+2=27 | 47 | 2 |
-| Windows, CP-8 | 9 | 15+10+2=27 | 47 | 2 |
+| Linux, CP-7 | 10 | 20+20+2=42 | 62 | 2 |
+| Windows, CP-8 | 10 | 20+20+2=42 | 62 | 2 |
 
 Hard wall includes at most10min per outer admission, charged time includes2min
 settlement. Slot admission, execution and wall remain separate CARD-1531 facts.
@@ -1256,11 +1263,11 @@ All numbers below are **estimated**, not measured S1 executions. This TestDesign
 spent **0 build/test/PC execution minutes**. Authoring is separate. Each filter
 is the exact CP or PC F above, never an assembly wildcard.
 
-- **Ordinary V/R floor (Code) =47min**, CP-1..8 sum5+2+1+16+4+2+8+9.
-  Portable S1A/S1B=30min; separately placed native Linux/Windows=17min.
-  This contains22min build (RT3, AT12, Linux3, Windows4) and25min selected row
+- **Ordinary V/R floor (Code) =50min**, CP-1..8 sum5+2+1+16+4+2+10+10.
+  Portable S1A/S1B=30min; separately placed native Linux/Windows=20min.
+  This contains22min build (RT3, AT12, Linux3, Windows4) and28min selected row
   execution/setup; do not add those builds again. Optional tool bootstrap3min
-  makes setup+ordinary **50min**. No extra whole suite is authorized.
+  makes setup+ordinary **53min**. No extra whole suite is authorized.
 - **Mutation floor =3,151.5min** for102 controls, each with one exact F and
   baseline/red/restored-green. Runner portable29 controls:3min build+0.5min host
   per phase, plus0.5min patch/restoration accounting =11min/control =319min.
@@ -1272,8 +1279,8 @@ is the exact CP or PC F above, never an assembly wildcard.
   =262.5min;102 restoration/binding-accounting entries =51min. No shared baseline
   or frozen-binary discount is assumed. Candidates remain binding-required; a
   safe bound-pack optimization needs proof and revised costs before use.
-- **Combined setup+Code V/R+Mutation =3,201.5min (53h21m30s)**. Same-scope ordinary
-  Review adds47min =>3,248.5min. Implementation, performance Debug, contention,
+- **Combined setup+Code V/R+Mutation =3,204.5min (53h24m30s)**. Same-scope ordinary
+  Review adds50min =>3,254.5min. Implementation, performance Debug, contention,
   placement delay, repairs and deployment are separate and unmeasured. These
   are staged floors, not a single task or a75-minute implementation promise.
 - Admission is excluded from those charged floors:12 outer ordinary acquisitions
@@ -1285,7 +1292,7 @@ is the exact CP or PC F above, never an assembly wildcard.
 
 Savings: one reused build per portable packet uses2 cold builds instead of6;
 runner saving2x3=6min and server2x12=24min, **30min saved**. With native unchanged,
-naive per-row ordinary floor77min becomes47min. Cheap guards share those builds
+naive per-row ordinary floor80min becomes50min. Cheap guards share those builds
 and run together. No PC build savings assumed (0min) because source-qualified
 baseline/red/restore binds actual images; do not trade away preservation evidence.
 Measured phase costs from first required runs replace these estimates, with any
@@ -1296,7 +1303,7 @@ Measured phase costs from first required runs replace these estimates, with any
 Static document census (not an importer execution, compilation, discovery or
 mutation run):52 new methods in12 classes (native overhead split to honor the
 class-only Slow registry),8 exact checkpoint rows, four packets of3/3/1/1 rows,
-132 expected TUnit executions and47 estimated ordinary minutes. Real method
+132 expected TUnit executions and50 estimated ordinary minutes. Real method
 counts/patch compilation/native receipts remain pending after Code.
 
 **guards=102, mapped=102, missing=0, duplicate PC maps=0. All102 PCs are mandatory
