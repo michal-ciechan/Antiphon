@@ -12,6 +12,8 @@ namespace Antiphon.Tests.Scripts;
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
 {
+    [Before(Class)]
+    public static Task WarmDatabase() => TestDbFixture.Lifecycle.EnsureReadyAsync();
     private const string OwnedToken = "c1514-owned-token-never-print";
     [Test]
     public async Task JsonIsOneValueWithArithmetic()
@@ -91,14 +93,18 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
         return ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514", "Run", script,
             new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, AdditionalArguments: args), CancellationToken.None);
     }
-    private static void Recorder(C1514HostLoadWorld world, bool incomplete = false) => world.Override = async context =>
+    private static void Recorder(C1514HostLoadWorld world, bool incomplete = false)
     {
+        world.Hits.Clear(); // Record the script's reads, after owned peer registration has finished.
+        world.Override = async context =>
+        {
         if (context.Request.Path == "/api/runner-defaults") { await context.Response.WriteAsJsonAsync(new { revision = world.DefaultRevision, globalRunnerId = world.DefaultRunner }); return; }
         if (context.Request.Path == "/api/session-runners") { await context.Response.WriteAsJsonAsync(new[] { new { runnerId = "grok-linux" }, new { runnerId = "desktop" } }); return; }
         var host = context.Request.Path.Value!.Contains("/desktop/", StringComparison.Ordinal) ? "desktop" : "grok-linux";
         var scoped = context.Request.Query.ContainsKey("projectId") && context.Request.Query.ContainsKey("role");
         await context.Response.WriteAsJsonAsync(Response(host, scoped, incomplete));
-    };
+        };
+    }
     private static HostLoadCurrentDto Response(string host, bool scoped, bool incomplete)
     {
         var sample = new HostLoadSample { Source = new(host, Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), 101),

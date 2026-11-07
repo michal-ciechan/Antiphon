@@ -13,6 +13,8 @@ namespace Antiphon.Tests.Application;
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514TaskLoadWindowTests(C1514HostLoadFixture fixture)
 {
+    [Before(Class)]
+    public static Task WarmDatabase() => TestDbFixture.Lifecycle.EnsureReadyAsync();
     [Test]
     public async Task AttemptsAndMovesKeepSeparateWindows()
     {
