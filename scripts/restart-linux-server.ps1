@@ -5,16 +5,19 @@
 
     Off unless -Config or ANTIPHON_LINUX_SERVER_CONFIG names a Linux server.
     The default is a WhatIf probe: GET /health and GET /api/version, no docker.
-    -Execute stops and starts that container, then requires the same check.
+    -Execute probes the running server before any docker call and never stops it.
     Exit 0 requires /health 200 and version equal to -ExpectedServerSha.
-    A SHA mismatch exits 5 and leaves the lock. -Execute also stops the container.
+    A server already at that SHA exits 0. Any other probe exits 5, keeps the
+    lock, and leaves the container running. docker start <container> resumes
+    that same image if the container is later found stopped.
     Desktop AppHost ports 17200-17209 are refused. ASCII-only.
 .PARAMETER Config
     Key=value file: baseUrl, container, lockPath.
 .PARAMETER ExpectedServerSha
     Full 40- or 64-character SHA the running server must report.
 .PARAMETER Execute
-    Stop and start the configured container, then probe. Omit it to probe only.
+    Probe the running server. Do not stop it. A moved image tag is reported
+    and left for the compose deploy. Omit it to probe only.
 .PARAMETER WhatIf
     Probe only. This is the default when -Execute is omitted.
 .PARAMETER TimeoutSec
@@ -167,12 +170,71 @@ function Wait-GateProbe([string]$BaseUrl, [string]$Expected, [int]$BoundSec, [bo
 }
 
 function Invoke-GateDocker([string[]]$ArgumentList) {
-    $output = @(& $script:GateDocker @ArgumentList)
-    $code = 1
-    if ($null -ne $LASTEXITCODE) { $code = [int]$LASTEXITCODE }
-    $text = ''
-    if ($output) { $text = (@($output) | ForEach-Object { "$_" }) -join "`n" }
-    return [pscustomobject]@{ Code = $code; Output = $text.Trim() }
+    try {
+        $output = @(& $script:GateDocker @ArgumentList)
+        $code = 1
+        if ($null -ne $LASTEXITCODE) { $code = [int]$LASTEXITCODE }
+        $text = ''
+        if ($output) { $text = (@($output) | ForEach-Object { "$_" }) -join "`n" }
+        return [pscustomobject]@{ Code = $code; Output = $text.Trim() }
+    } catch {
+        return [pscustomobject]@{ Code = 1; Output = '' }
+    }
+}
+
+function Write-GateUnverified([string]$Reason, [string]$Expected, [string]$Observed, [string]$Mode, [string]$PreviousImage, [string]$TagImage, [string]$LockPath, [string]$Container) {
+    Write-GateLock -Path $LockPath -Reason $Reason -Expected $Expected -Observed $Observed -Mode $Mode -PreviousImage $PreviousImage
+    Write-Host 'REFUSED: server build unverified (exit 5).'
+    Write-Host "  expected SHA: $Expected"
+    Write-Host "  observed SHA: $Observed"
+    Write-Host "  reason: $Reason"
+    Write-Host "  lock: $LockPath"
+    if ($Reason -eq 'image-moved') {
+        Write-Host "  tag image: $TagImage"
+        Write-Host '  The image tag moved. This gate does not recreate the container.'
+    }
+    if ($Mode -eq 'execute') {
+        Write-Host 'Nothing was restarted.'
+        Write-Host 'The serving container was left running.'
+        Write-Host "recovery: docker start $Container"
+        exit 5
+    }
+    Write-Host 'Nothing was restarted.'
+    exit 5
+}
+
+function Resolve-GateReplacement([string]$Container) {
+    $script:GateDocker = [string]$env:ANTIPHON_LINUX_SERVER_DOCKER
+    if ([string]::IsNullOrWhiteSpace($script:GateDocker)) { $script:GateDocker = 'docker' }
+    $same = [pscustomobject]@{ Kind = 'mismatch'; PreviousImage = ''; TagImage = '' }
+    if ($script:GateDocker -ne 'docker' -and -not (Test-Path -LiteralPath $script:GateDocker)) {
+        return $same
+    }
+    $image = Invoke-GateDocker -ArgumentList @('inspect', '--format', '{{.Image}}', $Container)
+    $ref = Invoke-GateDocker -ArgumentList @('inspect', '--format', '{{.Config.Image}}', $Container)
+    $running = ''
+    if ($image.Code -eq 0 -and -not [string]::IsNullOrWhiteSpace($image.Output)) {
+        $running = (($image.Output -split "`n") | Select-Object -First 1).Trim()
+    }
+    if ($image.Code -ne 0 -or $ref.Code -ne 0 -or [string]::IsNullOrWhiteSpace($running)) {
+        return [pscustomobject]@{ Kind = 'mismatch'; PreviousImage = $running; TagImage = '' }
+    }
+    $tagRef = ''
+    if (-not [string]::IsNullOrWhiteSpace($ref.Output)) {
+        $tagRef = (($ref.Output -split "`n") | Select-Object -First 1).Trim()
+    }
+    if ($tagRef -notmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$') {
+        return [pscustomobject]@{ Kind = 'mismatch'; PreviousImage = $running; TagImage = '' }
+    }
+    $tag = Invoke-GateDocker -ArgumentList @('image', 'inspect', '--format', '{{.Id}}', $tagRef)
+    $tagId = ''
+    if ($tag.Code -eq 0 -and -not [string]::IsNullOrWhiteSpace($tag.Output)) {
+        $tagId = (($tag.Output -split "`n") | Select-Object -First 1).Trim()
+    }
+    if ($tag.Code -ne 0 -or [string]::IsNullOrWhiteSpace($tagId) -or $tagId -eq $running) {
+        return [pscustomobject]@{ Kind = 'mismatch'; PreviousImage = $running; TagImage = '' }
+    }
+    return [pscustomobject]@{ Kind = 'image-moved'; PreviousImage = $running; TagImage = $tagId }
 }
 
 $configPath = $Config
@@ -229,45 +291,38 @@ if (Test-GateLockFresh -Path $lockPath -MaxAgeMinutes $LockMaxAgeMinutes) {
     Write-GateRefusal "a restart lock is held at $lockPath."
 }
 
-$previousImage = ''
 if ($mode -eq 'execute') {
-    $script:GateDocker = [string]$env:ANTIPHON_LINUX_SERVER_DOCKER
-    if ([string]::IsNullOrWhiteSpace($script:GateDocker)) { $script:GateDocker = 'docker' }
-    if ($script:GateDocker -ne 'docker' -and -not (Test-Path -LiteralPath $script:GateDocker)) {
-        Write-GateRefusal 'the docker command for -Execute is missing.'
-    }
-    Write-GateLock -Path $lockPath -Reason 'execute' -Expected $expected -Observed '' -Mode $mode -PreviousImage ''
-    $inspected = Invoke-GateDocker -ArgumentList @('inspect', '--format', '{{.Image}}', $container)
-    if ($inspected.Code -ne 0 -or [string]::IsNullOrWhiteSpace($inspected.Output)) {
+    $pre = Invoke-GateProbe -BaseUrl $baseUrl -Expected $expected
+    if ($pre.Kind -eq 'ok') {
         Remove-GateLock $lockPath
-        Write-GateRefusal "docker inspect failed for $container."
+        Write-Host 'already at expected SHA'
+        Write-Host "VERIFIED sha=$($pre.Observed) mode=execute"
+        exit 0
     }
-    $previousImage = ($inspected.Output -split "`n" | Select-Object -First 1).Trim()
-    $stopped = Invoke-GateDocker -ArgumentList @('stop', $container)
-    if ($stopped.Code -ne 0) {
-        Write-Host "REFUSED: docker stop failed for $container. The lock is retained."
-        exit 1
+    $reason = $pre.Kind
+    $previousImage = ''
+    $tagImage = ''
+    if ($pre.Kind -eq 'mismatch') {
+        $decision = Resolve-GateReplacement -Container $container
+        $reason = [string]$decision.Kind
+        $previousImage = [string]$decision.PreviousImage
+        $tagImage = [string]$decision.TagImage
     }
-    $started = Invoke-GateDocker -ArgumentList @('start', $container)
-    if ($started.Code -ne 0) {
-        Write-Host "REFUSED: docker start failed for $container. The lock is retained."
-        exit 1
+    if ($reason -ne 'mismatch' -and $reason -ne 'malformed' -and $reason -ne 'unavailable' -and $reason -ne 'health' -and $reason -ne 'image-moved') {
+        $reason = 'unavailable'
     }
+    Write-GateUnverified -Reason $reason -Expected $expected -Observed $pre.Observed -Mode $mode -PreviousImage $previousImage -TagImage $tagImage -LockPath $lockPath -Container $container
 }
 
-$probe = Wait-GateProbe -BaseUrl $baseUrl -Expected $expected -BoundSec $TimeoutSec -Poll:($mode -eq 'execute')
+$probe = Wait-GateProbe -BaseUrl $baseUrl -Expected $expected -BoundSec $TimeoutSec -Poll:$false
 if ($probe.Kind -eq 'ok') {
     Remove-GateLock $lockPath
     Write-Host "VERIFIED sha=$($probe.Observed) mode=$mode"
     exit 0
 }
 if ($probe.Kind -eq 'health') {
-    if ($mode -eq 'whatif') {
-        Write-Host 'REFUSED: /health was not 200.'
-        Write-Host 'Nothing was restarted.'
-        exit 1
-    }
-    Write-Host 'REFUSED: /health was not 200. The lock is retained.'
+    Write-Host 'REFUSED: /health was not 200.'
+    Write-Host 'Nothing was restarted.'
     exit 1
 }
 
@@ -275,20 +330,4 @@ $reason = $probe.Kind
 if ($reason -ne 'mismatch' -and $reason -ne 'malformed' -and $reason -ne 'unavailable') {
     $reason = 'unavailable'
 }
-Write-GateLock -Path $lockPath -Reason $reason -Expected $expected -Observed $probe.Observed -Mode $mode -PreviousImage $previousImage
-Write-Host 'REFUSED: server build unverified (exit 5).'
-Write-Host "  expected SHA: $expected"
-Write-Host "  observed SHA: $($probe.Observed)"
-Write-Host "  reason: $reason"
-Write-Host "  lock: $lockPath"
-if ($mode -eq 'execute') {
-    $rolled = Invoke-GateDocker -ArgumentList @('stop', $container)
-    if ($rolled.Code -ne 0) {
-        Write-Host "  docker stop after the mismatch failed for $container. The lock is retained."
-    }
-    Write-Host "  previous image: $previousImage"
-    Write-Host '  container left stopped'
-    exit 5
-}
-Write-Host 'Nothing was restarted.'
-exit 5
+Write-GateUnverified -Reason $reason -Expected $expected -Observed $probe.Observed -Mode $mode -PreviousImage '' -TagImage '' -LockPath $lockPath -Container $container

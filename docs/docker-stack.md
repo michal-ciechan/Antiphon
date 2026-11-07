@@ -1033,13 +1033,23 @@ A config file supplies `baseUrl`, `container`, and `lockPath`. The default mode 
 `GET /health` and `GET /api/version` against that base URL, with no docker call. Exit 0
 requires HTTP 200 from `/health` and a `version` field equal to `-ExpectedServerSha` (40 or
 64 hex characters). A mismatch, a malformed body, or a version that is not HTTP 200 is exit 5
-and leaves the lock file. `-Execute` is the only mode that inspects, stops, and starts the
-named container, then applies the same check. A mismatch on that path exits 5, leaves the
-lock (including the image id from before the stop), and stops the container again so it is
-left stopped. The script refuses desktop AppHost ports 17200-17209, a short SHA, and container
-names for the runner, Postgres, or the gateway, before any docker call. It does not deploy
-the runner and it does not install a Scheduled Task. The staging compose remains CARD-1742;
-this gate does not create it and it is not the cutover.
+and leaves the lock file. `-Execute` probes that same running server once before any docker
+call. When the server is already healthy and reports the expected SHA, it prints
+`already at expected SHA` and exits 0 without stopping anything. A different well-formed SHA
+is compared with the container image: `docker inspect` reads `{{.Image}}` and
+`{{.Config.Image}}`, then `docker image inspect` reads the current id of that tag. The same
+id means a restart cannot carry a new SHA, so the gate exits 5 with no `docker stop`. A
+different id means a new image was pulled for that tag. `docker start` would still run the
+old image, and this gate does not own the compose spec, so it does not recreate the
+container. That path exits 5 with reason `image-moved`, again with no `docker stop`. A
+malformed body, a version that is not HTTP 200, or `/health` not 200 on `-Execute` exits 5
+with no docker call. Every `-Execute` refusal leaves the serving container left running on
+the image it already had. If that container is later found stopped, `docker start <container>`
+resumes that previous image. Replacing the image belongs to the CARD-1742 compose deploy,
+then a fresh probe. The script refuses desktop AppHost ports 17200-17209, a short SHA, and
+container names for the runner, Postgres, or the gateway, before any docker call. It does not
+deploy the runner and it does not install a Scheduled Task. The staging compose remains
+CARD-1742; this gate does not create it and it is not the cutover.
 
 ### What `deploy-server2.ps1` deploys
 
