@@ -20,6 +20,8 @@ namespace Antiphon.Tests.Application;
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
 {
+    [Before(Class)]
+    public static Task WarmDatabase() => TestDbFixture.Lifecycle.EnsureReadyAsync();
     [Test, Timeout(10_000)]
     public async Task RoutesReturnDurableProvenanceAndPages()
     {
