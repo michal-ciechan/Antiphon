@@ -43,10 +43,10 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         // The 1 s scratch-git deadline is per process start. Sharing the repository has to
         // remove init, commit, clone and branch from the case, not widen that deadline.
         C0824SlotTransportWorld.EnsureSharedScratchRepository();
-        var before = C0824SlotTransportWorld.ScratchGitProcessStarts;
+        using var counted = C0824SlotTransportWorld.BeginScratchGitCount();
         await using var world = await C0824SlotTransportWorld.StartAsync();
         await world.SeedAsync();
-        (C0824SlotTransportWorld.ScratchGitProcessStarts - before).ShouldBe(0,
+        counted.Starts.ShouldBe(0,
             "init, commit, clone and branch-f are once per process, not once per case");
     }
 
@@ -63,8 +63,8 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         request.Slot.ShouldBe(true);
         var slot = LeasedFor(world, taskId).ShouldHaveSingleItem();
         slot.PreparationId.ShouldBe(request.Binding!.PreparationId);
-        Git(slot.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
-        Git(slot.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
+        C0824SlotTransportWorld.RevParseHead(slot.Path).ShouldBe(world.Base);
+        C0824SlotTransportWorld.SymbolicRefHead(slot.Path).ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
         var task = await world.Rig.ReadTaskAsync(taskId);
         task.RemoteWorktreePath.ShouldBe(slot.Path);
         task.RemoteWorkspaceSlotId.ShouldBe(slot.Id);
@@ -94,8 +94,8 @@ public sealed class C0824WorkspaceSlotRoleGateTests
         AssertLegacyShape(frame, taskId);
         var mirror = LegacyMirror(world, taskId);
         Directory.Exists(mirror).ShouldBeTrue(mirror);
-        Git(mirror, "rev-parse", "HEAD").Trim().ShouldBe(world.Base);
-        Git(mirror, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
+        C0824SlotTransportWorld.RevParseHead(mirror).ShouldBe(world.Base);
+        C0824SlotTransportWorld.SymbolicRefHead(mirror).ShouldBe("refs/heads/" + RemoteWorkspaceService.OwnedBranch(taskId));
         LeasedFor(world, taskId).ShouldBeEmpty("no slot leased");
         var task = await world.Rig.ReadTaskAsync(taskId);
         Normal(task.RemoteWorktreePath).ShouldBe(Normal(mirror));
@@ -156,8 +156,8 @@ public sealed class C0824WorkspaceSlotRoleGateTests
 
         var free = world.Pool.Ledger().Slot(leased.Id)!;
         free.State.ShouldBe(WorkspaceSlotStates.Free);
-        Git(free.Path, "rev-parse", "HEAD").Trim().ShouldBe(world.Base, "detached at the published SHA");
-        Should.Throw<InvalidOperationException>(() => Git(free.Path, "symbolic-ref", "HEAD"), "HEAD is detached");
+        C0824SlotTransportWorld.RevParseHead(free.Path).ShouldBe(world.Base, "detached at the published SHA");
+        Should.Throw<InvalidOperationException>(() => C0824SlotTransportWorld.SymbolicRefHead(free.Path), "HEAD is detached");
         var task = await world.Rig.ReadTaskAsync(a);
         task.RemoteWorkspaceSlotReleasedAt.ShouldNotBeNull();
         task.RemoteWorktreePath.ShouldBeNull();
@@ -493,6 +493,4 @@ public sealed class C0824WorkspaceSlotRoleGateTests
 
         last.Reason.ShouldBe(reason, "the reload did not reach the gate within 10 s");
     }
-
-    private static string Git(string directory, params string[] args) => C0824SlotTransportWorld.Git(directory, args);
 }
