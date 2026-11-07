@@ -14,7 +14,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
 {
-    [Test, NativeLinuxOnly("CARD-1514: two native Linux full-runner off/on pairs; CP-7 requires measured CPU, cadence, tick and spool budgets.")]
+    [Test]
+    [NativeLinuxOnly("CARD-1514: two native Linux full-runner off/on pairs; CP-7 requires measured CPU, cadence, tick and spool budgets.")]
     public async Task Linux_SamplerOverheadStaysWithinBudget()
     { OperatingSystem.IsLinux().ShouldBeTrue(); await MeasureAsync(); }
 
