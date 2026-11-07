@@ -126,6 +126,22 @@ public static class CompactionContinuationPolicy
         return index;
     }
 
+    /// <summary>
+    /// Sequence of the last effective end before the newest owned auto boundary.
+    /// User-prompt text at or before this sequence cannot change a verdict, except an
+    /// interrupt prompt, which is itself an effective end. <see cref="long.MinValue"/>
+    /// when the open turn is the whole session.
+    /// </summary>
+    internal static long OpenStartExclusive(IReadOnlyList<CompactionTranscriptFact> entries, DateTime accepted)
+    {
+        var ordered = entries.OrderBy(e => e.Sequence).ToList();
+        var newest = NewestOwnedBoundarySequence(ordered, accepted);
+        var endIndex = LastEffectiveEndIndex(ordered, newest);
+        if (endIndex < 0)
+            return long.MinValue;
+        return ordered[endIndex].Sequence;
+    }
+
     internal static bool IsEffectiveEnd(CompactionTranscriptFact fact) =>
         fact.Kind == TranscriptKinds.TurnEnd
         || TranscriptKinds.IsInterruptPrompt(fact.Kind, fact.Text)
