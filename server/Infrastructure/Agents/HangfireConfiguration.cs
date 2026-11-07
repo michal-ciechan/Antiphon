@@ -139,6 +139,32 @@ internal static class HangfireConfiguration
             manager.RemoveIfExists(census.RecurringJobId);
     }
 
+    public static void RegisterWorktreeResidueJob(IRecurringJobManager manager, WorktreeResidueSettings settings)
+    {
+        if (settings.Enabled)
+            AddOrUpdateWorktreeResidueJob(manager, settings);
+    }
+
+    public static void RegisterExpectationWatchdogJob(
+        IRecurringJobManager manager, HangfireSettings hangfire, ExpectationWatchdogSettings watchdog)
+    {
+        if (ExpectationWatchdogJob.ShouldRun(hangfire, watchdog))
+            AddOrUpdateExpectationWatchdogJob(manager);
+    }
+
+    public static void RegisterRunnerSlotReconcileJob(
+        IRecurringJobManager manager, PhoneHomeRunnerSettings settings)
+    {
+        if (settings.Enabled)
+            AddOrUpdateRunnerSlotReconcileJob(manager, settings);
+    }
+
+    public static void RegisterRunnerRetireJob(IRecurringJobManager manager, PhoneHomeRunnerSettings settings)
+    {
+        if (settings.Enabled)
+            AddOrUpdateRunnerRetireJob(manager, settings);
+    }
+
     /// <summary>
     /// CARD-1743. Unset storage stays on <see cref="InMemoryStorage"/>. PostgreSql registration
     /// does not open the database; <see cref="PreparePostgreSqlStorage"/> installs the schema
