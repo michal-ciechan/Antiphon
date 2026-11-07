@@ -102,10 +102,17 @@ internal static partial class InProcessGitReads
         try
         {
             using var repo = new Repository(repository);
-            if (Unusual(repo)) return false;
-            return !repo.Config.Any(e => e.Key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
-                || e.Key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
-                || e.Key.StartsWith("remote." + endpoint + ".", StringComparison.OrdinalIgnoreCase));
+            if (Unusual(repo) || ConfigOf(repo) is not { } view) return false;
+            try
+            {
+                return !view.Config.Any(e => e.Key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
+                    || e.Key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
+                    || e.Key.StartsWith("remote." + endpoint + ".", StringComparison.OrdinalIgnoreCase));
+            }
+            finally
+            {
+                if (view.Owned) view.Config.Dispose();
+            }
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
@@ -176,6 +183,31 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>The common dir for a git dir, per gitrepository-layout(5): its commondir file, else itself.</summary>
+    /// <summary>
+    /// The config git reads for <paramref name="repo"/>. LibGit2Sharp builds <c>Repository.Config</c> with
+    /// <c>&lt;gitdir&gt;/config</c> as its local file and installs it into libgit2 on first use. For a linked worktree
+    /// that is <c>&lt;common&gt;/worktrees/&lt;name&gt;/config</c>, which git never reads, so the repository's own
+    /// settings drop out of every read, libgit2's status included once that config is installed. For a linked
+    /// worktree this is a separate view over <c>&lt;common&gt;/config</c> plus the global, XDG and system levels, and
+    /// <c>repo.Config</c> must then not be touched (libgit2 keeps its own, correct config). Null when per-worktree
+    /// config (<c>config.worktree</c>) is in play: git's to merge. <c>Owned</c>: the caller disposes it.
+    /// </summary>
+    internal static (Configuration Config, bool Owned)? ConfigOf(Repository repo)
+    {
+        var gitDir = repo.Info.Path;
+        if (CommonDirectory(gitDir) is not { } common) return null;
+        if (GitText.PathsEqual(Path.GetFullPath(common).TrimEnd('\\', '/'), Path.GetFullPath(gitDir).TrimEnd('\\', '/')))
+            return (repo.Config, false);
+        if (File.Exists(Path.Combine(gitDir, "config.worktree")) || File.Exists(Path.Combine(common, "config.worktree"))) return null;
+        var config = Configuration.BuildFrom(Path.Combine(common, "config"));
+        if (config.Get<bool>("extensions.worktreeConfig")?.Value == true)
+        {
+            config.Dispose();
+            return null;
+        }
+        return (config, true);
+    }
+
     private static string? CommonDirectory(string gitDir)
     {
         var file = Path.Combine(gitDir, "commondir");

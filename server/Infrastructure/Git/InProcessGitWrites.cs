@@ -131,7 +131,17 @@ internal static class InProcessGitWrites
     {
         var common = CommonDirectory(repo);
         var directories = new List<string> { Path.Combine(common, "hooks") };
-        if (repo.Config.Get<string>("core.hooksPath")?.Value is { Length: > 0 } configured) directories.Add(configured);
+        // Through ConfigOf: a linked worktree's Repository.Config lacks the repository's own file. Per-worktree
+        // config (no view) is git's to merge, so it counts as a hook and git writes.
+        if (InProcessGitReads.ConfigOf(repo) is not { } view) return true;
+        try
+        {
+            if (view.Config.Get<string>("core.hooksPath")?.Value is { Length: > 0 } configured) directories.Add(configured);
+        }
+        finally
+        {
+            if (view.Owned) view.Config.Dispose();
+        }
         foreach (var value in ConfigValues(env, "core.hookspath")) if (!string.IsNullOrEmpty(value)) directories.Add(value);
         return directories.Any(d =>
         {

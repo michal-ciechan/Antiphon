@@ -99,6 +99,16 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             await r.GitAsync("config", "core.excludesFile", Path.GetFullPath(file).Replace('\\', '/'));
             await r.WriteAsync("scratch.tmp", "t\n");
         }),
+        // The repository's own config, read from a linked worktree. LibGit2Sharp's Repository.Config reads
+        // <common>/worktrees/<name>/config there (a file git never reads) and installs it into libgit2, so once
+        // touched, the status lost this rule and listed scratch.tmp; config is read through ConfigOf instead.
+        new("ignored-excludesfile-linked-worktree", async r =>
+        {
+            var file = Path.Combine(r.Root, "..", Path.GetFileName(r.Root) + ".excludes");
+            await File.WriteAllTextAsync(file, "*.tmp\n");
+            await r.GitAsync("config", "core.excludesFile", Path.GetFullPath(file).Replace('\\', '/'));
+            await r.WriteAsync("scratch.tmp", "t\n");
+        }, Linked: true),
         new("ignore-negated", async r => { await r.WriteAsync(".gitignore", "*.log\n!keep.log\n"); await r.CommitAllAsync(); await r.WriteAsync("drop.log", "d\n"); await r.WriteAsync("keep.log", "k\n"); }),
         new("ignored-dir-with-tracked-file", async r =>
         {

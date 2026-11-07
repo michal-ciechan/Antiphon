@@ -60,7 +60,7 @@ internal static class InProcessGitStatus
         }
         if (a is ["ls-files", "--unmerged", "-z"])
             return overrides.Count == 0 && HasUnmerged(checkout) == false ? Ok("") : null;
-        Func<Repository, bool> agrees = repo => GitStatusConfigAgreement.Agrees(repo, childEnvironment, overrides);
+        Func<Configuration, bool> agrees = config => GitStatusConfigAgreement.Agrees(config, childEnvironment, overrides);
         if (a is ["ls-files", "--others", "--exclude-standard", "-z"] or ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"])
             return OtherPaths(checkout, ignored: a.Length == 5, agrees) is { Count: 0 } ? Ok("") : null;
         if (StatusForm(a) is { } form)
@@ -106,7 +106,7 @@ internal static class InProcessGitStatus
     /// Renames count as both paths.
     /// </summary>
     public static IReadOnlySet<string>? StatusPaths(string checkout, bool untracked, bool ignored = false,
-        Func<Repository, bool>? agrees = null)
+        Func<Configuration, bool>? agrees = null)
         => StatusEntries(checkout, untracked, ignored, agrees) is { } entries
             ? entries.Select(e => e.Path).ToHashSet(StringComparer.Ordinal)
             : null;
@@ -116,13 +116,13 @@ internal static class InProcessGitStatus
     /// The codes are libgit2's reading and renames are not paired.
     /// </summary>
     internal static IReadOnlyList<string>? StatusRows(string checkout, bool untracked, bool ignored = false,
-        Func<Repository, bool>? agrees = null)
+        Func<Configuration, bool>? agrees = null)
         => StatusEntries(checkout, untracked, ignored, agrees) is { } entries
             ? entries.Select(e => Code(e.State) + " " + e.Path).ToList()
             : null;
 
     private static List<(string Path, FileStatus State)>? StatusEntries(string checkout, bool untracked, bool ignored,
-        Func<Repository, bool>? agrees)
+        Func<Configuration, bool>? agrees)
         => Read(checkout, agrees, repo =>
         {
             var options = new StatusOptions
@@ -183,7 +183,7 @@ internal static class InProcessGitStatus
     /// <c>git ls-files --others --exclude-standard -z</c> (<paramref name="ignored"/> false) or
     /// <c>git ls-files --others --ignored --exclude-standard -z</c> (true), as a path set.
     /// </summary>
-    public static IReadOnlySet<string>? OtherPaths(string checkout, bool ignored, Func<Repository, bool>? agrees = null)
+    public static IReadOnlySet<string>? OtherPaths(string checkout, bool ignored, Func<Configuration, bool>? agrees = null)
         => Read(checkout, agrees, repo =>
         {
             var options = new StatusOptions
@@ -221,7 +221,7 @@ internal static class InProcessGitStatus
     public static bool? HasUnmerged(string checkout)
         => Read<object>(checkout, null, repo => repo.Index.Any(e => e.StageLevel != StageLevel.Staged)) is bool any ? any : null;
 
-    private static T? Read<T>(string checkout, Func<Repository, bool>? agrees, Func<Repository, T?> answer) where T : class
+    private static T? Read<T>(string checkout, Func<Configuration, bool>? agrees, Func<Repository, T?> answer) where T : class
     {
         if (!InProcessGitReads.Enabled) return null;
         try
@@ -230,10 +230,20 @@ internal static class InProcessGitStatus
             if (repo.Info.IsBare || repo.Info.WorkingDirectory is null || InProcessGitReads.Unusual(repo)) return null;
             if (!GitText.PathsEqual(repo.Info.WorkingDirectory.TrimEnd('\\', '/'), checkout.TrimEnd('\\', '/'))) return null;
             if (!PlainIndex(repo.Info.Path)) return null;
-            if (repo.Config.Get<bool>("core.sparseCheckout")?.Value == true) return null;
-            if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;
-            if (agrees is not null && !agrees(repo)) return null;
-            return answer(repo);
+            // Config only through ConfigOf: touching repo.Config of a linked worktree would install LibGit2Sharp's
+            // config, which lacks the repository's own file, into the libgit2 status below.
+            if (InProcessGitReads.ConfigOf(repo) is not { } view) return null;
+            try
+            {
+                if (view.Config.Get<bool>("core.sparseCheckout")?.Value == true) return null;
+                if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;
+                if (agrees is not null && !agrees(view.Config)) return null;
+                return answer(repo);
+            }
+            finally
+            {
+                if (view.Owned) view.Config.Dispose();
+            }
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {

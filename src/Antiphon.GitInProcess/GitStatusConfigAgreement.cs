@@ -53,12 +53,24 @@ internal static class GitStatusConfigAgreement
     /// True when every status key agrees. <paramref name="childEnvironment"/> is the child's whole environment
     /// (null: this process's); <paramref name="overrides"/> are <c>-c key=value</c> pairs on the command itself.
     /// </summary>
-    public static bool Agrees(Repository repo, IReadOnlyDictionary<string, string?>? childEnvironment,
+    public static bool Agrees(Configuration config, IReadOnlyDictionary<string, string?>? childEnvironment,
         IReadOnlyList<KeyValuePair<string, string>> overrides)
-        => Disagreement(repo, childEnvironment, overrides) is null;
+        => Disagreement(config, childEnvironment, overrides) is null;
 
     /// <summary>Null when every status key agrees, otherwise what differs (for tests and diagnostics).</summary>
     internal static string? Disagreement(Repository repo, IReadOnlyDictionary<string, string?>? childEnvironment,
+        IReadOnlyList<KeyValuePair<string, string>> overrides)
+    {
+        if (InProcessGitReads.ConfigOf(repo) is not { } view) return "per-worktree config is in play";
+        try { return Disagreement(view.Config, childEnvironment, overrides); }
+        finally { if (view.Owned) view.Config.Dispose(); }
+    }
+
+    /// <summary>
+    /// As above, against <paramref name="config"/>: the repository's config as git reads it
+    /// (<c>InProcessGitReads.ConfigOf</c>, never a linked worktree's <c>Repository.Config</c>).
+    /// </summary>
+    internal static string? Disagreement(Configuration config, IReadOnlyDictionary<string, string?>? childEnvironment,
         IReadOnlyList<KeyValuePair<string, string>> overrides)
     {
         string? Env(string name) => childEnvironment is null ? Environment.GetEnvironmentVariable(name)
@@ -72,24 +84,24 @@ internal static class GitStatusConfigAgreement
         foreach (var key in Keys)
         {
             var wanted = command.TryGetValue(key, out var c) ? c
-                : Level(repo, key, ConfigurationLevel.Worktree) ?? Level(repo, key, ConfigurationLevel.Local)
+                : Level(config, key, ConfigurationLevel.Worktree) ?? Level(config, key, ConfigurationLevel.Local)
                   ?? (child.Inherited.TryGetValue(key, out var i) ? i : null);
-            var seen = repo.Config.Get<string>(key)?.Value;
+            var seen = config.Get<string>(key)?.Value;
             if (!Same(key, wanted, seen)) return $"{key}: git child '{wanted}', libgit2 '{seen}'";
         }
         // Unset excludesFile/attributesFile: both read a default file beside their XDG config.
-        if (command.ContainsKey("core.excludesfile") is false && repo.Config.Get<string>("core.excludesfile") is null
+        if (command.ContainsKey("core.excludesfile") is false && config.Get<string>("core.excludesfile") is null
             && !SameDefault(child.DefaultIgnore, "ignore"))
             return "default ignore file differs: " + child.DefaultIgnore;
-        if (command.ContainsKey("core.attributesfile") is false && repo.Config.Get<string>("core.attributesfile") is null
+        if (command.ContainsKey("core.attributesfile") is false && config.Get<string>("core.attributesfile") is null
             && !SameDefault(child.DefaultAttributes, "attributes"))
             return "default attributes file differs: " + child.DefaultAttributes;
         return null;
     }
 
-    private static string? Level(Repository repo, string key, ConfigurationLevel level)
+    private static string? Level(Configuration config, string key, ConfigurationLevel level)
     {
-        try { return repo.Config.Get<string>(key, level)?.Value; }
+        try { return config.Get<string>(key, level)?.Value; }
         catch (LibGit2SharpException) { return null; }
     }
 
