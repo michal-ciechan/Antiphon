@@ -1,0 +1,44 @@
+# CARD-1406 scratch restore drill. Not the production service.
+# Project antiphon-server2-postgres-drill. The volume name is pinned to this
+# scratch volume only. Published on loopback port 5434, never the tailnet.
+# Network antiphon-server2-postgres-drill, not the production network.
+name: antiphon-server2-postgres-drill
+
+services:
+  postgres:
+    image: ${ANTIPHON_POSTGRES_IMAGE:?ANTIPHON_POSTGRES_IMAGE is required}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - pg_stat_statements.max=5000
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: 4.0
+    environment:
+      POSTGRES_DB: antiphon
+      POSTGRES_USER: antiphon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - antiphon-server2-postgres-drill
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antiphon -d antiphon"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+networks:
+  antiphon-server2-postgres-drill:
+    name: antiphon-server2-postgres-drill
+
+volumes:
+  pgdata:
+    name: antiphon-server2-postgres-drill_pgdata

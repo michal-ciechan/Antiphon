@@ -4,14 +4,20 @@
     CARD-1406 server2 host Postgres service and scratch restore drill.
 
     Default is -WhatIf. It prints the host-daemon command and, with
-    -RestoreDrill, the scratch restore plan. -WhatIf does not call docker.
+    -RestoreDrill, the scratch restore commands. -WhatIf does not call docker.
     -Execute starts the service only when this process is on the server2 host
     daemon (not inside the runner container, not a sibling daemon). The env
     file is untracked, mode 0600, and outside the repo. It holds
     ANTIPHON_POSTGRES_BIND_ADDRESS, ANTIPHON_POSTGRES_IMAGE, and
     POSTGRES_PASSWORD. This script never prints the password.
-    The drill plan names readings that are still unread. It does not invent
-    them, and it never removes antiphon_pgdata or the production volume.
+    -WhatIf accepts only a bind inside 100.64.0.0/10. -Execute still requires
+    that bind to equal the single line of tailscale ip -4.
+    The image must be postgres:16@sha256:<64 hex> or postgres@sha256:<64 hex>.
+    The production compose runs only as project antiphon-server2-postgres.
+    The drill compose runs only as project antiphon-server2-postgres-drill.
+    The drill commands dump the desktop database with pg_dump only, restore
+    into the scratch volume, and remove only that scratch project.
+    Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.
     ASCII-only.
 #>
 [CmdletBinding()]
@@ -19,6 +25,7 @@ param(
     [switch]$WhatIf,
     [switch]$Execute,
     [switch]$RestoreDrill,
+    [string]$Project = '',
     [string]$EnvFile = '',
     [string]$ComposeFile = '',
     [string]$RepoRoot = ''
@@ -47,10 +54,15 @@ function Test-Server2PostgresBind {
     $trimmed = $Address.Trim()
     if ($trimmed -eq '0.0.0.0' -or $trimmed -eq '::' -or $trimmed -eq '*') { return 'bind-any' }
     if ($trimmed -notmatch '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$') { return 'bind-not-ipv4' }
-    foreach ($octet in $trimmed.Split('.')) {
+    $octets = $trimmed.Split('.')
+    foreach ($octet in $octets) {
         $n = 0
         if (-not [int]::TryParse($octet, [ref]$n) -or $n -gt 255) { return 'bind-not-ipv4' }
     }
+    # 100.64.0.0/10. -Execute still compares the surviving address with tailscale ip -4.
+    $second = 0
+    [void][int]::TryParse($octets[1], [ref]$second)
+    if ([int]$octets[0] -ne 100 -or $second -lt 64 -or $second -gt 127) { return 'bind-not-cgnat' }
     return ''
 }
 
@@ -58,8 +70,9 @@ function Test-Server2PostgresImage {
     param([string]$Image)
     if ([string]::IsNullOrWhiteSpace($Image)) { return 'empty-image' }
     if ($Image -match '(?i)alpine') { return 'image-alpine' }
-    if ($Image -notmatch '^postgres:16@sha256:[0-9a-f]{64}$') { return 'image-floating' }
-    return ''
+    if ($Image -match '^postgres:16@sha256:[0-9a-f]{64}$') { return '' }
+    if ($Image -match '^postgres@sha256:[0-9a-f]{64}$') { return '' }
+    return 'image-floating'
 }
 
 function Test-Server2PostgresDrillVolume {
@@ -70,6 +83,30 @@ function Test-Server2PostgresDrillVolume {
     if ($Name -match '(?i)windmill') { return 'volume-forbidden' }
     if ($Name -cne $script:Server2PostgresDrillVolume) { return 'volume-forbidden' }
     return ''
+}
+
+function Test-Server2PostgresDrillTeardown {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name) -or -not $Name.EndsWith('-drill_pgdata', [StringComparison]::Ordinal)) {
+        return 'volume-forbidden'
+    }
+    return (Test-Server2PostgresDrillVolume $Name)
+}
+
+function Test-Server2PostgresExactLine {
+    param([string]$Text, [string]$Line)
+    $norm = $Text.Replace("`r`n", "`n")
+    return [regex]::IsMatch($norm, '(?m)^' + [regex]::Escape($Line) + '$')
+}
+
+function Get-Server2PostgresComposeClass {
+    param([string]$Text)
+    $drill = (Test-Server2PostgresExactLine $Text 'name: antiphon-server2-postgres-drill') -and (Test-Server2PostgresExactLine $Text '    name: antiphon-server2-postgres-drill_pgdata')
+    $prodVolume = Test-Server2PostgresExactLine $Text '    name: antiphon-server2-postgres_pgdata'
+    $prod = (Test-Server2PostgresExactLine $Text 'name: antiphon-server2-postgres') -and $prodVolume
+    if ($drill -and -not $prodVolume) { return 'drill' }
+    if ($prod -and -not $drill) { return 'production' }
+    return 'unknown'
 }
 
 function Test-Server2PostgresTailnet {
@@ -145,11 +182,44 @@ function Get-Server2PostgresComposeRefusal {
             'shared_preload_libraries=pg_stat_statements',
             'pg_stat_statements.track=top',
             'pg_stat_statements.max=5000',
-            'antiphon-server2',
+            "networks:`n  antiphon-server2:`n    name: antiphon-server2",
+            "    networks:`n      - antiphon-server2",
             'pgdata:/var/lib/postgresql/data',
             'name: antiphon-server2-postgres_pgdata'
         )) {
         if (-not $Text.Contains($need)) { return 'compose-invalid' }
+    }
+    return ''
+}
+
+function Get-Server2PostgresDrillComposeRefusal {
+    param([string]$Text)
+    $norm = $Text.Replace("`r`n", "`n")
+    if ($norm.Contains('antiphon_pgdata')) { return 'volume-forbidden' }
+    if ($norm.Contains('name: antiphon-server2-postgres_pgdata')) { return 'volume-forbidden' }
+    if ($norm -match '5433') { return 'port-5433' }
+    if ($norm -match '(?i)alpine') { return 'image-alpine' }
+    if ($norm -match '0\.0\.0\.0') { return 'bind-any' }
+    if ($norm.Contains(':5432:5432')) { return 'port-production' }
+    if ($norm.Contains('ANTIPHON_POSTGRES_BIND_ADDRESS')) { return 'bind-not-loopback' }
+    if (Test-Server2PostgresExactLine $norm '      - antiphon-server2') { return 'network-forbidden' }
+    if ($norm.Contains("networks:`n  antiphon-server2:`n    name: antiphon-server2")) { return 'network-forbidden' }
+    foreach ($need in @(
+            'name: antiphon-server2-postgres-drill',
+            'ANTIPHON_POSTGRES_IMAGE:?',
+            'POSTGRES_PASSWORD:?',
+            '127.0.0.1:5434:5432',
+            'mem_limit: 4g',
+            'cpus: 4.0',
+            'restart: unless-stopped',
+            'pg_isready -U antiphon -d antiphon',
+            'shared_preload_libraries=pg_stat_statements',
+            'pgdata:/var/lib/postgresql/data',
+            'name: antiphon-server2-postgres-drill_pgdata',
+            "networks:`n  antiphon-server2-postgres-drill:`n    name: antiphon-server2-postgres-drill",
+            "    networks:`n      - antiphon-server2-postgres-drill"
+        )) {
+        if (-not $norm.Contains($need)) { return 'compose-invalid' }
     }
     return ''
 }
@@ -176,8 +246,15 @@ function Get-Server2PostgresHostCommand {
 }
 
 function Write-Server2PostgresDrillPlan {
-    Write-Output ('drill-project: ' + $script:Server2PostgresDrillProject)
-    Write-Output ('drill-volume: ' + $script:Server2PostgresDrillVolume)
+    param([string]$EnvPath, [string]$ComposePath)
+    $envArg = '<env-file>'
+    if (-not [string]::IsNullOrWhiteSpace($EnvPath)) { $envArg = $EnvPath }
+    $project = $script:Server2PostgresDrillProject
+    $volume = $script:Server2PostgresDrillVolume
+    $container = $project + '-postgres-1'
+    $prefix = 'drill-command: project=' + $project + ' volume=' + $volume + ' :: '
+    Write-Output ('drill-project: ' + $project)
+    Write-Output ('drill-volume: ' + $volume)
     Write-Output 'drill-remove: scratch-only'
     Write-Output 'unread: docker-ps'
     Write-Output 'unread: docker-volume-ls'
@@ -195,6 +272,19 @@ function Write-Server2PostgresDrillPlan {
     Write-Output 'phase3: key-table-count-min-max-pk'
     Write-Output 'phase3: key tables are TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, AgentTaskEvents'
     Write-Output 'phase3: count, minimum primary key, and maximum primary key; no row body'
+    Write-Output ($prefix + 'docker volume create ' + $volume)
+    Write-Output ($prefix + 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $project + ' up -d')
+    Write-Output ($prefix + 'docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl > antiphon-drill.dump')
+    Write-Output ($prefix + 'docker exec -i ' + $container + ' pg_restore -U antiphon -d antiphon --no-owner --no-acl < antiphon-drill.dump')
+    $rowCount = 'select relname, n_live_tup from pg_stat_user_tables order by relname'
+    $migrations = 'select "MigrationId" from "__EFMigrationsHistory" order by "MigrationId"'
+    $extensions = 'select extname, extversion from pg_extension order by extname'
+    Write-Output ($prefix + 'docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $rowCount + '"')
+    Write-Output ($prefix + 'docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $migrations + '"')
+    Write-Output ($prefix + 'docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $extensions + '"')
+    Write-Output ($prefix + 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $project + ' down')
+    $remove = 'if case ' + $volume + ' in *-drill_pgdata) true ;; *) echo ''SERVER2-POSTGRES fail exit=2 reason=volume-forbidden''; exit 2 ;; esac; then docker volume rm ' + $volume + '; fi'
+    Write-Output ($prefix + $remove)
 }
 
 function Resolve-Server2PostgresLane {
@@ -242,22 +332,50 @@ function Invoke-Server2PostgresDeploy {
     }
     $planOnly = -not $Execute
     if ($WhatIf) { $planOnly = $true }
+    $drillMode = [bool]$RestoreDrill
+    # $Project is the script parameter. PowerShell names are case-insensitive,
+    # so the selected project uses a different variable.
+    $requestedProject = $Project
+    $selectedProject = $script:Server2PostgresProject
+    if ($drillMode) { $selectedProject = $script:Server2PostgresDrillProject }
+    if (-not [string]::IsNullOrWhiteSpace($requestedProject)) { $selectedProject = $requestedProject.Trim() }
+    if ($drillMode) {
+        if ($selectedProject -cne $script:Server2PostgresDrillProject) {
+            Write-Server2PostgresResult 'fail' 2 'drill-compose-wrong-project'
+            return
+        }
+    } elseif ($selectedProject -cne $script:Server2PostgresProject) {
+        Write-Server2PostgresResult 'fail' 2 'production-compose-wrong-project'
+        return
+    }
     $root = Get-Server2PostgresRepoRoot
     $composePath = $ComposeFile
     if ([string]::IsNullOrWhiteSpace($composePath)) {
-        $composePath = Join-Path $root 'docker-compose.server2-postgres.yml'
+        $fileName = 'docker-compose.server2-postgres.yml'
+        if ($drillMode) { $fileName = 'docker-compose.server2-postgres-drill.yml' }
+        $composePath = Join-Path $root $fileName
     }
     if (-not (Test-Path -LiteralPath $composePath)) {
         Write-Server2PostgresResult 'fail' 2 'missing-compose'
         return
     }
     $composeText = [System.IO.File]::ReadAllText($composePath)
-    $composeReason = Get-Server2PostgresComposeRefusal $composeText
+    $class = Get-Server2PostgresComposeClass $composeText
+    if ($drillMode -and $class -ne 'drill') {
+        Write-Server2PostgresResult 'fail' 2 'production-compose-wrong-project'
+        return
+    }
+    if ((-not $drillMode) -and $class -eq 'drill') {
+        Write-Server2PostgresResult 'fail' 2 'drill-compose-wrong-project'
+        return
+    }
+    if ($drillMode) { $composeReason = Get-Server2PostgresDrillComposeRefusal $composeText }
+    else { $composeReason = Get-Server2PostgresComposeRefusal $composeText }
     if ($composeReason) {
         Write-Server2PostgresResult 'fail' 2 $composeReason
         return
     }
-    $drillReason = Test-Server2PostgresDrillVolume $script:Server2PostgresDrillVolume
+    $drillReason = Test-Server2PostgresDrillTeardown $script:Server2PostgresDrillVolume
     if ($drillReason) {
         Write-Server2PostgresResult 'fail' 2 $drillReason
         return
@@ -307,8 +425,8 @@ function Invoke-Server2PostgresDeploy {
     }
 
     if ($planOnly) {
-        Write-Output (Get-Server2PostgresHostCommand $EnvFile $composePath)
-        if ($RestoreDrill) { Write-Server2PostgresDrillPlan }
+        if ($drillMode) { Write-Server2PostgresDrillPlan $EnvFile $composePath }
+        else { Write-Output (Get-Server2PostgresHostCommand $EnvFile $composePath) }
         Write-Server2PostgresResult 'plan' 0 'ok'
         return
     }
@@ -332,7 +450,7 @@ function Invoke-Server2PostgresDeploy {
     if ($RestoreDrill) {
         # The scratch restore is the operator rehearsal. This switch prints it.
         # It does not start a second project and it does not remove a volume.
-        Write-Server2PostgresDrillPlan
+        Write-Server2PostgresDrillPlan $EnvFile $composePath
         Write-Server2PostgresResult 'plan' 0 'ok'
         return
     }

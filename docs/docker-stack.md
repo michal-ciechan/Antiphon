@@ -1357,15 +1357,35 @@ PowerShell 7's `ConvertFrom-Json` returns an ISO-8601-looking manifest `tempReti
 
 `docker-compose.server2-postgres.yml` is the host-daemon Postgres service. It exists beside the runner. It is not the nested dockerd inside the runner and it is not Windmill. The project is `antiphon-server2-postgres`, the service is `postgres`, the network is `antiphon-server2`, and the volume key is `pgdata` (full name `antiphon-server2-postgres_pgdata`, mounted at `/var/lib/postgresql/data`). The image digest, the tailnet bind, and the cluster password come from an untracked mode-0600 env file outside the repo. The published port is `${ANTIPHON_POSTGRES_BIND_ADDRESS:?}:5432:5432`. An empty bind refuses to start. There is no `0.0.0.0` publish, no LAN publish, and no port 5433.
 
-`scripts/deploy-server2-postgres.ps1` defaults to `-WhatIf` and does not call docker in that mode. `-Execute` runs only when this process is on the server2 host daemon. Neither mode prints the password. The new cluster password is not the committed dev password.
+`scripts/deploy-server2-postgres.ps1` defaults to `-WhatIf` and does not call docker in that mode. `-Execute` runs only when this process is on the server2 host daemon. Neither mode prints the password. The new cluster password is not the committed dev password. Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.
+
+`-WhatIf` refuses a bind outside `100.64.0.0/10` (`bind-not-cgnat`), including a LAN or public address. `-Execute` still requires the bind to equal the single line of `tailscale ip -4` on that host. The image must be `postgres:16@sha256:` plus 64 lowercase hex digits, or the RepoDigest form `postgres@sha256:` plus 64 lowercase hex digits. A tag or any other reference is `image-floating`. `alpine` anywhere in the reference is `image-alpine`.
+
+The production file runs only as project `antiphon-server2-postgres`. Its volume name is pinned, so `docker compose -p antiphon-server2-postgres-drill -f docker-compose.server2-postgres.yml` still mounts `antiphon-server2-postgres_pgdata`. The script refuses that pair with `production-compose-wrong-project`. Do not improvise it.
 
 ### Scratch restore drill
 
-The drill is an operator rehearsal on the server2 host. It is not a CI test. `-RestoreDrill` prints the steps and the readings that are still unread. It does not invent those readings and it does not call docker.
+The drill is an operator rehearsal on the server2 host. It is not a CI test. `-RestoreDrill` prints the command sequence below and the readings that are still unread. It does not invent those readings, it does not call docker, and it does not start the scratch project.
+
+The scratch file is `docker-compose.server2-postgres-drill.yml`. Its project is `antiphon-server2-postgres-drill`, its volume is pinned to `antiphon-server2-postgres-drill_pgdata`, its network is `antiphon-server2-postgres-drill`, and its only publish is `127.0.0.1:5434:5432`. Rendering that file with the production project name still mounts the scratch volume, because the volume name is pinned. The script refuses the drill file under the production project (`drill-compose-wrong-project`). The drill file has no production volume pin and no tailnet bind variable.
 
 Read on the host, not from the desktop and not from inside the runner: `docker ps`, `docker volume ls`, and `df` of the Docker data-root. Free space must be many times the desktop database size measured 2026-10-21 (1,265,417,239 bytes). Re-list the parent of the live Windmill compose and record it. The 2026-09-17 note of `/home/mc/docker/windmill` is that note, not a measurement.
 
-Restore one encrypted custom dump into scratch project `antiphon-server2-postgres-drill` and its own volume `antiphon-server2-postgres-drill_pgdata`. Compare phase 3 of the CARD-1401 plan: `count(*)` per user table, sequence name / `last_value` / `is_called`, extension `extname` / `extversion`, `__EFMigrationsHistory` count and ordered `MigrationId`, and count, minimum primary key, and maximum primary key on TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, and AgentTaskEvents. All five are over 32 MiB, so the check is not a row-body checksum. Do not print transcript text. Record dump elapsed time, restore elapsed time, copy elapsed time, and the dump file size. Then remove only that scratch container and that scratch volume. The script has no command that removes `antiphon_pgdata` or `antiphon-server2-postgres_pgdata`.
+`-RestoreDrill` prints this sequence. The desktop command is `pg_dump` only. It never writes to the desktop database. The restore and the acceptance queries run in the scratch container. The teardown removes the scratch project and then the scratch volume only when that volume name ends with `-drill_pgdata`.
+
+```text
+docker volume create antiphon-server2-postgres-drill_pgdata
+docker compose --env-file <env-file> -f docker-compose.server2-postgres-drill.yml -p antiphon-server2-postgres-drill up -d
+docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl > antiphon-drill.dump
+docker exec -i antiphon-server2-postgres-drill-postgres-1 pg_restore -U antiphon -d antiphon --no-owner --no-acl < antiphon-drill.dump
+docker exec antiphon-server2-postgres-drill-postgres-1 psql -U antiphon -d antiphon -At -c "select relname, n_live_tup from pg_stat_user_tables order by relname"
+docker exec antiphon-server2-postgres-drill-postgres-1 psql -U antiphon -d antiphon -At -c "select \"MigrationId\" from \"__EFMigrationsHistory\" order by \"MigrationId\""
+docker exec antiphon-server2-postgres-drill-postgres-1 psql -U antiphon -d antiphon -At -c "select extname, extversion from pg_extension order by extname"
+docker compose --env-file <env-file> -f docker-compose.server2-postgres-drill.yml -p antiphon-server2-postgres-drill down
+docker volume rm antiphon-server2-postgres-drill_pgdata
+```
+
+Compare phase 3 of the CARD-1401 plan as well: sequence name / `last_value` / `is_called`, and count, minimum primary key, and maximum primary key on TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, and AgentTaskEvents. All five are over 32 MiB, so the check is not a row-body checksum. Do not print transcript text. Record dump elapsed time, restore elapsed time, copy elapsed time, and the dump file size. The script has no command that removes `antiphon_pgdata` or the production volume.
 
 ## Native Windows phone-home runner
 

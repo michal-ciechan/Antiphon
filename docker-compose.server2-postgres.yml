@@ -2,6 +2,8 @@
 # Project antiphon-server2-postgres. Not the nested dockerd and not Windmill.
 # Bind address, image digest, and password come from an untracked mode-0600 env file.
 # An empty bind or image refuses to start.
+# The volume name is pinned. Use this file only with project
+# antiphon-server2-postgres. Another project name still mounts that volume.
 name: antiphon-server2-postgres
 
 services:
