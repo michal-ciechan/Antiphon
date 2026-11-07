@@ -6,8 +6,8 @@ Every control below is pending; ordinary red/green does not discharge Mutation.
 
 | ID/variant | Guarded behavior | Deliberate mutant | Exact method filter |
 |---|---|---|---|
-| PC-1/tool | Native obj byte preservation, staged helper, valid terminal report | Remove `_PtyHostArtifactsArguments` from the shipped target's Exec command | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
-| PC-1/script | Same property forwarding through run-checkpoint.ps1 | Same mutant; the two argument cases may share one red/restore/green cycle | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
+| PC-1/tool | Native obj byte preservation, staged helper, valid terminal report | Remove `-p:UseArtifactsOutput=true` and `-p:ArtifactsPath=` from the `UseArtifactsOutput == true` Exec in the shipped target | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
+| PC-1/script | Same argument forwarding through run-checkpoint.ps1 | Same mutant; the two argument cases may share one red/restore/green cycle | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
 | PC-2 | Real tracked tampering remains refused with diagnostic and valid RED report | Suppress BuildConfinement's changed-path tampering classification; a source-changed exit alone must not satisfy the exact JSON refusal assertion | `/*/*/CheckpointColdBuildTests/C1734_Real_tampering_keeps_a_red_terminal_report` |
 | PC-3/stop | Stop publishes a canceled terminal receipt | Omit the stop terminal write | `/*/*/CheckpointTerminalReceiptTests/C1734_Stop_publishes_before_the_executor_waiter_returns` |
 | PC-3/cancel | Cancellation publishes its non-passing receipt | Omit cancellation fallback publication | `/*/*/CheckpointTerminalReceiptTests/C1734_Executor_terminal_receipt_reaches_a_real_waiter` |
