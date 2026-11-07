@@ -102,10 +102,14 @@ function Read-NightlyExecutionPolicy {
 function Get-NightlyIsTestProjectPaths {
     param([string]$RepoRoot)
     $root = ConvertTo-NightlyCanonicalPath -Path $RepoRoot
-    $files = Get-ChildItem -Path $root -Filter '*.csproj' -Recurse -File -ErrorAction SilentlyContinue
+    if (Test-NightlyCoreAvailable) {
+        # Compiled walk that prunes bin/obj/bin-* instead of listing them (NightlyCore.cs NightlyRepository).
+        $fullNames = @([Antiphon.Nightly.NightlyRepository]::CandidateProjectFiles($root))
+    } else {
+        $fullNames = @(Get-ChildItem -Path $root -Filter '*.csproj' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    }
     $hits = @()
-    foreach ($f in $files) {
-        $full = $f.FullName
+    foreach ($full in $fullNames) {
         $relParts = $full.Substring($root.Length).Split([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
         $skip = $false
         foreach ($p in $relParts) {

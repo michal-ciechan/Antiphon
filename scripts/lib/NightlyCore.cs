@@ -803,6 +803,45 @@ namespace Antiphon.Nightly
         }
     }
 
+    /// <summary>Repository scans from nightly-policy.ps1.</summary>
+    public static class NightlyRepository
+    {
+        /// <summary>
+        /// The *.csproj files Get-NightlyIsTestProjectPaths considers: what Get-ChildItem -Recurse -File lists
+        /// (no hidden items, directory links not followed), minus any whose path below the root has a segment
+        /// equal to bin or obj (case-insensitively) or starting with bin- (ordinally). Excluded directories are
+        /// pruned rather than walked; unreadable directories are skipped, as -ErrorAction SilentlyContinue did.
+        /// </summary>
+        public static string[] CandidateProjectFiles(string root)
+        {
+            var found = new List<string>();
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0)
+            {
+                var directory = pending.Pop();
+                try
+                {
+                    foreach (var file in new System.IO.DirectoryInfo(directory).EnumerateFiles("*.csproj"))
+                        if ((file.Attributes & System.IO.FileAttributes.Hidden) == 0 && !Excluded(file.Name)) found.Add(file.FullName);
+                    foreach (var child in new System.IO.DirectoryInfo(directory).EnumerateDirectories())
+                    {
+                        var attributes = child.Attributes;
+                        if ((attributes & System.IO.FileAttributes.Hidden) != 0 || (attributes & System.IO.FileAttributes.ReparsePoint) != 0) continue;
+                        if (Excluded(child.Name)) continue;
+                        pending.Push(child.FullName);
+                    }
+                }
+                catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
+            }
+            return found.ToArray();
+        }
+
+        private static bool Excluded(string segment) =>
+            string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase) || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase)
+            || segment.StartsWith("bin-", StringComparison.Ordinal);
+    }
+
     /// <summary>Launch packing helpers from nightly-tests-impl.ps1 that ran once per discovered test or class pair.</summary>
     public static class NightlyLaunchPlan
     {

@@ -234,9 +234,27 @@ function Test-NCLaunchPlanMatchesFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('true') -and $r.Fallback.Contains('false')) 'groupFilter' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+function Test-NCProjectWalkMatchesFallback {
+    $tree = Join-Path $root 'nc-projects'
+    $test = '<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>'
+    $files = @('a/One.csproj', 'a/b/Two.csproj', 'bin/Skip.csproj', 'BIN/Skip.csproj', 'obj/Skip.csproj', 'x/obj/Skip.csproj',
+        'bin-debug/Skip.csproj', 'a/bin-named.csproj', 'Bin-Upper/Kept.csproj', 'objects/Kept.csproj', 'binary/Kept.csproj',
+        'hidden/Skip.csproj', 'c/NotTest.csproj', 'c/Other.txt')
+    foreach ($relative in $files) {
+        $path = Join-Path $tree $relative
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+        $text = $test; if ($relative -like 'c/*') { $text = '<Project />' }
+        [IO.File]::WriteAllText($path, $text)
+    }
+    $hidden = Get-Item -LiteralPath (Join-Path $tree 'hidden') -Force
+    $hidden.Attributes = $hidden.Attributes -bor [IO.FileAttributes]::Hidden
+    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $tree) }
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('Kept') -and -not $r.Fallback.Contains('Skip')) 'projectWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; $expected = 10 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; $expected = 11 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
