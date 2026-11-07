@@ -406,7 +406,7 @@ internal static class TaskReportTurnSelector
         return null;
     }
 
-    private static TranscriptPromptSpan.PromptRow? LastBefore(
+    internal static TranscriptPromptSpan.PromptRow? LastBefore(
         IReadOnlyList<TranscriptPromptSpan.PromptRow> rows, long sequence)
     {
         TranscriptPromptSpan.PromptRow? owner = null;
