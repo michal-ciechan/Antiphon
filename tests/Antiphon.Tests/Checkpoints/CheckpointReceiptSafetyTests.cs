@@ -219,7 +219,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             Builds = [new ReportBuild { Id = "owned", Project = "fixture", State = "built", Slot = "granted", Source = source }],
             Rows = [new ReportRow { Id = "CP-fixture", State = "green", Source = source, Executed = 1, Passed = 1, Failed = 0, Skipped = 0,
                 Line = "CHECKPOINT CP-fixture commit=" + observation.Commit + " source=" + observation.Commit
-                    + " dirty=0 sourceState=clean buildSource=verified executed=1" }] });
+                    + " dirty=0 sourceState=clean buildSource=verified executed=1 passed=1 failed=0 skipped=0" }] });
         return (root, run);
     }
 
