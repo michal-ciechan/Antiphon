@@ -49,7 +49,8 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
     {
         try
         {
-            var statLine = FirstCpuLine(_readLines("/proc/stat"));
+            var statLines = _readLines("/proc/stat");
+            var statLine = FirstCpuLine(statLines);
             var memory = ParseMemInfo(_readLines("/proc/meminfo"));
             var loadLine = _readLines("/proc/loadavg").FirstOrDefault();
             var load = loadLine is null ? null : ParseLoadAvg(loadLine);
@@ -64,7 +65,7 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
             return new HostSample(
                 DateTimeOffset.UtcNow,
                 cpu,
-                Environment.ProcessorCount,
+                CountHostCores(statLines),
                 load?.Load1,
                 load?.Load5,
                 load?.Load15,
@@ -83,6 +84,16 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
     }
 
     internal readonly record struct ProcStatTotals(long Idle, long Total);
+
+    // Aggregate /proc/stat is host-scoped even when this process has a cgroup/affinity cap.
+    // A missing topology stays unknown (0 in the legacy DTO; null in history).
+    internal static int CountHostCores(IEnumerable<string> lines) => lines.Count(line =>
+    {
+        var end = line.IndexOf(' ');
+        var name = end < 0 ? line : line[..end];
+        return name.Length > 3 && name.StartsWith("cpu", StringComparison.Ordinal)
+            && name.AsSpan(3).IndexOfAnyExceptInRange('0', '9') < 0;
+    });
 
     internal readonly record struct MemInfo(long? TotalBytes, long? AvailableBytes, long? SwapTotalBytes, long? SwapFreeBytes);
 
