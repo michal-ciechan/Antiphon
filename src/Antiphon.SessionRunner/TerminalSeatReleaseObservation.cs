@@ -131,6 +131,10 @@ internal sealed class TerminalSeatReleaseObservation
     private NativeFileIdentity? _boundFileIdentity;
     private long _consumedByPoll;
     private long _largestObservation;
+    private int _identityHandleOpens;
+
+    /// <summary>CARD-1756: times <see cref="File.OpenHandle"/> ran for this observation. Production only counts.</summary>
+    internal int IdentityHandleOpens => Volatile.Read(ref _identityHandleOpens);
 
     // Called by the real binding/poll path, not by observation. A replacement cannot be adopted
     // merely because the next observation sees an old idle transcript at the same pathname.
@@ -285,9 +289,10 @@ internal sealed class TerminalSeatReleaseObservation
     private static TerminalTranscriptObservation Refuse(TerminalTranscriptReadStatus status) =>
         new(status, TerminalTranscriptVerdict.Unknown);
 
-    private static FileStamp? CaptureFile(string path)
+    private FileStamp? CaptureFile(string path)
     {
         if (!File.Exists(path)) return null;
+        Interlocked.Increment(ref _identityHandleOpens);
         using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);
         return CaptureHandle(handle);
