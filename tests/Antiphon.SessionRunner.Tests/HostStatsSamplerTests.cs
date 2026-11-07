@@ -62,31 +62,28 @@ public class HostStatsSamplerTests
     }
 
     /// <summary>
-    /// CARD-1757. The production working-set reader must not take one whole-system process
-    /// snapshot per sampled pid.
+    /// CARD-1757. The production <see cref="SamplerProcessQuery"/> reader must not take one
+    /// whole-system process snapshot per sampled pid. The scan is the live <c>WorkingSet</c>,
+    /// <c>Read</c>, and <c>ReadWindows</c> bodies. <c>ReadLinux</c> is the single Linux
+    /// <c>/proc</c> read and is outside this scan.
     /// </summary>
     [Test]
     public void Working_set_reader_does_not_snapshot_the_system_once_per_process()
     {
         var root = RepoRoot();
         var sampler = File.ReadAllText(Path.Combine(root, "src/Antiphon.SessionRunner/HostStatsSamplerService.cs"));
-        var workingSet = MethodBody(sampler, "long? WorkingSet(");
-        workingSet.ShouldNotContain("GetProcessById");
-        workingSet.ShouldNotContain("WorkingSet64");
-        workingSet.ShouldNotContain("GetProcesses");
-        workingSet.ShouldNotContain("NtQuerySystemInformation");
+        sampler.IndexOf("static long? WorkingSet", StringComparison.Ordinal).ShouldBeLessThan(0);
 
         var queryPath = Path.Combine(root, "src/Antiphon.SessionRunner/SamplerProcessQuery.cs");
         File.Exists(queryPath).ShouldBeTrue();
         var query = File.ReadAllText(queryPath);
+        RejectSystemSnapshot(MethodBody(query, "long? WorkingSet("));
+        RejectSystemSnapshot(MethodBody(query, "Reading Read("));
         var windows = MethodBody(query, "Reading ReadWindows(");
+        RejectSystemSnapshot(windows);
         windows.ShouldContain("OpenProcess");
         windows.ShouldContain("K32GetProcessMemoryInfo");
         windows.ShouldContain("GetProcessTimes");
-        windows.ShouldNotContain("GetProcessById");
-        windows.ShouldNotContain("WorkingSet64");
-        windows.ShouldNotContain("GetProcesses");
-        windows.ShouldNotContain("NtQuerySystemInformation");
 
         using var provider = HostStatsServices();
         provider.GetRequiredService<IProcessCpuProbe>().ShouldBeOfType<SystemProcessCpuProbe>();
@@ -155,6 +152,22 @@ public class HostStatsSamplerTests
         await sampler.SampleOnceAsync();
         (sampled.Queries - sampledBefore).ShouldBe(4);
         store.Latest().ShouldNotBeNull().Processes.Single(process => process.Name == "session").CpuPercent.ShouldNotBeNull();
+
+        // Production wiring: the sampler's CPU probe and working-set delegate are one singleton.
+        // The self target has no host pid, so one tick is one query and consumes that cache.
+        var wired = provider.GetRequiredService<SamplerProcessQuery>();
+        var wiredSampler = provider.GetRequiredService<HostStatsSamplerService>();
+        wiredSampler.CpuProbe.ShouldBeSameAs(wired);
+        var wiredBefore = wired.Queries;
+        await wiredSampler.SampleOnceAsync();
+        (wired.Queries - wiredBefore).ShouldBe(1);
+        var self = provider.GetRequiredService<HostStatsStore>().Latest().ShouldNotBeNull().Processes.Single();
+        self.Name.ShouldBe("runner");
+        self.SessionId.ShouldBeNull();
+        self.WorkingSetBytes.ShouldBeGreaterThan(0);
+        var consumed = wired.Queries;
+        wired.WorkingSet(pid).ShouldNotBeNull();
+        (wired.Queries - consumed).ShouldBe(1);
     }
 
     private static ServiceProvider HostStatsServices()
@@ -271,6 +284,14 @@ public class HostStatsSamplerTests
         }
 
         throw new InvalidOperationException("unterminated method " + signature);
+    }
+
+    private static void RejectSystemSnapshot(string body)
+    {
+        body.IndexOf("GetProcessById", StringComparison.Ordinal).ShouldBeLessThan(0);
+        body.IndexOf("WorkingSet64", StringComparison.Ordinal).ShouldBeLessThan(0);
+        body.IndexOf("GetProcesses", StringComparison.Ordinal).ShouldBeLessThan(0);
+        body.IndexOf("NtQuerySystemInformation", StringComparison.Ordinal).ShouldBeLessThan(0);
     }
 
     private sealed class QueueCpu : IProcessCpuProbe
