@@ -648,6 +648,161 @@ namespace Antiphon.Nightly
         }
     }
 
+    /// <summary>
+    /// Whole per-batch loops of the native suite verdict (nightly-coverage.ps1): one call per batch instead of
+    /// one PowerShell call per result row. Collections follow PowerShell's: a $null row list is one $null row
+    /// (as the pipeline passes it), and @{} hashtables use OrdinalIgnoreCase, so they enumerate in the same order.
+    /// </summary>
+    public static class NightlyVerdicts
+    {
+        private static object[] Rows(object rows) => rows == null ? new object[] { null } : PsValue.AsArray(rows);
+
+        private static PSObject Result(params (string Name, object Value)[] properties)
+        {
+            var o = new PSObject();
+            foreach (var (name, value) in properties) o.Properties.Add(new PSNoteProperty(name, value));
+            return o;
+        }
+
+        /// <summary>
+        /// The outcome filters of ConvertTo-NightlyCoverageVerdict in one pass: Failed, Skipped, NotExecuted and
+        /// Unknown rows in row order, and the Passed count.
+        /// </summary>
+        public static PSObject ClassifyOutcomes(object terminalRows)
+        {
+            var failed = new List<object>(); var skipped = new List<object>();
+            var unexecuted = new List<object>(); var unknown = new List<object>();
+            var passed = 0;
+            foreach (var row in Rows(terminalRows))
+            {
+                switch (NightlyClassNames.NormalizedOutcome(PsValue.Str(PsValue.Prop(row, "Outcome"))))
+                {
+                    case "Failed": failed.Add(row); break;
+                    case "Skipped": skipped.Add(row); break;
+                    case "NotExecuted": unexecuted.Add(row); break;
+                    case "Unknown": unknown.Add(row); break;
+                    case "Passed": passed++; break;
+                }
+            }
+            return Result(("Failed", failed.ToArray()), ("Skipped", skipped.ToArray()),
+                ("NotExecuted", unexecuted.ToArray()), ("Unknown", unknown.ToArray()), ("Passed", passed));
+        }
+
+        /// <summary>Test-NightlyExpandedRowsPresent: every required UID has an executed terminal row.</summary>
+        public static PSObject ExpandedRowsPresent(object terminalRows, string[] requiredUids)
+        {
+            var executed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in Rows(terminalRows))
+            {
+                var outcome = NightlyClassNames.NormalizedOutcome(PsValue.Str(PsValue.Prop(row, "Outcome")));
+                if (outcome != "Passed" && outcome != "Failed" && outcome != "Skipped") continue;
+                var uid = PsValue.Str(PsValue.Prop(row, "Uid"));
+                if (!string.IsNullOrWhiteSpace(uid)) executed.Add(uid);
+            }
+            var missing = new List<object>();
+            foreach (var uid in requiredUids ?? new string[] { null })
+            {
+                var key = uid ?? "";
+                if (!string.IsNullOrWhiteSpace(key) && !executed.Contains(key)) missing.Add(key);
+            }
+            return Result(("Ok", missing.Count == 0), ("Missing", missing.ToArray()));
+        }
+
+        /// <summary>
+        /// Test-NightlyTrxDiagnosticCrossCheck: the TRX rows and the diagnostic's terminal nodes hold the same
+        /// multiset of (simple class, method) keys for the batch's classes; rows outside them are extra classes.
+        /// </summary>
+        public static PSObject CrossCheck(object trxRows, object terminalNodes, string[] requiredClasses)
+        {
+            var assignment = new ClassAssignment(requiredClasses);
+            var requiredTruthy = LanguagePrimitives.IsTrue(requiredClasses) && requiredClasses.Length > 0;
+            var trxBag = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            var diagBag = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            var extra = new List<object>();
+            foreach (var r in Rows(trxRows))
+            {
+                var className = PsValue.Str(PsValue.Prop(r, "ClassName"));
+                var methodName = PsValue.Str(PsValue.Prop(r, "MethodName"));
+                if (!assignment.Assigned(className, ""))
+                {
+                    if (requiredTruthy) extra.Add(className + "." + methodName);
+                    continue;
+                }
+                var key = NightlyClassNames.BagKey(className, "", methodName);
+                trxBag[key] = (trxBag.ContainsKey(key) ? (int)trxBag[key] : 0) + 1;
+            }
+            foreach (var n in Rows(terminalNodes))
+            {
+                var className = PsValue.Str(PsValue.Prop(n, "ClassName"));
+                var typeName = PsValue.Str(PsValue.Prop(n, "Type"));
+                if (!assignment.Assigned(className, typeName)) continue;
+                var method = PsValue.Str(PsValue.Prop(n, "Method"));
+                if (string.IsNullOrWhiteSpace(method)) method = PsValue.Str(PsValue.Prop(n, "MethodName"));
+                var key = NightlyClassNames.BagKey(className, typeName, method);
+                diagBag[key] = (diagBag.ContainsKey(key) ? (int)diagBag[key] : 0) + 1;
+            }
+            var allKeys = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            foreach (var k in new ArrayList(trxBag.Keys)) allKeys[k] = true;
+            foreach (var k in new ArrayList(diagBag.Keys)) allKeys[k] = true;
+            var mismatch = new List<object>();
+            foreach (var k in new ArrayList(allKeys.Keys))
+            {
+                var t = trxBag.ContainsKey(k) ? (int)trxBag[k] : 0;
+                var d = diagBag.ContainsKey(k) ? (int)diagBag[k] : 0;
+                if (t != d) mismatch.Add(string.Format(CultureInfo.InvariantCulture, "{0} trx={1} diag={2}", k, t, d));
+            }
+            return Result(("Ok", mismatch.Count == 0 && extra.Count == 0), ("Mismatch", mismatch.ToArray()), ("ExtraClasses", extra.ToArray()));
+        }
+
+        /// <summary>Test-NightlyRequiredClassesPresent: each required class (or its bare name) has a terminal row.</summary>
+        public static PSObject RequiredClassesPresent(object terminalRows, string[] requiredClasses)
+        {
+            if (requiredClasses == null || requiredClasses.Length == 0) return Result(("Ok", true), ("Missing", Array.Empty<object>()));
+            var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in Rows(terminalRows))
+            {
+                var cn = PsValue.Str(PsValue.Prop(r, "ClassName"));
+                if (string.IsNullOrWhiteSpace(cn)) continue;
+                present.Add(cn);
+                present.Add(NightlyClassNames.Bare(cn));
+            }
+            var missing = new List<object>();
+            foreach (var name in requiredClasses)
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (!present.Contains(name) && !present.Contains(NightlyClassNames.Bare(name))) missing.Add(name);
+            }
+            return Result(("Ok", missing.Count == 0), ("Missing", missing.ToArray()));
+        }
+
+        /// <summary>
+        /// Get-NightlyDiscoveryIndexRequiredUids for a non-empty class list: the view's required UIDs of those
+        /// classes, in discovery order, without duplicates.
+        /// </summary>
+        public static object[] IndexRequiredUids(IDictionary byClass, bool[] excluded, object nodes, string[] requiredClasses)
+        {
+            var nodeArray = PsValue.AsArray(nodes);
+            var selected = new SortedSet<int>();
+            foreach (var want in requiredClasses)
+            {
+                if (string.IsNullOrWhiteSpace(want)) continue;
+                foreach (var name in new[] { want, NightlyClassNames.Bare(want) })
+                    if (byClass.Contains(name) && byClass[name] is IEnumerable hits)
+                        foreach (var i in hits) selected.Add((int)i);
+            }
+            var uids = new List<object>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var i in selected)
+            {
+                if (excluded[i]) continue;
+                var uid = PsValue.Str(PsValue.Prop(nodeArray[i], "Uid"));
+                if (string.IsNullOrWhiteSpace(uid) || !seen.Add(uid)) continue;
+                uids.Add(uid);
+            }
+            return uids.ToArray();
+        }
+    }
+
     /// <summary>Per-row helpers of the test-phase summary in test-phase-evidence.ps1.</summary>
     public static class TestPhaseSummary
     {
@@ -670,6 +825,92 @@ namespace Antiphon.Nightly
             var cells = new string[fields.Length];
             for (var i = 0; i < fields.Length; i++) cells[i] = Cell(PsValue.Prop(test, fields[i]));
             return string.Join(",", cells);
+        }
+
+        /// <summary>ConvertTo-TestPhaseSummaryRows' per-TRX tagging: Add-Member -Force of GroupId and Suite on each row.</summary>
+        public static void TagRows(object rows, string groupId, string suite)
+        {
+            foreach (var item in PsValue.AsArray(rows))
+            {
+                if (!(item is PSObject row)) continue;
+                SetNote(row, "GroupId", groupId ?? "");
+                SetNote(row, "Suite", suite ?? "");
+            }
+        }
+
+        /// <summary>
+        /// ConvertTo-TestPhaseSummaryRows' native lookup: TestId and every native identity in a row's output, to
+        /// the distinct (TestId, Path) rows carrying it. Keys and the duplicate test compare case-insensitively,
+        /// as the @{} and -eq they replace.
+        /// </summary>
+        public static Hashtable MapNative(object trxRows)
+        {
+            var nativeMap = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in PsValue.AsArray(trxRows))
+            {
+                var path = PsValue.Str(PsValue.Prop(row, "Path"));
+                var testId = PsValue.Str(PsValue.Prop(row, "TestId"));
+                var keys = new List<string> { testId };
+                keys.AddRange(NativeIds(PsValue.Str(PsValue.Prop(row, "StdOut"))));
+                foreach (var key in keys)
+                {
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+                    if (!(nativeMap[key] is List<object> list)) nativeMap[key] = list = new List<object>();
+                    var already = false;
+                    foreach (var existing in list)
+                        if (string.Equals(PsValue.Str(PsValue.Prop(existing, "TestId")), testId, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(PsValue.Str(PsValue.Prop(existing, "Path")), path, StringComparison.OrdinalIgnoreCase)) already = true;
+                    if (!already) list.Add(row);
+                }
+            }
+            return nativeMap;
+        }
+
+        private static void SetNote(PSObject row, string name, object value)
+        {
+            if (row.Properties[name] != null) row.Properties.Remove(name);
+            row.Properties.Add(new PSNoteProperty(name, value));
+        }
+
+        /// <summary>
+        /// ConvertTo-TestPhaseSummaryRows' rows for TRX results no phase record claims: { Rows, PassedWithoutPhase }.
+        /// A passing TRX row without phase evidence is 'unknown' and incomplete.
+        /// </summary>
+        public static PSObject UnjoinedTrxRows(object trxRows, IDictionary joinedTrx, IDictionary completeTestIds)
+        {
+            var rows = new List<object>();
+            var passedWithoutPhase = false;
+            foreach (var row in PsValue.AsArray(trxRows))
+            {
+                var testId = PsValue.Str(PsValue.Prop(row, "TestId"));
+                if (joinedTrx.Contains(testId + "|" + PsValue.Str(PsValue.Prop(row, "Path")))) continue;
+                var nativeHit = false;
+                foreach (var native in NativeIds(PsValue.Str(PsValue.Prop(row, "StdOut"))))
+                    if (completeTestIds.Contains(native)) nativeHit = true;
+                if (nativeHit || completeTestIds.Contains(testId)) continue;
+                var outcome = PsValue.Str(PsValue.Prop(row, "Outcome"));
+                var incomplete = false;
+                if (string.Equals(outcome, "Passed", StringComparison.OrdinalIgnoreCase))
+                {
+                    outcome = "unknown";
+                    incomplete = true;
+                    passedWithoutPhase = true;
+                }
+                rows.Add(new OrderedDictionary(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "testId", testId }, { "suite", PsValue.Str(PsValue.Prop(row, "Suite")) }, { "className", "" },
+                    { "method", PsValue.Str(PsValue.Prop(row, "Name")) }, { "duration", PsValue.Str(PsValue.Prop(row, "Duration")) },
+                    { "groupId", PsValue.Str(PsValue.Prop(row, "GroupId")) }, { "outcome", outcome },
+                    { "trxOutcome", PsValue.Str(PsValue.Prop(row, "Outcome")) }, { "phaseOutcome", "" },
+                    { "joined", false }, { "incomplete", incomplete }, { "countsKnown", false },
+                    { "db", 0 }, { "host", 0 }, { "process", 0 }, { "fs", 0 }, { "network", 0 }, { "fixture", 0 },
+                    { "overlapMs", 0 }, { "remainderMs", 0 }, { "droppedPhaseCount", 0 },
+                });
+            }
+            var result = new PSObject();
+            result.Properties.Add(new PSNoteProperty("Rows", rows.ToArray()));
+            result.Properties.Add(new PSNoteProperty("PassedWithoutPhase", passedWithoutPhase));
+            return result;
         }
 
         /// <summary>Get-TestPhaseNativeIds: ANTIPHON_TEST_PHASE_ID / C1514_NATIVE identities in a TRX row's output.</summary>

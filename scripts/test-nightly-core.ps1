@@ -179,9 +179,46 @@ function Test-NCDiagnosticsMatchFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+function Test-NCVerdictsMatchFallback {
+    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $nodes = @(Get-NCFixtureNodes 1500)
+    $outcomes = @('Passed', 'Failed', 'pass', ' Error ', 'Skipped', 'NotExecuted', 'pending', 'weird', '', $null)
+    $trx = [Collections.Generic.List[object]]::new()
+    $terminal = [Collections.Generic.List[object]]::new()
+    for ($i = 0; $i -lt 400; $i++) {
+        $n = $nodes[$i]
+        $trx.Add([pscustomobject]@{ ClassName = $n.ClassName; MethodName = $n.Method; Outcome = $outcomes[$i % $outcomes.Count]; Identity = ($n.ClassName + '.' + $n.Method) })
+        # The diagnostic side drops some rows and doubles others, so the bags disagree both ways.
+        if ($i % 17 -ne 0) { $terminal.Add([pscustomobject]@{ Uid = $n.Uid; ClassName = $n.ClassName; Type = $n.Type; Method = $n.Method; Outcome = $outcomes[($i + 3) % $outcomes.Count] }) }
+        if ($i % 29 -eq 0) { $terminal.Add([pscustomobject]@{ Uid = $n.Uid; ClassName = $n.ClassName; Type = $n.Type; Method = ''; MethodName = $n.Method; Outcome = 'Passed' }) }
+    }
+    $trx.Add($null); $terminal.Add($null)
+    $classes = @($nodes | ForEach-Object { $_.ClassName } | Select-Object -Unique)
+    $classSets = @(, @()) + @(, @('')) + @(, @($classes | Select-Object -First 4)) + @(, @(@($classes | Select-Object -First 2) + 'No.Such.Class' + $classes[5].Split('(')[0]))
+    $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
+    $r = Invoke-NCBothWays {
+        $entry.Views.Clear()
+        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) -ProfileAware
+        [ordered]@{
+            verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $trx.ToArray() -ProcessExit 0 -Sha 'a' -ExpectedSha 'A' -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+            verdictNull = ConvertTo-NightlyCoverageVerdict -TerminalRows $null -ProcessExit 1 -Sha 'a' -ExpectedSha 'b' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash ''
+            verdictEmpty = ConvertTo-NightlyCoverageVerdict -TerminalRows @() -ProcessExit 0 -Sha '' -ExpectedSha '' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash ''
+            perClassSet = @(foreach ($set in $classSets) { [ordered]@{
+                cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set
+                present = Test-NightlyRequiredClassesPresent -TerminalRows $trx.ToArray() -RequiredClasses $set
+                required = @(Get-NightlyDiscoveryIndexRequiredUids -View $view -RequiredClasses $set)
+            } })
+            expanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $terminal.ToArray() -RequiredUids @($nodes | Select-Object -First 300 | ForEach-Object { $_.Uid })
+            expandedNull = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $null -RequiredUids $null
+            crossNull = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $null -TerminalNodes $null -RequiredClasses $null
+        }
+    }
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains(' trx=')) 'verdicts' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; $expected = 8 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; $expected = 9 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

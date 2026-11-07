@@ -2931,10 +2931,21 @@ function ConvertTo-TestPhaseSummaryRows {
     }
     $trxRows = New-Object System.Collections.Generic.List[object]
     $trxFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Filter '*.trx' -File -ErrorAction SilentlyContinue)
+    # Compiled row loops (NightlyCore.cs TestPhaseSummary); the loops below are the fallback.
+    $core = Test-NightlyCoreAvailable
     foreach ($trx in $trxFiles) {
         if ((Get-TestPhasePathIdentity -Path $trx.FullName).Kind -ne 'regular') { continue }
         $trxRead = Read-TestPhaseTrxRows -Path $trx.FullName
         if ($null -eq $trxRead -or -not $trxRead.Complete -or $trxRead.Refused) { continue }
+        if ($core) {
+            $group = ''
+            if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
+            $suiteText = ''
+            if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
+            [Antiphon.Nightly.TestPhaseSummary]::TagRows(@($trxRead.Rows), $group, $suiteText)
+            foreach ($row in @($trxRead.Rows)) { $trxRows.Add($row) }
+            continue
+        }
         foreach ($row in @($trxRead.Rows)) {
             $group = ''
             if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
@@ -2946,6 +2957,8 @@ function ConvertTo-TestPhaseSummaryRows {
         }
     }
     $nativeMap = @{}
+    if ($core) { $nativeMap = [Antiphon.Nightly.TestPhaseSummary]::MapNative($trxRows.ToArray()) }
+    else {
     foreach ($row in $trxRows) {
         $keys = @([string]$row.TestId)
         foreach ($native in @(Get-TestPhaseNativeIds -Text ([string]$row.StdOut))) { $keys += [string]$native }
@@ -2959,6 +2972,7 @@ function ConvertTo-TestPhaseSummaryRows {
             }
             if (-not $already) { $list.Add($row) }
         }
+    }
     }
 
     $tests = New-Object System.Collections.Generic.List[object]
@@ -3068,6 +3082,11 @@ function ConvertTo-TestPhaseSummaryRows {
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
         })
     }
+    if ($core) {
+        $unjoined = [Antiphon.Nightly.TestPhaseSummary]::UnjoinedTrxRows($trxRows.ToArray(), $joinedTrx, $completeTestIds)
+        foreach ($row in $unjoined.Rows) { $tests.Add($row) }
+        if ($unjoined.PassedWithoutPhase -and -not $quality.Contains('missing-phase-unknown')) { $quality.Add('missing-phase-unknown') }
+    } else {
     foreach ($row in $trxRows) {
         $key = [string]$row.TestId + '|' + [string]$row.Path
         if ($joinedTrx.ContainsKey($key)) { continue }
@@ -3103,6 +3122,7 @@ function ConvertTo-TestPhaseSummaryRows {
             db = 0; host = 0; process = 0; fs = 0; network = 0; fixture = 0
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
         })
+    }
     }
     $shared = @()
     foreach ($fix in $fixtures) {

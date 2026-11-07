@@ -1061,6 +1061,9 @@ function Get-NightlyDiscoveryIndexRequiredUids {
     # launch's classes alone.
     param($View, [string[]]$RequiredClasses = @())
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $View.RequiredUids }
+    if (Test-NightlyCoreAvailable) {
+        return [Antiphon.Nightly.NightlyVerdicts]::IndexRequiredUids($View.ByClass, $View.Excluded, $View.Nodes, $RequiredClasses)
+    }
     $selected = [Collections.Generic.SortedSet[int]]::new()
     foreach ($c in @($RequiredClasses)) {
         $want = [string]$c
@@ -1144,10 +1147,19 @@ function ConvertTo-NightlyCoverageVerdict {
         $testsPassed = $false
         $reasons += 'zero-terminal-rows'
     }
+    $passedCount = $null
+    if (Test-NightlyCoreAvailable) {
+        # One compiled pass classifies every row once (the filters below normalise each row five times).
+        $classified = [Antiphon.Nightly.NightlyVerdicts]::ClassifyOutcomes($TerminalRows)
+        $failed = @($classified.Failed); $skipped = @($classified.Skipped)
+        $unexecuted = @($classified.NotExecuted); $unknown = @($classified.Unknown)
+        $passedCount = [int]$classified.Passed
+    } else {
     $failed = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Failed' })
     $skipped = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Skipped' })
     $unexecuted = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'NotExecuted' })
     $unknown = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Unknown' })
+    }
     if ($failed.Count -gt 0) {
         $testsPassed = $false
         $reasons += 'failed-row'
@@ -1188,7 +1200,9 @@ function ConvertTo-NightlyCoverageVerdict {
         $coverageComplete = $false
         $reasons += ('policy-mismatch {0} vs {1}' -f $PolicyHash, $ExpectedPolicyHash)
     }
-    $passedCount = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Passed' }).Count
+    if ($null -eq $passedCount) {
+        $passedCount = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Passed' }).Count
+    }
     return [pscustomobject]@{
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
@@ -1211,6 +1225,7 @@ function Test-NightlyCounterAgreement {
 
 function Test-NightlyExpandedRowsPresent {
     param([object[]]$DiscoveryNodes, [object[]]$TerminalRows, [string[]]$RequiredUids)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyVerdicts]::ExpandedRowsPresent($TerminalRows, $RequiredUids) }
     $terminalUids = @{}
     $executed = @('Passed', 'Failed', 'Skipped')
     foreach ($r in @($TerminalRows)) {
@@ -1233,6 +1248,7 @@ function Test-NightlyExpandedRowsPresent {
 
 function Test-NightlyTrxDiagnosticCrossCheck {
     param([object[]]$TrxRows, [object[]]$TerminalNodes, [string[]]$RequiredClasses = @())
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyVerdicts]::CrossCheck($TrxRows, $TerminalNodes, $RequiredClasses) }
     $trxBag = @{}
     $diagBag = @{}
     $extra = @()
@@ -1287,6 +1303,7 @@ function Test-NightlyRequiredClassesPresent {
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) {
         return [pscustomobject]@{ Ok = $true; Missing = @() }
     }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyVerdicts]::RequiredClassesPresent($TerminalRows, $RequiredClasses) }
     $present = @{}
     foreach ($r in @($TerminalRows)) {
         $cn = [string]$r.ClassName

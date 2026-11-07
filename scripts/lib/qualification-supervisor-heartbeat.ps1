@@ -150,19 +150,45 @@ function Read-QualificationActiveChunkIdentity {
     } catch {return $null}
 }
 
+# The suite's planned-groups file is written once and re-validated on every active-chunk write (twice per
+# chunk). Its parse is reused while its bytes are unchanged: the key is the SHA-256 the record publishes as
+# planDigest, taken from the same bytes that are parsed. Validation still runs on every write.
+$script:QualificationPlanSnapshots = @{}
+function Read-QualificationPlanSnapshot {
+    param([string]$Path)
+    if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
+    $bytes=[IO.File]::ReadAllBytes($Path)
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try { $hex=New-Object System.Text.StringBuilder; foreach($b in $sha.ComputeHash($bytes)){[void]$hex.Append($b.ToString('x2'))}; $digest=$hex.ToString() }
+    finally { $sha.Dispose() }
+    $key=$Path+'|'+$digest
+    if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
+        # As [IO.File]::ReadAllText decodes: UTF-8 unless a byte-order mark says otherwise.
+        $reader=New-Object System.IO.StreamReader((New-Object System.IO.MemoryStream(,$bytes)), [Text.Encoding]::UTF8, $true)
+        try { $plan=$reader.ReadToEnd()|ConvertFrom-Json } finally { $reader.Dispose() }
+        $chunks=New-Object 'System.Collections.Generic.Dictionary[string,int]' ([StringComparer]::Ordinal)
+        foreach($group in @($plan.groups)){$chunk=[string]$group.chunk;$count=0;[void]$chunks.TryGetValue($chunk,[ref]$count);$chunks[$chunk]=$count+1}
+        if($script:QualificationPlanSnapshots.Count -ge 16){$script:QualificationPlanSnapshots.Clear()}
+        $script:QualificationPlanSnapshots[$key]=[pscustomobject]@{Plan=$plan;Digest=$digest;Chunks=$chunks}
+    }
+    return $script:QualificationPlanSnapshots[$key]
+}
+
 function Write-QualificationActiveChunkIdentity {
     param([string]$Directory, [string]$SuiteId, [string]$ChunkId, [string]$RunId, [string]$Attempt, [string]$State='Active')
     try {
         if($State -cnotin @('Active','Idle') -or $SuiteId -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or $RunId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or $Attempt -cnotmatch '^[1-9][0-9]*$' -or $ChunkId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'){throw 'active-identity-schema'}
         $file='groups-planned-'+$SuiteId+'.json'
         $path=Join-Path $Directory $file
-        $plan=Read-QualificationPlanJson $path
+        $snapshot=Read-QualificationPlanSnapshot $path
+        $plan=$snapshot.Plan
         $index=Read-QualificationPlanJson (Join-Path $Directory 'groups-planned-index.json')
         $rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId})
-        if($rows.Count -ne 1 -or $rows[0].file -cne $file -or $index.runId -cne $RunId -or [string]$index.attempt -cne $Attempt -or $plan.runId -cne $RunId -or [string]$plan.attempt -cne $Attempt -or $plan.suite -cne $SuiteId -or @($plan.groups|Where-Object {$_.chunk -ceq $ChunkId}).Count -ne 1){throw 'active-plan-binding'}
+        $chunkCount=0;[void]$snapshot.Chunks.TryGetValue([string]$ChunkId,[ref]$chunkCount)
+        if($rows.Count -ne 1 -or $rows[0].file -cne $file -or $index.runId -cne $RunId -or [string]$index.attempt -cne $Attempt -or $plan.runId -cne $RunId -or [string]$plan.attempt -cne $Attempt -or $plan.suite -cne $SuiteId -or $chunkCount -ne 1){throw 'active-plan-binding'}
         $old=Read-QualificationActiveChunkIdentity $Directory
         $generation=1;if($old -and $old.runId -ceq $RunId -and $old.attempt -ceq $Attempt){$generation=[long]$old.generation+1}
-        $record=[ordered]@{format='antiphon-qualification-active-chunk-v1';state=$State;generation=$generation;runId=$RunId;attempt=$Attempt;suite=$SuiteId;chunk=$ChunkId;planFile=$file;planDigest=(Get-NightlyFileSha256 $path)}
+        $record=[ordered]@{format='antiphon-qualification-active-chunk-v1';state=$State;generation=$generation;runId=$RunId;attempt=$Attempt;suite=$SuiteId;chunk=$ChunkId;planFile=$file;planDigest=$snapshot.Digest}
         foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){if([string]$rows[0].$field -cne [string]$plan.$field){throw ('active-plan-'+$field)};$record[$field]=[string]$plan.$field}
         Write-NightlyAtomicJson -Path (Join-Path $Directory 'active-chunk.json') -Object $record
         return $true
