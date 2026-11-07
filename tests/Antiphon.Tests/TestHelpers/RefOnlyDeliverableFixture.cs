@@ -43,7 +43,9 @@ internal sealed class RefOnlyDeliverableFixture : IAsyncDisposable
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(w.Runner, file.Key))!);
             await File.WriteAllBytesAsync(Path.Combine(w.Runner, file.Key), file.Value);
-            await w.RunAsync(w.Runner, "add", "--", file.Key);
+            // These fixtures promise exact object bytes, independent of host autocrlf and clean filters.
+            var blob = await w.RunAsync(w.Runner, "hash-object", "--no-filters", "-w", "--", file.Key);
+            await w.RunAsync(w.Runner, "update-index", "--add", "--cacheinfo", "100644", blob, file.Key);
         }
         await w.RunAsync(w.Runner, "commit", "-m", "exact deliverable source");
         await w.RunAsync(w.Runner, "push", "origin", "HEAD:" + w.FullRef);
