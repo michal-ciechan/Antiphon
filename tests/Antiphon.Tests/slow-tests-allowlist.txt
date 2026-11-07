@@ -451,3 +451,6 @@ Antiphon.Tests.Scripts.ReleaseTagAllocatorTests
 Antiphon.Tests.Scripts.C1733AllocatorFixtureTests
 # CARD-1734: cold native builds execute the shipped child-build target through both checkpoint entry points.
 Antiphon.Tests.Checkpoints.CheckpointColdBuildTests
+
+# real Git pre-commit stall. The Windows timeout case uses the product per-command timeout because commit startup exceeds the 2s Linux budget before hook-started; that row is measured above 5s.
+Antiphon.Tests.Application.CardFileGitFailureAcceptanceTests
