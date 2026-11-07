@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "f6d55df5e16249b454f7dd575ca13725cb16817c677d4522d66a653c3c97ce06",
+  "policyHash": "c6da42db3549444e55fcf35ead72f674861dd24f4809bc924780bebcbd07f39d",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1532,6 +1532,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: mode-000 raw-reflog denial requires an unprivileged Linux process; Windows needs separate permission evidence.",
           "owner": "CARD-1737"
+        },
+        {
+          "suite": "antiphon",
+          "class": "LinuxServerRestartGateTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the SHA restart gate harness is a #!/bin/sh fake docker plus chmod. The case remains required on Linux.",
+          "owner": "CARD-1745"
         }
       ]
     }
