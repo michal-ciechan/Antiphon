@@ -51,6 +51,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     public Task SampleOnceAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        var tickStarted = Stopwatch.GetTimestamp();
         HostSample? read;
         try
         {
@@ -74,6 +75,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes, CpuUnknownReason = reason };
         _store.Add(sample);
         _history?.TryCapture(sample);
+        _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds);
         return Task.CompletedTask;
     }
 

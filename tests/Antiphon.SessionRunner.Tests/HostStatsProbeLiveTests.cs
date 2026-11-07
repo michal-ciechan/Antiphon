@@ -31,7 +31,7 @@ public class HostStatsProbeLiveTests
         first.Value.MemoryAvailableBytes.ShouldNotBeNull();
         first.Value.MemoryAvailableBytes!.Value.ShouldBeGreaterThan(0);
         first.Value.MemoryAvailableBytes.Value.ShouldBeLessThanOrEqualTo(first.Value.MemoryTotalBytes!.Value);
-        first.Value.Cores.ShouldBe(Environment.ProcessorCount);
+        first.Value.Cores.ShouldBe(C1514HostLoadNativeTests.LinuxOnlineCores());
         first.Value.CpuPercent.ShouldBeNull();
         first.Value.Load1.ShouldNotBeNull();
         first.Value.ProcessCount.ShouldNotBeNull();
@@ -70,7 +70,7 @@ public class HostStatsProbeLiveTests
         first.Value.SwapTotalBytes!.Value.ShouldBeGreaterThanOrEqualTo(first.Value.MemoryTotalBytes.Value);
         first.Value.Load1.ShouldBeNull();
         first.Value.CpuPercent.ShouldBeNull();
-        first.Value.Cores.ShouldBe(Environment.ProcessorCount);
+        first.Value.Cores.ShouldBe(checked((int)C1514HostLoadNativeTests.GetActiveProcessorCount(ushort.MaxValue)));
 
         await Task.Delay(1000);
         var second = probe.Read();

@@ -15,3 +15,5 @@ Antiphon.SessionRunner.Tests.LegacyWorkspaceRemovalGateTests
 Antiphon.SessionRunner.Tests.LinuxRunnerCustodyLifecycleTests
 # CARD-1619 native cgroup-v1 release uses owned tracked descendants and installed helpers.
 Antiphon.SessionRunner.Tests.Card1619LinuxCustodyStopIntentTests
+# CARD-1514: two full-runner 60-second off/on pairs after 15-second warmups; native CP-7/8.
+Antiphon.SessionRunner.Tests.C1514HostLoadNativeOverheadTests
