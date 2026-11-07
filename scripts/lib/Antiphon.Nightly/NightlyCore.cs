@@ -1212,142 +1212,77 @@ namespace Antiphon.Nightly
 
     /// <summary>
     /// Background writes for the evidence files a nightly run rewrites several times per batch (the timing
-    /// sidecars and the active-batch identity). Each write is the same temporary-file-then-replace as the
-    /// PowerShell writers, so a reader never sees a torn file; it only lands a little later. A path queued again
-    /// before its earlier text was written replaces that text and moves to the back of the queue, so files land
-    /// in the order the run produced them and only the newest text of each is written. Flush waits for the
-    /// queue; the process waits for it on exit. A crash can lose the writes still queued.
+    /// sidecars and the active-batch identity), on an Antiphon.IO.WriteBehind file system: each lands as a
+    /// temporary file renamed over the target, so a reader never sees a torn file, only a later one. A path
+    /// written again before it landed keeps only its newest text; files land in the order last written.
+    /// Flush waits for the queue; the process waits for it on exit. A crash can lose the queued writes.
     /// </summary>
     public static class DeferredEvidenceWriter
     {
         private static readonly object Gate = new object();
-        private static readonly LinkedList<string> Queue = new LinkedList<string>();
-        private static readonly Dictionary<string, KeyValuePair<LinkedListNode<string>, string[]>> Pending =
-            new Dictionary<string, KeyValuePair<LinkedListNode<string>, string[]>>(StringComparer.Ordinal);
-        private static readonly List<string> Failures = new List<string>();
-        private static bool running;
-        private static int busy;
-        private static string writing;
-        private static bool exitHooked;
+        private static Antiphon.IO.WriteBehind.WriteBehindFileSystem fileSystem;
 
-        /// <summary>Queues a write. skipLinks: leave an existing directory or link alone, as Write-TestPhaseTextAtomic does.</summary>
+        private static Antiphon.IO.WriteBehind.WriteBehindFileSystem FileSystem
+        {
+            get
+            {
+                lock (Gate)
+                {
+                    if (fileSystem == null)
+                    {
+                        fileSystem = new Antiphon.IO.WriteBehind.WriteBehindFileSystem(new System.IO.Abstractions.FileSystem());
+                        AppDomain.CurrentDomain.ProcessExit += (sender, args) => Flush();
+                    }
+                    return fileSystem;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Queues a write, creating its directory. skipLinks: leave an existing directory or link alone, as
+        /// Write-TestPhaseTextAtomic does; otherwise a path that cannot be written throws now.
+        /// </summary>
         public static void Enqueue(string path, string text, bool skipLinks)
         {
             string full = System.IO.Path.GetFullPath(path);
-            lock (Gate)
+            if (skipLinks)
             {
-                KeyValuePair<LinkedListNode<string>, string[]> old;
-                if (Pending.TryGetValue(full, out old)) Queue.Remove(old.Key);
-                LinkedListNode<string> node = Queue.AddLast(full);
-                Pending[full] = new KeyValuePair<LinkedListNode<string>, string[]>(node, new[] { text, skipLinks ? "1" : "" });
-                if (!exitHooked)
-                {
-                    exitHooked = true;
-                    AppDomain.CurrentDomain.ProcessExit += (sender, args) => Flush();
-                }
-                if (!running)
-                {
-                    running = true;
-                    var thread = new System.Threading.Thread(Run);
-                    thread.IsBackground = false;
-                    thread.Name = "antiphon-evidence-writer";
-                    thread.Start();
-                }
-            }
-        }
-
-        /// <summary>Waits until every queued write is on disk; returns (and forgets) the writes that failed.</summary>
-        public static string[] Flush()
-        {
-            lock (Gate)
-            {
-                while (Queue.Count > 0 || busy > 0) System.Threading.Monitor.Wait(Gate);
-                string[] failed = Failures.ToArray();
-                Failures.Clear();
-                return failed;
-            }
-        }
-
-        /// <summary>Waits until the queued write of one path is on disk; returns (and forgets) failed writes.</summary>
-        public static string[] Flush(string path)
-        {
-            string full = System.IO.Path.GetFullPath(path);
-            lock (Gate)
-            {
-                while (Pending.ContainsKey(full) || string.Equals(writing, full, StringComparison.Ordinal)) System.Threading.Monitor.Wait(Gate);
-                string[] failed = Failures.ToArray();
-                Failures.Clear();
-                return failed;
-            }
-        }
-
-        private static void Run()
-        {
-            while (true)
-            {
-                string path;
-                string[] item;
-                lock (Gate)
-                {
-                    if (Queue.Count == 0)
-                    {
-                        running = false;
-                        System.Threading.Monitor.PulseAll(Gate);
-                        return;
-                    }
-                    path = Queue.First.Value;
-                    Queue.RemoveFirst();
-                    item = Pending[path].Value;
-                    Pending.Remove(path);
-                    writing = path;
-                    busy++;
-                }
-                try { WriteAtomic(path, item[0], item[1].Length > 0); }
-                catch (Exception ex) { lock (Gate) { Failures.Add(path + ": " + ex.Message); } }
-                finally
-                {
-                    lock (Gate)
-                    {
-                        busy--;
-                        writing = null;
-                        System.Threading.Monitor.PulseAll(Gate);
-                    }
-                }
-            }
-        }
-
-        /// <summary>Write-TestPhaseTextAtomic / Write-NightlyAtomicJson: temporary file, then replace or move.</summary>
-        public static void WriteAtomic(string path, string text, bool skipLinks)
-        {
-            bool exists = true;
-            System.IO.FileAttributes attrs = 0;
-            try { attrs = System.IO.File.GetAttributes(path); }
-            catch (System.IO.FileNotFoundException) { exists = false; }
-            catch (System.IO.DirectoryNotFoundException) { exists = false; }
-            if (exists && skipLinks && (attrs & (System.IO.FileAttributes.Directory | System.IO.FileAttributes.ReparsePoint)) != 0) return;
-            string dir = System.IO.Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
-            string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            System.IO.File.WriteAllText(tmp, text, new UTF8Encoding(false));
-            if (exists)
-            {
-                string bak = path + ".bak";
-                System.IO.File.Replace(tmp, path, bak);
                 try
                 {
-                    if (System.IO.File.Exists(bak))
-                    {
-                        System.IO.File.SetAttributes(bak, System.IO.FileAttributes.Normal);
-                        System.IO.File.Delete(bak);
-                    }
+                    System.IO.FileAttributes attrs = System.IO.File.GetAttributes(full);
+                    if ((attrs & (System.IO.FileAttributes.Directory | System.IO.FileAttributes.ReparsePoint)) != 0) return;
                 }
-                catch (System.IO.IOException) { }
-                catch (UnauthorizedAccessException) { }
+                catch (System.IO.FileNotFoundException) { }
+                catch (System.IO.DirectoryNotFoundException) { }
             }
-            else
+            string dir = System.IO.Path.GetDirectoryName(full);
+            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+            FileSystem.File.WriteAllText(full, text);
+        }
+
+        /// <summary>Waits until every queued write is on disk; returns the writes that failed since the last flush.</summary>
+        public static string[] Flush()
+        {
+            try { FileSystem.Flush(); return new string[0]; }
+            catch (AggregateException ex) { return Describe(ex); }
+        }
+
+        /// <summary>Waits until the queued write of one path is on disk; returns the writes that failed.</summary>
+        public static string[] Flush(string path)
+        {
+            try { FileSystem.Flush(System.IO.Path.GetFullPath(path)); return new string[0]; }
+            catch (AggregateException ex) { return Describe(ex); }
+        }
+
+        private static string[] Describe(AggregateException ex)
+        {
+            var failed = new List<string>();
+            foreach (Exception inner in ex.InnerExceptions)
             {
-                System.IO.File.Move(tmp, path);
+                var write = inner as Antiphon.IO.WriteBehind.WriteBehindException;
+                failed.Add(write == null ? inner.Message : write.Path + ": " + write.InnerException.Message);
             }
+            return failed.ToArray();
         }
     }
 }

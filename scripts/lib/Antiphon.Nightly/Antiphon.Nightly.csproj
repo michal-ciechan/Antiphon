@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The nightly scripts' compiled implementation. nightly-core.ps1 builds this project once per source
+    version into a cache under the user's temp directory and loads it into the PowerShell session; the
+    PowerShell functions stay the entry points (and the fallback when it cannot be built).
+    PowerShell's own System.Management.Automation is used at run time: the reference is compile-only.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Antiphon.Nightly</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PowerShellStandard.Library" Version="5.1.1" IncludeAssets="compile" PrivateAssets="all" />
+    <ProjectReference Include="../../../src/Antiphon.IO.WriteBehind/Antiphon.IO.WriteBehind.csproj" />
+  </ItemGroup>
+</Project>

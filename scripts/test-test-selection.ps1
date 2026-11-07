@@ -388,8 +388,8 @@ function New-C1313CrlfScriptRoot {
         [IO.File]::WriteAllBytes($dest,[Text.Encoding]::UTF8.GetBytes($text))
     }
     [IO.File]::Copy((Join-Path $repoRoot 'scripts/lib/CheckpointProcessRunner.cs'),(Join-Path $scripts 'lib/CheckpointProcessRunner.cs'))
-    # nightly-common.ps1 loads the compiled nightly core (nightly-core.ps1 + NightlyCore.cs).
-    [IO.File]::Copy((Join-Path $repoRoot 'scripts/lib/NightlyCore.cs'),(Join-Path $scripts 'lib/NightlyCore.cs'))
+    # nightly-common.ps1 loads nightly-core.ps1; without the Antiphon.Nightly project beside it, this copy
+    # runs the PowerShell implementations.
     return $scripts
 }
 function Test-C1313_SelectorLineEndings {
