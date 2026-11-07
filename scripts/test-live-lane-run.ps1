@@ -9,15 +9,20 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/c487-harness.ps1"
 . "$PSScriptRoot/lib/live-lane-run.ps1"
 $repo = Split-Path $PSScriptRoot -Parent
-# These five inputs are the census the paid wrapper-only manifest was commissioned
+# These inputs are the census the paid wrapper-only manifest was commissioned
 # against. A change to any of them must be a deliberate, reviewed act: the same
 # change updates $script:PinnedInputDigest to the value printed by
 #   pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest
 # The digest is over newline-normalised text, so LF and CRLF checkouts agree.
+# nightly-core.ps1 is the loader those readers dot-source. The isolated census
+# turns the loader off and runs the pinned PowerShell reader: the compiled
+# census bypasses Get-NightlyDiscoveryDispositionIndexed, and this pin does
+# not carry NightlyCore.cs. Core off matches the compiled census on this fixture.
 $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
+    'scripts/lib/nightly-core.ps1',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = '744567b884786c7f1e79e02a1d350195b37231cd3f1489e15bdaaf0d9e2e754a'
+$script:PinnedInputDigest = '656735d424cb7151fdfcbf2593cd91278fded6a7f492788fc1380e99b4994411'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
@@ -238,21 +243,28 @@ function Read-Census($root) {
     # reader silently resolve functions from the candidate (or the reverse).
     $reader = {
         param($root)
-        . "$root/scripts/lib/nightly-common.ps1"
-        . "$root/scripts/lib/nightly-policy.ps1"
-        . "$root/scripts/lib/nightly-coverage.ps1"
-        $policyRead = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
-        $policy = $policyRead.Object
-        $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
-        $nodes = @($discovery.Nodes)
-        $nodes += @(
-            @{ Uid='sentinel-c680'; ClassName='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; Method='C680_LiveNudgeRefusesPermissionAndQuestionDialogs'; Categories=@('Integration') },
-            @{ Uid='sentinel-ordinary'; ClassName='Antiphon.Tests.Ordinary'; Method='Plain'; Categories=@('Unit') },
-            @{ Uid='sentinel-excluded'; ClassName='Antiphon.Tests.Agents.ClaudeAdapterIntegrationTests'; Method='RoundTrip'; Categories=@('Integration') }
-        )
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy -Profile rc -SuiteId antiphon -Platform linux)
-        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
-        return [ordered]@{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
+        $previousCore = $env:ANTIPHON_NIGHTLY_CORE
+        $env:ANTIPHON_NIGHTLY_CORE = 'off'
+        try {
+            . "$root/scripts/lib/nightly-common.ps1"
+            . "$root/scripts/lib/nightly-policy.ps1"
+            . "$root/scripts/lib/nightly-coverage.ps1"
+            $policyRead = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
+            $policy = $policyRead.Object
+            $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
+            $nodes = @($discovery.Nodes)
+            $nodes += @(
+                @{ Uid='sentinel-c680'; ClassName='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; Method='C680_LiveNudgeRefusesPermissionAndQuestionDialogs'; Categories=@('Integration') },
+                @{ Uid='sentinel-ordinary'; ClassName='Antiphon.Tests.Ordinary'; Method='Plain'; Categories=@('Unit') },
+                @{ Uid='sentinel-excluded'; ClassName='Antiphon.Tests.Agents.ClaudeAdapterIntegrationTests'; Method='RoundTrip'; Categories=@('Integration') }
+            )
+            $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy -Profile rc -SuiteId antiphon -Platform linux)
+            $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+            return [ordered]@{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
+        } finally {
+            if ($null -eq $previousCore) { Remove-Item Env:ANTIPHON_NIGHTLY_CORE -ErrorAction SilentlyContinue }
+            else { $env:ANTIPHON_NIGHTLY_CORE = $previousCore }
+        }
     }
     $ps = [PowerShell]::Create()
     try {
@@ -288,7 +300,7 @@ function Test-WrapperOnlyPaidManifest {
     Check 'policy-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     [IO.File]::WriteAllText($policyPath, $original)
     $reader = Join-Path $beforeRoot 'scripts/lib/nightly-coverage.ps1'
-    [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryDisposition { param(`$Node, `$ProfileExclusions, [switch]`$ProfileAware) return @{ Disposition = 'excluded'; Reason = 'fixture'; Owner = 'CARD-1545' } }`n")
+    [IO.File]::AppendAllText($reader, "`nfunction Get-NightlyDiscoveryDispositionIndexed { param(`$Index, `$Node) return @{ Disposition = 'excluded'; Reason = 'fixture'; Owner = 'CARD-1545' } }`n")
     Check 'reader-edit' ((Read-Census $beforeRoot) -cne $after -and -not (Test-ProtectedInputs $beforeRoot))
     # Committed edits, as a clean CI/nightly/rc checkout sees them, each with a recomputed
     # policyHash. The first excludes an unrelated class: no sentinel moves, so only the pin
