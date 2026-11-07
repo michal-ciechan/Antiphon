@@ -33,13 +33,15 @@ public static class ReportValidator
             return "invalid_timing";
         if (report.CleanupRefusals.Count > 0)
             return "cleanup_refused";
-        if (report.ExitCode != ExitCodes.Green || report.Verdict != "GREEN" || !string.IsNullOrWhiteSpace(report.Reason))
+        if (report.ExitCode != ExitCodes.Green || report.Verdict != "GREEN")
             return "report_failed";
         if (expectedRepeat < 1 || report.SchemaVersion is not (2 or 3)
             || report.SchemaVersion == 2 && report.Rows.Any(row => row.Repeat is not null)
             || report.SchemaVersion == 3 && report.Rows.All(row => row.Repeat is null)
             || !IsSourceEligible(report.Source, expectedSha) || report.Commit != expectedSha)
             return "report_source_ineligible";
+        if (!string.IsNullOrWhiteSpace(report.Reason))
+            return "report_failed";
         var rows = selectedIds is { Count: > 0 }
             ? report.Rows.Where(row => selectedIds.Contains(row.Id, StringComparer.Ordinal)).ToList()
             : report.Rows;
