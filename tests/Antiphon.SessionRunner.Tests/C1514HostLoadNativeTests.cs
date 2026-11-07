@@ -13,7 +13,8 @@ namespace Antiphon.SessionRunner.Tests;
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadNativeTests(C1514HostLoadFixture fixture)
 {
-    [Test, NativeLinuxOnly("CARD-1514: production Linux factory, host /proc topology and durable sample; CP-7 required on Linux.")]
+    [Test]
+    [NativeLinuxOnly("CARD-1514: production Linux factory, host /proc topology and durable sample; CP-7 required on Linux.")]
     public async Task Linux_ProductionFactoryPreservesHostSamples()
     {
         OperatingSystem.IsLinux().ShouldBeTrue();
