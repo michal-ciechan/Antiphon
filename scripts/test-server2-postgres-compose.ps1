@@ -183,6 +183,89 @@ function Assert-NoDocker {
     Assert-True ($Result.Err -notmatch [regex]::Escape($script:Password)) ($Name + ' hides the fixture password on stderr') 'stderr contained the fixture password'
 }
 
+function Get-DrillCommandBodies {
+    param([string]$Text)
+    $bodies = New-Object System.Collections.Generic.List[string]
+    foreach ($line in @($Text -split "`n")) {
+        $trim = $line.TrimEnd("`r")
+        $mark = ' :: '
+        $at = $trim.IndexOf($mark)
+        if ($trim.StartsWith('drill-command:') -and $at -ge 0) {
+            [void]$bodies.Add($trim.Substring($at + $mark.Length))
+        }
+    }
+    return @($bodies)
+}
+
+function Get-DocDrillFence {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    $text = [System.IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+    $at = $text.IndexOf('### Scratch restore drill')
+    if ($at -lt 0) { return @() }
+    $needle = '```text' + [char]10
+    $fenceAt = $text.IndexOf($needle, $at)
+    if ($fenceAt -lt 0) { return @() }
+    $bodyAt = $fenceAt + $needle.Length
+    $endNeedle = [char]10 + '```'
+    $end = $text.IndexOf($endNeedle, $bodyAt)
+    if ($end -lt 0) { return @() }
+    $body = $text.Substring($bodyAt, $end - $bodyAt)
+    return @($body -split "`n" | Where-Object { $_.Length -gt 0 })
+}
+
+function Get-DrillSection {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $text = [System.IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+    $at = $text.IndexOf('### Scratch restore drill')
+    if ($at -lt 0) { return '' }
+    $nextNeedle = [char]10 + '## '
+    $next = $text.IndexOf($nextNeedle, $at + 1)
+    if ($next -lt 0) { return $text.Substring($at) }
+    return $text.Substring($at, $next - $at)
+}
+
+function Invoke-PsqlQuoteProbe {
+    param([string]$PsqlLine)
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1406-sh-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    try {
+        $stub = Join-Path $dir 'psql'
+        $stubBody = @'
+#!/bin/sh
+prev=
+for a in "$@"; do
+  if [ "$prev" = "-c" ]; then
+    printf '%s' "$a"
+    exit 0
+  fi
+  prev=$a
+done
+exit 2
+'@
+        [System.IO.File]::WriteAllText($stub, ($stubBody -replace "`r`n", "`n"))
+        Set-Mode $stub '755'
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = 'sh'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        [void]$psi.ArgumentList.Add('-c')
+        [void]$psi.ArgumentList.Add($PsqlLine)
+        $psi.Environment['PATH'] = $dir
+        $proc = [System.Diagnostics.Process]::new()
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+        return @{ Exit = $proc.ExitCode; Out = $stdout; Err = $stderr }
+    } finally {
+        if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+    }
+}
+
 $cases = @(
     'compose-contract',
     'render',
@@ -549,15 +632,28 @@ function Invoke-Case {
                         'docker volume create antiphon-server2-postgres-drill_pgdata',
                         'docker volume rm antiphon-server2-postgres-drill_pgdata',
                         '*-drill_pgdata',
-                        'docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl',
+                        'postgres-snapshot.ps1 -Execute',
+                        '.dump.age',
+                        'age -d -i "$AGE_IDENTITY"',
+                        'scp "$SNAPSHOT"',
+                        'copy_start=$(date +%s)',
+                        'chmod 0600',
+                        'shred -u',
                         'pg_restore -U antiphon -d antiphon --no-owner --no-acl',
                         'antiphon-server2-postgres-drill-postgres-1',
                         'pg_stat_user_tables',
                         '__EFMigrationsHistory',
+                        '\"__EFMigrationsHistory\"',
                         'pg_extension'
                     )) {
                     Assert-True ($result.Out.Contains($need)) ('drill command contains ' + $need) 'missing'
                 }
+                Assert-True ($result.Out -notmatch 'pg_dump') 'drill plan does not print a plaintext pg_dump' 'pg_dump present'
+                Assert-True ($result.Out -notmatch 'AGE-SECRET-KEY-') 'drill plan does not print an age key' 'key text present'
+                Assert-True (-not ($result.Out -match '(?m)>\s*\S+\.dump(?!\.age)')) 'no command writes a plaintext dump' 'plaintext redirect present'
+                Assert-True (-not ($result.Out -match 'shred[^\n]*\.dump\.age')) 'shred does not delete the ciphertext' 'ciphertext shredded'
+                $section = Get-DrillSection $doc
+                Assert-True ($section.Contains('encrypted')) 'drill section says encrypted' 'missing'
                 Assert-True ($result.Out -notmatch 'docker-compose\.server2-postgres\.yml') 'drill plan does not name the production compose' 'production compose named'
                 Assert-True ($result.Out -notmatch '-p antiphon-server2-postgres up') 'drill plan does not start the production project' 'production up present'
                 Assert-True ($result.Out -notmatch 'antiphon-server2-postgres_pgdata') 'drill plan does not name the production volume' 'production volume named'
@@ -568,10 +664,38 @@ function Invoke-Case {
                     Assert-True (($line.Contains('antiphon-server2-postgres-drill')) -and ($line.Contains('antiphon-server2-postgres-drill_pgdata'))) 'drill command names the drill project and volume' $line.Trim()
                     Assert-True ($line -notmatch 'antiphon-server2-postgres_pgdata') 'drill command cannot reach the production volume' $line.Trim()
                 }
+                $bodies = @(Get-DrillCommandBodies $result.Out)
+                $docCmds = @(Get-DocDrillFence $doc)
+                Assert-True ($docCmds.Count -gt 0) 'doc drill fence has commands' ('count=' + $docCmds.Count)
+                $same = ($docCmds.Count -eq $bodies.Count) -and ($docCmds.Count -gt 0)
+                $mismatch = 'script=' + $bodies.Count + ' doc=' + $docCmds.Count
+                $limit = [Math]::Min($docCmds.Count, $bodies.Count)
+                for ($i = 0; $i -lt $limit; $i++) {
+                    if ($docCmds[$i] -cne $bodies[$i]) {
+                        $same = $false
+                        $mismatch = 'line ' + ($i + 1) + ' script=[' + $bodies[$i] + '] doc=[' + $docCmds[$i] + ']'
+                        break
+                    }
+                }
+                Assert-True ($same) 'printed drill commands equal the doc fence' $mismatch
                 $dump = @($lines | Where-Object { $_ -match 'antiphon-postgres' })
                 Assert-True ($dump.Count -eq 1) 'the desktop database is named once' ('count=' + $dump.Count)
                 if ($dump.Count -eq 1) {
-                    Assert-True (($dump[0] -match 'pg_dump') -and ($dump[0] -notmatch 'psql|pg_restore|dropdb|createdb|DELETE|INSERT|UPDATE|DROP')) 'the desktop command is pg_dump only' $dump[0].Trim()
+                    Assert-True (($dump[0] -match 'postgres-snapshot\.ps1') -and ($dump[0] -match '-Execute') -and ($dump[0] -match '-RecipientFile "\$AGE_RECIPIENT"') -and ($dump[0] -notmatch 'pg_dump|>|psql|pg_restore|dropdb|createdb|DELETE|INSERT|UPDATE|DROP')) 'the desktop step takes the encrypted snapshot' $dump[0].Trim()
+                }
+                $migBodies = @($bodies | Where-Object { $_ -match '__EFMigrationsHistory' })
+                Assert-True ($migBodies.Count -eq 1) 'one migrations command' ('count=' + $migBodies.Count)
+                $docMig = @($docCmds | Where-Object { $_ -match '__EFMigrationsHistory' })
+                if ($migBodies.Count -eq 1 -and $docMig.Count -eq 1) {
+                    Assert-True ($migBodies[0] -ceq $docMig[0]) 'printed migrations line equals the doc line' $migBodies[0]
+                    $psqlLine = [regex]::Replace($migBodies[0], '^docker exec \S+ ', '')
+                    Assert-True ($psqlLine.StartsWith('psql ')) 'migrations line is a psql command' $psqlLine
+                    $probe = Invoke-PsqlQuoteProbe $psqlLine
+                    $wanted = 'select "MigrationId" from "__EFMigrationsHistory" order by "MigrationId"'
+                    Assert-True (($probe.Exit -eq 0) -and ($probe.Out -ceq $wanted)) 'sh keeps the migrations identifier quotes' ('exit=' + $probe.Exit + ' out=[' + $probe.Out + '] err=[' + $probe.Err + ']')
+                } else {
+                    Assert-True $false 'printed migrations line equals the doc line' 'missing migrations line'
+                    Assert-True $false 'sh keeps the migrations identifier quotes' 'missing migrations line'
                 }
                 Assert-NoDocker $root 'drill-commands' $result
             } finally { Remove-Root $root }
