@@ -425,7 +425,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
                 $text = (& $Validator -Evidence $case.path -ExpectedSourceSha $Sha -ExpectedRepeat $ExpectedRepeat *>&1 | Out-String)
                 [pscustomobject]@{ key = $case.key; exit = $LASTEXITCODE; output = $text }
             })
-            [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8))
+            [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8 -EscapeHandling EscapeNonAscii))
             """);
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
