@@ -8,7 +8,7 @@ repeat-proof: at most 3 normal + 2 loaded repetitions per unchanged proof select
 
 SOURCE: Pass committed HEAD as expected SHA; keep actual tested SHA and unedited CHECKPOINT lines with clean receipts/verified build provenance. Run scripts/check-evidence-diff.ps1 over full task base..HEAD.
 
-ROUND: Follow the brief. Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
+ROUND: Follow the brief. Final (default, first round): closed rows, named classes, not the whole lane, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
 
 INVARIANTS: Run required V-n/R-n; report every ID and actual outcome. Commit and push slices; report full commit SHA, branch, worktree, original Code task ID (landing owner), plan/evidence paths.
 

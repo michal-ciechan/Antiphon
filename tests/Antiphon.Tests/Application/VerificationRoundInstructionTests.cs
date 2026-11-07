@@ -23,7 +23,7 @@ public sealed class VerificationRoundInstructionTests
         foreach (var required in new[]
                  {
                      "Unit plus the named affected integration classes",
-                     "Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work.",
+                     "Final (default, first round): closed rows, named classes, not the whole lane, every ordinary V/R, required manual work.",
                      "Run required V-n/R-n; report every ID and actual outcome.",
                  })
             code.ShouldContain(required, customMessage: $"Code contract row: {required}");

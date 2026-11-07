@@ -20,7 +20,7 @@ TUnit uses `--treenode-filter`, not `--filter`:
 dotnet run --project tests/Antiphon.Tests -- --treenode-filter "/Antiphon.Tests/AnsiStripperTests/*"
 ```
 
-**Foreground default (CARD-0110):** run the Unit lane, not the full ~25.5 min assembly. A `[Category=X]` predicate works:
+**Foreground default (CARD-0110):** per-task Final runs the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence, not the full ~25.5 min assembly. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop. `/*/*/*/*[Category=Unit]` is that nightly and rc lane, not a per-task Final command:
 
 ```
 dotnet run --project tests/Antiphon.Tests -- --treenode-filter "/*/*/*/*[Category=Unit]"

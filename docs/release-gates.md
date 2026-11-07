@@ -726,7 +726,7 @@ landing policy.
 - An Interim round selects cumulative changed cases since that baseline (earlier repair cases
   included), unresolved-finding tests and named adjacent smoke, and records every deferred ID.
   Deferred IDs are never marked passed.
-- Whole-Unit and affected-class ordinary V/R stay in Final.
+- Affected-class ordinary V/R stay in per-task Final: the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop.
 - Unbounded shared or native impact stays Final.
 - Unnamed broad integration/native work and automated E2E run periodically on RCs; a named
   ordinary check is never silently reclassified as "covered by the RC".
