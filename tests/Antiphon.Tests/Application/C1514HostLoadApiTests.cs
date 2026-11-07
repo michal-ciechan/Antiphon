@@ -84,6 +84,13 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
             await using var db = world.Db(false); (await db.HostLoadIngestCursors.CountAsync()).ShouldBe(0);
             using var api = await world.GetAsync("/api/hosts/grok-linux/load/history"); api.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse(); api.RootElement.GetProperty("items").GetArrayLength().ShouldBe(0);
         }
+        await using (var legacy = await fixture.WorldAsync(phoneHome: true, advertiseHistory: false))
+        {
+            await legacy.ProduceAsync(C1514HostLoadWorld.T0);
+            await Should.ThrowAsync<HostStatsUnsupportedException>(() => legacy.Source.GetHostLoadHistoryAsync(null, 120, CancellationToken.None));
+            legacy.HistoryRequests.ShouldBe(0, "Never send a new operation name to an old peer that cannot parse it.");
+            (await legacy.Source.GetHostStatsAsync(CancellationToken.None))!.Current!.CpuPercent.ShouldBe(40d);
+        }
         await using var broken = await fixture.WorldAsync(); broken.RunnerReply = async c => { c.Response.ContentType = "application/json"; await c.Response.WriteAsync("{truncated", c.RequestAborted); };
         await Should.ThrowAsync<JsonException>(() => broken.Source.GetHostLoadHistoryAsync(null, 120, CancellationToken.None));
         using var canceled = new CancellationTokenSource(); canceled.Cancel(); await Should.ThrowAsync<OperationCanceledException>(() => broken.Source.GetHostLoadHistoryAsync(null, 120, canceled.Token));
