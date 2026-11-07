@@ -132,6 +132,11 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
             Builds = [new BuildSpec { Id = "bin-partial", Project = "sample", OutputPath = "bin-partial/" }],
             Checkpoints = [CheckpointFixtures.Row("CP-known", "bin-partial"), CheckpointFixtures.Row("CP-pending", "bin-partial")],
         };
+        foreach (var row in manifest.Checkpoints)
+        {
+            row.Filter = "/*/*/FixtureTests/*";
+            row.Expect = ["FixtureTests"];
+        }
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var driver = new FakeDriver();
         driver.When(CheckpointFixtures.IsRun, (request, _) =>
@@ -157,6 +162,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
         ReportWriter.RequiredReceiptRefusal(run, state).ShouldBeNull();
         var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
         var known = report.Rows.Single(row => row.Id == "CP-known");
+        known.State.ShouldBe("green");
         known.Executed.ShouldBe(2); known.Passed.ShouldBe(2); known.Failed.ShouldBe(0); known.Skipped.ShouldBe(0);
         report.Rows.Single(row => row.Id == "CP-pending").Executed.ShouldBeNull();
         report.Builds.Single().Source.BuildSource.ShouldBe("verified");
@@ -236,9 +242,24 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
         report.Rows.Single().Executed.ShouldBeNull("a command has no test counts");
         if (reason is not null) report.Reason.ShouldBe(reason);
         ReportValidator.Validate(report, report.Commit).ShouldBe("report_failed");
+        ValidateScript(Path.Combine(run, "report.json"), report.Commit);
         // Forging the top-level result must not turn unknown/unrun rows into green.
         report.ExitCode = 0; report.Verdict = "GREEN";
         ReportValidator.Validate(report, report.Commit).ShouldNotBeNull();
+        var forged = Path.Combine(Path.GetDirectoryName(run)!, Path.GetFileName(run) + "-forged.json");
+        File.WriteAllText(forged, ReportWriter.JsonText(report));
+        ValidateScript(forged, report.Commit);
+    }
+
+    private static void ValidateScript(string evidence, string sha)
+    {
+        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot,
+            "scripts/validate-checkpoint-receipt.ps1"), "-Evidence", evidence, "-ExpectedSourceSha", sha })
+            start.ArgumentList.Add(arg);
+        var result = CheckpointFixtureProcess.Run(start, 30_000);
+        result.Exit.ShouldBe(2, result.Stdout + result.Stderr);
+        result.Stdout.ShouldContain("reason=report_failed");
     }
 
     private static async Task Join(Process process)

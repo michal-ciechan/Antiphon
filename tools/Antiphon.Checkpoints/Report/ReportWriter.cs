@@ -18,6 +18,7 @@ public static class ReportWriter
     public static string Markdown(CheckpointCleanupContext context, ReportModel model)
     {
         var text = new StringBuilder();
+        text.AppendLine(SafeWrite.Marker + " " + model.RunId);
         text.AppendLine("--- checkpoint report ---");
         text.AppendLine($"run: {model.RunId}   manifest: {model.ManifestPath}");
         text.AppendLine($"commit: {model.Commit}  branch: {model.Branch}  worktree: {model.Worktree}  host: {model.Host.Os} cores={model.Host.Cores}");
@@ -85,7 +86,11 @@ public static class ReportWriter
         var markdown = Markdown(context, model);
         model.MarkdownSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(markdown)));
         var write = new CheckpointWrite(context);
-        var ownership = write.Under(runDirectory);
+        var ownership = write.Under(runDirectory, model.RunId, WriteKind.ToolOwnedReplaceable);
+        // Refuse either foreign destination before replacing either half.
+        foreach (var path in new[] { Path.Combine(runDirectory, "report.md"), Path.Combine(runDirectory, "report.json") })
+            if (write.Refusal(path, ownership) is string refusal)
+                throw new IOException("refused: required report receipt-write-failed: " + refusal);
         var markdownRefusal = write.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
         var jsonRefusal = write.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
         if (markdownRefusal is not null || jsonRefusal is not null)
