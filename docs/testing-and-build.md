@@ -1042,8 +1042,10 @@ What blocked V-7 was CARD-0594's launch deadlock, not a mount or visibility prob
 
 The persistent deployment is `docker-compose.server2-runner.yml` (project `antiphon-runner`) on
 server2, registering with the **production** desktop server over
-`https://antiphon.desktop.codeperf.net`. It is the only standing Antiphon process there: no server
-and no Postgres, because the throwaway stack a session needs is the nested child it creates itself.
+`https://antiphon.desktop.codeperf.net`. The phone-home runner is a standing Antiphon process there.
+A host Postgres service (`docker-compose.server2-postgres.yml`, project `antiphon-server2-postgres`)
+exists beside the runner and is not yet the control plane. There is no Antiphon server process on
+server2. The throwaway stack a session needs is still the nested child it creates itself.
 The CARD-0490 `grok-linux` canary keeps working unchanged against its own isolated server through
 `verify-phone-home-grok.ps1`; that harness's settings block now carries `AllowDelegatedTasks=false`,
 because a canary is one pinned agent and nothing else.
