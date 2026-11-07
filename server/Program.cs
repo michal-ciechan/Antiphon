@@ -2,7 +2,6 @@ using Antiphon.Observability;
 using Serilog.Extensions.Logging;
 using System.Text.Json.Serialization;
 using Hangfire;
-using Hangfire.InMemory;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -988,7 +987,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     var hangfireSettings = builder.Configuration.GetSection("Hangfire").Get<HangfireSettings>()
         ?? new HangfireSettings();
     builder.Services.AddHangfire(config =>
-        config.UseInMemoryStorage(HangfireConfiguration.CreateStorageOptions(hangfireSettings)));
+        HangfireConfiguration.ConfigureStorage(
+            config,
+            hangfireSettings,
+            builder.Configuration.GetConnectionString("DefaultConnection")));
     if (hangfireSettings.ServerEnabled)
     {
         builder.Services.AddHangfireServer(options => { options.WorkerCount = 1; options.Queues = ["default"]; });
@@ -1111,6 +1113,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
 
     databaseCreateTiming.Dispose();
     using var setupTiming = liveTiming.BeginStartup(StartupOperation.Setup);
+    // CARD-1743: the lease outlives this scope and is released when the process stops.
+    HangfireWorkerLease? hangfireWorkerLease = null;
     using (var scope = app.Services.CreateScope())
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1166,11 +1170,14 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         var hangfire = scope.ServiceProvider.GetRequiredService<IOptions<HangfireSettings>>().Value;
         var census = scope.ServiceProvider.GetRequiredService<IOptions<ZombieCensusSettings>>().Value;
         var residue = scope.ServiceProvider.GetRequiredService<IOptions<WorktreeResidueSettings>>().Value;
+        if (hangfire.UsesPostgreSql)
+            HangfireConfiguration.PreparePostgreSqlStorage(hangfire, rawConnectionString);
+        if (hangfire.UsesPostgreSql && hangfire.ServerEnabled)
+            hangfireWorkerLease = HangfireConfiguration.AcquireSingleWorkerLease(rawConnectionString);
         if (hangfire.ServerEnabled)
         {
             var recurringJobManager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
-            if (census.Enabled)
-                HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
+            HangfireConfiguration.RegisterCensusJob(recurringJobManager, census);
             if (residue.Enabled)
                 HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
             var retention = scope.ServiceProvider.GetRequiredService<IOptions<RunnerWorktreeRetentionSettings>>().Value;
@@ -1217,6 +1224,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
             Log.Warning(ex, "Operator token file could not be created; force-release will retry on first use");
         }
     }
+
+    if (hangfireWorkerLease is { } heldLease)
+        app.Lifetime.ApplicationStopping.Register(heldLease.Dispose);
 
     setupTiming.Complete();
     setupTiming.Dispose();
