@@ -58,6 +58,15 @@ from selected estimates; checkpoint importer floor is retained as an existing
 tooling exception, not a widened test timeout. Any observed run over 30 minutes
 requires Debug. Slot admission is separate and bounded by the existing 45m limit.
 
+S1 measurement (5d9403e839c9025084f5173b33b1342bde18aba1, Linux, shared host):
+CP-1 wall 700.14s; build 499.84s; fixture bodies 72.49s (script 24.03s,
+tracked-tampering 19.64s, tool 28.53s); row slot wait 30s. The build exceeded
+the provisional estimate because isolated outputs rebuild and stage helpers.
+Retain the existing row/test timeouts; do not increase the estimate to widen them.
+The first two cold-build variants failed at the intended snapshot assertion;
+R-1 had a diagnostic-location harness error, corrected by exact JSON build-reason
+and named build-log assertions in S2. Historical outcomes remain RED.
+
 ## OS and startup impact
 
 Only the existing Linux-selected test build target changes. Witnesses execute its
