@@ -1,5 +1,4 @@
 using System.Data.Common;
-using System.Diagnostics;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -18,6 +17,9 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1759. A fresh reconcile reads the note once through a compiled query, and the hosted
 /// scan does not load a null-queue note whose next attempt is still in the future.
+/// A compiled query names its parameter after the lambda (<c>@__id</c>, <c>@__now</c>). An ad-hoc
+/// query keeps the ordinal suffix (<c>@__id_0</c>) even when the plan is already cached. The async
+/// reader runs after the compiled-query method has returned, so the stack does not name it.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("card-1759-land-note-load")]
@@ -165,9 +167,11 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
             worker.Dispose();
         }
 
+        _observer.PageCompiled.ShouldBeTrue("hosted page was not a compiled query: " + _observer.Describe(futureId));
         _observer.NoteSelects(futureId).Count.ShouldBe(0, "undue null-queue note was loaded: " + _observer.Describe(futureId));
         _observer.NoteSelects(linkedId).Count.ShouldBeGreaterThan(0, "linked undue note was not loaded: " + _observer.Describe(linkedId));
-        _observer.NoteSelects(dueId).Count.ShouldBeGreaterThan(0, _observer.Describe(dueId));
+        _observer.NoteSelects(dueId).Where(row => !row.Sql.Contains("EXISTS", StringComparison.Ordinal)).Count()
+            .ShouldBeGreaterThan(0, _observer.Describe(dueId));
         await using var check = new AppDbContext(_options);
         (await check.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == futureId)).State
             .ShouldBe(LandNotificationState.Queued);
@@ -200,10 +204,15 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
         private readonly object _gate = new();
         private readonly List<Select> _selects = [];
 
+        public bool PageCompiled { get; private set; }
+
         public void Reset()
         {
             lock (_gate)
+            {
                 _selects.Clear();
+                PageCompiled = false;
+            }
         }
 
         public IReadOnlyList<Select> NoteSelects(Guid id) => Selects("AgentTaskLandNotifications", id);
@@ -256,15 +265,21 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
                 : null;
             if (table is null)
                 return;
+            var names = new List<string>();
             var ids = new List<Guid>();
             foreach (DbParameter parameter in command.Parameters)
             {
+                names.Add(parameter.ParameterName);
                 if (parameter.Value is Guid id)
                     ids.Add(id);
                 else if (parameter.Value is string text && Guid.TryParse(text, out var parsed))
                     ids.Add(parsed);
             }
-            var compiled = new StackTrace(false).ToString().Contains("CompiledAsyncQuery", StringComparison.Ordinal);
+            // CompileAsyncQuery names the parameter from the lambda (@__id, @__now). Ad-hoc
+            // extraction appends an ordinal (@__id_0) on every execution, cache hit included.
+            var compiled = names.Contains("@__id") || names.Contains("@__now");
+            if (sql.Contains("LIMIT 128", StringComparison.Ordinal) && names.Contains("@__now"))
+                PageCompiled = true;
             var compact = sql.Length <= 240 ? sql : sql[..240];
             lock (_gate)
                 _selects.Add(new Select(table, ids, compiled, compact));
