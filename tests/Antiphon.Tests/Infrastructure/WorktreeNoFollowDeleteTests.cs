@@ -507,6 +507,8 @@ public sealed class WorktreeNoFollowDeleteTests
 
     private static void RewriteOpenWriter(FileStream writer)
     {
+        // FileMode.Open preserves the old length when the replacement is shorter.
+        writer.SetLength(0);
         writer.Write("later-bytes"u8);
     }
 
