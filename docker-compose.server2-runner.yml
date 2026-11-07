@@ -1,5 +1,5 @@
-# CARD-0604 D-2: the standalone persistent server2 deployment. It is the ONLY standing Antiphon
-# process on server2 -- no server, no Postgres. The runner phones home to the desktop production
+# CARD-0604 D-2: the standalone persistent server2 runner. Host Postgres is the separate
+# project antiphon-server2-postgres (CARD-1406), not this file. The runner phones home to the desktop production
 # server and owns a nested dockerd (D-1); everything a session starts through Docker lives on that
 # nested daemon, so the host daemon never sees it and no socket is ever mounted.
 # Project name is fixed: COMPOSE_PROJECT_NAME=antiphon-runner.
