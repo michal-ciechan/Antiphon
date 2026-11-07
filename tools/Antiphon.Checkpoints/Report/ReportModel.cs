@@ -2,6 +2,8 @@ namespace Antiphon.Checkpoints;
 
 public sealed class ReportModel
 {
+    // Additive, read-only ownership metadata: older receipts remain readable.
+    public string ToolOwner => SafeWrite.Marker;
     public string? MarkdownSha256 { get; set; }
     public int SchemaVersion { get; set; } = 2;
     public RunBudgetEvidence? Budget { get; set; }
