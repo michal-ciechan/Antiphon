@@ -54,6 +54,8 @@ public sealed class Server2StagingServerContractTests
         text.ShouldNotContain("0.0.0.0");
         var server = Service("staging-server");
         server.ShouldContain("Host=staging-postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}");
+        server.ShouldContain("- antiphon-server2-staging");
+        postgres.ShouldContain("- antiphon-server2-staging");
         server.ShouldNotContain("localhost");
         server.ShouldNotContain("antiphon_dev");
     }

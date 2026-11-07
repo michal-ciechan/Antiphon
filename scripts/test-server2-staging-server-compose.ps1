@@ -41,6 +41,17 @@ function Set-Mode {
     [System.IO.File]::SetUnixFileMode($Path, [System.IO.UnixFileMode]$bits)
 }
 
+function Write-UnixLines {
+    param([string]$Path, $Lines)
+    $nl = [string][char]10
+    $text = ''
+    foreach ($line in $Lines) {
+        if ($text.Length -gt 0) { $text = $text + $nl }
+        $text = $text + $line
+    }
+    [System.IO.File]::WriteAllText($Path, $text + $nl)
+}
+
 function New-Root {
     param([string]$InfoName = 'not-the-host')
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1742-' + [guid]::NewGuid().ToString('N'))
@@ -51,30 +62,28 @@ function New-Root {
     $marker = Join-Path $root 'marker'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     Set-Content -LiteralPath $marker -Value '' -Encoding ASCII
-    $dockerBody = @(
-        '#!/bin/sh',
-        'printf "%s\n" "$*" >> "$CARD1742_MARKER"',
-        'if [ "$1" = "info" ]; then printf "%s\n" "' + $InfoName + '"; exit 0; fi',
-        'exit 99'
-    )
     $docker = Join-Path $bin 'docker'
-    $dockerBody | Set-Content -LiteralPath $docker -Encoding ASCII
+    $infoLine = 'if [ "$1" = "info" ]; then printf "%s\n" "' + $InfoName + '"; exit 0; fi'
+    $dockerLines = New-Object System.Collections.Generic.List[string]
+    [void]$dockerLines.Add('#!/bin/sh')
+    [void]$dockerLines.Add('printf "%s\n" "$*" >> "$CARD1742_MARKER"')
+    [void]$dockerLines.Add($infoLine)
+    [void]$dockerLines.Add('exit 99')
+    Write-UnixLines $docker $dockerLines
     Set-Mode $docker '755'
-    $hostBody = @(
-        '#!/bin/sh',
-        'printf "%s\n" "fixture-host"',
-        'exit 0'
-    )
     $hostname = Join-Path $bin 'hostname'
-    $hostBody | Set-Content -LiteralPath $hostname -Encoding ASCII
+    $hostLines = New-Object System.Collections.Generic.List[string]
+    [void]$hostLines.Add('#!/bin/sh')
+    [void]$hostLines.Add('printf "%s\n" "fixture-host"')
+    [void]$hostLines.Add('exit 0')
+    Write-UnixLines $hostname $hostLines
     Set-Mode $hostname '755'
-    $curlBody = @(
-        '#!/bin/sh',
-        'printf "%s\n" "curl $*" >> "$CARD1742_MARKER"',
-        'exit 99'
-    )
     $curl = Join-Path $bin 'curl'
-    $curlBody | Set-Content -LiteralPath $curl -Encoding ASCII
+    $curlLines = New-Object System.Collections.Generic.List[string]
+    [void]$curlLines.Add('#!/bin/sh')
+    [void]$curlLines.Add('printf "%s\n" "curl $*" >> "$CARD1742_MARKER"')
+    [void]$curlLines.Add('exit 99')
+    Write-UnixLines $curl $curlLines
     Set-Mode $curl '755'
     $dev = Join-Path $repoRoot 'docker-compose.dev.yml'
     Set-Content -LiteralPath $dev -Value "POSTGRES_PASSWORD: antiphon_dev`n" -Encoding ASCII
@@ -93,11 +102,10 @@ function New-EnvFile {
     $dir = $Root.Root
     if ($InsideRepo) { $dir = $Root.Repo }
     $path = Join-Path $dir 'staging.env'
-    $lines = @(
-        'ANTIPHON_STAGING_POSTGRES_IMAGE=' + $Image,
-        'POSTGRES_PASSWORD=' + $Password
-    )
-    [System.IO.File]::WriteAllText($path, ($lines -join "`n") + "`n")
+    $imageLine = 'ANTIPHON_STAGING_POSTGRES_IMAGE=' + $Image
+    $passwordLine = 'POSTGRES_PASSWORD=' + $Password
+    $nl = [string][char]10
+    [System.IO.File]::WriteAllText($path, $imageLine + $nl + $passwordLine + $nl)
     Set-Mode $path $Mode
     return $path
 }
@@ -201,17 +209,32 @@ function Invoke-OffHostCase {
     }
 }
 
+function Invoke-LaneCase {
+    . $deploy
+    Assert-True ((Resolve-StagingLane 'fixture-host' 'fixture-host' $false) -eq 'host') 'lane is host when the daemon name matches outside a container' (Resolve-StagingLane 'fixture-host' 'fixture-host' $false)
+    Assert-True ((Resolve-StagingLane 'not-the-host' 'fixture-host' $false) -eq 'sibling') 'lane is sibling when the daemon name differs' (Resolve-StagingLane 'not-the-host' 'fixture-host' $false)
+    Assert-True ((Resolve-StagingLane 'fixture-host' 'fixture-host' $true) -eq 'nested') 'lane is nested inside a container' (Resolve-StagingLane 'fixture-host' 'fixture-host' $true)
+    Assert-True ((Resolve-StagingLane '' 'fixture-host' $false) -eq 'none') 'lane is none when the daemon name is empty' (Resolve-StagingLane '' 'fixture-host' $false)
+}
+
 function Invoke-HostCommandCase {
     $root = New-Root -InfoName 'fixture-host'
     try {
         $envFile = New-EnvFile $root
         $result = Invoke-Deploy $root @('-Execute', '-ComposeFile', $compose, '-RepoRoot', $repo, '-EnvFile', $envFile)
-        Assert-True ($result.Exit -eq 2) 'host Execute stops when compose up fails' ('exit=' + $result.Exit + ' out=' + $result.Out)
-        Assert-True ((Get-Reason $result) -eq 'compose-up-failed') 'host Execute reports compose-up-failed' (Get-Reason $result)
         $marker = Get-Marker $root
-        Assert-True ($marker.Contains('compose')) 'host Execute calls compose' $marker
-        Assert-True ($marker.Contains('-p antiphon-server2-staging')) 'host Execute pins the project' $marker
-        Assert-True ($marker.Contains('up -d') -or $marker.Contains('up')) 'host Execute asks for up' $marker
+        if (Test-Path -LiteralPath '/.dockerenv') {
+            Assert-True ($result.Exit -eq 2) 'host Execute inside a container exits 2' ('exit=' + $result.Exit + ' out=' + $result.Out)
+            Assert-True ((Get-Reason $result) -eq 'not-server2-host') 'host Execute inside a container is not-server2-host' (Get-Reason $result)
+            Assert-True ($marker -notmatch 'compose') 'host Execute inside a container does not compose up' $marker
+            Assert-True ($marker -notmatch 'curl') 'host Execute inside a container does not curl' $marker
+        } else {
+            Assert-True ($result.Exit -eq 2) 'host Execute stops when compose up fails' ('exit=' + $result.Exit + ' out=' + $result.Out)
+            Assert-True ((Get-Reason $result) -eq 'compose-up-failed') 'host Execute reports compose-up-failed' (Get-Reason $result)
+            Assert-True ($marker.Contains('compose')) 'host Execute calls compose' $marker
+            Assert-True ($marker.Contains('-p antiphon-server2-staging')) 'host Execute pins the project' $marker
+            Assert-True ($marker.Contains('up -d') -or $marker.Contains('up')) 'host Execute asks for up' $marker
+        }
         Assert-True ($marker -notmatch [regex]::Escape($script:Password)) 'compose argv hides the password' $marker
         Assert-True ($result.Out -notmatch [regex]::Escape($script:Password)) 'host Execute hides the password' 'leaked'
     } finally {
@@ -262,7 +285,8 @@ function Invoke-Selected {
         'bind-any' { Invoke-RefusalCase 'bind any' 'bind-any' ((Get-GoodCompose) + "`n0.0.0.0`n") }
         'volume' { Invoke-RefusalCase 'forbidden volume' 'volume-forbidden' ((Get-GoodCompose) + "`nantiphon_pgdata`n") }
         'dev-password' { Invoke-RefusalCase 'dev password' 'dev-password' '' -Password 'antiphon_dev' }
-        'env-mode' { Invoke-RefusalCase 'env mode' 'env-mode' '' -Mode '644' }
+        'env-mode' { Invoke-RefusalCase 'env mode' 'env-mode' '' -Mode '644' -WantEnv }
+        'lane' { Invoke-LaneCase }
         'wrong-project' { Invoke-RefusalCase 'wrong project' 'staging-compose-wrong-project' '' -Project 'antiphon-runner' }
         'alpine' { Invoke-RefusalCase 'alpine image' 'image-alpine' '' -Image 'postgres:16-alpine' }
         'floating' { Invoke-RefusalCase 'floating image' 'image-floating' '' -Image 'postgres:16' }
@@ -271,7 +295,7 @@ function Invoke-Selected {
     }
 }
 
-$selected = @('whatif', 'ambiguous', 'off-host', 'host-command', 'bind-any', 'volume', 'dev-password', 'env-mode', 'wrong-project', 'alpine', 'floating', 'env-inside')
+$selected = @('whatif', 'ambiguous', 'off-host', 'host-command', 'lane', 'bind-any', 'volume', 'dev-password', 'env-mode', 'wrong-project', 'alpine', 'floating', 'env-inside')
 if (-not [string]::IsNullOrWhiteSpace($Case)) { $selected = @($Case) }
 foreach ($name in $selected) { Invoke-Selected $name }
 Write-Host ('SERVER2-STAGING-TEST passed=' + $script:Passed + ' failed=' + $script:Failed)

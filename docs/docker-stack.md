@@ -1585,6 +1585,18 @@ if case antiphon-server2-postgres-drill_pgdata in *-drill_pgdata) true ;; *) ech
 
 Compare phase 3 of the CARD-1401 plan as well: sequence name / `last_value` / `is_called`, and count, minimum primary key, and maximum primary key on TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, and AgentTaskEvents. All five are over 32 MiB, so the check is not a row-body checksum. Do not print transcript text. Record dump elapsed time, restore elapsed time, copy elapsed time, and the dump file size. The script has no command that removes `antiphon_pgdata` or the production volume.
 
+## Staging server on the server2 host (CARD-1742)
+
+`docker-compose.server2-staging-server.yml` is a staging Antiphon server on the server2 host daemon. The project is `antiphon-server2-staging`. It is not the phone-home runner project, not the nested dockerd, not Windmill, and not the desktop production database. It does not attach to the CARD-1406 host Postgres service. That service's operator drill is still owed, so this stack brings its own scratch Postgres on the network `antiphon-server2-staging`.
+
+Services are `staging-state-init`, `staging-server`, and `staging-postgres`, so a mistaken project name cannot replace the phone-home runner's `state-init`. The scratch cluster volume is `antiphon-server2-staging_pgdata`, mounted only inside this project. Its image digest and password come from an untracked mode-0600 env file outside the repo (`ANTIPHON_STAGING_POSTGRES_IMAGE`, `POSTGRES_PASSWORD`). The image reference must be `postgres:16@sha256:` or `postgres@sha256:` plus 64 lowercase hex digits. There is no published database port. The server listens on `127.0.0.1:17420` only. The scratch cluster is limited to 1g and 1 CPU.
+
+`scripts/deploy-server2-staging-server.ps1` defaults to `-WhatIf` and does not call docker in that mode. `-Execute` runs only when this process is on the server2 host daemon. Neither mode prints the password. The new cluster password is not the committed dev password. Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode. Acceptance, when an operator does run it, is `http://127.0.0.1:17420/health` and `http://127.0.0.1:17420/api/version`.
+
+Hangfire is on. Zombie census is off. Schedules, the check interpreter, diagnose, and the output distiller are on, with working directories `/state/check-interpreter`, `/state/diagnose`, and `/state/output-distiller` on this project's state volume `antiphon-server2-staging_server-state`. The agent TUI key ring is `/state/keyring` on that same volume. A fresh empty ring cannot read secrets protected by the desktop ring; CARD-1744 copies that ring. Agent executables here are Linux paths; with the session runner off, specialists do not launch until cutover. Worktree residue is on and `Execute` is false (report only, the desktop default); the only worktree root is `/work/worktrees` on this project's work volume `antiphon-server2-staging_work`. Legacy release is off. Runner worktree retention is off, so this worker does not send removals to the phone-home runner. Channel bridge and digest are off. This project has no session runner and does not set a phone-home origin. `deploy-server2.ps1` does not deploy it. AppHost and the public vhost stay on the desktop.
+
+Nothing in this card starts the project. Rollback is to remove the compose project. Desktop production is untouched. This slice adds no cache.
+
 ## Native Windows phone-home runner
 
 A second Windows host (a laptop) can run the same session runner natively and phone home to the
