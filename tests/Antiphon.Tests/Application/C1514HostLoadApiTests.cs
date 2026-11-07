@@ -5,11 +5,13 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -22,12 +24,31 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
 {
     [Before(Class)]
     public static Task WarmDatabase() => TestDbFixture.Lifecycle.EnsureReadyAsync();
-    [Test, Timeout(10_000)]
-    public async Task RoutesReturnDurableProvenanceAndPages()
+    private C1514HostLoadWorld? _preparedWorld;
+    private AppDbContext? _late;
+    private IDbContextTransaction? _transaction;
+    [Before(Test)]
+    public async Task PrepareReadFixtures()
     {
-        await using var world = await fixture.WorldAsync(); var sample = await world.ProduceAsync(C1514HostLoadWorld.T0); await world.TransferAsync();
+        var name = TestContext.Current!.Metadata.TestDetails.TestName;
+        if (name is not (nameof(RoutesReturnDurableProvenanceAndPages) or nameof(CurrentAndTaskReadsRespectExistingScope))) return;
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "host-load API read fixtures");
+        _preparedWorld = await fixture.WorldAsync();
+        if (name == nameof(CurrentAndTaskReadsRespectExistingScope)) await _preparedWorld.SeedPrefixAsync();
+        else await PreparePagingAsync(_preparedWorld);
+    }
+    [After(Test)]
+    public async Task ReleaseReadFixtures()
+    {
+        if (_transaction is not null) await _transaction.DisposeAsync();
+        if (_late is not null) await _late.DisposeAsync();
+        if (_preparedWorld is not null) await _preparedWorld.DisposeAsync();
+    }
+    private async Task PreparePagingAsync(C1514HostLoadWorld world)
+    {
+        var sample = await world.ProduceAsync(C1514HostLoadWorld.T0); await world.TransferAsync();
         var from = C1514HostLoadWorld.T0.AddHours(-3); var to = C1514HostLoadWorld.T0.AddSeconds(5);
-        await using var late = world.Db(false); await using var transaction = await late.Database.BeginTransactionAsync();
+        var late = _late = world.Db(false); _transaction = await late.Database.BeginTransactionAsync();
         late.HostLoadSamples.Add(new() { RunnerStoreId = sample.Source.RunnerStoreId, BootId = sample.Source.BootId, Sequence = 9999,
             RunnerId = "grok-linux", PhysicalHostKey = "owned-host", SourceEpoch = sample.SourceEpoch, IsPrimary = true, SampledAt = to.AddSeconds(-1), IngestedAt = C1514HostLoadWorld.T0,
             PayloadJson = JsonSerializer.Serialize(sample with { Source = sample.Source with { Sequence = 9999 }, SampledAt = to.AddSeconds(-1) }, PhoneHomeFraming.Json) });
@@ -38,10 +59,16 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
             await using var db = world.Db(false); var after = (await db.HostLoadIngestCursors.SingleAsync()).Cursor;
             world.Pump.TryEnqueue(new("grok-linux", after, new(1, sample.Source, points, [], null, false, true))).ShouldBeTrue(); await world.Pump.ProcessOneAsync(CancellationToken.None);
         }
+    }
+    [Test, Timeout(10_000)]
+    public async Task RoutesReturnDurableProvenanceAndPages()
+    {
+        var world = _preparedWorld!;
+        var from = C1514HostLoadWorld.T0.AddHours(-3); var to = C1514HostLoadWorld.T0.AddSeconds(5);
         var query = "/api/hosts/grok-linux/load/history?from=" + Uri.EscapeDataString(from.ToString("O")) + "&to=" + Uri.EscapeDataString(to.ToString("O"));
         using var first = await world.GetAsync(query + "&limit=2000"); var items = first.RootElement.GetProperty("items").EnumerateArray().ToArray(); items.Length.ShouldBe(2000);
         items[0].GetProperty("ingestedAt").GetDateTimeOffset().ShouldBe(C1514HostLoadWorld.T0); items[0].GetProperty("counters").GetProperty("tasksInFlight").ValueKind.ShouldBe(JsonValueKind.Null);
-        var cursor = first.RootElement.GetProperty("nextCursor").GetString()!; await transaction.CommitAsync();
+        var cursor = first.RootElement.GetProperty("nextCursor").GetString()!; await _transaction!.CommitAsync();
         using var second = await world.GetAsync(query + "&limit=2000&cursor=" + Uri.EscapeDataString(cursor));
         var rest = second.RootElement.GetProperty("items").EnumerateArray().ToArray(); rest.Length.ShouldBe(1); rest[0].GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(1);
         items.Concat(rest).Select(x => x.GetProperty("source").GetProperty("sequence").GetInt64()).Distinct().Count().ShouldBe(2001);
@@ -56,7 +83,7 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
     [Test, Timeout(10_000)]
     public async Task CurrentAndTaskReadsRespectExistingScope()
     {
-        await using var world = await fixture.WorldAsync(); await world.SeedPrefixAsync(); await world.ProduceAsync(C1514HostLoadWorld.T0);
+        var world = _preparedWorld!; await world.ProduceAsync(C1514HostLoadWorld.T0);
         var a = await world.StartTaskAsync(C1514HostLoadWorld.T0.AddSeconds(-1)); var b = await world.StartTaskAsync(C1514HostLoadWorld.T0.AddSeconds(-2)); await world.TransferAsync();
         await world.FinishTaskAsync(a.Id, C1514HostLoadWorld.T0.AddSeconds(1)); await world.RetryThroughServiceAsync(a.Id);
         await world.StartTaskAsync(C1514HostLoadWorld.T0.AddSeconds(2), attempt: 2, taskId: a.Id); await world.DeriveAsync();
