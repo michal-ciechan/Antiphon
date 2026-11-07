@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
+using Antiphon.Server.Infrastructure.HostLoad;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
@@ -19,11 +20,12 @@ public sealed class HostStatsPollService : BackgroundService
     private readonly TimeProvider _time;
     private readonly ILogger<HostStatsPollService> _logger;
     private readonly int _desktopCapacity;
+    private readonly HostLoadCounterCache? _historyCounters;
 
     public HostStatsPollService(ISessionRunnerDirectory directory, HostStatsCache cache,
         IHostStatsAntiphonCounters counters, IEventBus bus, IOptions<HostStatsSettings> settings,
         TimeProvider time, ILogger<HostStatsPollService> logger,
-        IOptions<DelegationSettings>? delegation = null)
+        IOptions<DelegationSettings>? delegation = null, HostLoadCounterCache? historyCounters = null)
     {
         _directory = directory;
         _cache = cache;
@@ -33,6 +35,7 @@ public sealed class HostStatsPollService : BackgroundService
         _time = time;
         _logger = logger;
         _desktopCapacity = delegation?.Value.MaxConcurrentTasks ?? new DelegationSettings().MaxConcurrentTasks;
+        _historyCounters = historyCounters;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -68,13 +71,16 @@ public sealed class HostStatsPollService : BackgroundService
         var reads = ids.Select(id => PollHostAsync(id, ct)).ToArray();
         await Task.WhenAll(reads);
         IReadOnlyDictionary<string, HostStatsAntiphonDto> counts;
+        var countsKnown = true;
         try { counts = await _counters.ReadAsync(ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Host stats task counter read failed");
             counts = new Dictionary<string, HostStatsAntiphonDto>();
+            countsKnown = false;
         }
         var rows = await Task.WhenAll(ids.Select(id => DescribeAsync(id, ct)));
+        var countedAt = _time.GetUtcNow();
         var annotated = counts.ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
         foreach (var id in ids)
         {
@@ -84,6 +90,11 @@ public sealed class HostStatsPollService : BackgroundService
             int? sessions = id == RunnerPlatformWire.DesktopId ? count.TasksInFlight
                 : (_directory as PhoneHomeRunnerDirectory)?.SnapshotLive(id)?.KnownLiveSessions().Count;
             annotated[id] = count with { SessionsLive = sessions };
+            _historyCounters?.Observe(id, countsKnown
+                ? new HostLoadCounters(countedAt, count.TasksInFlight, count.ByStage, count.ByKind,
+                    count.PendingLaunches, count.PendingMirrors, count.Queued, count.Held, sessions,
+                    rows.FirstOrDefault(r => r.RunnerId == id)?.Capacity)
+                : new HostLoadCounters(countedAt, null, null, null, null, null, null, null, null, null));
         }
         _cache.SetProjection(rows, annotated);
         var projected = _cache.Project();

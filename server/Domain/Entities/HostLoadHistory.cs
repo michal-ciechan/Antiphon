@@ -3,6 +3,7 @@ namespace Antiphon.Server.Domain.Entities;
 public sealed class HostLoadSampleRecord
 {
     public long Id { get; set; }
+    public long CreatedTransactionId { get; set; }
     public Guid RunnerStoreId { get; set; }
     public Guid BootId { get; set; }
     public long Sequence { get; set; }
@@ -29,6 +30,7 @@ public sealed class HostLoadSampleIdentity
 public sealed class HostLoadHourlyRollup
 {
     public long Id { get; set; }
+    public long CreatedTransactionId { get; set; }
     public string PhysicalHostKey { get; set; } = "";
     public Guid SourceEpoch { get; set; }
     public DateTimeOffset HourUtc { get; set; }

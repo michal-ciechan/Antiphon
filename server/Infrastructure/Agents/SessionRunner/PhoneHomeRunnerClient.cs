@@ -154,6 +154,15 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<RunnerHostStatsDto>(frame);
     }
 
+    public async Task<HostLoadHistoryPage?> GetHostLoadHistoryAsync(string? after, int limit, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.HostLoadHistory,
+            new PhoneHomeHostLoadHistoryRequest(after, limit), ct);
+        HostStatsError(frame);
+        if (frame.Kind == PhoneHomeFrameKind.Error) throw new IOException("host_load_history_unavailable");
+        return Read<HostLoadHistoryPage>(frame);
+    }
+
     public async Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.HostStatsSeries,

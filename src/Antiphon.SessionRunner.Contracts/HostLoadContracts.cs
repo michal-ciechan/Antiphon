@@ -51,3 +51,5 @@ public sealed record HostLoadHistoryPage(int SchemaVersion, HostLoadSource Sourc
     IReadOnlyList<HostLoadSample> Samples, IReadOnlyList<HostLoadGap> Gaps,
     string? NextCursor, bool More, bool Complete);
 public sealed record PhoneHomeHostLoadHistoryRequest(string? After = null, int Limit = 120);
+public sealed record RunnerLoadShadowDto(DateTimeOffset ObservedAt, bool Shadow, double? CommandPressure,
+    double? DispatchPressure, string Command, string Dispatch, int RecommendedAdditionalTasks);
