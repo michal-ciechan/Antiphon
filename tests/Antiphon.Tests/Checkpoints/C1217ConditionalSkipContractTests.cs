@@ -206,7 +206,9 @@ public sealed class C1217ConditionalSkipContractTests : CheckpointTestBase
     public void UnsupportedCombinationsRefuse()
     {
         var root = TempDir();
-        var conditional = F.Yaml + "\n    conditionalSkips: c1217-fixture-v1";
+        // Qualification clones inherit core.autocrlf, so this raw string is CRLF there.
+        var windowsYaml = F.Yaml.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+        var conditional = windowsYaml + "\n    conditionalSkips: c1217-fixture-v1";
         foreach (var (key, yaml) in new[]
         {
             ("command", conditional.Replace("    filter: /*/Fixture/Cases/*\n    minExecuted: 1", "    command: echo fixture", StringComparison.Ordinal)),
