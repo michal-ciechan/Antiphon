@@ -1393,7 +1393,7 @@ public class PhoneHomeCommandDispatcherTests
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
             System.Text.Json.JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json));
 
-    private sealed class RecordingRuntime : IPhoneHomeRuntimeSurface
+    internal sealed class RecordingRuntime : IPhoneHomeRuntimeSurface
     {
         public int Owned { get; set; }
         public int KillAllCalls { get; private set; }

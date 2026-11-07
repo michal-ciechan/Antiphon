@@ -4,7 +4,10 @@ namespace Antiphon.SessionRunner;
 public readonly record struct HostDiskSample(string Path, long FreeBytes, long TotalBytes);
 
 /// <summary>CARD-0718. One process the sampler could name. A null CPU is "cannot say".</summary>
-public readonly record struct HostProcessSample(string Name, string? SessionId, double? CpuPercent, long WorkingSetBytes);
+public readonly record struct HostProcessSample(string Name, string? SessionId, double? CpuPercent, long WorkingSetBytes)
+{
+    public bool WorkingSetKnown { get; init; } = true;
+}
 
 /// <summary>
 /// CARD-0718 D-1. One host reading. Null metrics are absent (the first CPU sample, load on Windows),
@@ -23,7 +26,13 @@ public readonly record struct HostSample(
     long? SwapFreeBytes,
     IReadOnlyList<HostDiskSample> Disks,
     int? ProcessCount,
-    IReadOnlyList<HostProcessSample> Processes);
+    IReadOnlyList<HostProcessSample> Processes)
+{
+    public string? CpuUnknownReason { get; init; }
+    public double? IoWaitPercent { get; init; }
+    public double? EffectiveCoreLimit { get; init; }
+    public bool LoadUnsupported { get; init; }
+}
 
 /// <summary>CARD-0718. The platform read. Null when this OS has no arm or the read faults.</summary>
 public interface IHostStatsProbe

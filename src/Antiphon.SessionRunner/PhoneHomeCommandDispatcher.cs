@@ -107,6 +107,7 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly RunnerCapacityState _capacity;
     private readonly IProviderAuthProbe? _authProbe;
     private readonly IHostStatsSource? _hostStats;
+    private readonly IHostLoadHistorySource? _hostLoad;
     private readonly IHostApplicationLifetime? _lifetime;
     private readonly TimeProvider _time;
     private readonly Guid _processBootId;
@@ -122,13 +123,15 @@ public sealed class PhoneHomeCommandDispatcher
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
         ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null,
         IHostApplicationLifetime? lifetime = null, TimeProvider? time = null,
-        PhoneHomeProcessIdentity? identity = null, RunnerCapacityState? capacity = null)
+        PhoneHomeProcessIdentity? identity = null, RunnerCapacityState? capacity = null,
+        IHostLoadHistorySource? hostLoad = null)
     {
         _runtime = runtime;
         _settings = settings;
         _capacity = capacity ?? new RunnerCapacityState(settings);
         _authProbe = authProbe;
         _hostStats = hostStats;
+        _hostLoad = hostLoad;
         _lifetime = lifetime;
         _time = time ?? TimeProvider.System;
         _processBootId = identity?.BootId ?? Guid.NewGuid();
@@ -141,7 +144,14 @@ public sealed class PhoneHomeCommandDispatcher
     /// CARD-0604: the same DTO the Capabilities operation answers with, exposed so registration
     /// can carry it. One source, so a registration can never disagree with a later probe.
     /// </summary>
-    public RunnerCapabilitiesDto Capabilities() => WithSlotFeature(_runtime.Capabilities());
+    public RunnerCapabilitiesDto Capabilities()
+    {
+        var capabilities = WithSlotFeature(_runtime.Capabilities());
+        var features = (capabilities.Features ?? []).Where(f => f != RunnerCapabilityFeatures.HostLoadHistoryV1).ToList();
+        if (_hostStats is not null && !features.Contains(RunnerCapabilityFeatures.HostStatsV1)) features.Add(RunnerCapabilityFeatures.HostStatsV1);
+        if (_hostLoad is not null) features.Add(RunnerCapabilityFeatures.HostLoadHistoryV1);
+        return capabilities with { Features = features };
+    }
 
     /// <summary>CARD-0824 S1: <c>workspaceSlotV1</c> is advertised only while this runner's slot flag is on.</summary>
     private RunnerCapabilitiesDto WithSlotFeature(RunnerCapabilitiesDto capabilities) =>
@@ -598,6 +608,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.ObserveCompaction => Result(
                     request, await _runtime.ObserveCompactionAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.HostStats => HostStatsResult(request),
+                PhoneHomeOperation.HostLoadHistory => HostLoadHistoryResult(request),
                 PhoneHomeOperation.HostStatsSeries => HostStatsSeriesResult(request),
                 // CARD-1153 D-3: the authenticated, runner/store-bound connection is the authentication.
                 PhoneHomeOperation.PrepareAbsenceEvidence => await MutateAsync(request, async () =>
@@ -1105,6 +1116,17 @@ public sealed class PhoneHomeCommandDispatcher
         if (_hostStats is null)
             return Error(request, PhoneHomeProblemTypes.UnsupportedOperation, "Host stats are not supported on this runner.", 400);
         return Result(request, _hostStats.Snapshot());
+    }
+
+    private PhoneHomeFrame HostLoadHistoryResult(PhoneHomeFrame request)
+    {
+        if (_hostLoad is null)
+            return Error(request, PhoneHomeProblemTypes.UnsupportedOperation, "Host load history is unsupported.", 400);
+        var body = request.Payload?.Deserialize<PhoneHomeHostLoadHistoryRequest>(PhoneHomeFraming.Json)
+            ?? new PhoneHomeHostLoadHistoryRequest();
+        try { return Result(request, _hostLoad.ReadHistory(body.After, body.Limit)); }
+        catch (ArgumentException) { return Error(request, "invalid_host_load_query", "Invalid history cursor or limit.", 400); }
+        catch (IOException) { return Error(request, "host_load_history_unavailable", "History is unavailable.", 503); }
     }
 
     private PhoneHomeFrame HostStatsSeriesResult(PhoneHomeFrame request)

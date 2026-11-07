@@ -108,7 +108,8 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
         sp.GetRequiredService<IHostApplicationLifetime>(),
         sp.GetRequiredService<TimeProvider>(),
         sp.GetRequiredService<PhoneHomeProcessIdentity>(),
-        sp.GetRequiredService<RunnerCapacityState>());
+        sp.GetRequiredService<RunnerCapacityState>(),
+        hostStatsOptions.Enabled && hostStatsOptions.HistoryEnabled ? sp.GetRequiredService<IHostLoadHistorySource>() : null);
 });
 // CARD-0628 D-7 / CARD-0647 / CARD-0660: the Claude, Grok and Codex probes behind one router.
 builder.Services.AddProviderAuthProbes();

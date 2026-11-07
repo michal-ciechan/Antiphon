@@ -1,5 +1,9 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using Shouldly;
 using TUnit.Core;
 
@@ -93,6 +97,50 @@ public class C1514HostLoadSampleTests
         time.Utc = time.Utc.AddHours(2);
         await sampler.SampleOnceAsync();
         store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBe(50d);
+    }
+
+    [Test]
+    public void SourceIdentityAndPayloadAreStable()
+    {
+        var storeId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var firstBoot = new HostLoadIdentity("owned-runner", storeId);
+        var secondBoot = new HostLoadIdentity("owned-runner", storeId);
+        var first = firstBoot.Next(); var second = secondBoot.Next();
+        first.Sequence.ShouldBe(1); second.Sequence.ShouldBe(1); first.BootId.ShouldNotBe(second.BootId);
+        firstBoot.Next().Sequence.ShouldBe(2);
+        var raw = new ScriptedHostStatsProbe().Read().ShouldNotBeNull() with
+        { At = C1514HostLoadFixture.T0, Processes = [new("credential-sentinel-do-not-serialize", null, 250, 1024)] };
+        var sample = HostLoadProjection.Create(raw, first, new HostStatsSettings(), HostAdmissionSnapshot.Unknown());
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(sample, PhoneHomeFraming.Json);
+        var retry = JsonSerializer.Deserialize<HostLoadSample>(bytes, PhoneHomeFraming.Json)!;
+        retry.Source.RunnerStoreId.ShouldBe(storeId); retry.Source.BootId.ShouldBe(first.BootId);
+        retry.CpuPercent.ShouldBe(10d); retry.Processes.Single().CpuPercent.ShouldBe(250d);
+        System.Text.Encoding.UTF8.GetString(bytes).ShouldNotContain("credential-sentinel-do-not-serialize");
+        JsonSerializer.SerializeToUtf8Bytes(retry, PhoneHomeFraming.Json).ShouldBe(bytes);
+    }
+
+    [Test]
+    public async Task DisabledHistoryKeepsLegacySampling()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["SessionRunner:HostStats:HistoryEnabled"] = "false" }).Build();
+        var services = new ServiceCollection(); var clock = new SeparateClocks();
+        services.AddLogging(); services.AddSingleton<TimeProvider>(clock);
+        services.AddSingleton<IHostStatsProbe>(new ScriptedHostStatsProbe());
+        services.AddHostStats(config, startSampler: false);
+        using var provider = services.BuildServiceProvider();
+        var sampler = provider.GetRequiredService<HostStatsSamplerService>();
+        var source = provider.GetRequiredService<IHostStatsSource>();
+        await sampler.SampleOnceAsync(); source.Snapshot().At.ShouldBe(clock.GetUtcNow());
+        var options = provider.GetRequiredService<IOptions<HostStatsSettings>>().Value;
+        options.HistoryEnabled.ShouldBeFalse();
+        HostStatsRoutes.CapabilityFeatures([], options).ShouldNotContain("hostLoadHistoryV1");
+        clock.Advance(TimeSpan.FromSeconds(5)); await sampler.SampleOnceAsync();
+        source.Snapshot().At.ShouldBe(clock.GetUtcNow()); source.Series("cpu", "1m").Points.Count.ShouldBe(2);
+        options.HistoryEnabled = true;
+        clock.Advance(TimeSpan.FromSeconds(5)); await sampler.SampleOnceAsync();
+        source.Snapshot().At.ShouldBe(clock.GetUtcNow());
+        Should.Throw<IOException>(() => provider.GetRequiredService<IHostLoadHistorySource>().ReadHistory(null, 120));
     }
 
     private static HostStatsSamplerService Sampler(IHostStatsProbe probe, HostStatsStore store, TimeProvider time,
