@@ -789,14 +789,14 @@ all rows require zero failed/skipped and source-qualified receipts.
 | CP-1 | S1A | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1a/ | s1a-new | `/*/*/(C1514HostLoadSampleTests*)\|(C1514HostLoadAuthorityTests*)\|(C1514HostLoadSpoolTests*)\|(C1514HostLoadWireTests*)/*` | V-1..18 | 18 new methods; 0 failed/skipped | 18 | 5 | true |
 | CP-2 | S1A | CP-1 | s1a-legacy | `/*/*/(HostStatsSamplerTests*)\|(HostStatsStoreTests*)\|(HostStatsProbeParseTests*)\|(HostStatsEndpointTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-1,R-5 | 29 legacy +4 guards; 0 failed/skipped | 33 | 2 | true |
 | CP-3 | S1A | CP-1 | s1a-phone | `/*/*/PhoneHomeCommandDispatcherTests/Host_stats_*` | R-1,R-4 | 3 exact Host_stats methods; 0 failed/skipped | 3 | 1 | true |
-| CP-4 | S1B | tests/Antiphon.Tests -> bin-c1514-s1b/ | s1b-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44,R-3,R-6 | 18 new integration methods; 0 failed/skipped | 18 | 16 | true |
+| CP-4 | S1B | tests/Antiphon.Tests -> bin-c1514-s1b/ | s1b-delivery | `/*/*/(C1514HostLoadHistoryTests*)\|(C1514TaskLoadWindowTests*)\|(C1514HostLoadApiTests*)/*` | V-19..27,V-31..35,V-41..44,R-3,R-6 | 18 methods / 28 executions (H3 has 11 arguments); 0 failed/skipped | 28 | 16 | true |
 | CP-5 | S1B | CP-4 | s1b-surfaces | `/*/*/(C1514HostLoadAggregateTests*)\|(C1514HostLoadRecommendationTests*)\|(C1514HostLoadScriptTests*)\|(HostStatsCacheTests*)\|(HostStatsPollServiceTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-28..30,V-36..40,V-45..48,R-1..4 | 12 new +28 existing methods; 0 failed/skipped | 40 | 4 | true |
 | CP-6 | S1B | CP-4 | s1b-guards | `/*/*/(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)\|(TestLaneCategoryGuardTests*)\|(LiveLaneRunnerTests*)/(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)\|(every_test_class_is_tagged_unit_xor_integration*)\|(WrapperOnlyPaidManifest*)` | R-5 | 6 exact guard methods; 0 failed/skipped | 6 | 2 | true |
 | CP-7 | S1B | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1l/ | s1-linux | `/*/*/(C1514HostLoadNativeTests*)\|(C1514HostLoadNativeOverheadTests*)\|(HostStatsProbeLiveTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/(Linux_*)\|(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)` | V-49,V-51,R-1,R-6,R-5 | 3 Linux witnesses +4 shared guards at final source; 0 failed/skipped | 7 | 8 | true |
 | CP-8 | S1B | tests/Antiphon.SessionRunner.Tests -> bin-c1514-s1w/ | s1-windows | `/*/*/(C1514HostLoadNativeTests*)\|(C1514HostLoadNativeOverheadTests*)\|(HostStatsProbeLiveTests*)\|(TestClassificationGuardTests*)\|(NativeLinuxPolicyWitnessTests*)/(Windows_*)\|(Registry_matches_compiled_metadata*)\|(Policy_rows_require_pinned_attribute*)\|(Pinned_attribute_contract_matches_native_platform*)\|(Markers_do_not_expand_policy_exclusions*)` | V-50,V-52,R-1,R-6,R-5 | 3 Windows witnesses +4 shared guards at final source; 0 failed/skipped | 7 | 9 | true |
 
-S1A=CP-1..3 (54 results); S1B=CP-4..6 (64); Linux=CP-7 (7);
-Windows=CP-8 (7). **132 total expected executions: 118 portable, 6 native
+S1A=CP-1..3 (54 results); S1B=CP-4..6 (74); Linux=CP-7 (7);
+Windows=CP-8 (7). **142 total expected executions: 128 portable, 6 native
 behavior witnesses and 8 final-source native-lane guard executions**.
 The runner guards repeat after S1B because its policy/fixture inputs can change.
 These are source-derived counts, not compiled discovery. If Code adds parameters,
@@ -809,6 +809,11 @@ S1A and S1B are portable default-placement packets; N1/N3 require native Linux,
 N2/N4 native Windows on an eligible isolated worker. **Nothing runs on the desktop.**
 A missing native worker leaves that packet pending and S1 acceptance incomplete;
 it does not stop disjoint Code and is not a green skip.
+
+
+#### Code amendment: H3 process initialization and independent cut cases
+
+At Code 924f8ae2, H3 retains one method and its exact filter, but expands to 11 named Arguments: append-before-flush, append-after-flush, ingest-before-enqueue, ingest-after-enqueue, ingest-before-save, ingest-before-commit, ingest-after-commit, derive-before-call, derive-before-save, derive-after-write and derive-after-commit. Each case retains Timeout(60_000), ScriptHarness execution 60 seconds and cleanup 10 seconds. Cold process/EF connection/model initialization is an explicit fixture phase, acknowledged by an atomic nonce-bound initialized receipt; the guarded operation receipt still has the original five-second deadline. Case/child budgets include initialization. No prior deadline value or outcome assertion is relaxed. The four derive cases also persist a real task/session/terminal ledger and assert one restored task window, K101 at start/end and count/sum/min/max/p95 1/40/40/40/40 through the public task API. CP-4 now has 28 executions, the portable packet 128 and the complete packet 142. Earlier 18/118/132 receipts remain historical facts. A repair run may select only the previously red exact H3 method (11 executions), reusing the 17 unchanged green methods from the full CP-4 receipt at 6ccd0322eec472819b1170c773d948a7dc2d1316; this is a targeted red-row repair, not a green-row repetition.
 
 #### Exact inherited method roster
 

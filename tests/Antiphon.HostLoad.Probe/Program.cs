@@ -23,6 +23,7 @@ try
     var runner = new RunnerSettings { RunnerId = "grok-linux", HistoryPath = Path.Combine(config.Root, "spool"), PhysicalHostKey = "owned-host", BindingRevision = 1, SourceEpoch = config.Sample.SourceEpoch };
     if (config.Cut.StartsWith("append-", StringComparison.Ordinal))
     {
+        boundary.Initialized();
         var spool = new HostLoadSpool(runner.HistoryPath, runner, clock, config.Sample.Source.BootId,
             (stage, _) => { if (config.Cut == "append-" + stage) boundary.Ready(); });
         spool.Append(config.Sample); return 3;
@@ -35,6 +36,13 @@ try
     services.AddDbContext<AppDbContext>(o => o.UseNpgsql(config.ConnectionString).AddInterceptors(new SaveBoundary(boundary), new TransactionBoundary(boundary)));
     services.AddScoped<HostLoadIngestService>(); services.AddScoped<HostLoadTaskWindowObserver>(); services.AddScoped<HostLoadDerivedService>(); services.AddSingleton<HostLoadIngestPump>();
     using var provider = services.BuildServiceProvider(); var pump = provider.GetRequiredService<HostLoadIngestPump>();
+    using (var warmup = provider.CreateScope())
+    {
+        var db = warmup.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.OpenConnectionAsync();
+        _ = await db.HostLoadIngestCursors.Where(c => c.RunnerId == "grok-linux").Select(c => c.Cursor).SingleOrDefaultAsync();
+    }
+    boundary.Initialized();
     if (config.Cut == "ingest-before-enqueue")
     {
         using var scope = provider.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -52,7 +60,7 @@ try
 catch { Console.Error.WriteLine("c1514-probe-failed"); return 2; }
 
 internal sealed record Config(string Root, string SourceUrl, string ConnectionString, DateTimeOffset Now,
-    string Cut, string Nonce, string ReadyPath, HostLoadSample Sample);
+    string Cut, string Nonce, string ReadyPath, string InitializedPath, HostLoadSample Sample);
 internal sealed class Clock(DateTimeOffset now) : TimeProvider { public override DateTimeOffset GetUtcNow() => now; }
 internal sealed class Boundary(Config config)
 {
@@ -68,11 +76,16 @@ internal sealed class Boundary(Config config)
     public void Committed() { if ((Phase == "ingest" && config.Cut == "ingest-after-commit") || (DerivedWrite && config.Cut == "derive-after-commit")) Ready(); }
     public void Ready()
     {
-        var temporary = config.ReadyPath + ".tmp";
+        WriteReceipt(config.ReadyPath);
+        using var forever = new ManualResetEventSlim(); forever.Wait();
+    }
+    public void Initialized() => WriteReceipt(config.InitializedPath);
+    private void WriteReceipt(string path)
+    {
+        var temporary = path + ".tmp";
         using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         { file.Write(JsonSerializer.SerializeToUtf8Bytes(new { config.Nonce, config.Cut, config.Sample.Source }, PhoneHomeFraming.Json)); file.Flush(true); }
-        File.Move(temporary, config.ReadyPath);
-        using var forever = new ManualResetEventSlim(); forever.Wait();
+        File.Move(temporary, path);
     }
 }
 internal sealed class SaveBoundary(Boundary boundary) : SaveChangesInterceptor
