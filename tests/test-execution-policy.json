@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "f7b7f7534ca39270a26e8b7da7b6a171690940fb64d7c6b45f9b0462d99b44e1",
+  "policyHash": "4660fd74c8f38fe32f55057025c7a02e1507b44439cf61b0cb9cfe9bf440fd78",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1340,6 +1340,38 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Unix executable-bit witness and Linux named-pipe inventory. The case remains required on Linux.",
           "owner": "CARD-1032"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1514HostLoadNativeTests",
+          "methods": ["Linux_ProductionFactoryPreservesHostSamples"],
+          "platform": "windows",
+          "reason": "CARD-1514 native Linux factory, /proc and spool proof; CP-7 remains required on Linux.",
+          "owner": "CARD-1514"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1514HostLoadNativeOverheadTests",
+          "methods": ["Linux_SamplerOverheadStaysWithinBudget"],
+          "platform": "windows",
+          "reason": "CARD-1514 native Linux overhead experiment; CP-7 remains required on Linux.",
+          "owner": "CARD-1514"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1514HostLoadNativeTests",
+          "methods": ["Windows_ProductionFactoryPreservesHostSamples"],
+          "platform": "linux",
+          "reason": "CARD-1514 native Windows all-group topology and spool proof; CP-8 remains required on Windows.",
+          "owner": "CARD-1514"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C1514HostLoadNativeOverheadTests",
+          "methods": ["Windows_SamplerOverheadStaysWithinBudget"],
+          "platform": "linux",
+          "reason": "CARD-1514 native Windows overhead experiment; CP-8 remains required on Windows.",
+          "owner": "CARD-1514"
         },
         {
           "suite": "session-runner",

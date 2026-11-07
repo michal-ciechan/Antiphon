@@ -41,6 +41,8 @@ public sealed class HostStatsSettings
             throw new InvalidOperationException($"{SectionName}:IntervalMs must be at least 1000.");
         if (RetentionMinutes < 1)
             throw new InvalidOperationException($"{SectionName}:RetentionMinutes must be at least 1.");
+        if (HistoryPath is not null && string.IsNullOrWhiteSpace(HistoryPath))
+            throw new InvalidOperationException($"{SectionName}:HistoryPath must be absent or a nonempty path.");
         if (SpoolMaxBytes < 4096 || SpoolMaxBytes > 256L * 1024 * 1024 || SpoolMaxHours is < 1 or > 24
             || AppendQueueCapacity is < 1 or > 120)
             throw new InvalidOperationException($"{SectionName}: history bounds are invalid.");
