@@ -452,6 +452,8 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         foreach (var context in new[] { "text", "attribute", "reason" })
             cases.Add((context + ":" + reference, C1217ConditionalSkipFixture.WithReference(template, reference, context), value is null ? 2 : 0));
 
+        cases.AddRange(C1217ConditionalSkipFixture.DtdCases(template));
+
         var corpus = cases.Select((item, index) => new { key = item.Key, path = Path.Combine(root, index + ".json") }).ToArray();
         for (var i = 0; i < cases.Count; i++)
         {
@@ -475,6 +477,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         // Keep the existing 30-second child deadline; one PowerShell host for the corpus.
         var records = await ValidateCorpusWithScriptAsync(root, corpus, 2);
         records.Select(record => record.GetProperty("key").GetString()).ShouldBe(cases.Select(item => item.Key));
+        var disagreements = new List<string>();
         for (var i = 0; i < cases.Count; i++)
         {
             var label = "preserved:R2-1:parity:" + cases[i].Key;
@@ -484,9 +487,10 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             TrxReport.ParseStrict(path, 2).ExitCode.ShouldBe(cases[i].Expected, label + ":strict-file");
             var tool = await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", corpus[i].path,
                 "--expected-source-sha", Sha, "--expected-repeat", "2"]);
-            tool.ShouldBe(cases[i].Expected, label + ":C");
+            if (tool != cases[i].Expected) disagreements.Add(label + ":C expected=" + cases[i].Expected + " actual=" + tool);
             File.ReadAllText(path).ShouldBe(cases[i].Xml, label + ":input unchanged");
         }
+        disagreements.ShouldBeEmpty("preserved:R3-1:real-validator-parity");
     }
 
     [Test]

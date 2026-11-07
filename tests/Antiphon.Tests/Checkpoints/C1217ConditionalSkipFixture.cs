@@ -33,6 +33,31 @@ internal static class C1217ConditionalSkipFixture
         _ => throw new ArgumentException("unknown XML context", nameof(context)),
     };
 
+    // The first four declarations are the exact round-3 review audit vectors.
+    internal static IEnumerable<(string Key, string Xml, int Expected)> DtdCases(string xml)
+    {
+        foreach (var declaration in new[]
+        {
+            "<!DOCTYPE TestRun>",
+            "<!DOCTYPE TestRun [<!ENTITY reason \"text\">]>",
+            "<!DOCTYPE TestRun SYSTEM \"file:///nonexistent-c1217.xml\">",
+            "<!DOCTYPE TestRun [<!ENTITY reason SYSTEM \"file:///nonexistent-c1217.xml\">]>",
+        })
+            yield return ("review:" + declaration, declaration + xml, 2);
+        yield return ("internal-used", "<!DOCTYPE TestRun [<!ENTITY reason 'text'>]>" + WithReference(xml, "&reason;", "reason"), 2);
+        yield return ("external-used", "<!DOCTYPE TestRun [<!ENTITY reason SYSTEM 'file:///nonexistent-c1217.xml'>]>" + WithReference(xml, "&reason;", "reason"), 2);
+        yield return ("parameter", "<!DOCTYPE TestRun [<!ENTITY % declaration \"<!ENTITY reason 'text'>\">%declaration;]>" + WithReference(xml, "&reason;", "reason"), 2);
+        yield return ("billion-laughs", "<!DOCTYPE TestRun [<!ENTITY a 'lol'><!ENTITY b '&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;'><!ENTITY c '&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;'><!ENTITY d '&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;'>]>" + WithReference(xml, "&d;", "reason"), 2);
+        yield return ("undefined-entity", WithReference(xml, "&reason;", "reason"), 2);
+        yield return ("comment", "<!-- <!DOCTYPE TestRun [<!ENTITY reason 'text'>]> -->" + xml, 0);
+        yield return ("attribute-literal", WithReference(xml, "&lt;!DOCTYPE TestRun&gt;", "attribute"), 0);
+        yield return ("attribute-raw-less-than", WithReference(xml, "<!DOCTYPE TestRun>", "attribute"), 2);
+        yield return ("cdata", WithReference(xml, "<![CDATA[<!DOCTYPE TestRun [<!ENTITY reason 'text'>]>]]>", "text"), 0);
+        foreach (var entity in new[] { "&amp;", "&lt;", "&gt;", "&apos;", "&quot;" })
+        foreach (var context in new[] { "text", "attribute", "reason" })
+            yield return ("predefined:" + context + ":" + entity, WithReference(xml, entity, context), 0);
+    }
+
     internal const string Catalog = """
         {"schemaVersion":1,"contracts":[{"id":"c1217-fixture-v1","probe":"file-symlink-create-v1","project":"tests/Fixture","filter":"/*/Fixture/Cases/*","expectedTotal":3,"minExecuted":1,"skips":[{"className":"Fixture.Cases","method":"LinkA","count":1,"reason":"fixture capability unavailable"},{"className":"Fixture.Cases","method":"LinkB","count":1,"reason":"fixture capability unavailable"}]}]}
         """;
