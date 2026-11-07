@@ -25,13 +25,8 @@ internal static class TargetPins
         {
             foreach (var element in Elements(document.DocumentElement!))
             {
+                if (!IsPinned(element)) continue;
                 var target = element.LocalName == "Target";
-                var condition = element.GetAttribute("Condition");
-                var readsKnob = element.Attributes.Cast<XmlAttribute>().Any(attribute =>
-                    EvaluationExpressionPolicy.ReadsReviewedEnvironment(attribute.Value))
-                    || EvaluationExpressionPolicy.ReadsReviewedEnvironment(string.Concat(element.ChildNodes.OfType<XmlCharacterData>()
-                        .Where(text => text is XmlText or XmlCDataSection).Select(text => text.Value)));
-                if (!target && !OsDependent(condition) && !readsKnob) continue;
                 var selector = target ? element.GetAttribute("Name") : ElementPath(element);
                 var display = relative + " " + (target ? "Target " : "") + selector;
                 if (selector.Length == 0 || selector.IndexOfAny(['\t', '\r', '\n']) >= 0)
@@ -123,6 +118,38 @@ internal static class TargetPins
                 refusals.Add($"refused: {PinsPath}:{lineNumber} {fields[0]} {fields[1]} (duplicate pin)");
         }
         return pins;
+    }
+
+    /// <summary>
+    /// Prints the current pin rows. Not an evaluation and not an approval.
+    /// The land-refresh script uses this to rewrite pins for files the batch itself changed.
+    /// </summary>
+    internal static void Print(string repo, TextWriter output)
+    {
+        foreach (var (relative, document) in DefinitionDocuments(repo))
+        {
+            foreach (var element in Elements(document.DocumentElement!))
+            {
+                if (!IsPinned(element)) continue;
+                var target = element.LocalName == "Target";
+                var selector = target ? element.GetAttribute("Name") : ElementPath(element);
+                if (selector.Length == 0 || selector.IndexOfAny(['\t', '\r', '\n']) >= 0) continue;
+                output.WriteLine(relative + "\t" + selector + "\t" + Hash(element));
+            }
+        }
+    }
+
+    private static bool IsPinned(XmlElement element)
+    {
+        if (element.LocalName == "Target") return true;
+        if (OsDependent(element.GetAttribute("Condition"))) return true;
+        if (element.Attributes.Cast<XmlAttribute>().Any(attribute =>
+                EvaluationExpressionPolicy.ReadsReviewedEnvironment(attribute.Value)))
+            return true;
+        var text = string.Concat(element.ChildNodes.OfType<XmlCharacterData>()
+            .Where(node => node is XmlText or XmlCDataSection)
+            .Select(node => node.Value));
+        return EvaluationExpressionPolicy.ReadsReviewedEnvironment(text);
     }
 
     private static bool OsDependent(string condition) =>

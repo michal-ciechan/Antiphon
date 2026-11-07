@@ -140,9 +140,14 @@ These directions override the cited standing rules in
    ```
 
    Supply the documented built audit tool when needed; its build also takes a slot
-   and uses an isolated OutputPath. Only a Merge whose `-Check` fails **solely** on
-   the recorded digest may use the documented `-Update` once on the final tree.
-   Commit regenerated records separately, then rerun `-Check`. Other failures are
+   and uses an isolated OutputPath. When `-Check` fails solely because this batch
+   changed a build-definition record, the selected digest or count, or a target pin,
+   run `scripts/land-graph-land-refresh.ps1 -Base <batch-base>` before the land. It
+   refreshes once, commits only the land-graph files, re-runs `-Check`, and never
+   asks. See [land-graph refresh](../../../docs/orchestration-loop.md#land-graph-refresh).
+   A bare `-Update` outside that land path stays forbidden. A property or construct
+   refusal, a malformed manifest, a refresh outside the batch's own files, and a
+   `-Check` that still fails after the refresh stay hard failures. Other failures are
    blockers, never authority to regenerate or widen inputs. Historical context:
    68 definitions, digest `7BDABBA0...`, became 69, `E7C6EDAF...`, when the test-only
    GitFixture project was added; these prefixes are history, not acceptance values.
