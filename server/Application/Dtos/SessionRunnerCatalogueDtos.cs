@@ -20,4 +20,7 @@ public sealed record SessionRunnerCatalogueEntryDto(
     string? CodexCliVersion = null,
     DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
     string? CodexCliVersionError = null,
-    bool? CodexCliVersionStale = null);
+    bool? CodexCliVersionStale = null)
+{
+    public HostLoadAdvice? Load { get; init; }
+}

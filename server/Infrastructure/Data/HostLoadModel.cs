@@ -19,6 +19,7 @@ public partial class AppDbContext
         model.Entity<HostLoadSampleRecord>(e =>
         {
             e.HasKey(r => r.Id); e.Property(r => r.Id).ValueGeneratedOnAdd();
+            e.Property(r => r.CreatedTransactionId).HasDefaultValueSql("pg_current_xact_id()::text::bigint");
             e.Property(r => r.RunnerId).HasMaxLength(64); e.Property(r => r.PhysicalHostKey).HasMaxLength(128);
             e.HasIndex(r => new { r.RunnerStoreId, r.BootId, r.Sequence }).IsUnique();
             e.HasIndex(r => new { r.PhysicalHostKey, r.SampledAt, r.Id });
@@ -32,6 +33,7 @@ public partial class AppDbContext
         model.Entity<HostLoadHourlyRollup>(e =>
         {
             e.HasKey(r => r.Id); e.Property(r => r.Id).ValueGeneratedOnAdd();
+            e.Property(r => r.CreatedTransactionId).HasDefaultValueSql("pg_current_xact_id()::text::bigint");
             e.Property(r => r.PhysicalHostKey).HasMaxLength(128); e.Property(r => r.Metric).HasMaxLength(128);
             e.HasIndex(r => new { r.PhysicalHostKey, r.SourceEpoch, r.HourUtc, r.Metric }).IsUnique();
             e.HasIndex(r => new { r.PhysicalHostKey, r.HourUtc, r.Id });
