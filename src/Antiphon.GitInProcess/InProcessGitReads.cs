@@ -86,6 +86,34 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>
+    /// Whether a git child in <paramref name="repository"/> would list the endpoint exactly as given. git rewrites a
+    /// command-line URL with url.&lt;base&gt;.insteadOf and reads a remote of that name instead of the path; both come
+    /// from the child's config, so any url.*, include or matching remote.* key there, or config injected through the
+    /// environment, leaves the read to git. The config is libgit2's view of the repository (its own levels plus this
+    /// process's global and system files, which the runners' children inherit).
+    /// </summary>
+    private static bool EndpointTakenLiterally(string repository, IReadOnlyList<string> arguments)
+    {
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_CONFIG_PARAMETERS"))
+            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT"))
+            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_CONFIG"))) return false;
+        var endpoint = arguments.Count > 3 && arguments[3] == "--" ? arguments.ElementAtOrDefault(4) : arguments.ElementAtOrDefault(3);
+        if (endpoint is null) return false;
+        try
+        {
+            using var repo = new Repository(repository);
+            if (Unusual(repo)) return false;
+            return !repo.Config.Any(e => e.Key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
+                || e.Key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
+                || e.Key.StartsWith("remote." + endpoint + ".", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// For runners that hand git's stderr to their callers as well (<c>WorktreeManager</c>,
     /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
@@ -94,7 +122,11 @@ internal static partial class InProcessGitReads
     internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments)
     {
         if (arguments.Count > 0 && arguments[0] == "--no-optional-locks") arguments = arguments.Skip(1).ToArray();
-        if (arguments.Count == 0 || arguments[0] == "ls-remote") return null;
+        if (arguments.Count == 0) return null;
+        // ls-remote exits 0, or 2 under --exit-code when nothing matches, without a word on stderr.
+        if (arguments[0] == "ls-remote")
+            return EndpointTakenLiterally(repository, arguments) && LsRemote(arguments) is { ExitCode: 0 or 2 } listed
+                ? (listed.ExitCode, listed.Output) : null;
         // Both runners' children inherit this process's environment (plus gc/maintenance keys no status
         // reads), so the status config is checked against this process's own. Answers are all exit 0.
         if (arguments[0] is "status" or "ls-files")
