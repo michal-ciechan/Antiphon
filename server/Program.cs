@@ -1178,8 +1178,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         {
             var recurringJobManager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
             HangfireConfiguration.RegisterCensusJob(recurringJobManager, census);
-            if (residue.Enabled)
-                HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
+            HangfireConfiguration.RegisterWorktreeResidueJob(recurringJobManager, residue);
             var retention = scope.ServiceProvider.GetRequiredService<IOptions<RunnerWorktreeRetentionSettings>>().Value;
             if (retention.Enabled)
                 HangfireConfiguration.AddOrUpdateRunnerWorktreeRetentionJob(recurringJobManager, retention);
@@ -1197,16 +1196,14 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateDesktopLegacyReleaseJob(recurringJobManager, legacy.Settings);
             else
                 recurringJobManager.RemoveIfExists(legacy.Settings?.RecurringJobId ?? new WorktreeLegacyReleaseSettings().RecurringJobId);
-            if (ExpectationWatchdogJob.ShouldRun(hangfire,
-                scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value))
-                HangfireConfiguration.AddOrUpdateExpectationWatchdogJob(recurringJobManager);
+            HangfireConfiguration.RegisterExpectationWatchdogJob(
+                recurringJobManager,
+                hangfire,
+                scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value);
             // CARD-0653: finish pending slot-release intents at startup and on a schedule.
             var phoneHome = scope.ServiceProvider.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value;
-            if (phoneHome.Enabled)
-            {
-                HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob(recurringJobManager, phoneHome);
-                HangfireConfiguration.AddOrUpdateRunnerRetireJob(recurringJobManager, phoneHome);
-            }
+            HangfireConfiguration.RegisterRunnerSlotReconcileJob(recurringJobManager, phoneHome);
+            HangfireConfiguration.RegisterRunnerRetireJob(recurringJobManager, phoneHome);
 
             // CARD-1320: one minute reminder. No startup trigger; the per-agent toggle is the switch.
             HangfireConfiguration.AddOrUpdateKeepSixJob(recurringJobManager);
