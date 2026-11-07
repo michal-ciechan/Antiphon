@@ -581,6 +581,46 @@ public sealed class WorktreeGuardedCleanupTests
         h.SetAsideTrees().ShouldBeEmpty();
     }
 
+    // CARD-1755: the receipt SHA-256 and the git blob come from one read, and the second manifest
+    // reuses that SHA-256 when TryStamp still matches. A same-length, same-mtime rewrite in that
+    // window must come back to the worktree; CustodyOf and the delete-time hash are not reused.
+    [Test]
+    public async Task C1755_SameStampRewriteAfterReceiptIsNotRemoved()
+    {
+        await using var h = await RemovalHarness.CreateAsync();
+        h.CleanFirst = true;
+        var feature = Path.Combine(h.H.Fixture.Source, "feature.txt");
+        var original = await File.ReadAllBytesAsync(feature);
+        original.Length.ShouldBeGreaterThan(0);
+        var rewritten = (byte[])original.Clone();
+        rewritten[0] ^= 0x1;
+        var mutated = false;
+        WorktreeNoFollowDelete.EntryStamp? beforeStamp = null, afterStamp = null;
+        h.H.Fixture.Git.AfterCommand = async (repo, args, result) =>
+        {
+            if (mutated || !result.Succeeded || args.Count != 5 || args[0] != "ls-tree" || args[1] != "-r"
+                || args[2] != "-z" || args[3] != "--full-tree" || args[4] != h.SourceSha
+                || !LandingGit.PathsEqual(repo, h.H.Fixture.Repository))
+                return;
+            mutated = true;
+            beforeStamp = WorktreeNoFollowDelete.TryStamp(feature);
+            beforeStamp.ShouldNotBeNull();
+            await File.WriteAllBytesAsync(feature, rewritten);
+            File.SetLastWriteTimeUtc(feature, new DateTime(beforeStamp.Value.MtimeTicks, DateTimeKind.Utc));
+            afterStamp = WorktreeNoFollowDelete.TryStamp(feature);
+        };
+        var result = await h.RemoveAsync();
+        mutated.ShouldBeTrue();
+        afterStamp.ShouldBe(beforeStamp);
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("set_aside_content_changed");
+        result.DirectoryGone.ShouldBeFalse();
+        Directory.Exists(h.H.Fixture.Source).ShouldBeTrue();
+        (await File.ReadAllBytesAsync(feature)).ShouldBe(rewritten);
+        h.SetAsideTrees().ShouldBeEmpty();
+        WorktreeSetAside.Read(h.Operation.CommonDirectory, h.H.Fixture.Source).ShouldBeNull();
+    }
+
     /// <summary>Turns on core.autocrlf and checks the tracked file out again, so it holds CRLF bytes as on Windows.</summary>
     private static async Task<string> UseCrlfCheckoutAsync(RemovalHarness h)
     {
