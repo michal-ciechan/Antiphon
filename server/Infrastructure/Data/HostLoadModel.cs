@@ -13,6 +13,7 @@ public partial class AppDbContext
     public DbSet<AgentTaskLoadWindow> AgentTaskLoadWindows => Set<AgentTaskLoadWindow>();
     public DbSet<HostLoadTaskMetricBucket> HostLoadTaskMetricBuckets => Set<HostLoadTaskMetricBucket>();
     public DbSet<HostLoadObservedEvent> HostLoadObservedEvents => Set<HostLoadObservedEvent>();
+    public DbSet<HostLoadRetentionState> HostLoadRetentionStates => Set<HostLoadRetentionState>();
 
     private static void ConfigureHostLoadModel(ModelBuilder model)
     {
@@ -24,6 +25,7 @@ public partial class AppDbContext
             e.HasIndex(r => new { r.RunnerStoreId, r.BootId, r.Sequence }).IsUnique();
             e.HasIndex(r => new { r.PhysicalHostKey, r.SampledAt, r.Id });
             e.HasIndex(r => r.Id).HasFilter("\"DerivedAt\" IS NULL").HasDatabaseName("IX_HostLoadSamples_PendingDerived");
+            e.HasIndex(r => new { r.SampledAt, r.Id }).HasFilter("\"DerivedAt\" IS NOT NULL").HasDatabaseName("IX_HostLoadSamples_DerivedAge");
         });
         model.Entity<HostLoadSampleIdentity>(e =>
         {
@@ -37,6 +39,7 @@ public partial class AppDbContext
             e.Property(r => r.PhysicalHostKey).HasMaxLength(128); e.Property(r => r.Metric).HasMaxLength(128);
             e.HasIndex(r => new { r.PhysicalHostKey, r.SourceEpoch, r.HourUtc, r.Metric }).IsUnique();
             e.HasIndex(r => new { r.PhysicalHostKey, r.HourUtc, r.Id });
+            e.HasIndex(r => new { r.HourUtc, r.Id }).HasDatabaseName("IX_HostLoadHourlyRollups_Age");
         });
         model.Entity<HostLoadIngestCursor>(e => { e.HasKey(r => r.RunnerId); e.Property(r => r.RunnerId).HasMaxLength(64); });
         model.Entity<AgentTaskLoadWindow>(e =>
@@ -52,6 +55,7 @@ public partial class AppDbContext
             e.HasOne<AgentTaskLoadWindow>().WithMany().HasForeignKey(r => r.WindowId).OnDelete(DeleteBehavior.Cascade);
         });
         model.Entity<HostLoadObservedEvent>(e => { e.HasKey(r => r.EventId); e.HasIndex(r => r.ObservedAt); });
+        model.Entity<HostLoadRetentionState>(e => { e.HasKey(r => r.Id); e.Property(r => r.Id).ValueGeneratedNever(); });
         model.Entity<AgentTaskEvent>().HasIndex(e => new { e.At, e.Id }).HasFilter("\"LoadAttempt\" IS NOT NULL")
             .HasDatabaseName("IX_AgentTaskEvents_LoadObservation");
     }

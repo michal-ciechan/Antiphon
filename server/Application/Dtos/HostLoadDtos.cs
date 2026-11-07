@@ -5,7 +5,7 @@ namespace Antiphon.Server.Application.Dtos;
 public sealed record HostLoadMetricSummary(double? Avg, double? Min, double? Max, double? P95,
     double? Sum, long ValidCount, long ExpectedCount, double Coverage, bool Complete,
     bool P95Approximate, double? P95ErrorBound, int HistogramVersion = 1, double? BinWidth = null);
-public sealed record HostLoadMetricPoint(string Identity, DateTimeOffset At, double? Value);
+public sealed record HostLoadMetricPoint(string Identity, DateTimeOffset At, double? Observation);
 public sealed record HostLoadHistogramState(double BinWidth, IReadOnlyDictionary<long, long> Bins,
     long Count, double Sum, double? Min, double? Max);
 public sealed record HostLoadPressureInput(string? PhysicalHostKey, string? ExpectedPhysicalHostKey,
