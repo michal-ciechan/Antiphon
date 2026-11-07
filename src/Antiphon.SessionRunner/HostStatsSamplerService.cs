@@ -53,7 +53,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         _history = history;
     }
 
-    public Task SampleOnceAsync(CancellationToken ct = default)
+    public Task SampleOnceAsync(CancellationToken ct = default, bool logTick = true)
     {
         ct.ThrowIfCancellationRequested();
         var tickStarted = Stopwatch.GetTimestamp();
@@ -80,7 +80,8 @@ public sealed class HostStatsSamplerService : BackgroundService
         var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes, CpuUnknownReason = reason };
         _store.Add(sample);
         _history?.TryCapture(sample);
-        _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds);
+        if (logTick)
+            _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds);
         return Task.CompletedTask;
     }
 
@@ -89,6 +90,8 @@ public sealed class HostStatsSamplerService : BackgroundService
         if (!_settings.Enabled)
             return;
 
+        // The cold call pays JIT. Logged ticks are the steady sample the overhead budget measures.
+        await SampleOnceAsync(stoppingToken, logTick: false);
         await SampleOnceAsync(stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_settings.IntervalMs), _time);
         try

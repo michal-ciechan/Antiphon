@@ -50,6 +50,9 @@ public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
         var info = new ProcessStartInfo("dotnet") { WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var key in info.Environment.Keys.Where(k => k.StartsWith("SessionRunner__", StringComparison.OrdinalIgnoreCase)
             || k.StartsWith("PhoneHome__", StringComparison.OrdinalIgnoreCase) || k.StartsWith("ANTIPHON_", StringComparison.OrdinalIgnoreCase)).ToArray()) info.Environment.Remove(key);
+        // Past the 15s warmup the on/off gap is background tiered compilation of the enabled path
+        // (about 2.9 points), not the steady sampler (about 0.15 with the compiler off).
+        info.Environment["DOTNET_TieredCompilation"] = "0";
         foreach (var arg in new[] { Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.dll"), "--urls", "http://127.0.0.1:0",
             "--SessionRunner:SessionLogPath", root, "--SessionRunner:Herdr:Enabled", "false", "--SessionRunner:CpuWatchdogEnabled", "false",
             "--SessionRunner:BuildSlotsOnly", "false", "--PhoneHome:Enabled", "false", "--PhoneHome:CapacityStatePath", Path.Combine(root, "capacity"),
