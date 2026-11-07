@@ -1,0 +1,20 @@
+# CARD-1734 unbound Mutation candidate
+
+Original Code/landing owner: a38720f2. SourceLanding binding belongs to the caller.
+Plan: ../plans/2026-11-07-card-1734-checkpoint-cold-build-plan.md.
+Every control below is pending; ordinary red/green does not discharge Mutation.
+
+| ID/variant | Guarded behavior | Deliberate mutant | Exact method filter |
+|---|---|---|---|
+| PC-1/tool | Native obj byte preservation, staged helper, valid terminal report | Remove `_PtyHostArtifactsArguments` from the shipped target's Exec command | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
+| PC-1/script | Same property forwarding through run-checkpoint.ps1 | Same mutant; the two argument cases may share one red/restore/green cycle | `/*/*/CheckpointColdBuildTests/C1734_Cold_build_preserves_native_obj_and_terminal_receipt` |
+| PC-2 | Real tracked tampering remains refused with diagnostic and valid RED report | Suppress BuildConfinement's changed-path tampering classification; a source-changed exit alone must not satisfy the exact JSON refusal assertion | `/*/*/CheckpointColdBuildTests/C1734_Real_tampering_keeps_a_red_terminal_report` |
+
+The fixture executes a verbatim copy of the shipped MSBuild target. The first
+ordinary run on S1 proved both PC-1 variants fail at the native obj snapshot.
+Its third failure was a harness diagnostic-location error: when tracked source
+changes, the Markdown row is replaced by source_changed. S2 checks the exact
+JSON build SlotReason and the named TAMPERED build-log path instead. It still
+requires exit 2, valid terminal report/state binding and retained changed bytes.
+No timeout or custody assertion is relaxed. Mutation owns all deliberate source
+mutants, missing-control discovery, restore records and final green receipts.
