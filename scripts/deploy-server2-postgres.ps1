@@ -15,8 +15,10 @@
     The image must be postgres:16@sha256:<64 hex> or postgres@sha256:<64 hex>.
     The production compose runs only as project antiphon-server2-postgres.
     The drill compose runs only as project antiphon-server2-postgres-drill.
-    The drill commands dump the desktop database with pg_dump only, restore
-    into the scratch volume, and remove only that scratch project.
+    The drill commands take or locate the encrypted B1 snapshot, time the
+    copy to server2, decrypt it with age under the drill scratch directory
+    mode 0600, restore into the scratch volume, shred the plaintext, and
+    remove only that scratch project.
     Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.
     ASCII-only.
 #>
@@ -252,6 +254,10 @@ function Write-Server2PostgresDrillPlan {
     $project = $script:Server2PostgresDrillProject
     $volume = $script:Server2PostgresDrillVolume
     $container = $project + '-postgres-1'
+    $composeArg = [System.IO.Path]::GetFileName($ComposePath)
+    $scratch = '/var/tmp/' + $project
+    $plain = $scratch + '/antiphon-drill-plain.dump'
+    $cipher = $scratch + '/antiphon-drill.dump.age'
     $prefix = 'drill-command: project=' + $project + ' volume=' + $volume + ' :: '
     Write-Output ('drill-project: ' + $project)
     Write-Output ('drill-volume: ' + $volume)
@@ -272,19 +278,23 @@ function Write-Server2PostgresDrillPlan {
     Write-Output 'phase3: key-table-count-min-max-pk'
     Write-Output 'phase3: key tables are TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, AgentTaskEvents'
     Write-Output 'phase3: count, minimum primary key, and maximum primary key; no row body'
-    Write-Output ($prefix + 'docker volume create ' + $volume)
-    Write-Output ($prefix + 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $project + ' up -d')
-    Write-Output ($prefix + 'docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl > antiphon-drill.dump')
-    Write-Output ($prefix + 'docker exec -i ' + $container + ' pg_restore -U antiphon -d antiphon --no-owner --no-acl < antiphon-drill.dump')
-    $rowCount = 'select relname, n_live_tup from pg_stat_user_tables order by relname'
-    $migrations = 'select "MigrationId" from "__EFMigrationsHistory" order by "MigrationId"'
-    $extensions = 'select extname, extversion from pg_extension order by extname'
-    Write-Output ($prefix + 'docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $rowCount + '"')
-    Write-Output ($prefix + 'docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $migrations + '"')
-    Write-Output ($prefix + 'docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $extensions + '"')
-    Write-Output ($prefix + 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $project + ' down')
-    $remove = 'if case ' + $volume + ' in *-drill_pgdata) true ;; *) echo ''SERVER2-POSTGRES fail exit=2 reason=volume-forbidden''; exit 2 ;; esac; then docker volume rm ' + $volume + '; fi'
-    Write-Output ($prefix + $remove)
+    $migrations = 'select \"MigrationId\" from \"__EFMigrationsHistory\" order by \"MigrationId\"'
+    $commands = New-Object System.Collections.Generic.List[string]
+    [void]$commands.Add('pwsh -NoProfile -File scripts/postgres-snapshot.ps1 -Execute -Container antiphon-postgres -RecipientFile "$AGE_RECIPIENT"')
+    [void]$commands.Add('SNAPSHOT=$(ls -1t "$SNAPSHOT_DIR"/antiphon-*.dump.age | head -n 1)')
+    [void]$commands.Add('mkdir -p -m 0700 ' + $scratch)
+    [void]$commands.Add('docker volume create ' + $volume)
+    [void]$commands.Add('docker compose --env-file ' + $envArg + ' -f ' + $composeArg + ' -p ' + $project + ' up -d')
+    [void]$commands.Add('copy_start=$(date +%s); scp "$SNAPSHOT" mc@server2:' + $cipher + '; copy_end=$(date +%s); echo copy-elapsed-sec=$((copy_end - copy_start))')
+    [void]$commands.Add('umask 077; age -d -i "$AGE_IDENTITY" -o ' + $plain + ' ' + $cipher + '; chmod 0600 ' + $plain)
+    [void]$commands.Add('docker exec -i ' + $container + ' pg_restore -U antiphon -d antiphon --no-owner --no-acl < ' + $plain)
+    [void]$commands.Add('docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "select relname, n_live_tup from pg_stat_user_tables order by relname"')
+    [void]$commands.Add('docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "' + $migrations + '"')
+    [void]$commands.Add('docker exec ' + $container + ' psql -U antiphon -d antiphon -At -c "select extname, extversion from pg_extension order by extname"')
+    [void]$commands.Add('shred -u ' + $plain)
+    [void]$commands.Add('docker compose --env-file ' + $envArg + ' -f ' + $composeArg + ' -p ' + $project + ' down')
+    [void]$commands.Add('if case ' + $volume + ' in *-drill_pgdata) true ;; *) echo ''SERVER2-POSTGRES fail exit=2 reason=volume-forbidden''; exit 2 ;; esac; then docker volume rm ' + $volume + '; fi')
+    foreach ($command in $commands) { Write-Output ($prefix + $command) }
 }
 
 function Resolve-Server2PostgresLane {
