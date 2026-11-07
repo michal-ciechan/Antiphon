@@ -36,6 +36,8 @@ internal static class C1217ConditionalSkipFixture
     // The first four declarations are the exact round-3 review audit vectors.
     internal static IEnumerable<(string Key, string Xml, int Expected)> DtdCases(string xml)
     {
+        string Prolog(string declaration) => xml.StartsWith("<?xml", StringComparison.Ordinal)
+            ? xml.Insert(xml.IndexOf("?>", StringComparison.Ordinal) + 2, declaration) : declaration + xml;
         foreach (var declaration in new[]
         {
             "<!DOCTYPE TestRun>",
@@ -43,13 +45,13 @@ internal static class C1217ConditionalSkipFixture
             "<!DOCTYPE TestRun SYSTEM \"file:///nonexistent-c1217.xml\">",
             "<!DOCTYPE TestRun [<!ENTITY reason SYSTEM \"file:///nonexistent-c1217.xml\">]>",
         })
-            yield return ("review:" + declaration, declaration + xml, 2);
-        yield return ("internal-used", "<!DOCTYPE TestRun [<!ENTITY reason 'text'>]>" + WithReference(xml, "&reason;", "reason"), 2);
-        yield return ("external-used", "<!DOCTYPE TestRun [<!ENTITY reason SYSTEM 'file:///nonexistent-c1217.xml'>]>" + WithReference(xml, "&reason;", "reason"), 2);
-        yield return ("parameter", "<!DOCTYPE TestRun [<!ENTITY % declaration \"<!ENTITY reason 'text'>\">%declaration;]>" + WithReference(xml, "&reason;", "reason"), 2);
-        yield return ("billion-laughs", "<!DOCTYPE TestRun [<!ENTITY a 'lol'><!ENTITY b '&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;'><!ENTITY c '&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;'><!ENTITY d '&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;'>]>" + WithReference(xml, "&d;", "reason"), 2);
+            yield return ("review:" + declaration, Prolog(declaration), 2);
+        yield return ("internal-used", WithReference(Prolog("<!DOCTYPE TestRun [<!ENTITY reason 'text'>]>"), "&reason;", "reason"), 2);
+        yield return ("external-used", WithReference(Prolog("<!DOCTYPE TestRun [<!ENTITY reason SYSTEM 'file:///nonexistent-c1217.xml'>]>"), "&reason;", "reason"), 2);
+        yield return ("parameter", WithReference(Prolog("<!DOCTYPE TestRun [<!ENTITY % declaration \"<!ENTITY reason 'text'>\">%declaration;]>"), "&reason;", "reason"), 2);
+        yield return ("billion-laughs", WithReference(Prolog("<!DOCTYPE TestRun [<!ENTITY a 'lol'><!ENTITY b '&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;'><!ENTITY c '&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;'><!ENTITY d '&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;'>]>"), "&d;", "reason"), 2);
         yield return ("undefined-entity", WithReference(xml, "&reason;", "reason"), 2);
-        yield return ("comment", "<!-- <!DOCTYPE TestRun [<!ENTITY reason 'text'>]> -->" + xml, 0);
+        yield return ("comment", Prolog("<!-- <!DOCTYPE TestRun [<!ENTITY reason 'text'>]> -->"), 0);
         yield return ("attribute-literal", WithReference(xml, "&lt;!DOCTYPE TestRun&gt;", "attribute"), 0);
         yield return ("attribute-raw-less-than", WithReference(xml, "<!DOCTYPE TestRun>", "attribute"), 2);
         yield return ("cdata", WithReference(xml, "<![CDATA[<!DOCTYPE TestRun [<!ENTITY reason 'text'>]>]]>", "text"), 0);

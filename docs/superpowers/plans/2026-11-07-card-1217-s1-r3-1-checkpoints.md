@@ -22,6 +22,13 @@ No full assembly/whole Unit or 405 owed Scripts methods: brief explicitly forbid
 No changed OS branch; use real BCL readers and script input. Restart: none.
 All PC-1..PC-102 and existing B/R2 variants plus R3 candidates remain Mutation-owned pending.
 
+The first CP-RED run (29b975715) had an invalid fixture prolog: comment/DTD
+preceded an XML declaration. Retain it as fixture failure, no R3-1 credit.
+CP-RED2 corrects insertion after the declaration; CP-XML-RED covers every
+additional XML consumer with independent controls before the production repair.
+CP-2 also includes the complete new security class and existing coverage command
+class because project XML discovery now uses the shared reader. No broad assembly.
+
 ### Checkpoints
 
 totalTimeoutMinutes: 55
@@ -29,8 +36,10 @@ totalTimeoutMinutes: 55
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-RED | RED | tests/Antiphon.Tests -> bin-c1217-fd3883-red/ | r3-1-red | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests*/validators_agree_on_xml_character_references` | R3-1 red | red | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-RED2 | RED2 | tests/Antiphon.Tests -> bin-c1217-fd3883-red2/ | r3-1-red2 | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests*/validators_agree_on_xml_character_references` | R3-1 red | red | 1 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-XML-RED | RED2 | CP-RED2 | r3-1-red2 | `/*/Antiphon.Tests.Checkpoints/XmlInputSecurityTests*/*` | R3-1 parse sites | red | 4 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-1 | GREEN | tests/Antiphon.Tests -> bin-c1217-fd3883-green/ | r3-1 | `/*/Antiphon.Tests.Checkpoints/C1217ConditionalSkipContractTests*/*` | V-1..4; R2-1 | green | 8 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
-| CP-2 | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Checkpoints/(CheckpointManifestTests*)\|(CheckpointImportTests*)\|(TrxReportTests*)/*` | R-1 | green | 48 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
+| CP-2 | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Checkpoints/(CheckpointManifestTests*)\|(CheckpointImportTests*)\|(TrxReportTests*)\|(XmlInputSecurityTests*)\|(PlanCoverageCommandTests*)/*` | R-1 | green | 48 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-3 | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointRepeatConfigurationTests*/*` | R-1 | green | 5 | 1 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-GUARDS | GREEN | CP-1 | r3-1 | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(CheckpointToolProjectContractTests*)/*` | R-4 | green | 80 | 3 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
 | CP-SOURCE | GREEN | CP-1 | r3-1 | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests*/*` | R-3; R2-1 parity | green | 14 | 3 | true | TEMP=/tmp; TMP=/tmp; TMPDIR=/tmp |
