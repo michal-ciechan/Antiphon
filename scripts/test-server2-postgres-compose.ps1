@@ -13,7 +13,9 @@ $here = $PSScriptRoot
 $repo = Split-Path -Parent $here
 $deploy = Join-Path $here 'deploy-server2-postgres.ps1'
 $compose = Join-Path $repo 'docker-compose.server2-postgres.yml'
+$drillCompose = Join-Path $repo 'docker-compose.server2-postgres-drill.yml'
 $doc = Join-Path $repo 'docs/docker-stack.md'
+$testingDoc = Join-Path $repo 'docs/testing-and-build.md'
 $runnerCompose = Join-Path $repo 'docker-compose.server2-runner.yml'
 $script:Passed = 0
 $script:Failed = 0
@@ -138,6 +140,41 @@ function Get-Marker {
     return [string](Get-Content -LiteralPath $Root.Marker -Raw)
 }
 
+function Get-RenderedFields {
+    param([string]$ComposePath, [string]$ProjectName, [string]$EnvPath)
+    $docker = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $docker) { return @{ Ok = $false; Detail = 'missing-docker' } }
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $docker.Source
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    foreach ($arg in @('compose', '--env-file', $EnvPath, '-f', $ComposePath, '-p', $ProjectName, 'config')) {
+        [void]$psi.ArgumentList.Add($arg)
+    }
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    [void]$proc.Start()
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    [void]$proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) { return @{ Ok = $false; Detail = ('exit=' + $proc.ExitCode) } }
+    $norm = $stdout.Replace("`r`n", "`n")
+    $volume = ''
+    $vol = [regex]::Match($norm, '(?m)^volumes:\n  pgdata:\n    name: (\S+)')
+    if ($vol.Success) { $volume = $vol.Groups[1].Value }
+    $hostIp = ''
+    $hip = [regex]::Match($norm, '(?m)^[ ]+host_ip: (\S+)')
+    if ($hip.Success) { $hostIp = $hip.Groups[1].Value }
+    $published = ''
+    $pub = [regex]::Match($norm, '(?m)^[ ]+published: "([0-9]+)"')
+    if ($pub.Success) { $published = $pub.Groups[1].Value }
+    $network = ''
+    $net = [regex]::Match($norm, '(?m)^networks:\n  \S+:\n    name: (\S+)')
+    if ($net.Success) { $network = $net.Groups[1].Value }
+    return @{ Ok = $true; Volume = $volume; HostIp = $hostIp; Published = $published; Network = $network; Detail = '' }
+}
+
 function Assert-NoDocker {
     param($Root, [string]$Name, $Result)
     $marker = Get-Marker $Root
@@ -164,7 +201,14 @@ $cases = @(
     'tailnet-guard',
     'ambiguous-mode',
     'doc-sentence',
-    'ascii'
+    'ascii',
+    'network-block',
+    'drill-compose',
+    'drill-render',
+    'drill-commands',
+    'project-refusal',
+    'refuse-bind-cgnat',
+    'image-repodigest'
 )
 
 function Invoke-Case {
@@ -187,7 +231,8 @@ function Invoke-Case {
                     'shared_preload_libraries=pg_stat_statements',
                     'pg_stat_statements.track=top',
                     'pg_stat_statements.max=5000',
-                    'antiphon-server2',
+                    "networks:`n  antiphon-server2:`n    name: antiphon-server2",
+                    "    networks:`n      - antiphon-server2",
                     'pgdata:/var/lib/postgresql/data',
                     'name: antiphon-server2-postgres_pgdata',
                     'interval: 5s',
@@ -405,9 +450,18 @@ function Invoke-Case {
             $runner = [System.IO.File]::ReadAllText($runnerCompose)
             Assert-True ($runner -notmatch 'no server, no Postgres') 'runner compose no longer says there is no Postgres' 'old sentence remains'
             Assert-True ($runner.Contains('CARD-1406')) 'runner compose points at the host Postgres project' 'missing'
+            $exitCodes = 'Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.'
+            Assert-True ($text.Contains($exitCodes)) 'doc names the deploy exit codes' 'missing'
+            $header = ''
+            if (Test-Path -LiteralPath $deploy) { $header = [System.IO.File]::ReadAllText($deploy) }
+            Assert-True ($header.Contains($exitCodes)) 'deploy script documents exit codes' 'missing'
+            $guide = ''
+            if (Test-Path -LiteralPath $testingDoc) { $guide = [System.IO.File]::ReadAllText($testingDoc) }
+            Assert-True ($guide -notmatch 'no server\s+and no Postgres') 'testing guide no longer says server2 has no Postgres' 'old sentence remains'
+            Assert-True ($guide.Contains('not yet the control plane')) 'testing guide says the host Postgres is not yet the control plane' 'missing'
         }
         'ascii' {
-            foreach ($path in @($deploy, $compose, (Join-Path $here 'test-server2-postgres-compose.ps1'))) {
+            foreach ($path in @($deploy, $compose, $drillCompose, (Join-Path $here 'test-server2-postgres-compose.ps1'))) {
                 if (-not (Test-Path -LiteralPath $path)) {
                     Write-Fail ('ascii ' + $path) 'missing'
                     continue
@@ -417,6 +471,161 @@ function Invoke-Case {
                 foreach ($b in $bytes) { if ($b -gt 127) { $high++ } }
                 Assert-True ($high -eq 0) ('ascii ' + [System.IO.Path]::GetFileName($path)) ('non-ascii=' + $high)
             }
+        }
+        'network-block' {
+            Assert-True (Test-Path -LiteralPath $compose) 'compose file exists for the network block' $compose
+            Assert-True (Test-Path -LiteralPath $deploy) 'deploy script exists for the network block' $deploy
+            if (-not (Test-Path -LiteralPath $compose) -or -not (Test-Path -LiteralPath $deploy)) { return }
+            $source = [System.IO.File]::ReadAllText($deploy)
+            $block = 'networks:`n  antiphon-server2:`n    name: antiphon-server2'
+            $attached = '    networks:`n      - antiphon-server2'
+            Assert-True ($source.Contains($block)) 'deploy refusal requires the exact network block' 'substring only'
+            Assert-True ($source.Contains($attached)) 'deploy refusal requires the service network attachment' 'substring only'
+            $root = New-Root
+            try {
+                $copy = Join-Path $root.Root 'compose.yml'
+                $text = [System.IO.File]::ReadAllText($compose).Replace("`r`n", "`n")
+                $text = $text.Replace("    networks:`n      - antiphon-server2`n", '')
+                $text = $text.Replace("networks:`n  antiphon-server2:`n    name: antiphon-server2`n`n", '')
+                [System.IO.File]::WriteAllText($copy, $text)
+                $stripped = [System.IO.File]::ReadAllText($copy)
+                Assert-True (-not $stripped.Contains("networks:`n  antiphon-server2:`n    name: antiphon-server2")) 'stripped compose has no network block' 'block remains'
+                $envFile = New-EnvFile $root
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile, '-ComposeFile', $copy)
+                Assert-True ($result.Exit -eq 2 -and (Get-Reason $result) -eq 'compose-invalid') 'WhatIf refuses a compose with no network block' (Get-Reason $result)
+                Assert-NoDocker $root 'network-block' $result
+            } finally { Remove-Root $root }
+        }
+        'drill-compose' {
+            $text = ''
+            if (Test-Path -LiteralPath $drillCompose) { $text = [System.IO.File]::ReadAllText($drillCompose).Replace("`r`n", "`n") }
+            foreach ($need in @(
+                    'name: antiphon-server2-postgres-drill',
+                    'name: antiphon-server2-postgres-drill_pgdata',
+                    '127.0.0.1:5434:5432',
+                    "networks:`n  antiphon-server2-postgres-drill:`n    name: antiphon-server2-postgres-drill",
+                    "    networks:`n      - antiphon-server2-postgres-drill",
+                    'ANTIPHON_POSTGRES_IMAGE:?',
+                    'POSTGRES_PASSWORD:?'
+                )) {
+                Assert-True ($text.Contains($need)) ('drill compose contains ' + $need) 'missing'
+            }
+            Assert-True (($text.Length -gt 0) -and ($text -notmatch 'name: antiphon-server2-postgres_pgdata')) 'drill compose does not pin the production volume' 'pinned or missing'
+            Assert-True (($text.Length -gt 0) -and ($text -notmatch 'antiphon_pgdata')) 'drill compose omits antiphon_pgdata' 'present or missing'
+            Assert-True (($text.Length -gt 0) -and ($text -notmatch ':5432:5432')) 'drill compose does not publish the production port' 'present or missing'
+            Assert-True (($text.Length -gt 0) -and ($text -notmatch '0\.0\.0\.0')) 'drill compose omits 0.0.0.0' 'present or missing'
+            Assert-True (($text.Length -gt 0) -and ($text -notmatch '5433')) 'drill compose omits port 5433' 'present or missing'
+            Assert-True (($text.Length -gt 0) -and (-not $text.Contains('ANTIPHON_POSTGRES_BIND_ADDRESS'))) 'drill bind is not the production tailnet variable' 'present or missing'
+            Assert-True (($text.Length -gt 0) -and (-not $text.Contains("networks:`n  antiphon-server2:`n    name: antiphon-server2"))) 'drill compose does not define the production network' 'present or missing'
+        }
+        'drill-render' {
+            $root = New-Root
+            try {
+                $envFile = New-EnvFile $root
+                $prod = Get-RenderedFields $compose 'antiphon-server2-postgres-drill' $envFile
+                Assert-True ($prod.Ok) 'production compose renders under the drill project' $prod.Detail
+                Assert-True ($prod.Volume -eq 'antiphon-server2-postgres_pgdata') 'production compose under the drill project mounts the production volume' $prod.Volume
+                Assert-True (Test-Path -LiteralPath $drillCompose) 'scratch drill compose exists for render' $drillCompose
+                if (-not (Test-Path -LiteralPath $drillCompose)) { return }
+                $drill = Get-RenderedFields $drillCompose 'antiphon-server2-postgres-drill' $envFile
+                Assert-True ($drill.Ok) 'drill compose renders under the drill project' $drill.Detail
+                Assert-True ($drill.Volume -eq 'antiphon-server2-postgres-drill_pgdata') 'drill compose under the drill project mounts the scratch volume' $drill.Volume
+                Assert-True (($drill.Volume -ne 'antiphon-server2-postgres_pgdata') -and ($drill.Volume -ne 'antiphon_pgdata')) 'drill render does not mount a production volume' $drill.Volume
+                Assert-True (($drill.HostIp -eq '127.0.0.1') -and ($drill.Published -eq '5434')) 'drill publish is loopback port 5434' ($drill.HostIp + ':' + $drill.Published)
+                Assert-True ($drill.Network -eq 'antiphon-server2-postgres-drill') 'drill network is the scratch network' $drill.Network
+                $asProd = Get-RenderedFields $drillCompose 'antiphon-server2-postgres' $envFile
+                Assert-True ($asProd.Ok -and ($asProd.Volume -eq 'antiphon-server2-postgres-drill_pgdata')) 'drill compose under the production project still mounts the scratch volume' $asProd.Volume
+            } finally { Remove-Root $root }
+        }
+        'drill-commands' {
+            $root = New-Root
+            try {
+                $result = Invoke-Deploy $root @('-WhatIf', '-RestoreDrill')
+                Assert-True ($result.Exit -eq 0 -and (Get-Reason $result) -eq 'ok') 'drill command plan exits 0' (Get-Reason $result)
+                foreach ($need in @(
+                        'docker-compose.server2-postgres-drill.yml',
+                        '-p antiphon-server2-postgres-drill up -d',
+                        '-p antiphon-server2-postgres-drill down',
+                        'docker volume create antiphon-server2-postgres-drill_pgdata',
+                        'docker volume rm antiphon-server2-postgres-drill_pgdata',
+                        '*-drill_pgdata',
+                        'docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl',
+                        'pg_restore -U antiphon -d antiphon --no-owner --no-acl',
+                        'antiphon-server2-postgres-drill-postgres-1',
+                        'pg_stat_user_tables',
+                        '__EFMigrationsHistory',
+                        'pg_extension'
+                    )) {
+                    Assert-True ($result.Out.Contains($need)) ('drill command contains ' + $need) 'missing'
+                }
+                Assert-True ($result.Out -notmatch 'docker-compose\.server2-postgres\.yml') 'drill plan does not name the production compose' 'production compose named'
+                Assert-True ($result.Out -notmatch '-p antiphon-server2-postgres up') 'drill plan does not start the production project' 'production up present'
+                Assert-True ($result.Out -notmatch 'antiphon-server2-postgres_pgdata') 'drill plan does not name the production volume' 'production volume named'
+                Assert-True ($result.Out -notmatch 'antiphon_pgdata') 'drill plan does not name antiphon_pgdata' 'desktop volume named'
+                $lines = @($result.Out -split "`n" | Where-Object { $_ -match 'drill-command:' })
+                Assert-True ($lines.Count -ge 9) 'drill prints one line per command' ('count=' + $lines.Count)
+                foreach ($line in $lines) {
+                    Assert-True (($line.Contains('antiphon-server2-postgres-drill')) -and ($line.Contains('antiphon-server2-postgres-drill_pgdata'))) 'drill command names the drill project and volume' $line.Trim()
+                    Assert-True ($line -notmatch 'antiphon-server2-postgres_pgdata') 'drill command cannot reach the production volume' $line.Trim()
+                }
+                $dump = @($lines | Where-Object { $_ -match 'antiphon-postgres' })
+                Assert-True ($dump.Count -eq 1) 'the desktop database is named once' ('count=' + $dump.Count)
+                if ($dump.Count -eq 1) {
+                    Assert-True (($dump[0] -match 'pg_dump') -and ($dump[0] -notmatch 'psql|pg_restore|dropdb|createdb|DELETE|INSERT|UPDATE|DROP')) 'the desktop command is pg_dump only' $dump[0].Trim()
+                }
+                Assert-NoDocker $root 'drill-commands' $result
+            } finally { Remove-Root $root }
+        }
+        'project-refusal' {
+            $root = New-Root
+            try {
+                $wrongProject = Invoke-Deploy $root @('-WhatIf', '-Project', 'antiphon-server2-postgres-drill')
+                Assert-True ($wrongProject.Exit -eq 2 -and (Get-Reason $wrongProject) -eq 'production-compose-wrong-project') 'WhatIf refuses the production compose under the drill project' (Get-Reason $wrongProject)
+                Assert-NoDocker $root 'wrong-project' $wrongProject
+                $wrongDrill = Invoke-Deploy $root @('-WhatIf', '-RestoreDrill', '-Project', 'antiphon-server2-postgres')
+                Assert-True ($wrongDrill.Exit -eq 2 -and (Get-Reason $wrongDrill) -eq 'drill-compose-wrong-project') 'WhatIf refuses the drill under the production project' (Get-Reason $wrongDrill)
+                Assert-NoDocker $root 'wrong-drill-project' $wrongDrill
+                $prodFile = Invoke-Deploy $root @('-WhatIf', '-RestoreDrill', '-ComposeFile', $compose)
+                Assert-True ($prodFile.Exit -eq 2 -and (Get-Reason $prodFile) -eq 'production-compose-wrong-project') 'RestoreDrill refuses the production compose file' (Get-Reason $prodFile)
+                Assert-NoDocker $root 'prod-file-drill' $prodFile
+                $drillFile = Invoke-Deploy $root @('-WhatIf', '-ComposeFile', $drillCompose)
+                Assert-True ($drillFile.Exit -eq 2 -and (Get-Reason $drillFile) -eq 'drill-compose-wrong-project') 'a normal plan refuses the drill compose file' (Get-Reason $drillFile)
+                Assert-NoDocker $root 'drill-file-prod' $drillFile
+            } finally { Remove-Root $root }
+        }
+        'refuse-bind-cgnat' {
+            Assert-True (Test-Path -LiteralPath $deploy) 'deploy script exists for the CGNAT check' $deploy
+            if (-not (Test-Path -LiteralPath $deploy)) { return }
+            . $deploy
+            Assert-True ((Test-Server2PostgresBind -Provided $true -Address '100.64.0.0') -eq '') 'CGNAT range bottom is accepted' (Test-Server2PostgresBind -Provided $true -Address '100.64.0.0')
+            Assert-True ((Test-Server2PostgresBind -Provided $true -Address '100.127.255.255') -eq '') 'CGNAT range top is accepted' (Test-Server2PostgresBind -Provided $true -Address '100.127.255.255')
+            Assert-True ((Test-Server2PostgresBind -Provided $true -Address '100.63.255.255') -eq 'bind-not-cgnat') 'an address below CGNAT is refused' (Test-Server2PostgresBind -Provided $true -Address '100.63.255.255')
+            Assert-True ((Test-Server2PostgresBind -Provided $true -Address '100.128.0.1') -eq 'bind-not-cgnat') 'an address above CGNAT is refused' (Test-Server2PostgresBind -Provided $true -Address '100.128.0.1')
+            Assert-True ((Test-Server2PostgresBind -Provided $true -Address '192.168.4.34') -eq 'bind-not-cgnat') 'a LAN address is outside CGNAT' (Test-Server2PostgresBind -Provided $true -Address '192.168.4.34')
+            Assert-True ((Test-Server2PostgresBind -Provided $true -Address '8.8.8.8') -eq 'bind-not-cgnat') 'a public address is outside CGNAT' (Test-Server2PostgresBind -Provided $true -Address '8.8.8.8')
+            $root = New-Root
+            try {
+                $envFile = New-EnvFile $root -Bind '192.168.4.34'
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
+                Assert-True ($result.Exit -eq 2 -and (Get-Reason $result) -eq 'bind-not-cgnat') 'WhatIf refuses a LAN bind' (Get-Reason $result)
+                Assert-NoDocker $root 'cgnat' $result
+            } finally { Remove-Root $root }
+        }
+        'image-repodigest' {
+            Assert-True (Test-Path -LiteralPath $deploy) 'deploy script exists for the RepoDigest pin' $deploy
+            if (-not (Test-Path -LiteralPath $deploy)) { return }
+            . $deploy
+            $pin = 'postgres@sha256:' + ('c' * 64)
+            Assert-True ((Test-Server2PostgresImage $pin) -eq '') 'RepoDigest postgres@sha256 is a digest pin' (Test-Server2PostgresImage $pin)
+            Assert-True ((Test-Server2PostgresImage 'postgres:latest') -eq 'image-floating') 'a floating latest tag is refused' (Test-Server2PostgresImage 'postgres:latest')
+            Assert-True ((Test-Server2PostgresImage ('postgres@sha256:' + ('d' * 12))) -eq 'image-floating') 'a short digest is refused' (Test-Server2PostgresImage ('postgres@sha256:' + ('d' * 12)))
+            $root = New-Root
+            try {
+                $envFile = New-EnvFile $root -Image $pin
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
+                Assert-True ($result.Exit -eq 0 -and (Get-Reason $result) -eq 'ok') 'WhatIf accepts a postgres RepoDigest pin' (Get-Reason $result)
+                Assert-NoDocker $root 'repodigest' $result
+            } finally { Remove-Root $root }
         }
         default { Write-Fail $Name 'unknown case' }
     }
