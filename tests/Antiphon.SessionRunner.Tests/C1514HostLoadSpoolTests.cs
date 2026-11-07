@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -56,6 +57,17 @@ public class C1514HostLoadSpoolTests(C1514HostLoadFixture fixture)
         var payload = Encoding.UTF8.GetString(Convert.FromBase64String(parts[0])).Replace("\"through\":1", "\"through\":2", StringComparison.Ordinal);
         var skipped = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload)) + "." + parts[1];
         Should.Throw<ArgumentException>(() => spool.ReadHistory(skipped, 120));
+        // Authenticate the negative vectors so the frontier/store checks, rather than the MAC,
+        // must reject them. The key belongs only to this private fixture ledger.
+        using var ledger = JsonDocument.Parse(File.ReadAllText(Path.Combine(settings.HistoryPath!, "cursor.json")));
+        var secret = Convert.FromHexString(ledger.RootElement.GetProperty("secret").GetString()!);
+        string Signed(Guid store, long from, long through)
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(new { store, from, through }, PhoneHomeFraming.Json);
+            return Convert.ToBase64String(bytes) + "." + Convert.ToHexString(HMACSHA256.HashData(secret, bytes));
+        }
+        Should.Throw<ArgumentException>(() => spool.ReadHistory(Signed(spool.RunnerStoreId, 1, 2), 120));
+        Should.Throw<ArgumentException>(() => spool.ReadHistory(Signed(Guid.NewGuid(), 0, 1), 120));
         spool.ReadHistory(null, 120).Samples.Select(s => s.Source.Sequence).ShouldBe([101L, 102L]);
         var otherSettings = C1514HostLoadFixture.Config(fixture.PrivatePath());
         var other = new HostLoadSpool(otherSettings.HistoryPath!, otherSettings, clock);

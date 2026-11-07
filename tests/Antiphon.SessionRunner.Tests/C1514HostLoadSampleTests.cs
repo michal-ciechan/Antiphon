@@ -4,6 +4,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -23,12 +24,15 @@ public class C1514HostLoadSampleTests
                 .Concat(Enumerable.Range(0, hostCores).Select(i => "cpu" + i + " 0 0 0 0 0 0 0 0")).ToArray(),
             "/proc/meminfo" => ["MemTotal: 100 kB", "MemAvailable: 50 kB"],
             "/proc/loadavg" => ["24 12 6 1/10 11"],
+            "/sys/fs/cgroup/cpu.max" => ["200000 100000"],
             _ => throw new IOException(),
         }, _ => null, []);
         probe.Read().ShouldNotBeNull().CpuPercent.ShouldBeNull();
         var sample = probe.Read().ShouldNotBeNull();
         sample.CpuPercent.ShouldBe(50d);
         sample.Cores.ShouldBe(24, "preserved:PC-1:host-denominator");
+        sample.EffectiveCoreLimit.ShouldBe(2d);
+        sample.IoWaitPercent.ShouldBe(10d);
         (sample.CpuPercent * sample.Cores / 100d).ShouldBe(12d);
         (sample.Load1 / sample.Cores).ShouldBe(1d);
         WindowsHostStatsProbe.CpuPercent(0, 0, 0, 600, 800, 200).ShouldBe(40d);
@@ -41,6 +45,15 @@ public class C1514HostLoadSampleTests
     [Test]
     public async Task UnknownMetricsStayNull()
     {
+        var windows = new WindowsHostStatsProbe(() => (0, 0, 0), () => (1024, 512, 2048, 1024), _ => null, [], () => 24);
+        var first = HostLoadProjection.Create(windows.Read().ShouldNotBeNull(),
+            new("owned", Guid.NewGuid(), Guid.NewGuid(), 1), new(), HostAdmissionSnapshot.Unknown());
+        first.CpuPercent.ShouldBeNull("preserved:PC-2:first-delta");
+        first.UnknownReasons["cpuPercent"].ShouldBe("first-delta");
+        first.Load1.ShouldBeNull("preserved:PC-3:windows-load"); first.UnknownReasons["load1"].ShouldBe("unsupported");
+        var invalid = HostLoadProjection.Create(new ScriptedHostStatsProbe().Read().ShouldNotBeNull() with { CpuPercent = -1 },
+            first.Source, new(), HostAdmissionSnapshot.Unknown());
+        invalid.CpuPercent.ShouldBeNull(); invalid.UnknownReasons["cpuPercent"].ShouldBe("invalid");
         var time = new SeparateClocks();
         var store = new HostStatsStore(new HostStatsSettings(), time);
         var probe = new ScriptedHostStatsProbe { Cpu = double.NaN };
@@ -97,6 +110,19 @@ public class C1514HostLoadSampleTests
         time.Utc = time.Utc.AddHours(2);
         await sampler.SampleOnceAsync();
         store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBe(50d);
+        var cadenceClock = new SeparateClocks(); var cadenceProbe = new CountingProbe();
+        using var ticking = Sampler(cadenceProbe, new(new(), cadenceClock), cadenceClock, new CpuSequence(), []);
+        await ticking.StartAsync(CancellationToken.None); cadenceProbe.Reads.ShouldBe(1);
+        cadenceClock.Utc += TimeSpan.FromHours(3); cadenceProbe.Reads.ShouldBe(1);
+        cadenceClock.Advance(TimeSpan.FromMilliseconds(4999)); cadenceProbe.Reads.ShouldBe(1);
+        cadenceClock.Advance(TimeSpan.FromMilliseconds(1));
+        await C1514HostLoadFixture.EventuallyAsync(() => cadenceProbe.Reads == 2);
+        await ticking.StopAsync(CancellationToken.None);
+        var disabledProbe = new CountingProbe();
+        using var disabled = new HostStatsSamplerService(disabledProbe, new(new(), cadenceClock), new CpuSequence(), () => [], _ => null,
+            cadenceClock, Options.Create(new HostStatsSettings { Enabled = false }), NullLogger<HostStatsSamplerService>.Instance);
+        await disabled.StartAsync(CancellationToken.None); cadenceClock.Advance(TimeSpan.FromMinutes(1)); disabledProbe.Reads.ShouldBe(0);
+        await disabled.StopAsync(CancellationToken.None);
     }
 
     [Test]
@@ -156,11 +182,18 @@ public class C1514HostLoadSampleTests
 
     private sealed class SeparateClocks : TimeProvider
     {
+        private readonly FakeTimeProvider _timers = new(C1514HostLoadFixture.T0);
         public DateTimeOffset Utc { get; set; } = new(2026, 11, 6, 12, 0, 0, TimeSpan.Zero);
         private long _timestamp;
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override DateTimeOffset GetUtcNow() => Utc;
         public override long GetTimestamp() => _timestamp;
-        public void Advance(TimeSpan elapsed) { _timestamp += elapsed.Ticks; Utc += elapsed; }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => _timers.CreateTimer(callback, state, dueTime, period);
+        public void Advance(TimeSpan elapsed) { _timestamp += elapsed.Ticks; Utc += elapsed; _timers.Advance(elapsed); }
+    }
+    private sealed class CountingProbe : IHostStatsProbe
+    {
+        public int Reads;
+        public HostSample? Read() { Interlocked.Increment(ref Reads); return new ScriptedHostStatsProbe().Read(); }
     }
 }
