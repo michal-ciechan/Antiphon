@@ -112,23 +112,24 @@ public sealed class WorktreeResidueRegistrationTests
         services.AddScoped<WorktreeResidueJob>();
         services.AddHangfire(config => config.UseStorage(storage));
         await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
-        GlobalConfiguration.Configuration.UseStorage(storage).UseActivator(new ScopeJobActivator(provider));
         var manager = new RecurringJobManager(storage);
         HangfireConfiguration.AddOrUpdateWorktreeResidueJob(manager, new WorktreeResidueSettings());
         using (var connection = storage.GetConnection())
             connection.GetRecurringJobs().ShouldHaveSingleItem().Id.ShouldBe("antiphon:worktree-residue");
 
+        var serverOptions = new BackgroundJobServerOptions
+        {
+            WorkerCount = 1,
+            SchedulePollingInterval = TimeSpan.FromMilliseconds(50),
+            Activator = new ScopeJobActivator(provider),
+        };
         var client = new BackgroundJobClient(storage);
         client.Enqueue<WorktreeResidueJob>(job => job.ExecuteAsync(CancellationToken.None));
-        using (var server = new BackgroundJobServer(new BackgroundJobServerOptions { WorkerCount = 1, SchedulePollingInterval = TimeSpan.FromMilliseconds(50) }, storage))
+        using (var server = new BackgroundJobServer(serverOptions, storage))
         {
+            // PersistRunAsync inserts the row before FinishedAt. Dispose cancels that worker.
             using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            while (!budget.IsCancellationRequested)
-            {
-                await using var probe = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-                if (await probe.WorktreeResidueRuns.AnyAsync(budget.Token)) break;
-                await Task.Delay(50, budget.Token);
-            }
+            await WaitUntilFinishedAsync(schema.ConnectionString, finishedRuns: 1, budget.Token);
         }
 
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
@@ -140,18 +141,25 @@ public sealed class WorktreeResidueRegistrationTests
         lanes.ShouldContain(nameof(WorktreeResidueLane.Publication));
 
         client.Enqueue<WorktreeResidueJob>(job => job.ExecuteAsync(CancellationToken.None));
-        using (var server = new BackgroundJobServer(new BackgroundJobServerOptions { WorkerCount = 1, SchedulePollingInterval = TimeSpan.FromMilliseconds(50) }, storage))
+        using (var server = new BackgroundJobServer(serverOptions, storage))
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            while (!budget.IsCancellationRequested)
-            {
-                await using var probe = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-                if (await probe.WorktreeResidueRuns.CountAsync(budget.Token) >= 2) break;
-                await Task.Delay(50, budget.Token);
-            }
+            await WaitUntilFinishedAsync(schema.ConnectionString, finishedRuns: 2, budget.Token);
         }
 
         (await verify.WorktreeResidueRuns.CountAsync()).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    private static async Task WaitUntilFinishedAsync(string connectionString, int finishedRuns, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await using var probe = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+            if (await probe.WorktreeResidueRuns.CountAsync(run => run.FinishedAt != null, cancellationToken) >= finishedRuns)
+                return;
+            await Task.Delay(50, cancellationToken);
+        }
     }
 
     private sealed class ScopeJobActivator(IServiceProvider provider) : JobActivator
