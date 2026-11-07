@@ -1026,7 +1026,7 @@ public sealed class CheckCompactionContinuationService
         };
     }
 
-    private async Task<IReadOnlyList<CompactionTranscriptFact>> LoadFactsAsync(Guid sessionId, CancellationToken ct)
+    internal async Task<IReadOnlyList<CompactionTranscriptFact>> LoadFactsAsync(Guid sessionId, CancellationToken ct)
     {
         var rows = await _db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId)
