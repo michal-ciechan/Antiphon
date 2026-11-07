@@ -446,3 +446,5 @@ Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
 Antiphon.Tests.Scripts.ReleaseTagAllocatorTests
 # CARD-1733: native fixture/isolation regressions spawn PowerShell and real Git; baseline seed witness 48 seconds.
 Antiphon.Tests.Scripts.C1733AllocatorFixtureTests
+# CARD-1734: cold native builds execute the shipped child-build target through both checkpoint entry points.
+Antiphon.Tests.Checkpoints.CheckpointColdBuildTests
