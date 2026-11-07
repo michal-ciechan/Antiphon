@@ -25,8 +25,21 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
         foreach (var phoneHome in new[] { false, true })
         {
             await using var world = await fixture.WorldAsync(phoneHome); await world.SeedPrefixAsync();
-            var sample = await world.ProduceAsync(C1514HostLoadWorld.T0); sample.Source.Sequence.ShouldBe(101);
-            await world.TransferAsync();
+            using var consumerStop = new CancellationTokenSource();
+            // The real channel consumer is waiting before K=101 exists.
+            var recipient = world.Pump.ProcessOneAsync(consumerStop.Token);
+            HostLoadSample sample;
+            try
+            {
+                sample = await world.ProduceAsync(C1514HostLoadWorld.T0); sample.Source.Sequence.ShouldBe(101);
+                (await world.Pump.PollOnceAsync("grok-linux", CancellationToken.None)).ShouldBeTrue();
+                await recipient; await world.DeriveAsync();
+            }
+            finally
+            {
+                consumerStop.Cancel();
+                try { await recipient; } catch (OperationCanceledException) { }
+            }
             await using var fresh = world.Db(false);
             var row = await fresh.HostLoadSamples.SingleAsync(r => r.RunnerStoreId == sample.Source.RunnerStoreId && r.BootId == sample.Source.BootId && r.Sequence == 101);
             JsonSerializer.Deserialize<HostLoadSample>(row.PayloadJson, PhoneHomeFraming.Json)!.CpuPercent.ShouldBe(40d);
@@ -48,7 +61,7 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
         {
             await using var world = await fixture.WorldAsync(phoneHome); await world.SeedPrefixAsync();
             await world.ProduceAsync(C1514HostLoadWorld.T0.AddSeconds(-5)); await world.TransferAsync();
-            for (var i = 0; i < 4; i++) await world.ProduceAsync(C1514HostLoadWorld.T0.AddSeconds(i * 5));
+            await world.ProduceAsync(C1514HostLoadWorld.T0);
             world.ReadLimit = 1;
             var gate = new C1514HostLoadSqlProbe { Hold = sql => sql.Contains("INSERT INTO \"HostLoadSamples\"", StringComparison.Ordinal) };
             world.Interceptor = gate; world.RecreateServices(); await world.Pump.PollOnceAsync("grok-linux", CancellationToken.None);
@@ -56,6 +69,7 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
             try
             {
                 await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                for (var i = 1; i < 4; i++) await world.ProduceAsync(C1514HostLoadWorld.T0.AddSeconds(i * 5));
                 (await world.Pump.PollOnceAsync("grok-linux", CancellationToken.None)).ShouldBeTrue();
                 (await world.Pump.PollOnceAsync("grok-linux", CancellationToken.None)).ShouldBeTrue();
                 (await world.Pump.PollOnceAsync("grok-linux", CancellationToken.None)).ShouldBeFalse();
