@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.HostLoad;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -99,5 +101,74 @@ public class C1514TaskLoadWindowTests(C1514HostLoadFixture fixture)
         await world.FinishTaskAsync(task.Id, world.Clock.GetUtcNow()); await world.DeriveAsync(); world.Clock.Utc = world.Clock.Utc.AddDays(89); await world.RetainAsync();
         await using var db = world.Db(false); (await db.AgentTaskLoadWindows.CountAsync(w => w.TaskId == task.Id)).ShouldBe(1);
         world.Clock.Utc = world.Clock.Utc.AddDays(2); await world.RetainAsync(); (await db.AgentTaskLoadWindows.AsNoTracking().CountAsync(w => w.TaskId == task.Id)).ShouldBe(0);
+    }
+    [Test]
+    public async Task ReusedSessionOpensAtAcceptance()
+    {
+        await using var world = await fixture.WorldAsync();
+        var accepted = C1514HostLoadWorld.T0;
+        await using var db = world.Db();
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(), DefinitionName = "owned", AgentKind = AgentKind.Codex, Status = SessionStatus.Running, Cwd = world.Root,
+            CreatedAt = accepted.AddHours(-2).UtcDateTime, StartedAt = accepted.AddHours(-2).UtcDateTime, LastSeenAt = accepted.UtcDateTime,
+        };
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(), Title = "reused seat", Goal = "owned", Status = AgentTaskStatus.Working,
+            CreatedAt = accepted.AddSeconds(-20).UtcDateTime, Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.Codex,
+            Workspace = WorkspaceMode.Shared, WorkingDirectory = world.Root, TokenHash = AgentTaskService.HashToken("owned-task-token"),
+            RunnerId = "grok-linux", Attempt = 1, DispatchedAt = accepted.UtcDateTime, AgentSessionId = session.Id,
+        };
+        task.RootTaskId = task.Id;
+        db.AgentSessions.Add(session); db.AgentTasks.Add(task);
+        db.AgentTaskEvents.Add(new() { Id = Guid.NewGuid(), AgentTaskId = task.Id, AgentSessionId = session.Id, Type = AgentTaskEventType.Dispatched, At = accepted.AddSeconds(1).UtcDateTime });
+        await db.SaveChangesAsync();
+        await world.DeriveAsync();
+        using var api = await world.GetAsync("/api/agent-tasks/" + task.Id + "/load");
+        var windows = api.RootElement.GetProperty("windows");
+        windows.GetArrayLength().ShouldBe(1);
+        windows[0].GetProperty("startedAt").GetDateTimeOffset().ShouldBe(accepted);
+    }
+    [Test]
+    public async Task BackwardsTerminalClosesWithoutLeavingTheWindowOpen()
+    {
+        await using var world = await fixture.WorldAsync();
+        var start = C1514HostLoadWorld.T0;
+        var task = await world.StartTaskAsync(start);
+        await world.DeriveAsync();
+        await using var db = world.Db();
+        (await db.AgentTaskLoadWindows.SingleAsync(w => w.TaskId == task.Id)).StartedAt.ShouldBe(start);
+        var tracked = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        tracked.Status = AgentTaskStatus.Succeeded; tracked.CompletedAt = start.AddSeconds(-1).UtcDateTime;
+        db.AgentTaskEvents.Add(new() { Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Completed, At = start.AddSeconds(-1).UtcDateTime });
+        await db.SaveChangesAsync();
+        await world.DeriveAsync();
+        await using var after = world.Db(false);
+        var closed = await after.AgentTaskLoadWindows.SingleAsync(w => w.TaskId == task.Id);
+        closed.EndedAt.ShouldNotBeNull();
+        closed.Complete.ShouldBeFalse();
+    }
+    [Test]
+    public async Task KnownBoundariesWithMissingInteriorAreIncomplete()
+    {
+        await using var world = await fixture.WorldAsync();
+        var start = C1514HostLoadWorld.T0; var end = start.AddMinutes(15);
+        await world.ProduceAsync(start); await world.TransferAsync();
+        var task = await world.StartTaskAsync(start);
+        await world.ProduceAsync(end); await world.TransferAsync();
+        await world.FinishTaskAsync(task.Id, end); world.Clock.Utc = end; await world.DeriveAsync();
+        using var api = await world.GetAsync("/api/agent-tasks/" + task.Id + "/load");
+        var window = api.RootElement.GetProperty("windows")[0];
+        window.GetProperty("start").GetProperty("state").GetString().ShouldBe("known");
+        window.GetProperty("end").GetProperty("state").GetString().ShouldBe("known");
+        var cpu = window.GetProperty("during").GetProperty("cpuPercent");
+        var expected = HostLoadAggregation.ExpectedCount(start.AddTicks(1), end);
+        expected.ShouldBeGreaterThan(0);
+        cpu.GetProperty("validCount").GetInt64().ShouldBe(0);
+        cpu.GetProperty("expectedCount").GetInt64().ShouldBe(expected);
+        cpu.GetProperty("complete").GetBoolean().ShouldBeFalse();
+        api.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse();
+        api.RootElement.GetProperty("gaps").GetArrayLength().ShouldBeGreaterThan(0);
     }
 }
