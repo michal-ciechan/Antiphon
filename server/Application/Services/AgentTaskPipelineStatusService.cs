@@ -62,6 +62,7 @@ public sealed class AgentTaskPipelineStatusService
     private readonly DispatchConcurrencySettingsService? _concurrency;
     private readonly PhoneHomeRunnerDirectory? _directory;
     private readonly RunnerDefaultSettingsService? _runnerDefaults;
+    private readonly HostLoadShadowCache? _hostLoad;
 
     public AgentTaskPipelineStatusService(
         AppDbContext db,
@@ -72,7 +73,7 @@ public sealed class AgentTaskPipelineStatusService
         RemoteWorkspacePreparer? remotePrep = null,
         DispatchConcurrencySettingsService? concurrency = null,
         PhoneHomeRunnerDirectory? directory = null,
-        RunnerDefaultSettingsService? runnerDefaults = null)
+        RunnerDefaultSettingsService? runnerDefaults = null, HostLoadShadowCache? hostLoad = null)
     {
         _db = db;
         _settings = settings.Value;
@@ -83,6 +84,7 @@ public sealed class AgentTaskPipelineStatusService
         _concurrency = concurrency;
         _directory = directory;
         _runnerDefaults = runnerDefaults;
+        _hostLoad = hostLoad;
     }
 
     public Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct) =>
@@ -277,7 +279,7 @@ public sealed class AgentTaskPipelineStatusService
                 .Select(h => new HostLimitSummaryDto(h.HostId,
                     h.HostId == "local" ? localInFlight : remoteOccupancy.GetValueOrDefault(h.HostId),
                     h.Effective, h.Configured, h.Declared, h.Source)
-                { Scope = "fleet" }).ToArray(),
+                { Scope = "fleet", Load = _hostLoad?.Get(h.HostId == "local" ? "desktop" : h.HostId) }).ToArray(),
             TaskScope = scope.Kind switch
             {
                 PipelineScopeKind.Project => "project",
@@ -286,7 +288,7 @@ public sealed class AgentTaskPipelineStatusService
             },
             HostSummaryScope = "fleet",
             ConcurrencyScopes = ProjectScopes(policies, policyScopes, open),
-            Runners = runners,
+            Runners = runners.Select(r => r with { Load = _hostLoad?.Get(r.RunnerId) }).ToArray(),
             RunnerDefaults = defaults,
         };
     }

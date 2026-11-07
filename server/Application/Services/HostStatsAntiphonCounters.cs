@@ -11,7 +11,9 @@ public sealed record HostStatsTaskRow(
     string? RunnerId,
     AgentTaskStatus Status,
     bool CapacityWaitRetained,
-    bool HasLand);
+    bool HasLand,
+    Guid? AgentSessionId = null,
+    bool PendingMirror = false);
 
 public interface IHostStatsAntiphonCounters
 {
@@ -29,7 +31,8 @@ public sealed class HostStatsAntiphonCounters(IServiceScopeFactory scopes) : IHo
             .Where(t => t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
                 || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked)
             .Select(t => new HostStatsTaskRow(t.Role, t.AgentKind, t.RunnerId, t.Status,
-                t.CapacityWaitRetained, t.LandRequestedAt != null))
+                t.CapacityWaitRetained, t.LandRequestedAt != null, t.AgentSessionId,
+                t.Workspace == WorkspaceMode.Worktree && t.Status == AgentTaskStatus.Dispatched && t.AgentSessionId == null))
             .ToListAsync(ct);
         return Group(rows);
     }
@@ -44,6 +47,7 @@ public sealed class HostStatsAntiphonCounters(IServiceScopeFactory scopes) : IHo
                     active.GroupBy(r => r.AgentKind.ToString()).ToDictionary(x => x.Key, x => x.Count()),
                     g.Count(r => r.Status == AgentTaskStatus.Queued),
                     g.Count(r => r.CapacityWaitRetained),
-                    g.Count(r => r.HasLand), null, null, null);
+                    g.Count(r => r.HasLand), null, null, null)
+                { PendingLaunches = active.Count(r => r.AgentSessionId == null), PendingMirrors = active.Count(r => r.PendingMirror) };
             }, StringComparer.Ordinal);
 }

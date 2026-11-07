@@ -162,6 +162,7 @@ try
         sp.GetRequiredService<IOptions<HostStatsSettings>>().Value,
         sp.GetRequiredService<TimeProvider>()));
     builder.Services.AddSingleton<IHostStatsAntiphonCounters, HostStatsAntiphonCounters>();
+    Antiphon.Server.Infrastructure.HostLoad.HostLoadRegistration.AddHostLoadHistory(builder.Services, builder.Configuration);
     builder.Services.Configure<DiagnosticsSettings>(builder.Configuration.GetSection("Diagnostics"));
     builder.Services.AddOptions<DeliverablesSettings>()
         .Bind(builder.Configuration.GetSection(DeliverablesSettings.SectionName))
@@ -1254,6 +1255,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapSessionEndpoints();
     app.MapSessionRunnerEndpoints();
     app.MapHostStatsEndpoints();
+    app.MapHostLoadEndpoints();
     app.MapHostEndpoints();
     app.MapOperatorEndpoints();
     app.MapOrchestratorEndpoints();

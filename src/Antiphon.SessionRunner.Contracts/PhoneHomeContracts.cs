@@ -715,4 +715,7 @@ public sealed record PhoneHomeRunnerStatusDto(
     DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
     string? CodexCliVersionError = null,
     bool? CodexCliVersionStale = null,
-    string? EventMode = null);
+    string? EventMode = null)
+{
+    public RunnerLoadShadowDto? Load { get; init; }
+}

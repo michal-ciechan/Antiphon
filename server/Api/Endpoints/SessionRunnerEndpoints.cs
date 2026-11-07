@@ -39,7 +39,9 @@ public static class SessionRunnerEndpoints
             var delegation = http.RequestServices.GetService<IOptions<DelegationSettings>>()?.Value
                 ?? new DelegationSettings();
             var prep = http.RequestServices.GetService<RemoteWorkspacePreparer>();
-            return Results.Ok(await SessionRunnerCatalogue.ListAsync(directory, db, delegation, prep, ct));
+            var rows = await SessionRunnerCatalogue.ListAsync(directory, db, delegation, prep, ct);
+            var load = http.RequestServices.GetService<HostLoadShadowCache>();
+            return Results.Ok(rows.Select(r => r with { Load = load?.Get(r.RunnerId) }));
         }).WithTags("SessionRunners");
 
         app.MapPost(PhoneHomeProtocol.RegisterPath, (
@@ -58,8 +60,8 @@ public static class SessionRunnerEndpoints
 
         app.MapGet("/api/session-runners/{runnerId}/status", (
             string runnerId,
-            PhoneHomeRunnerDirectory directory) =>
-            Results.Ok(directory.Status(runnerId))).WithTags("SessionRunners");
+            PhoneHomeRunnerDirectory directory, HttpContext http) =>
+            Results.Ok(directory.Status(runnerId) with { Load = http.RequestServices.GetService<HostLoadShadowCache>()?.Status(runnerId) })).WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/capacity", async (
             string runnerId, PhoneHomeRunnerDirectory directory, [FromServices] HostBudgetService budgets,

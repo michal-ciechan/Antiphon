@@ -47,6 +47,7 @@ public sealed record AgentTaskPipelineDto(
 public sealed record HostLimitSummaryDto(
     string HostId, int InFlight, int? EffectiveLimit, int? Configured, int? Declared, string Source)
 {
+    public HostLoadAdvice? Load { get; init; }
     /// <summary>CARD-0505. Always <c>fleet</c>: a project filter does not add seats.</summary>
     public string Scope { get; init; } = "fleet";
 

@@ -392,6 +392,25 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
         HostStatsReadAsync<RunnerHostStatsDto>("host-stats", _hostStats.RequestTimeoutMs, ct);
 
+    public async Task<HostLoadHistoryPage?> GetHostLoadHistoryAsync(string? after, int limit, CancellationToken ct)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3), _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        var query = "host-stats/history?limit=" + limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + (after is null ? "" : "&after=" + Uri.EscapeDataString(after));
+        using var response = await _httpClient.GetAsync(query, HttpCompletionOption.ResponseHeadersRead, linked.Token);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) throw new HostStatsUnsupportedException();
+        response.EnsureSuccessStatusCode();
+        await using var input = await response.Content.ReadAsStreamAsync(linked.Token);
+        using var body = new MemoryStream(); var buffer = new byte[8192]; int read;
+        while ((read = await input.ReadAsync(buffer, linked.Token)) != 0)
+        {
+            if (body.Length + read > 1048576) throw new InvalidDataException("host_load_batch_too_large");
+            body.Write(buffer, 0, read);
+        }
+        return System.Text.Json.JsonSerializer.Deserialize<HostLoadHistoryPage>(body.ToArray(), JsonOptions);
+    }
+
     public Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct) =>
         HostStatsReadAsync<RunnerHostSeriesDto>(
             $"host-stats/series?metric={Uri.EscapeDataString(metric)}&window={Uri.EscapeDataString(window)}",

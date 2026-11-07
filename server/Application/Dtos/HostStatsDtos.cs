@@ -11,7 +11,11 @@ public sealed record HostStatsAntiphonDto(
     int LandsPending,
     int? SessionsLive,
     int? SeatsDeclared,
-    RunnerHostBuildSlotsDto? BuildSlots);
+    RunnerHostBuildSlotsDto? BuildSlots)
+{
+    [System.Text.Json.Serialization.JsonIgnore] public int? PendingLaunches { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore] public int? PendingMirrors { get; init; }
+}
 
 public sealed record HostStatsDto(
     string HostId,

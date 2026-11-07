@@ -56,6 +56,9 @@ public interface ISessionRunnerClient
     Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct) =>
         Task.FromResult<RunnerHostSeriesDto?>(null);
 
+    Task<HostLoadHistoryPage?> GetHostLoadHistoryAsync(string? after, int limit, CancellationToken ct) =>
+        Task.FromResult<HostLoadHistoryPage?>(null);
+
     /// <summary>
     /// Body of the runner's <c>GET /health</c> (CARD-0179). Null means this client cannot say —
     /// the diagnostics bundle records that in errors.txt rather than failing the zip.
