@@ -72,6 +72,7 @@ function Enable-TestPhaseExecutionEnvironment {
 
 function ConvertTo-TestPhaseCsvCell {
     param($Value)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseSummary]::Cell($Value) }
     $text = ''
     if ($null -ne $Value) { $text = [string]$Value }
     $escaped = $text.Replace('"', '""')
@@ -280,6 +281,7 @@ function Read-TestPhaseTrxRows {
 
 function Get-TestPhaseNativeIds {
     param([string]$Text)
+    if (Test-NightlyCoreAvailable) { return @([Antiphon.Nightly.TestPhaseSummary]::NativeIds($Text)) }
     $ids = New-Object System.Collections.Generic.List[string]
     if ([string]::IsNullOrEmpty($Text)) { return @() }
     $marker = 'C1514_NATIVE '
@@ -2927,7 +2929,7 @@ function ConvertTo-TestPhaseSummaryRows {
             }
         }
     }
-    $trxRows = @()
+    $trxRows = New-Object System.Collections.Generic.List[object]
     $trxFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Filter '*.trx' -File -ErrorAction SilentlyContinue)
     foreach ($trx in $trxFiles) {
         if ((Get-TestPhasePathIdentity -Path $trx.FullName).Kind -ne 'regular') { continue }
@@ -2940,7 +2942,7 @@ function ConvertTo-TestPhaseSummaryRows {
             $suiteText = ''
             if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
             $row | Add-Member -NotePropertyName Suite -NotePropertyValue $suiteText -Force
-            $trxRows += $row
+            $trxRows.Add($row)
         }
     }
     $nativeMap = @{}
@@ -2959,7 +2961,7 @@ function ConvertTo-TestPhaseSummaryRows {
         }
     }
 
-    $tests = @()
+    $tests = New-Object System.Collections.Generic.List[object]
     $joinedTrx = @{}
     $completeTestIds = @{}
     foreach ($completeKey in @($completes.Keys)) {
@@ -3019,7 +3021,7 @@ function ConvertTo-TestPhaseSummaryRows {
         }
         $src = $bag.Record
         $ex = $src.exclusive
-        $tests += [ordered]@{
+        $tests.Add([ordered]@{
             testId = [string]$id
             suite = [string]$headerSuite
             className = [string]$src.className
@@ -3041,7 +3043,7 @@ function ConvertTo-TestPhaseSummaryRows {
             overlapMs = $(if ($src.overlapMs) { [long]$src.overlapMs } else { 0 })
             remainderMs = $(if ($src.remainderMs) { [long]$src.remainderMs } else { 0 })
             droppedPhaseCount = $(if ($src.droppedPhaseCount) { [int]$src.droppedPhaseCount } else { 0 })
-        }
+        })
     }
     foreach ($startKey in @($starts.Keys)) {
         if ($completes.ContainsKey([string]$startKey)) { continue }
@@ -3049,7 +3051,7 @@ function ConvertTo-TestPhaseSummaryRows {
         $startId = [string]$startRec.testId
         $startSuite = ''
         if (-not $quality.Contains('missing-terminal-remains-incomplete')) { $quality.Add('missing-terminal-remains-incomplete') }
-        $tests += [ordered]@{
+        $tests.Add([ordered]@{
             testId = [string]$startId
             suite = [string]$startSuite
             className = ''
@@ -3064,7 +3066,7 @@ function ConvertTo-TestPhaseSummaryRows {
             countsKnown = $false
             db = 0; host = 0; process = 0; fs = 0; network = 0; fixture = 0
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
-        }
+        })
     }
     foreach ($row in $trxRows) {
         $key = [string]$row.TestId + '|' + [string]$row.Path
@@ -3085,7 +3087,7 @@ function ConvertTo-TestPhaseSummaryRows {
         }
         $rowSuite = ''
         if ($row.PSObject.Properties.Name -contains 'Suite') { $rowSuite = [string]$row.Suite }
-        $tests += [ordered]@{
+        $tests.Add([ordered]@{
             testId = [string]$row.TestId
             suite = [string]$rowSuite
             className = ''
@@ -3100,7 +3102,7 @@ function ConvertTo-TestPhaseSummaryRows {
             countsKnown = [bool]$countsKnown
             db = 0; host = 0; process = 0; fs = 0; network = 0; fixture = 0
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
-        }
+        })
     }
     $shared = @()
     foreach ($fix in $fixtures) {
@@ -3128,7 +3130,7 @@ function ConvertTo-TestPhaseSummaryRows {
         Quality = @($quality.ToArray())
         Torn = $torn
         Malformed = $malformed
-        Tests = @($tests)
+        Tests = $tests.ToArray()
         Shared = @($shared)
         Complete = [bool]$complete
         SummaryAggregationBudgetMilliseconds = [int]$budget.Milliseconds
@@ -3172,7 +3174,9 @@ function Write-TestPhaseSummaryFiles {
     $headCells = @()
     foreach ($h in $headers) { $headCells += (ConvertTo-TestPhaseCsvCell -Value $h) }
     $lines.Add(($headCells -join ','))
+    $core = Test-NightlyCoreAvailable
     foreach ($test in $orderedTests) {
+        if ($core) { $lines.Add([Antiphon.Nightly.TestPhaseSummary]::Row($test, [string[]]$headers)); continue }
         $cells = @(
             (ConvertTo-TestPhaseCsvCell -Value $test.testId),
             (ConvertTo-TestPhaseCsvCell -Value $test.duration),

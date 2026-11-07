@@ -4,6 +4,7 @@
 
 if ($script:AntiphonNightlyCommonLoaded) { return }
 $script:AntiphonNightlyCommonLoaded = $true
+. (Join-Path $PSScriptRoot 'nightly-core.ps1')
 
 $script:NightlySeams = $null
 $script:NightlyOwnedLock = $null
@@ -332,6 +333,7 @@ function Get-NightlyFileSha256 {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
         throw ('missing file for hash {0}' -f $Path)
     }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::FileSha256($Path) }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $stream = [System.IO.File]::OpenRead($Path)
     try {

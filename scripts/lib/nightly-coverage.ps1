@@ -198,6 +198,7 @@ function Test-NightlyPinnedDiagnosticVersions {
 
 function Get-NightlyDiagnosticStateProperty {
     param([string]$Record)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::StateProperty($Record) }
     $absent = [pscustomobject]@{ Name = ''; ExplanationStart = -1 }
     # Enter the TestNode's own property list, not the update-message properties
     # or display text. Match the pinned identifier -> optional location -> state
@@ -218,6 +219,7 @@ function Get-NightlyDiagnosticStateProperty {
 function Get-NightlyDiagnosticStateName {
     param([string]$Record, $StateProperty = $null)
     if ($null -eq $StateProperty) { $StateProperty = Get-NightlyDiagnosticStateProperty -Record $Record }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::StateName([string]$StateProperty.Name) }
     switch -CaseSensitive ($StateProperty.Name) {
         'Passed' { return 'Passed' }
         'Skipped' { return 'Skipped' }
@@ -286,6 +288,7 @@ function Test-NightlyDiagnosticTypeNameComplete {
     # IndexOf plus a balance count stays within Windows PowerShell 5.1.
     param([string]$Name)
     if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::TypeNameComplete($Name) }
     $openAt = $Name.IndexOf('(')
     $closeAt = $Name.IndexOf(')')
     $commaAt = $Name.IndexOf(',')
@@ -314,6 +317,18 @@ function Test-NightlyDiagnosticTypeNameComplete {
 
 function ConvertFrom-NightlyDiagnosticRecord {
     param([string]$Record, [string]$State, $StateProperty = $null)
+    if (Test-NightlyCoreAvailable) {
+        $converted = [Antiphon.Nightly.NightlyDiagnostics]::ConvertRecord($Record, $State)
+        if ($converted.Error) { throw $converted.Error }
+        $node = $converted.Node
+        if ($State -eq 'Failed') {
+            $message = Get-NightlyDiagnosticFailureMessage -Record $Record -StateProperty $StateProperty
+            if ($null -ne $message) {
+                $node | Add-Member -NotePropertyName Message -NotePropertyValue $message
+            }
+        }
+        return $node
+    }
     if ($Record -notmatch 'TestNodeUid \{ Value = (?<uid>[^}]+?) \}') {
         throw 'truncated diagnostic record: missing uid'
     }
@@ -413,6 +428,7 @@ function ConvertFrom-NightlyExecutionJson {
 
 function Get-NightlyDiagnosticRecords {
     param([string]$Text)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::Records($Text) }
     # A record ends at the next structural node update or logging header, never
     # at display-name punctuation. Keep the original physical line endings.
     # Every TestNodeUpdateMessage envelope starts a record, including a second
@@ -471,10 +487,25 @@ function ConvertFrom-NightlyDiagnosticLog {
     Test-NightlyPinnedDiagnosticVersions -Text $text
     # Count raw markers independently of framing/acceptance. Even an orphan or
     # an ambiguous marker in display text must prevent a partial inventory.
-    $discoveredCount = [regex]::Matches($text, 'DiscoveredTestNodeStateProperty \{').Count
+    if (Test-NightlyCoreAvailable) { $discoveredCount = [Antiphon.Nightly.NightlyDiagnostics]::DiscoveredMarkerCount($text) }
+    else { $discoveredCount = [regex]::Matches($text, 'DiscoveredTestNodeStateProperty \{').Count }
     $recognized = $false
-    $nodes = @()
+    $nodes = [Collections.Generic.List[object]]::new()
     $seen = @{}
+    if (Test-NightlyCoreAvailable) {
+        # Compiled record loop (NightlyCore.cs): same refusals in the same record order. Failure messages are
+        # attached here, as the loop below does per record; they never refuse, so the order is unchanged.
+        $parsed = [Antiphon.Nightly.NightlyDiagnostics]::ParseRecords($text, $Kind, $Path)
+        if ($parsed.Error) { throw $parsed.Error }
+        foreach ($failed in $parsed.Failed) {
+            $message = Get-NightlyDiagnosticFailureMessage -Record $failed.Record -StateProperty $failed.StateProperty
+            if ($null -ne $message) {
+                $failed.Node | Add-Member -NotePropertyName Message -NotePropertyValue $message
+            }
+        }
+        $recognized = [bool]$parsed.Recognized
+        $nodes.AddRange([object[]]$parsed.Nodes)
+    } else {
     foreach ($record in (Get-NightlyDiagnosticRecords -Text $text)) {
         $stateProperty = Get-NightlyDiagnosticStateProperty -Record $record
         $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $stateProperty
@@ -505,7 +536,8 @@ function ConvertFrom-NightlyDiagnosticLog {
             throw ('duplicate {0} uid {1}' -f $Kind, $node.Uid)
         }
         $seen[$node.Uid] = $true
-        $nodes += $node
+        $nodes.Add($node)
+    }
     }
     if (-not $recognized) {
         throw ('unknown diagnostic format {0}' -f $Path)
@@ -513,11 +545,12 @@ function ConvertFrom-NightlyDiagnosticLog {
     if ($Kind -eq 'discovery' -and $discoveredCount -ne $nodes.Count) {
         throw ('discovery-count-mismatch discovered={0} parsed={1} path={2}' -f $discoveredCount, $nodes.Count, $Path)
     }
-    return [pscustomobject]@{ Nodes = $nodes }
+    return [pscustomobject]@{ Nodes = $nodes.ToArray() }
 }
 
 function ConvertTo-NightlyNormalizedOutcome {
     param([string]$Outcome)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($Outcome) }
     $raw = ([string]$Outcome).Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($raw)) { return 'Unknown' }
     switch ($raw) {
@@ -1053,6 +1086,7 @@ function Get-NightlyDiscoveryIndexRequiredUids {
 
 function Get-NightlyIdentityBagKey {
     param([string]$ClassName, [string]$TypeName, [string]$MethodName)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::BagKey($ClassName, $TypeName, $MethodName) }
     $simple = Get-NightlyClassNameFromIdentity -ClassName $(if ([string]::IsNullOrWhiteSpace($ClassName)) { $TypeName } else { $ClassName })
     return (('{0}.{1}' -f $simple, $MethodName).ToLowerInvariant())
 }

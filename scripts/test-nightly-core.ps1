@@ -97,9 +97,91 @@ function Test-NCCoreMatchesFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'json' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+function Get-NCOutcome([scriptblock]$Body) {
+    try { return (& $Body) } catch { return ('REFUSED ' + $_.Exception.Message) }
+}
+
+# The reflected short envelope the C1325 fixtures build on (as in test-nightly-tests.ps1).
+function New-D13StateRecord {
+    param([string]$Uid, [string]$TypeName, [string]$Method, [string]$StateName, [string]$Explanation,
+        [string]$ExceptionText = 'System.Exception: outer')
+    $state = '{0}TestNodeStateProperty {{ Explanation = {1}' -f $StateName, $Explanation
+    if ($StateName -notin @('Passed', 'Skipped', 'Discovered', 'InProgress')) { $state += ', Exception = ' + $ExceptionText }
+    if ($StateName -eq 'Timeout') { $state += ', Timeout = 00:00:00.0250000' }
+    $state += ' }'
+    return ('TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = ' + $Uid + ' }, DisplayName = ' + $Method + ', Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = ' + $TypeName + ', MethodName = ' + $Method + ', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, ' + $state + ' ] } }')
+}
+
+function Test-NCDiagnosticsMatchFallback {
+    . (Join-Path $PSScriptRoot 'fixtures/nightly/c1325-diagnostic-records.ps1')
+    . (Join-Path $PSScriptRoot 'fixtures/nightly/c1375-diagnostic-records.ps1')
+    $decode = { param($b) [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b.Base64)) }
+    $c1375 = @(Get-C1375DiagnosticFixtures)
+    $records = [Collections.Generic.List[string]]::new()
+    foreach ($f in @(Get-C1325ExplanationFixtures) + @(Get-C1325StateFixtures)) { $records.Add([string]$f.Record) }
+    $records.Add((Get-C1325AmbiguousStateRecord)); $records.Add($D13FailureRecord)
+    foreach ($f in $c1375) { $records.Add((& $decode $f.Record)) }
+    $i = 0
+    foreach ($state in 'Passed', 'Skipped', 'Discovered', 'InProgress', 'Failed', 'Error', 'Timeout', 'Cancelled', 'Unheard') {
+        foreach ($type in 'Plain', 'Ctor(Arg, Other)', 'Bad,Comma', 'Open(Arg') {
+            $records.Add((New-D13StateRecord -Uid ('Probe.NC.' + (++$i)) -TypeName $type -Method 'Run' -StateName $state `
+                -Explanation ('[Test Failure] boom ' + $i) -ExceptionText ('System.Exception: inner ' + $i)))
+        }
+    }
+    # Truncations and a damaged identity, for the refusal messages.
+    foreach ($r in @($records.ToArray())) { $records.Add($r.Substring(0, [int]($r.Length / 2))) }
+    $records.Add($D13FailureRecord.Replace('TestNodeUid { Value = ', 'TestNodeUid { Valu = '))
+    $records.Add($D13FailureRecord.Replace('MethodName = ', 'MethodNam = '))
+    $header = (& $decode $c1375[0].MtpHeader) + "`n" + (& $decode $c1375[0].TunitHeader) + "`n"
+    $logs = @(
+        @('all', ($header + ($records.ToArray() -join "`n"))),
+        @('first-three', ($header + (@($records)[0..2] -join "`n"))),
+        @('duplicate', ($header + $D13FailureRecord + "`n" + $D13FailureRecord)),
+        @('no-version', ($D13FailureRecord)),
+        @('c1375', ($header + (& $decode $c1375[0].Record) + "`n" + (& $decode $c1375[1].Record))))
+    $paths = foreach ($log in $logs) {
+        $path = Join-Path $root ('nc-' + $log[0] + '.diag'); [IO.File]::WriteAllText($path, $log[1]); $path
+    }
+    $r = Invoke-NCBothWays {
+        $perRecord = foreach ($record in $records) {
+            $property = Get-NightlyDiagnosticStateProperty -Record $record
+            $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $property
+            [ordered]@{
+                property = $property; state = $state
+                split = @(Get-NightlyDiagnosticRecords -Text $record)
+                asState = Get-NCOutcome { ConvertFrom-NightlyDiagnosticRecord -Record $record -State $(if ($state) { $state } else { 'Failed' }) -StateProperty $property }
+                asDiscovered = Get-NCOutcome { ConvertFrom-NightlyDiagnosticRecord -Record $record -State 'Discovered' -StateProperty $property }
+            }
+        }
+        $perLog = foreach ($path in $paths) {
+            [ordered]@{
+                execution = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution }
+                discovery = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery }
+            }
+        }
+        [ordered]@{ records = @($perRecord); logs = @($perLog) }
+    }
+    Assert-NC ($r.Compiled -ceq $r.Fallback) 'diagnostics' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+
+    $hashed = Join-Path $root 'nc-hash.bin'; [IO.File]::WriteAllBytes($hashed, [byte[]](0..255))
+    $values = @($null, '', 'plain', '=SUM(A1)', '+1', '-2', '@x', 'say "hi"', $true, $false, [long]42, 3.5, [datetime]'2026-01-02T03:04:05')
+    $row = [ordered]@{ testId = '=id'; duration = $null; joined = $true; db = [long]7; outcome = 'say "x"' }
+    $stdout = "noise`r`n  ANTIPHON_TEST_PHASE_ID  a.b.c  `r`nC1514_NATIVE 12 x.y`nC1514_NATIVE nospace`nANTIPHON_TEST_PHASE_ID a.b.c`nC1514_NATIVE 1 "
+    $r = Invoke-NCBothWays { [ordered]@{
+        cells = @(foreach ($v in $values) { ConvertTo-TestPhaseCsvCell -Value $v })
+        native = @(Get-TestPhaseNativeIds -Text $stdout); nativeEmpty = @(Get-TestPhaseNativeIds -Text '')
+        bag = @(Get-NightlyIdentityBagKey -ClassName 'A.B.C(x)' -TypeName 'T' -MethodName 'M', (Get-NightlyIdentityBagKey -ClassName ' ' -TypeName 'N.Type' -MethodName 'Run'))
+        outcomes = @(foreach ($o in @('Passed', ' FAIL ', 'error', 'NotRunnable', 'pending', '', 'weird')) { ConvertTo-NightlyNormalizedOutcome -Outcome $o })
+        sha = Get-NightlyFileSha256 -Path $hashed
+        csvRow = (@($row.Keys | ForEach-Object { ConvertTo-TestPhaseCsvCell -Value $row[$_] }) -join ',')
+    } }
+    $rowCore = [Antiphon.Nightly.TestPhaseSummary]::Row($row, [string[]]@($row.Keys))
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; $expected = 6 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; $expected = 8 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

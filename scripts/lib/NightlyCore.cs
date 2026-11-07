@@ -11,6 +11,7 @@ using System.Collections.Specialized;
 using System.Globalization;
 using System.Management.Automation;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Antiphon.Nightly
 {
@@ -76,6 +77,41 @@ namespace Antiphon.Nightly
             if (string.IsNullOrWhiteSpace(className)) return className;
             var parts = Bare(className).Split('.');
             return parts[parts.Length - 1];
+        }
+
+        /// <summary>Get-NightlyIdentityBagKey: "simpleclass.method", lower-cased invariantly.</summary>
+        public static string BagKey(string className, string typeName, string methodName)
+        {
+            var simple = Simple(string.IsNullOrWhiteSpace(className) ? typeName : className);
+            return ((simple ?? "") + "." + (methodName ?? "")).ToLowerInvariant();
+        }
+
+        /// <summary>ConvertTo-NightlyNormalizedOutcome.</summary>
+        public static string NormalizedOutcome(string outcome)
+        {
+            var raw = (outcome ?? "").Trim().ToLowerInvariant();
+            switch (raw)
+            {
+                case "": return "Unknown";
+                case "passed": case "pass": return "Passed";
+                case "failed": case "fail": case "error": return "Failed";
+                case "skipped": return "Skipped";
+                case "notexecuted": case "notrunnable": case "pending": return "NotExecuted";
+                default: return "Unknown";
+            }
+        }
+
+        /// <summary>Get-NightlyFileSha256 (after its existence check): lower-case hex SHA-256 of the file.</summary>
+        public static string FileSha256(string path)
+        {
+            using (var stream = System.IO.File.OpenRead(path))
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                var hash = sha.ComputeHash(stream);
+                var sb = new StringBuilder(hash.Length * 2);
+                foreach (var b in hash) sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+                return sb.ToString();
+            }
         }
 
         /// <summary>Test-NightlyClassAssigned.</summary>
@@ -363,6 +399,302 @@ namespace Antiphon.Nightly
             o.Properties.Add(new PSNoteProperty("RequiredUids", allRequired.ToArray()));
             o.Properties.Add(new PSNoteProperty("Classes", classes.ToArray()));
             return o;
+        }
+    }
+
+    /// <summary>
+    /// The pinned TUnit 1.44 / MTP 2.2 diagnostic record parser from nightly-coverage.ps1. PowerShell's -match is
+    /// case-insensitive and [regex]:: calls are not; each pattern keeps the option of the operator it replaces.
+    /// Refusals are returned as the same message text the PowerShell function threw, for it to throw.
+    /// </summary>
+    public static class NightlyDiagnostics
+    {
+        private const RegexOptions Match = RegexOptions.IgnoreCase | RegexOptions.Compiled; // PowerShell -match / -notmatch
+        private const RegexOptions Exact = RegexOptions.Compiled; // [regex]:: calls and -cmatch: case-sensitive
+        public const string TypeNameClass = @"[A-Za-z0-9_.+\x60()<>,\[\] \u00B7-]";
+
+        private static readonly Regex Envelope = new Regex(@"TestNodeUpdateMessage \{[^\r\n]*?TestNode = TestNode \{ Uid = TestNodeUid", Exact);
+        private static readonly Regex LineSplit = new Regex(@"(?<=\n)", Exact);
+        private static readonly Regex NodeStart = new Regex(@"^(?:[^\r\n]*?TestNodeUpdateMessage \{[^\r\n]*?TestNode = |\s*)TestNode \{ Uid = TestNodeUid", Match);
+        private static readonly Regex HeaderStart = new Regex(@"^\d{4}-\d{2}-\d{2}T\S+\s+\S+\s+(?:TRACE|DEBUG|INFORMATION|WARNING|ERROR|CRITICAL)\b", Match);
+        private static readonly Regex VersionStart = new Regex(@"^\s*version:\s+", Match);
+        private static readonly Regex StateEnvelope = new Regex(@"(?s)TestNode \{ Uid = TestNodeUid \{ Value = [^}]* \}, DisplayName = .*?, Properties = \[ ", Exact);
+        private static readonly Regex Transition = new Regex(
+            @"TestMethodIdentifierProperty \{ AssemblyFullName = [^{}\r\n]+, Namespace = [A-Za-z0-9_.]*, TypeName = " + TypeNameClass
+            + @"*?, MethodName = [A-Za-z0-9_]*, MethodArity = \d+, ParameterTypeFullNames = \[[^{}\r\n]*\], ReturnTypeFullName = [^{}\r\n]+ \}, "
+            + @"(?:TestFileLocationProperty \{ FilePath = [^\r\n]*?, LineSpan = LinePositionSpan \{ Start = LinePosition \{ Line = \d+, Column = \d+ \}, End = LinePosition \{ Line = \d+, Column = \d+ \} \} \}, )?"
+            + @"(?<name>[A-Za-z]+)TestNodeStateProperty \{ Explanation = ", Exact);
+        private static readonly Regex Uid = new Regex(@"TestNodeUid \{ Value = (?<uid>[^}]+?) \}", Match);
+        private static readonly Regex TypeName = new Regex(@"(?<![A-Za-z])TypeName = (?<type>" + TypeNameClass + @"+?), MethodName = ", Match);
+        private static readonly Regex MethodName = new Regex(@"(?<![A-Za-z])MethodName = (?<method>[A-Za-z0-9_]+)", Match);
+        private static readonly Regex Namespace = new Regex(@"(?<![A-Za-z])Namespace = (?<ns>[A-Za-z0-9_\.]+)", Match);
+        private static readonly Regex AssemblyName = new Regex(@"AssemblyFullName = (?<asm>[^,]+)", Match);
+        private static readonly Regex Category = new Regex(@"TestMetadataProperty \{ Key = (?<key>[A-Za-z0-9_]+)", Exact);
+
+        /// <summary>Get-NightlyDiagnosticRecords: one string per TestNode record, physical line endings kept.</summary>
+        public static string[] Records(string text)
+        {
+            var records = new List<string>();
+            var record = new StringBuilder();
+            foreach (var line in LineSplit.Split(text ?? ""))
+            {
+                var envelopeHits = Envelope.Matches(line);
+                if (envelopeHits.Count >= 2)
+                {
+                    if (record.Length > 0) { records.Add(record.ToString()); record.Clear(); }
+                    var start = 0;
+                    for (var hitIndex = 1; hitIndex < envelopeHits.Count; hitIndex++)
+                    {
+                        var at = envelopeHits[hitIndex].Index;
+                        if (at > start)
+                        {
+                            var piece = line.Substring(start, at - start);
+                            if (piece.Length > 0) records.Add(piece);
+                        }
+                        start = at;
+                    }
+                    if (start < line.Length) record.Append(line.Substring(start));
+                    continue;
+                }
+                var nodeStart = NodeStart.IsMatch(line);
+                var headerStart = HeaderStart.IsMatch(line) || VersionStart.IsMatch(line);
+                if ((nodeStart || headerStart) && record.Length > 0) { records.Add(record.ToString()); record.Clear(); }
+                if (nodeStart || (record.Length > 0 && !headerStart)) record.Append(line);
+            }
+            if (record.Length > 0) records.Add(record.ToString());
+            return records.ToArray();
+        }
+
+        /// <summary>Get-NightlyDiagnosticStateProperty: { Name, ExplanationStart }, Name '' when absent or ambiguous.</summary>
+        public static PSObject StateProperty(string record)
+        {
+            record = record ?? "";
+            var envelope = StateEnvelope.Match(record);
+            if (envelope.Success)
+            {
+                var hit = Transition.Match(record, envelope.Index + envelope.Length);
+                if (hit.Success && !hit.NextMatch().Success)
+                    return StateObject(hit.Groups["name"].Value, hit.Index + hit.Length);
+            }
+            return StateObject("", -1);
+        }
+
+        private static PSObject StateObject(string name, int explanationStart)
+        {
+            var o = new PSObject();
+            o.Properties.Add(new PSNoteProperty("Name", name));
+            o.Properties.Add(new PSNoteProperty("ExplanationStart", explanationStart));
+            return o;
+        }
+
+        /// <summary>Get-NightlyDiagnosticStateName.</summary>
+        public static string StateName(string propertyName)
+        {
+            switch (propertyName)
+            {
+                case "Passed": return "Passed";
+                case "Skipped": return "Skipped";
+                case "Discovered": return "Discovered";
+                case "InProgress": return "InProgress";
+                case "Failed": case "Error": case "Timeout": case "Cancelled": return "Failed";
+                default: return "";
+            }
+        }
+
+        /// <summary>Test-NightlyDiagnosticTypeNameComplete.</summary>
+        public static bool TypeNameComplete(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            var openAt = name.IndexOf('(');
+            var closeAt = name.IndexOf(')');
+            var commaAt = name.IndexOf(',');
+            if (openAt < 0 && closeAt < 0) return commaAt < 0;
+            if (openAt <= 0) return false;
+            if (!name.EndsWith(")", StringComparison.Ordinal)) return false;
+            var depth = 0;
+            foreach (var ch in name)
+            {
+                if (ch == '(') depth++;
+                else if (ch == ')') { depth--; if (depth < 0) return false; }
+                else if (ch == ',' && depth == 0) return false;
+            }
+            return depth == 0;
+        }
+
+        /// <summary>
+        /// ConvertFrom-NightlyDiagnosticRecord without the failure message (which stays in PowerShell):
+        /// { Node, Error }, Error being the refusal text the PowerShell function threw, in the same order.
+        /// </summary>
+        public static PSObject ConvertRecord(string record, string state)
+        {
+            record = record ?? ""; state = state ?? "";
+            var result = new PSObject();
+            var uidMatch = Uid.Match(record);
+            if (!uidMatch.Success) return Refusal(result, "truncated diagnostic record: missing uid");
+            var uid = uidMatch.Groups["uid"].Value.Trim();
+            var typeName = ""; var method = ""; var ns = ""; var assembly = "";
+            var m = TypeName.Match(record); if (m.Success) typeName = m.Groups["type"].Value;
+            m = MethodName.Match(record); if (m.Success) method = m.Groups["method"].Value;
+            m = Namespace.Match(record); if (m.Success) ns = m.Groups["ns"].Value;
+            m = AssemblyName.Match(record); if (m.Success) assembly = m.Groups["asm"].Value.Trim();
+            if (string.IsNullOrWhiteSpace(uid)) return Refusal(result, "truncated diagnostic record: missing uid");
+            if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(method)
+                || !TypeNameComplete(typeName))
+                return Refusal(result, "truncated diagnostic record uid=" + uid);
+            var categories = new List<object>();
+            foreach (System.Text.RegularExpressions.Match c in Category.Matches(record)) categories.Add(c.Groups["key"].Value);
+            var excluded = false;
+            foreach (var c in categories)
+            {
+                var category = (string)c;
+                if (string.Equals(category, "OptIn", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(category, "Explicit", StringComparison.OrdinalIgnoreCase)) excluded = true;
+            }
+            var node = new PSObject();
+            node.Properties.Add(new PSNoteProperty("Uid", uid));
+            node.Properties.Add(new PSNoteProperty("Assembly", assembly));
+            node.Properties.Add(new PSNoteProperty("Namespace", ns));
+            node.Properties.Add(new PSNoteProperty("Type", typeName));
+            node.Properties.Add(new PSNoteProperty("Method", method));
+            node.Properties.Add(new PSNoteProperty("Signature", ""));
+            node.Properties.Add(new PSNoteProperty("State", state));
+            node.Properties.Add(new PSNoteProperty("Outcome", state));
+            node.Properties.Add(new PSNoteProperty("ClassName", string.IsNullOrWhiteSpace(ns) ? typeName : ns + "." + typeName));
+            node.Properties.Add(new PSNoteProperty("Excluded", excluded));
+            node.Properties.Add(new PSNoteProperty("Categories", categories.ToArray()));
+            result.Properties.Add(new PSNoteProperty("Node", node));
+            result.Properties.Add(new PSNoteProperty("Error", ""));
+            return result;
+        }
+
+        private static readonly Regex DiscoveredHeader = new Regex(@"(?<![A-Za-z])DiscoveredTestNodeStateProperty \{", Exact); // -cmatch
+        private static readonly Regex DiscoveredMarker = new Regex(@"DiscoveredTestNodeStateProperty \{", Exact);
+
+        /// <summary>The raw discovered-marker count ConvertFrom-NightlyDiagnosticLog checks the parse against.</summary>
+        public static int DiscoveredMarkerCount(string text) => DiscoveredMarker.Matches(text ?? "").Count;
+
+        private static readonly Regex FramedNode = new Regex(@"TestNode \{ Uid = TestNodeUid", Match);
+
+        /// <summary>
+        /// The record loop of ConvertFrom-NightlyDiagnosticLog (pinned text format) for kind discovery/execution:
+        /// { Nodes, Failed, Recognized, Error }. Error is the first refusal the PowerShell loop threw, in the same
+        /// record order. Failed lists { Node, Record, StateProperty } for the caller to attach failure messages,
+        /// which never refuse.
+        /// </summary>
+        public static PSObject ParseRecords(string text, string kind, string path)
+        {
+            var result = new PSObject();
+            var nodes = new List<object>();
+            var failed = new List<object>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var recognized = false;
+            var discovery = string.Equals(kind, "discovery", StringComparison.OrdinalIgnoreCase);
+            var execution = string.Equals(kind, "execution", StringComparison.OrdinalIgnoreCase);
+            string error = "";
+            foreach (var record in Records(text))
+            {
+                var stateProperty = StateProperty(record);
+                var state = StateName((string)stateProperty.Properties["Name"].Value);
+                if (string.IsNullOrWhiteSpace(state))
+                {
+                    if (discovery)
+                    {
+                        if (DiscoveredHeader.IsMatch(record))
+                        {
+                            var refused = (string)ConvertRecord(record, "").Properties["Error"].Value;
+                            if (refused.Length > 0) { error = refused; break; }
+                        }
+                        error = "malformed discovery record: missing state " + path;
+                        break;
+                    }
+                    if (FramedNode.IsMatch(record)) state = "Failed";
+                    else continue;
+                }
+                recognized = true;
+                if (discovery) { if (!string.Equals(state, "Discovered", StringComparison.OrdinalIgnoreCase)) continue; }
+                else if (execution)
+                {
+                    if (string.Equals(state, "InProgress", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(state, "Discovered", StringComparison.OrdinalIgnoreCase)) continue;
+                }
+                var converted = ConvertRecord(record, state);
+                var convertError = (string)converted.Properties["Error"].Value;
+                if (convertError.Length > 0) { error = convertError; break; }
+                var node = (PSObject)converted.Properties["Node"].Value;
+                if (string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    var entry = new PSObject();
+                    entry.Properties.Add(new PSNoteProperty("Node", node));
+                    entry.Properties.Add(new PSNoteProperty("Record", record));
+                    entry.Properties.Add(new PSNoteProperty("StateProperty", stateProperty));
+                    failed.Add(entry);
+                }
+                var uid = (string)node.Properties["Uid"].Value;
+                if (!seen.Add(uid)) { error = "duplicate " + kind + " uid " + uid; break; }
+                nodes.Add(node);
+            }
+            result.Properties.Add(new PSNoteProperty("Nodes", nodes.ToArray()));
+            result.Properties.Add(new PSNoteProperty("Failed", failed.ToArray()));
+            result.Properties.Add(new PSNoteProperty("Recognized", recognized));
+            result.Properties.Add(new PSNoteProperty("Error", error));
+            return result;
+        }
+
+        private static PSObject Refusal(PSObject result, string error)
+        {
+            result.Properties.Add(new PSNoteProperty("Node", null));
+            result.Properties.Add(new PSNoteProperty("Error", error));
+            return result;
+        }
+    }
+
+    /// <summary>Per-row helpers of the test-phase summary in test-phase-evidence.ps1.</summary>
+    public static class TestPhaseSummary
+    {
+        /// <summary>ConvertTo-TestPhaseCsvCell: quoted, quotes doubled, a leading = + - @ neutralised with '.</summary>
+        public static string Cell(object value)
+        {
+            var text = value == null ? "" : PsValue.Str(value);
+            var escaped = text.Replace("\"", "\"\"");
+            if (escaped.Length > 0)
+            {
+                var lead = escaped[0];
+                if (lead == '=' || lead == '+' || lead == '-' || lead == '@') escaped = "'" + escaped;
+            }
+            return "\"" + escaped + "\"";
+        }
+
+        /// <summary>One tests.csv line: the cells of <paramref name="fields"/> read from the row, comma-joined.</summary>
+        public static string Row(object test, string[] fields)
+        {
+            var cells = new string[fields.Length];
+            for (var i = 0; i < fields.Length; i++) cells[i] = Cell(PsValue.Prop(test, fields[i]));
+            return string.Join(",", cells);
+        }
+
+        /// <summary>Get-TestPhaseNativeIds: ANTIPHON_TEST_PHASE_ID / C1514_NATIVE identities in a TRX row's output.</summary>
+        public static string[] NativeIds(string text)
+        {
+            var ids = new List<string>();
+            if (string.IsNullOrEmpty(text)) return ids.ToArray();
+            const string marker = "C1514_NATIVE ";
+            const string phase = "ANTIPHON_TEST_PHASE_ID ";
+            foreach (var line in text.Split('\n'))
+            {
+                var trim = line.Trim().TrimEnd('\r');
+                string id;
+                if (trim.StartsWith(phase, StringComparison.Ordinal)) id = trim.Substring(phase.Length).Trim();
+                else if (trim.StartsWith(marker, StringComparison.Ordinal))
+                {
+                    var rest = trim.Substring(marker.Length);
+                    var space = rest.IndexOf(' ');
+                    if (space < 1) continue;
+                    id = rest.Substring(space + 1).Trim();
+                }
+                else continue;
+                if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id)) ids.Add(id);
+            }
+            return ids.ToArray();
         }
     }
 
