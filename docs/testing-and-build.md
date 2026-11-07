@@ -738,7 +738,7 @@ presence never grants custody. Invalid or linked markers remain refusals.
 
 To recover, establish executor death and inspect containment, links and the remaining
 files before manually removing that specific tool residue. Keep the run receipts,
-ownership seal and removal marker. A later `wait --run <run>` can observe
+ownership seal and removal marker. The run directory also retains `.terminal-publication.lock`, the terminal-publication gate left after stop or receipt publication (CARD-1734). A later `wait --run <run>` can observe
 `AlreadyAbsent`; `clean` still requires manual removal. Deleting the marker,
 editing/resealing the inventory or importing it into creation records is not recovery.
 Legacy unsealed copies retain their current-process ledger behavior.
