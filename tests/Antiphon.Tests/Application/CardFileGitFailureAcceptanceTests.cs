@@ -11,6 +11,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<GitProcessSpawnLimit>]
 public class CardFileGitFailureAcceptanceTests
 {
@@ -52,7 +53,7 @@ public class CardFileGitFailureAcceptanceTests
             : StallHook());
         var expected = new Dictionary<string, string?> { [relative] = "C408_PUBLIC\n" };
         using var cancel = new CancellationTokenSource();
-        var task = Repository(fault == "timeout" ? 2 : 30).CommitAsync(repo.Path, directory, expected, "public sync", cancel.Token);
+        var task = Repository(fault == "timeout" ? OwnedHookTimeoutSeconds(OperatingSystem.IsWindows()) : 30).CommitAsync(repo.Path, directory, expected, "public sync", cancel.Token);
         if (fault == "cancel")
         {
             var hookStarted = Path.Combine(repo.Path, "hook-started");
@@ -102,6 +103,13 @@ public class CardFileGitFailureAcceptanceTests
         (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
         (await repo.GitReadAsync("diff", "--cached", "--name-only")).ShouldBeEmpty();
     }
+
+    // Linux keeps the 2s budget. Git for Windows can spend that whole budget starting
+    // git.exe, so pre-commit never writes hook-started and the kill proof does not run.
+    // Windows uses the product per-command default. The hook still waits until killed,
+    // so the command still returns git_error inside that budget.
+    private static int OwnedHookTimeoutSeconds(bool windowsHost) =>
+        windowsHost ? new GitSettings().TimeoutSeconds : 2;
 
     // Git for Windows sh has no sleep, so a failing sleep falls through and writes hook-ended.
     // The hook waits for hook-release, which this test writes only after the hook pid is gone.

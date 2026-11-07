@@ -446,3 +446,6 @@ Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
 Antiphon.Tests.Scripts.ReleaseTagAllocatorTests
 # CARD-1733: native fixture/isolation regressions spawn PowerShell and real Git; baseline seed witness 48 seconds.
 Antiphon.Tests.Scripts.C1733AllocatorFixtureTests
+
+# real Git pre-commit stall. The Windows timeout case uses the product per-command timeout because commit startup exceeds the 2s Linux budget before hook-started; that row is measured above 5s.
+Antiphon.Tests.Application.CardFileGitFailureAcceptanceTests
