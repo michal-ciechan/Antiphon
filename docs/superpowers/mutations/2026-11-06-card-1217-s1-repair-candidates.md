@@ -46,3 +46,14 @@ both real validator entry points using otherwise valid native-repeat receipts.
 It does not discharge S2 conditional eligibility or future PowerShell strict-skip
 projection controls. Mutation owns exact landed-source binding, compiling patches,
 consumed-site/expected-assertion proof, method-scoped red/restore/green, and discovery.
+
+The ordinary parity witness additionally found an inherited PowerShell repeat
+reader acceptance of `&#0;`; it is now guarded by the same corpus and a strict
+validation read before the unchanged XML cast. These additional controls remain
+unbound/pending Mutation at
+`/*/*/CheckpointSourceExecutionTests/validators_agree_on_xml_character_references`:
+R2-1/P-no-validation (omit strict read), R2-1/P-decimal-only (escape hex references
+only for validation), R2-1/P-hex-only (escape decimal references only for validation).
+Expect the corresponding `:P:` refusal assertion to fail with actual exit 0;
+ordinary and valid-reference controls must still qualify. S2 PowerShell skip
+projection/reason controls remain pending; no deliberate mutant ran in Code.

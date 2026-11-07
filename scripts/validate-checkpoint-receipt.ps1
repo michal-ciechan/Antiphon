@@ -47,7 +47,17 @@ function Assert-RepeatReceipt {
         throw 'repeat_summary_invalid'
     }
     if (-not (Test-Path -LiteralPath $TrxPath)) { throw 'repeat_trx_missing' }
-    [xml]$trx = Read-CheckpointText $TrxPath
+    $rawTrx = Read-CheckpointText $TrxPath
+    # The PowerShell XML cast admits illegal numeric references. Validate first,
+    # then project the original text so existing literal newline behavior stays.
+    $settings = [Xml.XmlReaderSettings]::new()
+    $settings.CheckCharacters = $true
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $reader = [Xml.XmlReader]::Create([IO.StringReader]::new($rawTrx), $settings)
+    try { while ($reader.Read()) {} }
+    finally { $reader.Dispose() }
+    [xml]$trx = $rawTrx
     $actual = Get-CheckpointRepeatEvidence -Document $trx -Requested $ExpectedRepeat -Nonce ([string]$Repeat.nonce) -MinExecuted 1 -Expect @()
     if (($actual | ConvertTo-Json -Compress -Depth 20) -cne ($Repeat | ConvertTo-Json -Compress -Depth 20)) {
         throw 'repeat_trx_disagreement'
