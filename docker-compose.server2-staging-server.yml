@@ -1,0 +1,129 @@
+# CARD-1742. Staging Antiphon server on the server2 host daemon.
+# Project antiphon-server2-staging. Own scratch Postgres. Not the phone-home
+# runner project, not the nested dockerd, not the foreign scheduler stack, and not the desktop
+# production database. Phone-home origin, the public vhost, and AppHost stay
+# on the desktop. Use this file only with project antiphon-server2-staging.
+# scripts/deploy-server2-staging-server.ps1 is the entry. It defaults to -WhatIf.
+name: antiphon-server2-staging
+
+services:
+  staging-state-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "set -eu; uid=1654; gid=1654; for d in /state /state/logs /state/keyring /state/check-interpreter /state/diagnose /state/output-distiller /work /work/repos /work/worktrees; do mkdir -p \"$$d\"; done; for d in /state /work; do owner=$$(stat -c %u \"$$d\"); if [ \"$$owner\" != 0 ] && [ \"$$owner\" != \"$$uid\" ]; then echo \"ForeignStateOwner path=$$d uid=$$owner\" >&2; exit 42; fi; done; chown -R \"$$uid:$$gid\" /state /work; echo \"staging-state-init owned uid=$$uid\""
+    volumes:
+      - work:/work
+      - server-state:/state
+    restart: "no"
+
+  staging-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "1654:1654"
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:17420:8080"
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=staging-postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required};No Reset On Close=true
+      SessionRunner__Enabled: "false"
+      PhoneHomeRunner__Enabled: "false"
+      Git__WorkspacePath: /work/repos
+      Git__WorktreeBasePath: /work/worktrees
+      AgentSessions__SessionLogPath: /state/logs
+      ZombieCensus__SessionLogPath: /state/logs
+      Serilog__LogPath: /state/logs
+      AgentTui__KeyRingPath: /state/keyring
+      Delegation__CheckInterpreterWorkingDirectory: /state/check-interpreter
+      Delegation__DiagnoseWorkingDirectory: /state/diagnose
+      Delegation__OutputDistillerWorkingDirectory: /state/output-distiller
+      Delegation__CheckInterpreterEnabled: "true"
+      Delegation__DiagnoseEnabled: "true"
+      Delegation__OutputDistillerEnabled: "true"
+      Hangfire__ServerEnabled: "true"
+      ZombieCensus__Enabled: "false"
+      WorktreeResidue__Enabled: "true"
+      WorktreeResidue__Execute: "false"
+      WorktreeLegacyRelease__Enabled: "false"
+      WorktreeLegacyRelease__Execute: "false"
+      RunnerWorktreeRetention__Enabled: "false"
+      RunnerWorktreeRetention__Execute: "false"
+      Schedules__Enabled: "true"
+      ChannelBridge__Enabled: "false"
+      Digest__Enabled: "false"
+      Agents__DefaultDefinition: grok
+      Agents__Definitions__grok__Kind: Grok
+      Agents__Definitions__grok__Exe: /usr/local/bin/grok
+      Agents__Definitions__claude__Kind: ClaudeCode
+      Agents__Definitions__claude__Exe: /usr/local/bin/claude
+      Agents__Definitions__codex__Kind: Codex
+      Agents__Definitions__codex__Exe: /usr/local/bin/codex
+      Agents__Definitions__raw-pwsh__Kind: Raw
+      Agents__Definitions__raw-pwsh__Exe: /usr/local/bin/pwsh
+      Agents__Definitions__raw-sh__Kind: Raw
+      Agents__Definitions__raw-sh__Exe: /bin/sh
+    volumes:
+      - work:/work
+      - server-state:/state
+    networks:
+      - antiphon-server2-staging
+    depends_on:
+      staging-state-init:
+        condition: service_completed_successfully
+      staging-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  staging-postgres:
+    image: ${ANTIPHON_STAGING_POSTGRES_IMAGE:?ANTIPHON_STAGING_POSTGRES_IMAGE is required}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - pg_stat_statements.max=5000
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    environment:
+      POSTGRES_DB: antiphon
+      POSTGRES_USER: antiphon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - antiphon-server2-staging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antiphon -d antiphon"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+networks:
+  antiphon-server2-staging:
+    name: antiphon-server2-staging
+
+volumes:
+  pgdata:
+    name: antiphon-server2-staging_pgdata
+  server-state:
+    name: antiphon-server2-staging_server-state
+  work:
+    name: antiphon-server2-staging_work

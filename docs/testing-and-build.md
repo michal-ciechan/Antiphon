@@ -1045,7 +1045,9 @@ server2, registering with the **production** desktop server over
 `https://antiphon.desktop.codeperf.net`. The phone-home runner is a standing Antiphon process there.
 A host Postgres service (`docker-compose.server2-postgres.yml`, project `antiphon-server2-postgres`)
 exists beside the runner and is not yet the control plane. There is no Antiphon server process on
-server2. The throwaway stack a session needs is still the nested child it creates itself.
+server2. CARD-1742 adds `docker-compose.server2-staging-server.yml` (project `antiphon-server2-staging`)
+as files only; test runs do not start it, and `deploy-server2.ps1` does not deploy it.
+The throwaway stack a session needs is still the nested child it creates itself.
 The CARD-0490 `grok-linux` canary keeps working unchanged against its own isolated server through
 `verify-phone-home-grok.ps1`; that harness's settings block now carries `AllowDelegatedTasks=false`,
 because a canary is one pinned agent and nothing else.
