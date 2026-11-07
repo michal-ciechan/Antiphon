@@ -1371,18 +1371,23 @@ The scratch file is `docker-compose.server2-postgres-drill.yml`. Its project is 
 
 Read on the host, not from the desktop and not from inside the runner: `docker ps`, `docker volume ls`, and `df` of the Docker data-root. Free space must be many times the desktop database size measured 2026-10-21 (1,265,417,239 bytes). Re-list the parent of the live Windmill compose and record it. The 2026-09-17 note of `/home/mc/docker/windmill` is that note, not a measurement.
 
-`-RestoreDrill` prints this sequence. The desktop command is `pg_dump` only. It never writes to the desktop database. The restore and the acceptance queries run in the scratch container. The teardown removes the scratch project and then the scratch volume only when that volume name ends with `-drill_pgdata`.
+`-RestoreDrill` prints this sequence. On the desktop, take or locate the encrypted B1 snapshot (`antiphon-*.dump.age` from `scripts/postgres-snapshot.ps1 -Execute`). No step writes a plaintext dump on the desktop or leaves one on either host. Time the copy of that ciphertext to server2 (`mc@server2`). On the server2 host, decrypt with `age -d` into `/var/tmp/antiphon-server2-postgres-drill/antiphon-drill-plain.dump` (mode 0600), restore into the scratch volume only, run the acceptance queries, then shred the plaintext. The desktop ciphertext stays. The transferred ciphertext is not deleted. `$AGE_IDENTITY` and `$AGE_RECIPIENT` are paths, never a key. Run the snapshot, the locate, and the timed copy on the desktop. Run every other line on the server2 host. The teardown removes the scratch project and then the scratch volume only when that volume name ends with `-drill_pgdata`.
 
 ```text
+pwsh -NoProfile -File scripts/postgres-snapshot.ps1 -Execute -Container antiphon-postgres -RecipientFile "$AGE_RECIPIENT"
+SNAPSHOT=$(ls -1t "$SNAPSHOT_DIR"/antiphon-*.dump.age | head -n 1)
+mkdir -p -m 0700 /var/tmp/antiphon-server2-postgres-drill
 docker volume create antiphon-server2-postgres-drill_pgdata
 docker compose --env-file <env-file> -f docker-compose.server2-postgres-drill.yml -p antiphon-server2-postgres-drill up -d
-docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl > antiphon-drill.dump
-docker exec -i antiphon-server2-postgres-drill-postgres-1 pg_restore -U antiphon -d antiphon --no-owner --no-acl < antiphon-drill.dump
+copy_start=$(date +%s); scp "$SNAPSHOT" mc@server2:/var/tmp/antiphon-server2-postgres-drill/antiphon-drill.dump.age; copy_end=$(date +%s); echo copy-elapsed-sec=$((copy_end - copy_start))
+umask 077; age -d -i "$AGE_IDENTITY" -o /var/tmp/antiphon-server2-postgres-drill/antiphon-drill-plain.dump /var/tmp/antiphon-server2-postgres-drill/antiphon-drill.dump.age; chmod 0600 /var/tmp/antiphon-server2-postgres-drill/antiphon-drill-plain.dump
+docker exec -i antiphon-server2-postgres-drill-postgres-1 pg_restore -U antiphon -d antiphon --no-owner --no-acl < /var/tmp/antiphon-server2-postgres-drill/antiphon-drill-plain.dump
 docker exec antiphon-server2-postgres-drill-postgres-1 psql -U antiphon -d antiphon -At -c "select relname, n_live_tup from pg_stat_user_tables order by relname"
 docker exec antiphon-server2-postgres-drill-postgres-1 psql -U antiphon -d antiphon -At -c "select \"MigrationId\" from \"__EFMigrationsHistory\" order by \"MigrationId\""
 docker exec antiphon-server2-postgres-drill-postgres-1 psql -U antiphon -d antiphon -At -c "select extname, extversion from pg_extension order by extname"
+shred -u /var/tmp/antiphon-server2-postgres-drill/antiphon-drill-plain.dump
 docker compose --env-file <env-file> -f docker-compose.server2-postgres-drill.yml -p antiphon-server2-postgres-drill down
-docker volume rm antiphon-server2-postgres-drill_pgdata
+if case antiphon-server2-postgres-drill_pgdata in *-drill_pgdata) true ;; *) echo 'SERVER2-POSTGRES fail exit=2 reason=volume-forbidden'; exit 2 ;; esac; then docker volume rm antiphon-server2-postgres-drill_pgdata; fi
 ```
 
 Compare phase 3 of the CARD-1401 plan as well: sequence name / `last_value` / `is_called`, and count, minimum primary key, and maximum primary key on TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, and AgentTaskEvents. All five are over 32 MiB, so the check is not a row-body checksum. Do not print transcript text. Record dump elapsed time, restore elapsed time, copy elapsed time, and the dump file size. The script has no command that removes `antiphon_pgdata` or the production volume.
