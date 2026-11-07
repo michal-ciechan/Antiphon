@@ -156,6 +156,9 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
 
     public async Task<HostLoadHistoryPage?> GetHostLoadHistoryAsync(string? after, int limit, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+        if (_connection.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.HostLoadHistoryV1, StringComparer.Ordinal) != true)
+            throw new HostStatsUnsupportedException();
         var frame = await _connection.RequestAsync(PhoneHomeOperation.HostLoadHistory,
             new PhoneHomeHostLoadHistoryRequest(after, limit), ct);
         HostStatsError(frame);
