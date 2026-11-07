@@ -57,6 +57,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     {
         ct.ThrowIfCancellationRequested();
         var tickStarted = Stopwatch.GetTimestamp();
+        var cpuStarted = ThreadCpuMilliseconds();
         HostSample? read;
         try
         {
@@ -81,7 +82,13 @@ public sealed class HostStatsSamplerService : BackgroundService
         _store.Add(sample);
         _history?.TryCapture(sample);
         if (logTick)
-            _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds);
+        {
+            // Wall time charges time this thread was not running. The tick budget is its own CPU.
+            var elapsedMs = cpuStarted is double started && ThreadCpuMilliseconds() is double cpuNow
+                ? cpuNow - started
+                : Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds;
+            _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", elapsedMs);
+        }
         return Task.CompletedTask;
     }
 
@@ -244,6 +251,26 @@ public sealed class HostStatsSamplerService : BackgroundService
         {
             return null;
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct ThreadCpuTime
+    {
+        public readonly long Seconds;
+        public readonly long Nanoseconds;
+    }
+
+    /// <summary>Linux <c>CLOCK_THREAD_CPUTIME_ID</c>.</summary>
+    private const int ClockThreadCpuTimeId = 3;
+
+    [DllImport("libc", EntryPoint = "clock_gettime")]
+    private static extern int ClockGetTime(int clockId, out ThreadCpuTime time);
+
+    private static double? ThreadCpuMilliseconds()
+    {
+        if (!OperatingSystem.IsLinux() || ClockGetTime(ClockThreadCpuTimeId, out var time) != 0)
+            return null;
+        return time.Seconds * 1000d + time.Nanoseconds / 1_000_000d;
     }
 
     private TimeSpan? ReadProcessCpu(int pid, DateTime startedAt)
