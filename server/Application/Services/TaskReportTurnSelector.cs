@@ -406,18 +406,32 @@ internal static class TaskReportTurnSelector
         return null;
     }
 
+    /// <summary>
+    /// The last row whose sequence is strictly below <paramref name="sequence"/>.
+    /// <paramref name="rows"/> is ordered by sequence. Each call reads that list;
+    /// nothing is cached, so the answer is not stale.
+    /// </summary>
     internal static TranscriptPromptSpan.PromptRow? LastBefore(
         IReadOnlyList<TranscriptPromptSpan.PromptRow> rows, long sequence)
     {
-        TranscriptPromptSpan.PromptRow? owner = null;
-        foreach (var row in rows)
+        var lo = 0;
+        var hi = rows.Count - 1;
+        var found = -1;
+        while (lo <= hi)
         {
-            if (row.Sequence >= sequence)
-                break;
-            owner = row;
+            var mid = lo + ((hi - lo) / 2);
+            if (rows[mid].Sequence < sequence)
+            {
+                found = mid;
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
         }
 
-        return owner;
+        return found < 0 ? null : rows[found];
     }
 
     private readonly record struct BoundaryRow(long Sequence, string? Kind, string? StopReason);
