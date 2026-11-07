@@ -76,12 +76,13 @@ try {
     $path = '/api/hosts/' + [uri]::EscapeDataString($runner) + '/load'
     if ($query.Count -gt 0) { $path += '?' + ($query -join '&') }
     $load = Get-LoadRead $path
-    Require-Fields $load @('schemaVersion','hostId','physicalHostKey','observedAt','current','currentAgeSeconds','lastHour','coverage','policy','authority','decision','recommendation')
+    Require-Fields $load @('schemaVersion','hostId','physicalHostKey','observedAt','current','currentAgeSeconds','lastHour','coverage','policy','authority','decision','recommendation','counters')
     if ($load.schemaVersion -ne 1 -or (Get-CanonicalRunner ([string]$load.hostId)) -cne $canonical) { throw 'invalid_response' }
     Require-Fields $load.policy @('mode','revision','shadow','commandThresholdPercent','dispatchThresholdPercent','perTaskCpuPoints')
+    Require-Fields $load.counters @('countedAt','tasksInFlight','byStage','byKind','pendingLaunches','pendingMirrors','queued','held','sessionsLive','effectiveTaskCapacity')
     Require-Fields $load.recommendation @('recommendedAdditionalTasks','scope','missingConstraints','pressurePercent','startupDebtPercent','cpuHeadroom','hostRemaining','runnerSeatsRemaining','projectRemaining','stageRemaining','inputsAt','reasons')
     $additional = $load.recommendation.recommendedAdditionalTasks
-    if ($null -eq $additional -or $additional -is [string] -or -not [double]::IsFinite([double]$additional) -or $additional -lt 0 -or [math]::Floor([double]$additional) -ne $additional) { throw 'invalid_response' }
+    if ($null -eq $additional -or $additional -is [string] -or $additional -is [bool] -or -not [double]::IsFinite([double]$additional) -or $additional -lt 0 -or $additional -gt [int]::MaxValue -or [math]::Floor([double]$additional) -ne $additional) { throw 'invalid_response' }
     if ($load.policy.shadow -ne $true) { throw 'invalid_response' }
     $load.placement = @{ runnerId = $runner; source = $source; revision = $revision }
     if ($Json) { [Console]::Out.WriteLine(($load | ConvertTo-Json -Depth 100 -Compress)) }

@@ -110,7 +110,7 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
     public HostLoadHistoryPage ReadHistory(string? after, int limit)
     {
         if (limit is < 1 or > 120) throw new ArgumentException("invalid_host_load_query");
-        if (!Monitor.TryEnter(_gate)) throw new IOException("host_load_history_busy");
+        if (!Monitor.TryEnter(_gate, TimeSpan.FromMilliseconds(20))) throw new IOException("host_load_history_busy");
         try
         {
             EnforceCaps();

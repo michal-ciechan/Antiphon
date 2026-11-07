@@ -31,7 +31,10 @@ public sealed record HostLoadCurrentDto(int SchemaVersion, string HostId, string
     DateTimeOffset ObservedAt, HostLoadSample? Current, double? CurrentAgeSeconds,
     IReadOnlyDictionary<string, HostLoadMetricSummary> LastHour, double Coverage,
     HostLoadPolicyDto Policy, HostAdmissionSnapshot Authority, HostLoadShadowDecision Decision,
-    HostLoadRecommendationDto Recommendation);
+    HostLoadRecommendationDto Recommendation)
+{
+    public HostLoadCounters Counters { get; init; } = new(null, null, null, null, null, null, null, null, null, null);
+}
 public sealed record HostLoadHistoryDto(int SchemaVersion, string HostId, DateTimeOffset From, DateTimeOffset To,
     string Resolution, IReadOnlyList<object> Items, string? NextCursor, bool Complete, IReadOnlyList<string> Gaps);
 public sealed record HostLoadBoundary(Guid EventId, DateTimeOffset EventAt, HostLoadSource? SampleIdentity,
