@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Settings;
 using Hangfire;
 using Hangfire.InMemory;
+using Hangfire.Storage;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -119,5 +120,38 @@ internal static class HangfireConfiguration
             job => job.ExecuteAsync(CancellationToken.None),
             "* * * * *",
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+    }
+
+    /// <summary>
+    /// CARD-1743. Disabled census must not leave a stored recurring row. In-memory storage has
+    /// no row to remove; durable storage does.
+    /// </summary>
+    public static void RegisterCensusJob(IRecurringJobManager manager, ZombieCensusSettings census)
+    {
+        if (census.Enabled)
+            AddOrUpdateCensusJob(manager, census);
+    }
+
+    public static void ConfigureStorage(
+        IGlobalConfiguration configuration, HangfireSettings settings, string? connectionString)
+    {
+        configuration.UseInMemoryStorage(CreateStorageOptions(settings));
+    }
+
+    public static JobStorage CreateStorage(HangfireSettings settings, string? connectionString) =>
+        new InMemoryStorage(CreateStorageOptions(settings));
+
+    public static void PreparePostgreSqlStorage(HangfireSettings settings, string? connectionString)
+    {
+    }
+
+    public static HangfireWorkerLease AcquireSingleWorkerLease(string? connectionString) => new();
+}
+
+/// <summary>CARD-1743. One held lease is the only Hangfire worker for a database.</summary>
+internal sealed class HangfireWorkerLease : IDisposable
+{
+    public void Dispose()
+    {
     }
 }
