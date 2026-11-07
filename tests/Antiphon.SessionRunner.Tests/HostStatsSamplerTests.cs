@@ -57,6 +57,34 @@ public class HostStatsSamplerTests
         probe.Calls.ShouldBe(0);
     }
 
+    /// <summary>
+    /// CARD-1757. The production working-set reader must not take one whole-system process
+    /// snapshot per sampled pid.
+    /// </summary>
+    [Test]
+    public void Working_set_reader_does_not_snapshot_the_system_once_per_process()
+    {
+        var root = RepoRoot();
+        var sampler = File.ReadAllText(Path.Combine(root, "src/Antiphon.SessionRunner/HostStatsSamplerService.cs"));
+        var workingSet = MethodBody(sampler, "WorkingSet");
+        workingSet.ShouldNotContain("GetProcessById");
+        workingSet.ShouldNotContain("WorkingSet64");
+        workingSet.ShouldNotContain("GetProcesses");
+        workingSet.ShouldNotContain("NtQuerySystemInformation");
+
+        var queryPath = Path.Combine(root, "src/Antiphon.SessionRunner/SamplerProcessQuery.cs");
+        File.Exists(queryPath).ShouldBeTrue();
+        var query = File.ReadAllText(queryPath);
+        var windows = MethodBody(query, "ReadWindows");
+        windows.ShouldContain("OpenProcess");
+        windows.ShouldContain("K32GetProcessMemoryInfo");
+        windows.ShouldContain("GetProcessTimes");
+        windows.ShouldNotContain("GetProcessById");
+        windows.ShouldNotContain("WorkingSet64");
+        windows.ShouldNotContain("GetProcesses");
+        windows.ShouldNotContain("NtQuerySystemInformation");
+    }
+
     [Test]
     public async Task Reused_pid_and_returning_target_start_with_no_cpu_delta()
     {
@@ -132,6 +160,37 @@ public class HostStatsSamplerTests
             NullLogger<HostStatsSamplerService>.Instance);
 
     private static IReadOnlyList<HostStatsProcessTarget> EmptyTargets() => [];
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
+            dir = dir.Parent;
+        dir.ShouldNotBeNull();
+        return dir.FullName;
+    }
+
+    private static string MethodBody(string source, string name)
+    {
+        var start = source.IndexOf(" " + name + "(", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var open = source.IndexOf('{', start);
+        open.ShouldBeGreaterThanOrEqualTo(0);
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{')
+                depth++;
+            else if (source[i] == '}')
+            {
+                depth--;
+                if (depth == 0)
+                    return source[open..(i + 1)];
+            }
+        }
+
+        throw new InvalidOperationException($"unterminated method {name}");
+    }
 
     private sealed class QueueCpu : IProcessCpuProbe
     {
