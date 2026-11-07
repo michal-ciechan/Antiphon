@@ -33,6 +33,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// <summary>One server and one runner loopback listener per assembly run; cloned databases/private spools per world.</summary>
 public sealed class C1514HostLoadFixture : IAsyncDisposable
 {
+    internal PhoneHomeProcessIdentity Identity { get; } = new();
+    internal Guid StoreId { get; } = Guid.NewGuid();
     private readonly Lazy<Task<PhoneHomeTestHost>> _host;
     private readonly Lazy<Task<WebApplication>> _runner;
     internal C1514HostLoadWorld Current { get; private set; } = null!;
@@ -168,7 +170,14 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     public async Task InitializeAsync(bool phoneHome)
     {
         System.IO.Directory.CreateDirectory(Root);
-        var identity = new PhoneHomeProcessIdentity();
+        // Every world is an isolated database/filesystem snapshot of the same owned runner.
+        // The shared production directory correctly refuses an unrelated replacement store.
+        var identity = _fixture.Identity;
+        _ = new HostLoadSpool(Runner.HistoryPath!, Runner, Clock, identity.BootId);
+        var ledgerPath = Path.Combine(Runner.HistoryPath!, "cursor.json");
+        var ledger = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(ledgerPath))!.AsObject();
+        ledger["store"] = _fixture.StoreId;
+        File.WriteAllText(ledgerPath, ledger.ToJsonString());
         Spool = new(Runner.HistoryPath!, Runner, Clock, identity.BootId);
         Capture = new(Options.Create(Runner), Clock, new C1514Authority(Clock), NullLogger<HostLoadCaptureService>.Instance,
             identity, () => Spool);
