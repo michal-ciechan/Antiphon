@@ -270,7 +270,7 @@ public class HostStatsSamplerTests
             }
         }
 
-        throw new InvalidOperationException($"unterminated method {signature}");
+        throw new InvalidOperationException("unterminated method " + signature);
     }
 
     private sealed class QueueCpu : IProcessCpuProbe
