@@ -220,7 +220,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 // The rename can admit a new file or a different directory before Git's entry is dropped.
                 var drifted = CustodyOf(recorded);
                 if (drifted is null) drifted = await LateUntrackedAsync(aside, final.Snapshot!, ct);
-                if (drifted is null) drifted = await TrackedBytesAsync(aside, request, ct);
+                if (drifted is null) drifted = await TrackedBytesAsync(aside, request,
+                    new Dictionary<string, BoundReading>(StringComparer.Ordinal), ct);
                 // CARD-1717 D-1: those checks are awaits and the unregister drops Git's entry. A switch turned off
                 // here puts the tree back; nothing awaits between this read and the unregister command.
                 if (drifted is null) drifted = await LiveAuthorizationAsync(request, ct);
@@ -647,9 +648,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
 
     private readonly record struct BoundContent(string? Reason, string? Entries, string? Evidence);
 
+    /// <summary>One attempt's receipt. Discarded when <see cref="BindContentAsync"/> returns.</summary>
+    private readonly record struct BoundReading(WorktreeNoFollowDelete.EntryStamp Stamp, string Sha256, string? GitBlob);
+
     /// <summary>
-    /// Hashes the tree, compares tracked files with the proven commit through the index, and hashes again.
-    /// A write during that read makes the two manifests differ and refuses the move.
+    /// One read of each content-bound file records the receipt SHA-256 and, for a tracked regular file,
+    /// the git blob id. The second manifest reuses that SHA-256 when <see cref="WorktreeNoFollowDelete.TryStamp"/>
+    /// still matches. A stamp change is hashed again. <see cref="CustodyOf"/> and the delete-time hash are
+    /// separate reads and are not reused. The readings live only for this call.
     /// </summary>
     private async Task<BoundContent> BindContentAsync(WorktreeRemovalRequest request, string root, WorktreeIgnoredContent content,
         IReadOnlyList<RetainedWorktreeFile>? retained, CancellationToken ct)
@@ -661,11 +667,12 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         var evidenceNames = new HashSet<string>(StringComparer.Ordinal);
         if (retained is not null)
             foreach (var file in retained) evidenceNames.Add(file.Relative.Replace('\\', '/'));
+        var readings = new Dictionary<string, BoundReading>(StringComparer.Ordinal);
         string before, after;
-        try { before = EntryManifest(root, names.Names!, disposable, evidenceNames); }
+        try { before = EntryManifest(root, names.Names!, disposable, evidenceNames, readings); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new("source_changed", null, null); }
-        if (await TrackedBytesAsync(root, request, ct) is { } tracked) return new(tracked, null, null);
-        try { after = EntryManifest(root, names.Names!, disposable, evidenceNames); }
+        if (await TrackedBytesAsync(root, request, readings, ct) is { } tracked) return new(tracked, null, null);
+        try { after = EntryManifest(root, names.Names!, disposable, evidenceNames, readings); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new("source_changed", null, null); }
         if (!string.Equals(before, after, StringComparison.Ordinal)) return new("source_changed", null, null);
         return new(null, after, EvidenceManifest(retained));
@@ -691,7 +698,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     /// regular file holding that text where links are not checked out. A gitlink holds no bytes here
     /// unless its directory is populated, and a populated one is a nested repository the census keeps.
     /// </summary>
-    private async Task<string?> TrackedBytesAsync(string root, WorktreeRemovalRequest request, CancellationToken ct)
+    private async Task<string?> TrackedBytesAsync(string root, WorktreeRemovalRequest request,
+        Dictionary<string, BoundReading> readings, CancellationToken ct)
     {
         var staged = await TreeEntriesAsync(root, ["ls-files", "--stage", "-z"], ct);
         if (staged is null) return "source_changed";
@@ -725,7 +733,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 if (entry.Mode != "120000" && !OperatingSystem.IsWindows()
                     && File.GetUnixFileMode(full).HasFlag(UnixFileMode.UserExecute) != (entry.Mode == "100755"))
                     return "tracked_bytes_changed";
-                oid = WorktreeNoFollowDelete.GitBlobSha1(full);
+                // The receipt read already hashed these bytes. Re-read only when the stamp moved.
+                oid = readings.TryGetValue(relative, out var bound) && bound.GitBlob is { Length: > 0 } && bound.Stamp == stamp.Value
+                    ? bound.GitBlob
+                    : WorktreeNoFollowDelete.GitBlobSha1(full);
                 // CARD-1717 A-B-7: a checkout through core.autocrlf, an eol/text attribute or a clean filter holds
                 // bytes that differ from the blob. Git's own clean form decides those below; the raw hashes of the
                 // receipt still bind every byte that is later deleted.
@@ -801,7 +812,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     private static bool IsGitOid(string value) => value.Length == 40
         && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
 
-    private static string EntryManifest(string root, HashSet<string> tracked, HashSet<string> disposable, HashSet<string> evidence)
+    private static string EntryManifest(string root, HashSet<string> tracked, HashSet<string> disposable, HashSet<string> evidence,
+        Dictionary<string, BoundReading> readings)
     {
         var entries = new List<WorktreeApprovedEntry>();
         var pending = new Stack<string>();
@@ -818,8 +830,18 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 string? hash = null;
                 if (stamp.Kind == "file" && BindsContent(relative, tracked, disposable, evidence))
                 {
-                    hash = WorktreeNoFollowDelete.RegularFileHash(entry);
-                    if (hash is null || hash.Length == 0) throw new IOException("manifest_entry_unreadable: " + relative);
+                    if (readings.TryGetValue(relative, out var prior) && prior.Stamp == stamp)
+                        hash = prior.Sha256;
+                    else
+                    {
+                        var digest = WorktreeNoFollowDelete.ReadReceipt(entry);
+                        if (digest is null || digest.Value.Sha256.Length == 0)
+                            throw new IOException("manifest_entry_unreadable: " + relative);
+                        hash = digest.Value.Sha256;
+                        if (!readings.ContainsKey(relative))
+                            readings.Add(relative, new(stamp, hash,
+                                tracked.Contains(relative) && digest.Value.GitBlob.Length > 0 ? digest.Value.GitBlob : null));
+                    }
                 }
                 entries.Add(new(relative, stamp.Kind, hash));
                 if (stamp.Kind == "dir") pending.Push(entry);
