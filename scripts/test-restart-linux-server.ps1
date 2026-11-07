@@ -42,19 +42,33 @@ function New-C1745Root {
     New-Item -ItemType Directory -Path $bin | Out-Null
     $trace = Join-Path $root 'docker.trace'
     $image = Join-Path $root 'image.txt'
+    $ref = Join-Path $root 'ref.txt'
+    $tagId = Join-Path $root 'tagid.txt'
     Set-Content -LiteralPath $trace -Value '' -Encoding ascii
     Set-Content -LiteralPath $image -Value 'sha256:c1745previous' -Encoding ascii
+    Set-Content -LiteralPath $ref -Value 'antiphon-server:current' -Encoding ascii
+    Set-Content -LiteralPath $tagId -Value 'sha256:c1745previous' -Encoding ascii
     $fake = Join-Path $bin 'docker'
     @(
         '#!/bin/sh'
         'trace="$C1745_DOCKER_TRACE"'
         'printf "%s\n" "$*" >> "$trace"'
-        'cmd="$1"'
-        'if [ "$cmd" = "inspect" ]; then'
-        '  cat "$C1745_DOCKER_IMAGE"'
+        'if [ "$1" = "inspect" ]; then'
+        '  if [ "$3" = "{{.Image}}" ]; then'
+        '    cat "$C1745_DOCKER_IMAGE"'
+        '    exit 0'
+        '  fi'
+        '  if [ "$3" = "{{.Config.Image}}" ]; then'
+        '    cat "$C1745_DOCKER_REF"'
+        '    exit 0'
+        '  fi'
+        '  exit 99'
+        'fi'
+        'if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then'
+        '  cat "$C1745_DOCKER_TAGID"'
         '  exit 0'
         'fi'
-        'if [ "$cmd" = "stop" ] || [ "$cmd" = "start" ]; then'
+        'if [ "$1" = "stop" ] || [ "$1" = "start" ]; then'
         '  exit 0'
         'fi'
         'exit 99'
@@ -66,6 +80,8 @@ function New-C1745Root {
         Docker = $fake
         Trace = $trace
         Image = $image
+        Ref = $ref
+        TagId = $tagId
         Hits = (Join-Path $root 'hits.log')
         Lock = (Join-Path $root 'restart.lock')
         Config = (Join-Path $root 'server.cfg')
@@ -190,12 +206,16 @@ function Invoke-C1745Gate {
     $savedDocker = $env:ANTIPHON_LINUX_SERVER_DOCKER
     $savedTrace = $env:C1745_DOCKER_TRACE
     $savedImage = $env:C1745_DOCKER_IMAGE
+    $savedRef = $env:C1745_DOCKER_REF
+    $savedTagId = $env:C1745_DOCKER_TAGID
     $savedPath = $env:PATH
     $savedConfig = $env:ANTIPHON_LINUX_SERVER_CONFIG
     try {
         $env:ANTIPHON_LINUX_SERVER_DOCKER = $Fx.Docker
         $env:C1745_DOCKER_TRACE = $Fx.Trace
         $env:C1745_DOCKER_IMAGE = $Fx.Image
+        $env:C1745_DOCKER_REF = $Fx.Ref
+        $env:C1745_DOCKER_TAGID = $Fx.TagId
         $env:PATH = $Fx.Bin + [System.IO.Path]::PathSeparator + $savedPath
         Remove-Item Env:ANTIPHON_LINUX_SERVER_CONFIG -ErrorAction SilentlyContinue
         $p = Start-Process -FilePath 'pwsh' -ArgumentList $argList -Wait -PassThru -NoNewWindow `
@@ -210,6 +230,8 @@ function Invoke-C1745Gate {
         $env:ANTIPHON_LINUX_SERVER_DOCKER = $savedDocker
         $env:C1745_DOCKER_TRACE = $savedTrace
         $env:C1745_DOCKER_IMAGE = $savedImage
+        $env:C1745_DOCKER_REF = $savedRef
+        $env:C1745_DOCKER_TAGID = $savedTagId
         $env:PATH = $savedPath
         if ($null -eq $savedConfig) { Remove-Item Env:ANTIPHON_LINUX_SERVER_CONFIG -ErrorAction SilentlyContinue }
         else { $env:ANTIPHON_LINUX_SERVER_CONFIG = $savedConfig }
@@ -219,6 +241,12 @@ function Invoke-C1745Gate {
 function Assert-NoDocker($Fx, [string]$Name) {
     $trace = @(Get-C1745Trace $Fx)
     Assert-True ($trace.Count -eq 0) $Name ("trace=" + ($trace -join ' | '))
+}
+
+function Assert-NoStop($Fx, [string]$Name) {
+    $joined = (@(Get-C1745Trace $Fx) -join "`n")
+    $stopped = $joined.Contains('stop ') -or $joined.Contains('start ')
+    Assert-True (-not $stopped) $Name $joined
 }
 
 function Finish-C1745 {
@@ -283,11 +311,9 @@ try {
             Write-C1745Config $fx ("http://127.0.0.1:{0}/" -f $stub.Port) 'antiphon-staging'
             $run = Invoke-C1745Gate -Fx $fx -ConfigPath $fx.Config -Sha $sha40 -Execute
             Assert-True ($run.Code -eq 0) 'W5-exit-0' "code=$($run.Code) text=$($run.Text)"
+            Assert-True ($run.Text.Contains('already at expected SHA')) 'W5-already' $run.Text
             Assert-True ($run.Text.Contains('VERIFIED sha=' + $sha40 + ' mode=execute')) 'W5-verified-execute' $run.Text
-            $trace = @(Get-C1745Trace $fx)
-            $joined = $trace -join "`n"
-            Assert-True ($joined -eq ("inspect --format {{.Image}} antiphon-staging`nstop antiphon-staging`nstart antiphon-staging")) 'W5-docker-order' $joined
-            Assert-True (-not ($joined.Contains('session-runner'))) 'W5-no-runner' $joined
+            Assert-NoDocker $fx 'W5-no-docker'
             Assert-True (-not (Test-Path -LiteralPath $fx.Lock)) 'W5-lock-cleared' $fx.Lock
         }
         'W6' {
@@ -295,15 +321,18 @@ try {
             Write-C1745Config $fx ("http://127.0.0.1:{0}/" -f $stub.Port) 'antiphon-staging'
             $run = Invoke-C1745Gate -Fx $fx -ConfigPath $fx.Config -Sha $sha40 -Execute
             Assert-True ($run.Code -eq 5) 'W6-exit-5' "code=$($run.Code) text=$($run.Text)"
-            Assert-True ($run.Text.Contains('left stopped')) 'W6-left-stopped' $run.Text
+            Assert-True ($run.Text.Contains('Nothing was restarted.')) 'W6-nothing-restarted' $run.Text
+            Assert-True ($run.Text.Contains('left running')) 'W6-left-running' $run.Text
+            Assert-True ($run.Text.Contains('recovery: docker start antiphon-staging')) 'W6-recovery' $run.Text
             Assert-True (Test-Path -LiteralPath $fx.Lock) 'W6-lock-remains' 'lock missing'
             $lock = ''
             if (Test-Path -LiteralPath $fx.Lock) { $lock = [System.IO.File]::ReadAllText($fx.Lock) }
-            Assert-True ($lock.Contains('reason=mismatch') -and $lock.Contains('previousImage=sha256:c1745previous')) 'W6-lock-records-rollback' $lock
-            $trace = @(Get-C1745Trace $fx)
-            $joined = $trace -join "`n"
-            Assert-True ($joined -eq ("inspect --format {{.Image}} antiphon-staging`nstop antiphon-staging`nstart antiphon-staging`nstop antiphon-staging")) 'W6-stopped-after-start' $joined
+            Assert-True ($lock.Contains('reason=mismatch') -and $lock.Contains('previousImage=sha256:c1745previous')) 'W6-lock-records-image' $lock
+            $joined = (@(Get-C1745Trace $fx) -join "`n")
+            Assert-True ($joined -eq ("inspect --format {{.Image}} antiphon-staging`ninspect --format {{.Config.Image}} antiphon-staging`nimage inspect --format {{.Id}} antiphon-server:current")) 'W6-inspected-same-image' $joined
+            Assert-NoStop $fx 'W6-no-stop'
             Assert-True (-not $run.Text.Contains('VERIFIED')) 'W6-not-verified' $run.Text
+            Assert-True (-not $run.Text.Contains('left stopped')) 'W6-not-left-stopped' $run.Text
         }
         'W7' {
             $stub = Start-C1745Stub -Fx $fx -HealthCode 200 -VersionBody ('{"version":"' + $sha40 + '"}') -VersionCode 200
@@ -352,6 +381,61 @@ try {
             if (Test-Path -LiteralPath $fx.Lock) { $lock = [System.IO.File]::ReadAllText($fx.Lock) }
             Assert-True ($lock.Contains('reason=malformed')) 'W13-lock-malformed' $lock
             Assert-NoDocker $fx 'W13-no-docker'
+        }
+        'W14' {
+            $stub = Start-C1745Stub -Fx $fx -HealthCode 503 -VersionBody ('{"version":"' + $sha40 + '"}') -VersionCode 200
+            Write-C1745Config $fx ("http://127.0.0.1:{0}/" -f $stub.Port) 'antiphon-staging'
+            $run = Invoke-C1745Gate -Fx $fx -ConfigPath $fx.Config -Sha $sha40 -Execute
+            Assert-True ($run.Code -eq 5) 'W14-exit-5' "code=$($run.Code) text=$($run.Text)"
+            Assert-True ($run.Text.Contains('left running')) 'W14-left-running' $run.Text
+            Assert-True ($run.Text.Contains('Nothing was restarted.')) 'W14-nothing-restarted' $run.Text
+            Assert-True (Test-Path -LiteralPath $fx.Lock) 'W14-lock-remains' 'lock missing'
+            $lock = ''
+            if (Test-Path -LiteralPath $fx.Lock) { $lock = [System.IO.File]::ReadAllText($fx.Lock) }
+            Assert-True ($lock.Contains('reason=health')) 'W14-lock-health' $lock
+            Assert-NoDocker $fx 'W14-no-docker'
+        }
+        'W15' {
+            $stub = Start-C1745Stub -Fx $fx -HealthCode 200 -VersionBody ('{"version":"' + $sha40 + '"}') -VersionCode 500
+            Write-C1745Config $fx ("http://127.0.0.1:{0}/" -f $stub.Port) 'antiphon-staging'
+            $run = Invoke-C1745Gate -Fx $fx -ConfigPath $fx.Config -Sha $sha40 -Execute
+            Assert-True ($run.Code -eq 5) 'W15-exit-5' "code=$($run.Code) text=$($run.Text)"
+            Assert-True ($run.Text.Contains('Nothing was restarted.')) 'W15-nothing-restarted' $run.Text
+            Assert-True (Test-Path -LiteralPath $fx.Lock) 'W15-lock-remains' 'lock missing'
+            $lock = ''
+            if (Test-Path -LiteralPath $fx.Lock) { $lock = [System.IO.File]::ReadAllText($fx.Lock) }
+            Assert-True ($lock.Contains('reason=unavailable')) 'W15-lock-unavailable' $lock
+            Assert-NoDocker $fx 'W15-no-docker'
+        }
+        'W16' {
+            $stub = Start-C1745Stub -Fx $fx -HealthCode 200 -VersionBody 'not-json' -VersionCode 200
+            Write-C1745Config $fx ("http://127.0.0.1:{0}/" -f $stub.Port) 'antiphon-staging'
+            $run = Invoke-C1745Gate -Fx $fx -ConfigPath $fx.Config -Sha $sha40 -Execute
+            Assert-True ($run.Code -eq 5) 'W16-exit-5' "code=$($run.Code) text=$($run.Text)"
+            Assert-True ($run.Text.Contains('left running')) 'W16-left-running' $run.Text
+            Assert-True (Test-Path -LiteralPath $fx.Lock) 'W16-lock-remains' 'lock missing'
+            $lock = ''
+            if (Test-Path -LiteralPath $fx.Lock) { $lock = [System.IO.File]::ReadAllText($fx.Lock) }
+            Assert-True ($lock.Contains('reason=malformed')) 'W16-lock-malformed' $lock
+            Assert-NoDocker $fx 'W16-no-docker'
+        }
+        'W17' {
+            Set-Content -LiteralPath $fx.TagId -Value 'sha256:c1745moved' -Encoding ascii
+            $stub = Start-C1745Stub -Fx $fx -HealthCode 200 -VersionBody ('{"version":"' + $other + '"}') -VersionCode 200
+            Write-C1745Config $fx ("http://127.0.0.1:{0}/" -f $stub.Port) 'antiphon-staging'
+            $run = Invoke-C1745Gate -Fx $fx -ConfigPath $fx.Config -Sha $sha40 -Execute
+            Assert-True ($run.Code -eq 5) 'W17-exit-5' "code=$($run.Code) text=$($run.Text)"
+            Assert-True ($run.Text.Contains('reason: image-moved')) 'W17-image-moved' $run.Text
+            Assert-True ($run.Text.Contains('sha256:c1745moved')) 'W17-names-new-image' $run.Text
+            Assert-True ($run.Text.Contains('does not recreate')) 'W17-no-recreate' $run.Text
+            Assert-True ($run.Text.Contains('left running')) 'W17-left-running' $run.Text
+            Assert-True ($run.Text.Contains('Nothing was restarted.')) 'W17-nothing-restarted' $run.Text
+            Assert-True ($run.Text.Contains('recovery: docker start antiphon-staging')) 'W17-recovery' $run.Text
+            Assert-True (Test-Path -LiteralPath $fx.Lock) 'W17-lock-remains' 'lock missing'
+            $lock = ''
+            if (Test-Path -LiteralPath $fx.Lock) { $lock = [System.IO.File]::ReadAllText($fx.Lock) }
+            Assert-True ($lock.Contains('reason=image-moved') -and $lock.Contains('previousImage=sha256:c1745previous')) 'W17-lock-records-running-image' $lock
+            Assert-NoStop $fx 'W17-no-stop'
         }
         default {
             Write-Fail 'known-case' $Case
