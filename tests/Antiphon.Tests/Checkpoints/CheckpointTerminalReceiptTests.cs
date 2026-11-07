@@ -83,10 +83,19 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
                 (await CheckpointFixtureProcess.RunAsync(signal, cancellationToken)).Exit.ShouldBe(0);
             }
             await waiter.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(90), cancellationToken);
-            waiter.ExitCode.ShouldBe(exit);
+            var detail = await waiter.StandardOutput.ReadToEndAsync(cancellationToken);
+            waiter.ExitCode.ShouldBe(exit, detail);
             File.Exists(Path.Combine(run, "report.md")).ShouldBeTrue("the receipt must exist when wait returns");
             AssertReceipt(run, exit, mode == "cancel" ? "caller-requested" : null,
                 forgedScriptReason: mode == "build-failure" ? "row_failed" : "report_failed");
+            if (mode.StartsWith("build-", StringComparison.Ordinal))
+            {
+                var report = ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
+                report.Builds.Single().State.ShouldBe("failed");
+                if (mode == "build-failure")
+                    File.ReadAllText(Path.Combine(run, "builds/bin-probe/build.log")).ShouldContain("C1734 expected build failure");
+                else report.Builds.Single().TerminalReason.ShouldBe("build-deadline-exceeded");
+            }
             await executor.WaitForExitAsync(cancellationToken);
             executor.ExitCode.ShouldBe(exit);
         }
@@ -178,7 +187,7 @@ public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
         git.Git(root, "init", "-b", "terminal-receipt");
         File.WriteAllText(Path.Combine(root, ".gitignore"), ".antiphon/\nbin-*/\nbin/\nobj/\n");
         if (build is not null)
-            File.WriteAllText(Path.Combine(root, "probe.csproj"), "<Project><Target Name=\"Restore\" /><Target Name=\"Build\">"
+            File.WriteAllText(Path.Combine(root, "probe.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup><Target Name=\"C1734Build\" BeforeTargets=\"CoreCompile\">"
                 + (build == "build-failure" ? "<Error Text=\"C1734 expected build failure\" />" : "<Exec Command=\"sleep 120\" />")
                 + "</Target></Project>");
         git.Git(root, "add", ".");

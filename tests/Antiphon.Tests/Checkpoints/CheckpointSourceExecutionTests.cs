@@ -352,6 +352,39 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     }
 
     [Test]
+    [Arguments("changed")]
+    [Arguments("unknown")]
+    [Timeout(30_000)]
+    public async Task C1734_Failure_receipt_preserves_observed_source_history(string history)
+    {
+        var original = Observe(Sha, 0);
+        var interrupted = history == "changed" ? Observe(OtherSha, 0) : SourceObservation.Unknown("fixture-observation-failed");
+        var observations = 0;
+        var run = NewRun(CommandManifest(), original);
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime
+        {
+            EnvironmentLookup = _ => null, Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
+            SourceCapture = _ => ++observations == 1 ? interrupted : original,
+            LogSinkFactory = _ => new C1734FailingFlush(), Output = TextWriter.Null,
+        });
+        exit.ShouldBe(ExitCodes.ExecutorCrashed);
+        observations.ShouldBeGreaterThanOrEqualTo(3, "the terminal fallback observed restored source after the earlier refusal");
+        var report = Read(run);
+        report.Source.State.ShouldBe(history, "terminal recovery must retain the earlier observation");
+        report.Source.End!.Commit.ShouldBe(Sha, "the latest observation is restored, not an invented drift");
+        ReportWriter.RequiredReceiptRefusal(run, new RunStateStore().TryRead(Path.Combine(run, "state.json"))!).ShouldBeNull();
+        report.ExitCode = 0; report.Verdict = "GREEN";
+        ReportValidator.Validate(report, Sha).ShouldBe("report_source_ineligible");
+    }
+
+    private sealed class C1734FailingFlush : IExecutorLogSink
+    {
+        public Task AppendAsync(string line, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task FlushAsync(CancellationToken cancellationToken) => Task.FromException(new IOException("C1734 terminal flush failure"));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Test]
     public void merge_cannot_launder_source_identity()
     {
         var clean = ValidReport();

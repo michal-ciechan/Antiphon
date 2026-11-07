@@ -80,7 +80,7 @@ restart server/runner: none. Tests policy JSON and pinned hashes remain unchange
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1734-main-repair/` | cold-build | `/*/*/CheckpointColdBuildTests/*` | V-1, V-2, R-1 | all 3 cases, 0 failed/skipped after S2; S1 expects both cold-build variants RED at snapshot assertion | 3 | 5 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1734-final-main/` | cold-build | `/*/*/CheckpointColdBuildTests/*` | V-1, V-2, R-1 | all 3 cases, 0 failed/skipped after S2; S1 expects both cold-build variants RED at snapshot assertion | 3 | 5 |
 | CP-2 | all | CP-1 | touched | `/*/*/(C1307CliCancellationTests*)\|(WaitCommandTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointStatePublicationTests*)\|(CheckpointAppTests*)\|(ReportWriterTests*)\|(CheckpointSourceExecutionTests*)\|(RunCheckpointSourceScriptTests*)/*` | R-5 | all full affected classes, 0 failed | 1 | 5 |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/*` | R-2 scoped, R-3 | 70 guards plus 5 registry cases, 0 failed | 75 | 4 |
 | CP-4 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1734-runner/` | runner-policy | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuard*)/*` | R-4 | all listed, 0 failed/skipped | 1 | 3 |
@@ -102,6 +102,13 @@ must still be refused. R-5 runs the full named adjacent classes in CP-2.
 R-6 is `C1734_Partial_counts_survive_failure_and_cancel` (both variants), with
 two known passed fixture results before interruption and unknown unrun counts.
 R-7 is `C1734_Stop_replaces_only_its_bound_provisional_reports` (owned/foreign).
+R-8 is `C1734_Failure_receipt_preserves_observed_source_history` in the full
+CheckpointSourceExecutionTests class (CP-2): inject changed/unknown observation,
+then restored source and a terminal log failure. A fresh terminal capture must
+not relabel the recorded history clean. Both cases must go red before the repair.
+This uses external-observation/log-failure seams through the real CheckpointApp
+and SourceRunGuard; no OS branch or product host is involved. New case bound 30s,
+provisional expected <=3s, collect one red/green sample, no loaded repetition.
 V-5/V-6 additionally drive real cold MSBuild failure/timeout targets. The timeout
 uses the existing one-minute row override; no timeout or assertion is relaxed.
 Green eligibility also refuses a terminal failure reason in both validators,
