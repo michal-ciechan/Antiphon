@@ -793,6 +793,7 @@ public sealed class TestTimingSession : IDisposable
         "c1653-legacy-real-host-adoption", "c1653-legacy-real-host-launch",
         "c1653-owned-real-host-adoption", "c1653-owned-real-host-launch",
         "c1653-unsafe-dir-launch",
+        "raw-reflog-fault", "source-snapshot",
     };
 
     private static string BoundOperation(string? operation) =>
