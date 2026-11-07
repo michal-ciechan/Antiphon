@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Infrastructure.Data;
 
-public class AppDbContext : DbContext
+public partial class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
@@ -147,6 +147,7 @@ public class AppDbContext : DbContext
         if (RuntimeActionTaskFence is not null)
             throw new InvalidOperationException("Deferred task writes require the asynchronous identity fence.");
         RequireImmutablePipelineEvidence();
+        SnapshotHostLoadEvents();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
@@ -156,6 +157,7 @@ public class AppDbContext : DbContext
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         RequireImmutablePipelineEvidence();
+        SnapshotHostLoadEvents();
         if (RuntimeActionTaskFence is not { } fence)
             return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         // Only the bound deferred-task scope opts in. Hold SQL locks over this save,
@@ -195,6 +197,7 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        ConfigureHostLoadModel(modelBuilder);
 
         modelBuilder.Entity<SessionQueuedMessage>().HasIndex(m => m.SourceTaskSupervisionNoticeId)
             .IsUnique().HasFilter("\"SourceTaskSupervisionNoticeId\" IS NOT NULL");
