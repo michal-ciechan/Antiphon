@@ -74,13 +74,14 @@
   <Target Name="CopyOwnedPtyHostAppHostForHerdr" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
     <PropertyGroup>
       <_PtyHostNativeDir>$(TargetDir)ptyhost-native/</_PtyHostNativeDir>
-      <!-- A child dotnet process does not inherit the checkpoint's global properties. -->
-      <_PtyHostArtifactsArguments Condition="'$(UseArtifactsOutput)' == 'true'">-p:UseArtifactsOutput=true &quot;-p:ArtifactsPath=$(ArtifactsPath)&quot;</_PtyHostArtifactsArguments>
     </PropertyGroup>
     <!-- CARD-1664: restore and build in a child process. This node may already hold the outer
          RID-less build's parsed PtyHost assets file (net9.0 only) for the rest of the build, so an
-         in-process linux-x64 build read that stale copy and failed NETSDK1047 on a fresh checkout. -->
-    <Exec Command="&quot;$(DOTNET_HOST_PATH)&quot; build &quot;$(MSBuildThisFileDirectory)../../src/Antiphon.PtyHost/Antiphon.PtyHost.csproj&quot; -nologo -tl:off -v:minimal -m:1 -p:Configuration=$(Configuration) -p:TargetFramework=$(TargetFramework) -p:UseAppHost=true -p:RuntimeIdentifier=linux-x64 -p:SelfContained=false $(_PtyHostArtifactsArguments) &quot;-p:OutDir=$(_PtyHostNativeDir)&quot;" />
+         in-process linux-x64 build read that stale copy and failed NETSDK1047 on a fresh checkout.
+         A child process does not inherit the checkpoint's global properties. The artifact switches
+         stay on this command: the land-graph audit refuses a new property for them. -->
+    <Exec Condition="'$(UseArtifactsOutput)' == 'true'" Command="&quot;$(DOTNET_HOST_PATH)&quot; build &quot;$(MSBuildThisFileDirectory)../../src/Antiphon.PtyHost/Antiphon.PtyHost.csproj&quot; -nologo -tl:off -v:minimal -m:1 -p:Configuration=$(Configuration) -p:TargetFramework=$(TargetFramework) -p:UseAppHost=true -p:RuntimeIdentifier=linux-x64 -p:SelfContained=false -p:UseArtifactsOutput=true &quot;-p:ArtifactsPath=$(ArtifactsPath)&quot; &quot;-p:OutDir=$(_PtyHostNativeDir)&quot;" />
+    <Exec Condition="'$(UseArtifactsOutput)' != 'true'" Command="&quot;$(DOTNET_HOST_PATH)&quot; build &quot;$(MSBuildThisFileDirectory)../../src/Antiphon.PtyHost/Antiphon.PtyHost.csproj&quot; -nologo -tl:off -v:minimal -m:1 -p:Configuration=$(Configuration) -p:TargetFramework=$(TargetFramework) -p:UseAppHost=true -p:RuntimeIdentifier=linux-x64 -p:SelfContained=false &quot;-p:OutDir=$(_PtyHostNativeDir)&quot;" />
     <Copy SourceFiles="$(_PtyHostNativeDir)Antiphon.PtyHost"
           DestinationFiles="$(TargetDir)Antiphon.PtyHost" />
     <Copy SourceFiles="$(_PtyHostNativeDir)libporta_pty.so"
