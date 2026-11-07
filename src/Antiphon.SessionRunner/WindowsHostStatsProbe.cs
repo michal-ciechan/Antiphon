@@ -14,6 +14,7 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
     private readonly Func<(ulong TotalPhys, ulong AvailPhys, ulong TotalPageFile, ulong AvailPageFile)?> _readMemoryStatus;
     private readonly Func<string, (long Free, long Total)?> _statVolume;
     private readonly IReadOnlyList<string> _volumes;
+    private readonly Func<int> _hostCores;
     private (long Idle, long Kernel, long User)? _previous;
 
     public WindowsHostStatsProbe(IReadOnlyList<string> volumes)
@@ -25,12 +26,13 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
         Func<(long Idle, long Kernel, long User)?> readSystemTimes,
         Func<(ulong TotalPhys, ulong AvailPhys, ulong TotalPageFile, ulong AvailPageFile)?> readMemoryStatus,
         Func<string, (long Free, long Total)?> statVolume,
-        IReadOnlyList<string> volumes)
+        IReadOnlyList<string> volumes, Func<int>? hostCores = null)
     {
         _readSystemTimes = readSystemTimes;
         _readMemoryStatus = readMemoryStatus;
         _statVolume = statVolume;
         _volumes = volumes;
+        _hostCores = hostCores ?? ReadHostCores;
     }
 
     public long? AvailableBytes
@@ -80,7 +82,7 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
             return new HostSample(
                 DateTimeOffset.UtcNow,
                 cpu,
-                Environment.ProcessorCount,
+                _hostCores(),
                 null,
                 null,
                 null,
@@ -90,7 +92,7 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
                 memory is { } swapFree ? (long)swapFree.AvailPageFile : null,
                 disks,
                 null,
-                []);
+                []) { LoadUnsupported = true, EffectiveCoreLimit = Environment.ProcessorCount };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ExternalException)
         {
@@ -122,6 +124,12 @@ public sealed class WindowsHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
             return null;
         return (idle, kernel, user);
     }
+
+    internal static int ReadHostCores() => OperatingSystem.IsWindows()
+        ? checked((int)GetActiveProcessorCount(ushort.MaxValue)) : 0;
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetActiveProcessorCount(ushort groupNumber);
 
     private static (ulong TotalPhys, ulong AvailPhys, ulong TotalPageFile, ulong AvailPageFile)? ReadMemoryStatus()
     {

@@ -23,11 +23,29 @@ public sealed class HostStatsSettings
     /// </summary>
     public string[] Volumes { get; set; } = [];
 
+    public bool HistoryEnabled { get; set; } = true;
+    public string? HistoryPath { get; set; }
+    public string RunnerId { get; set; } = "local";
+    public string? PhysicalHostKey { get; set; }
+    public long? BindingRevision { get; set; }
+    public Guid? SourceEpoch { get; set; }
+    public string? AuthorityEndpoint { get; set; }
+    public string? AuthorityId { get; set; }
+    public long SpoolMaxBytes { get; set; } = 256L * 1024 * 1024;
+    public int SpoolMaxHours { get; set; } = 24;
+    public int AppendQueueCapacity { get; set; } = 48;
+
     public void Validate()
     {
         if (IntervalMs < 1000)
             throw new InvalidOperationException($"{SectionName}:IntervalMs must be at least 1000.");
         if (RetentionMinutes < 1)
             throw new InvalidOperationException($"{SectionName}:RetentionMinutes must be at least 1.");
+        if (SpoolMaxBytes < 4096 || SpoolMaxBytes > 256L * 1024 * 1024 || SpoolMaxHours is < 1 or > 24
+            || AppendQueueCapacity is < 1 or > 120)
+            throw new InvalidOperationException($"{SectionName}: history bounds are invalid.");
+        if (AuthorityEndpoint is not null && (!Uri.TryCreate(AuthorityEndpoint, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo)))
+            throw new InvalidOperationException($"{SectionName}:AuthorityEndpoint must be an http(s) authority without credentials.");
     }
 }

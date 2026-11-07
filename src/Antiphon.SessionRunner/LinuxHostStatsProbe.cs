@@ -75,7 +75,7 @@ public sealed class LinuxHostStatsProbe : IHostStatsProbe, IHostMemoryProbe
                 memory.SwapFreeBytes,
                 ReadDisks(),
                 load?.ProcessCount,
-                []);
+                []) { EffectiveCoreLimit = Environment.ProcessorCount };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

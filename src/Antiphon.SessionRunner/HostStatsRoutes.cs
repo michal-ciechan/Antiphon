@@ -27,6 +27,10 @@ public static class HostStatsRoutes
                 }
 
                 settings.Validate();
+                settings.HistoryPath ??= Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "antiphon", "host-load");
+                settings.AuthorityEndpoint ??= configuration["ANTIPHON_BUILD_SLOTS_URL"];
+                settings.RunnerId = configuration["PhoneHome:RunnerId"] ?? settings.RunnerId;
             })
             .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
@@ -40,6 +44,13 @@ public static class HostStatsRoutes
             sp.GetRequiredService<TimeProvider>(),
             sp.GetService<BuildSlotBroker>()));
         services.AddSingleton<IHostStatsSource>(sp => sp.GetRequiredService<HostStatsStore>());
+        services.AddHttpClient("HostLoad.Authority", client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.TryAddSingleton<IHostAdmissionSnapshotReader>(sp => new HostAdmissionSnapshotClient(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("HostLoad.Authority"),
+            sp.GetRequiredService<IOptions<HostStatsSettings>>().Value,
+            sp.GetRequiredService<TimeProvider>(), () => sp.GetService<BuildSlotBroker>()?.List()));
+        services.AddSingleton<HostLoadCaptureService>();
+        services.AddSingleton<IHostLoadHistorySource>(sp => sp.GetRequiredService<HostLoadCaptureService>());
         services.AddSingleton(sp => new HostStatsSamplerService(
             sp.GetRequiredService<IHostStatsProbe>(),
             sp.GetRequiredService<HostStatsStore>(),
@@ -48,14 +59,26 @@ public static class HostStatsRoutes
             HostStatsSamplerService.WorkingSet,
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<IOptions<HostStatsSettings>>(),
-            sp.GetRequiredService<ILogger<HostStatsSamplerService>>()));
+            sp.GetRequiredService<ILogger<HostStatsSamplerService>>(),
+            sp.GetRequiredService<HostLoadCaptureService>()));
         if (startSampler)
+        {
+            services.AddHostedService(sp => sp.GetRequiredService<HostLoadCaptureService>());
             services.AddHostedService(sp => sp.GetRequiredService<HostStatsSamplerService>());
+        }
         return services;
     }
 
     public static IEndpointRouteBuilder MapHostStatsRoutes(this IEndpointRouteBuilder app)
     {
+        app.MapGet("/host-stats/history", (string? after, int? limit, IHostLoadHistorySource history,
+            IOptions<HostStatsSettings> options) =>
+        {
+            if (!options.Value.Enabled || !options.Value.HistoryEnabled) return Results.NotFound();
+            try { return Results.Ok(history.ReadHistory(after, limit ?? 120)); }
+            catch (ArgumentException) { return Results.Problem(title: "invalid_host_load_query", statusCode: 400); }
+            catch (IOException) { return Results.Problem(title: "host_load_history_unavailable", statusCode: 503); }
+        });
         app.MapGet("/host-stats", (HostStatsStore store, IOptions<HostStatsSettings> options, TimeProvider time) =>
         {
             if (!options.Value.Enabled)
@@ -94,6 +117,8 @@ public static class HostStatsRoutes
     {
         if (!settings.Enabled)
             return features;
-        return [.. features, RunnerCapabilityFeatures.HostStatsV1];
+        return settings.HistoryEnabled
+            ? [.. features, RunnerCapabilityFeatures.HostStatsV1, RunnerCapabilityFeatures.HostLoadHistoryV1]
+            : [.. features, RunnerCapabilityFeatures.HostStatsV1];
     }
 }

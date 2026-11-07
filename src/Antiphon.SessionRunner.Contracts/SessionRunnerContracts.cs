@@ -193,6 +193,7 @@ public static class RunnerCapabilityFeatures
 
     /// <summary>CARD-0718. This runner samples host stats and answers <c>/host-stats</c>.</summary>
     public const string HostStatsV1 = "hostStatsV1";
+    public const string HostLoadHistoryV1 = "hostLoadHistoryV1";
 
     /// <summary>
     /// CARD-1032. Guarded completed-card workspace inspect and remove. Default runners do not

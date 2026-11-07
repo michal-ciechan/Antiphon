@@ -23,6 +23,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly TimeProvider _time;
     private readonly HostStatsSettings _settings;
     private readonly ILogger<HostStatsSamplerService> _logger;
+    private readonly HostLoadCaptureService? _history;
     private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, long At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
 
@@ -34,7 +35,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         Func<int, long?> workingSet,
         TimeProvider time,
         IOptions<HostStatsSettings> settings,
-        ILogger<HostStatsSamplerService> logger)
+        ILogger<HostStatsSamplerService> logger, HostLoadCaptureService? history = null)
     {
         _probe = probe;
         _store = store;
@@ -44,6 +45,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         _time = time;
         _settings = settings.Value;
         _logger = logger;
+        _history = history;
     }
 
     public Task SampleOnceAsync(CancellationToken ct = default)
@@ -68,7 +70,9 @@ public sealed class HostStatsSamplerService : BackgroundService
         var percent = read.Value.CpuPercent;
         if (percent is { } value && (!double.IsFinite(value) || value < 0 || value > 100))
             percent = null;
-        _store.Add(read.Value with { At = now, CpuPercent = percent, Processes = processes });
+        var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes };
+        _store.Add(sample);
+        _history?.TryCapture(sample);
         return Task.CompletedTask;
     }
 
@@ -138,10 +142,14 @@ public sealed class HostStatsSamplerService : BackgroundService
         }
 
         long workingSet = 0;
+        var workingSetKnown = false;
         try
         {
             if (_workingSet(pid) is long bytes)
+            {
                 workingSet = bytes;
+                workingSetKnown = bytes >= 0;
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -166,7 +174,7 @@ public sealed class HostStatsSamplerService : BackgroundService
             _last[key] = (current, now);
         }
 
-        return new HostProcessSample(name, sessionId, percent, workingSet);
+        return new HostProcessSample(name, sessionId, percent, workingSet) { WorkingSetKnown = workingSetKnown };
     }
 
     private void LogFault(Exception ex)
