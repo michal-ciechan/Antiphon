@@ -38,7 +38,7 @@ public sealed class VerificationRoundBriefTests
             {
                 ("final-code", Task(AgentTaskRole.Code, WorkspaceMode.Worktree, VerificationRound.Final, dir),
                     ["--- verification profile ---", "round: Final (profile v1)",
-                     "ordinary scope: the whole Unit lane, every named full affected integration class, every ordinary V-n/R-n and required manual acceptance in the plan.",
+                     "ordinary scope: the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence; every ordinary V-n/R-n and required manual acceptance in the plan. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop.",
                      "final-review: none pending from this task"],
                     ["round: Interim", "final-review: PENDING"]),
                 ("final-review", Task(AgentTaskRole.Review, WorkspaceMode.ReadOnly, VerificationRound.Final, dir),

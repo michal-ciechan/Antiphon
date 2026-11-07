@@ -327,7 +327,7 @@ public static class DelegationReportFormatter
         if (round == VerificationRound.Final)
         {
             sb.AppendLine($"round: Final (profile v{version})");
-            sb.AppendLine("ordinary scope: the whole Unit lane, every named full affected integration class, every ordinary V-n/R-n and required manual acceptance in the plan.");
+            sb.AppendLine("ordinary scope: the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence; every ordinary V-n/R-n and required manual acceptance in the plan. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop.");
             if (task.Role == AgentTaskRole.Review)
                 sb.AppendLine("independence: rerun that complete scope yourself, including every row an earlier Interim round deferred; an Interim pass never discharges it.");
             sb.AppendLine("final-review: none pending from this task");

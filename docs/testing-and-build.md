@@ -231,7 +231,7 @@ production retains restart/re-adoption with the default `PtyHostExitWithOwner=fa
 
 ## CARD-0459 worktree residue
 
-Ordinary Code/Review builds in the worktree's native default output, runs the Unit lane, and the named
+Ordinary Code/Review builds in the worktree's native default output, runs the named
 classes in `docs/superpowers/plans/2026-09-19-card-0459-worktree-cleanup-plan.md`.
 `scripts/test-worktree-residue.ps1` covers the operator script. `WorktreeResidue:Execute` stays
 false in shipped config. Do not treat `PruneStaleAsync` or a shorter TTL as cleanup authority.
@@ -283,15 +283,15 @@ assemblies and crashed discovery with `SemaphoreSlim maxCount=0`, before writing
 TRX. This is a startup failure, never a passing zero-test row. Change the ignored
 manifest's output name while retaining its filters, budgets and source binding.
 
-Build once in the worktree's native default output (no custom output; CARD-1629). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
+Build once in the worktree's native default output (no custom output; CARD-1629). Per-task Final runs the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
 
 The brief/verification section must list coverage-to-class and end with the `### Checkpoints` table (below). Code and Review report the filters they ran and the actual expanded counts. Unit-only is insufficient for native delivery, landing, leases or persistence. A broad namespace/full-assembly exception names the affected cross-cutting invariant, the classes that cannot be bounded, and the expected cost **before** the run; missing rationale is a Review defect. CI/nightly keep the broad run. Per-PC Mutation stays method-scoped. Do not silently edit `LandVerifyFilter` or the production verifier as part of a documentation policy change.
 
-Example (directory names are examples — use a fresh empty results directory per invocation):
+Example (directory names are examples — use a fresh empty results directory per invocation). `/*/*/*/*[Category=Unit]` is the nightly and rc definition of the Unit lane, not a per-task Final command:
 
 ```powershell
 dotnet build tests/Antiphon.Tests -p:UseAppHost=false --nologo
-dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c475-unit
+dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(TouchedClassA*)|(TouchedClassB*)/*' --report-trx --report-trx-filename named.trx --results-directory .antiphon/c475-named
 dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
 ```
 
@@ -1866,7 +1866,7 @@ A file changed after its own second hash has matched, while a later file is stil
 
 ### Unit lane checkpoint shards (CARD-1573)
 
-A Full Final receipt for the Unit lane is a set of checkpoint rows that share one build. The selection `/*/*/*/*[Category=Unit]` on `tests/Antiphon.Tests` remains the local and nightly definition of that lane. Its wall time is past 30 minutes, so one row exhausts the default execution allowance from `RowTimeout.DeriveTotalMinutes` (`max(30, 2 * sum(EstimatedMinutes) + 10)` when `--total-timeout` is omitted). An `EstimatedMinutes` above 15 makes `DeriveRowMinutes` return more than 45, and `PlanTableImporter` warns above `RowTimeoutAdvisoryMinutes` (45).
+The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop. A receipt for that lane is a set of checkpoint rows that share one build. The selection `/*/*/*/*[Category=Unit]` on `tests/Antiphon.Tests` remains the nightly and rc definition of that lane. Its wall time is past 30 minutes, so one row exhausts the default execution allowance from `RowTimeout.DeriveTotalMinutes` (`max(30, 2 * sum(EstimatedMinutes) + 10)` when `--total-timeout` is omitted). An `EstimatedMinutes` above 15 makes `DeriveRowMinutes` return more than 45, and `PlanTableImporter` warns above `RowTimeoutAdvisoryMinutes` (45).
 
 Each shard row:
 
@@ -1876,7 +1876,7 @@ Each shard row:
 - Selects only that class-level tag. A method-level `[Category("Unit")]` on a class with another category is outside these rows. `tests/Antiphon.Tests/Application/MatrixDefaultComplexityCreateTests.cs` is `[Category("Integration")]`, and `The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` at line 130 is `[Test, Category("Unit")]`. The full lane filter `/*/*/*/*[Category=Unit]` still selects that method. A class shard does not.
 - Is split again when a measurement would put `EstimatedMinutes` above 15.
 
-Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Do not set an explicit total below that derivation: `totalTimeoutMinutes: N` below it is refused as `checkpoint-total-below-derived` unless `totalTimeoutOverrideReason` is set (CARD-1720). Each shard writes `rows/<id>/run.trx`. A later total-budget kill still reports a shard that already flushed that file. Shard runtimes are UNMEASURED, so those `EstimatedMinutes` values stay provisional under R5 and are not a measured p95. The killed run 20261105-013711-58df reached 535s on one whole-Unit row and wrote no TRX; that duration is not a p95. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, executing the shard rows does not demonstrate `ordinaryScopeCompleted=Full`. A Full Final receipt for the Unit lane is not yet demonstrated.
+Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Do not set an explicit total below that derivation: `totalTimeoutMinutes: N` below it is refused as `checkpoint-total-below-derived` unless `totalTimeoutOverrideReason` is set (CARD-1720). Each shard writes `rows/<id>/run.trx`. A later total-budget kill still reports a shard that already flushed that file. Shard runtimes are UNMEASURED, so those `EstimatedMinutes` values stay provisional under R5 and are not a measured p95. The killed run 20261105-013711-58df reached 535s on one whole-Unit row and wrote no TRX; that duration is not a p95. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, those rows do not yet demonstrate a complete Unit-lane receipt.
 
 Measured shard cost (CARD-1728, [investigation](investigations/2026-11-07-debug-unit-shard-completion.md)): a shard is bounded by its serial `ParallelLimiter<ProcessSpawnLimit>` chain (Limit 1 per host), not by its test count. On loaded server2 the A-L class-letter shard ran 2,177 cases in under a minute, then spent about 37 minutes running one process-spawning case at a time. 1,904 s of that was `Antiphon.Tests.Checkpoints`. The shard hit its 45-minute cap with no TRX. Discovery depends on the filter shape: 47 s to the first test for a namespace filter, 116 s for `/*/*/*/*[Category=Unit]`, and 261-419 s for a 12-operand class OR filter. Size shards by measured serial seconds and prefer namespace or single-prefix filters to OR lists. A killed or SIGTERMed host writes no TRX. Only the CARD-1514 phase journal (`ANTIPHON_TEST_PHASE_ROOT`) keeps per-case attribution.
 
