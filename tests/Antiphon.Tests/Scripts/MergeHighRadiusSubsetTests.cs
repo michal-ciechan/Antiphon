@@ -29,11 +29,10 @@ public sealed class MergeHighRadiusSubsetTests
 
     private const string MessagingFilter = "/*/*/(InboxConversationMigrationTests*)/*";
 
-    // The server boot otherwise creates the Windows default check-interpreter directory
-    // inside the E2E output on Linux, and the row ends red on output-ledger-mismatch.
-    private const string CheckInterpreterVariable = "Delegation__CheckInterpreterWorkingDirectory";
-
-    private const string CheckInterpreterDirectory = "/tmp/antiphon-merge-e2e-check-interpreter";
+    // CARD-1795: the E2E fixture keeps the check-interpreter directory in its own workspace, so the
+    // CARD-1783 Environment workaround on the E2E row must not come back.
+    private const string CheckInterpreterWorkaround =
+        "Delegation__CheckInterpreterWorkingDirectory=/tmp/antiphon-merge-e2e-check-interpreter";
 
     // One TUnit row per selector filters entry: project, exact filter, measured minimum.
     private static readonly (string Id, string Project, string Filter, int Min)[] MergeRows =
@@ -119,12 +118,15 @@ public sealed class MergeHighRadiusSubsetTests
             .Where(line => !line.Contains("CP-merge-subset-messaging", StringComparison.Ordinal)));
         dropped.ShouldNotBe(table);
         Should.Throw<ShouldAssertException>(() => AssertRows(dropped));
-        var noEnvironment = table.Replace(
-            "| " + CheckInterpreterVariable + "=" + CheckInterpreterDirectory + " |",
-            "| n/a |",
+        var e2eRow = table.Split(
+).Single(line => line.Contains("| CP-merge-subset-e2e |", StringComparison.Ordinal));
+        e2eRow.ShouldEndWith("| true | n/a |");
+        var withEnvironment = table.Replace(
+            e2eRow,
+            e2eRow[..^"| n/a |".Length] + "| " + CheckInterpreterWorkaround + " |",
             StringComparison.Ordinal);
-        noEnvironment.ShouldNotBe(table);
-        Should.Throw<ShouldAssertException>(() => AssertRows(noEnvironment));
+        withEnvironment.ShouldNotBe(table);
+        Should.Throw<ShouldAssertException>(() => AssertRows(withEnvironment));
     }
 
     [Test]
@@ -166,9 +168,7 @@ public sealed class MergeHighRadiusSubsetTests
             row.MinExecuted.ShouldBe(expected.Min, expected.Id);
             row.Group.ShouldBe("merge-high-radius", expected.Id);
             var environment = row.Environment.Select(pair => pair.Key + "=" + pair.Value).ToArray();
-            environment.ShouldBe(
-                expected.Id == "CP-merge-subset-e2e" ? new[] { CheckInterpreterVariable + "=" + CheckInterpreterDirectory } : Array.Empty<string>(),
-                expected.Id);
+            environment.ShouldBeEmpty(expected.Id);
             manifest.Builds.Single(build => build.Id == row.Build).Project.ShouldBe(expected.Project, expected.Id);
         }
     }
