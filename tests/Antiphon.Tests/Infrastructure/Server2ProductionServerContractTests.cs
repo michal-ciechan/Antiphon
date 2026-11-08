@@ -260,13 +260,15 @@ public sealed class Server2ProductionServerContractTests
             ran.Stdout.ShouldContain("docker-compose.server2-server.yml");
             ran.Stdout.ShouldContain("-p antiphon-server2-server up -d");
             ran.Stdout.ShouldContain("up -d --build");
-            var revision = ran.Stdout.IndexOf(
-                "image label org.opencontainers.image.revision must equal SOURCE_REVISION",
-                StringComparison.Ordinal);
+            // CARD-1788 A-10: before up the script compares the env SOURCE_REVISION and
+            // the build-context checkout HEAD. No image label is inspected before up.
             var up = ran.Stdout.IndexOf(" up -d", StringComparison.Ordinal);
-            revision.ShouldBeGreaterThanOrEqualTo(0);
-            up.ShouldBeGreaterThan(revision);
-            ran.Stdout.ShouldContain("before up");
+            up.ShouldBeGreaterThan(0);
+            var beforeUp = ran.Stdout[..up];
+            beforeUp.ShouldContain("before up: SOURCE_REVISION in the env file and git rev-parse HEAD of ");
+            beforeUp.ShouldContain(DockerStackDocuments.RepoRoot + " must equal <expected-sha>");
+            beforeUp.ShouldNotContain("image label");
+            beforeUp.ShouldNotContain("inspect");
             ran.Stdout.ShouldContain("verify-only");
             ran.Stdout.ShouldContain("restart-linux-server.ps1");
             ran.Stdout.ShouldContain("SERVER2-SERVER plan exit=0 reason=ok");
@@ -304,6 +306,8 @@ public sealed class Server2ProductionServerContractTests
         var cert = Path.Combine(scratch, "cert.pem");
         var key = Path.Combine(scratch, "key.pem");
         var token = Path.Combine(scratch, "operator-token");
+        var context = Path.Combine(scratch, "not-a-checkout");
+        var outsideCompose = Path.Combine(context, "docker-compose.server2-server.yml");
         try
         {
             await File.WriteAllTextAsync(badCompose, "name: antiphon-server2-server\nantiphon_pgdata\n");
@@ -365,13 +369,38 @@ public sealed class Server2ProductionServerContractTests
             await WriteSecretFileAsync(envFile, EnvBody("fixture-password-1775", cert, key, token, "InMemory"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
             await AssertRefusalAsync(bin, ["-WhatIf", "-EnvFile", envFile], "env-mode", marker);
 
+            // CARD-1788 A-10: the host checkout HEAD must equal the expected SHA too.
+            var head = CheckoutHead();
             await WriteSecretFileAsync(
                 envFile,
-                EnvBody("fixture-password-1775", cert, key, token, "InMemory") + "SOURCE_REVISION=" + new string('b', 40) + "\n");
+                EnvBody("fixture-password-1775", cert, key, token, "InMemory") + "SOURCE_REVISION=" + head + "\n");
             await AssertRefusalAsync(
                 bin,
-                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", new string('b', 40)],
+                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", head],
                 "not-server2-host",
+                marker);
+            await AssertRefusalAsync(
+                bin,
+                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", head.ToUpperInvariant()],
+                "not-server2-host",
+                marker);
+
+            var other = head[0] == 'b' ? new string('c', 40) : new string('b', 40);
+            await WriteSecretFileAsync(
+                envFile,
+                EnvBody("fixture-password-1775", cert, key, token, "InMemory") + "SOURCE_REVISION=" + other + "\n");
+            await AssertRefusalAsync(
+                bin,
+                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", other],
+                "head-mismatch",
+                marker);
+
+            Directory.CreateDirectory(context);
+            File.Copy(Path.Combine(DockerStackDocuments.RepoRoot, ComposePath), outsideCompose);
+            await AssertRefusalAsync(
+                bin,
+                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", other, "-ComposeFile", outsideCompose],
+                "head-unknown",
                 marker);
 
             await WriteSecretFileAsync(
@@ -392,7 +421,7 @@ public sealed class Server2ProductionServerContractTests
         }
         finally
         {
-            foreach (var path in new[] { docker, badCompose, envFile, cert, key, token })
+            foreach (var path in new[] { docker, badCompose, envFile, cert, key, token, outsideCompose })
             {
                 if (File.Exists(path))
                     File.Delete(path);
@@ -400,6 +429,8 @@ public sealed class Server2ProductionServerContractTests
 
             if (Directory.Exists(bin))
                 Directory.Delete(bin);
+            if (Directory.Exists(context))
+                Directory.Delete(context);
             if (Directory.Exists(scratch))
                 Directory.Delete(scratch);
             if (File.Exists(marker))
@@ -440,6 +471,43 @@ public sealed class Server2ProductionServerContractTests
             init.ShouldContain("1654");
             script.ShouldContain(path);
             doc.ShouldContain(path);
+        }
+    }
+
+    [Test]
+    public void State_init_chowns_work_without_walking_repos_and_worktrees()
+    {
+        // CARD-1788 A-11: a recursive chown of /work walks every repository and
+        // worktree on each up. Only the specialist directories are walked; the
+        // other /work directories init creates are chowned one level.
+        var chowns = InitChowns();
+        chowns.Count.ShouldBeGreaterThan(0);
+        chowns.ShouldAllBe(chown => chown.Owner == "\"$$uid:$$gid\"");
+        var recursive = chowns.Where(chown => chown.Recursive).SelectMany(chown => chown.Targets).ToList();
+        var single = chowns.Where(chown => !chown.Recursive).SelectMany(chown => chown.Targets).ToList();
+        foreach (var target in recursive.Where(target => PathIsUnder(target, "/work")))
+            PathIsUnder(target, "/work/specialists").ShouldBeTrue("recursive chown walks " + target);
+        recursive.ShouldContain("/state");
+        recursive.ShouldContain("/runner-state");
+        var created = InitCreatedPaths();
+        created.ShouldContain("/work");
+        created.ShouldContain("/work/repos");
+        created.ShouldContain("/work/worktrees");
+        foreach (var path in created)
+        {
+            var covered = single.Contains(path) || recursive.Any(root => PathIsUnder(path, root));
+            covered.ShouldBeTrue("init creates " + path + " but does not chown it");
+        }
+
+        var server = Service("server");
+        foreach (var path in new[]
+                 {
+                     Env(server, "Delegation__CheckInterpreterWorkingDirectory"),
+                     Env(server, "Delegation__DiagnoseWorkingDirectory"),
+                     Env(server, "Delegation__OutputDistillerWorkingDirectory"),
+                 })
+        {
+            recursive.Any(root => PathIsUnder(path, root)).ShouldBeTrue("specialist " + path + " is not chowned recursively");
         }
     }
 
@@ -563,6 +631,69 @@ public sealed class Server2ProductionServerContractTests
         var path = Path.Combine(DockerStackDocuments.RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue(relative);
         return File.ReadAllText(path);
+    }
+
+    private static string CheckoutHead()
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in new[] { "-C", DockerStackDocuments.RepoRoot, "rev-parse", "--verify", "HEAD" })
+            start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        process.ExitCode.ShouldBe(0, stderr);
+        var head = stdout.Trim().ToLowerInvariant();
+        head.Length.ShouldBe(40, head);
+        return head;
+    }
+
+    private readonly record struct ChownStatement(bool Recursive, string Owner, string[] Targets);
+
+    private static string InitCommand()
+    {
+        var init = Service("server-state-init");
+        var line = init.Replace("\r\n", "\n").Split('\n').Single(row => row.Contains("set -eu;", StringComparison.Ordinal)).Trim();
+        line.StartsWith("- \"", StringComparison.Ordinal).ShouldBeTrue(line);
+        line.EndsWith('"').ShouldBeTrue(line);
+        return line[3..^1].Replace("\\\"", "\"", StringComparison.Ordinal);
+    }
+
+    private static string[] InitStatements() =>
+        InitCommand().Split(';').Select(part => part.Trim()).Where(part => part.Length > 0).ToArray();
+
+    private static List<string> InitCreatedPaths()
+    {
+        var statements = InitStatements();
+        var index = Array.FindIndex(statements, s => s.StartsWith("for d in ", StringComparison.Ordinal));
+        index.ShouldBeGreaterThanOrEqualTo(0);
+        statements[index + 1].ShouldStartWith("do mkdir -p ");
+        return statements[index]["for d in ".Length..].Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+    }
+
+    private static List<ChownStatement> InitChowns()
+    {
+        var chowns = new List<ChownStatement>();
+        foreach (var statement in InitStatements())
+        {
+            var tokens = statement.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            tokens.Skip(1).ShouldNotContain("chown", statement);
+            if (tokens[0] != "chown")
+                continue;
+            var flags = tokens.Skip(1).Where(token => token.StartsWith('-')).ToArray();
+            flags.ShouldAllBe(flag => flag == "-R", statement);
+            var owner = tokens.Skip(1).Where(token => !token.StartsWith('-')).First();
+            var targets = tokens.Skip(1).Where(token => !token.StartsWith('-')).Skip(1).ToArray();
+            targets.ShouldAllBe(target => target.StartsWith('/'), statement);
+            chowns.Add(new ChownStatement(flags.Length > 0, owner, targets));
+        }
+
+        return chowns;
     }
 
     private static string Compose() => ReadRequired(ComposePath);
