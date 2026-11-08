@@ -1103,7 +1103,11 @@ Services are `server-state-init`, `server`, and `server-session-runner`. The che
 `127.0.0.1:17400` only and joins the external network `antiphon-server2`, so the connection host is
 `Host=postgres` on the CARD-1406 service. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`.
 `-Execute` is host-only and then calls this gate verify-only, with no execute switch on the gate,
-against `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `Hangfire__Storage`
+against `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. Before up, `-Execute`
+refuses `revision-mismatch` unless the env `SOURCE_REVISION` equals `-ExpectedServerSha`, and
+`head-mismatch` or `head-unknown` unless `git rev-parse HEAD` of the compose build context does too
+(CARD-1788). `server-state-init` chowns `/work` and its top directories one level and walks only
+`/work/specialists`, so an up does not walk every repository and worktree. `Hangfire__Storage`
 is an explicit setting whose default is `InMemory` because CARD-1768 is on this tip and CARD-1774
 A-1/A-2 are not. Nothing in this card starts the project or touches the production database. This slice
 adds no cache.
