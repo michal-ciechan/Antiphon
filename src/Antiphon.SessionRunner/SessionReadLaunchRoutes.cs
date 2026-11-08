@@ -16,8 +16,14 @@ public static class SessionReadLaunchRoutes
     public static void MapSessionTranscriptRoute(this WebApplication app)
     {
         app.MapGet("/sessions/{id:guid}/transcript", (Guid id, SessionRunnerRuntime runtime) =>
-            Results.Ok(runtime.GetTranscript(id)));
+            Transcript(runtime.GetTranscript(id)));
     }
+
+    public static IResult Buffer(RunnerBufferDto dto) => Results.Ok(dto);
+
+    public static IResult Snapshot(RunnerSnapshotDto dto) => Results.Ok(dto);
+
+    public static IResult Transcript(RunnerTranscriptDto dto) => Results.Ok(dto);
 
     // CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
     // before a restart) - it must answer 404, not crash the request pipeline with an unhandled
