@@ -900,6 +900,38 @@ public class ChannelBridgeTests
     }
 
     [Test]
+    public async Task An_over_limit_note_caps_the_name_and_strips_format_characters()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        // A-4/A-5 (Review a89708b6): an RTL override, a zero-width space and a line separator in a very
+        // long name, at 14 MiB + 1 byte so whole-MiB rounding would print the limit for the size.
+        var name = "‮home​work " + new string('x', 200) + ".pptx";
+        var msg = TelegramText(h.ChatId, text: null!, title: "Family", author: "Ola") with
+        {
+            Text = null,
+            Attachments =
+            [
+                new Attachment
+                {
+                    Kind = AttachmentKind.File, ChannelRef = "long-1",
+                    Name = name, Size = 14L * 1024 * 1024 + 1, InlineLimitBytes = 14L * 1024 * 1024,
+                },
+            ],
+        };
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        var shown = "homework " + new string('x', 70) + "…";
+        shown.Length.ShouldBe(80);
+        prompt.ShouldContain($"[file attached — \"{shown}\" (14.0 MiB) is over the 14 MiB limit and was not delivered]");
+        prompt.ShouldNotContain("‮");
+        prompt.ShouldNotContain("​");
+        prompt.ShouldNotContain(" ");
+    }
+
+    [Test]
     public async Task A_message_with_neither_text_nor_attachments_is_not_routed()
     {
         await using var h = await HarnessAsync();

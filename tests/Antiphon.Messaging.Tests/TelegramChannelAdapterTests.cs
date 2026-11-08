@@ -529,6 +529,148 @@ public sealed class TelegramChannelAdapterTests
         off.SentMessages.ShouldBeEmpty();
     }
 
+    // A-1 (Review a89708b6): in a non-forum supergroup a reply carries message_thread_id (the reply
+    // thread root) but Telegram accepts the send parameter only for forum topics, so copying it makes
+    // sendMessage fail "message thread not found" and the sender would get no notice at all.
+    private static JsonObject GroupOverCapMessage(long messageId, bool? isTopic, long? threadId = 77, string? mediaGroupId = null)
+    {
+        var m = new JsonObject
+        {
+            ["message_id"] = messageId,
+            ["from"] = new JsonObject { ["id"] = 999, ["is_bot"] = false, ["first_name"] = "Ola" },
+            ["chat"] = new JsonObject { ["id"] = -100123, ["type"] = "supergroup", ["title"] = "Family" },
+            ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["document"] = new JsonObject { ["file_id"] = $"big-{messageId}", ["file_name"] = "big.pptx", ["file_size"] = FamilyPptxBytes },
+        };
+        if (threadId is { } t)
+        {
+            m["message_thread_id"] = t;
+            m["reply_to_message"] = new JsonObject
+            {
+                ["message_id"] = t,
+                ["chat"] = new JsonObject { ["id"] = -100123, ["type"] = "supergroup", ["title"] = "Family" },
+                ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["text"] = "root",
+            };
+        }
+        if (isTopic is { } topic)
+            m["is_topic_message"] = topic;
+        if (mediaGroupId is not null)
+            m["media_group_id"] = mediaGroupId;
+        return new JsonObject { ["message"] = m };
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments(false)]
+    public async Task Over_cap_notice_to_a_non_forum_reply_thread_omits_the_thread_id(bool? isTopic)
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueUpdate(GroupOverCapMessage(4243, isTopic));
+
+        await FirstMessageAsync(NewAdapter(fake));
+
+        var sent = fake.SentMessages.ShouldHaveSingleItem();
+        sent.RawBody!.ContainsKey("message_thread_id").ShouldBeFalse(
+            "message_thread_id is a forum-topic send parameter; a reply thread in a plain supergroup must not carry it");
+        sent.RawBody["reply_to_message_id"]!.GetValue<long>().ShouldBe(4243);
+    }
+
+    [Test]
+    public async Task Thread_not_found_notice_is_resent_once_without_the_thread()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueSendBadRequest("Bad Request: message thread not found");
+        fake.EnqueueUpdate(GroupOverCapMessage(4244, isTopic: true));
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull();
+        fake.SendCalls.ShouldBe(2, "a thread-not-found rejection gets exactly one resend without the thread");
+        var sent = fake.SentMessages.ShouldHaveSingleItem();
+        sent.RawBody!.ContainsKey("message_thread_id").ShouldBeFalse();
+        sent.RawBody["reply_to_message_id"]!.GetValue<long>().ShouldBe(4244);
+    }
+
+    [Test]
+    public async Task Thread_not_found_twice_stops_after_the_one_resend()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueSendBadRequest("Bad Request: message thread not found");
+        fake.EnqueueSendBadRequest("Bad Request: message thread not found");
+        fake.EnqueueUpdate(GroupOverCapMessage(4245, isTopic: true));
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull("a rejected notice must never drop the inbound message");
+        fake.SendCalls.ShouldBe(2, "the thread fallback is one resend, never a loop");
+        fake.SentMessages.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Rate_limited_notice_is_a_single_attempt()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueSendRateLimit(retryAfterSeconds: 1);
+        fake.EnqueueUpdate(GroupOverCapMessage(4246, isTopic: true));
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull();
+        fake.SendCalls.ShouldBe(1, "a 429 on the best-effort notice is not retried on the ingress path");
+        fake.SentMessages.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task An_over_cap_album_gets_one_notice()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueUpdate(GroupOverCapMessage(5001, isTopic: null, threadId: null, mediaGroupId: "album-1"));
+        fake.EnqueueUpdate(GroupOverCapMessage(5002, isTopic: null, threadId: null, mediaGroupId: "album-1"));
+        fake.EnqueueUpdate(GroupOverCapMessage(5003, isTopic: null, threadId: null, mediaGroupId: "album-1"));
+        fake.EnqueueUpdate(GroupOverCapMessage(5004, isTopic: null, threadId: null, mediaGroupId: "album-2"));
+
+        var messages = await MessagesAsync(NewAdapter(fake), count: 4);
+
+        messages.Count.ShouldBe(4, "every album item is still delivered to the agent");
+        var sent = fake.SentMessages;
+        sent.Count.ShouldBe(2, "one notice per album, and a second album gets its own");
+        sent.Select(s => s.RawBody!["reply_to_message_id"]!.GetValue<long>()).ShouldBe(new[] { 5001L, 5004L });
+    }
+
+    [Test]
+    public async Task Over_cap_size_just_above_the_limit_never_reads_as_the_limit()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        // 14 MiB + 1 byte: whole-MiB rounding would print "14 MiB" for both numbers.
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "edge", fileName: "edge.pptx", fileSize: 14 * 1024 * 1024 + 1);
+
+        await FirstMessageAsync(NewAdapter(fake));
+
+        fake.SentMessages.ShouldHaveSingleItem().Text.ShouldBe(
+            "File too large (14.0 MiB): the limit is 14 MiB, so it was not delivered. "
+            + "Send a smaller file, compress it, or split it.");
+    }
+
+    [Test]
+    [Arguments(1L, "1 byte")]
+    [Arguments(3L, "3 bytes")]
+    [Arguments(2048L, "2 KiB")]
+    [Arguments(18_430_415L, "17.6 MiB")]
+    [Arguments(3L * 1024 * 1024 * 1024, "3 GiB")]
+    [Arguments(5L * 1024 * 1024 * 1024 / 2, "2.5 GiB")]
+    public async Task Attachment_sizes_use_binary_units_up_to_GiB(long bytes, string expected)
+    {
+        AttachmentSize.Format(bytes).ShouldBe(expected);
+        await Task.CompletedTask;
+    }
+
     [Test]
     public async Task A_failed_over_cap_notice_never_loses_the_message()
     {
