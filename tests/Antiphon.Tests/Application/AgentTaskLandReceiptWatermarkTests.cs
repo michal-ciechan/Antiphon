@@ -102,13 +102,14 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         await using var h = await LandReceiptScanHarness.CreateAsync();
         var (note, row, events) = await ArrangeAsync(h, row: shape == "dispatch-base-canceled-row"
             ? r => r.Status = QueuedMessageStatus.Canceled : null);
-        var expected = new[] { 6, 5, 5 };
+        // CARD-1759 reloads an already-tracked note once, so each pass is one command under the old Single-plus-Reload budget.
+        var expected = new[] { 5, 4, 4 };
         switch (shape)
         {
             case "two-kind-outcome-cold-store":
                 // A restart: the store is first touched by the reconciler's own observation.
                 await h.RestartAsync();
-                expected = [7, 5, 5];
+                expected = [6, 4, 4];
                 break;
             case "one-kind-legacy-outcome-null-verdict-404":
                 await h.UpdateNoteAsync(note.Id, n => n.IsLegacy = true);
@@ -118,7 +119,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 break;
             case "task-completion-unprofiled-404":
                 await h.UpdateNoteAsync(note.Id, n => n.Kind = LandNotificationKind.TaskCompletion);
-                expected = [7, 6, 6]; // its existing delivery-generation SELECT
+                expected = [6, 5, 5]; // its existing delivery-generation SELECT, minus the CARD-1759 note reload
                 break;
             case "two-kind-outcome-live-committed-row":
                 // The runner still holds the session and answers one row the store already committed.
@@ -128,7 +129,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 // RC 5a126f6fc instead takes d87adc576's exact [11,10,10] expectation.
                 h.Runner.Transcript = Mode.Entries;
                 h.Runner.NextEntries = _ => [events[5]];
-                expected = [9, 8, 8];
+                expected = [8, 7, 7];
                 break;
         }
 
@@ -404,7 +405,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                         TaskCompletionNotification.SnapshotVersion, "raw", wire, wire, TaskCompletionNotification.Sha256(wire),
                         [row.Id], null, null, DateTime.UtcNow));
                 });
-                commands = [7, 7, 7]; // its existing delivery-generation SELECT, every pass
+                commands = [6, 6, 6]; // delivery-generation SELECT every pass, minus the CARD-1759 note reload
                 break;
             }
             case "pointer-headline-row":
@@ -526,7 +527,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             {
                 passes[0].Sessions.ShouldBe([other], "the scan follows the keyed row to B");
                 passes[0].Floors.ShouldBe([Floor]);
-                passes.Select(p => p.Commands).ShouldBe([7, 2, 2], rosters);
+                passes.Select(p => p.Commands).ShouldBe([6, 1, 1], rosters);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.SessionProjections).ShouldBe([2, 0, 0], "the parent projection and the D-3 projection of B");
                 await ShouldBeConfirmedAtAsync(h, note, atOther, session: other);
@@ -557,7 +558,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 // D-2 is false on equal ids: the parent scan is already B, with no second SELECT.
                 passes[0].Sessions.ShouldBe([other]);
                 passes[0].Floors.ShouldBe([Floor]);
-                passes.Select(p => p.Commands).ShouldBe([6, 2, 2], rosters);
+                passes.Select(p => p.Commands).ShouldBe([5, 1, 1], rosters);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.SessionProjections).ShouldBe([1, 0, 0]);
                 await ShouldBeConfirmedAtAsync(h, note, atOther);
@@ -566,7 +567,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             case "row-equals-parent-miss":
             {
                 // The row stayed on A: today's parent scan and parent proof, although B holds the body.
-                passes.Select(p => p.Commands).ShouldBe([6, 5, 5], rosters);
+                passes.Select(p => p.Commands).ShouldBe([5, 4, 4], rosters);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.SessionProjections).ShouldBe([1, 1, 1]);
                 passes[0].ReceiptRows.ShouldBe(48);

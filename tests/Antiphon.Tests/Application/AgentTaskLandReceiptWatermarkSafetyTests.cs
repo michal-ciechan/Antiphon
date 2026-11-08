@@ -374,14 +374,15 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
         await using var h = await LandReceiptScanHarness.CreateAsync();
         var candidates = shape switch { "one-kind-852" => 852, "two-kind-1506" => 1506, _ => 48 };
         var (note, _, events) = await ArrangeAsync(h, candidates);
-        int[] commands = [6, 5, 5];
+        // CARD-1759 reloads an already-tracked note once, so each pass is one command under the old Single-plus-Reload budget.
+        int[] commands = [5, 4, 4];
         int[] transcript = [1, 0, 0];
         switch (shape)
         {
             case "two-kind-48":
                 // A restart: the store is first touched by the reconciler's own observation.
                 await h.RestartAsync();
-                commands = [7, 5, 5];
+                commands = [6, 4, 4];
                 break;
             case "one-kind-852":
                 await h.UpdateNoteAsync(note.Id, n => n.IsLegacy = true);
@@ -390,7 +391,7 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
                 // The catch-up's own StartedAt, identity and MAX statements, never a cache probe.
                 h.Runner.Transcript = Mode.Entries;
                 h.Runner.NextEntries = _ => [events[5]];
-                commands = [9, 8, 8];
+                commands = [8, 7, 7];
                 transcript = [3, 2, 2];
                 break;
         }
@@ -401,7 +402,7 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
             // An unrelated committed change outside the measured window reopens exactly one full scan.
             (await h.IngestAsync(h.SessionId, (TranscriptKinds.AssistantText, "unrelated assistant text"))).Count.ShouldBe(1);
             passes = [.. passes, .. await PassesAsync(h, note.Id, 2)];
-            commands = [6, 5, 5, 6, 5];
+            commands = [5, 4, 4, 5, 4];
             transcript = [1, 0, 0, 1, 0];
         }
 
