@@ -1,6 +1,9 @@
 # CARD-1782. Read-only selector from tests/impacted-classes.json.
+# CARD-1783. -MergeSubset always emits the fixed high-radius classes. A -Range
+# that touches server/Migrations/** also emits the migrations downgrade selector.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
+# -MergeSubset cannot combine with -Audit.
 # PowerShell 5.1 compatible: no ternary, no ??, no ?. ASCII only.
 [CmdletBinding()]
 param(
@@ -10,7 +13,8 @@ param(
     [string]$Repo,
     [string]$Table,
     [switch]$Json,
-    [switch]$Audit
+    [switch]$Audit,
+    [switch]$MergeSubset
 )
 
 Set-StrictMode -Version 2.0
@@ -71,6 +75,23 @@ if ($rangeSet -and ($pathSet -or $listSet)) {
     if ($Json) {
         Exit-Json ([pscustomobject]@{
             ok = $false
+            emptyGlobs = @()
+            missingClasses = @()
+            kinds = @()
+            globHits = @()
+            derivedFiles = @()
+            error = $switchMessage
+        }) 2
+    }
+    exit 2
+}
+if ($MergeSubset -and $Audit) {
+    $switchMessage = 'impacted-classes refused: -MergeSubset cannot be combined with -Audit'
+    Write-Err $switchMessage
+    if ($Json) {
+        Exit-Json ([pscustomobject]@{
+            ok = $false
+            mode = 'merge-subset'
             emptyGlobs = @()
             missingClasses = @()
             kinds = @()
@@ -576,6 +597,9 @@ if (-not [string]::IsNullOrWhiteSpace($Range)) {
     }
     foreach ($line in (Split-Lines $ran.Stdout)) { [void]$changed.Add($line.Replace('\', '/')) }
 }
+elseif ($MergeSubset -and [string]::IsNullOrWhiteSpace($FileList) -and ($null -eq $Path -or @($Path).Count -eq 0)) {
+    # Fixed subset only. A migration diff is what adds the downgrade selector.
+}
 elseif (-not [string]::IsNullOrWhiteSpace($FileList) -or ($null -ne $Path -and $Path.Count -gt 0)) {
     if (-not [string]::IsNullOrWhiteSpace($FileList)) {
         if (-not (Test-Path -LiteralPath $FileList)) {
@@ -591,8 +615,98 @@ elseif (-not [string]::IsNullOrWhiteSpace($FileList) -or ($null -ne $Path -and $
     }
 }
 else {
-    Write-Err "usage: impacted-classes.ps1 -Range <git-range> | -FileList <file> | -Path <repo-relative> [-Json] [-Audit]"
+    Write-Err "usage: impacted-classes.ps1 -Range <git-range> | -FileList <file> | -Path <repo-relative> | -MergeSubset [-Range <git-range>] [-Json] [-Audit]"
     exit 2
+}
+
+if ($MergeSubset) {
+    $fixedNames = @(
+        'AppDbContextModelTests',
+        'CheckpointReceiptSafetyTests',
+        'ContractSnapshotTests',
+        'HostCleanupCheckpointReceiptTests',
+        'TestTimingOperationLabelTests'
+    )
+    $wholeSubset = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($fixedName in $fixedNames) {
+        if (-not $census.Contains($fixedName)) {
+            $missingMessage = "merge-subset refused: class '" + $fixedName + "' was not found"
+            Write-Err $missingMessage
+            if ($Json) {
+                Exit-Json ([pscustomobject]@{
+                    ok = $false
+                    mode = 'merge-subset'
+                    migrations = $false
+                    error = $missingMessage
+                }) 1
+            }
+            exit 1
+        }
+        [void]$wholeSubset.Add($fixedName)
+    }
+    $migrationRegex = [regex]::new((Convert-GlobToRegex 'server/Migrations/**'), 'CultureInvariant')
+    $migrationsHit = $false
+    foreach ($changedPath in $changed) {
+        if ($migrationRegex.IsMatch($changedPath)) { $migrationsHit = $true; break }
+    }
+    if ($migrationsHit) {
+        foreach ($kind in $parsed) {
+            if ($kind.Id -ne 'migrations') { continue }
+            foreach ($className in $kind.Classes) {
+                if ($className.EndsWith('Tests')) { [void]$wholeSubset.Add($className) }
+            }
+        }
+        foreach ($className in @($filesByClass.Keys)) {
+            $ownsDerived = $false
+            foreach ($relative in $filesByClass[$className]) {
+                if ($derivedSet.Contains($relative)) { $ownsDerived = $true; break }
+            }
+            if ($ownsDerived -and ([string]$className).EndsWith('Tests')) { [void]$wholeSubset.Add($className) }
+        }
+    }
+    $subsetByProject = @{}
+    foreach ($className in $wholeSubset) {
+        $project = 'tests/Antiphon.Tests'
+        if ($filesByClass.ContainsKey($className) -and $filesByClass[$className].Count -gt 0) {
+            $project = Get-Project $filesByClass[$className][0]
+        }
+        if (-not $subsetByProject.ContainsKey($project)) {
+            $subsetByProject[$project] = New-Object System.Collections.Generic.List[string]
+        }
+        [void]$subsetByProject[$project].Add($className)
+    }
+    $subsetFilters = New-Object System.Collections.Generic.List[object]
+    $subsetProjects = New-StringList
+    Fill-Sorted @($subsetByProject.Keys) $subsetProjects
+    foreach ($project in $subsetProjects) {
+        $filter = New-ClassFilter $subsetByProject[$project]
+        [void]$subsetFilters.Add([pscustomobject]@{ project = $project; treenodeFilter = $filter })
+    }
+    $subsetTop = ''
+    foreach ($row in $subsetFilters) {
+        if ($row.project -eq 'tests/Antiphon.Tests') { $subsetTop = $row.treenodeFilter; break }
+    }
+    if ([string]::IsNullOrEmpty($subsetTop) -and $subsetFilters.Count -gt 0) { $subsetTop = $subsetFilters[0].treenodeFilter }
+    $fixedOut = New-StringList
+    Fill-Sorted $fixedNames $fixedOut
+    $classOut = New-StringList
+    Fill-Sorted $wholeSubset $classOut
+    $subsetPayload = [pscustomobject]@{
+        ok = $true
+        mode = 'merge-subset'
+        migrations = [bool]$migrationsHit
+        fixedClasses = $fixedOut
+        classes = $classOut
+        treenodeFilter = [string]$subsetTop
+        filters = @($subsetFilters.ToArray())
+    }
+    if ($Json) { Exit-Json $subsetPayload 0 }
+    Write-Output 'mode=merge-subset'
+    Write-Output ('migrations=' + $migrationsHit)
+    Write-Output ('fixedClasses=' + ($fixedOut -join ','))
+    Write-Output ('classes=' + ($classOut -join ','))
+    Write-Output ('treenodeFilter=' + $subsetTop)
+    exit 0
 }
 
 $addedText = $null
