@@ -38,7 +38,11 @@ public sealed class RunnerWorktreeRetentionSettings
     /// <summary>I-9. At most this many requests per runner per tick.</summary>
     public int MaxRemovalsPerTick { get; set; } = 25;
 
-    /// <summary>CARD-1794 (red shim).</summary>
+    /// <summary>
+    /// CARD-1794 (1). At most this many requests per runner per tick for eligible tasks whose mirror a complete runner
+    /// inventory shows already gone. They are sent after every present tree, unpaced, and never count against
+    /// <see cref="MaxRemovalsPerTick"/>; the runner still answers <c>already_absent</c> before the path is cleared.
+    /// </summary>
     public int MaxAbsentPerTick { get; set; } = 200;
 
     public int PauseBetweenSeconds { get; set; } = 5;
@@ -95,6 +99,8 @@ public sealed class RunnerWorktreeRetentionSettingsValidator : IValidateOptions<
             failures.Add("RunnerWorktreeRetention:MinTerminalHours must be at least 1.");
         if (options.MaxRemovalsPerTick is < 1 or > 100)
             failures.Add("RunnerWorktreeRetention:MaxRemovalsPerTick must be between 1 and 100.");
+        if (options.MaxAbsentPerTick is < 0 or > 1000)
+            failures.Add("RunnerWorktreeRetention:MaxAbsentPerTick must be between 0 and 1000.");
         if (options.PauseBetweenSeconds < 0)
             failures.Add("RunnerWorktreeRetention:PauseBetweenSeconds must not be negative.");
         if (options.RequestTimeoutSeconds < 1)

@@ -72,7 +72,8 @@ public sealed partial class AttentionService
     /// CARD-1677 S3 (plan §3.6): one Warning per allow-listed runner whose configured worktree volume
     /// is at or above <see cref="WorkspaceDiskAlarmSettings.UsedPercent"/> used in a fresh sample.
     /// Computed per read from the host-stats cache, so a recovered volume clears its row and the key
-    /// keeps one row per runner. Report only: nothing here deletes anything.
+    /// keeps one row per runner. Report only: nothing here deletes anything. CARD-1794: free space under
+    /// <see cref="WorkspaceDiskAlarmSettings.MinFreeGiB"/> raises the same row as an Error, even below the percentage.
     /// </summary>
     private List<AttentionItemDto> BuildWorkspaceDiskLowItems(DateTimeOffset now)
     {
@@ -93,20 +94,29 @@ public sealed partial class AttentionService
             if (now - sample.ObservedAt > TimeSpan.FromMinutes(settings.SampleFreshMinutes)) continue;
             var disk = sample.Snapshot.Current?.Disks?
                 .FirstOrDefault(entry => string.Equals(entry.Path, volume, StringComparison.Ordinal));
-            if (disk is null || !IsWorkspaceDiskLow(disk.FreeBytes, disk.TotalBytes, settings.UsedPercent))
+            if (disk is null)
+                continue;
+            var underFloor = IsWorkspaceDiskUnderFloor(disk.FreeBytes, disk.TotalBytes, settings.MinFreeGiB);
+            if (!underFloor && !IsWorkspaceDiskLow(disk.FreeBytes, disk.TotalBytes, settings.UsedPercent))
                 continue;
 
             var usedPercent = (int)((Int128)100 * (disk.TotalBytes - disk.FreeBytes) / disk.TotalBytes);
             var freeGiB = (disk.FreeBytes / (double)(1L << 30)).ToString("0.#", CultureInfo.InvariantCulture);
             var totalGiB = (disk.TotalBytes / (double)(1L << 30)).ToString("0.#", CultureInfo.InvariantCulture);
+            var minFreeBytes = (long)settings.MinFreeGiB << 30;
             items.Add(new AttentionItemDto(
-                AttentionKind.WorkspaceDiskLow, AlertSeverity.Warning,
+                AttentionKind.WorkspaceDiskLow, underFloor ? AlertSeverity.Error : AlertSeverity.Warning,
                 null, null, null, null,
-                $"Runner {runnerId} worktree disk {usedPercent}% used",
-                $"{volume} has {freeGiB} GiB free of {totalGiB} GiB (alarm at {settings.UsedPercent}%). Report only: nothing is deleted; worktree retention is {retention}.",
+                underFloor
+                    ? $"Runner {runnerId} worktree disk {usedPercent}% used, {freeGiB} GiB free"
+                    : $"Runner {runnerId} worktree disk {usedPercent}% used",
+                underFloor
+                    ? $"{volume} has {freeGiB} GiB free of {totalGiB} GiB, below the {settings.MinFreeGiB} GiB floor (alarm at {settings.UsedPercent}%). Report only: nothing is deleted; worktree retention is {retention}."
+                    : $"{volume} has {freeGiB} GiB free of {totalGiB} GiB (alarm at {settings.UsedPercent}%). Report only: nothing is deleted; worktree retention is {retention}.",
                 $"runner={runnerId}; path={volume}; usedPercent={usedPercent}; threshold={settings.UsedPercent}; "
                     + $"freeBytes={disk.FreeBytes.ToString(CultureInfo.InvariantCulture)}; "
                     + $"totalBytes={disk.TotalBytes.ToString(CultureInfo.InvariantCulture)}; "
+                    + $"minFreeBytes={minFreeBytes.ToString(CultureInfo.InvariantCulture)}; "
                     + $"observedAt={sample.ObservedAt:O}; retention={retention}",
                 sample.ObservedAt.UtcDateTime, null, [AttentionAction.OpenDrawer],
                 ConditionKey: $"workspace-disk-low:{runnerId}"));
@@ -121,6 +131,13 @@ public sealed partial class AttentionService
     internal static bool IsWorkspaceDiskLow(long freeBytes, long totalBytes, int usedPercent) =>
         totalBytes > 0 && freeBytes >= 0 && freeBytes <= totalBytes
         && (Int128)100 * (totalBytes - freeBytes) >= (Int128)usedPercent * totalBytes;
+
+    /// <summary>
+    /// CARD-1794 (5): free bytes strictly below <paramref name="minFreeGiB"/> GiB on a usable reading. 0 is off.
+    /// </summary>
+    internal static bool IsWorkspaceDiskUnderFloor(long freeBytes, long totalBytes, int minFreeGiB) =>
+        minFreeGiB > 0 && totalBytes > 0 && freeBytes >= 0 && freeBytes <= totalBytes
+        && freeBytes < (long)minFreeGiB << 30;
 
     /// <summary>
     /// The retention mode from configuration (test design §Slices: not from S1's settings type, so the

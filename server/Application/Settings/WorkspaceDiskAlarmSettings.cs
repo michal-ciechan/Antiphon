@@ -12,6 +12,7 @@ public sealed class WorkspaceDiskAlarmSettings
     public const int MinUsedPercent = 50;
     public const int MaxUsedPercent = 99;
     public const int MaxSampleFreshMinutes = 24 * 60;
+    public const int MaxMinFreeGiB = 100_000;
 
     public bool Enabled { get; set; } = true;
 
@@ -21,7 +22,10 @@ public sealed class WorkspaceDiskAlarmSettings
     /// <summary>A sample the server first observed longer ago than this raises nothing.</summary>
     public int SampleFreshMinutes { get; set; } = 15;
 
-    /// <summary>CARD-1794 (red shim).</summary>
+    /// <summary>
+    /// CARD-1794 (5). Free space below this many GiB raises the row as an Error, even under <see cref="UsedPercent"/>
+    /// (server2 reached 1.8 GB free with no alert). 0 turns the floor off. 0..<see cref="MaxMinFreeGiB"/>.
+    /// </summary>
     public int MinFreeGiB { get; set; } = 10;
 
     /// <summary>

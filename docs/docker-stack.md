@@ -845,6 +845,28 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   re-sends it at once. Never-sent trees go first, oldest first, so kept trees never starve removable ones and
   successive dry-run ticks cover the whole population.
 - **Tick bound:** a tick starts no new request after `MaxTickMinutes` (20); the rest wait for the next tick.
+- **Gone mirrors (CARD-1794):** when the runner inventory is complete, an eligible task whose `task-<8hex>` is not
+  in it is sent after every present tree, on its own bound `MaxAbsentPerTick` (200), unpaced, and never counts
+  against `MaxRemovalsPerTick`; the runner still answers `already_absent` before the path is cleared. An
+  incomplete inventory proves nothing, so then every task shares the one removal bound. Every eligible task past a
+  bound is a `queued_next_tick` row, so the census names it. The tick log and preview reply add `absentSent`,
+  `queued` and `minTerminalHours` (the floor this server applied).
+- **Settling beyond 12 h (CARD-1794):** a `settling` row means `CompletedAt` is younger than the applied
+  `MinTerminalHours`. The 2026-11-08 previews (runs ddb57b73, 8f1f4338) held every task up to 23.98 h old as
+  settling while the youngest `sync_debt` row was 24.03 h old: the server applied 24, not the shipped 12, so an
+  out-of-repo configuration override was in force. Read `minTerminalHours` in a preview reply before
+  changing anything; remove the override to get the 12 h floor back.
+- **Unbranched reports (CARD-1794):** the task record is the durable report (D-9). A finished mirror whose
+  `.antiphon/task-<id8>.md` is not in the branch is retired when the task row holds the report (`Result`); while
+  `Result` is empty and the report file lives in the mirror it is held `report_unpreserved`. Never retire such a
+  mirror by hand; nothing commits the file for it.
+- **One-shot reclaim (CARD-1794):** `POST /api/agent-tasks/worktree-residue/runner-retention/server2/execute` with
+  the `X-Antiphon-Operator-Token` header (403 `operator_token_required` otherwise) runs one Execute tick now, even
+  while `Execute=false`. `Enabled` and `Runners` still gate it, the tick bound and every runner check still apply,
+  and the temp sweep stays DryRun. It is the sanctioned replacement for hand deletion.
+- **Disk floor (CARD-1794):** the `WorkspaceDiskLow` attention row (Warning at `WorkspaceDiskAlarm:UsedPercent`, 85)
+  turns Error when the volume has less than `WorkspaceDiskAlarm:MinFreeGiB` free (50 in `server/appsettings.json`,
+  10 in code, 0 off), even below the percentage.
 - **Runner-side recent use:** the runner keeps a tree it mirrored, or launched a session in, within the last
   `PhoneHome:RetentionRecentUseMinutes` (10), and any tree one of its live sessions runs in
   (`recently_mirrored`, `workspace_in_use`). That covers a task re-dispatched between the server's reread

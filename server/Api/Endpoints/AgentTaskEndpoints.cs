@@ -14,10 +14,16 @@ namespace Antiphon.Server.Api.Endpoints;
 
 public static class AgentTaskEndpoints
 {
-    /// <summary>CARD-1794 (red shim).</summary>
-    public static Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> ExecuteRunnerRetentionAsync(string runnerId,
-        HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionService retention, CancellationToken ct) =>
-        retention.RunExecuteOnceAsync(runnerId, ct);
+    /// <summary>
+    /// CARD-1794 (4). The one-shot runner retention execute: operator credential only (403 operator_token_required for
+    /// anyone else, a task token included), then one Execute tick for one allow-listed runner.
+    /// </summary>
+    public static async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> ExecuteRunnerRetentionAsync(string runnerId,
+        HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionService retention, CancellationToken ct)
+    {
+        OperatorCredential.Require(http, operatorSettings, "The one-shot runner retention execute requires the operator credential.");
+        return await retention.RunExecuteOnceAsync(runnerId, ct);
+    }
 
     /// <summary>Header the delegate script sends; matches ANTIPHON_TASK_TOKEN in the agent's env.</summary>
     public const string TokenHeader = "X-Antiphon-Task-Token";
@@ -159,6 +165,16 @@ public static class AgentTaskEndpoints
                 throw new ForbiddenException("A child task token cannot preview runner retention.", "caller_scope");
             return Results.Ok(await retention.RunTickAsync(ct, previewRunner: runnerId));
         });
+
+        // CARD-1794 (4). The sanctioned one-shot reclaim: one Execute tick for one allow-listed runner, operator only.
+        // Enabled must be on and Runners must name it; it executes even while the scheduled job is DryRun.
+        tasks.MapPost("/worktree-residue/runner-retention/{runnerId}/execute", async (
+            string runnerId,
+            HttpContext http,
+            IOptions<PhoneHomeRunnerSettings> operatorSettings,
+            RunnerWorktreeRetentionService retention,
+            CancellationToken ct) =>
+            Results.Ok(await ExecuteRunnerRetentionAsync(runnerId, http, operatorSettings.Value, retention, ct)));
 
         // CARD-0824 S4a T-D-8. One dry-run desktop legacy release tick (it runs even while disabled, so the operator
         // can preview before switching it back on). It files nothing and runs no mutating git; rows land in a run.
