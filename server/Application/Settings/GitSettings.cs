@@ -39,8 +39,14 @@ public class GitSettings
     /// </summary>
     public int IndexLockStaleAfterSeconds { get; set; } = 300;
 
+    /// <summary>
+    /// Product default for <see cref="WorktreeBaseInspectionTimeoutSeconds"/>.
+    /// A missing <c>IOptions&lt;GitSettings&gt;</c> uses this same value (CARD-1749).
+    /// </summary>
+    public const int DefaultWorktreeBaseInspectionTimeoutSeconds = 5;
+
     /// <summary>Shared monotonic inspection budget for one card-bound worktree base decision.</summary>
-    public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = 5;
+    public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = DefaultWorktreeBaseInspectionTimeoutSeconds;
     public int WorktreeBaseMaxCandidates { get; set; } = 16;
     public int WorktreeBaseMaxInventoryRows { get; set; } = 256;
     public int WorktreeBaseMaxGitCommands { get; set; } = 128;

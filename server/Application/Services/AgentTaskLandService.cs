@@ -1135,7 +1135,9 @@ public sealed class AgentTaskLandService
             warnings.Add($"{cardIdentifier}: sibling inspection incomplete: candidate_limit "
                 + $"({pendingSiblings.Length} total, {candidateLimit} inspected). Inspect remaining branches separately.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _gitSettings?.WorktreeBaseInspectionTimeoutSeconds ?? 2)));
+        deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1,
+            _gitSettings?.WorktreeBaseInspectionTimeoutSeconds
+            ?? GitSettings.DefaultWorktreeBaseInspectionTimeoutSeconds)));
         string? landingCommon = null;
         if (_landingGit is not null)
         {

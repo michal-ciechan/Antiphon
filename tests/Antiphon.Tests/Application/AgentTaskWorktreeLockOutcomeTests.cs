@@ -42,9 +42,8 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
 
     /// <summary>
     /// The harness-built land service must use <see cref="GitSettings.WorktreeBaseInspectionTimeoutSeconds"/>
-    /// (5). The service falls back to 2 only when <c>IOptions&lt;GitSettings&gt;</c> is omitted.
-    /// 3 seconds is inside that gap: the long sibling token survives the production default and
-    /// disappears when the argument is removed (PC-1).
+    /// (5). A missing <c>IOptions&lt;GitSettings&gt;</c> uses that same default (CARD-1749).
+    /// Three seconds is inside the production budget, so the long sibling token survives.
     /// </summary>
     [Test]
     [Timeout(120_000)]
