@@ -152,7 +152,12 @@ public sealed class ServerRepositoryMirrorScriptTests
     // temp root goes in drive-relative, which names the same directory from the temp drive.
     private static string ScriptRoot(string hostPath, bool windows)
     {
-        return hostPath;
+        if (!windows)
+            return hostPath;
+        var path = hostPath.Replace('\\', '/');
+        if (path.Length >= 2 && path[1] == ':')
+            path = path.Substring(2);
+        return path;
     }
 
     private static async Task<(int Exit, string Output)> RunAsync(params string[] args)
@@ -162,6 +167,7 @@ public sealed class ServerRepositoryMirrorScriptTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            WorkingDirectory = Path.GetTempPath(),
         };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-NonInteractive");
