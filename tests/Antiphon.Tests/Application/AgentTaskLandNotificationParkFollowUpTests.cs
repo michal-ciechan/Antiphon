@@ -9,6 +9,8 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -234,7 +236,9 @@ public sealed class AgentTaskLandNotificationParkFollowUpTests
         foreach (var line in plan)
             Console.WriteLine(line);
 
-        var index = db.Model.FindEntityType(typeof(TranscriptEntry))!
+        // CreatedConcurrently lives on the design-time model. The runtime model leaves it null.
+        var index = db.GetService<IDesignTimeModel>().Model
+            .FindEntityType(typeof(TranscriptEntry))!
             .GetIndexes()
             .SingleOrDefault(candidate => candidate.GetDatabaseName() == PromptStampIndex);
         index.ShouldNotBeNull();
