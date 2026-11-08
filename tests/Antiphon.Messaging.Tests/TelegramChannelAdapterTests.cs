@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Antiphon.Messaging.Telegram;
 using Antiphon.Messaging.Tests.FakeTelegram;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -367,6 +368,195 @@ public sealed class TelegramChannelAdapterTests
         msg.ShouldNotBeNull("a broken download must never drop the inbound message");
         msg!.Text.ShouldBe("look at this");
         msg.Attachments.ShouldHaveSingleItem().Content.ShouldBeNull();
+    }
+
+    // ---------- over-cap inbound attachments (CARD-1799) ----------
+
+    // The 2026-11-08 Family file: 18,430,415 bytes against the default 14 MiB cap.
+    private const int FamilyPptxBytes = 18_430_415;
+
+    [Test]
+    public async Task Over_cap_document_is_marked_with_the_limit_and_never_fetched()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "pptx-1", fileName: "Homework.pptx",
+            mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", fileSize: FamilyPptxBytes);
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        var att = msg!.Attachments.ShouldHaveSingleItem();
+        att.Content.ShouldBeNull();
+        att.InlineLimitBytes.ShouldBe(14L * 1024 * 1024, "the bridge needs the cap to name the reason");
+        att.Name.ShouldBe("Homework.pptx");
+        att.Size.ShouldBe(FamilyPptxBytes);
+        fake.GetFileCalls.ShouldBe(0, "a declared over-cap file must never be downloaded");
+    }
+
+    [Test]
+    public async Task Over_cap_document_gets_one_automatic_reply_in_the_senders_chat()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "pptx-1", fileName: "Homework.pptx",
+            fileSize: FamilyPptxBytes, caption: "Make it pdf printable");
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        var sent = fake.SentMessages.ShouldHaveSingleItem();
+        sent.ChatId.ShouldBe("555");
+        sent.RawBody!["reply_to_message_id"]!.GetValue<long>().ShouldBe(long.Parse(msg!.ChannelMessageId));
+        sent.Text.ShouldBe(
+            "File too large (17.6 MiB): the limit is 14 MiB, so it was not delivered. "
+            + "Send a smaller file, compress it, or split it.");
+        sent.RawBody.ContainsKey("parse_mode").ShouldBeFalse("the notice is plain text");
+        sent.Text!.ShouldNotContain("Homework", Case.Insensitive, "the notice never echoes the sender's content");
+        sent.Text.ShouldNotContain("printable", Case.Insensitive, "the notice never echoes the sender's content");
+    }
+
+    [Test]
+    public async Task Over_cap_notice_in_a_forum_topic_stays_in_that_topic()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueUpdate(new JsonObject
+        {
+            ["message"] = new JsonObject
+            {
+                ["message_id"] = 4242,
+                ["message_thread_id"] = 77,
+                ["is_topic_message"] = true,
+                ["from"] = new JsonObject { ["id"] = 999, ["is_bot"] = false, ["first_name"] = "Ola" },
+                ["chat"] = new JsonObject { ["id"] = -100123, ["type"] = "supergroup", ["title"] = "Family" },
+                ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["document"] = new JsonObject { ["file_id"] = "big", ["file_name"] = "big.pptx", ["file_size"] = FamilyPptxBytes },
+            },
+        });
+
+        await FirstMessageAsync(NewAdapter(fake));
+
+        var sent = fake.SentMessages.ShouldHaveSingleItem();
+        sent.ChatId.ShouldBe("-100123");
+        sent.RawBody!["message_thread_id"]!.GetValue<long>().ShouldBe(77);
+        sent.RawBody["reply_to_message_id"]!.GetValue<long>().ShouldBe(4242);
+    }
+
+    [Test]
+    public async Task Over_cap_size_found_only_by_getFile_is_marked_and_answered()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        var settings = Settings(fake);
+        settings.MaxInlineAttachmentBytes = 2;
+        var adapter = new TelegramChannelAdapter(new HttpClient(), settings, NullLogger<TelegramChannelAdapter>.Instance);
+        fake.RegisterFile("nosize", [1, 2, 3]);
+        // No file_size in the update: only getFile reveals the file is over the cap.
+        fake.EnqueueUpdate(new JsonObject
+        {
+            ["message"] = new JsonObject
+            {
+                ["message_id"] = 9001,
+                ["from"] = new JsonObject { ["id"] = 999, ["is_bot"] = false, ["first_name"] = "Ola" },
+                ["chat"] = new JsonObject { ["id"] = 555, ["type"] = "private", ["first_name"] = "Ola" },
+                ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["document"] = new JsonObject { ["file_id"] = "nosize", ["file_name"] = "n.bin" },
+            },
+        });
+
+        var msg = await FirstMessageAsync(adapter);
+
+        var att = msg!.Attachments.ShouldHaveSingleItem();
+        att.Content.ShouldBeNull();
+        att.InlineLimitBytes.ShouldBe(2);
+        att.Size.ShouldBe(3, "the size getFile resolved is kept for the note");
+        fake.SentMessages.ShouldHaveSingleItem().Text.ShouldBe(
+            "File too large (3 bytes): the limit is 2 bytes, so it was not delivered. "
+            + "Send a smaller file, compress it, or split it.");
+    }
+
+    [Test]
+    public async Task Edited_over_cap_message_is_answered_only_once()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        JsonObject Message(string caption) => new()
+        {
+            ["message_id"] = 1784,
+            ["from"] = new JsonObject { ["id"] = 999, ["is_bot"] = false, ["first_name"] = "Ola" },
+            ["chat"] = new JsonObject { ["id"] = 555, ["type"] = "private", ["first_name"] = "Ola" },
+            ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["caption"] = caption,
+            ["document"] = new JsonObject { ["file_id"] = "big", ["file_name"] = "big.pptx", ["file_size"] = FamilyPptxBytes },
+        };
+        fake.EnqueueUpdate(new JsonObject { ["message"] = Message("first") });
+        fake.EnqueueUpdate(new JsonObject { ["edited_message"] = Message("edited caption") });
+
+        var messages = await MessagesAsync(NewAdapter(fake), count: 2);
+
+        messages.Count.ShouldBe(2);
+        messages.ShouldAllBe(m => m.Attachments.Single().InlineLimitBytes == 14L * 1024 * 1024);
+        fake.SentMessages.Count.ShouldBe(1, "an edit of the same message must not send a second notice");
+    }
+
+    [Test]
+    public async Task Inlined_failed_and_disabled_downloads_send_no_notice()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        var bytes = "%PDF-1.4 small"u8.ToArray();
+        fake.RegisterFile("small", bytes);
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "small", fileName: "s.pdf", fileSize: bytes.Length);
+        fake.EnqueuePhotoMessage(chatId: 555, fromId: 999, fileId: "ghost", fileSize: 3);
+
+        var messages = await MessagesAsync(NewAdapter(fake), count: 2);
+
+        messages[0].Attachments.Single().Content.ShouldBe(bytes);
+        messages[0].Attachments.Single().InlineLimitBytes.ShouldBeNull();
+        messages[1].Attachments.Single().Content.ShouldBeNull();
+        messages[1].Attachments.Single().InlineLimitBytes.ShouldBeNull("a failed download is not an over-cap file");
+
+        // Downloads disabled (cap 0): a big file is metadata-only by configuration, not over a limit.
+        await using var off = new FakeTelegramServer();
+        await off.StartAsync();
+        var settings = Settings(off);
+        settings.MaxInlineAttachmentBytes = 0;
+        off.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "big", fileName: "big.pptx", fileSize: FamilyPptxBytes);
+        var disabled = await FirstMessageAsync(
+            new TelegramChannelAdapter(new HttpClient(), settings, NullLogger<TelegramChannelAdapter>.Instance));
+
+        disabled!.Attachments.Single().InlineLimitBytes.ShouldBeNull();
+        fake.SentMessages.ShouldBeEmpty();
+        off.SentMessages.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task A_failed_over_cap_notice_never_loses_the_message()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueSendBadRequest("Bad Request: not enough rights to send text messages to the chat");
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "big", fileName: "big.pptx",
+            fileSize: FamilyPptxBytes, caption: "still here");
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull("a rejected notice must never drop the inbound message");
+        msg!.Text.ShouldBe("still here");
+        msg.Attachments.Single().InlineLimitBytes.ShouldBe(14L * 1024 * 1024);
+        fake.SendCalls.ShouldBe(1, "the notice is best-effort: one attempt, no retry loop on ingress");
+    }
+
+    private static async Task<List<ChannelMessage>> MessagesAsync(TelegramChannelAdapter adapter, int count)
+    {
+        var list = new List<ChannelMessage>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await foreach (var msg in adapter.ReceiveAsync(cts.Token))
+        {
+            list.Add(msg);
+            if (list.Count == count)
+                break;
+        }
+        return list;
     }
 
     private static async Task<ChannelMessage?> FirstMessageAsync(TelegramChannelAdapter adapter)

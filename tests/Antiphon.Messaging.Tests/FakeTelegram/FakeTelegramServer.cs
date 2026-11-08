@@ -34,6 +34,9 @@ public sealed class FakeTelegramServer : IAsyncDisposable
     public int GetUpdatesCalls { get; private set; }
     public int SendCalls { get; private set; }
 
+    /// <summary>How many times getFile has been called, so a test can prove a download was never attempted.</summary>
+    public int GetFileCalls { get; private set; }
+
     public IReadOnlyList<SentMessage> SentMessages
     {
         get { lock (_gate) return _sent.ToList(); }
@@ -323,6 +326,7 @@ public sealed class FakeTelegramServer : IAsyncDisposable
             if (!TokenOk(bot)) return Unauthorized();
             lock (_gate)
             {
+                GetFileCalls++;
                 if (file_id is null || !_files.TryGetValue(file_id, out var f))
                     return Error(400, "Bad Request: invalid file_id");
                 return Ok(new JsonObject

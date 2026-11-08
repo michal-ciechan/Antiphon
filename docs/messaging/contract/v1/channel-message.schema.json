@@ -149,6 +149,14 @@
               "null"
             ],
             "contentEncoding": "base64"
+          },
+          "inlineLimitBytes": {
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
           }
         },
         "required": [
