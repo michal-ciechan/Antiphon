@@ -77,10 +77,11 @@ public sealed class ReleaseGatePublicationAuthorityTests
         "C599 V-12: repository binds to the checkout origin and the publication destination, coordinatorVersion to the supported coordinator");
 
     [Test]
-    public Task C599A_ExecutionLedger() => RunCaseAsync("C599A_ExecutionLedger", 5,
+    public Task C599A_ExecutionLedger() => RunCaseAsync("C599A_ExecutionLedger", 6,
         "C599 V-12: the valid 13-chunk 19-UID control ledger passes the publication gate",
         "C599 G-226: a passing sibling chunk never hides a failed chunk in any suite",
         "C599 G-287: outside, absolute and reparse-escaped evidence refuses before publication",
+        "C599 G-287: an unreadable evidence directory is refused on a publication line and nothing is published",
         "C599 G-288: each failed, absent, duplicated or mistyped required prerequisite blocks remote writes",
         "C599 G-289: a nonzero or non-numeric child exit or zero executions blocks despite a passing TRX");
 

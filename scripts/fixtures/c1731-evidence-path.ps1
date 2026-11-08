@@ -48,6 +48,10 @@ function New-C1731EvidenceRoot {
     Remove-Item -LiteralPath (Join-Path $root 'break-target') -Force
     New-Item -ItemType HardLink -Path (Join-Path $cand 'evidence/hard.trx') -Target (Join-Path $cand 'evidence/hard-source.trx') | Out-Null
     New-C1731FileLink -Link (Join-Path $cand 'evidence/filelink.trx') -Target (Join-Path $cand 'evidence/suite.trx')
+    # Middle component: a directory link between evidence/ and the file. Symlink on Linux; junction if symlink creation is refused.
+    New-Item -ItemType Directory -Path (Join-Path $cand 'evidence/mid-real') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $cand 'evidence/mid-real/x.trx'), 'mid')
+    New-C1731DirectoryLink -Link (Join-Path $cand 'evidence/mid-link') -Target (Join-Path $cand 'evidence/mid-real')
     return [pscustomobject]@{ Root = $root; Candidate = $cand }
 }
 
@@ -79,6 +83,7 @@ function Test-C1731_EvidenceRefusals {
         @{ n = 'dot-segment'; r = './evidence/./suite.trx'; e = $ordinary },
         @{ n = 'escape-link'; r = 'escape-link/escape.trx'; e = '' },
         @{ n = 'inside-link'; r = 'inside-link/kept.trx'; e = '' },
+        @{ n = 'mid-link'; r = 'evidence/mid-link/x.trx'; e = '' },
         @{ n = 'file-link'; r = 'evidence/filelink.trx'; e = '' },
         @{ n = 'broken-link'; r = 'broken-link'; e = '' },
         @{ n = 'broken-child'; r = 'broken-link/file.trx'; e = '' },
@@ -97,6 +102,7 @@ function Test-C1731_EvidenceRefusals {
     Assert-C487 (($got['dotdot-inside'] -ceq $ordinary) -and ($got['dot-segment'] -ceq $ordinary)) 'C1731 a path that normalizes inside the root resolves to that file' ($got['dotdot-inside'] + ' ' + $got['dot-segment'])
     Assert-C487 ($got['escape-link'] -ceq '') 'C1731 a linked directory pointing outside refuses' $got['escape-link']
     Assert-C487 ($got['inside-link'] -ceq '') 'C1731 a linked directory whose target stays inside the root still refuses' $got['inside-link']
+    Assert-C487 ($got['mid-link'] -ceq '') 'C1731 a link in a middle path component refuses' $got['mid-link']
     Assert-C487 ($got['file-link'] -ceq '') 'C1731 a linked file refuses' $got['file-link']
     Assert-C487 (($got['broken-link'] -ceq '') -and ($got['broken-child'] -ceq '')) 'C1731 a broken link refuses' ($got['broken-link'] + ' ' + $got['broken-child'])
     Assert-C487 ($got['hard-link'] -ceq $hard) 'C1731 a hard link resolves' $got['hard-link']

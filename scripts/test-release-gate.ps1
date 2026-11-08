@@ -1435,6 +1435,34 @@ function Invoke-C599Publish {
     return (& (Join-Path $here 'publish-release.ps1') @splat)
 }
 
+function Get-C599PublishCapture {
+    # Same publisher call, keeping the REFUSED host line as well as the result.
+    param($Fx, [hashtable]$Extra)
+    $splat = @{
+        ReleaseRoot = $Fx.ReleaseRoot
+        CandidateId = $script:CandidateId
+        CheckoutRoot = $Fx.Checkout
+        SeamsPath = $Fx.Gh.Path
+        AntiphonApiUrl = $Fx.CardApi.Url
+        PassThru = $true
+    }
+    if ($Extra) { foreach ($k in $Extra.Keys) { $splat[$k] = $Extra[$k] } }
+    $raw = @(& (Join-Path $here 'publish-release.ps1') @splat *>&1)
+    $result = $null
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($raw)) {
+        $text = ''
+        if ($item -is [System.Management.Automation.InformationRecord]) { $text = [string]$item.MessageData }
+        elseif ($item -is [System.Management.Automation.ErrorRecord]) { $text = [string]$item.Exception.Message }
+        else { $text = [string]$item }
+        if ($null -ne $item -and $null -ne $item.PSObject.Properties['ExitCode'] -and $null -ne $item.PSObject.Properties['Published'] -and $null -ne $item.PSObject.Properties['Refusal']) {
+            $result = $item
+        }
+        if (-not [string]::IsNullOrEmpty($text)) { $lines.Add($text) }
+    }
+    return [pscustomobject]@{ Result = $result; Lines = @($lines) }
+}
+
 function Test-C599_CandidateIdentity {
     $root = New-C599Root
     $git = New-C599GitSeams -Root $root -HeadSha $ShaB
@@ -2585,6 +2613,56 @@ function Remove-C599AEvidenceLink {
     if (Test-Path -LiteralPath $Link) { [System.IO.Directory]::Delete($Link, $false) }
 }
 
+function Get-C599AAttributeDenial {
+    # True only when the production attribute read fails for a reason other than not-found.
+    param([string]$Path)
+    try {
+        $attrs = [System.IO.File]::GetAttributes($Path)
+        return [pscustomobject]@{ Denied = $false; Detail = [string]$attrs }
+    } catch {
+        $inner = $_.Exception
+        while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
+        $notFound = ($inner -is [System.IO.FileNotFoundException]) -or ($inner -is [System.IO.DirectoryNotFoundException])
+        return [pscustomobject]@{ Denied = (-not $notFound); Detail = ($inner.GetType().FullName + ' ' + $inner.Message) }
+    }
+}
+
+function Lock-C599AUnreadableDirectory {
+    # Hide a directory from attribute reads. Returns a scriptblock that restores the previous access.
+    # Linux: mode 000. Windows: a deny ACE for the current user. The caller must see the denial before asserting.
+    param([string]$Directory)
+    if ($env:OS -eq 'Windows_NT') {
+        $di = New-Object System.IO.DirectoryInfo $Directory
+        $sections = [System.Security.AccessControl.AccessControlSections]::Access
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $acl = $di.GetAccessControl($sections) }
+        else { $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($di, $sections) }
+        $saved = $acl.GetSecurityDescriptorSddlForm('Access')
+        $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $rights = [System.Security.AccessControl.FileSystemRights]'ListDirectory, ReadData, ReadAttributes, ReadExtendedAttributes, Traverse, ReadPermissions'
+        $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+        $deny = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sid, $rights, $inherit, [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Deny)
+        $acl.AddAccessRule($deny)
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $di.SetAccessControl($acl) }
+        else { [System.IO.FileSystemAclExtensions]::SetAccessControl($di, $acl) }
+        $locked = $Directory
+        $sddl = $saved
+        return {
+            $restoreDi = New-Object System.IO.DirectoryInfo $locked
+            $restoreAcl = New-Object System.Security.AccessControl.DirectorySecurity
+            $restoreAcl.SetSecurityDescriptorSddlForm($sddl, [System.Security.AccessControl.AccessControlSections]::Access)
+            if ($PSVersionTable.PSEdition -eq 'Desktop') { $restoreDi.SetAccessControl($restoreAcl) }
+            else { [System.IO.FileSystemAclExtensions]::SetAccessControl($restoreDi, $restoreAcl) }
+        }.GetNewClosure()
+    }
+    $prior = [System.IO.File]::GetUnixFileMode($Directory)
+    [System.IO.File]::SetUnixFileMode($Directory, [System.IO.UnixFileMode]::None)
+    $locked = $Directory
+    $mode = $prior
+    return { [System.IO.File]::SetUnixFileMode($locked, $mode) }.GetNewClosure()
+}
+
 function Test-C599A_PinnedPolicy {
     # V-12 full matrix for the pinned policy, first child (G-224, G-225, G-285 gate
     # rows). Summary/report and working tree never decide.
@@ -2941,6 +3019,50 @@ function Test-C599A_ExecutionLedger {
         } -Cleanup { Remove-C599AEvidenceLink -Link $linkPath }
     }
     Assert-C599AMatrix -Name 'C599 G-287: outside, absolute and reparse-escaped evidence refuses before publication' -Results $m
+
+    # CARD-1770: a component under an unreadable directory must be a REFUSED publication line, not an unhandled error.
+    $c1770Sealed = Join-Path $croot 'sealed-evidence'
+    $c1770File = Join-Path $c1770Sealed 'antiphon-001.trx'
+    $c1770Restore = $null
+    $c1770Ok = $false
+    $c1770Detail = ''
+    try {
+        New-Item -ItemType Directory -Path $c1770Sealed -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $croot (Join-Path 'evidence' 'antiphon-001.trx')) -Destination $c1770File -Force
+        Update-C599AChunkRow -Fx $fx -Chunk 'antiphon-001' -Mutate { param($c) $c.trx = 'sealed-evidence/antiphon-001.trx' }
+        $c1770Restore = Lock-C599AUnreadableDirectory -Directory $c1770Sealed
+        $c1770Probe = Get-C599AAttributeDenial -Path $c1770File
+        if (-not $c1770Probe.Denied) {
+            $c1770Detail = 'attribute read was not denied: ' + $c1770Probe.Detail
+        } else {
+            $c1770Capture = Get-C599PublishCapture -Fx $fx
+            $c1770WantLine = '[publish-release] REFUSED: publication gate (chunk-evidence-escape:antiphon-001).'
+            $c1770WantReason = 'chunk-evidence-escape:antiphon-001'
+            $c1770Res = $c1770Capture.Result
+            $c1770Line = @($c1770Capture.Lines) -contains $c1770WantLine
+            $c1770Journal = Join-Path $fx.ReleaseRoot 'publications.json'
+            $c1770NoJournal = -not (Test-Path -LiteralPath $c1770Journal)
+            $c1770Remote = Test-C599NoRemoteWrite -Fx $fx
+            $c1770Ok = ($null -ne $c1770Res -and [int]$c1770Res.ExitCode -eq 3 -and -not [bool]$c1770Res.Published -and
+                [string]$c1770Res.Refusal -ceq $c1770WantReason -and $c1770Line -and $c1770Remote -and $c1770NoJournal)
+            $c1770Detail = ('exit={0} published={1} refusal=[{2}] line={3} remote={4} journalAbsent={5} probe={6} lines=[{7}]' -f `
+                $(if ($null -eq $c1770Res) { 'none' } else { [string]$c1770Res.ExitCode }),
+                $(if ($null -eq $c1770Res) { 'none' } else { [string]$c1770Res.Published }),
+                $(if ($null -eq $c1770Res) { '' } else { [string]$c1770Res.Refusal }),
+                $c1770Line, $c1770Remote, $c1770NoJournal, $c1770Probe.Detail, ($c1770Capture.Lines -join ' | '))
+        }
+    } catch {
+        $c1770Inner = $_.Exception
+        while ($null -ne $c1770Inner.InnerException) { $c1770Inner = $c1770Inner.InnerException }
+        $c1770Detail = 'threw: ' + $c1770Inner.GetType().FullName + ' ' + $c1770Inner.Message
+        $c1770Ok = $false
+    } finally {
+        if ($null -ne $c1770Restore) { & $c1770Restore }
+        if (Test-Path -LiteralPath $c1770File) { Remove-Item -LiteralPath $c1770File -Force }
+        if (Test-Path -LiteralPath $c1770Sealed) { Remove-Item -LiteralPath $c1770Sealed -Force }
+        Restore-C599ASnapshot -Snap $snap
+    }
+    Assert-C487 -Cond $c1770Ok -Name 'C599 G-287: an unreadable evidence directory is refused on a publication line and nothing is published' -Detail $c1770Detail
 
     # G-288: every required build/prerequisite row.
     $m = @()

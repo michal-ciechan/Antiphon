@@ -26,7 +26,7 @@ public sealed class C599SnapshotTests
 
     [Test]
     public Task Evidence_path_refusals_match_the_seeded_set() =>
-        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1731", "C1731_EvidenceRefusals", 13,
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1731", "C1731_EvidenceRefusals", 14,
             "C1731 ordinary relative evidence resolves under the candidate root",
             "C1731 missing evidence resolves when no component is a reparse point",
             "C1731 blank and empty evidence refuses",
@@ -35,6 +35,7 @@ public sealed class C599SnapshotTests
             "C1731 a path that normalizes inside the root resolves to that file",
             "C1731 a linked directory pointing outside refuses",
             "C1731 a linked directory whose target stays inside the root still refuses",
+            "C1731 a link in a middle path component refuses",
             "C1731 a linked file refuses",
             "C1731 a broken link refuses",
             "C1731 a hard link resolves",
