@@ -85,6 +85,45 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     }
 
     [Test]
+    [Timeout(60_000)]
+    public void Driver_settings_answer_is_reused_only_within_its_lifetime(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        CheckpointFixtureProcess.Git(root, "config", "filter.cache.clean", "cache-driver-must-not-run");
+        var starts = new List<string[]>();
+        CheckpointProcessRunner.Result Status(int lifetime)
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = root };
+            foreach (var argument in new[] { "-C", root, "status", "--porcelain" }) start.ArgumentList.Add(argument);
+            return CheckpointProcessRunner.RunObserved(start, 30_000, true,
+                child => starts.Add(child.ArgumentList.ToArray()), lifetime, cancellationToken);
+        }
+
+        // Default (0): every call asks git again.
+        Status(0).Exit.ShouldBe(0);
+        Status(0).Exit.ShouldBe(0);
+        starts.Count(args => args.Contains("--get-regexp")).ShouldBe(2);
+
+        // Within a lifetime the answer is reused, and the driver is still disabled on the reused call.
+        starts.Clear();
+        Status(60_000).Exit.ShouldBe(0);
+        Status(60_000).Exit.ShouldBe(0);
+        starts.Count(args => args.Contains("--get-regexp")).ShouldBe(1);
+        starts.Count(args => args.Contains("status") && args.Contains("filter.cache.clean=")).ShouldBe(2);
+
+        // A different directory is a different answer.
+        starts.Clear();
+        var other = TempDir();
+        CheckpointFixtureProcess.Git(other, "init", "-q");
+        var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = other };
+        foreach (var argument in new[] { "-C", other, "status", "--porcelain" }) start.ArgumentList.Add(argument);
+        CheckpointProcessRunner.RunObserved(start, 30_000, true,
+            child => starts.Add(child.ArgumentList.ToArray()), 60_000, cancellationToken).Exit.ShouldBe(0);
+        starts.Count(args => args.Contains("--get-regexp")).ShouldBe(1);
+    }
+
+    [Test]
     public async Task C1616_admitted_build_deadline_preserves_terminal_receipt()
     {
         await AssertAdmittedBuildTimeoutAsync(cancelBudget: false);

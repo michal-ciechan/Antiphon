@@ -39,8 +39,13 @@ namespace Antiphon.Checkpoints
         // Invocation-local observation keeps process-count witnesses on the actual launch path.
         internal static Result RunObserved(ProcessStartInfo start, int timeoutMs, bool git,
             Action<ProcessStartInfo> beforeStart, CancellationToken cancellationToken = default)
+            => RunObserved(start, timeoutMs, git, beforeStart, -1, cancellationToken);
+
+        // driverSettingsCacheMs below 0 means DriverSettingsCacheMilliseconds; tests pass their own.
+        internal static Result RunObserved(ProcessStartInfo start, int timeoutMs, bool git,
+            Action<ProcessStartInfo> beforeStart, int driverSettingsCacheMs, CancellationToken cancellationToken = default)
         {
-            var result = RunCaptured(start, timeoutMs, git, ReadTextAsync, cancellationToken, beforeStart);
+            var result = RunCaptured(start, timeoutMs, git, ReadTextAsync, cancellationToken, beforeStart, driverSettingsCacheMs);
             return new Result { Exit = result.Exit, Stdout = result.Stdout ?? "", Stderr = result.Stderr, TimedOut = result.TimedOut };
         }
 
@@ -60,7 +65,7 @@ namespace Antiphon.Checkpoints
 
         private static Captured<T> RunCaptured<T>(ProcessStartInfo start, int timeoutMs, bool git,
             Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken,
-            Action<ProcessStartInfo> beforeStart = null)
+            Action<ProcessStartInfo> beforeStart = null, int driverSettingsCacheMs = -1)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(timeoutMs);
@@ -85,8 +90,8 @@ namespace Antiphon.Checkpoints
                     config.ArgumentList.Add("config"); config.ArgumentList.Add("--null");
                     config.ArgumentList.Add("--get-regexp");
                     config.ArgumentList.Add("^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.textconv)$");
-                    var settings = RunCoreAsync(config, ReadTextAsync, deadline.Token, beforeStart).GetAwaiter().GetResult();
-                    foreach (var entry in settings.Stdout.Split('\0'))
+                    var settings = DriverSettings(config, driverSettingsCacheMs < 0 ? DriverSettingsCacheMilliseconds : driverSettingsCacheMs, deadline.Token, beforeStart);
+                    foreach (var entry in settings.Split('\0'))
                     {
                         var split = entry.IndexOf('\n');
                         if (split < 1) continue;
@@ -100,6 +105,38 @@ namespace Antiphon.Checkpoints
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             { return new Captured<T> { Exit = 128, TimedOut = true }; }
+        }
+
+        // How long one driver-settings answer is reused for the same git, directory and environment.
+        // 0 (the default) asks git before every call. The release-selection worker turns it on for its
+        // own short life: a config change made while it runs is then seen by the next worker.
+        public static int DriverSettingsCacheMilliseconds { get; set; }
+
+        private static readonly object DriverSettingsGate = new object();
+        private static readonly Dictionary<string, KeyValuePair<long, string>> DriverSettingsCache = new Dictionary<string, KeyValuePair<long, string>>();
+
+        private static string DriverSettings(ProcessStartInfo config, int lifetime, CancellationToken cancellationToken, Action<ProcessStartInfo> beforeStart)
+        {
+            string key = null;
+            if (lifetime > 0)
+            {
+                var parts = new List<string> { config.FileName, config.WorkingDirectory };
+                foreach (var pair in config.Environment) parts.Add(pair.Key + "=" + pair.Value);
+                parts.Sort(2, parts.Count - 2, StringComparer.Ordinal);
+                parts.AddRange(config.ArgumentList);
+                key = string.Join("\0", parts);
+                lock (DriverSettingsGate)
+                {
+                    if (DriverSettingsCache.TryGetValue(key, out var cached) && Environment.TickCount64 - cached.Key < lifetime)
+                        return cached.Value;
+                }
+            }
+            var settings = RunCoreAsync(config, ReadTextAsync, cancellationToken, beforeStart).GetAwaiter().GetResult();
+            var stdout = settings.Stdout ?? "";
+            // Exit 1 is "no driver configured"; anything else is not an answer worth keeping.
+            if (key != null && !settings.TimedOut && (settings.Exit == 0 || settings.Exit == 1))
+                lock (DriverSettingsGate) DriverSettingsCache[key] = new KeyValuePair<long, string>(Environment.TickCount64, stdout);
+            return stdout;
         }
 
         private static Task<string> ReadTextAsync(Process process, CancellationToken cancellationToken) =>

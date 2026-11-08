@@ -2,6 +2,9 @@
 param([string]$RequestPath, [string]$ResponsePath)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
+# One driver-settings query per worker (CheckpointProcessRunner.DriverSettingsCacheMilliseconds); a worker lives at most 60 s.
+. (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+[Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds = 60000
 try {
     $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable
     $value = New-ReleaseSelectionAttemptCore $request
