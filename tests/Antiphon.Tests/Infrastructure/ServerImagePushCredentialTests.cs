@@ -66,6 +66,10 @@ public sealed class ServerImagePushCredentialTests
             "${SERVER_PUSH_ALLOW_LIST:?SERVER_PUSH_ALLOW_LIST is required}:/run/antiphon/push-allow-list:ro");
         text.ShouldContain("Git__PushCredentialTokenFile: /run/antiphon/github-token/token");
         text.ShouldContain("Git__PushCredentialPolicyPath: /run/antiphon/push-allow-list");
+        text.ShouldContain("Git__IdentityFile: /run/antiphon/gitconfig");
+        text.ShouldContain("GIT_CONFIG_GLOBAL: /run/antiphon/gitconfig");
+        text.ShouldContain(
+            "${RUNNER_GIT_IDENTITY_FILE:?RUNNER_GIT_IDENTITY_FILE is required}:/run/antiphon/gitconfig:ro");
         text.Contains("GH_TOKEN", StringComparison.Ordinal).ShouldBeFalse();
         // The required mount variable RUNNER_GITHUB_TOKEN_DIR contains the letters
         // GITHUB_TOKEN. Remove that required spelling, then refuse every other occurrence.
@@ -87,6 +91,13 @@ public sealed class ServerImagePushCredentialTests
         credentials.ShouldContain("/run/antiphon/github-token:ro");
         credentials.ShouldContain("/usr/local/bin/antiphon-github-credential");
         credentials.ShouldContain("push_credential_absent");
+        credentials.ShouldContain("RUNNER_GIT_IDENTITY_FILE");
+        credentials.ShouldContain("GIT_CONFIG_GLOBAL");
+        credentials.ShouldContain("/run/antiphon/gitconfig:ro");
+        credentials.ShouldContain("user.name");
+        credentials.ShouldContain("user.email");
+        credentials.ShouldContain("0644");
+        credentials.ShouldContain("git_identity_absent");
         credentials.ShouldContain("/work/repos/<name>");
         credentials.ShouldContain("gitRepositoryUrl");
         credentials.ShouldContain("before column");
@@ -103,6 +114,46 @@ public sealed class ServerImagePushCredentialTests
         stack.ShouldContain("/work/repos/<name>");
         stack.ShouldContain("CARD-1776");
         stack.ShouldContain("docker-compose.server2-land-credential.yml");
+        var land = stack[stack.IndexOf("### Linux land credential and repository mirrors (CARD-1776)", StringComparison.Ordinal)..];
+        var landNext = land.IndexOf("\n### ", 4, StringComparison.Ordinal);
+        if (landNext > 0)
+            land = land[..landNext];
+        land.ShouldContain("${RUNNER_GIT_IDENTITY_FILE}");
+        land.ShouldContain("GIT_CONFIG_GLOBAL");
+        land.ShouldContain("git_identity_absent");
+    }
+
+    [Test]
+    public async Task Identity_free_rebase_fails_without_git_config_global_and_passes_with_it()
+    {
+        var root = NewRoot();
+        try
+        {
+            var home = Path.Combine(root, "home");
+            var repo = Path.Combine(root, "repo");
+            var identity = Path.Combine(root, "gitconfig");
+            Directory.CreateDirectory(home);
+            Directory.CreateDirectory(repo);
+            await File.WriteAllTextAsync(identity,
+                "[user]\n\tname = Card 1776 Witness\n\temail = card-1776-witness@example.invalid\n");
+
+            await SetupCommitAsync(repo, home, "init", "-q", "-b", "master");
+            await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "base");
+            await SetupCommitAsync(repo, home, "checkout", "-q", "-b", "topic");
+            await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "topic");
+            await SetupCommitAsync(repo, home, "checkout", "-q", "master");
+            await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "advance");
+            await SetupCommitAsync(repo, home, "checkout", "-q", "topic");
+
+            var bare = await RebaseAsync(repo, home, identityFile: null);
+            bare.Exit.ShouldBe(128);
+            bare.Error.ShouldContain("unable to auto-detect email address");
+
+            var withIdentity = await RebaseAsync(repo, home, identity);
+            withIdentity.Exit.ShouldBe(0);
+            withIdentity.Error.ShouldContain("Successfully rebased");
+        }
+        finally { DeleteRoot(root); }
     }
 
     [Test]
@@ -243,6 +294,62 @@ public sealed class ServerImagePushCredentialTests
         {
             return new LandingGitResult(1, "", "git_started");
         }
+    }
+
+    private static async Task SetupCommitAsync(string repo, string home, params string[] args)
+    {
+        var (exit, error) = await RunGitAsync(repo, home, new Dictionary<string, string?>
+        {
+            ["GIT_AUTHOR_NAME"] = "Card 1776 Setup",
+            ["GIT_AUTHOR_EMAIL"] = "card-1776-setup@example.invalid",
+            ["GIT_COMMITTER_NAME"] = "Card 1776 Setup",
+            ["GIT_COMMITTER_EMAIL"] = "card-1776-setup@example.invalid",
+            ["GIT_CONFIG_GLOBAL"] = "/dev/null",
+        }, args);
+        exit.ShouldBe(0, error);
+    }
+
+    private static Task<(int Exit, string Error)> RebaseAsync(string repo, string home, string? identityFile)
+    {
+        var extra = new Dictionary<string, string?>();
+        if (identityFile is not null)
+            extra["GIT_CONFIG_GLOBAL"] = identityFile;
+        return RunGitAsync(repo, home, extra, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "master");
+    }
+
+    private static async Task<(int Exit, string Error)> RunGitAsync(
+        string repo, string home, IReadOnlyDictionary<string, string?> extra, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repo,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["HOME"] = home;
+        foreach (var name in new[]
+        {
+            "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_CONFIG_GLOBAL",
+        })
+            start.Environment.Remove(name);
+        foreach (var pair in extra)
+        {
+            if (pair.Value is null)
+                start.Environment.Remove(pair.Key);
+            else
+                start.Environment[pair.Key] = pair.Value;
+        }
+        foreach (var arg in args)
+            start.ArgumentList.Add(arg);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git_start_failed");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, stderr + stdout);
     }
 
     private static string NewRoot()
