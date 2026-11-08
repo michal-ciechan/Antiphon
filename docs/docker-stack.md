@@ -1069,7 +1069,16 @@ resumes that previous image. Replacing the image belongs to the CARD-1742 compos
 then a fresh probe. The script refuses desktop AppHost ports 17200-17209, a short SHA, and
 container names for the runner, Postgres, or the gateway, before any docker call. It does not
 deploy the runner and it does not install a Scheduled Task. The staging compose remains
-CARD-1742; this gate does not create it and it is not the cutover.
+CARD-1742; this gate does not create it and it is not the cutover. `docker-compose.server2-server.yml`
+is the production Antiphon server for the server2 host daemon. The project is `antiphon-server2-server`.
+Services are `server-state-init`, `server`, and `server-session-runner`. The server publishes
+`127.0.0.1:17400` only and joins the external network `antiphon-server2`, so the connection host is
+`Host=postgres` on the CARD-1406 service. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`.
+`-Execute` is host-only and then calls this gate verify-only, with no execute switch on the gate,
+against `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `Hangfire__Storage`
+is an explicit setting whose default is `InMemory` because CARD-1768 is on this tip and CARD-1774
+A-1/A-2 are not. Nothing in this card starts the project or touches the production database. This slice
+adds no cache.
 
 ### What `deploy-server2.ps1` deploys
 
