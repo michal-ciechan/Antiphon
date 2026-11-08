@@ -54,14 +54,16 @@ public class StandingSessionOwnershipTests
     [Arguments(0)] [Arguments(2)] [Arguments(500)]
     public async Task Upgrade_backfills_only_unambiguous_owners_and_preserves_recovery_state(int oldCount)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
-        await using var currentDb = new AppDbContext(options);
-        var migrations = currentDb.Database.GetMigrations().ToArray();
+        // Host-load migrations refuse Down, so this predecessor is built upward from an empty database.
+        using var catalog = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=metadata_only").Options);
+        var migrations = catalog.Database.GetMigrations().ToArray();
         var target = Array.FindIndex(migrations, m => m.EndsWith("_StandingSessionContinuity"));
         target.ShouldBeGreaterThan(0);
+        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[target - 1], CancellationToken.None);
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var currentDb = new AppDbContext(options);
         var migrator = currentDb.GetService<IMigrator>();
-        await migrator.MigrateAsync(migrations[target - 1]);
         (await currentDb.Database.SqlQueryRaw<int>("""
             SELECT count(*)::int AS "Value" FROM information_schema.columns
             WHERE table_schema = current_schema() AND table_name = 'AgentSessions' AND column_name = 'StandingAgentId'
