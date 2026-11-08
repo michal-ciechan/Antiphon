@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "3d54ece0132f9cd04bb80ca30f6f6817383ed3a2dbf96a824f27626299b5f3fb",
+  "policyHash": "822a7dd1e0279291e68b6028de5f96d854fe6922872f6240afdab34f98feb38d",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1544,30 +1544,12 @@
           "suite": "antiphon",
           "class": "Server2ProductionServerContractTests",
           "methods": [
+            "Execute_drains_large_compose_output_without_echoing_a_secret",
+            "Execute_refusals_stop_before_docker",
             "WhatIf_prints_the_plan_and_calls_no_docker"
           ],
           "platform": "windows",
-          "reason": "Linux-only by construction: the deploy plan witness uses a Unix file mode and a fake docker on PATH.",
-          "owner": "CARD-1775"
-        },
-        {
-          "suite": "antiphon",
-          "class": "Server2ProductionServerContractTests",
-          "methods": [
-            "Execute_refusals_stop_before_docker"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: deploy refusals check Unix mode 0600 and the container marker /.dockerenv.",
-          "owner": "CARD-1775"
-        },
-        {
-          "suite": "antiphon",
-          "class": "Server2ProductionServerContractTests",
-          "methods": [
-            "Execute_drains_large_compose_output_without_echoing_a_secret"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: the compose drain witness runs a Unix fake docker that writes both streams.",
+          "reason": "Linux-only by construction: the deploy plan, refusal and compose drain witnesses use Unix file modes (0600), the container marker /.dockerenv and a Unix fake docker on PATH.",
           "owner": "CARD-1775"
         },
         {
