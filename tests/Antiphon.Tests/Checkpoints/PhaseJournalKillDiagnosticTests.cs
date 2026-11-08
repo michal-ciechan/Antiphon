@@ -110,6 +110,7 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
             "-ResultsDirectory", results,
         })
             psi.ArgumentList.Add(token);
+        StripPhaseEnvironment(psi);
         using var process = Process.Start(psi)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
@@ -141,6 +142,7 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
             "-ResultsDirectory", results,
         })
             psi.ArgumentList.Add(token);
+        StripPhaseEnvironment(psi);
         using var process = Process.Start(psi)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
@@ -151,6 +153,19 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
         text.ShouldContain(Diagnostic);
         text.ShouldContain("PASS C1748 inherited root leaves the decoy empty");
         text.ShouldContain("PASS C1748 journal is under the row phase root");
+    }
+
+    private static void StripPhaseEnvironment(ProcessStartInfo psi)
+    {
+        var keys = new List<string>();
+        foreach (var key in psi.Environment.Keys)
+        {
+            if (key.StartsWith("ANTIPHON_TEST_PHASE_", StringComparison.OrdinalIgnoreCase))
+                keys.Add(key);
+        }
+
+        foreach (var key in keys)
+            psi.Environment.Remove(key);
     }
 
     private async Task<RowRunResult> RunKilled(FakeDriver driver, string project)

@@ -103,6 +103,13 @@ function New-C585Case {
     }
 }
 
+function Remove-C1748PhaseEnvironment {
+    param($Environment)
+    if ($null -eq $Environment) { return }
+    $names = @($Environment.Keys | Where-Object { [string]$_ -like 'ANTIPHON_TEST_PHASE_*' })
+    foreach ($name in $names) { [void]$Environment.Remove([string]$name) }
+}
+
 function Invoke-C585Runner {
     param(
         $Fx,
@@ -172,6 +179,7 @@ function Invoke-C585Runner {
         $psi.RedirectStandardError = $true
         $psi.WorkingDirectory = $script:RepoRoot
         foreach ($token in @($callArgs)) { [void]$psi.ArgumentList.Add([string]$token) }
+        Remove-C1748PhaseEnvironment -Environment $psi.Environment
         if (-not [string]::IsNullOrWhiteSpace($InheritedPhaseRoot)) {
             $psi.Environment['ANTIPHON_TEST_PHASE_ROOT'] = $InheritedPhaseRoot
             $psi.Environment['ANTIPHON_TEST_PHASE_RUN_ID'] = 'outer-run'
