@@ -15,7 +15,7 @@ public sealed partial class LandGraphEvaluationTests
     [Arguments("set-configuration", "configuration=unset platform=unset")]
     [Arguments("additional-properties", "configuration=unset platform=unset")]
     [Arguments("member-set-configuration", "")]
-    [Arguments("remove-after-properties", "configuration=unset platform=unset")]
+    [Arguments("remove-configuration", "")]
     [Timeout(300_000)]
     public async Task C1780_OutsideSolutionReferenceClearsParentConfiguration(string variant, string expectedFlag)
     {
@@ -35,8 +35,7 @@ public sealed partial class LandGraphEvaluationTests
                   </ProjectReference>
                 </ItemGroup>
                 """,
-            // Solution mapping is Debug. A Release-only docs item is included only when
-            // SetConfiguration survives that mapping.
+            // Solution mapping is Debug|Any CPU. SetConfiguration=Release must not survive it.
             "member-set-configuration" => """
                 <ItemGroup>
                   <ProjectReference Include="../Outside/Outside.csproj">
@@ -44,12 +43,11 @@ public sealed partial class LandGraphEvaluationTests
                   </ProjectReference>
                 </ItemGroup>
                 """,
-            // The marker item is included only when AdditionalProperties survives GlobalPropertiesToRemove.
-            "remove-after-properties" => """
+            // GlobalPropertiesToRemove is applied after the solution mapping.
+            "remove-configuration" => """
                 <ItemGroup>
                   <ProjectReference Include="../Outside/Outside.csproj">
-                    <AdditionalProperties>CustomMarker=1</AdditionalProperties>
-                    <GlobalPropertiesToRemove>CustomMarker</GlobalPropertiesToRemove>
+                    <GlobalPropertiesToRemove>Configuration</GlobalPropertiesToRemove>
                   </ProjectReference>
                 </ItemGroup>
                 """,
@@ -57,27 +55,13 @@ public sealed partial class LandGraphEvaluationTests
                 <ItemGroup><ProjectReference Include="../Outside/Outside.csproj" /></ItemGroup>
                 """,
         };
-        var outside = variant switch
-        {
-            "member-set-configuration" => """
-                <ItemGroup>
-                  <None Include="../docs/release-only.md" Condition="'$(Configuration)' == 'Release'" />
-                </ItemGroup>
-                """,
-            "remove-after-properties" => """
-                <ItemGroup>
-                  <None Include="../docs/marker.md" Condition="'$(CustomMarker)' == '1'" />
-                </ItemGroup>
-                """,
-            _ => "",
-        };
-        var solution = variant is "member" or "member-set-configuration"
+        var solution = variant is "member" or "member-set-configuration" or "remove-configuration"
             ? new[] { "App/App.csproj", "Outside/Outside.csproj" }
             : new[] { "App/App.csproj" };
         await using var repo = await AuditRepo.CreateAsync(new()
         {
             ["App/App.csproj"] = SdkProject(reference),
-            ["Outside/Outside.csproj"] = SdkProject(outside),
+            ["Outside/Outside.csproj"] = SdkProject(""),
         }, solutionProjects: solution);
         var run = await repo.RunToolAsync();
         run.ExitCode.ShouldBe(0, run.Text);
@@ -87,6 +71,12 @@ public sealed partial class LandGraphEvaluationTests
             run.Lines.ShouldNotContain(line => line.StartsWith("outside-solution:", StringComparison.Ordinal), run.Text);
         else
             run.Lines.ShouldContain(prefix + expectedFlag, run.Text);
+        if (variant == "member")
+            run.Lines.ShouldNotContain(line => line.StartsWith("member-configuration:", StringComparison.Ordinal), run.Text);
+        if (variant == "member-set-configuration")
+            run.Lines.ShouldContain("member-configuration: Outside/Outside.csproj configuration=Debug platform=AnyCPU", run.Text);
+        if (variant == "remove-configuration")
+            run.Lines.ShouldContain("member-configuration: Outside/Outside.csproj configuration=unset platform=AnyCPU", run.Text);
         repo.AssertUntouched();
     }
 
