@@ -39,4 +39,8 @@
 
   <ItemGroup><ProjectReference Include="../Antiphon.Observability/Antiphon.Observability.csproj" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../Antiphon.GitInProcess/Antiphon.GitInProcess.csproj" /></ItemGroup>
+  <!-- CARD-1790: the runner process installs the private cache before Main, including BuildSlotsOnly. -->
+  <ItemGroup>
+    <Compile Include="..\Antiphon.Hosting\PwshPrivateCache.cs" Link="PwshPrivateCache.cs" />
+  </ItemGroup>
 </Project>
