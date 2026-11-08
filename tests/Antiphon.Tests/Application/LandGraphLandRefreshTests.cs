@@ -366,6 +366,41 @@ public sealed class LandGraphLandRefreshTests
     }
 
     /// <summary>
+    /// Windows git writes loose objects read-only, and <c>Directory.Delete</c> throws
+    /// <see cref="UnauthorizedAccessException"/> on them. Linux unlinks a read-only file
+    /// from a writable directory, so the witness is that dispose calls
+    /// <see cref="StartRefGit.DeleteDirectory"/> and that call removes the object.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public void dispose_removes_a_readonly_git_object_through_startrefgit()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1753-ro-" + Guid.NewGuid().ToString("N"));
+        var loose = Path.Combine(root, "repo", ".git", "objects", "47", "a139e2691d0b91fe8cfc80f190e885a30de8");
+        Directory.CreateDirectory(Path.GetDirectoryName(loose)!);
+        File.WriteAllText(loose, "loose");
+        File.SetAttributes(loose, FileAttributes.ReadOnly);
+        try
+        {
+            var delete = Fixture.DeleteRoot;
+            delete.Method.DeclaringType.ShouldBe(typeof(StartRefGit));
+            delete.Method.Name.ShouldBe(nameof(StartRefGit.DeleteDirectory));
+            using (Fixture.Adopt(root))
+            {
+            }
+
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally
+        {
+            if (File.Exists(loose))
+                File.SetAttributes(loose, FileAttributes.Normal);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// The production audit, not the stub. A changed definition in a throwaway repo must refresh,
     /// commit only the land-graph files, and leave the second -Check at exit 0.
     /// </summary>
@@ -759,7 +794,23 @@ public sealed class LandGraphLandRefreshTests
 
         public string LogText() => File.Exists(_log) ? File.ReadAllText(_log) : "";
 
-        public void Dispose() => Directory.Delete(Root, recursive: true);
+        // Production dispose. The witness requires this delegate to be StartRefGit.DeleteDirectory.
+        // Directory.Delete cannot clear a Windows read-only loose object.
+        private static Action<string> DeleteRoot { get; set; } =
+            path => Directory.Delete(path, recursive: true);
+
+        internal static Fixture Adopt(string root) => new(root);
+
+        public void Dispose() => DeleteRoot(Root);
+
+        private Fixture(string existingRoot)
+        {
+            Root = existingRoot;
+            Repo = Path.Combine(existingRoot, "repo");
+            _audit = Path.Combine(existingRoot, "audit.ps1");
+            _pinsScript = Path.Combine(existingRoot, "pins.ps1");
+            _log = Path.Combine(existingRoot, "audit.log");
+        }
 
         private (int Code, string Text) RunScript(Dictionary<string, string> env, string? notePath, string? card)
         {
