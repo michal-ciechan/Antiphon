@@ -7,6 +7,8 @@ using System.Threading.Channels;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -103,6 +105,72 @@ public class PtyConditionalReadClientTests
         phone.Socket.Sent.ShouldAllBe(payload => !payload.Contains("ifNoneMatch", StringComparison.Ordinal));
     }
 
+    [Test]
+    public async Task Two_resolve_calls_on_one_live_connection_send_if_none_match_on_the_second_read()
+    {
+        await using var lane = ResolvedLane.Open();
+        var first = lane.Directory.Resolve(ResolvedLane.RunnerId);
+        var second = lane.Directory.Resolve(ResolvedLane.RunnerId);
+        await first.GetBufferAsync(SessionId, CancellationToken.None);
+        await second.GetBufferAsync(SessionId, CancellationToken.None);
+        var buffers = Frames(lane.Socket.Sent, PhoneHomeOperation.Buffer);
+        buffers.Count.ShouldBe(2);
+        buffers[0].ShouldNotContain("ifNoneMatch");
+        buffers[1].ShouldContain("ifNoneMatch");
+        buffers[1].ShouldContain("b1.held");
+
+        var third = lane.Directory.Resolve(ResolvedLane.RunnerId);
+        var fourth = lane.Directory.Resolve(ResolvedLane.RunnerId);
+        await third.GetSnapshotAsync(SessionId, CancellationToken.None);
+        await fourth.GetSnapshotAsync(SessionId, CancellationToken.None);
+        var snapshots = Frames(lane.Socket.Sent, PhoneHomeOperation.Snapshot);
+        snapshots.Count.ShouldBe(2);
+        snapshots[0].ShouldNotContain("ifNoneMatch");
+        snapshots[1].ShouldContain("ifNoneMatch");
+        snapshots[1].ShouldContain("s1.screen");
+    }
+
+    [Test]
+    public async Task A_new_connection_does_not_reuse_another_connections_hold()
+    {
+        await using var lane = ResolvedLane.Open();
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
+        var held = Frames(lane.Socket.Sent, PhoneHomeOperation.Buffer);
+        held.Count.ShouldBe(2);
+        held[1].ShouldContain("ifNoneMatch");
+
+        var fresh = lane.ReplaceConnection();
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetSnapshotAsync(SessionId, CancellationToken.None);
+        Frames(fresh.Sent, PhoneHomeOperation.Buffer).Single().ShouldNotContain("ifNoneMatch");
+        Frames(fresh.Sent, PhoneHomeOperation.Snapshot).Single().ShouldNotContain("ifNoneMatch");
+    }
+
+    [Test]
+    public async Task A_killed_session_drops_its_phone_home_hold()
+    {
+        await using var lane = ResolvedLane.Open();
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetSnapshotAsync(SessionId, CancellationToken.None);
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetSnapshotAsync(SessionId, CancellationToken.None);
+        Frames(lane.Socket.Sent, PhoneHomeOperation.Buffer)[1].ShouldContain("ifNoneMatch");
+        Frames(lane.Socket.Sent, PhoneHomeOperation.Snapshot)[1].ShouldContain("ifNoneMatch");
+
+        var killed = await lane.Directory.Resolve(ResolvedLane.RunnerId).KillAsync(SessionId, CancellationToken.None);
+        killed.Status.ShouldBe("Exited");
+
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
+        await lane.Directory.Resolve(ResolvedLane.RunnerId).GetSnapshotAsync(SessionId, CancellationToken.None);
+        Frames(lane.Socket.Sent, PhoneHomeOperation.Buffer)[2].ShouldNotContain("ifNoneMatch");
+        Frames(lane.Socket.Sent, PhoneHomeOperation.Snapshot)[2].ShouldNotContain("ifNoneMatch");
+    }
+
+    private static List<string> Frames(IEnumerable<string> sent, PhoneHomeOperation operation) =>
+        sent.Where(json =>
+            JsonSerializer.Deserialize<PhoneHomeFrame>(json, PhoneHomeFraming.Json)?.Operation == operation).ToList();
+
     private static SessionRunnerHttpClient Client(ScriptedHandler handler) =>
         new(new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
             new StubFactory(),
@@ -184,6 +252,22 @@ public class PtyConditionalReadClientTests
         private int _step;
         private WebSocketState _state = WebSocketState.Open;
         public List<string> Sent { get; } = new();
+        public Func<PhoneHomeFrame, PhoneHomeFrame>? Reply { get; set; }
+
+        private PhoneHomeFrame BufferReply(PhoneHomeFrame request, string json)
+        {
+            _step++;
+            var modified = notModifiedFirst && _step == 1
+                || !notModifiedFirst && json.Contains("ifNoneMatch", StringComparison.Ordinal);
+            var payload = modified
+                ? JsonSerializer.SerializeToElement(new { notModified = true }, PhoneHomeFraming.Json)
+                : JsonSerializer.SerializeToElement(
+                    new RunnerBufferDto(SessionId, notModifiedFirst ? "fresh-text" : "held-text", 4),
+                    RunnerReadJson.Use(RunnerReadJson.PhoneBuffer));
+            return new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, payload,
+                Match: "s1.held");
+        }
 
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
@@ -213,17 +297,7 @@ public class PtyConditionalReadClientTests
             var json = Encoding.UTF8.GetString(buffer.Array!, buffer.Offset, buffer.Count);
             Sent.Add(json);
             var request = JsonSerializer.Deserialize<PhoneHomeFrame>(json, PhoneHomeFraming.Json)!;
-            _step++;
-            var modified = notModifiedFirst && _step == 1
-                || !notModifiedFirst && json.Contains("ifNoneMatch", StringComparison.Ordinal);
-            var payload = modified
-                ? JsonSerializer.SerializeToElement(new { notModified = true }, PhoneHomeFraming.Json)
-                : JsonSerializer.SerializeToElement(
-                    new RunnerBufferDto(SessionId, notModifiedFirst ? "fresh-text" : "held-text", 4),
-                    RunnerReadJson.Use(RunnerReadJson.PhoneBuffer));
-            var reply = new PhoneHomeFrame(
-                PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, payload,
-                Match: modified ? "s1.held" : "s1.held");
+            var reply = Reply?.Invoke(request) ?? BufferReply(request, json);
             _inbound.Writer.TryWrite(JsonSerializer.SerializeToUtf8Bytes(reply, PhoneHomeFraming.Json));
             return Task.CompletedTask;
         }
@@ -251,6 +325,112 @@ public class PtyConditionalReadClientTests
                 _offset = 0;
             }
             return new WebSocketReceiveResult(count, WebSocketMessageType.Text, end);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1763 D-1. Production polls call <see cref="PhoneHomeRunnerDirectory.Resolve"/>
+    /// on every read. The hold has to survive that, stay on one connection, and leave when the session does.
+    /// </summary>
+    private sealed class ResolvedLane : IAsyncDisposable
+    {
+        public const string RunnerId = "grok-linux";
+        public PhoneHomeRunnerDirectory Directory { get; }
+        public ScriptedSocket Socket { get; private set; } = null!;
+        private PhoneHomeLiveConnection _connection = null!;
+        private CancellationTokenSource _stop = null!;
+        private readonly List<Task> _loops = new();
+        private readonly Guid _boot = Guid.NewGuid();
+        private readonly Guid _store = Guid.NewGuid();
+
+        private ResolvedLane(PhoneHomeRunnerDirectory directory) => Directory = directory;
+
+        public static ResolvedLane Open()
+        {
+            var settings = Options.Create(new PhoneHomeRunnerSettings
+            {
+                Enabled = true,
+                AllowedRunnerId = RunnerId,
+                LeaseSeconds = 90,
+                TicketTtlSeconds = 30,
+                Limits = new PhoneHomeLimits(),
+            });
+            var lane = new ResolvedLane(new PhoneHomeRunnerDirectory(
+                new PhoneHomeTestHost.RecordingLocalClient(),
+                settings,
+                new IdleScopes(),
+                TimeProvider.System));
+            lane.Attach(new ScriptedSocket(notModifiedFirst: false));
+            return lane;
+        }
+
+        public ScriptedSocket ReplaceConnection()
+        {
+            var socket = new ScriptedSocket(notModifiedFirst: false);
+            Attach(socket);
+            return socket;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _stop.Cancel();
+            await _connection.DisposeAsync();
+            try { await Task.WhenAll(_loops); }
+            catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or PhoneHomeTransportException)
+            {
+            }
+        }
+
+        private void Attach(ScriptedSocket socket)
+        {
+            _stop?.Cancel();
+            socket.Reply = DirectoryReply;
+            var registration = Directory.Register(new PhoneHomeRegistrationRequest(
+                PhoneHomeProtocol.Version, RunnerId, _boot, _store, "linux", 1, Capabilities()));
+            var connection = Directory.AcceptConnect(RunnerId, registration.Ticket, socket);
+            Directory.MarkRecovered(connection);
+            var stop = new CancellationTokenSource();
+            Socket = socket;
+            _connection = connection;
+            _stop = stop;
+            _loops.Add(connection.ReceiveLoopAsync(stop.Token));
+        }
+
+        private static RunnerCapabilitiesDto Capabilities() =>
+            new("ConPty", "ConPty", "test", false,
+                Features: [RunnerCapabilityFeatures.PtyConditionalReadV1]);
+
+        private static PhoneHomeFrame DirectoryReply(PhoneHomeFrame request)
+        {
+            if (request.Operation == PhoneHomeOperation.ReleaseSlot)
+            {
+                var session = new RunnerSessionDto(
+                    SessionId, 1, DateTime.UtcNow, "Exited", 0, "KilledByRequest", 4,
+                    AcceptedStartedAt: DateTime.UtcNow);
+                return new PhoneHomeFrame(
+                    PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+                    JsonSerializer.SerializeToElement(session, PhoneHomeFraming.Json));
+            }
+
+            if (request.Operation == PhoneHomeOperation.Snapshot)
+            {
+                var snapshot = new RunnerSnapshotDto(SessionId, "screen", "screen", 4, DateTime.UtcNow);
+                return new PhoneHomeFrame(
+                    PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+                    JsonSerializer.SerializeToElement(snapshot, RunnerReadJson.Use(RunnerReadJson.PhoneSnapshot)),
+                    Match: "s1.screen");
+            }
+
+            var buffer = new RunnerBufferDto(SessionId, "held-text", 4);
+            return new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+                JsonSerializer.SerializeToElement(buffer, RunnerReadJson.Use(RunnerReadJson.PhoneBuffer)),
+                Match: "b1.held");
+        }
+
+        private sealed class IdleScopes : IServiceScopeFactory
+        {
+            public IServiceScope CreateScope() => throw new InvalidOperationException("unused");
         }
     }
 }
