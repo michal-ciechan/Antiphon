@@ -1,6 +1,7 @@
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -814,7 +815,7 @@ public sealed partial class ChannelBridgeService : BackgroundService
             var word = AttachmentWord(attachment.Kind);
             if (attachment.Content is not { Length: > 0 } && attachment.InlineLimitBytes is { } limit)
             {
-                parts.Add($"[{word} attached — {OverLimitSubject(attachment)} is over the {AttachmentSize.Format(limit)} limit and was not delivered]");
+                parts.Add($"[{word} attached — {OverLimitSubject(attachment, limit)} is over the {AttachmentSize.Format(limit)} limit and was not delivered]");
                 continue;
             }
             if (attachment.Content is not { Length: > 0 } bytes)
@@ -848,18 +849,30 @@ public sealed partial class ChannelBridgeService : BackgroundService
 
     // "<name>" (<size>), either part when known, else "it". The name is untrusted channel data inside a
     // bracketed prompt marker: control characters, brackets and quotes are neutralised so it can never
-    // close the note or forge an "[file attached: <path>]" line.
-    private static string OverLimitSubject(Attachment attachment)
+    // close the note or forge an "[file attached: <path>]" line; format characters (RTL overrides,
+    // zero-width spaces) are dropped and the name is capped at OverLimitNameChars (Review a89708b6 A-5).
+    private const int OverLimitNameChars = 80;
+
+    private static string OverLimitSubject(Attachment attachment, long limit)
     {
-        var name = new string((attachment.Name ?? "").Select(c => c switch
+        var name = new string((attachment.Name ?? "")
+            .Where(c => char.GetUnicodeCategory(c) != UnicodeCategory.Format)
+            .Select(c => c switch
+            {
+                '[' => '(',
+                ']' => ')',
+                '"' => '\'',
+                _ when char.IsControl(c) || char.IsSeparator(c) => ' ',
+                _ => c,
+            }).ToArray()).Trim();
+        if (name.Length > OverLimitNameChars)
         {
-            '[' => '(',
-            ']' => ')',
-            '"' => '\'',
-            _ when char.IsControl(c) => ' ',
-            _ => c,
-        }).ToArray()).Trim();
-        var size = attachment.Size is { } bytes ? AttachmentSize.Format(bytes) : null;
+            var keep = OverLimitNameChars - 1;
+            if (char.IsHighSurrogate(name[keep - 1]))
+                keep--;
+            name = name[..keep] + "…";
+        }
+        var size = attachment.Size is { } bytes ? AttachmentSize.FormatOver(bytes, limit) : null;
         return (name.Length > 0, size) switch
         {
             (true, not null) => $"\"{name}\" ({size})",
