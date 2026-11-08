@@ -196,7 +196,26 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     /// <summary>Builds the one scratch origin and clone for this process. Later cases copy that tree.</summary>
     internal static void EnsureSharedScratchRepository() => _ = SharedScratchRepository.Value;
 
-    private static readonly Lazy<SharedScratch> SharedScratchRepository = new(BuildSharedScratch, LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly SharedScratchStore SharedScratchRepository = new(BuildSharedScratch);
+
+    /// <summary>A fresh store for the timeout-cache witness. Production keeps one store per process.</summary>
+    internal static SharedScratchStore CreateStore(Func<SharedScratch> build) => new(build);
+
+    internal static SharedScratch CreateScratch(string label) => new(label, label, label);
+
+    /// <summary>
+    /// One shared scratch for the process. A factory exception is cached, which is the
+    /// pre-fix behaviour the timeout witness must still catch.
+    /// </summary>
+    internal sealed class SharedScratchStore
+    {
+        private readonly Lazy<SharedScratch> _lazy;
+
+        internal SharedScratchStore(Func<SharedScratch> build) =>
+            _lazy = new Lazy<SharedScratch>(build, LazyThreadSafetyMode.ExecutionAndPublication);
+
+        internal SharedScratch Value => _lazy.Value;
+    }
 
     private static SharedScratch BuildSharedScratch()
     {
@@ -378,13 +397,16 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         }
     }
 
-    private sealed record SharedScratch(string Origin, string ClonePath, string Base);
+    internal sealed record SharedScratch(string Origin, string ClonePath, string Base);
 
     public static string Git(string workingDirectory, params string[] args) =>
         RunGit(workingDirectory, args,
             TUnit.Core.TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None, GitBudget);
 
-    internal static string RunGit(string workingDirectory, string[] args, CancellationToken ct, TimeSpan budget)
+    internal static string RunGit(string workingDirectory, string[] args, CancellationToken ct, TimeSpan budget) =>
+        RunGit(workingDirectory, args, ct, budget, fileName: null);
+
+    internal static string RunGit(string workingDirectory, string[] args, CancellationToken ct, TimeSpan budget, string? fileName)
     {
         Interlocked.Increment(ref _scratchGitProcessStarts);
         if (ScratchGitScope.Value is { } scope)
@@ -394,7 +416,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         using var span = Antiphon.Tests.TestHelpers.TestTrace.Span("git " + (args.FirstOrDefault() ?? ""));
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = string.IsNullOrEmpty(fileName) ? "git" : fileName,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
