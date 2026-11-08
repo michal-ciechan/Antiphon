@@ -254,12 +254,17 @@ public sealed class WorkspaceReservationJournal(
     private static async Task<List<WorkspaceUseReservation>> OverlapAsync(AppDbContext db,
         IReadOnlyList<WorkspaceUseReservation> rows, WorkspaceReservationKey key, Guid? taskId, CancellationToken ct)
     {
+        var normalized = key.Normalized();
+        // CARD-1767: the RefOnly fence is false when the normalized ref is empty, so the
+        // owner SELECT cannot change the Same() result. No cache: the skip is exact.
+        if (normalized.SourceFullRef.Length == 0)
+            return rows.Where(r => Same(r, normalized)).ToList();
+
         var ids = rows.Where(r => r.TaskId.HasValue).Select(r => r.TaskId!.Value)
             .Concat(taskId is Guid id ? new[] { id } : Array.Empty<Guid>()).Distinct().ToArray();
         var refOwners = (await db.AgentTasks.AsNoTracking()
             .Where(t => ids.Contains(t.Id) && t.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
             .Select(t => t.Id).ToListAsync(ct)).ToHashSet();
-        var normalized = key.Normalized();
         var requestingRefOwner = taskId is Guid owner && refOwners.Contains(owner);
         return rows.Where(r => Same(r, normalized)
             || (requestingRefOwner || r.TaskId is Guid rowOwner && refOwners.Contains(rowOwner))
