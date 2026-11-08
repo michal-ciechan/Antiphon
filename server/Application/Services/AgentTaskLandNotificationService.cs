@@ -53,10 +53,17 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     /// in the same scan are skipped unchanged, so they keep their order and retry on the next scan.
     /// Producers pass null and wait for the lock as before.
     /// </param>
-    public async Task ReconcileAsync(Guid id, CancellationToken ct, ISet<Guid>? busySessions = null)
+    /// <param name="transcriptPullsThisPass">
+    /// CARD-1773: set by the hosted scan only. The first note that needs a transcript for a session
+    /// pulls it; later notes of that session in the same pass read the store. A direct reconcile
+    /// passes null and pulls every time.
+    /// </param>
+    public async Task ReconcileAsync(Guid id, CancellationToken ct, ISet<Guid>? busySessions = null,
+        ISet<Guid>? transcriptPullsThisPass = null)
     {
         var note = await LoadNoteAsync(id, ct);
-        if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired or LandNotificationState.LegacyUnverified)
+        if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired
+            or LandNotificationState.LegacyUnverified or LandNotificationState.Canceled)
         {
             scanCache?.Invalidate(note.Id);
             return;
@@ -212,10 +219,13 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (row.Status == QueuedMessageStatus.Canceled)
             {
+                // CARD-1773. Canceled is terminal. A later prompt must not confirm the note.
                 note.State = LandNotificationState.Canceled;
                 note.LastErrorCode = "queue_canceled_unconfirmed";
+                await db.SaveChangesAsync(ct);
+                return;
             }
-            else if (row.DeliveryVerdict == DeliveryVerdict.Truncated)
+            if (row.DeliveryVerdict == DeliveryVerdict.Truncated)
                 note.LastErrorCode = "queue_truncated_unconfirmed";
             else if (row.Status == QueuedMessageStatus.Pending && row.DeliveryAttempts >= Math.Max(1,
                 (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.MaxDeliveryAttempts))
@@ -322,11 +332,19 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 var scan = ReceiptScanContext(note, row, scanStatus, expected);
                 if (scan is not null && scanSession != session) scan = scan with { ScanSessionId = scanSession };
                 LandReceiptScanCache.StateStamp? current = null;
+                // CARD-1773. One catch-up pull per session per hosted pass. Add before the await so a
+                // thrown pull still bounds the rest of the pass. A direct reconcile passes null and pulls.
+                var pullThisNote = transcriptPullsThisPass is null || transcriptPullsThisPass.Add(scanSession);
                 if (scan is null)
-                    await runtime.CatchUpTranscriptAsync(scanSession, ct);
-                else
+                {
+                    if (pullThisNote)
+                        await runtime.CatchUpTranscriptAsync(scanSession, ct);
+                }
+                else if (pullThisNote)
                     current = ReceiptStamp(await runtime.CatchUpForReceiptAsync(scanSession,
                         scanStatus is SessionStatus.Stopped or SessionStatus.Failed, ct), scanStartedAt);
+                else
+                    current = ReceiptStamp(await runtime.ObserveReceiptStateAsync(scanSession, ct), scanStartedAt);
                 // CARD-0641 D-2 kinds, destination and delivery floor: LandNoteReceipt, shared with
                 // the CARD-0650 watchdog's read-only note-debt check.
                 var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), scanSession, note.IsLegacy,

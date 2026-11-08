@@ -41,6 +41,7 @@ internal static class MigrationTestDatabase
             DROP TABLE IF EXISTS "HostLoadSampleIdentities";
             DROP TABLE IF EXISTS "HostLoadSamples";
             DROP INDEX IF EXISTS "IX_AgentTaskEvents_LoadObservation";
+            DROP INDEX IF EXISTS "IX_TranscriptEntries_AgentSessionId_Kind_Sequence";
             ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadAttempt";
             ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadDispatchedAt";
             ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadQueuedAt";
@@ -51,7 +52,8 @@ internal static class MigrationTestDatabase
             WHERE "MigrationId" IN (
                 '20261107034430_HostLoadTelemetryS1',
                 '20261107040142_HostLoadSnapshotMembership',
-                '20261107104114_HostLoadRetentionCatchup');
+                '20261107104114_HostLoadRetentionCatchup',
+                '20261108121426_Card1773TranscriptPromptStampIndex');
             """, ct);
 
     public static async Task<IsolatedTestSchema> CreateAsync(string migration, CancellationToken ct)

@@ -125,6 +125,9 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
         var wake = await LoadParkedStampsAsync(stoppingToken);
         await using var boundaryScope = scopes.CreateAsyncScope();
         var rescanBoundary = boundaryScope.ServiceProvider.GetService<LandDeliveryBoundary>();
+        // CARD-1773. One pull set and one seen set for the whole pass, including later pages.
+        var transcriptPulls = new HashSet<Guid>();
+        var seen = new HashSet<Guid>();
         Guid? cursor = null;
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -146,6 +149,8 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 : LandNotificationReconcileQueries.DueNoteIds(db, now);
             await foreach (var id in page.WithCancellation(stoppingToken))
                 ids.Add(id);
+            foreach (var id in ids)
+                seen.Add(id);
             var pending = new List<Guid>(ids.Count);
             foreach (var id in ids)
             {
@@ -163,7 +168,7 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                     await using var rowScope = scopes.CreateAsyncScope();
                     var rowDb = rowScope.ServiceProvider.GetRequiredService<AppDbContext>();
                     await rowScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
-                        .ReconcileAsync(id, stoppingToken, busySessions);
+                        .ReconcileAsync(id, stoppingToken, busySessions, transcriptPulls);
                     var tracked = rowDb.AgentTaskLandNotifications.Local.FirstOrDefault(n => n.Id == id);
                     var observedSession = Guid.Empty;
                     if (tracked is { State: LandNotificationState.AwaitingReceipt, ParentSessionId: Guid parent })
@@ -187,6 +192,10 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             if (ids.Count < 128) break;
             cursor = ids[^1];
         }
+
+        // A canceled pass has not seen every later page, so it must not drop entries for them.
+        if (!stoppingToken.IsCancellationRequested)
+            _rescanPark.Retain(seen);
     }
 
     /// <summary>CARD-1769. The rescan park's cap. A note past its backoff is reconciled on the next pass.</summary>
@@ -244,7 +253,9 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
         {
             if (!pre.Queues.TryGetValue(queued, out var loaded))
             {
-                _rescanPark.Forget(noteId);
+                // CARD-1773. The keyed row is gone. Count the miss; park on the session stamp
+                // only after MissingQueueParkAfter consecutive misses.
+                _rescanPark.NoteQueueMissing(noteId, parent, queued, sessionStamp, parkedAt);
                 return;
             }
 
@@ -332,13 +343,18 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
     /// A database-visible change to any stamped field is reconciled on the next hosted pass (the
     /// five-second period, plus whatever remains of a pass already in flight, plus that pass's stamp
     /// read). A receipt that exists only on the runner, with none of those fields changed, waits for
-    /// the backoff. That wait is at most five minutes. A missing session or queue row is not a match,
-    /// so the note is reconciled.
+    /// the backoff. That wait is at most five minutes. A missing session row is not a match, so the
+    /// note is reconciled. A missing queue row is reconciled until <see cref="MissingQueueParkAfter"/>
+    /// consecutive misses, then parked on the session stamp while the row stays absent. A completed
+    /// pass drops entries whose notes were not on any due page.
     /// </summary>
     private sealed class RescanPark
     {
         internal static readonly TimeSpan InitialBackoff = TimeSpan.FromMinutes(1);
         internal static readonly TimeSpan MaximumBackoff = TimeSpan.FromMinutes(5);
+
+        /// <summary>CARD-1773. Consecutive reconciles that find the keyed queue row gone, then park.</summary>
+        internal const int MissingQueueParkAfter = 3;
 
         private sealed class Entry
         {
@@ -351,6 +367,8 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             public int DeliveryAttempts { get; init; }
             public DeliveryVerdict? DeliveryVerdict { get; init; }
             public DateTime? CanceledAt { get; init; }
+            public bool QueueMissing { get; init; }
+            public int QueueMisses { get; init; }
             public DateTime ParkedUntil { get; set; }
             public int Observations { get; init; }
         }
@@ -384,6 +402,28 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
 
         internal void Forget(Guid noteId) => _entries.Remove(noteId);
 
+        /// <summary>Drop entries whose notes were absent from a completed due-page pass.</summary>
+        internal void Retain(IReadOnlySet<Guid> seen)
+        {
+            if (seen.Count == 0)
+            {
+                _entries.Clear();
+                return;
+            }
+
+            List<Guid>? drop = null;
+            foreach (var id in _entries.Keys)
+            {
+                if (!seen.Contains(id))
+                    (drop ??= []).Add(id);
+            }
+
+            if (drop is null)
+                return;
+            foreach (var id in drop)
+                _entries.Remove(id);
+        }
+
         internal bool Unchanged(
             Guid noteId,
             DateTime now,
@@ -402,6 +442,9 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 return false;
             if (entry.QueueMessageId is not Guid queueId)
                 return true;
+            // Still missing stays parked. The row coming back is a change.
+            if (entry.QueueMissing)
+                return !queues.ContainsKey(queueId);
             if (!queues.TryGetValue(queueId, out var queue))
                 return false;
             return queue.Status == entry.QueueStatus
@@ -430,8 +473,34 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 DeliveryAttempts = queue?.DeliveryAttempts ?? 0,
                 DeliveryVerdict = queue?.Verdict,
                 CanceledAt = queue?.CanceledAt,
+                QueueMissing = false,
+                QueueMisses = 0,
                 ParkedUntil = now.Add(Backoff(observations)),
                 Observations = observations,
+            };
+        }
+
+        /// <summary>
+        /// Count one missing keyed row. Below <see cref="MissingQueueParkAfter"/> the entry stays
+        /// due (parked-until is unset) so the next pass reconciles again. On the threshold the
+        /// session stamp parks for <see cref="InitialBackoff"/>, not the doubled schedule.
+        /// </summary>
+        internal void NoteQueueMissing(
+            Guid noteId, Guid sessionId, Guid queueMessageId, SessionRescanStamp session, DateTime now)
+        {
+            var misses = _entries.TryGetValue(noteId, out var prior) ? prior.QueueMisses + 1 : 1;
+            var park = misses >= MissingQueueParkAfter;
+            _entries[noteId] = new Entry
+            {
+                SessionId = sessionId,
+                Status = session.Status,
+                StartedAt = session.StartedAt,
+                PromptSequence = session.PromptSequence,
+                QueueMessageId = queueMessageId,
+                QueueMissing = park,
+                QueueMisses = misses,
+                ParkedUntil = park ? now.Add(InitialBackoff) : DateTime.MinValue,
+                Observations = prior?.Observations ?? 0,
             };
         }
 

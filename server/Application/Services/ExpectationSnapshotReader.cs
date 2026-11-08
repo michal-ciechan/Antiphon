@@ -590,13 +590,14 @@ public sealed class ExpectationSnapshotReader
 
         var ids = candidates.Select(episode => episode.Id).ToList();
         // A missing page row is only unknown while it still belongs to a debt-eligible source.
-        // Confirmed outbox notes and canceled queue notes must be allowed through the clear gap.
+        // Confirmed or canceled outbox notes, and canceled queue notes, must be allowed through the clear gap.
         var outboxIds = await _db.AgentTaskLandNotifications.AsNoTracking()
             .Where(note => ids.Contains(note.Id) && !note.IsLegacy
                 && note.ConfirmedAt == null
                 && note.State != LandNotificationState.Confirmed
                 && note.State != LandNotificationState.NotRequired
                 && note.State != LandNotificationState.LegacyUnverified
+                && note.State != LandNotificationState.Canceled
                 && note.ParentSessionId != null
                 && _db.AgentSessions.Any(session =>
                     session.Id == note.ParentSessionId && session.StandingAgentId == agentId))
@@ -627,6 +628,7 @@ public sealed class ExpectationSnapshotReader
                 && note.State != LandNotificationState.Confirmed
                 && note.State != LandNotificationState.NotRequired
                 && note.State != LandNotificationState.LegacyUnverified
+                && note.State != LandNotificationState.Canceled
                 && note.ParentSessionId != null
                 && _db.AgentSessions.Any(session =>
                     session.Id == note.ParentSessionId && session.StandingAgentId == agentId));

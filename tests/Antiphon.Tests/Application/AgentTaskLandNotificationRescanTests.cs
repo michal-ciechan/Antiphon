@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -32,6 +33,7 @@ public sealed class AgentTaskLandNotificationRescanTests
     private const int Population = 1500;
 
     private static IsolatedTestSchema _schema = null!;
+    private static FakeTimeProvider _clock = null!;
     private static BridgeQueueHarness _harness = null!;
     private static DbContextOptions<AppDbContext> _options = null!;
     private static ScanObserver _observer = null!;
@@ -56,10 +58,14 @@ public sealed class AgentTaskLandNotificationRescanTests
     {
         _schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         _observer = new ScanObserver();
+        // The park clock is this harness TimeProvider. Freezing it keeps the witness inside the
+        // first backoff without depending on the wall-clock duration of the seeded scan.
+        _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         _harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = _schema.ConnectionString,
+            TimeProvider = _clock,
             ConfigureDbContext = options => options.AddInterceptors(_observer),
             ConfigureServices = services =>
             {

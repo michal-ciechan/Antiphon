@@ -10186,6 +10186,10 @@ namespace Antiphon.Server.Migrations
 
                     NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("AgentSessionId", "Uuid"), new[] { "Kind" });
 
+                    b.HasIndex("AgentSessionId", "Kind", "Sequence")
+                        .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Kind_Sequence")
+                        .HasAnnotation("Npgsql:CreatedConcurrently", true);
+
                     b.HasIndex(new[] { "AgentSessionId", "Sequence" }, "IX_TranscriptEntries_End_AgentSessionId_Sequence")
                         .HasDatabaseName("IX_TranscriptEntries_End_AgentSessionId_Sequence")
                         .HasFilter("\"Kind\" IN ('TurnEnd', 'SessionRestartBoundary')\nOR (\"Kind\" = 'CompactBoundary' AND \"Text\" IS NOT NULL AND strpos(\"Text\", '(manual)') > 0)\nOR (\"Kind\" = 'UserPrompt' AND \"Text\" IS NOT NULL AND \"Text\" LIKE '[Request interrupted%')")

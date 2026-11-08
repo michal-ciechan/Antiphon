@@ -17,6 +17,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string Telemetry = "20261107034430_HostLoadTelemetryS1";
     private const string Membership = "20261107040142_HostLoadSnapshotMembership";
     private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
+    private const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -47,7 +48,8 @@ public sealed class C1514HostLoadMigrationTests
         previous.ShouldBeGreaterThanOrEqualTo(0);
         chain.Skip(previous).Take(3).ShouldBe([Previous, Telemetry, Membership], "linear-after-current-master");
         chain[previous + 3].ShouldBe(Catchup, "retention-catchup-follows-membership");
-        (chain.Length - previous).ShouldBe(4, "no-migration-after-retention-catchup");
+        chain[previous + 4].ShouldBe(PromptStamp, "prompt-stamp-index-follows-retention-catchup");
+        (chain.Length - previous).ShouldBe(5, "prompt-stamp-index-is-the-tip");
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
