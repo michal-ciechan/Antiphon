@@ -94,8 +94,6 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     }
 
     private readonly PhoneHomeLiveConnection _connection;
-    private readonly PtyReadHold<SessionRunnerBufferDto> _bufferHold = new();
-    private readonly PtyReadHold<SessionRunnerSnapshotDto> _snapshotHold = new();
     private readonly RunnerContractMapper _mapper = new();
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly Func<bool>? _isCurrent;
@@ -246,14 +244,14 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     }
 
     public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
-        ReadConditionalAsync(sessionId, PhoneHomeOperation.Buffer, _bufferHold, payload =>
+        ReadConditionalAsync(sessionId, PhoneHomeOperation.Buffer, _connection.PtyReads.Buffer, payload =>
         {
             var dto = RunnerReadJson.ReadElement(payload, RunnerReadJson.PhoneBuffer) ?? throw Missing("buffer");
             return new SessionRunnerBufferDto(dto.SessionId, dto.Buffer, dto.LastSequence);
         }, "buffer", ct);
 
     public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-        ReadConditionalAsync(sessionId, PhoneHomeOperation.Snapshot, _snapshotHold, payload =>
+        ReadConditionalAsync(sessionId, PhoneHomeOperation.Snapshot, _connection.PtyReads.Snapshot, payload =>
         {
             var dto = RunnerReadJson.ReadElement(payload, RunnerReadJson.PhoneSnapshot) ?? throw Missing("snapshot");
             return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence,
