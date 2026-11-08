@@ -295,6 +295,20 @@ dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --tr
 dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
 ```
 
+### Impacted classes (CARD-1782)
+
+`scripts/impacted-classes.ps1` reads `tests/impacted-classes.json` and names the test classes a high-blast-radius diff puts at risk. The script is read-only. It keeps no cache, so maximum staleness is zero. Code and Review Final scope includes the impacted-classes rows whose globs match `git diff --name-only base..HEAD`. A Merge batch appends the union for the whole batch diff. There is no merge-stage bundle; run the same script on that range:
+
+```powershell
+pwsh -NoProfile -File scripts/impacted-classes.ps1 -Range <base>..<tip> -Json
+```
+
+The JSON object carries `kinds`, `classes`, `files`, and one `treenodeFilter` per project. Whole classes use `/*/*/(ClassA*)|(ClassB*)/*`. Method rows use `/*/*/Class/(MethodA*)|(MethodB*)`. A whole class wins when another row would have selected only some of its methods.
+
+Downgrade callers are not stored in the table. When the migration row matches, the script scans `tests/**/*.cs` for `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(`. The scan is broad, so `AgentTuiSecretMigratorTests` is included with that row. Timing labels match `tests/Shared/TestTiming.cs`, or a `tests/**` diff that adds `BeginPhase(` or `BeginFixturePhase(`. A test edit that adds neither literal does not select that row. Remote deploy checks and the statement-budget checks stay method-scoped.
+
+The card named `scripts/lib/*.sh`, `server/Infrastructure/Data/**Snapshot**`, `server/**/*Routes*.cs`, and `server/**/Dispatch*/**`. Each of those globs matches no tracked file, and the audit fails a glob that matches nothing, so the table cannot store them. The paths that exist today are: migrations `server/Migrations/**` (the model snapshot lives there), `server/Infrastructure/Data/AppDbContext.cs`, and `server/Infrastructure/Data/**/*Model.cs`; contracts `server/**/Dtos/**`, `server/**/*Endpoints*.cs`, and `client/src/api/**`; remote scripts `scripts/c590-remote.sh` and `scripts/*.sh`; statement budgets `server/**/WorkspaceReservationJournal.cs` and `server/**/*Dispatch*.cs`.
+
 ### Offline rolling harness jq receipts (CARD-0983)
 
 On a jq-expected host, run `scripts/test-deploy-server2.ps1 -RequireJq` or
