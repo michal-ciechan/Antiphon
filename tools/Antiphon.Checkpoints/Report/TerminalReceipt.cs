@@ -61,6 +61,8 @@ internal static class TerminalReceipt
                 progress = new RowProgress { Id = spec.Id };
                 state.Rows.Add(progress);
             }
+            var wasRunning = progress.State == "running";
+            var priorState = progress.State;
             if (progress.State is "queued" or "running")
             {
                 progress.State = terminal;
@@ -71,7 +73,7 @@ internal static class TerminalReceipt
             var parsed = spec.IsCommand ? null : TrxReport.Parse(path);
             // An absent or incomplete XML document is unknown, never zero tests.
             var trx = parsed?.Ok == true ? parsed : null;
-            rows.Add(new RowRunResult
+            var rowResult = new RowRunResult
             {
                 Id = spec.Id, State = progress.State, ExitCode = progress.ExitCode,
                 Source = source.Copy(spec.IsCommand ? "notApplicable"
@@ -81,7 +83,20 @@ internal static class TerminalReceipt
                 TerminalReason = progress.TerminalReason, Line = progress.Line ?? "",
                 Repeat = progress.Repeat, Timings = progress.Timings,
                 Trx = trx, TrxPath = trx is null ? null : path,
-            });
+            };
+            if (!spec.IsCommand && trx is null && (wasRunning || priorState is "timeout" or "no-trx"))
+            {
+                var project = manifest.Builds.FirstOrDefault(build => build.Id == spec.Build)?.Project;
+                if (PhaseJournalDiagnostic.IsAntiphonTestsProject(project))
+                {
+                    var phaseRoot = spec.Environment.TryGetValue("ANTIPHON_TEST_PHASE_ROOT", out var configured)
+                        && !string.IsNullOrWhiteSpace(configured)
+                        ? configured
+                        : Path.Combine(runDirectory, "rows", spec.Id, "phase");
+                    rowResult.JournalDiagnostic = PhaseJournalDiagnostic.Format(phaseRoot, spec.Id);
+                }
+            }
+            rows.Add(rowResult);
         }
         state.Reason = reason;
         var model = CheckpointApp.BuildReport(runDirectory, request.RepoRoot, request, manifest, state,

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Antiphon.Checkpoints;
 
 public sealed class ReportModel
@@ -90,6 +92,10 @@ public sealed class ReportRow
     public int Attempt { get; set; } = 1;
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }
+
+    // Omitted when null so a passing row's receipt JSON stays free of journal counts.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? JournalDiagnostic { get; set; }
 }
 
 public sealed class ReportFailure

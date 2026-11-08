@@ -94,6 +94,7 @@ public static class ReportMerger
             Source = row.Source,
             Repeat = row.Repeat,
             Timings = row.Timings,
+            JournalDiagnostic = row.JournalDiagnostic,
             Attempt = earlierAttempts + 1,
         };
         if (row.Repeat is null && earlierAttempts > 0 && copy.Line is not null && !copy.Line.Contains("reruns=", StringComparison.Ordinal))

@@ -628,6 +628,7 @@ public static class Program
             Reason = result.ExitCode == 0 ? null : "source_ineligible",
             Rows = [new ReportRow { Id = name, Filter = Required(options, "filter"), State = result.State,
                 ExitCode = result.ExitCode, Source = result.Source, Line = result.Line, Trx = result.TrxPath,
+                JournalDiagnostic = result.JournalDiagnostic,
                 Executed = result.Trx?.Executed, Passed = result.Trx?.Passed, Failed = result.Trx?.Failed, Skipped = result.Trx?.Skipped }],
         });
         return result.ExitCode;

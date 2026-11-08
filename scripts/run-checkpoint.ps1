@@ -66,12 +66,14 @@ $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-repeat.ps1'))
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-owned-output.ps1'))
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-process-runner.ps1'))
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'phase-journal-diagnostic.ps1'))
 $script:sourceStart = $null
 $script:sourceEnd = $null
 $script:buildSource = 'unknown'
 $script:sourceReason = $null
 $script:buildState = 'n/a'
 $script:executed = 0
+$script:phaseDiagnosticRoot = $null
 $script:passed = 0
 $script:failed = 0
 $script:skipped = 0
@@ -766,6 +768,10 @@ function Invoke-Dotnet {
     }
     foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
     if ($Nonce) { $psi.Environment['ANTIPHON_CHECKPOINT_NONCE'] = $Nonce }
+    if ($Phase -eq 'run') {
+        [Antiphon.Checkpoints.PhaseJournalDiagnostic]::EnableProcess($psi, $Project, $resultsDirectory, $Name, 'row')
+        $script:phaseDiagnosticRoot = [Antiphon.Checkpoints.PhaseJournalDiagnostic]::ConfiguredRoot($psi)
+    }
     Set-AntiphonBuildDriverEnvironment -StartInfo $psi
     $logPath = Join-Path $resultsDirectory ($Phase + '.log')
     $stream = Open-CheckpointSafeCreate $logPath $resultsDirectory
@@ -1345,6 +1351,10 @@ if ($buildExit -ne 0) {
 # (5) No TRX is not a result.
 if (-not (Test-Path -LiteralPath $trxPath)) {
     Write-Host ('CHECKPOINT {0} no TRX written to {1} (runner exit {2})' -f $Name, $trxPath, $runExit)
+    if (-not [string]::IsNullOrWhiteSpace($script:phaseDiagnosticRoot)) {
+        $journalDiagnostic = [Antiphon.Checkpoints.PhaseJournalDiagnostic]::Format($script:phaseDiagnosticRoot, $Name)
+        if (-not [string]::IsNullOrWhiteSpace($journalDiagnostic)) { Write-Host $journalDiagnostic }
+    }
     Write-Trailer -Code 2
     exit 2
 }
