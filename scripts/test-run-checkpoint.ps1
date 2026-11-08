@@ -63,6 +63,21 @@ if ($env:C585_TRX -and $resultsDir) {
     if (-not (Test-Path -LiteralPath $resultsDir)) { New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null }
     Copy-Item -LiteralPath $env:C585_TRX -Destination (Join-Path $resultsDir 'run.trx') -Force
 }
+if ($env:C1748_WRITE_JOURNAL -eq '1' -and $env:ANTIPHON_TEST_PHASE_ROOT) {
+    $phaseDir = Join-Path $env:ANTIPHON_TEST_PHASE_ROOT 'chunk-c1748'
+    New-Item -ItemType Directory -Path $phaseDir -Force | Out-Null
+    $journal = @(
+        '{"recordKind":"header","version":1}',
+        '{"recordKind":"start","testId":"case-a","className":"Antiphon.Tests.Sample","method":"done"}',
+        '{"recordKind":"complete","testId":"case-a","className":"Antiphon.Tests.Sample","method":"done","outcome":"Passed"}',
+        '{"recordKind":"start","testId":"case-b","className":"Antiphon.Tests.Sample","method":"skipped"}',
+        '{"recordKind":"complete","testId":"case-b","className":"Antiphon.Tests.Sample","method":"skipped","outcome":"Skipped"}',
+        '{"recordKind":"start","testId":"case-c","className":"Antiphon.Tests.Sample","method":"left"}',
+        '{"recordKind":"fixture","fixtureId":"shared","testId":null}',
+        '{"recordKind":"comp'
+    ) -join "`n"
+    Set-Content -LiteralPath (Join-Path $phaseDir 'cases-4-c1748.jsonl') -Value $journal -Encoding ascii
+}
 $runCode = 0
 if ($env:C585_RUN_EXIT) { $runCode = [int]$env:C585_RUN_EXIT }
 exit $runCode
@@ -1290,6 +1305,24 @@ function Test-C578_NoSuccessReceiptForInterruptedBuild {
         Save-C578Evidence $fx $run "ready=$($ready.Ready) premature=$premature pid=$($ready.Child.Pid)"
         Assert-C487 -Cond $clean -Name 'C578 InterruptedBuild owned processes exited'
     }
+}
+
+function Test-C1748_KilledRowPrintsJournalCounts {
+    $fx = New-C585Case -Name 'c1748-kill'
+    $env:C1748_WRITE_JOURNAL = '1'
+    try {
+        $r = Invoke-C585Runner -Fx $fx -Name 'CP-1' -RunExit 134
+    } finally {
+        Remove-Item -LiteralPath Env:C1748_WRITE_JOURNAL -ErrorAction SilentlyContinue
+    }
+    $diag = @($r.Lines | Where-Object { $_ -like 'JOURNAL-DIAGNOSTIC *' })
+    Write-Host ('C1748 DIAG ' + ($diag -join ' | '))
+    $receipt = ''
+    if ($r.Checkpoint.Count -gt 0) { $receipt = [string]$r.Checkpoint[0] }
+    Assert-C487 -Cond ($r.Exit -eq 2) -Name 'C1748 killed row stays exit 2' -Detail $r.Text
+    Assert-C487 -Cond ($diag.Count -eq 1 -and $diag[0] -ceq 'JOURNAL-DIAGNOSTIC CP-1 completed=2 pending=1 outcome-passed=1 outcome-failed=0 outcome-skipped=1 in-flight=Antiphon.Tests.Sample.left') -Name 'C1748 journal diagnostic' -Detail ($diag -join ' | ')
+    Assert-C487 -Cond ($receipt -match ' executed=0 passed=0 failed=0 skipped=0 ') -Name 'C1748 receipt counts stay the no-TRX receipt' -Detail $receipt
+    Assert-C487 -Cond ($receipt -notmatch 'completed=') -Name 'C1748 receipt line has no journal token' -Detail $receipt
 }
 
 $script:C585ExpectedRows = 62 + 28 + 21
