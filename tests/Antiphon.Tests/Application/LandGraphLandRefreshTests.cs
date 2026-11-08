@@ -411,7 +411,8 @@ public sealed class LandGraphLandRefreshTests
     }
 
     /// <summary>
-    /// The real pre-check still refuses a property the audit cannot approve, and the refresh does not commit.
+    /// The real pre-check refuses a property the audit cannot approve. The refresh classifies that
+    /// phrase as property-or-construct and does not echo it or commit.
     /// </summary>
     [Test]
     [Timeout(180_000)]
@@ -423,10 +424,13 @@ public sealed class LandGraphLandRefreshTests
         });
         await ConfigureGit(repo.Root);
         var head = (await GitText(repo.Root, "rev-parse", "HEAD")).Trim();
+        var check = await LandGraphEvaluationTests.RunScriptAsync(repo.Root, "-Check");
+        check.ExitCode.ShouldNotBe(0, check.Text);
+        check.Text.ShouldContain("-Update cannot approve it");
+        check.Text.ShouldContain("property the audit does not allow");
         var result = await RunRealRefresh(repo.Root, head, TimeSpan.FromSeconds(120));
         result.Code.ShouldBe(1, result.Text);
         result.Text.ShouldContain("action=refuse reason=property-or-construct");
-        result.Text.ShouldContain("-Update cannot approve it");
         result.Text.ShouldNotContain("action=refresh");
         (await GitText(repo.Root, "rev-parse", "HEAD")).Trim().ShouldBe(head);
     }
