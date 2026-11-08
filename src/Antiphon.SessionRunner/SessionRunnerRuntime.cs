@@ -4345,6 +4345,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 etag = PtyObservationMatch.Buffer(_acceptedStartedAt, lastSequence, stamp.Length, stamp.WriteTicks);
             }
 
+            if (PtyObservationMatch.Matches(ifNoneMatch, etag))
+                return new(true, etag, null);
+
             return new(false, etag, new RunnerBufferDto(_sessionId, ReadAnsiLog(), lastSequence));
         }
 
@@ -4442,6 +4445,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     ? PtyObservationMatch.Snapshot(
                         _acceptedStartedAt, _startedAt, _lastSequence, _inputRevision, _ptyContentEpoch, dialog)
                     : null;
+                if (conditional && PtyObservationMatch.Matches(ifNoneMatch, etag!))
+                    return new(true, etag, null);
 
                 Interlocked.Increment(ref LiveBufferMaterializations);
                 return new(false, etag, new RunnerSnapshotDto(
