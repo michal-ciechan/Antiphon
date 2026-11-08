@@ -889,6 +889,7 @@ public static class CheckpointApp
             WallSeconds = row.WallSeconds,
             TerminalReason = row.TerminalReason,
             Line = row.Line,
+            JournalDiagnostic = row.JournalDiagnostic,
             RerunLines = row.RerunLines,
             SlowClasses = row.Trx?.SlowClasses ?? [],
             Failures = row.Trx?.Failures.Select(failure => new ReportFailure

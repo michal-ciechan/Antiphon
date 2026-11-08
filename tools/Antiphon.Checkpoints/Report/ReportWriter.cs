@@ -27,6 +27,8 @@ public static class ReportWriter
         {
             if (!string.IsNullOrWhiteSpace(row.Line))
                 text.AppendLine(row.Line);
+            if (!string.IsNullOrWhiteSpace(row.JournalDiagnostic))
+                text.AppendLine(row.JournalDiagnostic);
             if (row.ExecutedSeconds is double execution && row.WallSeconds is double wall)
                 text.AppendLine(FormattableString.Invariant($"CHECKPOINT-TIMING {row.Id} waited={row.WaitedSeconds}s executed={execution:F3}s wall={wall:F3}s")
                     + (row.TerminalReason is null ? "" : " reason=" + row.TerminalReason));

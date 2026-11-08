@@ -36,6 +36,7 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
         run.Environment["ANTIPHON_TEST_PHASE_SUITE"].ShouldBe("antiphon-tests");
         result.ExitCode.ShouldBe(ExitCodes.Timeout);
         result.Trx.ShouldBeNull();
+        result.JournalDiagnostic.ShouldBe(Diagnostic);
         result.Output.ShouldContain(Diagnostic);
         result.Line.ShouldContain("executed=n/a");
         result.Line.ShouldContain("passed=n/a");
@@ -67,6 +68,7 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
         var result = await RunKilled(driver, "tests/Antiphon.Tests");
         result.ExitCode.ShouldBe(ExitCodes.Invalid);
         result.Trx.ShouldBeNull();
+        result.JournalDiagnostic.ShouldBe(Diagnostic);
         result.Output.ShouldContain("no TRX");
         result.Output.ShouldContain(Diagnostic);
         result.Line.ShouldNotContain("executed=2");
@@ -81,6 +83,7 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
             Task.FromResult(new DriverResult(134, "", "", Killed: true, TimedOut: true)));
         var result = await RunKilled(driver, "tests/Antiphon.Agents.Pty.Tests");
         result.ExitCode.ShouldBe(ExitCodes.Timeout);
+        result.JournalDiagnostic.ShouldBeNull();
         result.Output.ShouldNotContain("JOURNAL-DIAGNOSTIC");
         var run = driver.Calls.Single(CheckpointFixtures.IsRun);
         (run.Environment?.ContainsKey("ANTIPHON_TEST_PHASE_ROOT") ?? false).ShouldBeFalse();

@@ -62,6 +62,7 @@ public sealed class RowRunResult
     public string? TerminalReason { get; set; }
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }
+    public string? JournalDiagnostic { get; set; }
 }
 
 public sealed class RowRunner
@@ -265,6 +266,11 @@ public sealed class RowRunner
             : null;
         if (runEnvironment is not null)
             runEnvironment["ANTIPHON_CHECKPOINT_NONCE"] = nonce!;
+        if (PhaseJournalDiagnostic.IsAntiphonTestsProject(request.Project))
+        {
+            runEnvironment ??= request.Environment.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            PhaseJournalDiagnostic.Enable(runEnvironment, request.ResultsDirectory, request.Name, request.TimingRunId);
+        }
         var hostLaunch = DateTimeOffset.UtcNow;
         var hostStartTick = System.Diagnostics.Stopwatch.GetTimestamp();
         var run = await RowTimeout.RunWithDeadlineAsync(
@@ -284,13 +290,18 @@ public sealed class RowRunner
             return WithTiming(Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "build-source-mismatch"), Unmeasured(ExitCodes.Invalid, "build-source"));
         }
         if (run.TimedOut)
-            return WithTiming(TimeoutResult(request, buildState, buffer, combined), Unmeasured(ExitCodes.Timeout, "run", timedOut: true));
+            return WithTiming(TimeoutResult(request, buildState, buffer, combined, JournalDiagnosticFor(request, runEnvironment ?? request.Environment)), Unmeasured(ExitCodes.Timeout, "run", timedOut: true));
 
         if (!File.Exists(trxPath))
         {
+            var journalDiagnostic = JournalDiagnosticFor(request, runEnvironment ?? request.Environment);
             combined.WriteLine($"CHECKPOINT {request.Name} no TRX written to {trxPath} (runner exit {run.ExitCode})");
+            if (!string.IsNullOrEmpty(journalDiagnostic))
+                combined.WriteLine(journalDiagnostic);
             combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
-            return WithTiming(Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "no-trx"), Unmeasured(ExitCodes.Invalid, "no-trx"));
+            var noTrx = Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "no-trx");
+            noTrx.JournalDiagnostic = journalDiagnostic;
+            return WithTiming(noTrx, Unmeasured(ExitCodes.Invalid, "no-trx"));
         }
 
         var parsed = TrxReport.Parse(trxPath);
@@ -328,9 +339,16 @@ public sealed class RowRunner
                 if (request.BeforeLaunch is not null)
                     await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
                 if (request.SourceBoundary?.Invoke() == false) { sourceStable = false; break; }
+                var rerunEnvironment = request.Environment;
+                if (PhaseJournalDiagnostic.IsAntiphonTestsProject(request.Project))
+                {
+                    var copy = request.Environment.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                    PhaseJournalDiagnostic.Enable(copy, request.ResultsDirectory, request.Name, request.TimingRunId);
+                    rerunEnvironment = copy;
+                }
                 var second = await RowTimeout.RunWithDeadlineAsync(
                     _driver,
-                    new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
+                    new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: rerunEnvironment),
                     request.Deadline,
                 _time,
                     cancellationToken).ConfigureAwait(false);
@@ -463,7 +481,14 @@ public sealed class RowRunner
         }
     }
 
-    private RowRunResult TimeoutResult(RowRequest request, string buildState, StringWriter buffer, TextWriter output)
+    private static string? JournalDiagnosticFor(RowRequest request, IReadOnlyDictionary<string, string>? environment)
+    {
+        if (!PhaseJournalDiagnostic.IsAntiphonTestsProject(request.Project) || environment is null)
+            return null;
+        return PhaseJournalDiagnostic.FormatFromEnvironment(environment, request.Name);
+    }
+
+    private RowRunResult TimeoutResult(RowRequest request, string buildState, StringWriter buffer, TextWriter output, string? journalDiagnostic = null)
     {
         var minutes = Math.Max(1, (int)Math.Round(request.Deadline.TotalMinutes));
         var line = CheckpointLine.Format(new CheckpointLineModel
@@ -480,8 +505,12 @@ public sealed class RowRunner
             Source = request.Source,
         });
         output.WriteLine(line);
+        if (!string.IsNullOrEmpty(journalDiagnostic))
+            output.WriteLine(journalDiagnostic);
         output.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 5");
-        return Finish(ExitCodes.Timeout, buildState, line, buffer, 0, [], null, null, true, "timeout");
+        var result = Finish(ExitCodes.Timeout, buildState, line, buffer, 0, [], null, null, true, "timeout");
+        result.JournalDiagnostic = journalDiagnostic;
+        return result;
     }
 
     private static RowRunResult Finish(
