@@ -321,6 +321,8 @@ public sealed class OrchestratorBundleOwnershipTests
         bundle.ShouldContain("one red witness plus one narrow green", Case.Sensitive, "c1753-one-red-witness");
         bundle.ShouldContain("a master land is not activation", Case.Sensitive, "c1753-master-land-not-activation");
         bundle.ShouldContain("reviewed rc picks", Case.Sensitive, "c1753-reviewed-rc-picks");
+        bundle.ShouldContain("never asks", Case.Sensitive, "c1753-never-asks");
+        bundle.ShouldContain("Own land-graph drift refreshes, never asks: #land-graph-refresh.", Case.Sensitive, "c1753-land-graph-rule");
         bundle.ShouldContain("#land-graph-refresh", Case.Sensitive, "c1753-land-graph-anchor");
     }
 
