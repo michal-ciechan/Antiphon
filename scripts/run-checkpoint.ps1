@@ -745,6 +745,15 @@ if (-not (Assert-CheckpointBoundary 'post_slot')) {
 $cpuArguments = @()
 if ($null -ne $slot -and [int]$slot.MaxCpuCount -gt 0) { $cpuArguments = @('-maxcpucount:' + [int]$slot.MaxCpuCount) }
 
+function Remove-AntiphonTestPhaseEnvironment {
+    param($Environment)
+    if ($null -eq $Environment) { return }
+    # ProcessStartInfo copies the parent environment. Every name in the phase family
+    # has to go before the row installs its own root; a leftover value is kept.
+    $names = @($Environment.Keys | Where-Object { [string]$_ -like 'ANTIPHON_TEST_PHASE_*' })
+    foreach ($name in $names) { [void]$Environment.Remove([string]$name) }
+}
+
 function Invoke-Dotnet {
     param([string[]]$Arguments, [string]$Phase, [string]$Nonce)
     # ProcessStartInfo.ArgumentList passes each token literally. The call operator
@@ -768,6 +777,7 @@ function Invoke-Dotnet {
     }
     foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
     if ($Nonce) { $psi.Environment['ANTIPHON_CHECKPOINT_NONCE'] = $Nonce }
+    Remove-AntiphonTestPhaseEnvironment -Environment $psi.Environment
     if ($Phase -eq 'run') {
         [Antiphon.Checkpoints.PhaseJournalDiagnostic]::EnableProcess($psi, $Project, $resultsDirectory, $Name, 'row')
         $script:phaseDiagnosticRoot = [Antiphon.Checkpoints.PhaseJournalDiagnostic]::ConfiguredRoot($psi)
