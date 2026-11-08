@@ -173,7 +173,7 @@ public sealed partial class ImpactedClassesSelectorTests
                  })
         {
             var selected = await SelectAsync(root, sha + "^.." + sha);
-            Names(selected, "kinds").ShouldContain("contracts", Case.Sensitive, sha);
+            Names(selected, "kinds").ShouldContain("contracts", sha);
             var rendered = selected.RootElement.GetRawText();
             rendered.ShouldContain("ContractSnapshotTests", Case.Sensitive, sha);
             rendered.ShouldContain("tests/Antiphon.E2E", Case.Sensitive, sha);
