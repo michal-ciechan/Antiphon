@@ -14,6 +14,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-1157 S3. The reconciler follows a whitelisted keyed row onto session B, and only then.
 /// A miss on B stays open. Any one refused condition, or a missing session row, scans the parent.
 /// A proof for one scan target does not certify the other.
+/// CARD-1759 reloads an already-tracked note once, so each measured pass is one command under the old Single-plus-Reload budget.
 /// </summary>
 [Category("Integration")]
 public sealed class ReceiptScanDestinationIntegrationTests
@@ -112,7 +113,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
         {
             case "stopped":
             case "failed":
-                passes.Select(p => p.Commands).ShouldBe([7, 2, 2], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 1, 1], roster);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.SessionProjections).ShouldBe([2, 0, 0], roster);
                 passes[0].Floors.ShouldBe([Floor]);
@@ -120,7 +121,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
                     await ConfirmWithoutCacheAsync(h, fx, ct);
                 break;
             case "running":
-                passes.Select(p => p.Commands).ShouldBe([7, 2, 2], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 1, 1], roster);
                 Refusal(h, "eligibility:DestinationStatus").ShouldBe(1);
                 (await h.StatusAsync(fx.Destination)).ShouldBe(SessionStatus.Running);
                 (await h.NoteAsync(fx.Note.Id)).LastErrorCode.ShouldBeNull();
@@ -156,7 +157,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
         // attempt. Account for exactly that lookup as well as the existing receipt scan.
         passes[0].Roster.Split('\n').Count(sql => sql.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal)
             && sql.Contains("\"Attempt\"", StringComparison.Ordinal)).ShouldBe(1, roster);
-        passes.Select(p => p.Commands).ShouldBe([12, 2, 2], roster);
+        passes.Select(p => p.Commands).ShouldBe([11, 1, 1], roster);
         passes[0].PullsB.ShouldBe(1);
         passes[0].PullsA.ShouldBe(0);
         passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
@@ -180,7 +181,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
 
         var first = await PassAsync(h, fx.Note.Id, fx.Destination, ct);
         var afterFault = await h.NoteAsync(fx.Note.Id);
-        first.Commands.ShouldBe(7, first.Roster);
+        first.Commands.ShouldBe(6, first.Roster);
         first.ReceiptSelects.ShouldBe(0);
         first.PullsA.ShouldBe(0);
         first.PullsB.ShouldBe(0);
@@ -190,14 +191,14 @@ public sealed class ReceiptScanDestinationIntegrationTests
         afterFault.ConfirmedAt.ShouldBeNull();
 
         var second = await PassAsync(h, fx.Note.Id, fx.Destination, ct);
-        second.Commands.ShouldBe(7, second.Roster);
+        second.Commands.ShouldBe(6, second.Roster);
         second.ReceiptSelects.ShouldBe(1);
         second.PullsB.ShouldBe(1);
         second.Sessions.ShouldBe([fx.Destination]);
         await ShouldBeConfirmedAtAsync(h, fx.Note.Id, PromptAt, fx.Destination);
 
         var third = await PassAsync(h, fx.Note.Id, fx.Destination, ct);
-        third.Commands.ShouldBe(2, third.Roster);
+        third.Commands.ShouldBe(1, third.Roster);
         third.ReceiptSelects.ShouldBe(0);
         third.PullsB.ShouldBe(0);
         var faultPasses = new[] { first, second, third };
@@ -261,7 +262,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
         passes[0].Sessions.ShouldBe([fx.Destination], roster);
         passes[0].Sessions.Count.ShouldBe(1);
         passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
-        passes.Select(p => p.Commands).ShouldBe([7, 6, 6], roster);
+        passes.Select(p => p.Commands).ShouldBe([6, 5, 5], roster);
         var rows = arm == "assistant-text-on-destination" ? new[] { 47, 0, 0 } : new[] { 48, 0, 0 };
         passes.Select(p => p.ReceiptRows).ShouldBe(rows, roster);
         await ShouldStayOpenAsync(h, fx.Note.Id);
@@ -310,7 +311,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
         passes[0].Sessions.ShouldBe([fx.Parent], roster);
         passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
         passes.Select(p => p.ReceiptRows).ShouldBe([48, 0, 0], roster);
-        passes.Select(p => p.Commands).ShouldBe([6, 5, 5], roster);
+        passes.Select(p => p.Commands).ShouldBe([5, 4, 4], roster);
         passes.Select(p => p.SessionProjections).ShouldBe([1, 1, 1], roster);
         passes.Select(p => p.PullsA).ShouldBe([1, 1, 1]);
         passes.Select(p => p.PullsB).ShouldBe([0, 0, 0]);
@@ -360,7 +361,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
         switch (arm)
         {
             case "confirm":
-                passes.Select(p => p.Commands).ShouldBe([7, 2, 2], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 1, 1], roster);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.SessionProjections).ShouldBe([2, 0, 0], roster);
                 passes[0].Sessions.ShouldBe([fx.Destination]);
@@ -368,7 +369,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
                 await ShouldBeConfirmedAtAsync(h, fx.Note.Id, PromptAt, fx.Destination);
                 break;
             case "quiet-miss":
-                passes.Select(p => p.Commands).ShouldBe([7, 6, 6], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 5, 5], roster);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.ReceiptRows).ShouldBe([48, 0, 0], roster);
                 passes.Select(p => p.SessionProjections).ShouldBe([2, 2, 2], roster);
@@ -385,7 +386,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
                 (await h.NoteAsync(fx.Note.Id)).LastErrorCode.ShouldBeNull();
                 break;
             case "row-session-missing":
-                passes.Select(p => p.Commands).ShouldBe([7, 6, 6], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 5, 5], roster);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.ReceiptRows).ShouldBe([48, 0, 0], roster);
                 passes.Select(p => p.SessionProjections).ShouldBe([2, 2, 2], roster);
@@ -399,7 +400,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
                     (await db.AgentSessions.CountAsync(s => s.Id == fx.Destination, ct)).ShouldBe(0);
                 break;
             case "running-quiet-miss":
-                passes.Select(p => p.Commands).ShouldBe([7, 7, 7], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 6, 6], roster);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 1, 1]);
                 passes.Select(p => p.ReceiptRows).ShouldBe([48, 48, 48], roster);
                 passes.Select(p => p.Sessions.Single()).ShouldBe([fx.Destination, fx.Destination, fx.Destination]);
@@ -414,7 +415,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
                 await ShouldStayOpenAsync(h, fx.Note.Id);
                 break;
             case "parent-running-row-stopped-quiet-miss":
-                passes.Select(p => p.Commands).ShouldBe([7, 6, 6], roster);
+                passes.Select(p => p.Commands).ShouldBe([6, 5, 5], roster);
                 passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
                 passes.Select(p => p.SessionProjections).ShouldBe([2, 2, 2], roster);
                 passes[0].Sessions.ShouldBe([fx.Destination]);
@@ -456,7 +457,7 @@ public sealed class ReceiptScanDestinationIntegrationTests
 
         var opening = await PassesAsync(h, fx.Note.Id, fx.Destination, 2, ct);
         var roster = Rosters(opening);
-        opening.Select(p => p.Commands).ShouldBe([7, 6], roster);
+        opening.Select(p => p.Commands).ShouldBe([6, 5], roster);
         opening.Select(p => p.ReceiptSelects).ShouldBe([1, 0]);
         opening.Select(p => p.PullsA).ShouldBe(appear ? [1, 1] : [0, 0]);
         opening.Select(p => p.PullsB).ShouldBe(appear ? [0, 0] : [1, 1]);
