@@ -30,13 +30,9 @@ public sealed class FakeBrowserSolutionReleaseTests
         DeleteDirectory(Path.Combine(producer, "bin", "Release"));
         DeleteDirectory(Path.Combine(consumer, "bin", "Release"));
 
-        var (exit, output) = await RunLeasedSolutionBuildAsync(repo, cancellationToken);
+        var (exit, output) = await RunSolutionBuildAsync(repo, cancellationToken);
         var detail = Relevant(output);
 
-        detail.ShouldContain("BUILD SLOT granted");
-        detail.ShouldContain("BUILD SLOT released");
-        detail.ShouldNotContain("BUILD SLOT unleased");
-        detail.ShouldNotContain("BUILD SLOT skipped");
         exit.ShouldBe(0, detail);
 
         var releaseDll = Path.Combine(producer, "bin", "Release", "net9.0", ProducerAssembly);
@@ -50,12 +46,13 @@ public sealed class FakeBrowserSolutionReleaseTests
             .ShouldBe(SHA256.HashData(await File.ReadAllBytesAsync(releaseDll, cancellationToken)));
     }
 
-    private static async Task<(int Exit, string Output)> RunLeasedSolutionBuildAsync(
+    private static async Task<(int Exit, string Output)> RunSolutionBuildAsync(
         string repo, CancellationToken cancellationToken)
     {
-        // The slot wait sits inside this test's timeout. Three minutes fails the row
-        // instead of holding the default forty-five while the runner is busy.
-        var start = new ProcessStartInfo("pwsh")
+        // The outer run already holds the host build slot. A nested build-slot.ps1
+        // lease would take a second slot, and a granted-lease assertion fails when
+        // slots are off or the runner is unreachable (CARD-1740).
+        var start = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = repo,
             RedirectStandardOutput = true,
@@ -66,21 +63,18 @@ public sealed class FakeBrowserSolutionReleaseTests
         start.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
         foreach (var arg in new[]
         {
-            "-NoProfile", "-NonInteractive", "-File", Path.Combine(repo, "scripts", "build-slot.ps1"),
-            "-Label", "card-1740-fakebrowser",
-            "-SlotWaitMinutes", "3",
-            "--",
-            "dotnet", "msbuild", "Antiphon.sln",
+            "msbuild", "Antiphon.sln",
+            "-maxcpucount:2",
+            "-nodeReuse:false",
             "-restore",
             "-p:Configuration=Release",
             "-p:UseAppHost=false",
             "-t:tests\\Antiphon_MarkdownPdf_Tests",
-            "-nodeReuse:false",
             "--nologo",
         })
             start.ArgumentList.Add(arg);
 
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("build slot did not start");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("solution build did not start");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
         try
@@ -100,8 +94,7 @@ public sealed class FakeBrowserSolutionReleaseTests
     {
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return string.Join('\n', lines.Where(line =>
-            line.Contains("BUILD SLOT", StringComparison.Ordinal)
-            || line.Contains("error", StringComparison.OrdinalIgnoreCase)
+            line.Contains("error", StringComparison.OrdinalIgnoreCase)
             || line.Contains("FakeBrowser", StringComparison.Ordinal)));
     }
 
