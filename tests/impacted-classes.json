@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "card": "CARD-1782",
+  "cache": "none",
+  "maximumStaleness": 0,
+  "kinds": [
+    {
+      "id": "migrations",
+      "globs": [
+        "server/Migrations/**",
+        "server/Infrastructure/Data/AppDbContext.cs",
+        "server/Infrastructure/Data/**/*Model.cs"
+      ],
+      "classes": [
+        "AppDbContextModelTests",
+        "C1514HostLoadMigrationTests"
+      ],
+      "derive": {
+        "patterns": [
+          "MigrateAsync\\s*\\(\\s*[^)\\s]",
+          "\\bIMigrator\\b",
+          "\\bMigrationTestDatabase\\b",
+          "\\.Down\\s*\\("
+        ]
+      }
+    },
+    {
+      "id": "contracts",
+      "globs": [
+        "server/**/Dtos/**",
+        "server/**/*Endpoints*.cs",
+        "client/src/api/**"
+      ],
+      "classes": [
+        "ContractSnapshotTests"
+      ]
+    },
+    {
+      "id": "timing-labels",
+      "globs": [
+        "tests/Shared/TestTiming.cs"
+      ],
+      "added": {
+        "glob": "tests/**",
+        "literals": [
+          "BeginPhase(",
+          "BeginFixturePhase("
+        ]
+      },
+      "classes": [
+        "TestTimingOperationLabelTests"
+      ]
+    },
+    {
+      "id": "remote-scripts",
+      "globs": [
+        "scripts/c590-remote.sh",
+        "scripts/*.sh"
+      ],
+      "methods": [
+        "RemoteScriptContractTests/C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle",
+        "RemoteScriptContractTests/C0995_Deploy_temp_checks_host_absence_before_checkout",
+        "RemoteScriptContractTests/C849_Deploy_temp_names_saved_import_when_seed_is_missing",
+        "RemoteScriptContractTests/C849_Deploy_ordering_contract_is_pinned",
+        "RemoteScriptContractTests/C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo"
+      ]
+    },
+    {
+      "id": "statement-budgets",
+      "globs": [
+        "server/**/WorkspaceReservationJournal.cs",
+        "server/**/*Dispatch*.cs"
+      ],
+      "methods": [
+        "DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets"
+      ]
+    },
+    {
+      "id": "checkpoint-tool",
+      "globs": [
+        "tools/Antiphon.Checkpoints/**"
+      ],
+      "classes": [
+        "CheckpointReceiptSafetyTests",
+        "CheckpointTerminalReceiptTests",
+        "HostCleanupCheckpointReceiptTests"
+      ]
+    }
+  ]
+}

@@ -295,6 +295,22 @@ dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --tr
 dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
 ```
 
+### Impacted classes (CARD-1782)
+
+`scripts/impacted-classes.ps1` reads `tests/impacted-classes.json` and names the test classes a high-blast-radius diff puts at risk. The script is read-only. It keeps no cache, so maximum staleness is zero. Code and Review Final scope includes the impacted-classes rows whose globs match `git diff --name-only base..HEAD`. A Merge batch appends the union for the whole batch diff. There is no merge-stage bundle; run the same script on that range:
+
+```powershell
+pwsh -NoProfile -File scripts/impacted-classes.ps1 -Range <base>..<tip> -Json
+```
+
+A malformed table exits 1 and names the row. That includes a root that is not an object, a schema other than 1, an unknown property, a kind with no id, a kind with no globs or added, a kind with no classes, methods, or derive, a methods entry that is not Class/Method, a class that does not end in Tests, and a named class that is absent from tests/. `-Range` cannot be combined with `-Path` or `-FileList` (exit 2).
+
+The JSON object carries `kinds`, `classes`, `files`, and one `treenodeFilter` per project. Whole classes use `/*/*/(ClassA*)|(ClassB*)/*`. Method rows use `/*/*/Class/(MethodA*)|(MethodB*)`. A whole class wins when another row would have selected only some of its methods.
+
+Downgrade callers are not stored in the table. When the migration row matches, the script scans `tests/**/*.cs` for `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(`. This migrations row is the downgrade selector the Code and Review bundles name. The scan is broad, so `AgentTuiSecretMigratorTests` is included with that row. Timing labels match `tests/Shared/TestTiming.cs`, or a `tests/**` diff that adds `BeginPhase(` or `BeginFixturePhase(`. A test edit that adds neither literal does not select that row. Remote deploy checks and the statement-budget checks stay method-scoped.
+
+The card named `scripts/lib/*.sh`, `server/Infrastructure/Data/**Snapshot**`, `server/**/*Routes*.cs`, and `server/**/Dispatch*/**`. Each of those globs matches no tracked file, and the audit fails a glob that matches nothing, so the table cannot store them. The paths that exist today are: migrations `server/Migrations/**` (the model snapshot lives there), `server/Infrastructure/Data/AppDbContext.cs`, and `server/Infrastructure/Data/**/*Model.cs`; contracts `server/**/Dtos/**`, `server/**/*Endpoints*.cs`, and `client/src/api/**`; remote scripts `scripts/c590-remote.sh` and `scripts/*.sh`; statement budgets `server/**/WorkspaceReservationJournal.cs` and `server/**/*Dispatch*.cs`.
+
 ### Offline rolling harness jq receipts (CARD-0983)
 
 On a jq-expected host, run `scripts/test-deploy-server2.ps1 -RequireJq` or
@@ -1176,7 +1192,7 @@ PC cycles remain method-scoped work for post-land SourceLanding Mutation.
 
 ### Additive migrations (operator rule, 2026-11-07)
 
-Operator rule (2026-11-07): "Migrations should be additive; Down must fail safely." Down throws where applying it would lose data. A migration whose Down throws makes every test that rewinds a tip clone fail. Build the predecessor schema forward with `MigrationTestDatabase.CreateAsync(<predecessor>)` instead of downgrading a latest clone. The downgrade selector greps `tests/` for `MigrateAsync(<target>)`, `IMigrator.Migrate`, `MigrationTestDatabase.CreateAsync`, `.Down(`, and `CreateIsolatedSchemaAsync` followed by a backwards `MigrateAsync`. Fix those fixtures or list them as owed, and report red/green counts. Also run the migration and model classes. A reviewer who only reruns the new migration tests has not reviewed the migration.
+Operator rule (2026-11-07): "Migrations should be additive; Down must fail safely." Down throws where applying it would lose data. A migration whose Down throws makes every test that rewinds a tip clone fail. Build the predecessor schema forward with `MigrationTestDatabase.CreateAsync(<predecessor>)` instead of downgrading a latest clone. The downgrade selector greps `tests/` for `MigrateAsync(<target>)`, `IMigrator.Migrate`, `MigrationTestDatabase.CreateAsync`, `.Down(`, and `CreateIsolatedSchemaAsync` followed by a backwards `MigrateAsync`. Fix those fixtures or list them as owed, and report red/green counts. Also run the migration and model classes. A reviewer who only reruns the new migration tests has not reviewed the migration. That selector is the migrations row of `tests/impacted-classes.json`, read by `scripts/impacted-classes.ps1`.
 
 ### NuGet version pins (CARD-1229)
 
