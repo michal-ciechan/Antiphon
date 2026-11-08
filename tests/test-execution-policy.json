@@ -1569,6 +1569,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the compose drain witness runs a Unix fake docker that writes both streams.",
           "owner": "CARD-1775"
+        },
+        {
+          "suite": "antiphon",
+          "class": "DeployServer2ApiDefaultTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the witness puts a #!/bin/sh docker and ssh on PATH and chmod's them. The case remains required on Linux.",
+          "owner": "CARD-1777"
         }
       ]
     }
