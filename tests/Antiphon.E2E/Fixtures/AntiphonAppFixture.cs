@@ -644,6 +644,11 @@ public class AntiphonAppFixture
                         ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
                         : "/bin/sh",
                     ["SessionRunner:BaseUrl"] = _sessionRunnerBaseUrl,
+                    // CARD-1795: server/appsettings.json carries Windows paths for these. On Linux the
+                    // check interpreter's would be a relative name, provisioned as one directory called
+                    // C:\logs\antiphon\check-interpreter inside the test output.
+                    ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspacePath, "check-interpreter"),
+                    ["ZombieCensus:SessionLogPath"] = Path.Combine(_workspacePath, "session-runner"),
                     ["Delegation:DiagnoseEnabled"] = "false",
                     ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
                     ["Delegation:OutputDistillerEnabled"] = "false",
