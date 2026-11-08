@@ -118,8 +118,7 @@ public sealed class MergeHighRadiusSubsetTests
             .Where(line => !line.Contains("CP-merge-subset-messaging", StringComparison.Ordinal)));
         dropped.ShouldNotBe(table);
         Should.Throw<ShouldAssertException>(() => AssertRows(dropped));
-        var e2eRow = table.Split(
-).Single(line => line.Contains("| CP-merge-subset-e2e |", StringComparison.Ordinal));
+        var e2eRow = table.Split('\n').Single(line => line.Contains("| CP-merge-subset-e2e |", StringComparison.Ordinal));
         e2eRow.ShouldEndWith("| true | n/a |");
         var withEnvironment = table.Replace(
             e2eRow,
