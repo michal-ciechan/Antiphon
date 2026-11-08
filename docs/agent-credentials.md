@@ -393,9 +393,25 @@ this fragment; this card does not edit that compose file.
 When `Git:PushCredentialTokenFile` and `Git:PushCredentialPolicyPath` are set, a
 missing, empty, unreadable, or symlinked token or allow-list refuses the remote
 git command with `push_credential_absent` before git starts. Both empty (the
-desktop) skips the probe. The probe does not cache file contents. Each remote
-command stats the mounts, so the maximum staleness of a present-or-absent answer
-is zero.
+desktop) skips the probe. The probe opens each file for read and checks that it
+is non-empty. It does not read or cache the token bytes. Each remote command
+stats the mounts, so the maximum staleness of a present-or-absent answer is zero.
+
+The server's git identity is the same non-secret file the runner already mounts.
+`RUNNER_GIT_IDENTITY_FILE` names that host file. The variable's value is not
+written into the image or into a compose environment entry. The file holds
+`user.name` and `user.email` and no secret. `deploy-parent` creates it only when
+it is missing, mode `0644`, owned by the host user `mc`, so uid 1654 can read
+the read-only mount. An existing file is never rewritten. The file stays out of
+the image. `docker-compose.server2-land-credential.yml` mounts it at
+`/run/antiphon/gitconfig:ro` and sets `GIT_CONFIG_GLOBAL` to that path. Compose
+refuses to start when `RUNNER_GIT_IDENTITY_FILE` is unset. `Git:IdentityFile` is
+the same path. When that setting is non-empty, a missing, empty, unreadable,
+relative, symlinked, or incomplete file (no `user.name` and `user.email`)
+refuses every git command with `git_identity_absent` before git starts. An empty
+setting is the desktop and is not probed. A usable file is passed to the git
+child as `GIT_CONFIG_GLOBAL`. Each command reads the identity file again and
+does not cache it, so the maximum staleness is zero.
 
 Land checkouts live at `/work/repos/<name>` on the production work volume.
 `scripts/server2-repository-mirrors.ps1` defaults to `-WhatIf` and, with

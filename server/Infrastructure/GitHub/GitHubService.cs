@@ -23,6 +23,7 @@ public class GitHubService : IGitHubService
     private readonly GithubSettings _settings;
     private readonly TimeProvider _time;
     private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
+    private readonly IOptions<GitSettings>? _git;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -36,7 +37,8 @@ public class GitHubService : IGitHubService
         ILogger<GitHubService> logger,
         IHttpClientFactory? httpClientFactory = null,
         TimeProvider? time = null,
-        IOptionsMonitor<ResilienceSettings>? resilience = null)
+        IOptionsMonitor<ResilienceSettings>? resilience = null,
+        IOptions<GitSettings>? git = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
@@ -44,6 +46,7 @@ public class GitHubService : IGitHubService
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _resilience = resilience;
+        _git = git;
 
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
@@ -92,7 +95,7 @@ public class GitHubService : IGitHubService
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(60));
-        var result = await new Git.LandingGit().RunAsync(repoPath, ["push", "origin", branchName], cts.Token);
+        var result = await new Git.LandingGit(null, _git).RunAsync(repoPath, ["push", "origin", branchName], cts.Token);
         if (!result.Succeeded) throw new InvalidOperationException(result.Diagnostic);
 
         _logger.LogInformation("Successfully pushed branch {Branch}", branchName);

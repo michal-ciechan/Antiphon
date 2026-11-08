@@ -929,12 +929,16 @@ CARD-1775 owns the production server compose. This card does not edit that file.
 `docker-compose.server2-land-credential.yml` is the include that mounts
 `${RUNNER_GITHUB_TOKEN_DIR}` read-only at `/run/antiphon/github-token` and
 `${SERVER_PUSH_ALLOW_LIST}` read-only at `/run/antiphon/push-allow-list`. The
-server image bakes the credential helper and `docker/server/gitconfig`. The token
-stays in the mounted directory. Land checkouts are `/work/repos/<name>` on the
-production work volume. `scripts/server2-repository-mirrors.ps1` defaults to
-`-WhatIf`. Cutover rewrites `Project.LocalRepositoryPath` from a recorded before
-column; rollback restores that before column. A missing mount refuses land with
-`push_credential_absent` before git starts. Custody is in
+same fragment mounts `${RUNNER_GIT_IDENTITY_FILE}` read-only at
+`/run/antiphon/gitconfig` and sets `GIT_CONFIG_GLOBAL` to that path. The server
+image bakes the credential helper and `docker/server/gitconfig`. The token stays
+in the mounted directory. The identity file stays on the host. Land checkouts
+are `/work/repos/<name>` on the production work volume.
+`scripts/server2-repository-mirrors.ps1` defaults to `-WhatIf`. Cutover rewrites
+`Project.LocalRepositoryPath` from a recorded before column; rollback restores
+that before column. A missing credential mount refuses land with
+`push_credential_absent` before git starts. A configured but unusable identity
+file refuses with `git_identity_absent` before git starts. Custody is in
 [agent-credentials.md](agent-credentials.md).
 
 `deploy-server2.ps1:1` says "Run from the desktop after Review, never on server2." Its default API
