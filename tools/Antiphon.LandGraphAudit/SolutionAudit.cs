@@ -311,13 +311,25 @@ internal static class SolutionAudit
         // Let the referenced project choose its own frameworks; an explicit SetTargetFramework
         // below selects the requested one. Otherwise Evaluate visits all its inner evaluations.
         result.Remove("TargetFramework");
-        foreach (var name in Project.GetMetadataValueEscaped(reference, "GlobalPropertiesToRemove")
-                     .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            result.Remove(ProjectCollection.Unescape(name));
-        // AssignProjectConfiguration, when BuildingSolutionFile is set, maps an in-solution
-        // reference onto the solution configuration and adds Configuration and Platform to
-        // GlobalPropertiesToRemove for every other reference (ShouldUnsetParentConfigurationAndPlatform).
-        // Explicit SetConfiguration / SetPlatform / AdditionalProperties below still win.
+        // The MSBuild task applies Properties, then RemoveProperties. Set* and
+        // AdditionalProperties go on first. AssignProjectConfiguration then overwrites
+        // Configuration and Platform for an in-solution reference, and adds both to
+        // GlobalPropertiesToRemove for every other reference
+        // (ShouldUnsetParentConfigurationAndPlatform). The item's own
+        // GlobalPropertiesToRemove is last, so explicit metadata does not restore them.
+        foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework", "AdditionalProperties" })
+        {
+            foreach (var assignment in Project.GetMetadataValueEscaped(reference, metadata)
+                         .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var equals = assignment.IndexOf('=');
+                if (equals <= 0)
+                    throw new InvalidOperationException($"{reference.EvaluatedInclude}: invalid {metadata} assignment");
+                result[ProjectCollection.Unescape(assignment[..equals].Trim())] =
+                    ProjectCollection.Unescape(assignment[(equals + 1)..].Trim());
+            }
+        }
+
         var fullPath = reference.GetMetadataValue("FullPath");
         if (!string.IsNullOrEmpty(fullPath) && memberConfiguration.TryGetValue(MsBuildFullPath(fullPath), out var mapped))
         {
@@ -332,18 +344,9 @@ internal static class SolutionAudit
             result.Remove("Platform");
         }
 
-        foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework", "AdditionalProperties" })
-        {
-            foreach (var assignment in Project.GetMetadataValueEscaped(reference, metadata)
-                         .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var equals = assignment.IndexOf('=');
-                if (equals <= 0)
-                    throw new InvalidOperationException($"{reference.EvaluatedInclude}: invalid {metadata} assignment");
-                result[ProjectCollection.Unescape(assignment[..equals].Trim())] =
-                    ProjectCollection.Unescape(assignment[(equals + 1)..].Trim());
-            }
-        }
+        foreach (var name in Project.GetMetadataValueEscaped(reference, "GlobalPropertiesToRemove")
+                     .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            result.Remove(ProjectCollection.Unescape(name));
         return result;
     }
 
