@@ -6564,6 +6564,7 @@ public sealed class RemoteScriptContractTests
             trap 'rm -rf "$root"' EXIT
             export ANTIPHON_OPERATOR_TOKEN_FILE="$root/operator-token"
             printf 'synthetic-test-token' > "$ANTIPHON_OPERATOR_TOKEN_FILE"
+            export ANTIPHON_API="${ANTIPHON_API:-http://127.0.0.1:9}"
             export C727_TEST_HTTP_STUB="$repo/scripts/fixtures/c727-fake-http.ps1"
             export C727_TEST_VERIFY_STUB="$repo/scripts/fixtures/c727-fake-verify.ps1"
             export C727_TEST_WAIT_MS=100 C727_TEST_POLL_MS=5
