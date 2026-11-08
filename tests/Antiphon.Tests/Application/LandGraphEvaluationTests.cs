@@ -497,20 +497,27 @@ public sealed partial class LandGraphEvaluationTests
         {
             var root = Path.Combine(Path.GetTempPath(), "c1483-" + Guid.NewGuid().ToString("N")[..12]);
             Directory.CreateDirectory(root);
-            File.Copy(Path.Combine(RepoRoot(), "global.json"), Path.Combine(root, "global.json"));
+            // Commit LF bytes with conversion off. A Windows host whose system core.autocrlf
+            // is true would otherwise store LF while leaving CRLF in the worktree, and a later
+            // core.autocrlf=false makes git diff --quiet HEAD nonzero once a tracked file is re-stat'd.
+            await WriteLfAsync(Path.Combine(root, "global.json"),
+                await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "global.json")));
             foreach (var (relative, content) in files)
             {
                 var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                await File.WriteAllTextAsync(path, content);
+                await WriteLfAsync(path, content);
             }
 
             foreach (var (relative, target) in links ?? [])
                 await CreateLinkAsync(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)), target);
 
-            await File.WriteAllTextAsync(Path.Combine(root, "Antiphon.sln"),
+            await WriteLfAsync(Path.Combine(root, "Antiphon.sln"),
                 Solution(solutionProjects ?? files.Keys.Where(k => k.EndsWith(".csproj", StringComparison.Ordinal)).ToArray(), projectTypes ?? []));
+            await WriteLfAsync(Path.Combine(root, ".gitattributes"), "* -text\n");
             await GitAsync(root, "init", "-q");
+            await GitAsync(root, "config", "core.autocrlf", "false");
+            await GitAsync(root, "config", "core.safecrlf", "false");
             await GitAsync(root, "add", "-A");
             await GitAsync(root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
                 "commit", "-q", "-m", "fixture");
@@ -518,7 +525,7 @@ public sealed partial class LandGraphEvaluationTests
             {
                 var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                await File.WriteAllTextAsync(path, content);
+                await WriteLfAsync(path, content);
             }
             return new AuditRepo(root);
         }
@@ -612,6 +619,12 @@ public sealed partial class LandGraphEvaluationTests
         {
             var relative = Path.GetRelativePath(Root, path);
             return relative == ".git" || relative.StartsWith(".git" + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        }
+
+        private static async Task WriteLfAsync(string path, string content)
+        {
+            var lf = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            await File.WriteAllTextAsync(path, lf, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         }
 
         private static async Task CreateLinkAsync(string path, string target)
