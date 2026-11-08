@@ -236,7 +236,7 @@ internal static class HangfireConfiguration
 
     public static HangfireWorkerLease AcquireSingleWorkerLease(string? connectionString)
     {
-        var probe = ProbeConnectionString(connectionString);
+        var probe = LeaseConnectionString(connectionString);
         var connection = new NpgsqlConnection(probe);
         try
         {
@@ -295,6 +295,16 @@ internal static class HangfireConfiguration
         {
             Timeout = 5,
             Pooling = false
+        };
+        return builder.ConnectionString;
+    }
+
+    /// <summary>CARD-1774. The lease session unlocks with a bounded command timeout. Schema install does not.</summary>
+    private static string LeaseConnectionString(string? connectionString)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(ProbeConnectionString(connectionString))
+        {
+            CommandTimeout = HangfireWorkerLease.UnlockCommandTimeoutSeconds
         };
         return builder.ConnectionString;
     }
@@ -427,14 +437,15 @@ internal sealed class HangfireWorkerLease : IDisposable
     /// <summary>CARD-1768. Unanswered probes before Postgres drops the dead session.</summary>
     internal const int KeepaliveCount = 3;
 
-    /// <summary>CARD-1768. Idle plus interval times count. A crashed host's lock ends within this.</summary>
+    /// <summary>CARD-1768. Idle plus interval times count. A crashed host's lock ends within this.
+    /// CARD-1774. An unreachable tick retries until this long after the last confirmed hold.</summary>
     internal const int CrashExpirySeconds =
         KeepaliveIdleSeconds + (KeepaliveIntervalSeconds * KeepaliveCount);
 
-    /// <summary>
-    /// CARD-1768. Longest a Postgres restart leaves this process running without the lock.
-    /// The check stores nothing.
-    /// </summary>
+    /// <summary>CARD-1774. Dispose's unlock uses this command timeout.</summary>
+    internal const int UnlockCommandTimeoutSeconds = 5;
+
+    /// <summary>CARD-1774. How often the process re-confirms the lock. The successor overlap is longer.</summary>
     internal static readonly TimeSpan ReacquireInterval = TimeSpan.FromSeconds(15);
 
     private readonly object _gate = new();
@@ -444,6 +455,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     private IHostApplicationLifetime? _lifetime;
     private TimeProvider _clock = TimeProvider.System;
     private long _lastConfirmedTicks;
+    private int _backendPid;
     private int _disposed;
 
     internal HangfireWorkerLease(NpgsqlConnection connection, string probe)
@@ -451,6 +463,8 @@ internal sealed class HangfireWorkerLease : IDisposable
         _connection = connection;
         _probe = probe;
         _lastConfirmedTicks = _clock.GetUtcNow().UtcTicks;
+        if (connection.State == System.Data.ConnectionState.Open)
+            _backendPid = ReadBackendPid(connection);
     }
 
     /// <summary>CARD-1774. Tests move the expiry clock. Production keeps <see cref="TimeProvider.System"/>.</summary>
@@ -504,6 +518,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     /// <summary>
     /// CARD-1768. Confirms the lock on this session. A dead session opens a new
     /// non-pooled connection. Nothing is stored between checks.
+    /// CARD-1774. A check that fails while this backend still holds the lock is not another worker.
     /// </summary>
     internal void EnsureHeld()
     {
@@ -515,7 +530,17 @@ internal sealed class HangfireWorkerLease : IDisposable
             if (_disposed != 0)
                 return;
             if (SessionStillHoldsLock(_connection))
+            {
+                MarkConfirmed();
                 return;
+            }
+
+            if (OwnOpenBackendStillHolds())
+            {
+                MarkConfirmed();
+                return;
+            }
+
             ReplaceConnection();
         }
     }
@@ -538,44 +563,184 @@ internal sealed class HangfireWorkerLease : IDisposable
         {
             EnsureHeld();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            try
-            {
-                _lifetime?.StopApplication();
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+            if (!IsAnotherWorker(ex) && WithinCrashExpiryWindow())
+                return;
+            StopHost();
         }
     }
 
-    private void ReplaceConnection()
+    private void StopHost()
     {
-        var fresh = new NpgsqlConnection(_probe);
         try
         {
-            fresh.Open();
-            if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
-                throw new InvalidOperationException(
-                    "Hangfire lost its worker lease and another worker holds it.");
+            _lifetime?.StopApplication();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private static bool IsAnotherWorker(Exception ex) =>
+        ex is InvalidOperationException
+        && ex.Message.Contains("another worker", StringComparison.Ordinal);
+
+    private void MarkConfirmed() =>
+        Volatile.Write(ref _lastConfirmedTicks, _clock.GetUtcNow().UtcTicks);
+
+    private void ReplaceConnection()
+    {
+        var fresh = OpenFresh();
+        var owned = false;
+        try
+        {
+            var holder = ReadGrantedHolder(fresh);
+            if (holder == _backendPid && _backendPid != 0)
+                ReclaimOwnBackend(fresh, _backendPid);
+            else if (holder is int)
+                throw Lost();
+            else if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
+                throw Lost();
 
             HangfireConfiguration.ApplyCrashExpiry(fresh);
+            var previous = Interlocked.Exchange(ref _connection, fresh);
+            owned = true;
+            _backendPid = ReadBackendPid(fresh);
+            MarkConfirmed();
+            HangfireConfiguration.ReleaseConnection(previous);
         }
-        catch (Exception ex) when (HangfireConfiguration.IsConnectivityFailure(ex))
+        catch (Exception ex) when (!owned && HangfireConfiguration.IsConnectivityFailure(ex))
         {
             HangfireConfiguration.ReleaseConnection(fresh);
             throw HangfireConfiguration.StartupFailure(ex);
         }
         catch
         {
-            HangfireConfiguration.ReleaseConnection(fresh);
+            if (!owned)
+                HangfireConfiguration.ReleaseConnection(fresh);
             throw;
         }
-
-        var previous = Interlocked.Exchange(ref _connection, fresh);
-        HangfireConfiguration.ReleaseConnection(previous);
     }
+
+    /// <summary>
+    /// CARD-1774. The check query failed, but the open session may still be the lock holder.
+    /// </summary>
+    private bool OwnOpenBackendStillHolds()
+    {
+        var connection = _connection;
+        if (connection is null
+            || connection.State != System.Data.ConnectionState.Open
+            || _backendPid == 0)
+            return false;
+
+        NpgsqlConnection? side = null;
+        try
+        {
+            side = OpenFresh();
+            var holder = ReadGrantedHolder(side);
+            if (holder == _backendPid)
+            {
+                TryRollback(connection);
+                return true;
+            }
+
+            if (holder is int)
+                throw Lost();
+
+            return false;
+        }
+        finally
+        {
+            side?.Dispose();
+        }
+    }
+
+    private NpgsqlConnection OpenFresh()
+    {
+        var fresh = new NpgsqlConnection(_probe);
+        try
+        {
+            fresh.Open();
+            return fresh;
+        }
+        catch (Exception ex) when (HangfireConfiguration.IsConnectivityFailure(ex))
+        {
+            fresh.Dispose();
+            throw HangfireConfiguration.StartupFailure(ex);
+        }
+    }
+
+    private void ReclaimOwnBackend(NpgsqlConnection fresh, int ownPid)
+    {
+        TerminateBackend(fresh, ownPid);
+        var started = Environment.TickCount64;
+        while (Environment.TickCount64 - started < 2000)
+        {
+            var holder = ReadGrantedHolder(fresh);
+            if (holder is int other && other != ownPid)
+                throw Lost();
+            if (holder is null && HangfireConfiguration.TryTakeWorkerLock(fresh))
+                return;
+            Thread.Sleep(50);
+        }
+
+        if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
+            throw new InvalidOperationException(
+                "Hangfire could not reclaim its own worker lease before the crash-expiry window.");
+    }
+
+    private static void TerminateBackend(NpgsqlConnection connection, int pid)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT pg_terminate_backend(@pid)";
+        command.Parameters.Add(new NpgsqlParameter("pid", NpgsqlDbType.Integer) { Value = pid });
+        command.ExecuteScalar();
+    }
+
+    private static int? ReadGrantedHolder(NpgsqlConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT pid
+            FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND classid = @lockClass
+              AND objid = @lockId
+              AND granted
+            """;
+        command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer) { Value = ClassId });
+        command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer) { Value = LockId });
+        var value = command.ExecuteScalar();
+        if (value is null || value is DBNull)
+            return null;
+        return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+    }
+
+    private static int ReadBackendPid(NpgsqlConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT pg_backend_pid()";
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static void TryRollback(NpgsqlConnection connection)
+    {
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "ROLLBACK";
+            command.ExecuteNonQuery();
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException)
+        {
+        }
+    }
+
+    private static InvalidOperationException Lost() =>
+        new("Hangfire lost its worker lease and another worker holds it.");
 
     private static bool SessionStillHoldsLock(NpgsqlConnection? connection)
     {
