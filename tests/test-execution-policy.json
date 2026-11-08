@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "c6da42db3549444e55fcf35ead72f674861dd24f4809bc924780bebcbd07f39d",
+  "policyHash": "e89665e29bbff3feede73459b1050889b9fec9596e24703d61ffa6d767c09952",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1539,6 +1539,26 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the SHA restart gate harness is a #!/bin/sh fake docker plus chmod. The case remains required on Linux.",
           "owner": "CARD-1745"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Server2ProductionServerContractTests",
+          "methods": [
+            "WhatIf_prints_the_plan_and_calls_no_docker"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the deploy plan witness uses a Unix file mode and a fake docker on PATH.",
+          "owner": "CARD-1775"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Server2ProductionServerContractTests",
+          "methods": [
+            "Execute_refusals_stop_before_docker"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: deploy refusals check Unix mode 0600 and the container marker /.dockerenv.",
+          "owner": "CARD-1775"
         }
       ]
     }
