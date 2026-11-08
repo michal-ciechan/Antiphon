@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-1769: seeded scan of 1,500 AwaitingReceipt notes and the parked rescan; measured above the five-second tripwire.
+Antiphon.Tests.Application.AgentTaskLandNotificationRescanTests
+
 # CARD-1734: real executor/observer processes, joined stop barrier and one existing one-minute row deadline; fresh startup/teardown is the subject.
 Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests
 
