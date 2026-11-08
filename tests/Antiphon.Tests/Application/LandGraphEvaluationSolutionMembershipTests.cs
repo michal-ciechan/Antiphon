@@ -6,9 +6,9 @@ namespace Antiphon.Tests.Application;
 public sealed partial class LandGraphEvaluationTests
 {
     // CARD-1780: a solution build unsets Configuration and Platform on a ProjectReference
-    // whose target is not in the solution. Set* and AdditionalProperties are applied first
-    // and do not restore them. An in-solution reference keeps the solution mapping, and
-    // GlobalPropertiesToRemove is applied last.
+    // whose target is not in the solution; neither Set* nor AdditionalProperties restores them.
+    // An in-solution reference takes the solution mapping over Set*, AdditionalProperties
+    // overrides that mapping, and GlobalPropertiesToRemove is applied last.
     [Test]
     [Arguments("outside", "configuration=unset platform=unset")]
     [Arguments("member", "")]
@@ -16,6 +16,7 @@ public sealed partial class LandGraphEvaluationTests
     [Arguments("additional-properties", "configuration=unset platform=unset")]
     [Arguments("member-set-configuration", "")]
     [Arguments("remove-configuration", "")]
+    [Arguments("member-additional-properties", "")]
     [Timeout(300_000)]
     public async Task C1780_OutsideSolutionReferenceClearsParentConfiguration(string variant, string expectedFlag)
     {
@@ -43,6 +44,14 @@ public sealed partial class LandGraphEvaluationTests
                   </ProjectReference>
                 </ItemGroup>
                 """,
+            // Solution mapping is Debug|Any CPU. AdditionalProperties=Release is applied after it.
+            "member-additional-properties" => """
+                <ItemGroup>
+                  <ProjectReference Include="../Outside/Outside.csproj">
+                    <AdditionalProperties>Configuration=Release</AdditionalProperties>
+                  </ProjectReference>
+                </ItemGroup>
+                """,
             // GlobalPropertiesToRemove is applied after the solution mapping.
             "remove-configuration" => """
                 <ItemGroup>
@@ -55,7 +64,7 @@ public sealed partial class LandGraphEvaluationTests
                 <ItemGroup><ProjectReference Include="../Outside/Outside.csproj" /></ItemGroup>
                 """,
         };
-        var solution = variant is "member" or "member-set-configuration" or "remove-configuration"
+        var solution = variant is "member" or "member-set-configuration" or "remove-configuration" or "member-additional-properties"
             ? new[] { "App/App.csproj", "Outside/Outside.csproj" }
             : new[] { "App/App.csproj" };
         await using var repo = await AuditRepo.CreateAsync(new()
@@ -75,6 +84,8 @@ public sealed partial class LandGraphEvaluationTests
             run.Lines.ShouldNotContain(line => line.StartsWith("member-configuration:", StringComparison.Ordinal), run.Text);
         if (variant == "member-set-configuration")
             run.Lines.ShouldContain("member-configuration: Outside/Outside.csproj configuration=Debug platform=AnyCPU", run.Text);
+        if (variant == "member-additional-properties")
+            run.Lines.ShouldContain("member-configuration: Outside/Outside.csproj configuration=Release platform=AnyCPU", run.Text);
         if (variant == "remove-configuration")
             run.Lines.ShouldContain("member-configuration: Outside/Outside.csproj configuration=unset platform=AnyCPU", run.Text);
         repo.AssertUntouched();
