@@ -28,6 +28,16 @@ internal interface ITranscriptTailer : IAsyncDisposable
     RunnerTranscriptDto Snapshot();
 
     /// <summary>
+    /// CARD-1764. <see cref="Snapshot"/> with only the entries after <paramref name="since"/>; the
+    /// rest of the body is the same observation. The production tailers take it under their lock.
+    /// </summary>
+    RunnerTranscriptDto SnapshotAfter(long since)
+    {
+        var full = Snapshot();
+        return full with { Entries = TranscriptEntries.After(full.Entries, since) };
+    }
+
+    /// <summary>
     /// <see cref="TranscriptWorkingState.Classify"/> over <see cref="Snapshot"/>'s entries. A tailer
     /// that folds it per entry overrides this so callers polling it skip the snapshot copy (CARD-1624).
     /// </summary>

@@ -258,11 +258,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     }
 
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
-    public RunnerTranscriptDto Snapshot()
+    public RunnerTranscriptDto Snapshot() => SnapshotAfter(0);
+
+    public RunnerTranscriptDto SnapshotAfter(long since)
     {
         Interlocked.Increment(ref _snapshots);
         lock (_gate)
-            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq,
+            return new RunnerTranscriptDto(_sessionId, TranscriptEntries.After(_entries, since), _seq,
                 _completion.IsComplete && !_claimRevoked, Readiness: ObserveReadiness());
     }
 

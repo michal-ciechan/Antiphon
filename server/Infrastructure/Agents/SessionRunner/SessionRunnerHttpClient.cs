@@ -94,6 +94,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private Task? _capabilityProbe;
     private readonly PtyReadHold<SessionRunnerBufferDto> _bufferHold = new();
     private readonly PtyReadHold<SessionRunnerSnapshotDto> _snapshotHold = new();
+    private readonly TranscriptReadHold _transcriptHold = new();
 
     public SessionRunnerHttpClient(
         HttpClient httpClient,
@@ -694,11 +695,17 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         return text.Length == 0 || text.Contains('"', StringComparison.Ordinal) ? null : text;
     }
 
-    public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
-    {
-        var transcript = await ReadGeneratedAsync(
-            $"sessions/{sessionId:D}/transcript", ResilienceOperations.RunnerTranscript, RunnerReadJson.PhoneTranscript, ct);
-        return new SessionRunnerTranscriptDto(
+    // CARD-1764. Only a runner that names its stream is ever sent a cursor, so an old runner keeps
+    // answering the full transcript to a request it has always served.
+    public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+        TranscriptSinceRead.ReadAsync(sessionId, _transcriptHold, cursorEnabled: false,
+            (since, stream, token) => ReadGeneratedAsync(
+                $"sessions/{sessionId:D}/transcript" + (stream is null ? "" : TranscriptSince.Query(since, stream)),
+                ResilienceOperations.RunnerTranscript, RunnerReadJson.PhoneTranscript, token),
+            MapTranscriptDto, ct);
+
+    private static SessionRunnerTranscriptDto MapTranscriptDto(RunnerTranscriptDto transcript) =>
+        new SessionRunnerTranscriptDto(
             transcript.SessionId,
             transcript.Entries.Select(MapTranscript).ToList(),
             transcript.LastSequence, transcript.TerminalComplete, transcript.AcceptedStartedAt,
@@ -706,7 +713,6 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 ? new SessionRunnerTranscriptReadiness(readiness.Status, readiness.BindingId,
                     readiness.ParsedThrough, readiness.ObservedLength, readiness.Reason) : null,
             CodexTokenCountAt: RunnerContractMapper.MapCodexTokenCount(transcript.CodexTokenCountAt));
-    }
 
     // CARD-1153 D-3/D-4: one signed POST, one fresh nonce, a five-second total deadline on the
     // injected clock, no generic read retries. The transcript 404 is never reinterpreted. F3: the

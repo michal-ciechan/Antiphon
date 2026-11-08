@@ -15,9 +15,17 @@ public static class SessionReadLaunchRoutes
 
     public static void MapSessionTranscriptRoute(this WebApplication app)
     {
-        app.MapGet("/sessions/{id:guid}/transcript", (Guid id, SessionRunnerRuntime runtime) =>
-            Transcript(runtime.GetTranscript(id)));
+        app.MapGet("/sessions/{id:guid}/transcript", (Guid id, HttpRequest request, SessionRunnerRuntime runtime) =>
+            Transcript(runtime.GetTranscript(id, TranscriptSinceQuery(request), TranscriptStreamQuery(request))));
     }
+
+    // CARD-1764. A missing or unreadable cursor is zero: the full transcript.
+    internal static long TranscriptSinceQuery(HttpRequest request) =>
+        long.TryParse(request.Query[TranscriptSince.SinceName].ToString(), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var since) ? since : 0;
+
+    internal static string? TranscriptStreamQuery(HttpRequest request) =>
+        request.Query[TranscriptSince.StreamName].Count == 1 ? request.Query[TranscriptSince.StreamName].ToString() : null;
 
     public static IResult Buffer(RunnerBufferDto dto) =>
         Results.Json(dto, RunnerReadJson.Use(RunnerReadJson.HttpBuffer));

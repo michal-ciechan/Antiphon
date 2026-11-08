@@ -61,6 +61,9 @@ public interface IPhoneHomeRuntimeSurface
     async Task<PtyRead<RunnerSnapshotDto>> ReadSnapshotAsync(Guid sessionId, string? ifNoneMatch, CancellationToken ct) =>
         new(false, null, await GetSnapshotAsync(sessionId, ct));
     RunnerTranscriptDto GetTranscript(Guid sessionId);
+
+    // CARD-1764. Fakes keep returning the full transcript. The production adapter overrides this.
+    RunnerTranscriptDto GetTranscript(Guid sessionId, long since, string? stream) => GetTranscript(sessionId);
     Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
     Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct);
     Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct);
@@ -418,7 +421,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
                 PhoneHomeOperation.Buffer => ConditionalFrame(request, _runtime.ReadBuffer(ReadSessionId(request), ReadIfNoneMatch(request)), RunnerReadJson.PhoneBuffer),
                 PhoneHomeOperation.Snapshot => ConditionalFrame(request, await _runtime.ReadSnapshotAsync(ReadSessionId(request), ReadIfNoneMatch(request), ct), RunnerReadJson.PhoneSnapshot),
-                PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request)), RunnerReadJson.PhoneTranscript),
+                PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request), ReadSince(request), ReadStream(request)), RunnerReadJson.PhoneTranscript),
                 PhoneHomeOperation.Input => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<RunnerInputRequest>(PhoneHomeFraming.Json)
@@ -1110,6 +1113,23 @@ public sealed class PhoneHomeCommandDispatcher
         outcome.Value is { } value
             ? Result(request, value)
             : Error(request, outcome.Refusal!.Code, outcome.Refusal.Reason, outcome.Refusal.Status);
+
+    // CARD-1764. A missing or malformed cursor is zero: the full transcript.
+    private static long ReadSince(PhoneHomeFrame request) =>
+        request.Payload is { ValueKind: JsonValueKind.Object } payload
+        && payload.TryGetProperty(TranscriptSince.SinceName, out var since)
+        && since.ValueKind == JsonValueKind.Number
+        && since.TryGetInt64(out var value)
+        && value > 0
+            ? value
+            : 0;
+
+    private static string? ReadStream(PhoneHomeFrame request) =>
+        request.Payload is { ValueKind: JsonValueKind.Object } payload
+        && payload.TryGetProperty(TranscriptSince.StreamName, out var stream)
+        && stream.ValueKind == JsonValueKind.String
+            ? stream.GetString()
+            : null;
 
     private static string? ReadIfNoneMatch(PhoneHomeFrame request)
     {

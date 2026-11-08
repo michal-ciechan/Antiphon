@@ -1170,6 +1170,10 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
 
+    /// <summary>CARD-1764. See <see cref="TranscriptSince"/>.</summary>
+    public RunnerTranscriptDto GetTranscript(Guid sessionId, long since, string? stream) =>
+        GetSession(sessionId).GetTranscript(since, stream);
+
     /// <summary>
     /// The runner's working/idle judgement for a session — <see cref="TranscriptWorkingState.Classify"/>
     /// over <see cref="GetTranscript"/>'s entries, without copying them (CARD-1624).
@@ -2761,6 +2765,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private TerminalScreen? _screen;
         private string? _ansiLogPath;
         private ITranscriptTailer? _tailer;
+        // CARD-1764. A new id for every tailer this session binds; since cursors name it.
+        private string? _transcriptStream;
         private TranscriptSidecar? _sidecar;
         private long _lastSequence;
         private string _status = "Starting";
@@ -4206,6 +4212,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     {
                         ClearDeliveryEvidence(preserveComposer: true);
                         _submittedInput.Clear();
+                        _transcriptStream = value is null ? null : Guid.NewGuid().ToString("N");
                     }
                     _tailer = value;
                 }
@@ -4213,6 +4220,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         }
 
         internal void DetachTailerForTest() => Tailer = null;
+
+        internal void AttachTailerForTest(ITranscriptTailer tailer) => Tailer = tailer;
 
         internal Task<CompactionTailObservation> ObserveCompactionAsync(CancellationToken ct) =>
             _tailer?.ObserveCompactionSilenceAsync(ct) ?? Task.FromResult(CompactionTailObservation.Unbound());
@@ -4468,9 +4477,29 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         public TranscriptWorkingState.WorkingVerdict GetWorkingVerdict() =>
             _tailer?.WorkingVerdict ?? TranscriptWorkingState.WorkingVerdict.Unknown;
 
-        public RunnerTranscriptDto GetTranscript() =>
-            (_tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0))
-                with { AcceptedStartedAt = _acceptedStartedAt };
+        public RunnerTranscriptDto GetTranscript() => GetTranscript(0, null);
+
+        /// <summary>
+        /// CARD-1764. The rows after <paramref name="since"/> when <paramref name="stream"/> names the
+        /// tailer bound now; the full transcript otherwise. The answer always carries the current stream.
+        /// </summary>
+        public RunnerTranscriptDto GetTranscript(long since, string? stream)
+        {
+            ITranscriptTailer? tailer;
+            string? current;
+            lock (_gate)
+            {
+                tailer = _tailer;
+                current = _transcriptStream;
+            }
+
+            if (tailer is null)
+                return new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0)
+                    with { AcceptedStartedAt = _acceptedStartedAt };
+            var delta = false;
+            var read = delta ? tailer.SnapshotAfter(since) : tailer.Snapshot();
+            return read with { AcceptedStartedAt = _acceptedStartedAt, Stream = current };
+        }
 
         public async Task WriteAsync(string input, CancellationToken ct, Action? beforeBackendWrite = null)
         {

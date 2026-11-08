@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Antiphon.SessionRunner.Contracts;
 
 public sealed record RunnerLaunchRequest(
@@ -199,6 +201,12 @@ public static class RunnerCapabilityFeatures
     /// keeps asking for the full body; an old peer still returns that body.
     /// </summary>
     public const string PtyConditionalReadV1 = "ptyConditionalReadV1";
+
+    /// <summary>
+    /// CARD-1764. Transcript reads honour <c>since</c> and <c>stream</c> (<see cref="TranscriptSince"/>).
+    /// Absence means the caller asks for the full transcript; an old peer still returns it.
+    /// </summary>
+    public const string TranscriptSinceV1 = "transcriptSinceV1";
     public const string HostLoadHistoryV1 = "hostLoadHistoryV1";
 
     /// <summary>
@@ -395,7 +403,29 @@ public sealed record RunnerTranscriptDto(
     DateTime? AcceptedStartedAt = null,
     RunnerTranscriptReadiness? Readiness = null,
     // Codex token_count time. Additive-optional: old peers omit it. Not a transcript entry.
-    DateTimeOffset? CodexTokenCountAt = null);
+    DateTimeOffset? CodexTokenCountAt = null,
+    // CARD-1764. Opaque id of the tailer these sequences belong to. A since read is a delta only
+    // within one stream. Old peers omit it and never receive a delta.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Stream = null);
+
+/// <summary>
+/// CARD-1764. The transcript since-cursor. A caller that holds the whole transcript of one stream
+/// up to <c>LastSequence</c> asks for the rows after it. The runner answers with only those rows
+/// when the stream is still the one it tails, and with the full transcript otherwise. The caller
+/// applies a delta only when it is gap-free; anything else is read again in full.
+/// </summary>
+public static class TranscriptSince
+{
+    public const string SinceName = "since";
+    public const string StreamName = "stream";
+
+    public static string Query(long since, string stream) =>
+        "?" + SinceName + "=" + since.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        + "&" + StreamName + "=" + Uri.EscapeDataString(stream);
+
+    /// <summary>A cursor the runner may answer with a delta: a positive sequence on a named stream.</summary>
+    public static bool IsCursor(long since, string? stream) => since > 0 && !string.IsNullOrEmpty(stream);
+}
 
 /// <summary>Normalized transcript entry kinds (see <see cref="RunnerTranscriptEvent.Kind"/>).</summary>
 public static class TranscriptKinds

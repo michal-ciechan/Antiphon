@@ -50,9 +50,13 @@ internal sealed class PhoneHomePtyReads
     public PtyReadHold<SessionRunnerBufferDto> Buffer { get; } = new();
     public PtyReadHold<SessionRunnerSnapshotDto> Snapshot { get; } = new();
 
+    /// <summary>CARD-1764. The transcript since-cursor shares the connection and the session end.</summary>
+    public TranscriptReadHold Transcript { get; } = new();
+
     public void Forget(Guid sessionId)
     {
         Buffer.Forget(sessionId);
         Snapshot.Forget(sessionId);
+        Transcript.Forget(sessionId);
     }
 }
