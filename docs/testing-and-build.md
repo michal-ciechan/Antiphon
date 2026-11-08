@@ -303,6 +303,8 @@ dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --tr
 pwsh -NoProfile -File scripts/impacted-classes.ps1 -Range <base>..<tip> -Json
 ```
 
+A malformed table exits 1 and names the row. That includes a root that is not an object, a schema other than 1, an unknown property, a kind with no id, a kind with no globs or added, a kind with no classes, methods, or derive, a methods entry that is not Class/Method, a class that does not end in Tests, and a named class that is absent from tests/. `-Range` cannot be combined with `-Path` or `-FileList` (exit 2).
+
 The JSON object carries `kinds`, `classes`, `files`, and one `treenodeFilter` per project. Whole classes use `/*/*/(ClassA*)|(ClassB*)/*`. Method rows use `/*/*/Class/(MethodA*)|(MethodB*)`. A whole class wins when another row would have selected only some of its methods.
 
 Downgrade callers are not stored in the table. When the migration row matches, the script scans `tests/**/*.cs` for `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(`. The scan is broad, so `AgentTuiSecretMigratorTests` is included with that row. Timing labels match `tests/Shared/TestTiming.cs`, or a `tests/**` diff that adds `BeginPhase(` or `BeginFixturePhase(`. A test edit that adds neither literal does not select that row. Remote deploy checks and the statement-budget checks stay method-scoped.

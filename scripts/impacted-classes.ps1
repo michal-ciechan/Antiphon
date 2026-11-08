@@ -1,5 +1,6 @@
 # CARD-1782. Read-only selector from tests/impacted-classes.json.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
+# A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # PowerShell 5.1 compatible: no ternary, no ??, no ?. ASCII only.
 [CmdletBinding()]
 param(
@@ -17,6 +18,23 @@ $ErrorActionPreference = 'Stop'
 
 function Write-Err([string]$Message) {
     [Console]::Error.WriteLine($Message)
+}
+
+function Refuse-Table([string]$Where, [string]$Problem) {
+    $message = 'impacted-classes table refused: ' + $Where + ': ' + $Problem
+    Write-Err $message
+    if ($script:Json) {
+        Exit-Json ([pscustomobject]@{
+            ok = $false
+            emptyGlobs = @()
+            missingClasses = @()
+            kinds = @()
+            globHits = @()
+            derivedFiles = @()
+            error = $message
+        }) 1
+    }
+    exit 1
 }
 
 function Exit-Json($Payload, [int]$Code) {
@@ -38,6 +56,32 @@ elseif (-not [IO.Path]::IsPathRooted($Table)) {
     $Table = Join-Path $Repo $Table
 }
 
+# Switch clash is usage, not a table error, and it is decided before the table is read.
+$rangeSet = -not [string]::IsNullOrWhiteSpace($Range)
+$pathSet = $false
+if ($null -ne $Path) {
+    foreach ($pathItem in @($Path)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$pathItem)) { $pathSet = $true }
+    }
+}
+$listSet = -not [string]::IsNullOrWhiteSpace($FileList)
+if ($rangeSet -and ($pathSet -or $listSet)) {
+    $switchMessage = 'impacted-classes refused: -Range cannot be combined with -Path or -FileList'
+    Write-Err $switchMessage
+    if ($Json) {
+        Exit-Json ([pscustomobject]@{
+            ok = $false
+            emptyGlobs = @()
+            missingClasses = @()
+            kinds = @()
+            globHits = @()
+            derivedFiles = @()
+            error = $switchMessage
+        }) 2
+    }
+    exit 2
+}
+
 function As-List($Value) {
     $list = New-Object System.Collections.Generic.List[string]
     if ($null -eq $Value) { return $list }
@@ -47,7 +91,8 @@ function As-List($Value) {
             if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$list.Add($text) }
         }
     }
-    return $list
+    # The comma keeps a one-element list from unwrapping into a bare string.
+    return ,$list
 }
 
 function Fill-Sorted($Items, [System.Collections.Generic.List[string]]$Into) {
@@ -196,32 +241,144 @@ catch {
     exit 1
 }
 
-$kindNodes = @()
-if ($null -ne $doc -and $null -ne $doc.PSObject.Properties['kinds']) {
-    $kindNodes = @($doc.kinds)
+# Structural refusal happens before the tests walk. PowerShell 5.1 unwraps a one-element
+# JSON array into the element, so a lone kind object is accepted as that one-element array.
+$allowedRoot = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+foreach ($name in @('schema', 'card', 'cache', 'maximumStaleness', 'kinds')) { [void]$allowedRoot.Add($name) }
+$allowedKind = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+foreach ($name in @('id', 'globs', 'classes', 'methods', 'added', 'derive')) { [void]$allowedKind.Add($name) }
+$allowedAdded = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+foreach ($name in @('glob', 'literals')) { [void]$allowedAdded.Add($name) }
+$allowedDerive = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+[void]$allowedDerive.Add('patterns')
+
+if (-not ($doc -is [System.Management.Automation.PSCustomObject])) {
+    Refuse-Table 'root' 'expected an object with a kinds array'
+}
+foreach ($prop in $doc.PSObject.Properties) {
+    if (-not $allowedRoot.Contains([string]$prop.Name)) {
+        Refuse-Table 'root' ("unknown property '" + $prop.Name + "'")
+    }
+}
+$schemaText = ''
+$schemaProp = $doc.PSObject.Properties['schema']
+if ($null -ne $schemaProp -and $null -ne $schemaProp.Value) { $schemaText = [string]$schemaProp.Value }
+if ($schemaText -ne '1') {
+    Refuse-Table 'root' 'schema must be 1'
+}
+$kindsProp = $doc.PSObject.Properties['kinds']
+if ($null -eq $kindsProp -or $null -eq $kindsProp.Value) {
+    Refuse-Table 'root' 'kinds must be an array'
+}
+$kindsValue = $kindsProp.Value
+if ($kindsValue -is [System.Array]) {
+    $kindNodes = @($kindsValue)
+}
+elseif ($kindsValue -is [System.Management.Automation.PSCustomObject]) {
+    $kindNodes = @($kindsValue)
+}
+else {
+    Refuse-Table 'root' 'kinds must be an array'
 }
 
 $parsed = New-Object System.Collections.Generic.List[object]
 $derivePatterns = New-Object System.Collections.Generic.List[string]
 $allGlobs = New-Object System.Collections.Generic.List[string]
+$kindIndex = 0
 foreach ($node in $kindNodes) {
-    if ($null -eq $node) { continue }
+    $where = 'kinds[' + $kindIndex + ']'
+    $kindIndex++
+    if (-not ($node -is [System.Management.Automation.PSCustomObject])) {
+        Refuse-Table $where 'expected an object'
+    }
+    foreach ($prop in $node.PSObject.Properties) {
+        if (-not $allowedKind.Contains([string]$prop.Name)) {
+            Refuse-Table $where ("unknown property '" + $prop.Name + "'")
+        }
+    }
     $id = ''
-    if ($null -ne $node.PSObject.Properties['id']) { $id = [string]$node.id }
-    $globs = As-List $(if ($null -ne $node.PSObject.Properties['globs']) { $node.globs } else { $null })
-    $classes = As-List $(if ($null -ne $node.PSObject.Properties['classes']) { $node.classes } else { $null })
-    $methods = As-List $(if ($null -ne $node.PSObject.Properties['methods']) { $node.methods } else { $null })
+    $idProp = $node.PSObject.Properties['id']
+    if ($null -ne $idProp -and $null -ne $idProp.Value) { $id = [string]$idProp.Value }
+    if ([string]::IsNullOrWhiteSpace($id)) {
+        Refuse-Table $where 'missing id'
+    }
+    $where = $id
+
+    $globs = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $node.PSObject.Properties['globs']) { $globs = As-List $node.globs }
+    $classes = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $node.PSObject.Properties['classes']) { $classes = As-List $node.classes }
+    $methods = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $node.PSObject.Properties['methods']) { $methods = As-List $node.methods }
+
     $addedGlob = ''
     $addedLiterals = New-Object System.Collections.Generic.List[string]
+    $hasAdded = $false
     if ($null -ne $node.PSObject.Properties['added'] -and $null -ne $node.added) {
-        if ($null -ne $node.added.PSObject.Properties['glob']) { $addedGlob = [string]$node.added.glob }
+        if (-not ($node.added -is [System.Management.Automation.PSCustomObject])) {
+            Refuse-Table $where 'added must be an object'
+        }
+        foreach ($prop in $node.added.PSObject.Properties) {
+            if (-not $allowedAdded.Contains([string]$prop.Name)) {
+                Refuse-Table $where ("unknown property '" + $prop.Name + "'")
+            }
+        }
+        if ($null -ne $node.added.PSObject.Properties['glob'] -and $null -ne $node.added.glob) {
+            $addedGlob = [string]$node.added.glob
+        }
         if ($null -ne $node.added.PSObject.Properties['literals']) {
             $addedLiterals = As-List $node.added.literals
         }
+        if (-not [string]::IsNullOrWhiteSpace($addedGlob) -or $addedLiterals.Count -gt 0) { $hasAdded = $true }
     }
-    if ($null -ne $node.PSObject.Properties['derive'] -and $null -ne $node.derive -and $null -ne $node.derive.PSObject.Properties['patterns']) {
-        foreach ($pattern in (As-List $node.derive.patterns)) { [void]$derivePatterns.Add($pattern) }
+
+    $hasDerive = $false
+    if ($null -ne $node.PSObject.Properties['derive'] -and $null -ne $node.derive) {
+        if (-not ($node.derive -is [System.Management.Automation.PSCustomObject])) {
+            Refuse-Table $where 'derive must be an object'
+        }
+        foreach ($prop in $node.derive.PSObject.Properties) {
+            if (-not $allowedDerive.Contains([string]$prop.Name)) {
+                Refuse-Table $where ("unknown property '" + $prop.Name + "'")
+            }
+        }
+        $patterns = New-Object System.Collections.Generic.List[string]
+        if ($null -ne $node.derive.PSObject.Properties['patterns']) { $patterns = As-List $node.derive.patterns }
+        foreach ($pattern in $patterns) {
+            try {
+                $null = [regex]::new($pattern, 'CultureInvariant')
+            }
+            catch {
+                Refuse-Table $where ("derive pattern '" + $pattern + "' is not valid")
+            }
+            [void]$derivePatterns.Add($pattern)
+        }
+        if ($patterns.Count -gt 0) { $hasDerive = $true }
     }
+
+    if ($globs.Count -lt 1 -and -not $hasAdded) {
+        Refuse-Table $where 'no globs or added'
+    }
+    if ($classes.Count -lt 1 -and $methods.Count -lt 1 -and -not $hasDerive) {
+        Refuse-Table $where 'no classes, methods, or derive'
+    }
+    foreach ($method in $methods) {
+        $slash = $method.IndexOf('/')
+        $last = $method.LastIndexOf('/')
+        if ($slash -le 0 -or $slash -ge ($method.Length - 1) -or $slash -ne $last) {
+            Refuse-Table $where ("methods entry '" + $method + "' is not Class/Method")
+        }
+        $methodClass = $method.Substring(0, $slash)
+        if (-not $methodClass.EndsWith('Tests', [StringComparison]::Ordinal)) {
+            Refuse-Table $where ("class '" + $methodClass + "' is not a *Tests class")
+        }
+    }
+    foreach ($className in $classes) {
+        if (-not $className.EndsWith('Tests', [StringComparison]::Ordinal)) {
+            Refuse-Table $where ("class '" + $className + "' is not a *Tests class")
+        }
+    }
+
     foreach ($glob in $globs) { [void]$allGlobs.Add($glob) }
     if (-not [string]::IsNullOrWhiteSpace($addedGlob)) { [void]$allGlobs.Add($addedGlob) }
     $regexes = New-Object System.Collections.Generic.List[regex]
@@ -293,6 +450,23 @@ foreach ($className in @($classWord.Keys)) {
     $owned = New-StringList
     Fill-Sorted $classWord[$className] $owned
     $filesByClass[$className] = $owned
+}
+
+# Named classes are refused for audit and select. Hashtables ignore case, so the census is ordinal.
+$census = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+foreach ($className in @($filesByClass.Keys)) { [void]$census.Add([string]$className) }
+foreach ($kind in $parsed) {
+    $named = New-Object System.Collections.Generic.List[string]
+    foreach ($className in $kind.Classes) { [void]$named.Add($className) }
+    foreach ($method in $kind.Methods) {
+        $slash = $method.IndexOf('/')
+        if ($slash -gt 0) { [void]$named.Add($method.Substring(0, $slash)) }
+    }
+    foreach ($className in $named) {
+        if (-not $census.Contains($className)) {
+            Refuse-Table $kind.Id ("class '" + $className + "' was not found")
+        }
+    }
 }
 
 $tracked = $null
