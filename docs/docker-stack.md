@@ -1071,7 +1071,7 @@ container names for the runner, Postgres, or the gateway, before any docker call
 deploy the runner and it does not install a Scheduled Task. The staging compose remains
 CARD-1742; this gate does not create it and it is not the cutover. `docker-compose.server2-server.yml`
 is the production Antiphon server for the server2 host daemon. The project is `antiphon-server2-server`.
-Services are `server-state-init`, `server`, and `server-session-runner`. The server publishes
+Services are `server-state-init`, `server`, and `server-session-runner`. The check interpreter, diagnose, and output distiller working directories are `/work/specialists/check-interpreter`, `/work/specialists/diagnose`, and `/work/specialists/output-distiller` on the shared work volume, mounted at `/work` by both `server` and `server-session-runner`. `server-state-init` creates them mode 0755 and chowns them to uid 1654. The server publishes
 `127.0.0.1:17400` only and joins the external network `antiphon-server2`, so the connection host is
 `Host=postgres` on the CARD-1406 service. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`.
 `-Execute` is host-only and then calls this gate verify-only, with no execute switch on the gate,
