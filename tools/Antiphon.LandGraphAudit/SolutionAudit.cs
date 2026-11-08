@@ -133,6 +133,11 @@ internal static class SolutionAudit
         var memberConfiguration = new Dictionary<string, (string? Configuration, string? Platform)>(BuildInputPolicy.PathComparer);
         var outsideSolution = new SortedSet<string>(StringComparer.Ordinal);
 
+        // Membership is complete before any project is evaluated. A ProjectReference is resolved
+        // while its parent is evaluated, and that parent can appear earlier in the solution than
+        // the target. Recording members on the way through would clear Configuration for a target
+        // that the solution does build.
+        var solutionProjects = new List<(string Path, Dictionary<string, string> Globals)>();
         foreach (var entry in parsed.ProjectsInOrder)
         {
             if (entry.ProjectType == SolutionProjectType.SolutionFolder) continue;
@@ -157,15 +162,19 @@ internal static class SolutionAudit
                 globals["Platform"] = mapped.PlatformName == "Any CPU" ? "AnyCPU" : mapped.PlatformName;
             }
 
-            memberConfiguration[Path.GetFullPath(entry.AbsolutePath)] = (
+            var absolutePath = MsBuildFullPath(entry.AbsolutePath);
+            memberConfiguration[absolutePath] = (
                 globals.TryGetValue("Configuration", out var configurationName) ? configurationName : null,
                 globals.TryGetValue("Platform", out var platformName) ? platformName : null);
-            evaluated += Evaluate(entry.AbsolutePath, globals);
+            solutionProjects.Add((absolutePath, globals));
         }
+
+        foreach (var (path, globals) in solutionProjects)
+            evaluated += Evaluate(path, globals);
 
         int Evaluate(string projectPath, Dictionary<string, string> globals)
         {
-            projectPath = Path.GetFullPath(projectPath);
+            projectPath = MsBuildFullPath(projectPath);
             // A cycle or a second solution entry must not repeat the same evaluation. Different
             // global properties still need their own evaluation (including each target framework).
             var key = projectPath + "\0" + string.Join('\0', globals.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
@@ -221,7 +230,7 @@ internal static class SolutionAudit
                 {
                     if (!string.IsNullOrEmpty(reference.Path))
                     {
-                        var full = Path.GetFullPath(reference.Path);
+                        var full = MsBuildFullPath(reference.Path);
                         if (!memberConfiguration.ContainsKey(full))
                         {
                             outsideSolution.Add("outside-solution: " + Display(repo, full)
@@ -273,6 +282,15 @@ internal static class SolutionAudit
         return Program.Approved;
     }
 
+    // Solution entries and ProjectReference metadata keep '\' on every OS. Path.GetFullPath leaves
+    // that character intact when the host separator is '/', so the same project would miss the map.
+    private static string MsBuildFullPath(string path)
+    {
+        if (Path.DirectorySeparatorChar == '/')
+            path = path.Replace('\\', '/');
+        return Path.GetFullPath(path);
+    }
+
     private static Dictionary<string, string> ReferenceGlobals(Dictionary<string, string> globals, ProjectItem reference,
         Dictionary<string, (string? Configuration, string? Platform)> memberConfiguration)
     {
@@ -288,7 +306,7 @@ internal static class SolutionAudit
         // GlobalPropertiesToRemove for every other reference (ShouldUnsetParentConfigurationAndPlatform).
         // Explicit SetConfiguration / SetPlatform / AdditionalProperties below still win.
         var fullPath = reference.GetMetadataValue("FullPath");
-        if (!string.IsNullOrEmpty(fullPath) && memberConfiguration.TryGetValue(Path.GetFullPath(fullPath), out var mapped))
+        if (!string.IsNullOrEmpty(fullPath) && memberConfiguration.TryGetValue(MsBuildFullPath(fullPath), out var mapped))
         {
             if (mapped.Configuration is null) result.Remove("Configuration");
             else result["Configuration"] = mapped.Configuration;
