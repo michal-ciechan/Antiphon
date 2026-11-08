@@ -414,11 +414,13 @@ function Get-NetFxAddTypeFindings {
         }
         $text = [IO.File]::ReadAllText($path)
         $blocks = @()
+        # A .cs file that PowerShell 5.1 compiles with Add-Type -Path is one block.
+        if ($path -like '*.cs') {
+            if ([string]::IsNullOrWhiteSpace($text)) { $findings.Add($path + ':empty-source') }
+            $blocks += $text
+        }
         foreach ($match in $single.Matches($text)) { $blocks += [string]$match.Groups[1].Value }
         foreach ($match in $double.Matches($text)) { $blocks += [string]$match.Groups[1].Value }
-        if ($blocks.Count -lt 1 -and $path -like '*test-phase-evidence.ps1') {
-            $findings.Add($path + ':no-add-type-block')
-        }
         foreach ($block in $blocks) {
             $source = [regex]::Replace($block, '(?s)/\*.*?\*/', ' ')
             $source = [regex]::Replace($source, '(?m)//.*?$', ' ')
@@ -488,8 +490,11 @@ Assert-Check ([bool](Get-Command Get-QualificationTimingReport -ErrorAction Sile
 # Windows PowerShell 5.1 compiles every Add-Type here-string with the legacy
 # csc (.NET Framework, C# 5). This host has no powershell.exe, so the Linux
 # witness is the source scan. The desktop row below is pending native.
+# test-phase-evidence.ps1 compiles its stream readers and Linux identity from these files there.
 $ps51Paths = @(
     (Join-Path $lib 'test-phase-evidence.ps1'),
+    (Join-Path $lib 'Antiphon.Nightly/TestPhaseStreamReaders.cs'),
+    (Join-Path $lib 'Antiphon.Nightly/TestPhaseLinuxIdentity.cs'),
     $PSCommandPath
 )
 $ps51Findings = @(Get-NetFxAddTypeFindings -Paths $ps51Paths)
