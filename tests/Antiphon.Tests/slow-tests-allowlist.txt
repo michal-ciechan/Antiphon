@@ -9,6 +9,9 @@ Antiphon.Tests.Application.AgentTaskLandNotificationRescanTests
 # CARD-1773: real-schema park clock, external confirm, canceled receipt, per-session pull, and missing queue row.
 Antiphon.Tests.Application.AgentTaskLandNotificationParkFollowUpTests
 
+# CARD-1773: interrupted concurrent prompt-stamp index retry against an owned PostgreSQL database.
+Antiphon.Tests.Application.Card1773TranscriptPromptStampMigrationTests
+
 # CARD-1734: real executor/observer processes, joined stop barrier and one existing one-minute row deadline; fresh startup/teardown is the subject.
 Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests
 
