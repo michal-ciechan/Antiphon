@@ -132,10 +132,18 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     /// <summary>
     /// Counted session projections of the shape the reconciler's parent SELECT and the CARD-1157 D-3
     /// SELECT both have: <c>SELECT a."Status", a."StartedAt" FROM "AgentSessions"</c>.
+    /// CARD-1769 leads that text with the <c>land-reconcile-compiled</c> comment. The SELECT shape stays required.
     /// </summary>
-    public int SessionProjections => Commands.Commands.Count(sql =>
-        string.Join(' ', sql.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-            .StartsWith("SELECT a.\"Status\", a.\"StartedAt\" FROM \"AgentSessions\"", StringComparison.Ordinal));
+    public int SessionProjections => Commands.Commands.Count(IsSessionProjection);
+
+    private static bool IsSessionProjection(string sql)
+    {
+        var flat = string.Join(' ', sql.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        const string shape = "SELECT a.\"Status\", a.\"StartedAt\" FROM \"AgentSessions\"";
+        if (flat.StartsWith(shape, StringComparison.Ordinal))
+            return true;
+        return flat.StartsWith("-- " + LandNotificationReconcileQueries.CompiledTag + " " + shape, StringComparison.Ordinal);
+    }
 
     public void ResetCounters()
     {
