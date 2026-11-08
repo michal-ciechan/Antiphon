@@ -61,6 +61,14 @@ public sealed partial class ImpactedClassesSelectorTests
             Case.Sensitive,
             "server/Bundles/stage-code.md");
 
+        // CARD-1782 D-3. The review bundle must name the impacted rows beside the
+        // downgrade selector. Deleting " +impacted rows" is the mutant that fails this witness.
+        var reviewBundle = await File.ReadAllTextAsync(Path.Combine(root, "server", "Bundles", "stage-review.md"));
+        reviewBundle.ShouldContain(
+            "MIGRATION: run downgrade selector; report its count. +impacted rows",
+            Case.Sensitive,
+            "server/Bundles/stage-review.md");
+
         var guide = await File.ReadAllTextAsync(Path.Combine(root, "docs", "testing-and-build.md"));
         guide.ShouldContain("scripts/impacted-classes.ps1", Case.Sensitive, "owner usage");
         guide.ShouldContain(
