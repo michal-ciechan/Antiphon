@@ -312,6 +312,19 @@ public sealed class OrchestratorBundleOwnershipTests
     }
 
     /// <summary>
+    /// CARD-1753. The standing-rule pointer keeps the minimal-testing, activation, and rc-pick clauses.
+    /// </summary>
+    [Test]
+    public void C1753_StandingRulesKeepTheMinimalTestingAndActivationClauses()
+    {
+        var bundle = Collapse(InstructionBundles.TextOf(InstructionBundles.Orchestrator));
+        bundle.ShouldContain("one red witness plus one narrow green", Case.Sensitive, "c1753-one-red-witness");
+        bundle.ShouldContain("a master land is not activation", Case.Sensitive, "c1753-master-land-not-activation");
+        bundle.ShouldContain("reviewed rc picks", Case.Sensitive, "c1753-reviewed-rc-picks");
+        bundle.ShouldContain("#land-graph-refresh", Case.Sensitive, "c1753-land-graph-anchor");
+    }
+
+    /// <summary>
     /// The catalog's normalisation (InstructionBundles.ReadNormalised): line endings to LF, outer blank
     /// space trimmed, and the size counted in UTF-16 units because the argv ceiling is CreateProcessW's.
     /// </summary>
