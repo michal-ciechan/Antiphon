@@ -40,8 +40,10 @@
   <Import Project="$(MSBuildThisFileDirectory)tests/Shared/CheckpointRepeat.targets"
           Condition="Exists('$(MSBuildThisFileDirectory)tests/Shared/CheckpointRepeat.targets')" />
 
-  <!-- CARD-1790: one private XDG_CACHE_HOME per test-host process. Children inherit it. -->
-  <ItemGroup Condition="('$(IsTestProject)' == 'true' Or '$(OutputType)' == 'Exe') And $([System.String]::Copy('$(MSBuildProjectDirectory)$([System.IO.Path]::DirectorySeparatorChar)').StartsWith('$(MSBuildThisFileDirectory)tests$([System.IO.Path]::DirectorySeparatorChar)'))">
+  <!-- CARD-1790: one private XDG_CACHE_HOME per test-host process. Children inherit it.
+       Every project directly under tests/ is a test host; reserved properties and pure path
+       functions only, so the land-graph audit needs no new property name. -->
+  <ItemGroup Condition="'$([System.IO.Path]::GetDirectoryName($(MSBuildProjectDirectory)))' == '$(MSBuildThisFileDirectory)tests'">
     <Compile Include="$(MSBuildThisFileDirectory)src/Antiphon.Hosting/PwshPrivateCache.cs" Link="PwshPrivateCache.cs" />
   </ItemGroup>
 </Project>
