@@ -21,6 +21,9 @@ public sealed class WorkspaceDiskAlarmSettings
     /// <summary>A sample the server first observed longer ago than this raises nothing.</summary>
     public int SampleFreshMinutes { get; set; } = 15;
 
+    /// <summary>CARD-1794 (red shim).</summary>
+    public int MinFreeGiB { get; set; } = 10;
+
     /// <summary>
     /// Runner id to volume path. Empty in code: configuration binding merges dictionary keys, so a
     /// code default could never be removed by an operator. <c>appsettings.json</c> lists server2.

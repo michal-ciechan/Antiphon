@@ -36,6 +36,9 @@ public sealed class C1677RetentionServerTests
         public Rig Rig { get; init; } = null!;
         public RunnerWorktreeRetentionSettings Settings { get; init; } = null!;
         public List<WorkspaceRetentionEntry> Inventory { get; } = [];
+
+        /// <summary>CARD-1794: the inventory answer's Complete flag (an incomplete inventory proves no absence).</summary>
+        public bool InventoryComplete { get; set; } = true;
         public Func<PhoneHomeWorkspaceRetainRequest, PhoneHomeFrame, PhoneHomeFrame?> Retain { get; set; } = (_, frame) => Answer(frame, Removed());
 
         public static async Task<World> StartAsync(bool capable = true, Action<IServiceCollection>? configure = null)
@@ -61,7 +64,7 @@ public sealed class C1677RetentionServerTests
             if (frame.Kind != PhoneHomeFrameKind.Request)
                 return null;
             if (frame.Operation == PhoneHomeOperation.WorkspaceRetentionInventory)
-                return Answer(frame, new PhoneHomeWorkspaceRetentionInventoryResponse(Inventory.ToList(), true));
+                return Answer(frame, new PhoneHomeWorkspaceRetentionInventoryResponse(Inventory.ToList(), InventoryComplete));
             if (frame.Operation == PhoneHomeOperation.WorkspaceRetain)
                 return Retain(frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)!, frame);
             return null;
@@ -92,11 +95,14 @@ public sealed class C1677RetentionServerTests
 
         public static string PathOf(Guid id) => "/work/worktrees/task-" + id.ToString("N")[..8];
 
-        /// <summary>F-5: a Succeeded Worktree task on this runner, finished <paramref name="ago"/> ago, report stored.</summary>
-        public Task<Guid> EligibleAsync(TimeSpan? ago = null, Action<AgentTask>? tweak = null)
+        /// <summary>
+        /// F-5: a Succeeded Worktree task on this runner, finished <paramref name="ago"/> ago, report stored. CARD-1794:
+        /// its mirror is listed in the runner inventory unless <paramref name="present"/> is false (a mirror already gone).
+        /// </summary>
+        public async Task<Guid> EligibleAsync(TimeSpan? ago = null, Action<AgentTask>? tweak = null, bool present = true)
         {
             var completedAgo = ago ?? TimeSpan.FromHours(24);
-            return Rig.SeedAsync(task =>
+            var id = await Rig.SeedAsync(task =>
             {
                 task.Status = AgentTaskStatus.Succeeded;
                 task.CompletedAt = Rig.Now - completedAgo;
@@ -104,6 +110,16 @@ public sealed class C1677RetentionServerTests
                 task.Result = "done";
                 tweak?.Invoke(task);
             });
+            if (present)
+                Inventory.Add(new WorkspaceRetentionEntry("worktrees", "task-" + id.ToString("N")[..8], true, false, true, false, null));
+            return id;
+        }
+
+        /// <summary>CARD-1794: the operator's one-shot execute route's call for this rig's runner.</summary>
+        public async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> ExecuteOnceAsync(string? runnerId = null, CancellationToken ct = default)
+        {
+            using var scope = Rig.Provider.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunExecuteOnceAsync(runnerId ?? Rig.RunnerId, ct);
         }
 
         public async Task<List<WorktreeResidueRunCandidate>> RowsAsync(Guid? taskId = null)
@@ -927,6 +943,230 @@ public sealed class C1677RetentionServerTests
         File.ReadAllBytes(nested + "/credentials/token").ShouldBe(bytes);
         world.Moves(path).ShouldBe(0);
         world.Removes().ShouldBe(0);
+    }
+
+    private static PhoneHomeWorkspaceRetainResponse AlreadyAbsent() =>
+        new(WorkspaceRetentionCodes.AlreadyAbsent, RetiringResidue: false);
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_absent_mirrors_do_not_spend_the_removal_budget()
+    {
+        // CARD-1794 (1). Three old finished tasks whose mirrors are gone (not in a complete inventory) and two
+        // newer present ones, with a bound of two: the present trees are sent first, oldest first, and the gone
+        // ones are retired after them on their own bound instead of eating the two removals.
+        await using var w = await World.StartAsync();
+        w.Settings.MaxRemovalsPerTick = 2;
+        var gone = new List<Guid>();
+        foreach (var hours in new[] { 100, 90, 80 })
+            gone.Add(await w.EligibleAsync(TimeSpan.FromHours(hours), present: false));
+        var older = await w.EligibleAsync(TimeSpan.FromHours(30));
+        var newer = await w.EligibleAsync(TimeSpan.FromHours(20));
+        var goneSet = gone.Select(World.PathOf).ToHashSet(StringComparer.Ordinal);
+        w.Retain = (request, frame) => World.Answer(frame, goneSet.Contains(request.Path) ? AlreadyAbsent() : Removed());
+
+        var result = (await w.TickAsync()).ShouldHaveSingleItem();
+
+        w.Requests().Select(r => r.TaskId).ShouldBe([older, newer, gone[0], gone[1], gone[2]], "present-first-then-gone");
+        foreach (var id in gone.Append(older).Append(newer))
+            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        result.Sent.ShouldBe(2, "only present trees count against MaxRemovalsPerTick");
+        result.AbsentSent.ShouldBe(3);
+        (await w.RowsAsync(newer)).ShouldHaveSingleItem().ReasonCode.ShouldBe(WorkspaceRetentionCodes.Removed);
+        (await w.RowsAsync(gone[2])).ShouldHaveSingleItem().ReasonCode.ShouldBe(WorkspaceRetentionCodes.AlreadyAbsent);
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_gone_mirrors_have_their_own_bound_and_unsent_ones_are_queued()
+    {
+        // CARD-1794 (1). MaxAbsentPerTick=1: one gone mirror is retired after the present tree, the other is queued
+        // with a row (it no longer vanishes from the census), and nothing is sent for it.
+        await using var w = await World.StartAsync();
+        w.Settings.MaxAbsentPerTick = 1;
+        var firstGone = await w.EligibleAsync(TimeSpan.FromHours(100), present: false);
+        var secondGone = await w.EligibleAsync(TimeSpan.FromHours(90), present: false);
+        var present = await w.EligibleAsync(TimeSpan.FromHours(20));
+        w.Retain = (request, frame) => World.Answer(frame, request.TaskId == present ? Removed() : AlreadyAbsent());
+
+        var result = (await w.TickAsync()).ShouldHaveSingleItem();
+
+        w.Requests().Select(r => r.TaskId).ShouldBe([present, firstGone]);
+        (await w.Rig.ReadTaskAsync(secondGone)).RemoteWorktreePath.ShouldBe(World.PathOf(secondGone));
+        var queued = (await w.RowsAsync(secondGone)).ShouldHaveSingleItem();
+        queued.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+        queued.ReasonCode.ShouldBe("queued_next_tick");
+        result.Queued.ShouldBe(1);
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_eligible_trees_past_the_bound_get_a_queued_row_in_the_preview()
+    {
+        // CARD-1794 (1). The preview names every eligible tree: the ones past MaxRemovalsPerTick are queued rows,
+        // not missing rows, and the runner sees one DryRun request.
+        await using var w = await World.StartAsync();
+        w.Settings.MaxRemovalsPerTick = 1;
+        var sent = await w.EligibleAsync(TimeSpan.FromHours(40));
+        var waiting = await w.EligibleAsync(TimeSpan.FromHours(30));
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.WouldRemove));
+
+        var result = (await w.PreviewAsync()).ShouldHaveSingleItem();
+
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(sent);
+        (await w.RowsAsync(waiting)).ShouldHaveSingleItem().ReasonCode.ShouldBe("queued_next_tick");
+        result.Queued.ShouldBe(1);
+        result.Eligible.ShouldBe(2);
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_incomplete_inventory_proves_no_absence()
+    {
+        // CARD-1794 (1) control. An incomplete inventory cannot show a mirror is gone: every eligible task counts
+        // against the one removal bound, oldest first, as before.
+        await using var w = await World.StartAsync();
+        w.Settings.MaxRemovalsPerTick = 2;
+        w.InventoryComplete = false;
+        var oldest = await w.EligibleAsync(TimeSpan.FromHours(100), present: false);
+        var middle = await w.EligibleAsync(TimeSpan.FromHours(90), present: false);
+        await w.EligibleAsync(TimeSpan.FromHours(20));
+
+        var result = (await w.TickAsync()).ShouldHaveSingleItem();
+
+        w.Requests().Select(r => r.TaskId).ShouldBe([oldest, middle]);
+        result.AbsentSent.ShouldBe(0);
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_one_shot_execute_sends_execute_while_the_schedule_is_dry_run()
+    {
+        // CARD-1794 (4). The operator's one-shot reclaim executes for one allow-listed runner even while the scheduled
+        // job is in DryRun (Execute=false); the runner still verifies every tree.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        var id = await w.EligibleAsync();
+
+        var result = (await w.ExecuteOnceAsync()).ShouldHaveSingleItem();
+
+        w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.Execute);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        result.Sent.ShouldBe(1);
+        await using var db = w.Rig.NewDb();
+        var run = await db.WorktreeResidueRuns.AsNoTracking().SingleAsync(r => r.Id == result.RunId);
+        run.Execute.ShouldBeTrue();
+        run.Preview.ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("disabled")]
+    [Arguments("unlisted")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_one_shot_execute_obeys_the_kill_switch_and_the_allow_list(string shape)
+    {
+        // CARD-1794 (4) control. Enabled=false, or a runner Runners does not name, sends nothing.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        if (shape == "disabled")
+            w.Settings.Enabled = false;
+
+        var results = await w.ExecuteOnceAsync(shape == "unlisted" ? "server2-temp" : null);
+
+        results.ShouldBeEmpty();
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_tick_result_names_the_effective_age_floor()
+    {
+        // CARD-1794 (2). The deployed preview held every task younger than 24 h as settling under a shipped floor of
+        // 12 h; the tick result now names the floor the server actually applied, so an override is visible.
+        await using var w = await World.StartAsync();
+        w.Settings.MinTerminalHours = 24;
+        var held = await w.EligibleAsync(TimeSpan.FromHours(13));
+        var sent = await w.EligibleAsync(TimeSpan.FromHours(25));
+        w.Retain = (_, frame) => World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.WouldRemove));
+
+        var result = (await w.PreviewAsync()).ShouldHaveSingleItem();
+
+        result.MinTerminalHours.ShouldBe(24);
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(sent);
+        (await w.RowsAsync(held)).ShouldHaveSingleItem().ReasonCode.ShouldBe("settling");
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_report_kept_in_the_task_record_releases_an_unbranched_report_file()
+    {
+        // CARD-1794 (3) policy pin. The report file .antiphon/task-<id8>.md is not in the branch, but the task record
+        // holds the report (Result): the mirror is a candidate. Without the record it stays report_unpreserved.
+        await using var w = await World.StartAsync();
+        var kept = await w.EligibleAsync(tweak: task =>
+            task.ResultFilePath = World.PathOf(task.Id) + "/.antiphon/task-" + task.Id.ToString("N")[..8] + ".md");
+        var unpreserved = await w.EligibleAsync(tweak: task =>
+        {
+            task.Result = null;
+            task.ResultFilePath = World.PathOf(task.Id) + "/.antiphon/task-" + task.Id.ToString("N")[..8] + ".md";
+        });
+
+        await w.TickAsync();
+
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(kept);
+        (await w.RowsAsync(unpreserved)).ShouldHaveSingleItem().ReasonCode.ShouldBe("report_unpreserved");
+    }
+
+    [Test]
+    [Arguments("no-token")]
+    [Arguments("wrong-token")]
+    [Arguments("operator-token")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1794_execute_route_requires_the_operator_credential(string shape)
+    {
+        // CARD-1794 (4). POST .../runner-retention/{runnerId}/execute runs the one-shot reclaim only for the operator
+        // credential; any other caller is 403 operator_token_required and nothing reaches the runner.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        var id = await w.EligibleAsync();
+        var tokenDir = Path.Combine(Path.GetTempPath(), "c1794-op-" + Guid.NewGuid().ToString("N"));
+        var operatorSettings = new Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings
+        {
+            OperatorTokenPath = Path.Combine(tokenDir, "operator.token"),
+        };
+        try
+        {
+            var token = Antiphon.Server.Infrastructure.Security.OperatorTokenFile.ReadOrCreate(operatorSettings.OperatorTokenPath);
+            var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            if (shape != "no-token")
+                http.Request.Headers[Antiphon.Server.Infrastructure.Security.OperatorTokenFile.Header] =
+                    shape == "operator-token" ? token : token + "x";
+            using var scope = w.Rig.Provider.CreateScope();
+            var retention = scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>();
+
+            if (shape != "operator-token")
+            {
+                var refused = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ForbiddenException>(() =>
+                    Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetentionAsync(
+                        w.Rig.RunnerId, http, operatorSettings, retention, CancellationToken.None));
+                refused.Message.ShouldContain("operator");
+                w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+                (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+                return;
+            }
+
+            var results = await Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetentionAsync(
+                w.Rig.RunnerId, http, operatorSettings, retention, CancellationToken.None);
+            results.ShouldHaveSingleItem().Sent.ShouldBe(1);
+            w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.Execute);
+            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(tokenDir))
+                Directory.Delete(tokenDir, recursive: true);
+        }
     }
 
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
