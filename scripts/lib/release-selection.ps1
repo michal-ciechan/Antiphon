@@ -286,8 +286,23 @@ function New-ReleaseSelectionAttempt {
         $worker = Join-Path $PSScriptRoot 'release-selection-worker.ps1'
         $command = "& '" + $worker.Replace("'", "''") + "' -RequestPath '" + $requestPath.Replace("'", "''") + "' -ResponsePath '" + $responsePath.Replace("'", "''") + "'"
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $script:ReleaseSelectionRoute = 'worker'
+        $handled = $false
         if ($PSVersionTable.PSVersion.Major -ge 7) {
             . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+            # The compiled command (Antiphon.Scripts select-release) answers a no-baseline attempt exactly as
+            # the worker would; exit 10 means not this input, and the worker below decides instead.
+            $cli = Get-AntiphonScriptsCli
+            if ($cli) {
+                $start = New-Object Diagnostics.ProcessStartInfo($cli)
+                foreach ($arg in @('select-release', $requestPath, $responsePath)) { $start.ArgumentList.Add($arg) }
+                $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 60000, $false)
+                if (-not $run.TimedOut -and $run.Exit -eq 0) { $handled = $true; $script:ReleaseSelectionRoute = 'cli' }
+            }
+        }
+        if ($handled) {
+            # Answered by the compiled command; its response file is read below like the worker's.
+        } elseif ($PSVersionTable.PSVersion.Major -ge 7) {
             $start = New-Object Diagnostics.ProcessStartInfo($pwsh.Source)
             foreach ($arg in @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded)) { $start.ArgumentList.Add($arg) }
             $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 60000, $false)

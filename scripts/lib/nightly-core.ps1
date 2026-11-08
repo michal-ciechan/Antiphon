@@ -40,17 +40,17 @@ function Get-NightlyCoreBuildIdentity {
         $stream.Write($runtime, 0, $runtime.Length)
         $hash = [BitConverter]::ToString($sha.ComputeHash($stream.ToArray())).Replace('-', '').Substring(0, 24)
     } finally { $sha.Dispose() }
-    return [pscustomobject]@{ Hash = $hash; Project = (Join-Path $projects[0] 'Antiphon.Nightly.csproj') }
+    return [pscustomobject]@{ Hash = $hash; Project = (Join-Path $projects[0] 'Antiphon.Nightly.csproj'); Name = 'Antiphon.Nightly'; Output = 'Antiphon.Nightly.dll' }
 }
 
 function Install-NightlyCoreBuild {
     param($Identity)
     $cacheDir = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-nightly-core'
-    $target = Join-Path $cacheDir ('Antiphon.Nightly-' + $Identity.Hash)
-    if ([IO.File]::Exists((Join-Path $target 'Antiphon.Nightly.dll'))) { return $target }
+    $target = Join-Path $cacheDir ($Identity.Name + '-' + $Identity.Hash)
+    if ([IO.File]::Exists((Join-Path $target $Identity.Output))) { return $target }
     if ($null -eq (Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
     [void][IO.Directory]::CreateDirectory($cacheDir)
-    $lockPath = Join-Path $cacheDir ('Antiphon.Nightly-' + $Identity.Hash + '.lock')
+    $lockPath = Join-Path $cacheDir ($Identity.Name + '-' + $Identity.Hash + '.lock')
     $lock = $null
     $deadline = [DateTime]::UtcNow.AddMinutes(10)
     while ($null -eq $lock) {
@@ -62,21 +62,21 @@ function Install-NightlyCoreBuild {
     }
     try {
         # Another process may have built it while this one waited.
-        if ([IO.File]::Exists((Join-Path $target 'Antiphon.Nightly.dll'))) { return $target }
+        if ([IO.File]::Exists((Join-Path $target $Identity.Output))) { return $target }
         $work = Join-Path $cacheDir ('build-' + [guid]::NewGuid().ToString('N'))
         try {
             $out = Join-Path $work 'out'
             $output = & dotnet build $Identity.Project -c Release -o $out --artifacts-path (Join-Path $work 'artifacts') '-p:CopyLocalLockFileAssemblies=true' -nologo -v q '-nodeReuse:false' 2>&1
-            if ($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists((Join-Path $out 'Antiphon.Nightly.dll'))) {
+            if ($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists((Join-Path $out $Identity.Output))) {
                 $tail = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'error' } | Select-Object -First 5) -join ' | '
-                throw ('nightly-core build failed (exit ' + $LASTEXITCODE + '): ' + $tail)
+                throw ($Identity.Name + ' build failed (exit ' + $LASTEXITCODE + '): ' + $tail)
             }
             [IO.Directory]::Move($out, $target)
         } finally {
             if ([IO.Directory]::Exists($work)) { try { [IO.Directory]::Delete($work, $true) } catch { } }
         }
         # Builds of earlier source versions: best effort, a week old (one still loaded elsewhere stays).
-        foreach ($old in @([IO.Directory]::GetDirectories($cacheDir, 'Antiphon.Nightly-*'))) {
+        foreach ($old in @([IO.Directory]::GetDirectories($cacheDir, $Identity.Name + '-*'))) {
             if ($old -eq $target -or [IO.Directory]::GetLastWriteTimeUtc($old) -gt [DateTime]::UtcNow.AddDays(-7)) { continue }
             try { [IO.Directory]::Delete($old, $true) } catch { }
         }
@@ -88,6 +88,50 @@ function Install-NightlyCoreBuild {
         $lock.Dispose()
         try { [IO.File]::Delete($lockPath) } catch { }
     }
+}
+
+# The scripts' command-line implementation (scripts/lib/Antiphon.Scripts): built the same way, keyed by its
+# own sources plus the shared CheckpointProcessRunner.cs and the .NET version. Returns the command to start
+# (the built executable), or $null when it cannot be had: Windows PowerShell 5.1, ANTIPHON_SCRIPTS_CLI=off,
+# a copy of the scripts without the project, no SDK or a failed build (warned). Callers then keep their
+# PowerShell path; a command that cannot answer an input exactly also tells them to (exit 10).
+function Get-AntiphonScriptsCli {
+    if ($null -ne $script:AntiphonScriptsCli) { if ($script:AntiphonScriptsCli) { return $script:AntiphonScriptsCli }; return $null }
+    $script:AntiphonScriptsCli = ''
+    if ([string]$env:ANTIPHON_SCRIPTS_CLI -ieq 'off' -or $PSVersionTable.PSVersion.Major -lt 7) { return $null }
+    $project = Join-Path $PSScriptRoot 'Antiphon.Scripts'
+    $shared = Join-Path $PSScriptRoot 'CheckpointProcessRunner.cs'
+    if (-not [IO.Directory]::Exists($project) -or -not [IO.File]::Exists($shared)) { return $null }
+    $files = New-Object System.Collections.Generic.List[string]
+    foreach ($file in [IO.Directory]::EnumerateFiles($project, '*', [IO.SearchOption]::AllDirectories)) {
+        $rel = $file.Substring($project.Length).Replace([char]92, '/').TrimStart('/')
+        if ($rel -match '^(bin|obj)/' -or $rel -notmatch '\.(cs|csproj)$') { continue }
+        $files.Add($rel)
+    }
+    if (@($files | Where-Object { $_.EndsWith('.cs') }).Count -eq 0) { return $null }
+    $files.Sort([StringComparer]::Ordinal)
+    $stream = New-Object System.IO.MemoryStream
+    foreach ($entry in @($files | ForEach-Object { @{ Name = 'Antiphon.Scripts/' + $_; Path = (Join-Path $project $_) } }) + @(@{ Name = 'CheckpointProcessRunner.cs'; Path = $shared })) {
+        $name = [Text.Encoding]::UTF8.GetBytes($entry.Name + "`n")
+        $stream.Write($name, 0, $name.Length)
+        $bytes = [IO.File]::ReadAllBytes($entry.Path)
+        $stream.Write($bytes, 0, $bytes.Length)
+    }
+    $runtime = [Text.Encoding]::UTF8.GetBytes("`n" + [Environment]::Version.ToString())
+    $stream.Write($runtime, 0, $runtime.Length)
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream.ToArray())).Substring(0, 24)
+    $identity = [pscustomobject]@{ Hash = $hash; Project = (Join-Path $project 'Antiphon.Scripts.csproj'); Name = 'Antiphon.Scripts'; Output = 'Antiphon.Scripts.dll' }
+    try { $dir = Install-NightlyCoreBuild -Identity $identity }
+    catch {
+        Write-Warning -WarningAction Continue ('antiphon-scripts-unavailable: ' + $_.Exception.Message)
+        return $null
+    }
+    if ($null -eq $dir) { return $null }
+    $exe = Join-Path $dir 'Antiphon.Scripts'
+    if ($IsWindows) { $exe += '.exe' }
+    if (-not [IO.File]::Exists($exe)) { return $null }
+    $script:AntiphonScriptsCli = $exe
+    return $exe
 }
 
 function Test-NightlyCoreAvailable {
