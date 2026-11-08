@@ -4,6 +4,10 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 
+var cacheProbe = Environment.GetEnvironmentVariable(Antiphon.Hosting.PwshPrivateCache.ProbeVariable);
+if (!string.IsNullOrWhiteSpace(cacheProbe))
+    return Antiphon.Hosting.PwshPrivateCache.CompleteProbe(cacheProbe);
+
 if (args.Length >= 3 && args[0] == "fixture-child")
     return await FixtureChild(args[1], args[2]);
 if (args.Length >= 3 && args[0] == "fixture-grandchild")

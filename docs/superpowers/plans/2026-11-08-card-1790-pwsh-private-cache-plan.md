@@ -2,7 +2,7 @@
 
 Each test host and the session runner installs one process-private cache directory under `Path.GetTempPath()` and exports it as `XDG_CACHE_HOME` before `Main`. pwsh children inherit that variable. The process that created the directory deletes it on exit. A second copy of the installer in the same process reuses the directory and does not delete it. An inherited value is replaced unless this process owns it: absent, empty, and a foreign directory each get a new directory.
 
-`tests/Antiphon.ScriptHarnessHost/Program.cs` releases that directory before the linux-owner supervisor signals its own process group. The existing Windows and Linux branches are unchanged.
+`tests/Antiphon.ScriptHarnessHost/Program.cs` answers `ANTIPHON_PWSH_CACHE_PROBE` from `Main` and releases that directory before the linux-owner supervisor signals its own process group. Exiting from the module initializer deadlocks the runtime on Linux. The existing Windows and Linux branches are unchanged.
 
 The pwsh 7.5.4 exit-134 abort is not forced. Nothing else in startup, limits, or spawn arguments changes. `tests/test-execution-policy.json` is unchanged.
 

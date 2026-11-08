@@ -19,16 +19,16 @@ internal static class PwshPrivateCache
         AppDomain.CurrentDomain.ProcessExit += (_, _) => Release();
 
     [ModuleInitializer]
-    internal static void InstallAtStartup()
+    internal static void InstallAtStartup() => Install();
+
+    // The probe runs from Main. Environment.Exit during the module initializer
+    // deadlocks the runtime after the directory has already been removed.
+    internal static int CompleteProbe(string outputPath)
     {
         var created = Install();
-        var probe = Environment.GetEnvironmentVariable(ProbeVariable);
-        if (string.IsNullOrWhiteSpace(probe))
-            return;
-
-        var code = WriteProbe(created, probe);
+        var code = WriteProbe(created, outputPath);
         Release();
-        Environment.Exit(code);
+        return code;
     }
 
     internal static string Install()
