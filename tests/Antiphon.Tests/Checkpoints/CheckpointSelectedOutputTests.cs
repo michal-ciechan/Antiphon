@@ -8,7 +8,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointSelectedOutputTests : CheckpointTestBase
 {
     [Test]

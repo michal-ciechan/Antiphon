@@ -79,19 +79,10 @@ public class ProcessSpawnLimitTests
         typeof(CheckNoteDeliveryHandoffTests),
         typeof(Antiphon.Tests.Scripts.RunCheckpointScriptTests),
         typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointTempLifecycleTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointTempUsageTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests),
-        typeof(Antiphon.Tests.Checkpoints.BuildSlotClientTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointSlotExecutorTests),
-        // ExecuteAsync captures host and Git evidence even when the row driver is fake.
-        typeof(Antiphon.Tests.Checkpoints.CheckpointAppTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointAdmissionContractTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests),
-        // CARD-1747: these start a child with the shared checkout as its working directory
+        // CARD-1747: checkpoint-tool classes name CheckpointToolSpawnLimit.
+        // These six start a child with the shared checkout as its working directory
         // (RepeatHost output, run-checkpoint.ps1, or dotnet against RepoRoot). They stay on
         // the strict lane so two of them cannot write one checkout.
         typeof(Antiphon.Tests.Checkpoints.RerunFilterHostTests),

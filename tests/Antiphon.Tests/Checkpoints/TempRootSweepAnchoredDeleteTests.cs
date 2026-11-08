@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Checkpoints;
 // outside the root. FIFO, socket and symlink entries are removed as themselves.
 // Every path stays under one fresh temp fixture.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class TempRootSweepAnchoredDeleteTests
 {
     [Test]

@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Checkpoints;
 // recorded identity to DeleteAnchored. The temp-root sweep uses the ancestor-safe
 // walk in ListAnchored/UnlinkAnchored (CARD-1596).
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class AnchoredPathDeleteWitnessTests
 {
     [Test]

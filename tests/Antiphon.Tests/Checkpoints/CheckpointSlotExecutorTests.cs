@@ -12,13 +12,13 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
 {
-    // About 2x the 94.8s max from run 28bbb58e. This class is ProcessSpawnLimit
-    // 1, but the same chunk includes OutputCleanupTests (49 rows) and
-    // CheckpointTaskOwnershipTests (24), which have no limiter. One hung wait
-    // is 190s, under the 900s launch target.
+    // About 2x the 94.8s max from run 28bbb58e. This class is on
+    // CheckpointToolSpawnLimit (width 2). The same chunk includes
+    // OutputCleanupTests (49 rows) and CheckpointTaskOwnershipTests (24),
+    // which have no class limiter. One hung wait is 190s, under the 900s launch target.
     private static readonly TimeSpan SeatExecutorWallCap = TimeSpan.FromSeconds(190);
 
     private static readonly Guid TaskId = Guid.Parse("11111111-1111-4111-8111-111111111111");

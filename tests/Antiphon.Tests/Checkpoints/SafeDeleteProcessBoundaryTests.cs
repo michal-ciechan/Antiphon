@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 // CARD-1199 F1: the cleanup/write preflight Git reader uses the shared bounded runner.
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class SafeDeleteProcessBoundaryTests : CheckpointTestBase
 {
     [NativeLinuxOnly("FIFO-held monitor proof runs on Linux")]

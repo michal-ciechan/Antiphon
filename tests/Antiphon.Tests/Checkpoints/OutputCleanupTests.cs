@@ -664,7 +664,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     [Test]
-    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.CheckpointToolSpawnLimit>]
     public void parent_symlink_does_not_delete_a_tracked_stamp()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())

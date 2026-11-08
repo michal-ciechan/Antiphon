@@ -9,7 +9,7 @@ using Antiphon.TestSupport;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class PlanCoverageHandleTests : CheckpointTestBase
 {
     [NativeLinuxOnly("hardlink sentinel requires Linux link(2)")]

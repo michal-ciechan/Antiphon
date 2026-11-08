@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
 {
     [Test]
@@ -432,7 +432,7 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
 
 // Portable setup witnesses must not inherit the native Windows class skip roster.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointRecoveryFixtureTests : CheckpointTestBase
 {
     [Test]

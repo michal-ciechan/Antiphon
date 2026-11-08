@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 // win32 145 left-in-place, and an NTFS hard-link sibling. Linux skips every row.
 // The temp-root sweep stays on the base path delete and is not witnessed here.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointWindowsAnchoredPathDeleteWitnessTests
 {
     [Test]

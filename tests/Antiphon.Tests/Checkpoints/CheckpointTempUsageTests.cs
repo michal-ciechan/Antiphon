@@ -10,7 +10,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointTempUsageTests : CheckpointTestBase
 {
     [Test]
@@ -363,7 +363,7 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
 }
 
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointNamespaceCensusUsageTests : CheckpointTestBase
 {
     [Test]

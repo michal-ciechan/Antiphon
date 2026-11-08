@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 // granted and verified after its release; inside the slot the build stamps its write roots and what
 // the ledger does not hold.
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
 {
     private const int IgnoredFiles = 2_000;

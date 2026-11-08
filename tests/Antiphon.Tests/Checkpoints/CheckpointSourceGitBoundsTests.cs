@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 [NativeLinuxOnly("Linux inherited-pipe custody proof")]
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
 {
     [Test]

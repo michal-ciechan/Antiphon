@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointColdBuildTests : CheckpointTestBase
 {
     private const string Project = "tests/Antiphon.SessionRunner.Tests/Probe.csproj";
