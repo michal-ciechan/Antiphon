@@ -4,7 +4,8 @@
     CARD-1483: real MSBuild evaluation for scripts/audit-land-verification-graph.ps1 -Update.
     Microsoft.Build is compile-only (ExcludeAssets="runtime"); MSBuildLocator loads the MSBuild of
     the SDK that the audited repo's global.json resolves, so this targets that SDK's runtime.
-    Not in Antiphon.sln (plan D-1/S1): Antiphon.Tests stages it as a helper.
+    Antiphon.Tests stages the helper from the producer's configuration-specific output,
+    so the project is a solution member (CARD-1780) and a Release solution build assigns Release.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
