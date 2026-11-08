@@ -111,6 +111,12 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
     }
 
     /// <summary>
+    /// CARD-1769. Fired after one note's reconcile and before this pass records its park stamp.
+    /// A witness uses it to land a session change in that window.
+    /// </summary>
+    internal const string RescanReconciledBoundary = "land-rescan-reconciled";
+
+    /// <summary>
     /// One land-notification pass, in id order. The hosted loop and the CARD-1769 measurement
     /// share it. <paramref name="busySessions"/> is the caller's queue-lock set for this pass.
     /// </summary>
@@ -118,6 +124,8 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
     {
         var stamps = await LoadRescanStampsAsync(_rescanPark.SessionIds(), stoppingToken);
         var parked = new List<(Guid NoteId, Guid SessionId)>();
+        await using var boundaryScope = scopes.CreateAsyncScope();
+        var rescanBoundary = boundaryScope.ServiceProvider.GetService<LandDeliveryBoundary>();
         Guid? cursor = null;
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -150,10 +158,16 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                     await rowScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
                         .ReconcileAsync(id, stoppingToken, busySessions);
                     var tracked = rowDb.AgentTaskLandNotifications.Local.FirstOrDefault(n => n.Id == id);
+                    var observedSession = Guid.Empty;
                     if (tracked is { State: LandNotificationState.AwaitingReceipt, ParentSessionId: Guid parent })
+                    {
                         parked.Add((id, parent));
+                        observedSession = parent;
+                    }
                     else
                         _rescanPark.Forget(id);
+                    if (rescanBoundary is not null)
+                        await rescanBoundary.ReachedAsync(RescanReconciledBoundary, id, observedSession, stoppingToken);
                 }
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 {
