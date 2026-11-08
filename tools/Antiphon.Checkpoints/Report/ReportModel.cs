@@ -93,8 +93,9 @@ public sealed class ReportRow
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }
 
-    // Omitted when null so a passing row's receipt JSON stays free of journal counts.
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    // Console and report.md only. The strict receipt reader requires every serialized
+    // reference property, so this diagnostic stays out of report.json.
+    [JsonIgnore]
     public string? JournalDiagnostic { get; set; }
 }
 
