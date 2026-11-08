@@ -116,17 +116,18 @@ public sealed class Server2ProductionServerContractTests
         Env(server, "Delegation__CheckInterpreterEnabled").ShouldBe("true");
         Env(server, "Delegation__DiagnoseEnabled").ShouldBe("true");
         Env(server, "Delegation__OutputDistillerEnabled").ShouldBe("true");
-        Env(server, "Delegation__CheckInterpreterWorkingDirectory").ShouldBe("/state/check-interpreter");
-        Env(server, "Delegation__DiagnoseWorkingDirectory").ShouldBe("/state/diagnose");
-        Env(server, "Delegation__OutputDistillerWorkingDirectory").ShouldBe("/state/output-distiller");
+        Env(server, "Delegation__CheckInterpreterWorkingDirectory").ShouldBe("/work/specialists/check-interpreter");
+        Env(server, "Delegation__DiagnoseWorkingDirectory").ShouldBe("/work/specialists/diagnose");
+        Env(server, "Delegation__OutputDistillerWorkingDirectory").ShouldBe("/work/specialists/output-distiller");
         Env(server, "Git__WorktreeBasePath").ShouldBe("/work/worktrees");
         Env(server, "Git__WorkspacePath").ShouldBe("/work/repos");
         var text = Compose();
         text.ShouldContain("CARD-1774");
         text.ShouldContain("InMemory");
-        Service("server-state-init").ShouldContain("/state/output-distiller");
-        Service("server-state-init").ShouldContain("/state/check-interpreter");
-        Service("server-state-init").ShouldContain("/state/diagnose");
+        Service("server-state-init").ShouldContain("/work/specialists/output-distiller");
+        Service("server-state-init").ShouldContain("/work/specialists/check-interpreter");
+        Service("server-state-init").ShouldContain("/work/specialists/diagnose");
+        Service("server-state-init").ShouldContain("chmod 0755");
     }
 
     [Test]
@@ -198,6 +199,7 @@ public sealed class Server2ProductionServerContractTests
         script.ShouldContain("missing-certificate");
         script.ShouldContain("hangfire-storage");
         script.ShouldContain("expected-sha");
+        script.ShouldContain("revision-mismatch");
         script.ShouldContain("production-compose-wrong-project");
         script.ShouldContain("/.dockerenv");
         script.ShouldContain("antiphon_pgdata");
@@ -363,7 +365,9 @@ public sealed class Server2ProductionServerContractTests
             await WriteSecretFileAsync(envFile, EnvBody("fixture-password-1775", cert, key, token, "InMemory"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
             await AssertRefusalAsync(bin, ["-WhatIf", "-EnvFile", envFile], "env-mode", marker);
 
-            await WriteSecretFileAsync(envFile, EnvBody("fixture-password-1775", cert, key, token, "InMemory"));
+            await WriteSecretFileAsync(
+                envFile,
+                EnvBody("fixture-password-1775", cert, key, token, "InMemory") + "SOURCE_REVISION=" + new string('b', 40) + "\n");
             await AssertRefusalAsync(
                 bin,
                 ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", new string('b', 40)],

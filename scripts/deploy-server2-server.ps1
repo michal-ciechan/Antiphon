@@ -133,9 +133,9 @@ function Get-ServerComposeRefusal {
             'Delegation__CheckInterpreterEnabled: "true"',
             'Delegation__DiagnoseEnabled: "true"',
             'Delegation__OutputDistillerEnabled: "true"',
-            'Delegation__CheckInterpreterWorkingDirectory: /state/check-interpreter',
-            'Delegation__DiagnoseWorkingDirectory: /state/diagnose',
-            'Delegation__OutputDistillerWorkingDirectory: /state/output-distiller',
+            'Delegation__CheckInterpreterWorkingDirectory: /work/specialists/check-interpreter',
+            'Delegation__DiagnoseWorkingDirectory: /work/specialists/diagnose',
+            'Delegation__OutputDistillerWorkingDirectory: /work/specialists/output-distiller',
             'AgentTui__KeyProtection__Mode: X509Certificate',
             'Operator__TokenPath: /state/operator-token',
             'runner-state:/state',
@@ -157,9 +157,10 @@ function Get-ServerHostCommand {
     if (-not [string]::IsNullOrWhiteSpace($EnvPath)) { $envArg = $EnvPath }
     $shaArg = '<expected-sha>'
     if (-not [string]::IsNullOrWhiteSpace($Sha)) { $shaArg = $Sha }
-    $composeUp = 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $script:ServerProject + ' up -d'
+    $revision = 'image label org.opencontainers.image.revision must equal SOURCE_REVISION ' + $shaArg + ' before up'
+    $composeUp = 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $script:ServerProject + ' up -d --build'
     $gate = 'verify-only: pwsh -NoProfile -File scripts/restart-linux-server.ps1 -Config ' + $script:GateConfig + ' -ExpectedServerSha ' + $shaArg
-    return ($composeUp + "`n" + $gate)
+    return ($revision + "`n" + $composeUp + "`n" + $gate)
 }
 
 function Resolve-ServerLane {
@@ -189,13 +190,20 @@ function Invoke-ServerUp {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    foreach ($arg in @('compose', '--env-file', $EnvPath, '-f', $ComposePath, '-p', $script:ServerProject, 'up', '-d')) {
+    foreach ($arg in @('compose', '--env-file', $EnvPath, '-f', $ComposePath, '-p', $script:ServerProject, 'up', '-d', '--build')) {
         [void]$psi.ArgumentList.Add($arg)
     }
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $psi
     [void]$proc.Start()
+    # Start both reads before WaitForExit. A first up builds three images
+    # and fills stderr; an unread pipe deadlocks the child. Do not write
+    # the text: compose output can repeat an interpolated secret.
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
     $proc.WaitForExit()
+    [void]$stdoutTask.GetAwaiter().GetResult()
+    [void]$stderrTask.GetAwaiter().GetResult()
     if ($proc.ExitCode -ne 0) { return 'compose-up-failed' }
     return ''
 }
@@ -326,6 +334,11 @@ function Invoke-ServerDeploy {
     }
     if (-not (Test-ServerSha $ExpectedServerSha)) {
         Write-ServerResult 'fail' 2 'expected-sha'
+        return
+    }
+    $revision = ([string]$envMap['SOURCE_REVISION']).Trim().ToLowerInvariant()
+    if ($revision -cne $ExpectedServerSha.ToLowerInvariant()) {
+        Write-ServerResult 'fail' 2 'revision-mismatch'
         return
     }
     $lane = Get-ServerObservedLane
