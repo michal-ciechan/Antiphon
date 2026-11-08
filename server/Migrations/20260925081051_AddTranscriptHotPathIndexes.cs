@@ -28,7 +28,7 @@ namespace Antiphon.Server.Migrations
         }
 
         internal static void CreateRetryableIndex(MigrationBuilder migrationBuilder,
-            string name, string columns, string? filter = null, string include = "")
+            string name, string columns, string filter = "", string include = "")
         {
             // PostgreSQL forbids concurrent DDL inside DO. Rename only an invalid index in
             // the conditional step, then drop it in a separate autocommit command. The fixed
