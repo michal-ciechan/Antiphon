@@ -63,7 +63,7 @@ function Install-NightlyCoreBuild {
         $work = Join-Path $cacheDir ('build-' + [guid]::NewGuid().ToString('N'))
         try {
             $out = Join-Path $work 'out'
-            $output = & dotnet build $Identity.Project -c Release -o $out --artifacts-path (Join-Path $work 'artifacts') -nologo -v q '-nodeReuse:false' 2>&1
+            $output = & dotnet build $Identity.Project -c Release -o $out --artifacts-path (Join-Path $work 'artifacts') '-p:CopyLocalLockFileAssemblies=true' -nologo -v q '-nodeReuse:false' 2>&1
             if ($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists((Join-Path $out 'Antiphon.Nightly.dll'))) {
                 $tail = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'error' } | Select-Object -First 5) -join ' | '
                 throw ('nightly-core build failed (exit ' + $LASTEXITCODE + '): ' + $tail)
