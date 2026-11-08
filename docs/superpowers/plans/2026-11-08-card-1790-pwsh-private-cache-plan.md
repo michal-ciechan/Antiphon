@@ -14,6 +14,6 @@ The pwsh 7.5.4 exit-134 abort is not forced. Nothing else in startup, limits, or
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1790-a/ | pwsh-cache | /*/Antiphon.Tests.Scripts/PwshPrivateCacheTests/* | S1 | 3 executed, 0 failed | 3 | 4 |
 | CP-2 | S1 | CP-1 | guards | /*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/* | S1 | all listed (75 at f0e9ea9d31), 0 failed | 60 | 8 |
-| CP-3 | S1 | CP-1 | land-graph | /*/Antiphon.Tests.Application/LandGraphEvaluationTests/* | S1 | 155 executed, 0 failed | 150 | 15 |
+| CP-3 | S1 | CP-1 | land-graph | /*/Antiphon.Tests.Application/LandGraphEvaluationTests/* | S1 | all executed (147 at 7a9b3a864a), 0 failed | 140 | 15 |
 
 CP-1: the child cache is under the temp root and owned by this process; absent, empty, and foreign inputs each get a distinct directory that is gone after the host exits; two concurrent hosts differ. CP-2: one batched guard run; policy, mechanical contract, platform guidance, and server layering stay green. CP-3: the land-graph evaluator suite stays green with the installer item in `Directory.Build.targets`.
