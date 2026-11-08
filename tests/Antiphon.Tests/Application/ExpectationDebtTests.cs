@@ -130,11 +130,14 @@ public sealed class ExpectationDebtTests
         {
             var scan = await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
             var notes = scan.Evaluation.UndeliveredNotes;
+            // CARD-1773. Canceled is terminal for the hosted page and cannot late-confirm, so it is
+            // not permanent outbox debt. The canceled row is still seeded and must stay out.
             notes.Select(row => row.SubjectKey).OrderBy(key => key, StringComparer.Ordinal).ShouldBe(
-                new[] { parked.Note.Id, retry.Note.Id, canceled.Note.Id }
+                new[] { parked.Note.Id, retry.Note.Id }
                     .Select(id => ExpectationSubjects.Note(world.Directive.Id, id))
                     .OrderBy(key => key, StringComparer.Ordinal)
                     .ToArray());
+            notes.ShouldNotContain(row => row.SubjectKey == ExpectationSubjects.Note(world.Directive.Id, canceled.Note.Id));
             notes.ShouldAllBe(row => row.Kind == ExpectationEpisodeKind.UndeliveredNote && row.IsDue);
             var retryRow = notes.Single(row => row.SubjectKey == ExpectationSubjects.Note(world.Directive.Id, retry.Note.Id));
             retryRow.Evidence.ShouldContain("RetryPending");
@@ -142,14 +145,12 @@ public sealed class ExpectationDebtTests
             retryRow.Evidence.ShouldContain("age 10m");
             notes.Single(row => row.SubjectKey == ExpectationSubjects.Note(world.Directive.Id, parked.Note.Id))
                 .Evidence.ShouldContain("queue Pending");
-            notes.Single(row => row.SubjectKey == ExpectationSubjects.Note(world.Directive.Id, canceled.Note.Id))
-                .Evidence.ShouldContain("queue Canceled");
             notes.ShouldAllBe(row => row.AffectedTaskIds.Single() == taskId);
             scan.NudgesCommitted.ShouldBe(1);
         }
 
         await using var read = world.Db();
-        (await read.ExpectationEpisodes.CountAsync(row => row.Kind == ExpectationEpisodeKind.UndeliveredNote)).ShouldBe(3);
+        (await read.ExpectationEpisodes.CountAsync(row => row.Kind == ExpectationEpisodeKind.UndeliveredNote)).ShouldBe(2);
         // The watchdog observes note debt. It does not settle or resend CARD-0641's notes.
         var states = await read.AgentTaskLandNotifications.AsNoTracking()
             .ToDictionaryAsync(row => row.Id, row => row.State);
