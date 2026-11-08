@@ -14,6 +14,11 @@ namespace Antiphon.Server.Api.Endpoints;
 
 public static class AgentTaskEndpoints
 {
+    /// <summary>CARD-1794 (red shim).</summary>
+    public static Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> ExecuteRunnerRetentionAsync(string runnerId,
+        HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionService retention, CancellationToken ct) =>
+        retention.RunExecuteOnceAsync(runnerId, ct);
+
     /// <summary>Header the delegate script sends; matches ANTIPHON_TASK_TOKEN in the agent's env.</summary>
     public const string TokenHeader = "X-Antiphon-Task-Token";
 

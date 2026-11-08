@@ -370,6 +370,50 @@ public sealed class C1677DiskAlarmTests
             .ShouldBe(valid, shape);
     }
 
+    // CARD-1794 (5). server2's /work reached 1.8 GB free with no alert: a free-space floor raises an Error row
+    // even below UsedPercent, and a Warning row turns Error once the free bytes are under the floor.
+    [Test]
+    [Arguments(45L, 250L, 50, "Error")]    // 82 percent used: below UsedPercent, under the floor
+    [Arguments(5L, 100L, 10, "Error")]     // 95 percent used and under the floor
+    [Arguments(15L, 100L, 10, "Warning")]  // 85 percent used, above the floor
+    [Arguments(50L, 250L, 50, "none")]     // 80 percent used, exactly at the floor
+    public async Task C1794_free_space_floor_raises_an_error(long freeGiB, long totalGiB, int minFreeGiB, string expected)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new World();
+        world.Settings.MinFreeGiB = minFreeGiB;
+        world.Record(Server2, ("/work", freeGiB * GiB, totalGiB * GiB));
+
+        var rows = await world.ReadAsync(schema);
+        if (expected == "none")
+        {
+            rows.ShouldBeEmpty("above-floor-below-percent-no-row");
+            return;
+        }
+        var row = rows.ShouldHaveSingleItem("floor-one-row");
+        row.Severity.ShouldBe(Enum.Parse<AlertSeverity>(expected), $"floor-{freeGiB}-of-{totalGiB}");
+        row.ConditionKey.ShouldBe("workspace-disk-low:server2");
+        if (expected == "Error")
+        {
+            row.Evidence.ShouldContain($"minFreeBytes={world.Settings.MinFreeGiB * GiB}");
+            row.Headline.ShouldContain("below the " + world.Settings.MinFreeGiB + " GiB floor");
+        }
+    }
+
+    [Test]
+    [Arguments(-1, false)]
+    [Arguments(0, true)]
+    [Arguments(50, true)]
+    [Arguments(100000, true)]
+    [Arguments(100001, false)]
+    public void C1794_min_free_bounds(int value, bool valid)
+    {
+        var settings = Listed();
+        settings.MinFreeGiB = value;
+        new WorkspaceDiskAlarmSettingsValidator().Validate(null, settings).Succeeded
+            .ShouldBe(valid, $"min-free-{value}");
+    }
+
     private static WorkspaceDiskAlarmSettings Listed() =>
         new() { Runners = new Dictionary<string, string>(StringComparer.Ordinal) { [Server2] = "/work" } };
 

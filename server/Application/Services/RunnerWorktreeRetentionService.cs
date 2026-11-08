@@ -75,7 +75,11 @@ public sealed class RunnerWorktreeRetentionService
     /// sending early (null when it did not).
     /// </summary>
     public sealed record TickResult(string RunnerId, int Sent, Guid? RunId, int Examined = 0, int Eligible = 0,
-        int BackedOff = 0, string? Stopped = null);
+        int BackedOff = 0, string? Stopped = null, int AbsentSent = 0, int Queued = 0, int MinTerminalHours = 0);
+
+    /// <summary>CARD-1794 (red shim).</summary>
+    public Task<IReadOnlyList<TickResult>> RunExecuteOnceAsync(string runnerId, CancellationToken ct) =>
+        RunTickAsync(ct, previewRunner: runnerId);
 
     /// <summary>One tick over every allow-listed runner. <paramref name="previewRunner"/> forces DryRun for one runner (the preview route).</summary>
     public async Task<IReadOnlyList<TickResult>> RunTickAsync(CancellationToken ct, string? previewRunner = null)

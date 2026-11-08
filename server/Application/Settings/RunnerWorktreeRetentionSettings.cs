@@ -38,6 +38,9 @@ public sealed class RunnerWorktreeRetentionSettings
     /// <summary>I-9. At most this many requests per runner per tick.</summary>
     public int MaxRemovalsPerTick { get; set; } = 25;
 
+    /// <summary>CARD-1794 (red shim).</summary>
+    public int MaxAbsentPerTick { get; set; } = 200;
+
     public int PauseBetweenSeconds { get; set; } = 5;
 
     public int RequestTimeoutSeconds { get; set; } = 300;
