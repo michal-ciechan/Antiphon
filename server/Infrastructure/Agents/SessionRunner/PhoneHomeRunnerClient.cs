@@ -246,14 +246,16 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Buffer, new { sessionId }, ct);
-        var dto = Read<RunnerBufferDto>(frame) ?? throw Missing("buffer");
+        ThrowIfError(frame);
+        var dto = RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneBuffer) ?? throw Missing("buffer");
         return new SessionRunnerBufferDto(dto.SessionId, dto.Buffer, dto.LastSequence);
     }
 
     public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Snapshot, new { sessionId }, ct);
-        var dto = Read<RunnerSnapshotDto>(frame) ?? throw Missing("snapshot");
+        ThrowIfError(frame);
+        var dto = RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneSnapshot) ?? throw Missing("snapshot");
         return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence,
             dto.StartedAt, dto.AcceptedStartedAt, dto.Dialog);
     }
@@ -355,7 +357,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Transcript, new { sessionId }, ct);
-        return _mapper.MapTranscript(Read<RunnerTranscriptDto>(frame) ?? throw Missing("transcript"));
+        ThrowIfError(frame);
+        return _mapper.MapTranscript(RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneTranscript) ?? throw Missing("transcript"));
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)

@@ -19,11 +19,14 @@ public static class SessionReadLaunchRoutes
             Transcript(runtime.GetTranscript(id)));
     }
 
-    public static IResult Buffer(RunnerBufferDto dto) => Results.Ok(dto);
+    public static IResult Buffer(RunnerBufferDto dto) =>
+        Results.Json(dto, RunnerReadJson.Use(RunnerReadJson.HttpBuffer));
 
-    public static IResult Snapshot(RunnerSnapshotDto dto) => Results.Ok(dto);
+    public static IResult Snapshot(RunnerSnapshotDto dto) =>
+        Results.Json(dto, RunnerReadJson.Use(RunnerReadJson.HttpSnapshot));
 
-    public static IResult Transcript(RunnerTranscriptDto dto) => Results.Ok(dto);
+    public static IResult Transcript(RunnerTranscriptDto dto) =>
+        Results.Json(dto, RunnerReadJson.Use(RunnerReadJson.HttpTranscript));
 
     // CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
     // before a restart) - it must answer 404, not crash the request pipeline with an unhandled

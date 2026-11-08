@@ -5,6 +5,9 @@ using System.Text.Json.Serialization.Metadata;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 using TUnit.Core;
 
@@ -136,8 +139,11 @@ public class RunnerReadJsonTests
     private static async Task<byte[]> Write<T>(IResult result)
     {
         result.ShouldBeOfType<JsonHttpResult<T>>();
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
+        var context = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().AddLogging().Configure<JsonOptions>(_ => { }).BuildServiceProvider(),
+            Response = { Body = new MemoryStream() },
+        };
         await result.ExecuteAsync(context);
         context.Response.StatusCode.ShouldBe(StatusCodes.Status200OK);
         return ((MemoryStream)context.Response.Body).ToArray();

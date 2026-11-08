@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 
@@ -408,9 +409,9 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.LaunchPlatformConstrained => await LaunchPlatformConstrainedAsync(request, trace, ct),
                 PhoneHomeOperation.Retire => await RetireAsync(request, ct),
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
-                PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
-                PhoneHomeOperation.Snapshot => Result(request, await _runtime.GetSnapshotAsync(ReadSessionId(request), ct)),
-                PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request))),
+                PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request)), RunnerReadJson.PhoneBuffer),
+                PhoneHomeOperation.Snapshot => Result(request, await _runtime.GetSnapshotAsync(ReadSessionId(request), ct), RunnerReadJson.PhoneSnapshot),
+                PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request)), RunnerReadJson.PhoneTranscript),
                 PhoneHomeOperation.Input => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<RunnerInputRequest>(PhoneHomeFraming.Json)
@@ -1148,6 +1149,10 @@ public sealed class PhoneHomeCommandDispatcher
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+    private static PhoneHomeFrame Result<T>(PhoneHomeFrame request, T payload, JsonTypeInfo<T> type) =>
+        new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(payload, RunnerReadJson.Use(type)));
 
     private static PhoneHomeFrame AlreadyExited(PhoneHomeFrame request, RunnerSessionDto exited) =>
         new(PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,

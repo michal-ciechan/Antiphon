@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Antiphon.Resilience;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -147,6 +148,16 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         where T : class
     {
         return await ReadJsonAsync<T>(relative, operation, ct, budget).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Session runner returned an empty response.");
+    }
+
+    private async Task<T> ReadGeneratedAsync<T>(
+        string relative, string operation, JsonTypeInfo<T> type, CancellationToken ct, ResilienceBudget? budget = null)
+        where T : class
+    {
+        using var response = await SendReadAsync(relative, operation, ct, budget).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(type), ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Session runner returned an empty response.");
     }
 
@@ -598,8 +609,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
     {
-        var buffer = await ReadRequiredJsonAsync<RunnerBufferDto>(
-            $"sessions/{sessionId:D}/buffer", ResilienceOperations.RunnerBuffer, ct);
+        var buffer = await ReadGeneratedAsync(
+            $"sessions/{sessionId:D}/buffer", ResilienceOperations.RunnerBuffer, RunnerReadJson.PhoneBuffer, ct);
         return new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence);
     }
 
@@ -608,7 +619,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         using var response = await SendReadAsync(
             $"sessions/{sessionId:D}/snapshot", ResilienceOperations.RunnerSnapshot, ct);
         await EnsureRunnerSuccessAsync(response, ct);
-        var snapshot = await response.Content.ReadFromJsonAsync<RunnerSnapshotDto>(JsonOptions, ct)
+        var snapshot = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.PhoneSnapshot), ct)
             ?? throw new InvalidOperationException("Session runner returned an empty snapshot response.");
         return new SessionRunnerSnapshotDto(
             snapshot.SessionId,
@@ -622,8 +633,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
-        var transcript = await ReadRequiredJsonAsync<RunnerTranscriptDto>(
-            $"sessions/{sessionId:D}/transcript", ResilienceOperations.RunnerTranscript, ct);
+        var transcript = await ReadGeneratedAsync(
+            $"sessions/{sessionId:D}/transcript", ResilienceOperations.RunnerTranscript, RunnerReadJson.PhoneTranscript, ct);
         return new SessionRunnerTranscriptDto(
             transcript.SessionId,
             transcript.Entries.Select(MapTranscript).ToList(),
