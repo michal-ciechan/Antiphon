@@ -1055,15 +1055,21 @@ CARD-1742; this gate does not create it and it is not the cutover.
 
 ### What `deploy-server2.ps1` deploys
 
-`scripts/deploy-server2.ps1` keeps deploying the **runner** from the desktop until CARD-1744. It
-does not deploy the server or Postgres. Through A and A2 the script stays as it is: desktop
-checkout, API `localhost:17202`, SSH to server2, one accepting runner. The named phases in the
-staged rollout above are that runner deploy.
+`scripts/deploy-server2.ps1` deploys the phone-home runner from a checkout that is not the host
+being mutated. It does not deploy the server or Postgres. `ANTIPHON_API` is required. An unset or
+whitespace value exits 2 and names this document before any operator-token read or docker call.
+There is no `localhost:17202` default. The CARD-1221 transcription above records the previous
+default at `deploy-server2.ps1:44`. The named phases and their stop gates stay as they are.
+`-Phase all` is unchanged. Census, drain, and retire keep their stop gates. A control-plane
+cutover is not a rolling runner phase. Do not drain the only accepting runner in order to move
+the server.
 
-CARD-1744 changes the default API to the server that owns runner rows. It does not collapse the
-phases, does not add `-Phase all`, and does not move the script onto the host it is mutating.
-Census, drain, and retire keep their stop gates. A control-plane cutover is not a rolling runner
-phase. Do not drain the only accepting runner in order to move the server.
+After the control plane moves, the operator token is the 32-byte hex value the Linux server
+creates at `Operator:TokenPath` on first start. The production path is `/state/operator-token`.
+The operator owns the copy and places it, without display, in the desktop file
+`%LOCALAPPDATA%\Antiphon\operator-token` or the path named by `ANTIPHON_OPERATOR_TOKEN_FILE`.
+`deploy-server2.ps1` reads that file on every phase except `check-census` and never prints the
+value.
 
 Host jq, volume recycle, and temp retirement are runner-host operations. They are unchanged by
 where Postgres sits.
@@ -1077,7 +1083,7 @@ where Postgres sits.
 | Claude OAuth token, Codex home, GitHub token dir, git identity | Host files, read-only mounts (`docker-compose.server2-runner.yml:133-145`). The persistent runner paragraph below, and `docs/agent-credentials.md`. | Unchanged by the control-plane move. They belong to the runner. |
 | Agent TUI data-protection key ring | Empty `AgentTui:KeyRingPath` resolves to `%LOCALAPPDATA%\Antiphon\DataProtection-Keys` on Windows and to the Unix data root on Linux (`AgentTuiSettings.cs:40-54`). Root compose sets `/state/keyring` (`docker-compose.yml:38`). | CARD-1744 copies or re-protects the ring before the Linux server serves. A new empty ring cannot read existing protected secrets. |
 | AppHost user-secrets (`aspire-antiphon-apphost`) | Desktop only. Connection string and optional broker override. | Not inside the Linux image. The staging and production server compose take env or mounted files. |
-| Operator token | Owner-only file read by `deploy-server2.ps1` (`:50-52`). | Still not printed. The script's API base changes in CARD-1744. The token file can stay on the desktop if the script keeps running there. |
+| Operator token | 32-byte hex owner-only token created by the Linux server at `Operator:TokenPath` (production `/state/operator-token`) on first start. The operator copies it, without display, to `%LOCALAPPDATA%\Antiphon\operator-token` or `ANTIPHON_OPERATOR_TOKEN_FILE`. | `deploy-server2.ps1` reads that desktop file for every phase except `check-census` and never prints the value. The operator owns the copy. |
 
 The database size, snapshot script (CARD-1405, `scripts/postgres-snapshot.ps1`), cutover script
 (CARD-1407, Done, `scripts/cutover-postgres-server2.ps1`), and monitor (CARD-1408, Done) stay

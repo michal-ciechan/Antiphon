@@ -1,6 +1,13 @@
 # CARD-0727 D-17. Run from the desktop after Review, never on server2.
 # The operator token is read from the same owner-only file as runner-slots.ps1.
 # This script requires PowerShell 7.
+# CARD-1777. ANTIPHON_API is required. There is no localhost:17202 default.
+# An unset or whitespace value exits 2 before any operator-token read or docker call.
+# After cutover the desktop operator-token file holds the Linux server's token,
+# created at Operator:TokenPath (/state/operator-token) on first start and copied
+# over SSH without display (CARD-1744 step 2.3) into
+# %LOCALAPPDATA%\Antiphon\operator-token or ANTIPHON_OPERATOR_TOKEN_FILE.
+# This script never prints that value.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][switch]$Rolling,
@@ -41,7 +48,10 @@ if ([string]::IsNullOrWhiteSpace($Sha)) {
 . (Join-Path $PSScriptRoot 'c1609-read-packet.ps1')
 
 $api = $env:ANTIPHON_API
-if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
+if ([string]::IsNullOrWhiteSpace($api)) {
+    [Console]::Error.WriteLine('ANTIPHON_API is required. Set it to the control-plane origin before any rolling phase. See docs/docker-stack.md.')
+    exit 2
+}
 $api = $api.TrimEnd('/')
 $headers = @{}
 if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {

@@ -1578,6 +1578,8 @@ internal sealed class HostJqFixture : IDisposable
         psi.Environment["HJ_PHASE"] = _executingPhase;
         psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
         psi.Environment["ANTIPHON_TASK_TOKEN"] = "task-C1025-secret";
+        if (!psi.Environment.TryGetValue("ANTIPHON_API", out var api) || string.IsNullOrWhiteSpace(api))
+            psi.Environment["ANTIPHON_API"] = "http://127.0.0.1:9";
         psi.Environment.Remove("C727_TEST_STATE");
         psi.Environment["C727_TEST_VERIFY_STUB"] = Root + "/scripts/fake-verify.ps1";
         psi.Environment["C727_TEST_HTTP_STUB"] = Root + "/scripts/fake-http.ps1";

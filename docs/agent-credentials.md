@@ -274,6 +274,13 @@ time and never logs it. Rotate by deleting the file and restarting the server. A
 a credential: the public vhost reaches Kestrel through Caddy and Vite as loopback, and `X-Forwarded-*` is
 neither trusted nor required.
 
+After the CARD-1744 control-plane move, the desktop copy of that file holds the Linux server's token.
+The server creates the 32-byte hex value at `Operator:TokenPath` on first start; the production path is
+`/state/operator-token`. The operator copies it over SSH without display into
+`%LOCALAPPDATA%\Antiphon\operator-token`, or into the path named by `ANTIPHON_OPERATOR_TOKEN_FILE`.
+`scripts/deploy-server2.ps1` reads that copy for every phase except `check-census` and never prints it.
+The operator owns the copy. Names and locations only.
+
 The same token guards the Hangfire dashboard (CARD-0658). `/hangfire` admits a request carrying the header, or a
 live dashboard session cookie, and nothing else; there is no address check. The browser path is
 `scripts/hangfire-dashboard.ps1`: it sends the header to `POST /api/operator/dashboard-sessions`, which answers a

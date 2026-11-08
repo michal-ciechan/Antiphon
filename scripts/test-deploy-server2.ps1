@@ -94,6 +94,9 @@ function Run-C727 {
         [void]$psi.ArgumentList.Add($SavedDonor)
     }
     $psi.Environment['ANTIPHON_OPERATOR_TOKEN_FILE'] = $tokenPath
+    if (-not $psi.Environment.ContainsKey('ANTIPHON_API') -or [string]::IsNullOrWhiteSpace($psi.Environment['ANTIPHON_API'])) {
+        $psi.Environment['ANTIPHON_API'] = 'http://127.0.0.1:9'
+    }
     $psi.Environment['C727_TEST_HTTP_STUB'] = $http
     $psi.Environment['C727_TEST_VERIFY_STUB'] = $verify
     $psi.Environment['C727_TEST_STATE'] = $statePath
