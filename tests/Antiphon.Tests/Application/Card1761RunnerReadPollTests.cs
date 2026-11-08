@@ -4,8 +4,10 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -319,11 +321,30 @@ public class Card1761RunnerReadPollTests
     }
 
     [Test]
-    public async Task Card1761_Watchdog_asks_for_the_tail_only_when_the_screen_is_empty()
+    public async Task Card1766_Watchdog_reads_the_ansi_tail_only_when_the_screen_is_empty()
     {
-        var text = await File.ReadAllTextAsync(RepoFile("server/Application/Services/WatchdogService.cs"));
+        var emptyId = Guid.NewGuid();
+        var occupiedId = Guid.NewGuid();
+        var client = new CountingRunner { Screen = " \t", Ansi = "Press Enter to continue" };
+        var runtime = Runtime(client);
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Port=1;Database=c1766_never_opened;Username=c1766;Password=c1766").Options);
+        var service = new WatchdogService(
+            db, runtime, new WatchdogMatcher(), new WatchdogCooldownStore(), new MockEventBus(),
+            Options.Create(new WatchdogSettings()), TimeProvider.System, NullLogger<WatchdogService>.Instance);
+        var started = DateTime.UtcNow;
 
-        text.ShouldContain("TryGetLiveSnapshotAsync(sessionId, ct, LiveAnsiTail.WhenScreenEmpty)");
+        await service.RespondAsync([new WatchdogActiveSession(emptyId, AgentKind.Raw, started)], CancellationToken.None);
+
+        client.SnapshotReads.ShouldBe(1);
+        client.BufferReads.ShouldBe(1, "an empty screen still has to see the tail before a rule can match");
+
+        client.Reset();
+        client.Screen = "rendered idle";
+        await service.RespondAsync([new WatchdogActiveSession(occupiedId, AgentKind.Raw, started)], CancellationToken.None);
+
+        client.SnapshotReads.ShouldBe(1);
+        client.BufferReads.ShouldBe(0, "an occupied screen is the frame; the tail is not a second copy of it");
     }
 
     [Test]
@@ -339,20 +360,6 @@ public class Card1761RunnerReadPollTests
         client.SnapshotReads.ShouldBe(1);
         client.BufferReads.ShouldBe(0);
         client.SessionGets.ShouldBe(0);
-    }
-
-    private static string RepoFile(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            var candidate = Path.Combine(dir.FullName, relative);
-            if (File.Exists(candidate) && File.Exists(Path.Combine(dir.FullName, "AGENTS.md")))
-                return candidate;
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException(relative);
     }
 
     private static async Task<(CountingRunner Client, RunnerTerminalSession Terminal)> StartedNonPty(
