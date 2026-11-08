@@ -93,17 +93,28 @@ public sealed partial class AgentTaskLandNotificationPersistenceTests
     [Test]
     public async Task C467_V17_UpgradeAndLegacyEvidence()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var bridge = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
-        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
-        await using var db = new AppDbContext(options);
-        var migrations = db.Database.GetMigrations().ToArray();
+        // The shared clone is already current, and host-load Downs refuse to discard durable
+        // telemetry. This legacy subject migrates forward from the schema that preceded
+        // durable land delivery.
+        string[] migrations;
+        await using (var meta = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=metadata_only").Options))
+            migrations = meta.Database.GetMigrations().ToArray();
         var cut = Array.FindIndex(migrations, m => m.EndsWith("_AddDurableLandDelivery", StringComparison.Ordinal));
         cut.ShouldBeGreaterThan(0);
-        await db.GetService<IMigrator>().MigrateAsync(migrations[cut - 1]);
+        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[cut - 1], CancellationToken.None);
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
         var pending = Guid.NewGuid(); var legacy = Guid.NewGuid(); var none = Guid.NewGuid();
         var unique = Guid.NewGuid(); var ambiguous = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
         var old = DateTime.UtcNow.AddDays(-5);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentSessions" ("Id", "AgentKind", "Cols", "CreatedAt", "Cwd", "DefinitionName",
+                "GrokRulesState", "LastSeenAt", "Rows", "SessionBackend", "StartedAt", "Status", "TerminationSource")
+            VALUES ({sessionId}, {(int)AgentKind.ClaudeCode}, 120, {old}, 'fixture', 'fake',
+                0, {old}, 30, {(int)SessionBackend.PtyHost}, {old}, {(int)SessionStatus.Running}, 0)
+            """);
         foreach (var id in new[] { pending, legacy, none, unique, ambiguous })
         {
             DateTime? requested = id == pending ? old : null;
@@ -118,13 +129,13 @@ public sealed partial class AgentTaskLandNotificationPersistenceTests
             if (id == unique || id == ambiguous)
             {
                 await db.Database.ExecuteSqlInterpolatedAsync($"""
-                    UPDATE "AgentTasks" SET "ParentSessionId" = {bridge.SessionId} WHERE "Id" = {id}
+                    UPDATE "AgentTasks" SET "ParentSessionId" = {sessionId} WHERE "Id" = {id}
                     """);
                 for (var i = 0; i < (id == unique ? 1 : 2); i++)
                     await db.Database.ExecuteSqlInterpolatedAsync($"""
                         INSERT INTO "SessionQueuedMessages" ("Id", "AgentSessionId", "Body", "Status", "Sequence", "Origin", "ConversationKey",
                             "CreatedAt", "DeliveryAttempts", "LastDeliveryBaselineSequence", "LastDeliveryStartedAt", "RulesFollowOnCount")
-                        VALUES ({Guid.NewGuid()}, {bridge.SessionId}, 'historical claim, no receipt', 1, {i + 1}, 3, {$"land:{id:N}"},
+                        VALUES ({Guid.NewGuid()}, {sessionId}, 'historical claim, no receipt', 1, {i + 1}, 3, {$"land:{id:N}"},
                             {old.AddSeconds(1)}, 1, 10, {old}, 0)
                         """);
             }
@@ -134,6 +145,13 @@ public sealed partial class AgentTaskLandNotificationPersistenceTests
                 """);
         }
         await db.GetService<IMigrator>().MigrateAsync(); await db.GetService<IMigrator>().MigrateAsync();
+        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
+            AttachSessionId = sessionId,
+            AttachAgentId = Guid.NewGuid(),
+        });
         await using var observer = new AppDbContext(options);
         var backfilled = await observer.AgentTaskLandRequests.SingleAsync(r => r.IsPending);
         backfilled.TaskId.ShouldBe(pending); backfilled.RequestedAt.ShouldBe(old, TimeSpan.FromMilliseconds(1));
