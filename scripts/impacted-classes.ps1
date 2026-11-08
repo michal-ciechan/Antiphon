@@ -1,6 +1,7 @@
 # CARD-1782. Read-only selector from tests/impacted-classes.json.
 # CARD-1783. -MergeSubset always emits the fixed high-radius classes. A -Range
-# that touches server/Migrations/** also emits the migrations downgrade selector.
+# that touches server/Migrations/** also emits the migrations downgrade selector. Text mode prints
+# one "filter=<project> <treenodeFilter>" line per project.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
@@ -706,6 +707,7 @@ if ($MergeSubset) {
     Write-Output ('fixedClasses=' + ($fixedOut -join ','))
     Write-Output ('classes=' + ($classOut -join ','))
     Write-Output ('treenodeFilter=' + $subsetTop)
+    foreach ($row in $subsetFilters) { Write-Output ('filter=' + $row.project + ' ' + $row.treenodeFilter) }
     exit 0
 }
 
