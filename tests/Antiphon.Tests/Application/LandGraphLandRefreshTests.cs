@@ -796,7 +796,7 @@ public sealed class LandGraphLandRefreshTests
 
         // Production dispose. The witness requires this delegate to be StartRefGit.DeleteDirectory.
         // Directory.Delete cannot clear a Windows read-only loose object.
-        private static Action<string> DeleteRoot { get; set; } =
+        internal static Action<string> DeleteRoot { get; set; } =
             path => Directory.Delete(path, recursive: true);
 
         internal static Fixture Adopt(string root) => new(root);
