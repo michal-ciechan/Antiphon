@@ -73,6 +73,8 @@ catch (EndOfStreamException) { }
 catch (IOException) { }
 finally
 {
+    // SIGKILL of this process group skips ProcessExit, so release the private cache first.
+    Antiphon.Hosting.PwshPrivateCache.Release();
     // Only this supervisor signals its own verified group. The parent never sends
     // a delayed signal to a saved group number that could have been recycled.
     if (getpid() == pid && getpgid(0) == pid && getsid(0) == pid && pid > 1)
