@@ -229,7 +229,7 @@ internal sealed class RunnerTerminalSession
         // GET also runs pane.get, process-info and a status refresh, and an old runner
         // omits Backend. Both stay on the buffer route, which returns the runner's current
         // LastSequence on every call. The sequence is not cached in this process.
-        if (AgentSessionRuntime.SequencePollUsesSessionRecord(_backend))
+        if (SequencePollRoute.UsesSessionRecord(_backend))
             return (await _client.GetAsync(_sessionId, ct)).LastSequence;
         return (await _client.GetBufferAsync(_sessionId, ct)).LastSequence;
     }

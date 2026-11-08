@@ -2468,14 +2468,6 @@ public sealed partial class AgentSessionRuntime
             await adapter.DisposeAsync();
     }
 
-    /// <summary>
-    /// CARD-1766: pty sequence polls read the session record. Herdr and an omitted backend
-    /// read the buffer route, which carries the runner's current <c>LastSequence</c> without
-    /// pane.get, process-info or a status refresh. A poll never answers from a stored copy.
-    /// </summary>
-    internal static bool SequencePollUsesSessionRecord(string? backend) =>
-        string.Equals(backend, SessionBackends.PtyHost, StringComparison.Ordinal);
-
     private async Task<long> GetRunnerSequenceOrDefaultAsync(Guid sessionId, CancellationToken ct)
     {
         if (_testBuffers.ContainsKey(sessionId))
@@ -2492,7 +2484,7 @@ public sealed partial class AgentSessionRuntime
                     return (await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token)).LastSequence;
 
                 var session = await _runnerClient.GetAsync(sessionId, linked.Token).WaitAsync(linked.Token);
-                _sequenceRouteIsPty.TryAdd(sessionId, SequencePollUsesSessionRecord(session.Backend));
+                _sequenceRouteIsPty.TryAdd(sessionId, SequencePollRoute.UsesSessionRecord(session.Backend));
                 return session.LastSequence;
             }
         }
@@ -2518,7 +2510,7 @@ public sealed partial class AgentSessionRuntime
             {
                 if (row.SessionId != sessionId)
                     continue;
-                return CacheSequenceRoute(sessionId, SequencePollUsesSessionRecord(row.Backend));
+                return CacheSequenceRoute(sessionId, SequencePollRoute.UsesSessionRecord(row.Backend));
             }
         }
         catch
