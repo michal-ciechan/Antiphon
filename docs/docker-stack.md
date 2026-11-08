@@ -941,6 +941,10 @@ that before column. A missing credential mount refuses land with
 file refuses with `git_identity_absent` before git starts. Custody is in
 [agent-credentials.md](agent-credentials.md).
 
+### Standing agents and specialists on the sidecar (CARD-1778)
+
+In topology B the server image does not contain the agent executables, so production sets `SessionRunner:VerifyExecutablesOnServer` false and a missing executable is the sidecar's spawn failure (an incident per attempt), not a server 409; the desktop leaves the setting unset and the default true still checks the local disk.
+
 `deploy-server2.ps1:1` says "Run from the desktop after Review, never on server2." Its default API
 is `http://localhost:17202` (`deploy-server2.ps1:44`). Rolling phases call that API and SSH to the
 host. They assume the desktop process owns runner state.
