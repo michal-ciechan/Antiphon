@@ -102,6 +102,7 @@ public sealed class C1677RetentionServerTests
         public async Task<Guid> EligibleAsync(TimeSpan? ago = null, Action<AgentTask>? tweak = null, bool present = true)
         {
             var completedAgo = ago ?? TimeSpan.FromHours(24);
+            string? runnerId = null;
             var id = await Rig.SeedAsync(task =>
             {
                 task.Status = AgentTaskStatus.Succeeded;
@@ -109,8 +110,10 @@ public sealed class C1677RetentionServerTests
                 task.RemoteWorktreePath = PathOf(task.Id);
                 task.Result = "done";
                 tweak?.Invoke(task);
+                runnerId = task.RunnerId;
             });
-            if (present)
+            // Only this rig runner's own mirrors are on its disk (another runner's task is listed nowhere here).
+            if (present && runnerId == Rig.RunnerId)
                 Inventory.Add(new WorkspaceRetentionEntry("worktrees", "task-" + id.ToString("N")[..8], true, false, true, false, null));
             return id;
         }
