@@ -26,7 +26,7 @@ public class AgentTaskInternalDecisionMigrationTests
     [Test]
     public async Task Old_dispatch_event_upgrades_with_no_invented_session_binding()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
@@ -65,7 +65,7 @@ public class AgentTaskInternalDecisionMigrationTests
     [Test]
     public async Task Card0407_V05_pre_feature_row_upgrades_to_a_null_policy_with_legacy_fields_intact()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 
         var now = DateTime.UtcNow;

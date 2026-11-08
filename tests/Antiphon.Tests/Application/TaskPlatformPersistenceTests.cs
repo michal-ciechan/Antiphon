@@ -22,13 +22,12 @@ public sealed class TaskPlatformPersistenceTests
     [Test]
     public async Task Legacy_rows_migrate_to_any()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
-        await using var db = new AppDbContext(options);
-        var migrations = db.Database.GetMigrations().ToArray();
+        var migrations = MigrationTestDatabase.Names();
         var platform = Array.FindIndex(migrations, name => name.EndsWith("_AddTaskPlatformPlacement", StringComparison.Ordinal));
         platform.ShouldBeGreaterThan(0);
-        await db.GetService<IMigrator>().MigrateAsync(migrations[platform - 1]);
+        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[platform - 1], CancellationToken.None);
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
 
         var taskId = Guid.NewGuid();
         var projectId = Guid.NewGuid();

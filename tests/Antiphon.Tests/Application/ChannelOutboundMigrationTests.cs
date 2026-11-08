@@ -17,7 +17,7 @@ public sealed class ChannelOutboundMigrationTests
     [Test]
     public async Task Upgrade_preserves_history_and_defaults()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var taskId = Guid.NewGuid();

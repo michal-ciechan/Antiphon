@@ -114,7 +114,7 @@ public sealed class PipelineDefinitionMigrationTests
     [Test]
     public async Task Down_removes_post_A_runs_then_restores_gen1_columns_and_Up_returns_to_head()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var cardId = await SeedCardAsync(db);
         await DatabaseSeeder.SeedPipelineDefinitionsAsync(db, PipelineDefinitions.StandardPipeline, CancellationToken.None);
@@ -221,7 +221,7 @@ public sealed class PipelineDefinitionMigrationTests
 
         public static async Task<LegacyFixture> CreateAsync(bool linkCard)
         {
-            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
             var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var cardId = await SeedCardAsync(db);
             var now = DateTime.UtcNow;

@@ -16,7 +16,7 @@ public sealed class PoolClaudeEffortMigrationTests
     [Test]
     public async Task C1491_nullable_stamp_roundtrips_and_legacy_rows_stay_unknown()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var templateId = Guid.NewGuid();
         var legacyId = Guid.NewGuid();
@@ -44,7 +44,7 @@ public sealed class PoolClaudeEffortMigrationTests
                 jsonb_build_object('Id', {legacyId}, 'Name', 'c1491 legacy', 'Slug', {"c1491-" + legacyId.ToString("N")}))).*
             FROM "Agents" a WHERE "Id" = {templateId}
             """);
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(MigrationTestDatabase.LastReversibleMigration);
         (await ColumnsAsync(db)).ShouldBe(columns);
         db.ChangeTracker.Clear();
         var legacy = await db.Agents.SingleAsync(a => a.Id == legacyId);
@@ -65,10 +65,10 @@ public sealed class PoolClaudeEffortMigrationTests
         db.ChangeTracker.Clear();
         (await db.Agents.AsNoTracking().SingleAsync(a => a.Id == legacyId)).PoolClaudeEffort.ShouldBe("xhigh");
         db.Database.HasPendingModelChanges().ShouldBeFalse();
-        (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
         await migrator.MigrateAsync(migrations[index - 1]);
         (await ColumnsAsync(db)).ShouldBe(columns.Where(c => c != "PoolClaudeEffort").ToArray());
         await migrator.MigrateAsync();
+        (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
         db.ChangeTracker.Clear();
         (await db.Agents.SingleAsync(a => a.Id == legacyId)).PoolClaudeEffort.ShouldBeNull();
     }

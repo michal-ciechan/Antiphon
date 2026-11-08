@@ -17,7 +17,7 @@ public class StandingSpecialistRoutingMigrationTests
     [Test]
     public async Task Card0415_V25_real_upgrade_preserves_primary_tasks_and_holds_without_fabricating_qualification()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var now = DateTime.UtcNow;
         var owner = new Agent { Id = Guid.NewGuid(), Name = "legacy primary", Slug = "legacy-primary",

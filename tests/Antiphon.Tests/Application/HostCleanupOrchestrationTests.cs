@@ -35,7 +35,7 @@ public sealed class HostCleanupOrchestrationTests
     [Test]
     public async Task AddHostCleanup_upgrades_current_master_without_changing_existing_rows()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var migrations = db.Database.GetMigrations().ToArray();
         var cleanup = Array.FindIndex(migrations, name => name.EndsWith("_AddHostCleanup"));
@@ -45,22 +45,22 @@ public sealed class HostCleanupOrchestrationTests
         var migrator = db.GetService<IMigrator>();
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
+        var at = DateTime.UtcNow;
         db.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "cleanup upgrade sentinel",
             Goal = "preserve existing rows", Status = AgentTaskStatus.Succeeded,
-            CreatedAt = DateTime.UtcNow, WorkingDirectory = "/virtual/cleanup-upgrade",
-        });
-        // Use the current entity so the newly landed InputBody column is part of the sentinel.
-        db.AgentTaskEvents.Add(new AgentTaskEvent
-        {
-            Id = eventId, AgentTaskId = taskId, Type = AgentTaskEventType.Created,
-            Detail = "existing event", InputBody = "existing input body", At = DateTime.UtcNow,
+            CreatedAt = at, WorkingDirectory = "/virtual/cleanup-upgrade",
         });
         await db.SaveChangesAsync();
+        // Park has InputBody and IsLandTerminal, and not the later nullable load columns.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentTaskEvents" ("Id", "AgentTaskId", "Type", "Detail", "InputBody", "At", "IsLandTerminal")
+            VALUES ({eventId}, {taskId}, {(int)AgentTaskEventType.Created}, {"existing event"}, {"existing input body"}, {at}, {false})
+            """);
         db.ChangeTracker.Clear();
-        // The current model includes columns newer than this migration. Seed at latest,
-        // then rewind to the populated predecessor before exercising the upgrade.
+        // Host-load Downs throw. Seed at the last reversible migration, then rewind
+        // to the populated predecessor before exercising the upgrade.
         await migrator.MigrateAsync(migrations[cleanup - 1]);
         await migrator.MigrateAsync(migrations[cleanup]);
         var sentinel = await db.AgentTaskEvents.AsNoTracking().Where(e => e.Id == eventId)

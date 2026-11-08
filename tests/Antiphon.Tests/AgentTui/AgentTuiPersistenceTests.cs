@@ -445,7 +445,7 @@ public class AgentTuiPersistenceTests
             })
             .Options;
         await using var db = new AppDbContext(options);
-        await db.Database.MigrateAsync();
+        await db.Database.MigrateAsync(MigrationTestDatabase.LastReversibleMigration);
 
         var applied = (await db.Database.GetAppliedMigrationsAsync()).ToList();
         var agentTuiMigrationIndex = applied.FindIndex(migration =>

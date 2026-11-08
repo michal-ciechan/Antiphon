@@ -285,7 +285,9 @@ public partial class SessionRuntimeActionRoutingTests
     {
         if (variant == "enqueue-failure") await VerifyReviewHandoffCutsAsync();
         if (variant == "atomic-comment") await VerifyCommittedReviewBeforeActionAckAsync();
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = variant == "legacy-upgrade"
+            ? await MigrationTestDatabase.CreateReversibleTipAsync()
+            : await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedSessionRunnerClient();
         var fault = new CommentCommitFault();
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()

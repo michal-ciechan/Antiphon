@@ -81,9 +81,12 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
 
     public static async Task<SessionStateTestFixture> CreateAsync(IInterceptor? fault = null,
         Func<ISessionStateLoader, ISessionStateLoader>? decorate = null, SessionStateSettings? settings = null, TimeProvider? clock = null,
-        Action<IServiceCollection>? configure = null)
+        Action<IServiceCollection>? configure = null, bool reversibleTip = false)
     {
-        var f = new SessionStateTestFixture(await TestDbFixture.CreateIsolatedSchemaAsync(), fault, decorate, settings, clock, configure);
+        var schema = reversibleTip
+            ? await MigrationTestDatabase.CreateReversibleTipAsync()
+            : await TestDbFixture.CreateIsolatedSchemaAsync();
+        var f = new SessionStateTestFixture(schema, fault, decorate, settings, clock, configure);
         try
         {
             await using var db = f.Db();

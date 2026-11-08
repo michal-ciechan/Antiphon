@@ -17,7 +17,9 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
     [Test]
     public async Task C458_UpgradePreservesLegacyRowsAndAddsNullColumns()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var migrations = MigrationTestDatabase.Names();
+        var migrationIndex = Card0458MigrationIndex(migrations);
+        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[migrationIndex - 1], CancellationToken.None);
         var projectId = Guid.NewGuid();
         var tasks = new[]
         {
@@ -27,10 +29,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
         };
         await using (var db = NewDb(schema))
         {
-            var migrations = db.Database.GetMigrations().ToArray();
-            var migration = Card0458MigrationIndex(migrations);
             var migrator = db.Database.GetService<IMigrator>();
-            await migrator.MigrateAsync(migrations[migration - 1]);
             var oldColumns = await ColumnsAsync(db);
             oldColumns.ShouldNotContain("DefaultWorkerWorkspace");
             oldColumns.ShouldNotContain("WorkspaceSource");
@@ -126,7 +125,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
     [Test]
     public async Task C458_DownThenUpPreservesLegacyWorkspace()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var (projectId, tasks) = await SeedAsync(schema);
         await RoundTripAsync(schema, projectId, tasks);
     }

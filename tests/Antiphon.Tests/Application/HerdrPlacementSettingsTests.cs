@@ -22,7 +22,7 @@ public class HerdrPlacementSettingsTests
     [Test]
     public async Task Follow_migration_preserves_existing_labels()
     {
-        await using var store = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var store = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(store.ConnectionString));
         var migrations = db.Database.GetMigrations().ToArray();
         var follow = Array.FindIndex(migrations, m => m.EndsWith("_AddHerdrLabelFollow", StringComparison.Ordinal));

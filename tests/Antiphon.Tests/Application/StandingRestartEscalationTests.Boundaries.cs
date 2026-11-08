@@ -227,7 +227,7 @@ public partial class StandingRestartEscalationTests
     [Arguments(500)]
     public async Task C510_migration_starts_without_invented_history(int legacyCount)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var now = DateTime.UtcNow;

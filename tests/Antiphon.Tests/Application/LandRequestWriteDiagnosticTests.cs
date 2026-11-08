@@ -164,9 +164,9 @@ public sealed class LandRequestWriteDiagnosticTests
         position.ShouldBeGreaterThan(0, customMessage: "D.MigrationExists");
         migrations[position - 1].EndsWith("_AddReviewSourceClean", StringComparison.Ordinal)
             .ShouldBeTrue("D.ActualImmediatePredecessor");
-        // Seed the unrelated task with the schema its current EF model describes, then
-        // rewind before inserting the request in the actual legacy schema below.
-        await db.GetService<IMigrator>().MigrateAsync();
+        // Seed the unrelated task at the last reversible migration, then rewind
+        // before inserting the request in the actual legacy schema below.
+        await db.GetService<IMigrator>().MigrateAsync(MigrationTestDatabase.LastReversibleMigration);
         var taskId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         db.AgentTasks.Add(new AgentTask

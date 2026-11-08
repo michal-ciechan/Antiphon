@@ -21,7 +21,7 @@ public sealed class DispatchConcurrencyMigrationTests
     [Test]
     public async Task Upgrade_populated_database_preserves_task_rows()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var now = DateTime.UtcNow;
         var projectP = Guid.NewGuid();
         var projectQ = Guid.NewGuid();
@@ -148,7 +148,7 @@ public sealed class DispatchConcurrencyMigrationTests
     [Test]
     public async Task Initialize_from_nondefault_config_then_restart()
     {
-        await using var shop = await DispatchConcurrencyShop.Open();
+        await using var shop = await DispatchConcurrencyShop.Open(reversibleTip: true);
         await using (var db = shop.Db())
         {
             await RewindAsync(db);

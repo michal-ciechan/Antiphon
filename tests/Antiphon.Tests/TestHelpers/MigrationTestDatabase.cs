@@ -9,6 +9,21 @@ namespace Antiphon.Tests.TestHelpers;
 /// <summary>Historical migration subjects start before their Up, without downgrading newer durable data.</summary>
 internal static class MigrationTestDatabase
 {
+    /// <summary>
+    /// Predecessor of HostLoadTelemetryS1. Later host-load Downs throw, so a rewind that only
+    /// needs reversible history starts here and walks forward.
+    /// </summary>
+    public const string LastReversibleMigration = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
+
+    public static Task<IsolatedTestSchema> CreateReversibleTipAsync(CancellationToken ct = default) =>
+        CreateAsync(LastReversibleMigration, ct);
+
+    public static string[] Names()
+    {
+        using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions("Host=localhost;Database=metadata_only"));
+        return db.Database.GetMigrations().ToArray();
+    }
+
     public static async Task<IsolatedTestSchema> CreateAsync(string migration, CancellationToken ct)
     {
         await TestDbFixture.Lifecycle.EnsureReadyAsync();

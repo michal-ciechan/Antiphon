@@ -232,13 +232,12 @@ public partial class DispatchBaseNotificationTests
     [Timeout(90_000)]
     public async Task C508_RequestlessNotificationUpgrade(CancellationToken ct)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
-        await using var db = new AppDbContext(options);
-        var migrations = db.Database.GetMigrations().ToArray();
+        var migrations = MigrationTestDatabase.Names();
         var cut = Array.FindIndex(migrations, m => m.EndsWith("_AddDispatchBaseWarningIntent", StringComparison.Ordinal));
         cut.ShouldBeGreaterThan(0);
-        await db.GetService<IMigrator>().MigrateAsync(migrations[cut - 1]);
+        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[cut - 1], ct);
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
 
         var taskId = Guid.NewGuid();
         var requestId = Guid.NewGuid();

@@ -41,7 +41,7 @@ public class SessionRuntimeActionTests
         using var cancel = new CancellationTokenSource();
         var fault = new CommitFault(variant, cancel);
         var receiver = new Receiver();
-        await using var f = await SessionStateTestFixture.CreateAsync(fault, configure: s => s.AddSingleton<IEventBus>(receiver));
+        await using var f = await SessionStateTestFixture.CreateAsync(fault, configure: s => s.AddSingleton<IEventBus>(receiver), reversibleTip: variant == "replay-after-ack");
         var entry = f.Event(1, "ToolResult", text: "original payload", uuid: "target");
         if (variant == "safe-stub") entry = entry with { ToolName = new string('x', 201), ToolInput = "distinct lost input" };
         if (variant == "cancel-before-commit")
