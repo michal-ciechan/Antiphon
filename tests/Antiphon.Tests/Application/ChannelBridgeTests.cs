@@ -907,7 +907,7 @@ public class ChannelBridgeTests
 
         // A-4/A-5 (Review a89708b6): an RTL override, a zero-width space and a line separator in a very
         // long name, at 14 MiB + 1 byte so whole-MiB rounding would print the limit for the size.
-        var name = "‮home​work " + new string('x', 200) + ".pptx";
+        var name = "\u202Ehome\u200Bwork\u2028" + new string('x', 200) + ".pptx";
         var msg = TelegramText(h.ChatId, text: null!, title: "Family", author: "Ola") with
         {
             Text = null,
@@ -926,9 +926,9 @@ public class ChannelBridgeTests
         var shown = "homework " + new string('x', 70) + "…";
         shown.Length.ShouldBe(80);
         prompt.ShouldContain($"[file attached — \"{shown}\" (14.0 MiB) is over the 14 MiB limit and was not delivered]");
-        prompt.ShouldNotContain("‮");
-        prompt.ShouldNotContain("​");
-        prompt.ShouldNotContain(" ");
+        prompt.ShouldNotContain("\u202E");
+        prompt.ShouldNotContain("\u200B");
+        prompt.ShouldNotContain("\u2028");
     }
 
     [Test]
