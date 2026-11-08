@@ -21,8 +21,9 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
     private readonly ILogger<TelegramChannelAdapter> _logger;
     private readonly HashSet<long> _allowed;
 
-    // Messages already sent an over-cap notice ("<chat>:<message_id>"), so an edit of the same
-    // message (Telegram re-delivers the document in edited_message) never sends a second one.
+    // Messages already sent an over-cap notice ("<chat>:<message_id>", or "<chat>:album:<media_group_id>"
+    // for every item of one album), so an edit of the same message (Telegram re-delivers the document in
+    // edited_message) or the rest of an album never sends a second one.
     // Bounded FIFO: the receive loop is the only writer.
     private const int NoticeMemory = 512;
     private readonly HashSet<string> _noticed = [];
@@ -248,8 +249,10 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
 
     /// <summary>
     /// Tells the sender, in their own chat (and forum topic), that a file was over the inline cap and
-    /// was not delivered — once per message. Plain text, never echoing the file name or caption.
-    /// Best-effort and single-attempt: a rejected notice is logged and never costs the inbound message.
+    /// was not delivered — once per message, or once per album. Plain text, never echoing the file name
+    /// or caption. Best-effort and single-attempt (a 429 is not retried): a rejected notice is logged and
+    /// never costs the inbound message. The one exception is a "message thread not found" rejection,
+    /// resent once without the thread.
     /// </summary>
     private async Task NoticeOverLimitAsync(ChannelMessage message, CancellationToken ct)
     {
@@ -257,14 +260,17 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         if (over?.InlineLimitBytes is not { } limit)
             return;
 
-        var key = $"{message.Conversation.Id}:{message.ChannelMessageId}";
+        var native = NativeMessage(message.Raw);
+        var key = native is { } n && GetString(n, "media_group_id") is { Length: > 0 } album
+            ? $"{message.Conversation.Id}:album:{album}"
+            : $"{message.Conversation.Id}:{message.ChannelMessageId}";
         if (!_noticed.Add(key))
             return;
         _noticedOrder.Enqueue(key);
         if (_noticedOrder.Count > NoticeMemory)
             _noticed.Remove(_noticedOrder.Dequeue());
 
-        var size = over.Size is { } bytes ? $" ({AttachmentSize.Format(bytes)})" : "";
+        var size = over.Size is { } bytes ? $" ({AttachmentSize.FormatOver(bytes, limit)})" : "";
         var payload = new Dictionary<string, object?>
         {
             ["chat_id"] = long.TryParse(message.Conversation.Id, out var chatId) ? chatId : message.Conversation.Id,
@@ -273,13 +279,26 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         };
         if (long.TryParse(message.ChannelMessageId, out var messageId))
             payload["reply_to_message_id"] = messageId;
-        if (NativeMessage(message.Raw) is { } native && GetLong(native, "message_thread_id") is { } threadId)
+        // message_thread_id is a forum-topic send parameter. A reply in a plain supergroup carries one too
+        // (the reply thread root), and sending it there fails "message thread not found" (Review a89708b6 A-1).
+        if (native is { } topic && IsTopicMessage(topic) && GetLong(topic, "message_thread_id") is { } threadId)
             payload["message_thread_id"] = threadId;
 
         var (result, _) = await TrySendOnceAsync(JsonSerializer.Serialize(payload), lastAttempt: true, ct);
+        if (result is { Ok: false } && IsThreadNotFound(result.Error) && payload.Remove("message_thread_id"))
+        {
+            _logger.LogWarning("[telegram] over-cap notice for message {Message} hit a missing thread; resending once without it", key);
+            (result, _) = await TrySendOnceAsync(JsonSerializer.Serialize(payload), lastAttempt: true, ct);
+        }
         if (result is { Ok: false })
             _logger.LogWarning("[telegram] over-cap notice for message {Message} was not sent: {Error}", key, result.Error);
     }
+
+    private static bool IsTopicMessage(JsonElement message) =>
+        message.TryGetProperty("is_topic_message", out var v) && v.ValueKind == JsonValueKind.True;
+
+    private static bool IsThreadNotFound(string? error) =>
+        error?.Contains("thread not found", StringComparison.OrdinalIgnoreCase) == true;
 
     /// <summary>Result of one getUpdates poll. <see cref="Backoff"/> is non-null when Telegram returned a
     /// retryable error (so the loop should pace itself); null means continue immediately.</summary>

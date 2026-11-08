@@ -378,12 +378,19 @@ downloaded) is never inlined and the message still goes through:
   prompt then names it, for example
   `[file attached — "Homework.pptx" (17.6 MiB) is over the 14 MiB limit and was not delivered]`.
   A failed download carries no `InlineLimitBytes` and keeps the
-  `[file attached — could not be imported (no content relayed)]` note.
+  `[file attached — could not be imported (no content relayed)]` note. The name shown is capped
+  at 80 characters (ending `…`) with Unicode format characters (RTL overrides, zero-width spaces)
+  removed, and a size that would round to the limit keeps one decimal (`14.0 MiB` against `14 MiB`).
 - The gateway replies once to the sender in the same chat, as a reply to their message and in
   the same forum topic: `File too large (17.6 MiB): the limit is 14 MiB, so it was not delivered.
   Send a smaller file, compress it, or split it.` The notice is plain text and never repeats the
-  file name or caption. It is one best-effort attempt: a rejected notice is logged and never costs
-  the inbound message. An edit of the same message sends no second notice.
+  file name or caption. It is one best-effort attempt (a 429 is not retried): a rejected notice is
+  logged and never costs the inbound message. An edit of the same message sends no second notice,
+  and an album (`media_group_id`) gets one notice, a reply to its first over-cap item.
+- `message_thread_id` is sent only when the message has `is_topic_message: true` (a forum
+  topic). A reply in a plain supergroup carries a `message_thread_id` too, but Telegram rejects
+  that send parameter outside forums. If Telegram still answers `message thread not found`, the
+  notice is resent once without the thread.
 - `MaxInlineAttachmentBytes = 0` turns inbound downloads off; then no file is marked over a limit
   and no notice is sent.
 

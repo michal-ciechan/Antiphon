@@ -27,3 +27,4 @@ Antiphon.Messaging.Attachment.InlineLimitBytes.get -> long?
 Antiphon.Messaging.Attachment.InlineLimitBytes.init -> void
 Antiphon.Messaging.AttachmentSize
 static Antiphon.Messaging.AttachmentSize.Format(long bytes) -> string!
+static Antiphon.Messaging.AttachmentSize.FormatOver(long bytes, long limit) -> string!
