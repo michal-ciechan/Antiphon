@@ -1382,6 +1382,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(stamped, "COMPILER");
         var created = SafeWrite.FreshRootCreated(clockOutput)!.Value;
         var clockExit = CheckpointFixtures.AfterFileClock(stamped);
+        PastKernelClock(clockExit);
         File.WriteAllText(stamped, "TAMPERED");
         var inside = created + (clockExit - created) / 2;
         File.SetCreationTimeUtc(stamped, inside.UtcDateTime);
@@ -1583,8 +1584,10 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         return (root, output, DateTimeOffset.UtcNow);
     }
 
-    // ctime comes from a coarse kernel clock: wait until it has passed the stamp so a later write is
-    // unambiguously after it (one tick is the disclosed custody boundary).
+    // ctime (NTFS change time on Windows) comes from a coarse kernel clock that lags the precise
+    // UtcNow stamp: wait until it has passed the stamp so a later write is unambiguously after it
+    // (one tick is the disclosed custody boundary). rc run a6410818 profile-1543 adopted a Windows
+    // stamp-back written inside that tick.
     private void PastKernelClock(DateTimeOffset stamp)
     {
         var probe = Path.Combine(TempDir(), "clock");
