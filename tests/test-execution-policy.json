@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "c6da42db3549444e55fcf35ead72f674861dd24f4809bc924780bebcbd07f39d",
+  "policyHash": "8db98312b28b5b3c2e9ac8bbf1345b46660b5af51e08d52d20670e57f46b04d6",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1539,6 +1539,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the SHA restart gate harness is a #!/bin/sh fake docker plus chmod. The case remains required on Linux.",
           "owner": "CARD-1745"
+        },
+        {
+          "suite": "antiphon",
+          "class": "DeployServer2ApiDefaultTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the witness puts a #!/bin/sh docker and ssh on PATH and chmod's them. The case remains required on Linux.",
+          "owner": "CARD-1777"
         }
       ]
     }
