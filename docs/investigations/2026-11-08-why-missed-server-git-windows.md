@@ -49,7 +49,7 @@ Not a flake: both causes are deterministic.
 introducing commit/card: `4128a884a9ae5713a1708ae559b8f5ed5e9ec71e` (CARD-1776; rc pick of
 `cef2481a855a317cfcb720a91e1f9a81513ffd19`) for both causes. That commit added `ApplyIdentity(probe)`
 and the two git-spawning rebase witnesses. `d6c63c922ee34106083f7fc7d7a0cd9954865b4a` is their red
-commit, with `DeleteRoot` unchanged from `841606834e214cc2fe948becdbcba6ba1a27b808`. Landed in Merge
+commit, with `DeleteRoot` unchanged from `dff78584d636fa49eca37652f2c3f14a48002a92`. Landed in Merge
 batch 126. `ServerGitProcessTests.cs` last changed in `cb4e278ad158765d931ab0bd350ad72f7cef239a`
 (2026-11-06), before CARD-1776.
 
