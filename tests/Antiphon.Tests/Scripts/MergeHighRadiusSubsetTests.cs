@@ -29,6 +29,12 @@ public sealed class MergeHighRadiusSubsetTests
 
     private const string MessagingFilter = "/*/*/(InboxConversationMigrationTests*)/*";
 
+    // The server boot otherwise creates the Windows default check-interpreter directory
+    // inside the E2E output on Linux, and the row ends red on output-ledger-mismatch.
+    private const string CheckInterpreterVariable = "Delegation__CheckInterpreterWorkingDirectory";
+
+    private const string CheckInterpreterDirectory = "/tmp/antiphon-merge-e2e-check-interpreter";
+
     // One TUnit row per selector filters entry: project, exact filter, measured minimum.
     private static readonly (string Id, string Project, string Filter, int Min)[] MergeRows =
     [
@@ -113,6 +119,12 @@ public sealed class MergeHighRadiusSubsetTests
             .Where(line => !line.Contains("CP-merge-subset-messaging", StringComparison.Ordinal)));
         dropped.ShouldNotBe(table);
         Should.Throw<ShouldAssertException>(() => AssertRows(dropped));
+        var noEnvironment = table.Replace(
+            "| " + CheckInterpreterVariable + "=" + CheckInterpreterDirectory + " |",
+            "| n/a |",
+            StringComparison.Ordinal);
+        noEnvironment.ShouldNotBe(table);
+        Should.Throw<ShouldAssertException>(() => AssertRows(noEnvironment));
     }
 
     [Test]
@@ -153,6 +165,10 @@ public sealed class MergeHighRadiusSubsetTests
             row.Filter.ShouldBe(expected.Filter, expected.Id);
             row.MinExecuted.ShouldBe(expected.Min, expected.Id);
             row.Group.ShouldBe("merge-high-radius", expected.Id);
+            var environment = row.Environment.Select(pair => pair.Key + "=" + pair.Value).ToArray();
+            environment.ShouldBe(
+                expected.Id == "CP-merge-subset-e2e" ? new[] { CheckInterpreterVariable + "=" + CheckInterpreterDirectory } : Array.Empty<string>(),
+                expected.Id);
             manifest.Builds.Single(build => build.Id == row.Build).Project.ShouldBe(expected.Project, expected.Id);
         }
     }
