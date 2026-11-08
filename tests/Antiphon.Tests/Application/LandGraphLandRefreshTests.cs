@@ -331,8 +331,10 @@ public sealed class LandGraphLandRefreshTests
         }
 
         var bundle = File.ReadAllText(Path.Combine(root, "server", "Bundles", "orchestrator.md"));
-        bundle.ShouldContain("docs/orchestration-loop.md#land-graph-refresh");
-        bundle.ShouldContain("never asks");
+        bundle.ShouldContain("#land-graph-refresh");
+        bundle.ShouldContain("one red witness plus one narrow green");
+        bundle.ShouldContain("a master land is not activation");
+        bundle.ShouldContain("reviewed rc picks");
         bundle.ShouldContain("docs/orchestration-loop.md#standing-operating-rules");
         bundle.ShouldContain("never Reply to a complete report Blocked only by runner sync");
         bundle.ShouldContain("full report");
@@ -358,6 +360,75 @@ public sealed class LandGraphLandRefreshTests
         audit.ShouldContain("-LandRefresh");
         audit.ShouldContain("only for scripts/land-graph-land-refresh.ps1");
         audit.ShouldContain("commit source and pins before auditing");
+        audit.ShouldContain("$PinsPath = Join-Path $RepoRoot $PinsRelative");
+    }
+
+    /// <summary>
+    /// The production audit, not the stub. A changed definition in a throwaway repo must refresh,
+    /// commit only the land-graph files, and leave the second -Check at exit 0.
+    /// </summary>
+    [Test]
+    [Timeout(600_000)]
+    public async Task real_audit_changed_definition_refreshes_commits_only_land_graph_files_and_second_check_exits_zero()
+    {
+        await using var repo = await LandGraphEvaluationTests.ScriptRepoAsync(new()
+        {
+            ["App/App.csproj"] = RealSdkProject(""),
+        });
+        await ConfigureGit(repo.Root);
+        var update = await LandGraphEvaluationTests.RunScriptAsync(repo.Root, "-Update");
+        update.ExitCode.ShouldBe(0, update.Text);
+        await Git(repo.Root, "add", "-A");
+        await Git(repo.Root, "commit", "-m", "records");
+        var baseSha = (await GitText(repo.Root, "rev-parse", "HEAD")).Trim();
+
+        var project = repo.Full("App/App.csproj");
+        var body = await File.ReadAllTextAsync(project);
+        await File.WriteAllTextAsync(project, body.Replace("</Project>", "<!-- batch -->\n</Project>", StringComparison.Ordinal));
+        await Git(repo.Root, "add", "--", "App/App.csproj");
+        await Git(repo.Root, "commit", "-m", "batch");
+        var batch = (await GitText(repo.Root, "rev-parse", "HEAD")).Trim();
+
+        var result = await RunRealRefresh(repo.Root, baseSha, TimeSpan.FromSeconds(540));
+        result.Code.ShouldBe(0, result.Text);
+        result.Text.ShouldContain("action=refresh");
+        result.Text.ShouldNotContain("action=refuse");
+
+        var names = (await GitText(repo.Root, "diff", "--name-only", batch, "HEAD"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        names.Length.ShouldBeGreaterThan(0, result.Text);
+        foreach (var name in names)
+            (name is Manifest or Evaluation or PinsFile).ShouldBeTrue(name + " " + result.Text);
+        names.ShouldContain(Manifest);
+        names.ShouldContain(Evaluation);
+        (await GitText(repo.Root, "status", "--porcelain")).Trim().ShouldBeEmpty();
+        (await GitText(repo.Root, "log", "-1", "--format=%s")).Trim().ShouldBe(CommitSubject);
+
+        var evaluation = await File.ReadAllLinesAsync(repo.Full(Evaluation));
+        evaluation.Length.ShouldBe(3);
+        var pinsHash = (await GitText(repo.Root, "hash-object", "--", PinsFile)).Trim();
+        evaluation[2].ShouldBe(pinsHash, result.Text);
+    }
+
+    /// <summary>
+    /// The real pre-check still refuses a property the audit cannot approve, and the refresh does not commit.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task real_audit_property_refusal_does_not_refresh()
+    {
+        await using var repo = await LandGraphEvaluationTests.ScriptRepoAsync(new()
+        {
+            ["App/App.csproj"] = RealSdkProject("<CustomAfterMicrosoftCommonTargets>../docs/evil.md</CustomAfterMicrosoftCommonTargets>"),
+        });
+        await ConfigureGit(repo.Root);
+        var head = (await GitText(repo.Root, "rev-parse", "HEAD")).Trim();
+        var result = await RunRealRefresh(repo.Root, head, TimeSpan.FromSeconds(120));
+        result.Code.ShouldBe(1, result.Text);
+        result.Text.ShouldContain("action=refuse reason=property-or-construct");
+        result.Text.ShouldContain("-Update cannot approve it");
+        result.Text.ShouldNotContain("action=refresh");
+        (await GitText(repo.Root, "rev-parse", "HEAD")).Trim().ShouldBe(head);
     }
 
     private static Dictionary<string, string> AssertRefreshNotice(
@@ -444,6 +515,75 @@ public sealed class LandGraphLandRefreshTests
 
     private static string Project(string framework) =>
         "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><TargetFramework>" + framework + "</TargetFramework></PropertyGroup>\n</Project>\n";
+
+    private static string RealSdkProject(string body) =>
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net9.0</TargetFramework>\n    "
+        + body + "\n  </PropertyGroup>\n</Project>\n";
+
+    private static async Task ConfigureGit(string root)
+    {
+        await Git(root, "config", "user.email", "land-graph-test@example.com");
+        await Git(root, "config", "user.name", "land-graph-test");
+        await Git(root, "config", "commit.gpgsign", "false");
+        await Git(root, "config", "core.autocrlf", "false");
+    }
+
+    private static async Task<(int Code, string Text)> RunRealRefresh(string root, string baseSha, TimeSpan timeout)
+    {
+        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "land-graph-land-refresh.ps1");
+        var audit = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in new[]
+        {
+            "-NoProfile", "-NonInteractive", "-File", script,
+            "-Base", baseSha, "-Repo", root, "-AuditScript", audit,
+        })
+            start.ArgumentList.Add(arg);
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(timeout);
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw new TimeoutException("real land-graph refresh exceeded " + timeout.TotalSeconds.ToString("0") + " s");
+        }
+
+        return (process.ExitCode, await stdout + await stderr);
+    }
+
+    private static Task Git(string root, params string[] args) => GitText(root, args);
+
+    private static async Task<string> GitText(string root, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var outText = await stdout;
+        var errText = await stderr;
+        process.ExitCode.ShouldBe(0, "git " + string.Join(' ', args) + ": " + errText + outText);
+        return outText;
+    }
 
     private static string PinLine(string path, string selector, string hash) => path + "\t" + selector + "\t" + hash + "\n";
 
