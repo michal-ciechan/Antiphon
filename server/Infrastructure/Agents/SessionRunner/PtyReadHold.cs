@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Dtos;
+
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 /// <summary>
@@ -36,5 +38,21 @@ internal sealed class PtyReadHold<T> where T : class
     {
         lock (_gate)
             _held.Remove(sessionId);
+    }
+}
+
+/// <summary>
+/// CARD-1763. Buffer and snapshot bodies live with the phone-home connection, so every
+/// client resolved on that socket sends the same validator. A new connection starts empty.
+/// </summary>
+internal sealed class PhoneHomePtyReads
+{
+    public PtyReadHold<SessionRunnerBufferDto> Buffer { get; } = new();
+    public PtyReadHold<SessionRunnerSnapshotDto> Snapshot { get; } = new();
+
+    public void Forget(Guid sessionId)
+    {
+        Buffer.Forget(sessionId);
+        Snapshot.Forget(sessionId);
     }
 }

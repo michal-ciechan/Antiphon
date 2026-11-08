@@ -108,6 +108,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     /// <summary>The capabilities DTO the runner sent with its registration, or null.</summary>
     public RunnerCapabilitiesDto? Capabilities { get; }
+
+    /// <summary>CARD-1763. Pty read validators for this connection. A reconnect is a new instance.</summary>
+    internal PhoneHomePtyReads PtyReads { get; } = new();
     private readonly Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? _codexCliObserved;
     public TimeProvider Clock { get; }
     public DateTimeOffset LastHeartbeatUtc { get; private set; }
@@ -212,6 +215,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     internal void ReplaceKnownLiveSessions(IEnumerable<(Guid SessionId, DateTime? Generation)> live, long readStamp)
     {
         var now = Clock.GetUtcNow();
+        List<Guid>? ended = null;
         lock (_inventoryGate)
         {
             var listed = new HashSet<Guid>();
@@ -229,8 +233,17 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             {
                 // Absent from a List sent after this entry last changed: the List is the truth for it.
                 if (entry.Stamp <= readStamp && !listed.Contains(id))
+                {
                     _inventory.Remove(id);
+                    (ended ??= new()).Add(id);
+                }
             }
+        }
+
+        if (ended is not null)
+        {
+            foreach (var id in ended)
+                PtyReads.Forget(id);
         }
     }
 
@@ -258,6 +271,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     /// </summary>
     internal void NoteSessionGone(Guid sessionId, DateTime? generation)
     {
+        var stillLive = false;
         lock (_inventoryGate)
         {
             var stamp = Interlocked.Increment(ref _inventoryStamp);
@@ -272,7 +286,12 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 && !(entry.Generation is { } liveGeneration && generation is { } goneGeneration
                     && SessionGeneration.Compare(liveGeneration, goneGeneration) > 0))
                 _inventory.Remove(sessionId);
+            stillLive = _inventory.ContainsKey(sessionId);
         }
+
+        // A newer generation that stayed keeps its body. Anything else has ended.
+        if (!stillLive)
+            PtyReads.Forget(sessionId);
     }
 
     /// <summary>CARD-0679 D-10: an event from <paramref name="sessionId"/> confirms it is still live.</summary>
