@@ -163,3 +163,60 @@ A Linux execution of that filter at `3364197bf1` is 20 passed, 0
 failed. It would not have turned this rc red. The check that would
 have is the owed native Windows run of the same filter, which batch
 115 named and which was not executed before run 4e0d1159.
+
+## Confirmed lines and earlier runs (task 51caad8a)
+
+The group-88 diagnosis on `feat/card-task-e9d0e86e`
+(`docs/investigations/2026-11-08-run-4e0d1159-group-88-windows-failure.md`)
+read the TRX. The origin-url alternative left open above is closed:
+`RewriteOriginUrl` never ran. Every failure is
+
+```
+TimeoutException: scratch git exceeded its operation deadline
+```
+
+At the failing checkout, and at base
+`c460b0d0a4de591b8e662f8dbc57eeac3f26d249` before the fix on this branch,
+the lines are:
+
+- `tests/Antiphon.Tests/Application/C0824SlotTransportWorld.cs:185`
+  `GitBudget = TimeSpan.FromSeconds(1)`, twice the Linux CP-6 maximum
+  of 325.291 ms.
+- Line 213, `Git(origin, "commit", "-m", "base")`, the fifth git call
+  in `BuildSharedScratch`. That is the call that crossed one second in
+  run 4e0d1159 (first case 2.449 s, then the deadline).
+- Line 412, `throw new TimeoutException("scratch git exceeded its operation deadline")`
+  from `RunGit` after `CheckpointProcessRunner` reports `TimedOut`.
+- Line 199, `Lazy<SharedScratch>` with
+  `LazyThreadSafetyMode.ExecutionAndPublication`, which caches that
+  exception. The other 14 world cases rethrow it in about 1 ms.
+  `Case_reuses_one_scratch_repository_and_spawns_no_git` enters through
+  `EnsureSharedScratchRepository` at line 197.
+
+The same message on earlier Windows runs:
+
+- `8e938b6d` (rc/2026-11-08, checkout-36d12cfa): 14 failed, 5 passed.
+  Per-case scratch, 1.07 to 2.40 s each. The shared lazy is not in
+  that tip, so each world case times out on its own.
+- `c3f65ddb` (rc/2026-11-09, checkout-59e9866b): 1 failed, 18 passed.
+  `Retry_keeps_the_first_decision_of_its_preparation(busy-then-none)`
+  at 2.38 s. Same one-second budget, still before the shared lazy.
+- `e737e9fe` (rc/2026-11-10, tip `74a8004f405b`): 20 passed.
+- `4e0d1159` (rc/2026-11-11, `3364197bf1cb38081fa27dd3bfc1e4f3e55ccd4e`):
+  15 failed, 5 passed, one cached exception.
+
+The one-second budget was introduced by
+`e4103bf1650840496a79bd854dde5bcf94b5aea1` (`test: calibrate scratch Git deadline from the loaded cached pack`).
+It is in all four of those rc tips. The 15-wide shape was introduced
+by the shared scratch, master cherry-pick
+`e02965b22564280eddc657f7385ccae00dcb9c16` (red
+`b34a16d0b5d884a5f346354d4c14a2b1edc6f1c5`). Those commits are in
+rc/2026-11-10 and rc/2026-11-11, not in rc/2026-11-09, which is why
+`c3f65ddb` stayed a single failure.
+
+The passing rig-only cases in 4e0d1159 took 3.415 s, 3.891 s, 4.714 s,
+7.121 s and 7.191 s. That 3.4 to 7.2 s start-up ceiling is why the
+hang bound is 15 s rather than another multiple of the Linux 325 ms
+sample. The 80 s class timeout is unchanged. A non-returning git still
+throws at the bound. A `TimeoutException` is tried once more and is
+not stored, so the next case is not failed by the first.

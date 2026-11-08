@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -179,10 +180,13 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         Base = shared.Base;
     }
 
-    // Scratch commands share the existing custodied runner's single start/exit/drain deadline.
-    // Provisional cold-process sample (CARD-1514/1404): 372 commands in CP-6 at 259c2cde,
-    // max 325.291 ms. Round twice that observed maximum up to one second, including both drains.
-    internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(1);
+    // Hang bound, not a latency sample. The retired one-second figure was twice a Linux
+    // CP-6 cold-process maximum of 325.291 ms (372 commands at 259c2cde). On the loaded
+    // Windows host in run 4e0d1159, plain rig starts took 3.4 to 7.2 seconds, and the
+    // fifth scratch command (git commit -m base) crossed one second. Fifteen seconds sits
+    // above that start-up ceiling and still kills one non-returning git well inside the
+    // 80-second class timeout. No assertion compares elapsed time with the old one second.
+    internal static readonly TimeSpan GitBudget = TimeSpan.FromSeconds(15);
 
     private static int _scratchGitProcessStarts;
     private static readonly AsyncLocal<GitCount?> ScratchGitScope = new();
@@ -204,17 +208,56 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     internal static SharedScratch CreateScratch(string label) => new(label, label, label);
 
     /// <summary>
-    /// One shared scratch for the process. A factory exception is cached, which is the
-    /// pre-fix behaviour the timeout witness must still catch.
+    /// One shared scratch for the process. A successful build is reused. A
+    /// <see cref="TimeoutException"/> is not stored: the build is tried once more, and a
+    /// second timeout leaves the next case free to build again. Any other exception is
+    /// cached, matching the old lazy store.
     /// </summary>
     internal sealed class SharedScratchStore
     {
-        private readonly Lazy<SharedScratch> _lazy;
+        private readonly object _gate = new();
+        private readonly Func<SharedScratch> _build;
+        private SharedScratch? _value;
+        private Exception? _fault;
+        private bool _retriedTimeout;
 
-        internal SharedScratchStore(Func<SharedScratch> build) =>
-            _lazy = new Lazy<SharedScratch>(build, LazyThreadSafetyMode.ExecutionAndPublication);
+        internal SharedScratchStore(Func<SharedScratch> build) => _build = build;
 
-        internal SharedScratch Value => _lazy.Value;
+        internal SharedScratch Value
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    if (_fault is not null)
+                        ExceptionDispatchInfo.Throw(_fault);
+                    if (_value is not null)
+                        return _value;
+                    try
+                    {
+                        return _value = _build();
+                    }
+                    catch (Exception ex) when (ex is not TimeoutException)
+                    {
+                        _fault = ex;
+                        throw;
+                    }
+                    catch (TimeoutException) when (!_retriedTimeout)
+                    {
+                        _retriedTimeout = true;
+                        try
+                        {
+                            return _value = _build();
+                        }
+                        catch (Exception ex) when (ex is not TimeoutException)
+                        {
+                            _fault = ex;
+                            throw;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private static SharedScratch BuildSharedScratch()
