@@ -130,6 +130,8 @@ internal static class SolutionAudit
         var inputs = new BuildInputPolicy(repo, sdkDirectory, tracked);
         var evaluatedProjects = new HashSet<string>(BuildInputPolicy.PathComparer);
         var evaluations = new HashSet<string>(StringComparer.Ordinal);
+        var memberConfiguration = new Dictionary<string, (string? Configuration, string? Platform)>(BuildInputPolicy.PathComparer);
+        var outsideSolution = new SortedSet<string>(StringComparer.Ordinal);
 
         foreach (var entry in parsed.ProjectsInOrder)
         {
@@ -155,6 +157,9 @@ internal static class SolutionAudit
                 globals["Platform"] = mapped.PlatformName == "Any CPU" ? "AnyCPU" : mapped.PlatformName;
             }
 
+            memberConfiguration[Path.GetFullPath(entry.AbsolutePath)] = (
+                globals.TryGetValue("Configuration", out var configurationName) ? configurationName : null,
+                globals.TryGetValue("Platform", out var platformName) ? platformName : null);
             evaluated += Evaluate(entry.AbsolutePath, globals);
         }
 
@@ -203,7 +208,9 @@ internal static class SolutionAudit
                 // GetItems is the evaluated, surviving reference list: false Conditions and
                 // removed references do not expand the solution build's project closure.
                 var references = project.GetItems("ProjectReference")
-                    .Select(item => (Path: item.GetMetadataValue("FullPath"), Globals: ReferenceGlobals(globals, item)))
+                    .Select(item => (
+                        Path: item.GetMetadataValue("FullPath"),
+                        Globals: ReferenceGlobals(globals, item, memberConfiguration)))
                     .ToArray();
                 collection.UnloadProject(project);
                 project = null;
@@ -211,7 +218,20 @@ internal static class SolutionAudit
                 foreach (var framework in frameworks.Distinct(StringComparer.OrdinalIgnoreCase))
                     count += Evaluate(projectPath, new(globals, StringComparer.OrdinalIgnoreCase) { ["TargetFramework"] = framework });
                 foreach (var reference in references)
+                {
+                    if (!string.IsNullOrEmpty(reference.Path))
+                    {
+                        var full = Path.GetFullPath(reference.Path);
+                        if (!memberConfiguration.ContainsKey(full))
+                        {
+                            outsideSolution.Add("outside-solution: " + Display(repo, full)
+                                + " configuration=" + (reference.Globals.ContainsKey("Configuration") ? "kept" : "unset")
+                                + " platform=" + (reference.Globals.ContainsKey("Platform") ? "kept" : "unset"));
+                        }
+                    }
+
                     count += Evaluate(reference.Path, reference.Globals);
+                }
                 return count;
             }
             finally
@@ -238,6 +258,8 @@ internal static class SolutionAudit
         if (refusals.Count == 0)
             foreach (var refusal in fileSystem.Refusals) refusals.Add(refusal);
 
+        foreach (var line in outsideSolution)
+            output.WriteLine(line);
         foreach (var path in inputs.TrackedProjects.Where(path => !evaluatedProjects.Contains(path)).Order(StringComparer.Ordinal))
             output.WriteLine($"not-built: {Display(repo, path)}");
 
@@ -251,7 +273,8 @@ internal static class SolutionAudit
         return Program.Approved;
     }
 
-    private static Dictionary<string, string> ReferenceGlobals(Dictionary<string, string> globals, ProjectItem reference)
+    private static Dictionary<string, string> ReferenceGlobals(Dictionary<string, string> globals, ProjectItem reference,
+        Dictionary<string, (string? Configuration, string? Platform)> memberConfiguration)
     {
         var result = new Dictionary<string, string>(globals, StringComparer.OrdinalIgnoreCase);
         // Let the referenced project choose its own frameworks; an explicit SetTargetFramework
@@ -260,6 +283,24 @@ internal static class SolutionAudit
         foreach (var name in Project.GetMetadataValueEscaped(reference, "GlobalPropertiesToRemove")
                      .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             result.Remove(ProjectCollection.Unescape(name));
+        // AssignProjectConfiguration, when BuildingSolutionFile is set, maps an in-solution
+        // reference onto the solution configuration and adds Configuration and Platform to
+        // GlobalPropertiesToRemove for every other reference (ShouldUnsetParentConfigurationAndPlatform).
+        // Explicit SetConfiguration / SetPlatform / AdditionalProperties below still win.
+        var fullPath = reference.GetMetadataValue("FullPath");
+        if (!string.IsNullOrEmpty(fullPath) && memberConfiguration.TryGetValue(Path.GetFullPath(fullPath), out var mapped))
+        {
+            if (mapped.Configuration is null) result.Remove("Configuration");
+            else result["Configuration"] = mapped.Configuration;
+            if (mapped.Platform is null) result.Remove("Platform");
+            else result["Platform"] = mapped.Platform;
+        }
+        else
+        {
+            result.Remove("Configuration");
+            result.Remove("Platform");
+        }
+
         foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework", "AdditionalProperties" })
         {
             foreach (var assignment in Project.GetMetadataValueEscaped(reference, metadata)
