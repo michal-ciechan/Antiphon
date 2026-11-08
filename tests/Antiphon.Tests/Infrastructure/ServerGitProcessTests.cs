@@ -182,6 +182,49 @@ public sealed class ServerGitProcessTests
         }
     }
 
+    // CARD-1776 gave the LandingGit probe ApplyIdentity so the probe and the child agree on
+    // GIT_CONFIG_GLOBAL; CARD-1787 made the helper scrub the inherited git env first.
+    private const string IdentityHelper = """
+        void ApplyIdentity(ProcessStartInfo start) { if (_identityFile is null) return; ServerGitIdentity.ScrubInherited(start.Environment); start.Environment["GIT_CONFIG_GLOBAL"] = _identityFile; }
+        """;
+
+    private static string ProbeWithIdentity(string helper)
+        => ScannerSource.Replace("ConfigureProcess(probe);", "ConfigureProcess(probe); ApplyIdentity(probe);")
+            .Replace("// extra site", helper);
+
+    [Test]
+    public void C1776_scanner_accepts_the_land_probe_identity_helper()
+    {
+        var audit = AuditStartSites(ProbeWithIdentity(IdentityHelper), "LandingGit.cs");
+        audit.Constructions.ShouldBe(3);
+        audit.Launches.ShouldBe(2);
+        audit.Failures.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void C1776_scanner_rejects_an_identity_helper_that_launches_or_escapes()
+    {
+        foreach (var leak in new[] { "Process.Start(start);", "StartProcess(start);", "saved = start;", "LaunchElsewhere(start);",
+            "var child = new Process(); child.StartInfo = start; child.Start();" })
+        {
+            var helper = IdentityHelper.Replace("ServerGitIdentity.ScrubInherited", leak + " ServerGitIdentity.ScrubInherited");
+            var failures = ScanStartSites(ProbeWithIdentity(helper), "LandingGit.cs");
+            failures.Count.ShouldBe(1, leak);
+            failures[0].ShouldContain("InProcessEligible/probe");
+        }
+    }
+
+    [Test]
+    public void C1776_scanner_rejects_an_identity_helper_it_cannot_inspect()
+    {
+        // Undeclared, overloaded, or allowed in a file whose probe never had one.
+        ScanStartSites(ProbeWithIdentity(""), "LandingGit.cs").Count.ShouldBe(1);
+        ScanStartSites(ProbeWithIdentity(IdentityHelper + " void ApplyIdentity(ProcessStartInfo a, bool b) { }"), "LandingGit.cs")
+            .Count.ShouldBe(1);
+        var other = ProbeWithIdentity(IdentityHelper).Replace("InProcessEligible", "InProcessReadsEligible");
+        ScanStartSites(other, "WorktreeManager.cs").Count.ShouldBe(1);
+    }
+
     private const string ScannerSource = """
         class LandingGit {
             bool InProcessEligible() { var probe = new ProcessStartInfo("git"); ConfigureProcess(probe); ServerGitProcess.DisableAutoMaintenance(probe); return InProcessGitReads.ChildReadsSameRepository(probe); }
