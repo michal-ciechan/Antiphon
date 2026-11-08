@@ -132,6 +132,7 @@ internal static class SolutionAudit
         var evaluations = new HashSet<string>(StringComparer.Ordinal);
         var memberConfiguration = new Dictionary<string, (string? Configuration, string? Platform)>(BuildInputPolicy.PathComparer);
         var outsideSolution = new SortedSet<string>(StringComparer.Ordinal);
+        var explicitMemberConfiguration = new SortedSet<string>(StringComparer.Ordinal);
 
         // Membership is complete before any project is evaluated. A ProjectReference is resolved
         // while its parent is evaluated, and that parent can appear earlier in the solution than
@@ -219,7 +220,8 @@ internal static class SolutionAudit
                 var references = project.GetItems("ProjectReference")
                     .Select(item => (
                         Path: item.GetMetadataValue("FullPath"),
-                        Globals: ReferenceGlobals(globals, item, memberConfiguration)))
+                        Globals: ReferenceGlobals(globals, item, memberConfiguration),
+                        Explicit: HasExplicitReferenceGlobals(item)))
                     .ToArray();
                 collection.UnloadProject(project);
                 project = null;
@@ -236,6 +238,15 @@ internal static class SolutionAudit
                             outsideSolution.Add("outside-solution: " + Display(repo, full)
                                 + " configuration=" + (reference.Globals.ContainsKey("Configuration") ? "kept" : "unset")
                                 + " platform=" + (reference.Globals.ContainsKey("Platform") ? "kept" : "unset"));
+                        }
+                        else if (reference.Explicit)
+                        {
+                            // The outside-solution line is absent for a member. This line is the
+                            // configuration actually handed to that member, so a solution mapping
+                            // can be told from explicit metadata. Absent when the reference sets none.
+                            explicitMemberConfiguration.Add("member-configuration: " + Display(repo, full)
+                                + " configuration=" + (reference.Globals.TryGetValue("Configuration", out var assignedConfiguration) ? assignedConfiguration : "unset")
+                                + " platform=" + (reference.Globals.TryGetValue("Platform", out var assignedPlatform) ? assignedPlatform : "unset"));
                         }
                     }
 
@@ -268,6 +279,8 @@ internal static class SolutionAudit
             foreach (var refusal in fileSystem.Refusals) refusals.Add(refusal);
 
         foreach (var line in outsideSolution)
+            output.WriteLine(line);
+        foreach (var line in explicitMemberConfiguration)
             output.WriteLine(line);
         foreach (var path in inputs.TrackedProjects.Where(path => !evaluatedProjects.Contains(path)).Order(StringComparer.Ordinal))
             output.WriteLine($"not-built: {Display(repo, path)}");
@@ -332,6 +345,17 @@ internal static class SolutionAudit
             }
         }
         return result;
+    }
+
+    private static bool HasExplicitReferenceGlobals(ProjectItem reference)
+    {
+        foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework", "AdditionalProperties", "GlobalPropertiesToRemove" })
+        {
+            if (Project.GetMetadataValueEscaped(reference, metadata).Trim().Length > 0)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
