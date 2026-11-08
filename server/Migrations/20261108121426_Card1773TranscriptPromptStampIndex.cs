@@ -10,11 +10,11 @@ namespace Antiphon.Server.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.CreateIndex(
+            // Same recovery as CARD-0698. A timed-out CREATE INDEX CONCURRENTLY leaves an INVALID
+            // index and no history row; the next startup must rename, drop, and create again.
+            AddTranscriptHotPathIndexes.CreateRetryableIndex(migrationBuilder,
                 name: "IX_TranscriptEntries_AgentSessionId_Kind_Sequence",
-                table: "TranscriptEntries",
-                columns: new[] { "AgentSessionId", "Kind", "Sequence" })
-                .Annotation("Npgsql:CreatedConcurrently", true);
+                columns: "\"AgentSessionId\", \"Kind\", \"Sequence\"");
         }
 
         /// <inheritdoc />
@@ -22,8 +22,12 @@ namespace Antiphon.Server.Migrations
         {
             // Additive. Dropping the index loses no rows. CONCURRENTLY cannot run inside the
             // migration transaction, and IF EXISTS keeps a second downgrade from throwing.
+            // The cleanup name is what an interrupted retry leaves behind.
             migrationBuilder.Sql(
                 """DROP INDEX CONCURRENTLY IF EXISTS "IX_TranscriptEntries_AgentSessionId_Kind_Sequence";""",
+                suppressTransaction: true);
+            migrationBuilder.Sql(
+                """DROP INDEX CONCURRENTLY IF EXISTS "IX_TranscriptEntries_AgentSessionId_Kind_Sequence_invalid";""",
                 suppressTransaction: true);
         }
     }

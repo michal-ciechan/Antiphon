@@ -27,8 +27,8 @@ namespace Antiphon.Server.Migrations
                 filter: "(\"Kind\" IN ('TurnEnd', 'SessionRestartBoundary')\nOR (\"Kind\" = 'CompactBoundary' AND \"Text\" IS NOT NULL AND strpos(\"Text\", '(manual)') > 0)\nOR (\"Kind\" = 'UserPrompt' AND \"Text\" IS NOT NULL AND \"Text\" LIKE '[Request interrupted%')) AND \"Timestamp\" IS NOT NULL");
         }
 
-        private static void CreateRetryableIndex(MigrationBuilder migrationBuilder,
-            string name, string columns, string filter, string include = "")
+        internal static void CreateRetryableIndex(MigrationBuilder migrationBuilder,
+            string name, string columns, string? filter = null, string include = "")
         {
             // PostgreSQL forbids concurrent DDL inside DO. Rename only an invalid index in
             // the conditional step, then drop it in a separate autocommit command. The fixed
@@ -56,9 +56,10 @@ namespace Antiphon.Server.Migrations
                 """, suppressTransaction: true);
             migrationBuilder.Sql($"DROP INDEX CONCURRENTLY IF EXISTS \"{name}_invalid\";",
                 suppressTransaction: true);
+            var where = string.IsNullOrEmpty(filter) ? "" : $" WHERE {filter}";
             migrationBuilder.Sql($"""
                 CREATE INDEX CONCURRENTLY IF NOT EXISTS "{name}"
-                ON "TranscriptEntries" ({columns}){include} WHERE {filter};
+                ON "TranscriptEntries" ({columns}){include}{where};
                 """, suppressTransaction: true);
         }
 
