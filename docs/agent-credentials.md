@@ -374,6 +374,38 @@ private fetch, dry-run with no created ref, outside-allow-list refusal, then a b
 markdown-package task that pushes its branch. Code checkpoints use inert files only and do
 not establish live acceptance.
 
+### Linux server land credential (CARD-1776)
+
+The Linux server pushes from its own process (`LandingGit`), in each project's
+`LocalRepositoryPath`. The image bakes the runner's helper at
+`/usr/local/bin/antiphon-github-credential`, the pinned `github_known_hosts`, and
+`docker/server/gitconfig` (`credential.helper` for `https://github.com` only, no
+SSH `pushInsteadOf`). No token is baked into the image or written into a compose
+environment value. Custody of the PAT is unchanged: the same directory the runners
+use, named by `RUNNER_GITHUB_TOKEN_DIR`, mounted read-only at
+`/run/antiphon/github-token:ro`. The helper reads `token` only for an admitted
+HTTPS request. The allow-list is a separate read-only mount,
+`${SERVER_PUSH_ALLOW_LIST}` at `/run/antiphon/push-allow-list`, containing
+repository URLs and nothing else. `docker-compose.server2-land-credential.yml`
+names those mounts. CARD-1775 owns the production server compose and includes
+this fragment; this card does not edit that compose file.
+
+When `Git:PushCredentialTokenFile` and `Git:PushCredentialPolicyPath` are set, a
+missing, empty, unreadable, or symlinked token or allow-list refuses the remote
+git command with `push_credential_absent` before git starts. Both empty (the
+desktop) skips the probe. The probe does not cache file contents. Each remote
+command stats the mounts, so the maximum staleness of a present-or-absent answer
+is zero.
+
+Land checkouts live at `/work/repos/<name>` on the production work volume.
+`scripts/server2-repository-mirrors.ps1` defaults to `-WhatIf` and, with
+`-Execute`, clones or fetches those checkouts read-write. Cutover records every
+`Project.LocalRepositoryPath` in a before column and rewrites it to the Linux
+path. Rollback restores the before column. The Antiphon project's
+`gitRepositoryUrl` is empty; its table remote is the desktop checkout's `origin`,
+recorded by the operator before `-Execute`. The script does not print the token
+and does not rewrite the database.
+
 Grok's OAuth store on the runner is provisioned once, interactively, inside the persistent container
 (`docker exec -it -u 1654:1654 <container> grok login`). It is never copied from the desktop and
 never baked (CARD-0575, CARD-0324). A runner-bound Grok task checks that runner's

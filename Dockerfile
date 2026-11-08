@@ -68,6 +68,17 @@ COPY --from=client-build /src/client/dist ./wwwroot
 RUN chmod 0755 /stack/init-state.sh \
  && test -f /app/Antiphon.Server.dll \
  && test -f /app/wwwroot/index.html
+# CARD-1776: the runner's credential helper, pinned GitHub host keys, and a system
+# gitconfig that names the helper. The token directory is a read-only mount, not a layer.
+COPY docker/session-runner-grok/github-credential.sh /usr/local/bin/antiphon-github-credential
+COPY docker/session-runner-grok/github_known_hosts /etc/antiphon/github_known_hosts
+COPY docker/server/gitconfig /etc/gitconfig
+RUN chown root:root /usr/local/bin/antiphon-github-credential \
+ && chmod 0755 /usr/local/bin/antiphon-github-credential \
+ && sh -n /usr/local/bin/antiphon-github-credential \
+ && chmod 0644 /etc/antiphon/github_known_hosts /etc/gitconfig \
+ && git config --file /etc/gitconfig --get credential.https://github.com.helper \
+    | grep -F '/usr/local/bin/antiphon-github-credential'
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 HEALTHCHECK CMD curl -fsS http://127.0.0.1:8080/health || exit 1

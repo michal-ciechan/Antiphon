@@ -44,4 +44,17 @@ public class GitSettings
     public int WorktreeBaseMaxCandidates { get; set; } = 16;
     public int WorktreeBaseMaxInventoryRows { get; set; } = 256;
     public int WorktreeBaseMaxGitCommands { get; set; } = 128;
+
+    /// <summary>
+    /// CARD-1776. Absolute path of the mounted GitHub token file. Empty, together with
+    /// <see cref="PushCredentialPolicyPath"/>, leaves the desktop land path unchanged.
+    /// The probe reads presence only and does not cache it.
+    /// </summary>
+    public string PushCredentialTokenFile { get; set; } = "";
+
+    /// <summary>
+    /// CARD-1776. Absolute path of the push allow-list. Empty, together with
+    /// <see cref="PushCredentialTokenFile"/>, leaves the desktop land path unchanged.
+    /// </summary>
+    public string PushCredentialPolicyPath { get; set; } = "";
 }
