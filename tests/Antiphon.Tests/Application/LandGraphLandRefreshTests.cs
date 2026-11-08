@@ -332,6 +332,8 @@ public sealed class LandGraphLandRefreshTests
 
         var bundle = File.ReadAllText(Path.Combine(root, "server", "Bundles", "orchestrator.md"));
         bundle.ShouldContain("#land-graph-refresh");
+        bundle.ShouldContain("never asks");
+        bundle.ShouldContain("Own land-graph drift refreshes, never asks: #land-graph-refresh.");
         bundle.ShouldContain("one red witness plus one narrow green");
         bundle.ShouldContain("a master land is not activation");
         bundle.ShouldContain("reviewed rc picks");
