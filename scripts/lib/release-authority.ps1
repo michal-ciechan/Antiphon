@@ -410,10 +410,14 @@ function New-ReleaseGateExecutionPlan {
 function Resolve-ReleaseAuthorityEvidencePath {
     <#
       G-287: evidence must be a relative path that resolves under the candidate
-      root with no link or reparse component. Returns '' when it escapes.
-      Each existing component is one attribute read. A link carries ReparsePoint
-      on Windows and on Linux, which is the same refusal as LinkTarget. Nothing
-      is cached: the next call reads the filesystem again, so staleness is none.
+      root with no link or reparse component. Returns '' when it escapes, when
+      a component is a reparse point, or when an existing component's attributes
+      cannot be read. Each existing component is one attribute read. A link
+      carries ReparsePoint on Windows and on Linux, which is the same refusal
+      as LinkTarget. Not-found is skipped. Any other attribute error (a
+      component under an unreadable directory) returns '' so the publication
+      gate emits a REFUSED line and publishes nothing. Nothing is cached: the
+      next call reads the filesystem again, so staleness is none.
     #>
     param([string]$CandidateRoot, [string]$Relative)
     if ([string]::IsNullOrWhiteSpace($Relative)) { return '' }
@@ -430,7 +434,7 @@ function Resolve-ReleaseAuthorityEvidencePath {
         } catch {
             $inner = $_.Exception
             while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
-            if ($inner -isnot [System.IO.FileNotFoundException] -and $inner -isnot [System.IO.DirectoryNotFoundException]) { throw }
+            if ($inner -isnot [System.IO.FileNotFoundException] -and $inner -isnot [System.IO.DirectoryNotFoundException]) { return '' }
         }
         $cursor = [System.IO.Path]::GetDirectoryName($cursor)
         if ([string]::IsNullOrEmpty($cursor)) { break }
