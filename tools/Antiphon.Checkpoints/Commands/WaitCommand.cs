@@ -72,6 +72,19 @@ public sealed class WaitCommand
                 || stateRefusal.Contains("receipt-identity:", StringComparison.Ordinal)))
             { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }
             var observed = cleanup.ObserveExecutor(runDirectory, cancellationToken);
+            // An already-done receipt is refused before the gate, so a blank report
+            // identity does not leave .terminal-publication.lock (CARD-1772).
+            if (observed.Verdict == ProcessVerdict.Dead && state?.Phase == "done")
+            {
+                var early = expectedSourceSha is not null && state.Source?.Start?.Commit != expectedSourceSha
+                    ? "receipt-source-SHA-mismatching"
+                    : ReportWriter.RequiredReceiptRefusal(_context, runDirectory, state, cancellationToken);
+                if (early is not null)
+                {
+                    output.WriteLine("refused: " + early);
+                    return ExitCodes.Invalid;
+                }
+            }
             Stream? publication = null;
             if (observed.Verdict == ProcessVerdict.Dead)
             {

@@ -346,12 +346,8 @@ public static class Program
             output.WriteLine("refused: receipt-source-SHA-mismatching");
             return ExitCodes.Invalid;
         }
-        if (!TerminalPublicationGate.TryEnter(context, run, out var publication))
-        {
-            output.WriteLine("stop incomplete " + Path.GetFileName(run) + " terminal-publication-busy");
-            return ExitCodes.StillRunning;
-        }
-        using var held = publication;
+        // An already-done receipt is refused before the gate, so a blank report
+        // identity does not leave .terminal-publication.lock (CARD-1772).
         if (state.Phase == "done")
         {
             var required = RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"), context, runtime.CancellationToken);
@@ -361,6 +357,12 @@ public static class Program
                 return ExitCodes.Invalid;
             }
         }
+        if (!TerminalPublicationGate.TryEnter(context, run, out var publication))
+        {
+            output.WriteLine("stop incomplete " + Path.GetFileName(run) + " terminal-publication-busy");
+            return ExitCodes.StillRunning;
+        }
+        using var held = publication;
         if (observed.Verdict == ProcessVerdict.AliveSame)
         {
             try
