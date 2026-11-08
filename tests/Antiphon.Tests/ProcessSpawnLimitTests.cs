@@ -10,7 +10,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests;
 
-/// <summary>CARD-0050 S5: non-git process-spawning classes share a 1-wide lane; CARD-1421: git-only classes a 2-4-wide lane.</summary>
+/// <summary>CARD-0050 S5: non-git process-spawning classes share a 1-wide lane; CARD-1421: git-only classes a 2-4-wide lane; CARD-1747: checkpoint-tool classes a 2-wide lane.</summary>
 [Category("Unit")]
 public class ProcessSpawnLimitTests
 {
@@ -91,6 +91,15 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointAppTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointAdmissionContractTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests),
+        // CARD-1747: these start a child with the shared checkout as its working directory
+        // (RepeatHost output, run-checkpoint.ps1, or dotnet against RepoRoot). They stay on
+        // the strict lane so two of them cannot write one checkout.
+        typeof(Antiphon.Tests.Checkpoints.RerunFilterHostTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests),
         // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
@@ -175,15 +184,152 @@ public class ProcessSpawnLimitTests
         }
     }
 
+    // Checkpoint-tool classes that start a child in the shared checkout. The census below
+    // keeps these on ProcessSpawnLimit and requires every other limited Checkpoints type
+    // to name CheckpointToolSpawnLimit.
+    private static readonly Type[] SharedCheckoutCheckpointClasses =
+    [
+        typeof(Antiphon.Tests.Checkpoints.RerunFilterHostTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests),
+        typeof(Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests),
+    ];
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(4)]
+    [Arguments(8)]
+    [Arguments(24)]
+    [Arguments(64)]
+    public void Checkpoint_tool_lane_limit_stays_at_two_build_slots(int processorCount)
+    {
+        var limit = CheckpointToolSpawnLimit.Resolve(processorCount, null);
+        limit.ShouldBe(CheckpointToolSpawnLimit.DefaultLimit);
+        limit.ShouldBe(2);
+        new CheckpointToolSpawnLimit().Limit.ShouldBeInRange(
+            CheckpointToolSpawnLimit.MinimumLimit, CheckpointToolSpawnLimit.MaximumLimit);
+    }
+
+    [Test]
+    [Arguments("1", 1)]
+    [Arguments("2", 2)]
+    [Arguments("4", 4)]
+    [Arguments("5", 4)]
+    [Arguments("0", 1)]
+    [Arguments(" 3 ", 3)]
+    [Arguments("garbage", 2)]
+    [Arguments("", 2)]
+    public void Checkpoint_tool_lane_limit_honours_the_override(string env, int expected)
+    {
+        CheckpointToolSpawnLimit.Resolve(24, env).ShouldBe(expected);
+    }
+
+    [Test]
+    public void Checkpoint_tool_classes_carry_their_own_limiter()
+    {
+        const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var misses = new List<string>();
+        var limited = 0;
+        foreach (var type in CheckpointCandidateTypes())
+        {
+            var shared = SharedCheckoutCheckpointClasses.Contains(type);
+            var strict = HasSpawnLimiter(type, typeof(ProcessSpawnLimit));
+            var tool = HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit));
+            if (strict || tool)
+            {
+                limited++;
+                if (shared)
+                {
+                    if (!strict)
+                        misses.Add(type.FullName + " shares the checkout and must keep [ParallelLimiter<ProcessSpawnLimit>]");
+                    if (tool)
+                        misses.Add(type.FullName + " shares the checkout and must not carry [ParallelLimiter<CheckpointToolSpawnLimit>]");
+                }
+                else
+                {
+                    if (!tool)
+                        misses.Add(type.FullName + " must carry [ParallelLimiter<CheckpointToolSpawnLimit>]");
+                    if (strict)
+                        misses.Add(type.FullName + " must not keep [ParallelLimiter<ProcessSpawnLimit>]");
+                }
+            }
+
+            foreach (var method in type.GetMethods(declared))
+            {
+                var methodStrict = HasSpawnLimiter(method, typeof(ProcessSpawnLimit));
+                var methodTool = HasSpawnLimiter(method, typeof(CheckpointToolSpawnLimit));
+                if (!methodStrict && !methodTool)
+                    continue;
+                limited++;
+                if (shared)
+                {
+                    if (!methodStrict || methodTool)
+                        misses.Add(type.FullName + "." + method.Name + " shares the checkout and must keep the strict limiter");
+                }
+                else if (!methodTool || methodStrict)
+                {
+                    misses.Add(type.FullName + "." + method.Name + " must carry only [ParallelLimiter<CheckpointToolSpawnLimit>]");
+                }
+            }
+        }
+
+        limited.ShouldBeGreaterThan(0, "the Checkpoints namespace has process-limited classes");
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void Process_spawn_guard_still_covers_classes_outside_the_checkpoint_tool_lane()
+    {
+        foreach (var type in StrictClasses)
+        {
+            HasSpawnLimiter(type, typeof(ProcessSpawnLimit))
+                .ShouldBeTrue($"{type.Name} must carry [ParallelLimiter<ProcessSpawnLimit>]");
+            HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit))
+                .ShouldBeFalse($"{type.Name} is outside the checkpoint-tool lane");
+        }
+
+        SharedCheckoutCheckpointClasses.Except(StrictClasses).ShouldBeEmpty(
+            "every shared-checkout checkpoint class stays on the strict roster");
+    }
+
     [Test]
     public void No_class_carries_both_limiters()
     {
         StrictClasses.Intersect(GitOnlyClasses).ShouldBeEmpty("a class belongs to one roster");
-        foreach (var type in StrictClasses.Concat(GitOnlyClasses))
+        StrictClasses.Intersect(SharedCheckoutCheckpointClasses).Count().ShouldBe(SharedCheckoutCheckpointClasses.Length);
+        var seen = new HashSet<Type>();
+        var both = new List<string>();
+        foreach (var type in StrictClasses.Concat(GitOnlyClasses).Concat(CheckpointCandidateTypes()))
         {
-            var strict = Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<ProcessSpawnLimit>)) is not null;
-            var git = Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<GitProcessSpawnLimit>)) is not null;
-            (strict && git).ShouldBeFalse($"{type.Name} carries both limiters");
+            if (!seen.Add(type))
+                continue;
+            var lanes = new[]
+            {
+                HasSpawnLimiter(type, typeof(ProcessSpawnLimit)) ? "ProcessSpawnLimit" : null,
+                HasSpawnLimiter(type, typeof(GitProcessSpawnLimit)) ? "GitProcessSpawnLimit" : null,
+                HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)) ? "CheckpointToolSpawnLimit" : null,
+            }.Where(name => name is not null).ToList();
+            if (lanes.Count > 1)
+                both.Add(type.FullName + " carries " + string.Join(" and ", lanes));
+        }
+
+        both.ShouldBeEmpty(string.Join(Environment.NewLine, both));
+    }
+
+    private static bool HasSpawnLimiter(MemberInfo member, Type limit) =>
+        Attribute.GetCustomAttribute(member, typeof(ParallelLimiterAttribute<>).MakeGenericType(limit)) is not null;
+
+    private static IEnumerable<Type> CheckpointCandidateTypes()
+    {
+        foreach (var type in LoadableTypes(typeof(ProcessSpawnLimitTests).Assembly))
+        {
+            if (type.Namespace != "Antiphon.Tests.Checkpoints" || type.IsNested)
+                continue;
+            yield return type;
         }
     }
 
