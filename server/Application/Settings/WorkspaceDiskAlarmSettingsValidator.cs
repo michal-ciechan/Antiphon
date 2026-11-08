@@ -12,6 +12,8 @@ public sealed class WorkspaceDiskAlarmSettingsValidator : IValidateOptions<Works
             failures.Add($"WorkspaceDiskAlarm:UsedPercent must be between {WorkspaceDiskAlarmSettings.MinUsedPercent} and {WorkspaceDiskAlarmSettings.MaxUsedPercent}.");
         if (options.SampleFreshMinutes is < 1 or > WorkspaceDiskAlarmSettings.MaxSampleFreshMinutes)
             failures.Add($"WorkspaceDiskAlarm:SampleFreshMinutes must be between 1 and {WorkspaceDiskAlarmSettings.MaxSampleFreshMinutes}.");
+        if (options.MinFreeGiB is < 0 or > WorkspaceDiskAlarmSettings.MaxMinFreeGiB)
+            failures.Add($"WorkspaceDiskAlarm:MinFreeGiB must be between 0 and {WorkspaceDiskAlarmSettings.MaxMinFreeGiB}.");
         foreach (var (runnerId, volume) in options.Runners ?? [])
         {
             if (string.IsNullOrWhiteSpace(runnerId))
