@@ -679,6 +679,25 @@ under the restart runbook before checking `GET /api/orchestrator-instructions` s
 A Docs task reports the exact proposed configuration command/text; it never writes live settings
 or edits the generated file. The full wording stays here, outside section 8's size cap.
 
+<a id="merge-process"></a>
+### Merge process (CARD-1783)
+
+A Merge batch's final-tree run always appends one cheap fixed high-radius subset, independent of what the subjects' reports name. Report that subset as its own CHECKPOINT row, so an omission is visible. The rc cut (Merge "Cut the new rc line") runs the same subset on the cut pin before pushing the rc ref and does not push that ref while the row is red.
+
+The fixed classes are always `TestTimingOperationLabelTests`, `AppDbContextModelTests`, `ContractSnapshotTests`, `CheckpointReceiptSafetyTests`, and `HostCleanupCheckpointReceiptTests`. When the batch diff touches `server/Migrations/**`, the same row also runs the downgrade selector from `scripts/impacted-classes.ps1` (every `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(` caller). Resolve the row with:
+
+```powershell
+pwsh -NoProfile -File scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json
+```
+
+Without `-Range`, `-MergeSubset` prints only the fixed classes. The fixed filters are `/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)|(TestTimingOperationLabelTests*)/*` on `tests/Antiphon.Tests` and `/*/*/(ContractSnapshotTests*)/*` on `tests/Antiphon.E2E`. A migration diff appends the downgrade classes to the `tests/Antiphon.Tests` filter. `ContractSnapshotTests` needs the server boot the E2E fixture already does. The fixed classes take a few minutes. The downgrade selector stays under an hour on a loaded host and runs only when `server/Migrations/**` is in the batch. Windows-only fixtures stay outside this subset.
+
+The batch reports this checkpoint row. `Filter` is the `filters` array from that command. `Min` stays `n/a` because the executed count depends on whether the downgrade selector is included; the row's TRX is the count.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-merge-subset | batch | native default | merge-high-radius | scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json | CARD-1783 fixed subset | 0 failed | n/a | 15 | true |
+
 <a id="review-rounds"></a>
 ### Review rounds: at most three, diff-only after the first, then a human (operator, 2026-11-01; CARD-1635)
 
