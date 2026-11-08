@@ -23,3 +23,5 @@ Antiphon.Messaging.InboundUnconsumedEvent.Provider.init -> void
 Antiphon.Messaging.InboundUnconsumedEvent.Topic.get -> string!
 Antiphon.Messaging.InboundUnconsumedEvent.Topic.init -> void
 
+Antiphon.Messaging.Attachment.InlineLimitBytes.get -> long?
+Antiphon.Messaging.Attachment.InlineLimitBytes.init -> void

@@ -95,6 +95,13 @@ public sealed record Attachment
     /// the metadata travels.
     /// </summary>
     public byte[]? Content { get; init; }
+
+    /// <summary>
+    /// The gateway's inline cap in bytes, set only when the gateway kept this attachment
+    /// metadata-only because the file is larger than that cap (so <see cref="Content"/> is null).
+    /// Null for an inlined file, a failed download, or a gateway that predates the field.
+    /// </summary>
+    public long? InlineLimitBytes { get; init; }
 }
 
 [UnknownValue(nameof(Other))]
