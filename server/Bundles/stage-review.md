@@ -11,11 +11,11 @@ reviewedSourceSha: <full SHA actually reviewed>
 reviewedSourceClean: ?
 ordinaryScopeCompleted: <Full|Interim|None>
 reviewRound: <1|2|3>
-reviewedRange: <prior SHA or base>..<tip>
+reviewedRange: <a>..<tip>
 Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
 Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
 next: land for clean Final; review (Final) for clean Interim; code when there are defects (name them in `handoff:`); decide for a blocking human choice.
-MIGRATION: run downgrade selector; report its count.
+MIGRATION: run downgrade selector; report its count. +impacted rows
 check-evidence-diff.ps1 complete candidate base..HEAD
 For changed input waits: what releases the waiting session, after how long? Parking disabled means no automatic release deadline (CARD-1083).
 Apply docs/testing-and-build.md#os-branch-witnesses, #performance-standards.
