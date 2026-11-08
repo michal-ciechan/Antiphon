@@ -1,0 +1,170 @@
+# CARD-1775. Production Antiphon server on the server2 host daemon.
+# Files only. Project antiphon-server2-server. Not the phone-home runner
+# project, not nested dockerd, not the foreign scheduler stack, and not the
+# desktop production database. Joins the external CARD-1406 network. The
+# server-session-runner sidecar is the direct runner (Herdr off).
+# Hangfire storage defaults to InMemory. CARD-1768 is on this tip.
+# CARD-1774 A-1/A-2 are not, so PostgreSql is an explicit env flip.
+# scripts/deploy-server2-server.ps1 is the entry. Default is -WhatIf.
+# Nothing here starts the project or touches the production database.
+name: antiphon-server2-server
+
+services:
+  server-state-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "set -eu; uid=1654; gid=1654; for d in /state /state/logs /state/keyring /state/keyring-cert /state/check-interpreter /state/diagnose /state/output-distiller /work /work/repos /work/worktrees /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok /runner-state/claude /runner-state/codex; do mkdir -p \"$$d\"; done; for d in /state /work /runner-state; do owner=$$(stat -c %u \"$$d\"); if [ \"$$owner\" != 0 ] && [ \"$$owner\" != \"$$uid\" ]; then echo \"ForeignStateOwner path=$$d uid=$$owner\" >&2; exit 42; fi; done; cp /host-keyring-cert/cert.pem /state/keyring-cert/cert.pem; cp /host-keyring-cert/key.pem /state/keyring-cert/key.pem; cp /host-operator-token /state/operator-token; chmod 0600 /state/keyring-cert/cert.pem /state/keyring-cert/key.pem /state/operator-token; chown -R \"$$uid:$$gid\" /state /work /runner-state; echo \"server-state-init owned uid=$$uid\""
+    volumes:
+      - work:/work
+      - server-state:/state
+      - runner-state:/runner-state
+      - ${KEYRING_CERT_FILE:?KEYRING_CERT_FILE is required}:/host-keyring-cert/cert.pem:ro
+      - ${KEYRING_KEY_FILE:?KEYRING_KEY_FILE is required}:/host-keyring-cert/key.pem:ro
+      - ${OPERATOR_TOKEN_FILE:?OPERATOR_TOKEN_FILE is required}:/host-operator-token:ro
+    networks:
+      - server-internal
+    restart: "no"
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "1654:1654"
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:17400:8080"
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required};No Reset On Close=true"
+      SessionRunner__Enabled: "true"
+      SessionRunner__BaseUrl: http://server-session-runner:8080
+      PhoneHomeRunner__Enabled: "true"
+      PhoneHomeRunner__Runners__server2__Enabled: "true"
+      PhoneHomeRunner__Runners__server2__AllowDelegatedTasks: "true"
+      PhoneHomeRunner__Runners__server2__DisplayName: server2
+      PhoneHomeRunner__Runners__server2__CallbackOrigin: "${ANTIPHON_PUBLIC_ORIGIN:?ANTIPHON_PUBLIC_ORIGIN is required}"
+      PhoneHomeRunner__Runners__server2__SharedSecret: "${PHONE_HOME_SHARED_SECRET:?PHONE_HOME_SHARED_SECRET is required}"
+      PhoneHomeRunner__Runners__server2__HostWorkspaceRoot: "${PHONE_HOME_HOST_WORKSPACE_ROOT:?PHONE_HOME_HOST_WORKSPACE_ROOT is required}"
+      PhoneHomeRunner__Runners__server2__RunnerWorkspace: /work
+      PhoneHomeRunner__Runners__server2__RunnerRepository: /work/repos/antiphon
+      PhoneHomeRunner__Runners__server2__MaxCapacity: "10"
+      PhoneHomeRunner__Runners__server2__ChildGrokHome: /state/grok
+      PhoneHomeRunner__Runners__server2__ChildClaudeHome: /state/claude
+      PhoneHomeRunner__Runners__server2__ChildCodexHome: /state/codex
+      PhoneHomeRunner__Runners__server2__ClaudeAuthProbeEnabled: "true"
+      PhoneHomeRunner__Runners__server2__CodexAuthProbeEnabled: "true"
+      Delegation__ApiBaseUrl: "${ANTIPHON_PUBLIC_ORIGIN:?ANTIPHON_PUBLIC_ORIGIN is required}"
+      Git__WorkspacePath: /work/repos
+      Git__WorktreeBasePath: /work/worktrees
+      AgentSessions__SessionLogPath: /runner-state/session-runner
+      ZombieCensus__SessionLogPath: /runner-state/session-runner
+      Serilog__LogPath: /state/logs
+      AgentTui__KeyRingPath: /state/keyring
+      AgentTui__KeyProtection__Mode: X509Certificate
+      AgentTui__KeyProtection__CertificatePath: /state/keyring-cert/cert.pem
+      AgentTui__KeyProtection__CertificatePrivateKeyPath: /state/keyring-cert/key.pem
+      Operator__TokenPath: /state/operator-token
+      Delegation__CheckInterpreterWorkingDirectory: /state/check-interpreter
+      Delegation__DiagnoseWorkingDirectory: /state/diagnose
+      Delegation__OutputDistillerWorkingDirectory: /state/output-distiller
+      Delegation__CheckInterpreterEnabled: "true"
+      Delegation__DiagnoseEnabled: "true"
+      Delegation__OutputDistillerEnabled: "true"
+      Hangfire__ServerEnabled: "true"
+      Hangfire__Storage: "${HANGFIRE_STORAGE:-InMemory}"
+      ZombieCensus__Enabled: "false"
+      WorktreeResidue__Enabled: "true"
+      WorktreeResidue__Execute: "false"
+      WorktreeLegacyRelease__Enabled: "false"
+      WorktreeLegacyRelease__Execute: "false"
+      RunnerWorktreeRetention__Enabled: "true"
+      RunnerWorktreeRetention__Execute: "true"
+      Schedules__Enabled: "true"
+      ChannelBridge__Enabled: "${CHANNEL_BRIDGE_ENABLED:-false}"
+      Digest__Enabled: "false"
+      Agents__DefaultDefinition: grok
+      Agents__Definitions__grok__Kind: Grok
+      Agents__Definitions__grok__Exe: /usr/local/bin/grok
+      Agents__Definitions__claude__Kind: ClaudeCode
+      Agents__Definitions__claude__Exe: /usr/local/bin/claude
+      Agents__Definitions__codex__Kind: Codex
+      Agents__Definitions__codex__Exe: /usr/local/bin/codex
+      Agents__Definitions__raw-pwsh__Kind: Raw
+      Agents__Definitions__raw-pwsh__Exe: /usr/local/bin/pwsh
+      Agents__Definitions__raw-sh__Kind: Raw
+      Agents__Definitions__raw-sh__Exe: /bin/sh
+    volumes:
+      - work:/work
+      - server-state:/state
+      - runner-state:/runner-state:ro
+    networks:
+      - antiphon-server2
+      - server-internal
+    depends_on:
+      server-state-init:
+        condition: service_completed_successfully
+      server-session-runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server-session-runner:
+    build:
+      context: .
+      dockerfile: docker/session-runner-grok/Dockerfile
+      target: runtime
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+    user: "1654:1654"
+    init: true
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      PhoneHome__Enabled: "false"
+      SessionRunner__SessionLogPath: /state/session-runner
+      SessionRunner__PtyHostDir: /state/pty-hosts
+      Serilog__LogPath: /state/logs
+      SessionRunner__PtyBackend: inbox
+      ANTIPHON_PTY_BACKEND: inbox
+      SessionRunner__Herdr__Enabled: "false"
+      GROK_HOME: /state/grok
+    volumes:
+      - runner-state:/state
+      - work:/work
+    networks:
+      - server-internal
+    depends_on:
+      server-state-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  server-internal:
+    name: antiphon-server2-server_internal
+  antiphon-server2:
+    external: true
+    name: antiphon-server2
+
+volumes:
+  work:
+    name: antiphon-server2-server_work
+  server-state:
+    name: antiphon-server2-server_server-state
+  runner-state:
+    name: antiphon-server2-server_runner-state
