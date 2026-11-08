@@ -225,9 +225,13 @@ internal sealed class RunnerTerminalSession
     public async Task<long> GetLastSequenceAsync(CancellationToken ct)
     {
         EnsureStarted();
-        // CARD-1761: the session record already carries LastSequence. The buffer route
-        // re-reads the ANSI tail and throws that text away.
-        return (await _client.GetAsync(_sessionId, ct)).LastSequence;
+        // CARD-1766: a pty session record is an in-memory sequence. Herdr's single-session
+        // GET also runs pane.get, process-info and a status refresh, and an old runner
+        // omits Backend. Both stay on the buffer route, which returns the runner's current
+        // LastSequence on every call. The sequence is not cached in this process.
+        if (AgentSessionRuntime.SequencePollUsesSessionRecord(_backend))
+            return (await _client.GetAsync(_sessionId, ct)).LastSequence;
+        return (await _client.GetBufferAsync(_sessionId, ct)).LastSequence;
     }
 
     public async Task<bool> WaitForOutputAsync(

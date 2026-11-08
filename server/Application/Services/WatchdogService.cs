@@ -53,12 +53,22 @@ public sealed class WatchdogService
         if (liveSessionIds.Count == 0)
             return 0;
 
-        var activeSessions = await _db.AgentSessions
+        var rows = await _db.AgentSessions
             .AsNoTracking()
             .Where(s => liveSessionIds.Contains(s.Id) && ActiveStatuses.Contains(s.Status))
             .Select(s => new { s.Id, s.AgentKind, s.StartedAt })
             .ToListAsync(ct);
 
+        return await RespondAsync(
+            rows.Select(s => new WatchdogActiveSession(s.Id, s.AgentKind, s.StartedAt)).ToArray(), ct);
+    }
+
+    /// <summary>
+    /// CARD-1766: the scan body, so a witness can drive the tail choice without a database.
+    /// An empty rendered screen reads the ANSI tail; an occupied screen does not.
+    /// </summary>
+    internal async Task<int> RespondAsync(IReadOnlyList<WatchdogActiveSession> activeSessions, CancellationToken ct)
+    {
         var responded = 0;
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var cooldown = TimeSpan.FromMilliseconds(Math.Max(0, _settings.CooldownMs));
@@ -165,3 +175,6 @@ public sealed class WatchdogService
         return responded;
     }
 }
+
+/// <summary>One live session row the watchdog scan answers. The store query projects this.</summary>
+internal readonly record struct WatchdogActiveSession(Guid Id, AgentKind AgentKind, DateTime StartedAt);

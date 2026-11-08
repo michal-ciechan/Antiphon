@@ -45,6 +45,9 @@ public sealed partial class AgentSessionRuntime
     private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
     // CARD-0679 D-3: when each session's output activity was last written.
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _lastActivityWrites = new();
+    // CARD-1766: pty uses the session record; anything else uses the buffer route.
+    // The choice is cached. The sequence value is read from the runner on every poll.
+    private readonly ConcurrentDictionary<Guid, bool> _sequenceRouteIsPty = new();
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
     private readonly AgentSessionSettings _settings;
@@ -2455,6 +2458,7 @@ public sealed partial class AgentSessionRuntime
         _testPending.TryRemove(sessionId, out _);
         _testAcceptedStartedAt.TryRemove(sessionId, out _);
         _testTranscriptBound.TryRemove(sessionId, out _);
+        _sequenceRouteIsPty.TryRemove(sessionId, out _);
         return _testAdapters.TryRemove(sessionId, out adapter);
     }
 
@@ -2464,6 +2468,14 @@ public sealed partial class AgentSessionRuntime
             await adapter.DisposeAsync();
     }
 
+    /// <summary>
+    /// CARD-1766: pty sequence polls read the session record. Herdr and an omitted backend
+    /// read the buffer route, which carries the runner's current <c>LastSequence</c> without
+    /// pane.get, process-info or a status refresh. A poll never answers from a stored copy.
+    /// </summary>
+    internal static bool SequencePollUsesSessionRecord(string? backend) =>
+        string.Equals(backend, SessionBackends.PtyHost, StringComparison.Ordinal);
+
     private async Task<long> GetRunnerSequenceOrDefaultAsync(Guid sessionId, CancellationToken ct)
     {
         if (_testBuffers.ContainsKey(sessionId))
@@ -2471,17 +2483,77 @@ public sealed partial class AgentSessionRuntime
 
         try
         {
+            var useSessionRecord = await UseSessionSequenceRecordAsync(sessionId, ct);
             var (deadline, linked) = LiveReadDeadline(ct);
             using (deadline)
             using (linked)
             {
+                if (!useSessionRecord)
+                    return (await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token)).LastSequence;
+
                 var session = await _runnerClient.GetAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+                _sequenceRouteIsPty.TryAdd(sessionId, SequencePollUsesSessionRecord(session.Backend));
                 return session.LastSequence;
             }
         }
         catch
         {
             return GetDeltaSequenceOrDefault(sessionId);
+        }
+    }
+
+    private async Task<bool> UseSessionSequenceRecordAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_sequenceRouteIsPty.TryGetValue(sessionId, out var cached))
+            return cached;
+
+        var stored = await TryReadStoredSessionBackendAsync(sessionId, ct);
+        if (stored is { } backend)
+            return CacheSequenceRoute(sessionId, backend == SessionBackend.PtyHost);
+
+        try
+        {
+            var listed = await _runnerClient.ListAsync(ct);
+            foreach (var row in listed)
+            {
+                if (row.SessionId != sessionId)
+                    continue;
+                return CacheSequenceRoute(sessionId, SequencePollUsesSessionRecord(row.Backend));
+            }
+        }
+        catch
+        {
+            // A list failure names no route. The session read below still asks the runner.
+        }
+
+        return true;
+    }
+
+    private bool CacheSequenceRoute(Guid sessionId, bool pty)
+    {
+        _sequenceRouteIsPty.TryAdd(sessionId, pty);
+        return _sequenceRouteIsPty[sessionId];
+    }
+
+    private async Task<SessionBackend?> TryReadStoredSessionBackendAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetService<AppDbContext>();
+            if (db is null)
+                return null;
+
+            // Nullable so a missing row stays null. PtyHost is 0, and a non-nullable
+            // FirstOrDefault would treat "no row" as pty.
+            return await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => (SessionBackend?)s.SessionBackend)
+                .FirstOrDefaultAsync(ct);
+        }
+        catch
+        {
+            return null;
         }
     }
 
