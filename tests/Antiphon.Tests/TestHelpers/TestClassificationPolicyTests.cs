@@ -478,7 +478,9 @@ public sealed class TestClassificationPolicyTests
     {
         var dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        return await body(dir);
+        try { return await body(dir); }
+        // Best-effort: a failed delete (a Probe.dll still loaded on Windows) never fails the test.
+        finally { StartRefGit.DeleteDirectory(dir); }
     }
 
     private static async Task<(int ExitCode, string Output)> InvokeTripwireAsyncPath(string trxPath, string allowPath)
