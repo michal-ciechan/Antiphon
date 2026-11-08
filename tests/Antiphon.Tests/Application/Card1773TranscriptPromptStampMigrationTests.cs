@@ -37,15 +37,16 @@ public sealed class Card1773TranscriptPromptStampMigrationTests
         commands[0].CommandText.ShouldContain(
             $"ALTER INDEX \"{IndexName}\" RENAME TO \"{IndexName}_invalid\"");
         commands[0].CommandText.ShouldContain("NOT indisvalid");
-        commands[1].CommandText.ShouldBe($"DROP INDEX CONCURRENTLY IF EXISTS \"{IndexName}_invalid\";");
+        // Generate(SqlOperation) calls AppendLine, so each command ends with a newline.
+        commands[1].CommandText.ShouldBe($"DROP INDEX CONCURRENTLY IF EXISTS \"{IndexName}_invalid\";\n");
         commands[2].CommandText.ShouldStartWith($"CREATE INDEX CONCURRENTLY IF NOT EXISTS \"{IndexName}\"");
         commands[2].CommandText.ShouldContain("(\"AgentSessionId\", \"Kind\", \"Sequence\")");
         commands[2].CommandText.ShouldNotContain("WHERE");
         var down = db.GetService<IMigrationsSqlGenerator>().Generate(migration.DownOperations, migration.TargetModel);
         down.Count.ShouldBe(2);
         down.ShouldAllBe(c => c.TransactionSuppressed);
-        down[0].CommandText.ShouldBe($"DROP INDEX CONCURRENTLY IF EXISTS \"{IndexName}\";");
-        down[1].CommandText.ShouldBe($"DROP INDEX CONCURRENTLY IF EXISTS \"{IndexName}_invalid\";");
+        down[0].CommandText.ShouldBe($"DROP INDEX CONCURRENTLY IF EXISTS \"{IndexName}\";\n");
+        down[1].CommandText.ShouldBe($"DROP INDEX CONCURRENTLY IF EXISTS \"{IndexName}_invalid\";\n");
     }
 
     [Test, Timeout(180_000)]
