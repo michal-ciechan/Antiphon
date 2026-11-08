@@ -94,6 +94,8 @@ owner: Build slots in `docs/testing-and-build.md`). Paste this sentence:
 > their own cold outputs. A mutant loop re-leases PER MUTANT BUILD, never one lease around a loop
 > (CARD-1627).
 
+Migration changes (`server/Migrations/**`) follow the operator rule (2026-11-07): "Migrations should be additive; Down must fail safely." The Code brief runs the migration and model classes and the downgrade selector (grep `tests/` for `MigrateAsync(<target>)`, `.Down(`, or `CreateIsolatedSchemaAsync` then migrate backwards) and must report red/green counts. The Review brief blast radius check runs that selector and reports its count. A reviewer who only reruns the new migration tests has not reviewed the migration. Plan and TestDesign require an Existing tests affected row for migrations, public DTOs/routes, operation labels, remote script functions and statement budgets, pointing at the impacted-classes table (CARD-1782).
+
 ## 2. A delegate's base is chosen at dispatch; it stays on its own branch
 
 A fresh `-Worktree` task works on its own recorded `WorktreeBranch`; git-common forbids switching
