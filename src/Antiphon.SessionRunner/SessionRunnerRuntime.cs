@@ -708,6 +708,11 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
         try
         {
+            // CARD-1778 D-2: seed trust in the runner's Claude config before either lane spawns.
+            ClaudeLaunchTrustSeed.Apply(
+                request,
+                ClaudeLaunchTrustSeed.ReadProcessEnvironment(),
+                line => _logger.LogInformation("{ClaudeTrustSeed}", line));
             if (useHerdr)
             {
                 if (request.InstalledGrokRulesReceipt is { } receipt)
