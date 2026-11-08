@@ -261,7 +261,18 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         await h.RequestAsync(expectedSourceSha: h.Git.SourceHead);
         var hosted = new AgentTaskLandHostedService(h.Queue, h.Services.GetRequiredService<IServiceScopeFactory>(), hostedLog);
         await hosted.StartAsync(CancellationToken.None);
-        try { await Task.Delay(TimeSpan.FromSeconds(2)); }
+        try
+        {
+            if (cut is "before-save" or "after-save" or "commit")
+                await WaitUntilAsync(() => Task.FromResult(LogSnapshot(entries).Any(e => e.Message.Contains("Could not persist land failure"))),
+                    "persist failure log");
+            else
+                await WaitUntilAsync(async () =>
+                {
+                    await using var probe = h.CreateContext();
+                    return (await probe.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId)).FailureDiagnosticId is not null;
+                }, "failure diagnostic");
+        }
         finally { await hosted.StopAsync(CancellationToken.None); }
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
@@ -349,7 +360,12 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         };
         var hosted = new AgentTaskLandHostedService(h.Queue, h.Services.GetRequiredService<IServiceScopeFactory>(), hostedLog);
         await hosted.StartAsync(CancellationToken.None);
-        try { await Task.Delay(TimeSpan.FromSeconds(2)); }
+        try
+        {
+            await WaitUntilAsync(() => Task.FromResult(LogSnapshot(entries).Any(e =>
+                Equals(e.State.GetValueOrDefault("Attempt"), 1) || Equals(e.State.GetValueOrDefault("Attempt"), 1L))),
+                "attempt log");
+        }
         finally { await hosted.StopAsync(CancellationToken.None); }
         await using var db = h.CreateContext();
         (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal)).ShouldBe(0);
@@ -463,6 +479,22 @@ public sealed class AgentTaskLandFailureDiagnosticTests
             await Task.Delay(50);
         }
         throw new TimeoutException("terminal event");
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> ready, string what)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await ready()) return;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException(what);
+    }
+
+    private static RecordingLogEntry[] LogSnapshot(List<RecordingLogEntry> entries)
+    {
+        lock (entries) return entries.ToArray();
     }
 
     private static void AssertNoMarker(AgentTaskLandRequest request, string detail, string body, string log)

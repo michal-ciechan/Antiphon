@@ -23,7 +23,8 @@ internal sealed class RecordingLogger<T> : ILogger<T>
             foreach (var item in kv)
                 pairs[item.Key] = item.Value;
         }
-        Entries.Add(new(logLevel, formatter(state, exception), exception, pairs));
+        lock (Entries)
+            Entries.Add(new(logLevel, formatter(state, exception), exception, pairs));
     }
 
     private sealed class NullScope : IDisposable
