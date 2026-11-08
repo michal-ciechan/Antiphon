@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [NativeLinuxOnly("DetachedLauncher setsid proof runs on Linux; Review runs the Windows half.")]
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class DetachedLauncherTests : CheckpointTestBase
 {
     [Test]

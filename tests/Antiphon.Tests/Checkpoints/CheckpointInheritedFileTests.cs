@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 [NativeLinuxOnly("Linux FIFO admission proof")]
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointInheritedFileTests : CheckpointTestBase
 {
     [Test]

@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
 [Category("C835")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointSourceStateTests
 {
     [Test]

@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 // real git with a hard link on Linux and NTFS. A second link deterministically makes the
 // entry unprovable without changing its bytes, privileges, ACLs, or handle sharing.
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointScriptReaderDeadlineTests : CheckpointTestBase
 {
     [Test]

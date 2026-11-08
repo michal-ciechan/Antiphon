@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 // CARD-1199 review 6b8368dc F1: a CheckpointFixtureProcess child blocked before exit or holding a pipe after exit
 // must fail its fixture step within the stated limit, not hang the test host.
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
 {
     [NativeLinuxOnly("FIFO config proof runs on Linux")]

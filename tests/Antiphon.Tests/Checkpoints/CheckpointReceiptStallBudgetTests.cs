@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 // CARD-1601 replaces CARD-1599's six-second scheduling stopgap with a dedicated I/O thread,
 // a three-second silence window, and a separate overall cap. Pool witnesses run in children.
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
 {
     private static readonly TimeSpan LoadedHostBudget = CheckpointFileReader.StallDeadline;

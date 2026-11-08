@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 // Each row guards against automatic restore/delete or a false preservation claim.
 [Category("Unit")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 {
     private const string OutputPath = "bin-probe/";

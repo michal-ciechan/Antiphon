@@ -8,7 +8,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 // Round-2 witnesses for review cc28539f. They exercise the production ledger and state store.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class UnsafeDeleteRecoveryTests
 {
     [Test]

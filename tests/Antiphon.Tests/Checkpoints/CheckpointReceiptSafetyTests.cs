@@ -10,7 +10,7 @@ using Antiphon.TestSupport;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
 {
     [NativeLinuxOnly("Linux FIFO qualification requires Linux")]

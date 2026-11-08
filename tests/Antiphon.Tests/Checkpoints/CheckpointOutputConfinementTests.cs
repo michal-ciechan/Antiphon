@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 // the build output to land under App/bin-confined/ (tool) or App/bin-script-confined/ (script).
 [Category("Unit")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 {
     private const string TrackedDllText = "TRACKED DEPENDENCY ORIGINAL";

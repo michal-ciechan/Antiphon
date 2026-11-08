@@ -7,7 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointWindowsAnchoredDeleteTests
 {
     [Test]

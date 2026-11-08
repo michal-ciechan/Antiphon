@@ -1416,8 +1416,7 @@ build outputs and results, and can use method-scoped batches. This is local test
 not permission to sub-delegate. Own and await every run before ending the turn.
 
 Concurrent `Antiphon.Tests` shards rely on per-test DB schema isolation and the existing
-assembly-local `ParallelLimiter<ProcessSpawnLimit>` (and `GitProcessSpawnLimit`) model. That limiter serializes process
-spawns within one assembly process, not across processes; do not co-schedule these shards
+assembly-local `ParallelLimiter<ProcessSpawnLimit>`, `GitProcessSpawnLimit`, and `CheckpointToolSpawnLimit` model. Each limiter serializes its own lane within one assembly process, not across processes, and a wider lane does not widen the strict lane; do not co-schedule these shards
 with `Antiphon.Agents.Pty.Tests`/FakeClaude. Controls depending on shared external state
 without isolation must remain serial. Restore all temporary mutations. Production/test repairs return to Code for ordinary V/R
 and a new post-land SourceLanding pass; sourced Mutation keeps amendments in external evidence.
@@ -1881,6 +1880,8 @@ Each shard row:
 Set `--total-timeout` to at least the derived execution allowance for the whole shard set. Do not set an explicit total below that derivation: `totalTimeoutMinutes: N` below it is refused as `checkpoint-total-below-derived` unless `totalTimeoutOverrideReason` is set (CARD-1720). Each shard writes `rows/<id>/run.trx`. A later total-budget kill still reports a shard that already flushed that file. Shard runtimes are UNMEASURED, so those `EstimatedMinutes` values stay provisional under R5 and are not a measured p95. The killed run 20261105-013711-58df reached 535s on one whole-Unit row and wrote no TRX; that duration is not a p95. Because those runtimes are unmeasured and the shard rows omit method-level Unit tests, those rows do not yet demonstrate a complete Unit-lane receipt.
 
 Measured shard cost (CARD-1728, [investigation](investigations/2026-11-07-debug-unit-shard-completion.md)): a shard is bounded by its serial `ParallelLimiter<ProcessSpawnLimit>` chain (Limit 1 per host), not by its test count. On loaded server2 the A-L class-letter shard ran 2,177 cases in under a minute, then spent about 37 minutes running one process-spawning case at a time. 1,904 s of that was `Antiphon.Tests.Checkpoints`. The shard hit its 45-minute cap with no TRX. Discovery depends on the filter shape: 47 s to the first test for a namespace filter, 116 s for `/*/*/*/*[Category=Unit]`, and 261-419 s for a 12-operand class OR filter. Size shards by measured serial seconds and prefer namespace or single-prefix filters to OR lists. A killed or SIGTERMed host writes no TRX. Only the CARD-1514 phase journal (`ANTIPHON_TEST_PHASE_ROOT`) keeps per-case attribution.
+
+CARD-1747 gives those checkpoint-tool classes `CheckpointToolSpawnLimit` at width 2 when their children run in a fixture-owned root. Each slots-off checkpoint build uses `-maxcpucount:4`, so two occupants are eight MSBuild nodes and the lane does not take the host build slot. `ANTIPHON_TEST_CHECKPOINT_TOOL_SPAWN_LIMIT` (1-4) overrides that width and is read once when the limiter type initializes; there is no later cache. Six classes stay on `ProcessSpawnLimit` because a child uses the shared checkout as its working directory: `RerunFilterHostTests`, `CheckpointSourceExecutionTests`, `CheckpointRepeatBuildIsolationTests`, `CheckpointTerminalReceiptTests`, `CheckpointRepeatHostTests`, and `CheckpointStatePublicationTests`.
 
 ## Test traces (OpenTelemetry-style spans)
 

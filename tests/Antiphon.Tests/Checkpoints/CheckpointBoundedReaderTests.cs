@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [NativeLinuxOnly("Linux FIFO and process-group qualification")]
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointBoundedReaderTests : CheckpointTestBase
 {
     [Test]

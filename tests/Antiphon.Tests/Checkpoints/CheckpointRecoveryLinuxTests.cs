@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 [NativeLinuxOnly("native Linux custody proof requires Linux")]
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
 {
     [Test]

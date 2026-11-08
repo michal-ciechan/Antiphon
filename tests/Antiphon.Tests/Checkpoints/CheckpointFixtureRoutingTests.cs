@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 [NativeLinuxOnly("CARD-1233 S8 requires Linux process identities and FIFO probes.")]
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointFixtureRoutingTests : CheckpointTestBase
 {
     [Test]

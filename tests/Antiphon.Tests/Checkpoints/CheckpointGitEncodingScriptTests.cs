@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Checkpoints;
 /// decodes git output, and invalid UTF-8 from git must be refused rather than replaced.
 /// </summary>
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointGitEncodingScriptTests : CheckpointTestBase
 {
     [Test]

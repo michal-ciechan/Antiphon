@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 // Real builds must detect changes and preserve resulting user bytes and index.
 [Category("Unit")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 {
     private const string OutputPath = "bin-probe/";

@@ -9,7 +9,7 @@ using Antiphon.TestSupport;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointStampSafetyTests : CheckpointTestBase
 {
     [NativeLinuxOnly("Linux source-shape qualification")]
