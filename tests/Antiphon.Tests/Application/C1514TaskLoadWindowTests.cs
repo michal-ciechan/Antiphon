@@ -11,7 +11,13 @@ using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 namespace Antiphon.Tests.Application;
-[Category("Integration"), Timeout(10_000), NotInParallel("C1514HostLoadServer")]
+// Provisional, two Linux completions, not a p95 (CARD-1514 R5).
+// AttemptsAndMovesKeepSeparateWindows was killed at the 10s class cap, then finished in 16.3s
+// (schema-cache 13.5s inside that run) and 26.2s (schema-cache 4.3s). The fixture poll allows 15s,
+// which is longer than that cap, so a slow poll died in the TUnit timeout handler.
+// 2x the slower completion is 52s. 60s matches the SeedPrefix methods on C1514HostLoadHistoryTests.
+// The 26.2s completion was observed under a 45s ceiling; assertions are unchanged.
+[Category("Integration"), Timeout(60_000), NotInParallel("C1514HostLoadServer")]
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514TaskLoadWindowTests(C1514HostLoadFixture fixture)
 {
