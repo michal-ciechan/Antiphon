@@ -65,6 +65,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly StandingRestartEscalationPolicy _restartEscalation;
+    private readonly bool _verifyExecutablesOnServer;
 
     /// <summary>
     /// Seconds the S-4 lost-commit reread may wait on the agent row. 120 matches the grant
@@ -105,9 +106,11 @@ public sealed class AgentControlService : ICompactionContinuationResume
         WorkspaceUseAdmission? workspaceUse = null,
         LandDeliveryBoundary? landBoundary = null,
         CapacityRecoveryService? capacityRecovery = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        IOptions<SessionRunnerSettings>? sessionRunnerSettings = null)
     {
         _scopeFactory = scopeFactory;
+        _verifyExecutablesOnServer = sessionRunnerSettings?.Value.VerifyExecutablesOnServer ?? true;
         _capacityRecovery = capacityRecovery;
         _landBoundary = landBoundary;
         _workspaceUse = workspaceUse;
@@ -523,8 +526,12 @@ public sealed class AgentControlService : ICompactionContinuationResume
             remoteControl: remoteControlName is not null);
         if (_phoneHome?.IsRunnerBound(agent) == true)
             spec = _phoneHome.Project(spec, agent);
-        else
+        else if (_verifyExecutablesOnServer)
             AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
+        else
+            _logger.LogDebug(
+                "Leaving executable {Exe} for the runner to spawn; SessionRunner:VerifyExecutablesOnServer is false.",
+                spec.Exe);
 
         if (agent.SessionBackend == SessionBackend.Herdr)
         {
