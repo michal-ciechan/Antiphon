@@ -255,6 +255,36 @@ public class Card1761RunnerReadPollTests
     }
 
     [Test]
+    public async Task Card1761_Pty_output_wait_reaches_the_moved_frame_when_a_poll_stalls_past_the_deadline()
+    {
+        var client = new CountingRunner { Backend = SessionBackends.PtyHost, Sequence = 4, Raw = "old" };
+        var terminal = new RunnerTerminalSession(client);
+        await terminal.StartAsync(Spec(), CancellationToken.None);
+        terminal.StopWatching();
+        client.Reset();
+        client.OnSessionGet = runner =>
+        {
+            if (runner.SessionGets == 1)
+                Thread.Sleep(TimeSpan.FromMilliseconds(500));
+            else if (runner.SessionGets == 3)
+            {
+                runner.Sequence = 9;
+                runner.Raw = "new";
+            }
+        };
+
+        using var hang = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var matched = await terminal.WaitForOutputAsync(
+            text => text.Contains("new", StringComparison.Ordinal),
+            TimeSpan.FromMilliseconds(400),
+            hang.Token);
+
+        matched.ShouldBeTrue();
+        client.SnapshotReads.ShouldBe(2);
+        client.BufferReads.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Card1761_Screen_only_live_snapshot_skips_the_ansi_tail()
     {
         var sessionId = Guid.NewGuid();
