@@ -55,17 +55,18 @@ public sealed partial class ImpactedClassesSelectorTests
         json.RootElement.GetProperty("emptyGlobs").GetArrayLength().ShouldBe(0, audit.Text);
         json.RootElement.GetProperty("missingClasses").GetArrayLength().ShouldBe(0, audit.Text);
 
-        foreach (var relative in new[] { "server/Bundles/stage-code.md", "server/Bundles/stage-review.md" })
-        {
-            var text = await File.ReadAllTextAsync(Path.Combine(root, relative));
-            text.ShouldContain(
-                "impacted-classes rows whose globs match git diff --name-only base..HEAD",
-                Case.Sensitive,
-                relative);
-        }
+        var codeBundle = await File.ReadAllTextAsync(Path.Combine(root, "server", "Bundles", "stage-code.md"));
+        codeBundle.ShouldContain(
+            "impacted-classes rows whose globs match git diff --name-only base..HEAD",
+            Case.Sensitive,
+            "server/Bundles/stage-code.md");
 
         var guide = await File.ReadAllTextAsync(Path.Combine(root, "docs", "testing-and-build.md"));
         guide.ShouldContain("scripts/impacted-classes.ps1", Case.Sensitive, "owner usage");
+        guide.ShouldContain(
+            "Code and Review Final scope includes the impacted-classes rows",
+            Case.Sensitive,
+            "review scope stays in the owner doc");
         guide.ShouldContain("A Merge batch appends the union", Case.Sensitive, "merge usage");
         guide.ShouldContain("maximum staleness is zero", Case.Sensitive, "staleness");
     }
