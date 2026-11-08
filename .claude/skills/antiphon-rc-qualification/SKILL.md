@@ -117,6 +117,20 @@ These directions override the cited standing rules in
    to execute only after the live run releases its native lock. A Linux green does
    not discharge Windows evidence. Fixers never run native tests, tags, or land graph `-Update`. Commit and push each repair slice; report full SHAs and counts.
 
+   **Why-missed write-up (CARD-1781).** Every Debug dispatched for a failed rc chunk
+   with a new cause also delivers a `WHY-MISSED` section in its done report and a
+   committed note `docs/investigations/<date>-why-missed-<cause>.md`, copied from
+   `docs/investigations/why-missed-template.md`. Owner:
+   [why-missed write-up](../../../docs/orchestration-loop.md#why-missed-write-up-card-1781).
+   The section and the note name these five items:
+   introducing commit/card;
+   approving review(s) with scope (Full/Interim) and the selection they actually ran;
+   why the failing test was outside that selection (lane/category/path);
+   the cheapest pre-land check as a path-glob -> class-filter entry for the impacted-classes table of CARD-1782.
+   Exemption: same cause as an already written note: link it.
+   Same-cause chunks share that one note. The orchestrator aggregates the notes and
+   files one Backlog card when a cause repeats.
+
 4. **Integrate repairs through a serial fix pipeline.** Debug fix -> Opus Review
    (`-Kind ClaudeCode -Level High`) for product/dispatcher/watchdog changes -> Merge.
    Test-only and other Debug repairs go directly to rc under this operator workflow;

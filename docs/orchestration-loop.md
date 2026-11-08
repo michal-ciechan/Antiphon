@@ -719,6 +719,8 @@ The overnight "rc batch" procedure, as practised 2026-10-24, repairs completed
    Use the role matrix for the tier and the effective concurrency limits in section 1.
    Supply failing classes/counts, sample methods, [CARD-0680 context](session-runtime-invariants.md#claude-automated-input-dialog-guard-card-0680) and the full sibling
    exclusion list, so parallel fixers do not edit one another's classes.
+   A chunk with a new cause also owes the [why-missed write-up](#why-missed-write-up-card-1781).
+   A chunk that is the same cause as an already written note links that note.
 3. **Include this DO list.** Start from fetched `origin/master`; one isolated build under
    `scripts/build-slot.ps1`, then run the compiled output through that gate with `--no-build`.
    The 2026-10-24 workaround was necessary because `run-checkpoint.ps1` refused the test
@@ -759,6 +761,23 @@ class roster and sibling exclusions for each dispatch; the DO list above remains
 > Sibling fixers for groups 33-36 are in flight or queued (do not touch their classes: ...).
 > DO: ... keep every assertion ... Budget 75 minutes with hard timeouts; push after each
 > class fix. No Review (operator) for fixture-only changes ... do NOT rebase ... (next: land).
+
+Each new dispatch's brief also requires the why-missed write-up below, or a link when the chunk is the same cause as an already written note. The historical group-37 text above stays the repair DO list.
+
+<a id="why-missed-write-up-card-1781"></a>
+### Why-missed write-up for a new rc failure cause (CARD-1781)
+
+Operator (2026-11-08): "Each time we get a failed chunk, we should be sending an agent to figure out and create a write up why was it missed before rc run."
+
+Every Debug dispatched for a failed rc chunk with a new cause delivers, besides the fix, a `WHY-MISSED` section in its done report and a committed note `docs/investigations/<date>-why-missed-<cause>.md`. Copy [docs/investigations/why-missed-template.md](investigations/why-missed-template.md). The report section and the note name these five items:
+
+1. introducing commit/card
+2. approving review(s) with scope (Full/Interim) and the selection they actually ran
+3. why the failing test was outside that selection (lane/category/path)
+4. the cheapest pre-land check as a path-glob -> class-filter entry for the impacted-classes table of CARD-1782
+5. Exemption: same cause as an already written note: link it.
+
+Same-cause chunks share that one note. The orchestrator aggregates the notes and files one Backlog card when a cause repeats. The first retrospective, for failures through 2026-11-08, is Investigate 4651491a.
 
 ### Post-land miss retrospective (CARD-0811)
 
