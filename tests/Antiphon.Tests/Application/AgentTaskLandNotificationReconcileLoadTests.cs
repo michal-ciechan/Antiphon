@@ -17,9 +17,10 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1759. A fresh reconcile reads the note once through a compiled query, and the hosted
 /// scan does not load a null-queue note whose next attempt is still in the future.
-/// A compiled query names its parameter after the lambda (<c>@__id</c>, <c>@__now</c>). An ad-hoc
-/// query keeps the ordinal suffix (<c>@__id_0</c>) even when the plan is already cached. The async
-/// reader runs after the compiled-query method has returned, so the stack does not name it.
+/// CARD-1769. A compiled query carries the <c>land-reconcile-compiled</c> tag inside its
+/// expression. Parameter names are not the witness: an EF upgrade that renames <c>@__id</c>
+/// must not turn this green or red by itself. The async reader runs after the compiled-query
+/// method has returned, so the stack does not name it.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("card-1759-land-note-load")]
@@ -281,10 +282,9 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
                 else if (parameter.Value is string text && Guid.TryParse(text, out var parsed))
                     ids.Add(parsed);
             }
-            // CompileAsyncQuery names the parameter from the lambda (@__id, @__now). Ad-hoc
-            // extraction appends an ordinal (@__id_0) on every execution, cache hit included.
-            var compiled = names.Contains("@__id") || names.Contains("@__now");
-            if (sql.Contains("LIMIT 128", StringComparison.Ordinal) && names.Contains("@__now"))
+            // The tag is inside the compiled lambda. An ad-hoc query, cached plan included, has no tag.
+            var compiled = sql.Contains(LandNotificationReconcileQueries.CompiledTag, StringComparison.Ordinal);
+            if (compiled && sql.Contains("LIMIT 128", StringComparison.Ordinal))
                 PageCompiled = true;
             var compact = sql.Length <= 240 ? sql : sql[..240];
             lock (_gate)
