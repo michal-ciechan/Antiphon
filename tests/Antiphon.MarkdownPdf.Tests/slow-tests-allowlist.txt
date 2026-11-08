@@ -1,2 +1,2 @@
 Antiphon.MarkdownPdf.Tests.MarkdownPdfRealBrowserTests # Docker Chromium rendering and independent Poppler page extraction
-Antiphon.MarkdownPdf.Tests.FakeBrowserSolutionReleaseTests # CARD-1740 leased Release solution build of the consumer, about 10s
+Antiphon.MarkdownPdf.Tests.FakeBrowserSolutionReleaseTests # CARD-1740 direct Release solution build under the outer slot, measured 11s on server2 (outer slot held 14s, waited 0s)
