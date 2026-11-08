@@ -3036,8 +3036,10 @@ function Test-C599A_ExecutionLedger {
             $c1770Detail = 'attribute read was not denied: ' + $c1770Probe.Detail
         } else {
             $c1770Capture = Get-C599PublishCapture -Fx $fx
-            $c1770WantLine = '[publish-release] REFUSED: publication gate (chunk-evidence-escape:antiphon-001).'
-            $c1770WantReason = 'chunk-evidence-escape:antiphon-001'
+            # An escape continues before that chunk's UIDs are recorded, so the gate also names them missing.
+            # The line below is the publisher text for that existing reason list, not a second refusal.
+            $c1770WantLine = '[publish-release] REFUSED: publication gate (chunk-evidence-escape:antiphon-001,uid-missing:antiphon-u1,uid-missing:antiphon-u2).'
+            $c1770WantReason = 'chunk-evidence-escape:antiphon-001,uid-missing:antiphon-u1,uid-missing:antiphon-u2'
             $c1770Res = $c1770Capture.Result
             $c1770Line = @($c1770Capture.Lines) -contains $c1770WantLine
             $c1770Journal = Join-Path $fx.ReleaseRoot 'publications.json'
