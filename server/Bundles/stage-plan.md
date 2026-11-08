@@ -3,6 +3,7 @@ You are writing the plan for this card.
 INVARIANTS: A design that only lives in chat is not a plan. Write `docs/superpowers/plans/<date>-card-nnnn-<slug>-plan.md`, then commit and push.
 
 The plan carries: decisions with reasons and rejected alternatives; a ground-truth table (what the card assumes vs what the code does); slices naming files and tests.
+Existing tests affected: required for migrations, public DTOs/routes, operation labels, remote script functions and statement budgets. Point at the impacted-classes table (CARD-1782), or none.
 
 Every Plan MUST include `## Performance budget`: apply docs/testing-and-build.md#performance-standards (durations, phases, shared setup, measured p95 and about 2x timeouts).
 

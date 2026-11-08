@@ -139,6 +139,10 @@ All AI agents and developers MUST follow these 13 rules:
 
 13. **Follow SignalR -> Query Invalidation Mapping** — `useSignalRInvalidation` hook subscribes to SignalR events and calls `queryClient.invalidateQueries()` with mapped keys. All features benefit automatically.
 
+### EF Core migrations
+
+Operator rule (2026-11-07): "Migrations should be additive; Down must fail safely." Down throws where applying it would lose data. A migration whose Down throws makes every test that rewinds a tip clone fail. Build the predecessor schema forward with `MigrationTestDatabase.CreateAsync(<predecessor>)` instead of downgrading a latest clone. The downgrade selector greps `tests/` for `MigrateAsync(<target>)`, `IMigrator.Migrate`, `MigrationTestDatabase.CreateAsync`, `.Down(`, and `CreateIsolatedSchemaAsync` followed by a backwards `MigrateAsync`. Fix those fixtures or list them as owed, and report red/green counts. Also run the migration and model classes. A reviewer who only reruns the new migration tests has not reviewed the migration.
+
 ## SignalR -> Query Invalidation Mapping
 
 | SignalR Event | Invalidates Query Keys | Trigger |
