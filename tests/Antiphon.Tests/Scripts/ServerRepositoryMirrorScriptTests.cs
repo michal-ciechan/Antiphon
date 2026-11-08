@@ -27,12 +27,13 @@ public sealed class ServerRepositoryMirrorScriptTests
                 gym-stat|C:/src/gym-stat|https://github.com/example/gym-stat.git
                 markdown-package|C:\src\markdown-package|https://github.com/example/markdown-package.git
                 """);
-            var run = await RunAsync("-TableFile", table, "-ReposRoot", repos);
+            var scriptRepos = ScriptRoot(repos, OperatingSystem.IsWindows());
+            var run = await RunAsync("-TableFile", table, "-ReposRoot", scriptRepos);
             run.Exit.ShouldBe(0, run.Output);
             run.Output.ShouldContain("reason=planned");
-            run.Output.ShouldContain("after=" + repos + "/antiphon");
-            run.Output.ShouldContain("after=" + repos + "/gym-stat");
-            run.Output.ShouldContain("after=" + repos + "/markdown-package");
+            run.Output.ShouldContain("after=" + scriptRepos + "/antiphon");
+            run.Output.ShouldContain("after=" + scriptRepos + "/gym-stat");
+            run.Output.ShouldContain("after=" + scriptRepos + "/markdown-package");
             run.Output.ShouldContain("before=C:/src/Antiphon");
             run.Output.ShouldContain("before=C:\\src\\markdown-package");
             run.Output.ShouldContain("rollback restores the before column");
@@ -68,7 +69,7 @@ public sealed class ServerRepositoryMirrorScriptTests
             var policy = Path.Combine(root, "policy");
             Directory.CreateDirectory(repos);
             await File.WriteAllTextAsync(table, "antiphon|C:/src/Antiphon|https://github.com/michal-ciechan/Antiphon.git\n");
-            var run = await RunAsync("-Execute", "-TableFile", table, "-ReposRoot", repos, "-TokenFile", token, "-PolicyFile", policy);
+            var run = await RunAsync("-Execute", "-TableFile", table, "-ReposRoot", ScriptRoot(repos, OperatingSystem.IsWindows()), "-TokenFile", token, "-PolicyFile", policy);
             run.Exit.ShouldBe(2, run.Output);
             run.Output.ShouldContain("reason=credential-absent");
             Directory.Exists(Path.Combine(repos, "antiphon")).ShouldBeFalse();
@@ -89,7 +90,7 @@ public sealed class ServerRepositoryMirrorScriptTests
             var policy = Path.Combine(root, "policy");
             await File.WriteAllTextAsync(table, "antiphon|C:/src/Antiphon|https://github.com/michal-ciechan/Antiphon.git\n");
             await File.WriteAllTextAsync(token, "CANARY-TOKEN-VALUE-1776\n");
-            var run = await RunAsync("-Execute", "-TableFile", table, "-ReposRoot", repos, "-TokenFile", token, "-PolicyFile", policy);
+            var run = await RunAsync("-Execute", "-TableFile", table, "-ReposRoot", ScriptRoot(repos, OperatingSystem.IsWindows()), "-TokenFile", token, "-PolicyFile", policy);
             run.Exit.ShouldBe(2, run.Output);
             run.Output.ShouldContain("reason=mirror-parent-missing");
             run.Output.ShouldNotContain("CANARY-TOKEN-VALUE-1776");
@@ -128,6 +129,30 @@ public sealed class ServerRepositoryMirrorScriptTests
             escape.Output.ShouldContain("reason=path-forbidden");
         }
         finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Windows_temp_root_is_passed_drive_relative_and_planned()
+    {
+        var root = NewRoot();
+        try
+        {
+            var table = Path.Combine(root, "table.txt");
+            await File.WriteAllTextAsync(table, "antiphon|C:/src/Antiphon|https://github.com/michal-ciechan/Antiphon.git\n");
+            var repos = ScriptRoot(@"C:\Users\runner\AppData\Local\Temp\card-1776-mirrors-0\repos", windows: true);
+            var run = await RunAsync("-TableFile", table, "-ReposRoot", repos);
+            run.Exit.ShouldBe(0, run.Output);
+            run.Output.ShouldContain("after=" + repos + "/antiphon");
+            repos.ShouldBe("/Users/runner/AppData/Local/Temp/card-1776-mirrors-0/repos");
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    // The script takes only a POSIX-rooted -ReposRoot (server2 /work/repos). A Windows
+    // temp root goes in drive-relative, which names the same directory from the temp drive.
+    private static string ScriptRoot(string hostPath, bool windows)
+    {
+        return hostPath;
     }
 
     private static async Task<(int Exit, string Output)> RunAsync(params string[] args)
