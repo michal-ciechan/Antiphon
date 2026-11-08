@@ -10,6 +10,9 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 internal sealed class RunnerTerminalSession
 {
     private readonly ISessionRunnerClient _client;
+    // Production waits stay on TimeProvider.System. A test clock advances once per poll so a
+    // stalled delay cannot eat the deadline before the next read.
+    private readonly TimeProvider _time;
     // CARD-0679 R5 repair 2: a remote client follows the runner's current connection, so an exit
     // watcher left running after its adapter was released would poll the replacement connection.
     private readonly CancellationTokenSource _watcher = new();
@@ -19,9 +22,10 @@ internal sealed class RunnerTerminalSession
     private string? _backend;
     private ClaudeEffortIntent _effortIntent = new();
 
-    public RunnerTerminalSession(ISessionRunnerClient client)
+    public RunnerTerminalSession(ISessionRunnerClient client, TimeProvider? time = null)
     {
         _client = client;
+        _time = time ?? TimeProvider.System;
     }
 
     public Guid SessionId => _sessionId;
@@ -240,14 +244,14 @@ internal sealed class RunnerTerminalSession
         CancellationToken ct)
     {
         EnsureStarted();
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = UtcNow() + timeout;
         // A pty frame moves with LastSequence under one lock, so holding it until the
         // next session read is not a time cache. Herdr's screen is a pane.read, and an
         // old runner omits Backend: both keep a snapshot on every poll.
         var sequenceTracksFrame = string.Equals(_backend, SessionBackends.PtyHost, StringComparison.Ordinal);
         long? heldSequence = null;
         string? heldText = null;
-        while (DateTime.UtcNow < deadline)
+        while (UtcNow() < deadline)
         {
             string text;
             if (sequenceTracksFrame)
@@ -270,7 +274,7 @@ internal sealed class RunnerTerminalSession
             if (predicate(text))
                 return true;
 
-            try { await Task.Delay(50, ct); }
+            try { await PollDelayAsync(ct); }
             catch (OperationCanceledException) { return false; }
         }
 
@@ -282,24 +286,24 @@ internal sealed class RunnerTerminalSession
         TimeSpan maxWait,
         CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + maxWait;
+        var deadline = UtcNow() + maxWait;
         var lastSequence = await GetLastSequenceAsync(ct);
-        var lastChange = DateTime.UtcNow;
+        var lastChange = UtcNow();
 
-        while (DateTime.UtcNow < deadline)
+        while (UtcNow() < deadline)
         {
-            try { await Task.Delay(50, ct); }
+            try { await PollDelayAsync(ct); }
             catch (OperationCanceledException) { return false; }
 
             var currentSequence = await GetLastSequenceAsync(ct);
             if (currentSequence != lastSequence)
             {
                 lastSequence = currentSequence;
-                lastChange = DateTime.UtcNow;
+                lastChange = UtcNow();
                 continue;
             }
 
-            if (DateTime.UtcNow - lastChange >= quietPeriod)
+            if (UtcNow() - lastChange >= quietPeriod)
                 return true;
         }
 
@@ -318,9 +322,9 @@ internal sealed class RunnerTerminalSession
         CancellationToken ct,
         Func<CancellationToken, Task>? observeAsync = null)
     {
-        var deadline = DateTime.UtcNow + maxWait;
+        var deadline = UtcNow() + maxWait;
 
-        while (DateTime.UtcNow < deadline)
+        while (UtcNow() < deadline)
         {
             if (observeAsync is not null)
                 await observeAsync(ct);
@@ -328,7 +332,7 @@ internal sealed class RunnerTerminalSession
             if (VisiblePtyOutput.HasVisibleOutput(await SnapshotTextAsync(ct)))
                 break;
 
-            try { await Task.Delay(50, ct); }
+            try { await PollDelayAsync(ct); }
             catch (OperationCanceledException) { return false; }
         }
 
@@ -336,25 +340,25 @@ internal sealed class RunnerTerminalSession
             return false;
 
         var lastSequence = await GetLastSequenceAsync(ct);
-        var lastChange = DateTime.UtcNow;
+        var lastChange = UtcNow();
 
-        while (DateTime.UtcNow < deadline)
+        while (UtcNow() < deadline)
         {
             if (observeAsync is not null)
                 await observeAsync(ct);
 
-            try { await Task.Delay(50, ct); }
+            try { await PollDelayAsync(ct); }
             catch (OperationCanceledException) { return false; }
 
             var currentSequence = await GetLastSequenceAsync(ct);
             if (currentSequence != lastSequence)
             {
                 lastSequence = currentSequence;
-                lastChange = DateTime.UtcNow;
+                lastChange = UtcNow();
                 continue;
             }
 
-            if (DateTime.UtcNow - lastChange >= quietPeriod)
+            if (UtcNow() - lastChange >= quietPeriod)
                 return true;
         }
 
@@ -451,6 +455,14 @@ internal sealed class RunnerTerminalSession
         _completion.TrySetResult(new(null));
         return -1;
     }
+
+    private DateTime UtcNow() =>
+        ReferenceEquals(_time, TimeProvider.System) ? DateTime.UtcNow : _time.GetUtcNow().UtcDateTime;
+
+    private Task PollDelayAsync(CancellationToken ct) =>
+        ReferenceEquals(_time, TimeProvider.System)
+            ? Task.Delay(50, ct)
+            : Task.Delay(TimeSpan.FromMilliseconds(50), _time, ct);
 
     private void EnsureStarted()
     {

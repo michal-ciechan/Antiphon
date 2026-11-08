@@ -79,7 +79,7 @@ public class Card1761RunnerReadPollTests
     public async Task Card1761_Pty_output_wait_snapshots_only_when_the_sequence_moves()
     {
         var client = new CountingRunner { Backend = SessionBackends.PtyHost, Sequence = 4, Raw = "idle" };
-        var terminal = new RunnerTerminalSession(client);
+        var terminal = PollTerminal(client);
         await terminal.StartAsync(Spec(), CancellationToken.None);
         client.Reset();
 
@@ -161,7 +161,7 @@ public class Card1761RunnerReadPollTests
             if (runner.BufferReads <= 3)
                 runner.BufferSequence = 10 + runner.BufferReads;
         };
-        var terminal = await Started(client);
+        var terminal = await Started(client, new PollStepTimeProvider());
 
         var quiet = await terminal.WaitForQuietAsync(
             TimeSpan.FromMilliseconds(80), TimeSpan.FromSeconds(2), CancellationToken.None);
@@ -232,7 +232,7 @@ public class Card1761RunnerReadPollTests
     public async Task Card1761_Pty_output_wait_refreshes_the_frame_when_the_sequence_moves()
     {
         var client = new CountingRunner { Backend = SessionBackends.PtyHost, Sequence = 4, Raw = "old" };
-        var terminal = new RunnerTerminalSession(client);
+        var terminal = PollTerminal(client);
         await terminal.StartAsync(Spec(), CancellationToken.None);
         client.Reset();
         client.OnSessionGet = runner =>
@@ -258,7 +258,7 @@ public class Card1761RunnerReadPollTests
     public async Task Card1761_Pty_output_wait_reaches_the_moved_frame_when_a_poll_stalls_past_the_deadline()
     {
         var client = new CountingRunner { Backend = SessionBackends.PtyHost, Sequence = 4, Raw = "old" };
-        var terminal = new RunnerTerminalSession(client);
+        var terminal = PollTerminal(client);
         await terminal.StartAsync(Spec(), CancellationToken.None);
         terminal.StopWatching();
         client.Reset();
@@ -404,9 +404,12 @@ public class Card1761RunnerReadPollTests
         return (client, await Started(client));
     }
 
-    private static async Task<RunnerTerminalSession> Started(CountingRunner client)
+    private static RunnerTerminalSession PollTerminal(CountingRunner client) =>
+        new(client, new PollStepTimeProvider());
+
+    private static async Task<RunnerTerminalSession> Started(CountingRunner client, TimeProvider? time = null)
     {
-        var terminal = new RunnerTerminalSession(client);
+        var terminal = new RunnerTerminalSession(client, time);
         await terminal.StartAsync(Spec(), CancellationToken.None);
         terminal.StopWatching();
         client.Reset();
@@ -520,6 +523,44 @@ public class Card1761RunnerReadPollTests
         {
             await Task.CompletedTask;
             yield break;
+        }
+    }
+
+    /// <summary>
+    /// Each poll delay advances logical time by its due time and completes off the caller
+    /// stack. Wall time spent inside a read does not move the deadline.
+    /// </summary>
+    private sealed class PollStepTimeProvider : TimeProvider
+    {
+        private long _utcTicks = DateTimeOffset.UnixEpoch.Ticks;
+
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime > TimeSpan.Zero)
+                Interlocked.Add(ref _utcTicks, dueTime.Ticks);
+
+            ThreadPool.UnsafeQueueUserWorkItem(
+                static fire => fire.Callback(fire.State),
+                new TimerFire(callback, state),
+                preferLocal: false);
+            return NoopTimer.Instance;
+        }
+
+        private sealed class TimerFire(TimerCallback callback, object? state)
+        {
+            public TimerCallback Callback { get; } = callback;
+            public object? State { get; } = state;
+        }
+
+        private sealed class NoopTimer : ITimer
+        {
+            public static readonly NoopTimer Instance = new();
+
+            public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 }
