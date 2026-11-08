@@ -420,6 +420,20 @@ setting is the desktop and is not probed. A usable file is passed to the git
 child as `GIT_CONFIG_GLOBAL`. Each command reads the identity file again and
 does not cache it, so the maximum staleness is zero.
 
+The identity file is mounted into the process that holds the push token, so it is
+allow-listed (CARD-1787). It may hold only a `[user]` section with `name` and
+`email`, plus blank and comment lines. Any other key or section refuses every git
+command with `git_identity_invalid` before git starts. That covers `include`,
+`includeIf`, `credential.*`, `core.*`, `alias.*`, `url.*`, any other `user`
+key, a quoted (`[user "x"]`) or dotted (`[user.x]`) subsection, a key before the
+first section, a key on a header line, a continuation line and a malformed header.
+Refused content wins over a missing key. With a configured identity, each land git
+child also loses the inherited variables that would outrank the file:
+`GIT_CONFIG_COUNT` with every `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`,
+`GIT_CONFIG_PARAMETERS`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`. The fixed
+`gc.auto`/`maintenance.auto` entries are appended afterwards. An empty setting (the
+desktop) neither reads the file nor scrubs the environment.
+
 Land checkouts live at `/work/repos/<name>` on the production work volume.
 `scripts/server2-repository-mirrors.ps1` defaults to `-WhatIf` and, with
 `-Execute`, clones or fetches those checkouts read-write. Cutover records every
