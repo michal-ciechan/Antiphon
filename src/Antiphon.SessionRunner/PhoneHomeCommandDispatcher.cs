@@ -53,6 +53,13 @@ public interface IPhoneHomeRuntimeSurface
     Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct);
     RunnerBufferDto GetBuffer(Guid sessionId);
     Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct);
+
+    // CARD-1763. Fakes keep returning the full body. The production adapter overrides these.
+    PtyRead<RunnerBufferDto> ReadBuffer(Guid sessionId, string? ifNoneMatch) =>
+        new(false, null, GetBuffer(sessionId));
+
+    async Task<PtyRead<RunnerSnapshotDto>> ReadSnapshotAsync(Guid sessionId, string? ifNoneMatch, CancellationToken ct) =>
+        new(false, null, await GetSnapshotAsync(sessionId, ct));
     RunnerTranscriptDto GetTranscript(Guid sessionId);
     Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
     Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct);
@@ -409,8 +416,8 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.LaunchPlatformConstrained => await LaunchPlatformConstrainedAsync(request, trace, ct),
                 PhoneHomeOperation.Retire => await RetireAsync(request, ct),
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
-                PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request)), RunnerReadJson.PhoneBuffer),
-                PhoneHomeOperation.Snapshot => Result(request, await _runtime.GetSnapshotAsync(ReadSessionId(request), ct), RunnerReadJson.PhoneSnapshot),
+                PhoneHomeOperation.Buffer => ConditionalFrame(request, _runtime.ReadBuffer(ReadSessionId(request), ReadIfNoneMatch(request)), RunnerReadJson.PhoneBuffer),
+                PhoneHomeOperation.Snapshot => ConditionalFrame(request, await _runtime.ReadSnapshotAsync(ReadSessionId(request), ReadIfNoneMatch(request), ct), RunnerReadJson.PhoneSnapshot),
                 PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request)), RunnerReadJson.PhoneTranscript),
                 PhoneHomeOperation.Input => await MutateAsync(request, async () =>
                 {
@@ -1103,6 +1110,33 @@ public sealed class PhoneHomeCommandDispatcher
         outcome.Value is { } value
             ? Result(request, value)
             : Error(request, outcome.Refusal!.Code, outcome.Refusal.Reason, outcome.Refusal.Status);
+
+    private static string? ReadIfNoneMatch(PhoneHomeFrame request)
+    {
+        if (request.Payload is not { ValueKind: JsonValueKind.Object } payload
+            || !payload.TryGetProperty("ifNoneMatch", out var match)
+            || match.ValueKind != JsonValueKind.String)
+            return null;
+        var text = match.GetString();
+        return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    private static PhoneHomeFrame ConditionalFrame<T>(PhoneHomeFrame request, PtyRead<T> read, JsonTypeInfo<T> type)
+        where T : class
+    {
+        if (read.NotModified)
+        {
+            return new PhoneHomeFrame(
+                PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+                JsonSerializer.SerializeToElement(new PtyNotModified(true), PhoneHomeFraming.Json),
+                Match: read.ETag);
+        }
+
+        var frame = Result(request, read.Body!, type);
+        return string.IsNullOrEmpty(read.ETag) ? frame : frame with { Match = read.ETag };
+    }
+
+    private sealed record PtyNotModified(bool NotModified);
 
     private static Guid ReadSessionId(PhoneHomeFrame request)
     {

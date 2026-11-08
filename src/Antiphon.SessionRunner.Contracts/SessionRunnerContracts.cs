@@ -193,6 +193,12 @@ public static class RunnerCapabilityFeatures
 
     /// <summary>CARD-0718. This runner samples host stats and answers <c>/host-stats</c>.</summary>
     public const string HostStatsV1 = "hostStatsV1";
+
+    /// <summary>
+    /// CARD-1763. Pty buffer and snapshot reads honour If-None-Match. Absence means the caller
+    /// keeps asking for the full body; an old peer still returns that body.
+    /// </summary>
+    public const string PtyConditionalReadV1 = "ptyConditionalReadV1";
     public const string HostLoadHistoryV1 = "hostLoadHistoryV1";
 
     /// <summary>

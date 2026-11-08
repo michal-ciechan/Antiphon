@@ -28,6 +28,61 @@ public static class SessionReadLaunchRoutes
     public static IResult Transcript(RunnerTranscriptDto dto) =>
         Results.Json(dto, RunnerReadJson.Use(RunnerReadJson.HttpTranscript));
 
+    public static void MapSessionObservationRoutes(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/sessions/{id:guid}/buffer", (Guid id, HttpRequest request, SessionRunnerRuntime runtime) =>
+            Conditional(runtime.ReadBuffer(id, IfNoneMatch(request)), Buffer));
+
+        // CARD-1365: a herdr pane.read past its deadline stays 503 herdr_unreachable.
+        app.MapGet("/sessions/{id:guid}/snapshot", async (
+                Guid id, HttpRequest request, SessionRunnerRuntime runtime, CancellationToken cancellationToken) =>
+            Conditional(await runtime.ReadSnapshotAsync(id, IfNoneMatch(request), cancellationToken), Snapshot))
+            .AddEndpointFilter(HerdrUnreachable);
+    }
+
+    internal static string? IfNoneMatch(HttpRequest request) =>
+        request.Headers.IfNoneMatch.Count == 0 ? null : request.Headers.IfNoneMatch.ToString();
+
+    internal static IResult Conditional<T>(PtyRead<T> read, Func<T, IResult> ok) where T : class =>
+        read.NotModified
+            ? new PtyNotModifiedResult(read.ETag ?? throw new InvalidOperationException("A conditional read is missing its ETag."))
+            : read.ETag is null ? ok(read.Body!) : new PtyETagResult(read.ETag, ok(read.Body!));
+
+    public static async ValueTask<object?> HerdrUnreachable(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        try
+        {
+            return await next(context);
+        }
+        catch (HerdrBackendUnavailableException ex)
+        {
+            return Results.Problem(
+                title: "Herdr unreachable",
+                detail: ex.Message,
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                type: HerdrProblemTypes.Unreachable);
+        }
+    }
+
+    private sealed class PtyETagResult(string token, IResult inner) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.ETag = PtyObservationMatch.Quote(token);
+            await inner.ExecuteAsync(httpContext);
+        }
+    }
+
+    private sealed class PtyNotModifiedResult(string token) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.ETag = PtyObservationMatch.Quote(token);
+            httpContext.Response.StatusCode = StatusCodes.Status304NotModified;
+            return Task.CompletedTask;
+        }
+    }
+
     // CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
     // before a restart) - it must answer 404, not crash the request pipeline with an unhandled
     // KeyNotFoundException out of SessionRunnerRuntime.GetSession. Narrow on purpose: this is the ONLY

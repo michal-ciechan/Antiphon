@@ -192,21 +192,8 @@ app.UseRunnerExceptionMapping();
 // CARD-0186 S3: /input, /kill, /resize, /snapshot map HerdrBackendUnavailableException to 503
 // with problem-type herdr_unreachable. Waiting on _clientReady would hold the queue's
 // per-session lock for the HTTP timeout; pending WriteAsync throws immediately instead.
-async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
-{
-    try
-    {
-        return await next(context);
-    }
-    catch (HerdrBackendUnavailableException ex)
-    {
-        return Results.Problem(
-            title: "Herdr unreachable",
-            detail: ex.Message,
-            statusCode: StatusCodes.Status503ServiceUnavailable,
-            type: HerdrProblemTypes.Unreachable);
-    }
-}
+ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext context, EndpointFilterDelegate next) =>
+    SessionReadLaunchRoutes.HerdrUnreachable(context, next);
 
 // Say which pseudoconsole every session on this runner will get, once, at startup. A "modern"
 // request that fell back to the inbox conhost looks identical from everywhere else, and it silently
@@ -328,14 +315,7 @@ app.MapPost("/sessions/attach", async (
     }
 });
 
-app.MapGet("/sessions/{id:guid}/buffer", (Guid id, SessionRunnerRuntime runtime) =>
-    SessionReadLaunchRoutes.Buffer(runtime.GetBuffer(id)));
-
-// CARD-1365: async with the request token; a herdr pane.read past its deadline is the same
-// 503 herdr_unreachable the filter already answers, never a 200 with the unfed mirror.
-app.MapGet("/sessions/{id:guid}/snapshot", async (Guid id, SessionRunnerRuntime runtime, CancellationToken cancellationToken) =>
-    SessionReadLaunchRoutes.Snapshot(await runtime.GetSnapshotAsync(id, cancellationToken)))
-    .AddEndpointFilter(HerdrUnreachableFilter);
+app.MapSessionObservationRoutes();
 
 app.MapSessionTranscriptRoute();
 
@@ -485,8 +465,8 @@ internal static class TerminalSeatReleaseRoutes
                 ? [SessionBackends.PtyHost, SessionBackends.Herdr]
                 : [SessionBackends.PtyHost];
             IReadOnlyList<string> features = herdrSettings.Value.Enabled
-                ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1]
-                : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
+                ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1]
+                : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1];
             if (runtime.VerificationCustodyBackend is not null)
                 features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
             features = [.. features, RunnerCapabilityFeatures.TerminalSeatReleaseV1,

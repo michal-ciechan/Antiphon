@@ -1141,14 +1141,27 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
-    public RunnerBufferDto GetBuffer(Guid sessionId) => GetSession(sessionId).GetBuffer();
+    public PtyRead<RunnerBufferDto> ReadBuffer(Guid sessionId, string? ifNoneMatch) =>
+        GetSession(sessionId).ReadBuffer(ifNoneMatch);
+
+    public RunnerBufferDto GetBuffer(Guid sessionId)
+    {
+        var read = ReadBuffer(sessionId, null);
+        return read.Body ?? throw new InvalidOperationException("A buffer without a match key has a body.");
+    }
 
     /// <summary>
     /// CARD-1365: the herdr snapshot read is async on every hop and bounded by
     /// <see cref="HerdrSettings.PaneReadTimeoutMs"/>; a pty-host snapshot stays the same in-memory read.
     /// </summary>
-    public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-        GetSession(sessionId).GetSnapshotAsync(_labelClock, _herdrPaneReadTimeout, ct, _terminalSeatEpoch);
+    public Task<PtyRead<RunnerSnapshotDto>> ReadSnapshotAsync(Guid sessionId, string? ifNoneMatch, CancellationToken ct) =>
+        GetSession(sessionId).ReadSnapshotAsync(_labelClock, _herdrPaneReadTimeout, ct, _terminalSeatEpoch, ifNoneMatch);
+
+    public async Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+    {
+        var read = await ReadSnapshotAsync(sessionId, null, ct);
+        return read.Body ?? throw new InvalidOperationException("A snapshot without a match key has a body.");
+    }
 
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
 
@@ -2762,6 +2775,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private int _terminalInputWriters;
         private bool _terminalInputUncertain;
         private long _inputRevision;
+        private long _ptyContentEpoch;
+        internal int AnsiLogReads;
+        internal int LiveBufferMaterializations;
         private long _dialogSequence = -1;
         private ClaudeDialogObservation? _dialogObservation;
         private readonly ClaudeSubmittedInputHistory _submittedInput = new();
@@ -4155,6 +4171,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 _liveBuffer.Append(replay);
                 _screen?.Feed(replay);
                 _lastSequence = Math.Max(_lastSequence, lastSeq);
+                _ptyContentEpoch++;
             }
         }
 
@@ -4245,6 +4262,25 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
+        internal void ArmPtyReadForTest(DateTime generation, string? ansiLogPath)
+        {
+            BindAcceptedGeneration(generation);
+            _startedAt = generation;
+            _status = "Running";
+            _backend = SessionBackends.PtyHost;
+            _pendingReason = null;
+            _ansiLogPath = ansiLogPath;
+            lock (_gate)
+                _screen = new TerminalScreen(120, 40);
+            _clientReady.TrySetResult(true);
+        }
+
+        internal void NoteInputForTest()
+        {
+            lock (_gate)
+                _inputRevision++;
+        }
+
         // Supplies concrete backend state, never a qualification verdict.
         internal void SetTerminalBackendStateForTest(string status = "Running", string? pendingReason = null,
             string backend = SessionBackends.PtyHost)
@@ -4285,12 +4321,44 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
-        public RunnerBufferDto GetBuffer()
+        public RunnerBufferDto GetBuffer() => ReadBuffer(null).Body!;
+
+        public PtyRead<RunnerBufferDto> ReadBuffer(string? ifNoneMatch)
         {
+            if (!CanConditionalPtyRead())
+            {
+                long sequence;
+                lock (_gate)
+                    sequence = _lastSequence;
+                return new(false, null, new RunnerBufferDto(_sessionId, ReadAnsiLog(), sequence));
+            }
+
+            // Stamp before the lock. A file that grows after a 304 is the next poll's 200.
+            // A file that grows between this stamp and the miss read is returned once under the
+            // older stamp; the following poll mismatches and sends the tail again.
+            var stamp = ReadAnsiStamp();
             long lastSequence;
+            string etag;
             lock (_gate)
+            {
                 lastSequence = _lastSequence;
-            return new RunnerBufferDto(_sessionId, ReadAnsiLog(), lastSequence);
+                etag = PtyObservationMatch.Buffer(_acceptedStartedAt, lastSequence, stamp.Length, stamp.WriteTicks);
+            }
+
+            return new(false, etag, new RunnerBufferDto(_sessionId, ReadAnsiLog(), lastSequence));
+        }
+
+        private bool CanConditionalPtyRead() =>
+            _herdrChild is null && _pendingReason is null && _backend == SessionBackends.PtyHost;
+
+        private readonly record struct AnsiFileStamp(long Length, long WriteTicks);
+
+        private AnsiFileStamp ReadAnsiStamp()
+        {
+            if (_ansiLogPath is null)
+                return new(-1, 0);
+            var info = new FileInfo(_ansiLogPath);
+            return info.Exists ? new(info.Length, info.LastWriteTimeUtc.Ticks) : new(-1, 0);
         }
 
         /// <summary>
@@ -4299,16 +4367,30 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         /// the bound is the herdr-unreachable class (never the mirror, which a herdr session never
         /// feeds); a cancelled caller token rethrows unchanged. The pty-host branch never awaits.
         /// </summary>
-        public async Task<RunnerSnapshotDto> GetSnapshotAsync(
-            TimeProvider clock, TimeSpan paneReadTimeout, CancellationToken ct, Guid runtimeEpoch = default)
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(
+            TimeProvider clock, TimeSpan paneReadTimeout, CancellationToken ct, Guid runtimeEpoch = default) =>
+            Unwrap(ReadSnapshotAsync(clock, paneReadTimeout, ct, runtimeEpoch, null));
+
+        private static async Task<RunnerSnapshotDto> Unwrap(Task<PtyRead<RunnerSnapshotDto>> pending)
+        {
+            var read = await pending;
+            return read.Body ?? throw new InvalidOperationException("A snapshot without a match key has a body.");
+        }
+
+        public async Task<PtyRead<RunnerSnapshotDto>> ReadSnapshotAsync(
+            TimeProvider clock, TimeSpan paneReadTimeout, CancellationToken ct, Guid runtimeEpoch = default,
+            string? ifNoneMatch = null)
         {
             if (_pendingReason is not null)
                 throw new HerdrBackendUnavailableException(
                     "Herdr is unreachable; session is pending adoption.");
 
             // Herdr has no push stream in S2 — serve an on-demand pane.read when asked.
+            // A herdr session never 304s, including when pane.read falls through to the mirror.
+            var herdrLane = false;
             if (_herdrChild is { } herdr)
             {
+                herdrLane = true;
                 using var deadline = new CancellationTokenSource(paneReadTimeout, clock);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
                 try
@@ -4321,7 +4403,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                             // CARD-0164: fold content-delta counter alongside herdr revision.
                             _lastSequence = Math.Max(
                                 _lastSequence, Math.Max(screen.Revision, screen.ContentSequence));
-                            return new RunnerSnapshotDto(
+                            return new PtyRead<RunnerSnapshotDto>(false, null, new RunnerSnapshotDto(
                                 _sessionId,
                                 screen.Text,
                                 screen.Text,
@@ -4329,7 +4411,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                                 _startedAt,
                                 _acceptedStartedAt,
                                 new ProviderDialogObservation(_sessionId, runtimeEpoch, _acceptedStartedAt,
-                                    _lastSequence, _inputRevision, ProviderDialogState.Unknown));
+                                    _lastSequence, _inputRevision, ProviderDialogState.Unknown)));
                         }
                     }
                 }
@@ -4354,14 +4436,22 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
             lock (_gate)
             {
-                return new RunnerSnapshotDto(
+                var dialog = ObserveDialog(runtimeEpoch, clock);
+                var conditional = !herdrLane && CanConditionalPtyRead();
+                var etag = conditional
+                    ? PtyObservationMatch.Snapshot(
+                        _acceptedStartedAt, _startedAt, _lastSequence, _inputRevision, _ptyContentEpoch, dialog)
+                    : null;
+
+                Interlocked.Increment(ref LiveBufferMaterializations);
+                return new(false, etag, new RunnerSnapshotDto(
                     _sessionId,
                     _liveBuffer.ToString(),
                     _screen?.GetScreenText() ?? "",
                     _lastSequence,
                     _startedAt,
                     _acceptedStartedAt,
-                    ObserveDialog(runtimeEpoch, clock));
+                    dialog));
             }
         }
 
@@ -4441,7 +4531,10 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         public async Task ClearLiveBufferAsync(CancellationToken ct)
         {
             lock (_gate)
+            {
                 _liveBuffer.Clear();
+                _ptyContentEpoch++;
+            }
             if (_client is { } client)
                 await client.ClearLiveBufferAsync(ct);
         }
@@ -4693,6 +4786,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 _liveBuffer.Append(chunk);
                 TrimLiveBuffer();
                 _screen?.Feed(chunk);
+                _ptyContentEpoch++;
             }
 
             _events.Publish(
@@ -5015,6 +5109,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         /// </summary>
         private string ReadAnsiLog()
         {
+            Interlocked.Increment(ref AnsiLogReads);
             if (_ansiLogPath is null || !File.Exists(_ansiLogPath))
                 return "";
 

@@ -665,7 +665,17 @@ public sealed record PhoneHomeFrame(
     string? ErrorCode = null,
     string? ErrorDetail = null,
     int? StatusCode = null,
-    string? EventName = null);
+    string? EventName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Match = null);
+
+/// <summary>CARD-1763. Phone-home has no 304, so an unchanged pty read is this payload.</summary>
+public static class PtyConditionalSignals
+{
+    public static bool IsNotModified(JsonElement? payload) =>
+        payload is { ValueKind: JsonValueKind.Object } element
+        && element.TryGetProperty("notModified", out var flag)
+        && flag.ValueKind == JsonValueKind.True;
+}
 
 public sealed record PhoneHomeSessionCommand(
     Guid SessionId,
