@@ -1719,6 +1719,12 @@ public partial class AppDbContext : DbContext
                 .IsUnique()
                 .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Sequence");
 
+            // CARD-1773. The park stamp's max UserPrompt/QueuedUserPrompt sequence filters Kind.
+            // The unique sequence index has no Kind, so that read heap-fetches the session's range.
+            entity.HasIndex(t => new { t.AgentSessionId, t.Kind, t.Sequence })
+                .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Kind_Sequence")
+                .IsCreatedConcurrently();
+
             // UUID is shared by normalized kinds from one native line: deliberately nonunique.
             entity.HasIndex(t => new { t.AgentSessionId, t.Uuid })
                 .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Uuid")

@@ -204,6 +204,13 @@ public sealed class AgentTaskLandNotificationParkFollowUpTests
         var connection = db.Database.GetDbConnection();
         if (connection.State != System.Data.ConnectionState.Open)
             await connection.OpenAsync(cancellationToken);
+        // The seeded session is a few dozen pages, so the planner seq-scans it even after the
+        // Kind index exists. Turning that off leaves the index choice, and the plan must name it.
+        await using (var seq = connection.CreateCommand())
+        {
+            seq.CommandText = "SET enable_seqscan = off";
+            await seq.ExecuteNonQueryAsync(cancellationToken);
+        }
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
@@ -232,7 +239,7 @@ public sealed class AgentTaskLandNotificationParkFollowUpTests
             .SingleOrDefault(candidate => candidate.GetDatabaseName() == PromptStampIndex);
         index.ShouldNotBeNull();
         index!.Properties.Select(property => property.Name).ShouldBe(["AgentSessionId", "Kind", "Sequence"]);
-index.IsCreatedConcurrently().ShouldBe(true);
+        index.IsCreatedConcurrently().ShouldBe(true);
         var present = await db.Database.SqlQuery<int>($"""
             SELECT count(*)::int AS "Value" FROM pg_indexes WHERE indexname = {PromptStampIndex}
             """).SingleAsync(cancellationToken);
