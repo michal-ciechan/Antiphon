@@ -523,8 +523,15 @@ function Get-NightlyParentProcess {
         return $script:NightlySeams.GetParentProcess.Invoke($ProcessId)
     }
     try {
-        $row = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $ProcessId) -ErrorAction Stop
-        $parentId = [int]$row.ParentProcessId
+        # The compiled read answers in microseconds; the first CIM query in a process takes about 0.4 s.
+        $parentId = -1
+        if ([IO.Path]::DirectorySeparatorChar -eq [char]92 -and (Test-NightlyCoreAvailable)) {
+            $parentId = [Antiphon.Nightly.NightlyProcesses]::ParentProcessId($ProcessId)
+        }
+        if ($parentId -lt 0) {
+            $row = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $ProcessId) -ErrorAction Stop
+            $parentId = [int]$row.ParentProcessId
+        }
         return [pscustomobject]@{
             Id = $parentId
             StartTimeUtc = (Get-NightlyProcessStartUtc -ProcessId $parentId)

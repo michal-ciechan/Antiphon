@@ -234,6 +234,13 @@ function Test-NCLaunchPlanMatchesFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('true') -and $r.Fallback.Contains('false')) 'groupFilter' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+function Test-NCParentProcessMatchesFallback {
+    # The compiled parent read and Win32_Process agree, for this process and for a missing one.
+    $r = Invoke-NCBothWays { @(Get-NightlyParentProcess -ProcessId $PID; Get-NightlyParentProcess -ProcessId 2147483647) }
+    $hasParent = [IO.Path]::DirectorySeparatorChar -ne [char]92 -or $r.Fallback -match '"Id":[1-9]'
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $hasParent) 'parentProcess' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
 function Test-NCProjectWalkMatchesFallback {
     $tree = Join-Path $root 'nc-projects'
     $test = '<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>'
@@ -359,7 +366,7 @@ function Test-NCDocumentsMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; $expected = 17 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; $expected = 18 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

@@ -804,6 +804,41 @@ namespace Antiphon.Nightly
     }
 
     /// <summary>Repository scans from nightly-policy.ps1.</summary>
+    /// <summary>Get-NightlyParentProcess on Windows: the parent id Win32_Process reports, without a CIM query.</summary>
+    public static class NightlyProcesses
+    {
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct BasicInformation
+        {
+            public IntPtr ExitStatus, PebBaseAddress, AffinityMask, BasePriority, UniqueProcessId, InheritedFromUniqueProcessId;
+        }
+
+        [System.Runtime.InteropServices.DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationProcess(IntPtr process, int informationClass, ref BasicInformation information, int length, out int returned);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(int access, bool inherit, int processId);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        /// <summary>The parent process id, or -1 when it cannot be read (the caller falls back to CIM).</summary>
+        public static int ParentProcessId(int processId)
+        {
+            if (!OperatingSystem.IsWindows()) return -1;
+            IntPtr handle = OpenProcess(0x1000, false, processId); // PROCESS_QUERY_LIMITED_INFORMATION
+            if (handle == IntPtr.Zero) return -1;
+            try
+            {
+                var info = new BasicInformation();
+                int status = NtQueryInformationProcess(handle, 0, ref info, System.Runtime.InteropServices.Marshal.SizeOf(typeof(BasicInformation)), out _);
+                if (status != 0) return -1;
+                return (int)info.InheritedFromUniqueProcessId.ToInt64();
+            }
+            finally { CloseHandle(handle); }
+        }
+    }
+
     public static class NightlyRepository
     {
         /// <summary>
