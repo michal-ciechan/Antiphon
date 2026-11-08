@@ -311,34 +311,29 @@ internal static class SolutionAudit
         // Let the referenced project choose its own frameworks; an explicit SetTargetFramework
         // below selects the requested one. Otherwise Evaluate visits all its inner evaluations.
         result.Remove("TargetFramework");
-        // The MSBuild task applies Properties, then RemoveProperties. Set* and
-        // AdditionalProperties go on first. AssignProjectConfiguration then overwrites
-        // Configuration and Platform for an in-solution reference, and adds both to
-        // GlobalPropertiesToRemove for every other reference
-        // (ShouldUnsetParentConfigurationAndPlatform). The item's own
-        // GlobalPropertiesToRemove is last, so explicit metadata does not restore them.
-        foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework", "AdditionalProperties" })
-        {
-            foreach (var assignment in Project.GetMetadataValueEscaped(reference, metadata)
-                         .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var equals = assignment.IndexOf('=');
-                if (equals <= 0)
-                    throw new InvalidOperationException($"{reference.EvaluatedInclude}: invalid {metadata} assignment");
-                result[ProjectCollection.Unescape(assignment[..equals].Trim())] =
-                    ProjectCollection.Unescape(assignment[(equals + 1)..].Trim());
-            }
-        }
+        // The MSBuild task applies Properties, then the item's AdditionalProperties, then
+        // RemoveProperties. Properties carries Set*, whose Configuration and Platform
+        // AssignProjectConfiguration has already overwritten with the solution mapping for an
+        // in-solution reference; AdditionalProperties overrides that mapping. Every other
+        // reference has both added to GlobalPropertiesToRemove
+        // (ShouldUnsetParentConfigurationAndPlatform), and the item's own
+        // GlobalPropertiesToRemove follows, so explicit metadata does not restore them.
+        foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework" })
+            ApplyAssignments(result, reference, metadata);
 
         var fullPath = reference.GetMetadataValue("FullPath");
+        var member = false;
         if (!string.IsNullOrEmpty(fullPath) && memberConfiguration.TryGetValue(MsBuildFullPath(fullPath), out var mapped))
         {
+            member = true;
             if (mapped.Configuration is null) result.Remove("Configuration");
             else result["Configuration"] = mapped.Configuration;
             if (mapped.Platform is null) result.Remove("Platform");
             else result["Platform"] = mapped.Platform;
         }
-        else
+
+        ApplyAssignments(result, reference, "AdditionalProperties");
+        if (!member)
         {
             result.Remove("Configuration");
             result.Remove("Platform");
@@ -348,6 +343,19 @@ internal static class SolutionAudit
                      .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             result.Remove(ProjectCollection.Unescape(name));
         return result;
+    }
+
+    private static void ApplyAssignments(Dictionary<string, string> result, ProjectItem reference, string metadata)
+    {
+        foreach (var assignment in Project.GetMetadataValueEscaped(reference, metadata)
+                     .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var equals = assignment.IndexOf('=');
+            if (equals <= 0)
+                throw new InvalidOperationException($"{reference.EvaluatedInclude}: invalid {metadata} assignment");
+            result[ProjectCollection.Unescape(assignment[..equals].Trim())] =
+                ProjectCollection.Unescape(assignment[(equals + 1)..].Trim());
+        }
     }
 
     private static bool HasExplicitReferenceGlobals(ProjectItem reference)
