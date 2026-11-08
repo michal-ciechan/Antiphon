@@ -18,6 +18,8 @@ namespace Antiphon.Tests.Application;
 /// CARD-1761 / CARD-1758 slice 1. Sequence polls and a single frame replace the ANSI tail.
 /// A pty frame is reused only while <c>LastSequence</c> is unchanged (no added staleness).
 /// Herdr and an unknown backend still snapshot on every poll.
+/// CARD-1766: those backends read sequence from the buffer route. Each poll reads the runner;
+/// a flat session record is not "nothing arrived" while the buffer sequence is still moving.
 /// </summary>
 [Category("Unit")]
 public class Card1761RunnerReadPollTests
@@ -88,37 +90,140 @@ public class Card1761RunnerReadPollTests
     }
 
     [Test]
-    public async Task Card1761_Herdr_output_wait_still_snapshots_every_poll()
+    public async Task Card1761_Herdr_output_wait_reads_each_frame_without_a_session_get()
     {
-        var client = new CountingRunner { Backend = SessionBackends.Herdr, Sequence = 4, Raw = "pane" };
-        var terminal = new RunnerTerminalSession(client);
-        await terminal.StartAsync(Spec(), CancellationToken.None);
-        client.Reset();
+        var (client, terminal) = await StartedNonPty(SessionBackends.Herdr, "one");
 
-        var matched = await terminal.WaitForOutputAsync(_ => false, TimeSpan.FromMilliseconds(250), CancellationToken.None);
+        var matched = await terminal.WaitForOutputAsync(
+            text => text.Contains("two", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(2),
+            CancellationToken.None);
 
-        matched.ShouldBeFalse();
-        client.SnapshotReads.ShouldBeGreaterThan(2);
-        // The exit watcher reads the session record. The output poll must not add a GET per frame.
-        client.SessionGets.ShouldBeLessThan(client.SnapshotReads);
+        matched.ShouldBeTrue();
+        client.SnapshotReads.ShouldBe(2);
+        client.SessionGets.ShouldBe(0);
         client.BufferReads.ShouldBe(0);
     }
 
     [Test]
-    public async Task Card1761_Unknown_backend_output_wait_still_snapshots_every_poll()
+    public async Task Card1761_Unknown_backend_output_wait_reads_each_frame_without_a_session_get()
     {
-        var client = new CountingRunner { Backend = null, Sequence = 4, Raw = "old-runner" };
-        var terminal = new RunnerTerminalSession(client);
-        await terminal.StartAsync(Spec(), CancellationToken.None);
-        client.Reset();
+        var (client, terminal) = await StartedNonPty(backend: null, "one");
 
-        var matched = await terminal.WaitForOutputAsync(_ => false, TimeSpan.FromMilliseconds(250), CancellationToken.None);
+        var matched = await terminal.WaitForOutputAsync(
+            text => text.Contains("two", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(2),
+            CancellationToken.None);
 
-        matched.ShouldBeFalse();
-        client.SnapshotReads.ShouldBeGreaterThan(2);
-        // The exit watcher reads the session record. The output poll must not add a GET per frame.
-        client.SessionGets.ShouldBeLessThan(client.SnapshotReads);
+        matched.ShouldBeTrue();
+        client.SnapshotReads.ShouldBe(2);
+        client.SessionGets.ShouldBe(0);
         client.BufferReads.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card1766_Herdr_sequence_poll_reads_the_buffer_each_time()
+    {
+        var client = new CountingRunner { Backend = SessionBackends.Herdr, Sequence = 4, BufferSequence = 9 };
+        var terminal = await Started(client);
+
+        var first = await terminal.GetLastSequenceAsync(CancellationToken.None);
+        client.BufferSequence = 12;
+        var second = await terminal.GetLastSequenceAsync(CancellationToken.None);
+
+        first.ShouldBe(9);
+        second.ShouldBe(12);
+        client.BufferReads.ShouldBe(2);
+        client.SessionGets.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card1766_Unknown_backend_sequence_poll_reads_the_buffer()
+    {
+        var client = new CountingRunner { Backend = null, Sequence = 4, BufferSequence = 8 };
+        var terminal = await Started(client);
+
+        var sequence = await terminal.GetLastSequenceAsync(CancellationToken.None);
+
+        sequence.ShouldBe(8);
+        client.BufferReads.ShouldBe(1);
+        client.SessionGets.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card1766_Herdr_quiet_follows_the_buffer_sequence_not_a_flat_session_record()
+    {
+        var client = new CountingRunner { Backend = SessionBackends.Herdr, Sequence = 10, BufferSequence = 10 };
+        client.OnBufferRead = runner =>
+        {
+            if (runner.BufferReads <= 3)
+                runner.BufferSequence = 10 + runner.BufferReads;
+        };
+        var terminal = await Started(client);
+
+        var quiet = await terminal.WaitForQuietAsync(
+            TimeSpan.FromMilliseconds(80), TimeSpan.FromSeconds(2), CancellationToken.None);
+
+        quiet.ShouldBeTrue();
+        client.BufferReads.ShouldBeGreaterThan(3);
+        client.SessionGets.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card1766_Listed_herdr_manual_turn_reads_the_buffer_not_the_session()
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new CountingRunner
+        {
+            Listed = [ListedSession(sessionId, SessionBackends.Herdr)],
+            Sequence = 4,
+            BufferSequence = 9,
+        };
+        var runtime = Runtime(client);
+
+        await runtime.SendInteractiveInputAsync(sessionId, "x", CancellationToken.None, trackManualTurn: false);
+
+        client.BufferReads.ShouldBe(1);
+        client.SessionGets.ShouldBe(0);
+        client.Inputs.ShouldBe(["x"]);
+    }
+
+    [Test]
+    public async Task Card1766_Listed_unknown_backend_manual_turn_reads_the_buffer_not_the_session()
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new CountingRunner
+        {
+            Listed = [ListedSession(sessionId, backend: null)],
+            Sequence = 4,
+            BufferSequence = 6,
+        };
+        var runtime = Runtime(client);
+
+        await runtime.SendInteractiveInputAsync(sessionId, "y", CancellationToken.None, trackManualTurn: false);
+
+        client.BufferReads.ShouldBe(1);
+        client.SessionGets.ShouldBe(0);
+        client.Inputs.ShouldBe(["y"]);
+    }
+
+    [Test]
+    public async Task Card1766_Listed_pty_manual_turn_still_reads_the_session_record()
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new CountingRunner
+        {
+            Listed = [ListedSession(sessionId, SessionBackends.PtyHost)],
+            Sequence = 4,
+            BufferSequence = 9,
+        };
+        var runtime = Runtime(client);
+
+        await runtime.SendInteractiveInputAsync(sessionId, "z", CancellationToken.None, trackManualTurn: false);
+
+        client.SessionGets.ShouldBe(1);
+        client.BufferReads.ShouldBe(0);
+        client.Inputs.ShouldBe(["z"]);
     }
 
     [Test]
@@ -250,6 +355,30 @@ public class Card1761RunnerReadPollTests
         throw new DirectoryNotFoundException(relative);
     }
 
+    private static async Task<(CountingRunner Client, RunnerTerminalSession Terminal)> StartedNonPty(
+        string? backend, string firstFrame)
+    {
+        var client = new CountingRunner { Backend = backend, Sequence = 4, Raw = firstFrame };
+        client.OnSnapshot = runner =>
+        {
+            if (runner.SnapshotReads == 2)
+                runner.Raw = "two";
+        };
+        return (client, await Started(client));
+    }
+
+    private static async Task<RunnerTerminalSession> Started(CountingRunner client)
+    {
+        var terminal = new RunnerTerminalSession(client);
+        await terminal.StartAsync(Spec(), CancellationToken.None);
+        terminal.StopWatching();
+        client.Reset();
+        return terminal;
+    }
+
+    private static SessionRunnerSessionDto ListedSession(Guid sessionId, string? backend) => new(
+        sessionId, 1, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 1, Backend: backend);
+
     private static AgentSessionRuntime Runtime(CountingRunner client)
     {
         var provider = new ServiceCollection().BuildServiceProvider();
@@ -280,11 +409,15 @@ public class Card1761RunnerReadPollTests
         public int SnapshotReads;
         public int TranscriptReads;
         public long Sequence = 1;
+        public long? BufferSequence;
         public string? Backend = SessionBackends.PtyHost;
         public string Screen = "";
         public string Raw = "";
         public string Ansi = "";
         public Action<CountingRunner>? OnSessionGet;
+        public Action<CountingRunner>? OnSnapshot;
+        public Action<CountingRunner>? OnBufferRead;
+        public IReadOnlyList<SessionRunnerSessionDto> Listed { get; set; } = [];
         public List<string> Inputs { get; } = [];
 
         public void Reset()
@@ -300,7 +433,7 @@ public class Card1761RunnerReadPollTests
             GetAsync(sessionId, ct);
 
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+            Task.FromResult(Listed);
 
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
         {
@@ -314,12 +447,14 @@ public class Card1761RunnerReadPollTests
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
         {
             BufferReads++;
-            return Task.FromResult(new SessionRunnerBufferDto(sessionId, Ansi, Sequence));
+            OnBufferRead?.Invoke(this);
+            return Task.FromResult(new SessionRunnerBufferDto(sessionId, Ansi, BufferSequence ?? Sequence));
         }
 
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
         {
             SnapshotReads++;
+            OnSnapshot?.Invoke(this);
             return Task.FromResult(new SessionRunnerSnapshotDto(
                 sessionId, Raw, Screen, Sequence, DateTime.UtcNow));
         }
