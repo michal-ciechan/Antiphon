@@ -56,9 +56,10 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     // CARD-0097 adds the same sweep SELECT (18 + 1); first-observation grace adds no recovery SQL.
     [Arguments("first-dead-session-observation", 19)]
     // Historical 42 + CARD-0097's routing sweep SELECT + CARD-1285's required
-    // TokenHash UPDATE before the refusing launch sink = 44. CARD-0824 adds one
-    // required RefOnly-owner SELECT in reservation admission before that sink.
-    [Arguments("initial-refused-dispatch", 45)]
+    // TokenHash UPDATE before the refusing launch sink = 44. CARD-1767 skips
+    // CARD-0824's RefOnly owner SELECT when the normalized key has no ref.
+    // This fixture is Shared, with no branch, so SourceFullRef is empty.
+    [Arguments("initial-refused-dispatch", 44)]
     // Measured 5. The plan's 6 counted a commit or alert this interceptor does not see.
     // Live select, FOR UPDATE, reload, the close UPDATE, then the Agents select. No AgentTasks query.
     [Arguments("runner-unknown-close-scan", 5)]
