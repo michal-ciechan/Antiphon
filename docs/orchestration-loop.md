@@ -682,21 +682,23 @@ or edits the generated file. The full wording stays here, outside section 8's si
 <a id="merge-process"></a>
 ### Merge process (CARD-1783)
 
-A Merge batch's final-tree run always appends one cheap fixed high-radius subset, independent of what the subjects' reports name. Report that subset as its own CHECKPOINT row, so an omission is visible. The rc cut (Merge "Cut the new rc line") runs the same subset on the cut pin before pushing the rc ref and does not push that ref while the row is red.
+A Merge batch's final-tree run always appends one cheap fixed high-radius subset, independent of what the subjects' reports name. Each test project in that subset is its own CHECKPOINT row, so an omission is visible. The rc cut (Merge "Cut the new rc line") runs the same rows on the cut pin before pushing the rc ref and does not push that ref while the row is red for any project.
 
-The fixed classes are always `TestTimingOperationLabelTests`, `AppDbContextModelTests`, `ContractSnapshotTests`, `CheckpointReceiptSafetyTests`, and `HostCleanupCheckpointReceiptTests`. When the batch diff touches `server/Migrations/**`, the same row also runs the downgrade selector from `scripts/impacted-classes.ps1` (every `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(` caller). Resolve the row with:
+The fixed classes are always `TestTimingOperationLabelTests`, `AppDbContextModelTests`, `ContractSnapshotTests`, `CheckpointReceiptSafetyTests`, and `HostCleanupCheckpointReceiptTests`. When the batch diff touches `server/Migrations/**`, the subset also takes the downgrade selector from `scripts/impacted-classes.ps1` (every `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(` caller). Resolve the filters with:
 
 ```powershell
 pwsh -NoProfile -File scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json
 ```
 
-Without `-Range`, `-MergeSubset` prints only the fixed classes. The fixed filters are `/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)|(TestTimingOperationLabelTests*)/*` on `tests/Antiphon.Tests` and `/*/*/(ContractSnapshotTests*)/*` on `tests/Antiphon.E2E`. A migration diff appends the downgrade classes to the `tests/Antiphon.Tests` filter. `ContractSnapshotTests` needs the server boot the E2E fixture already does. The fixed classes take a few minutes. The downgrade selector stays under an hour on a loaded host and runs only when `server/Migrations/**` is in the batch. Windows-only fixtures stay outside this subset.
+That command only resolves filters and is never a CHECKPOINT row: a command row runs no tests and reports green. Without `-Range`, `-MergeSubset` prints only the fixed classes. Without `-Json`, it prints one `filter=<project> <treenodeFilter>` line per `filters` entry. The fixed filters are `/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)|(TestTimingOperationLabelTests*)/*` on `tests/Antiphon.Tests` and `/*/*/(ContractSnapshotTests*)/*` on `tests/Antiphon.E2E`. `ContractSnapshotTests` needs the server boot the E2E fixture already does. The fixed classes take a few minutes. The downgrade selector stays under an hour on a loaded host and runs only when `server/Migrations/**` is in the batch. Windows-only fixtures stay outside this subset.
 
-The batch reports this checkpoint row. `Filter` is the `filters` array from that command. `Min` stays `n/a` because the executed count depends on whether the downgrade selector is included; the row's TRX is the count.
+The batch reports one TUnit row per `filters` entry, with that entry's project and exact `treenodeFilter`. A migration diff (`migrations=true`) replaces the `CP-merge-subset-tests` filter with the selector's `tests/Antiphon.Tests` entry, raises its `EstimatedMinutes` to 60, and adds `CP-merge-subset-messaging` for the `tests/Antiphon.Messaging.Tests` entry. Without one, drop `CP-merge-subset-messaging`. `Min` is the fixed floor: 21 tests in `tests/Antiphon.Tests`, 5 in `tests/Antiphon.E2E`, and 1 in `tests/Antiphon.Messaging.Tests` (`InboxConversationMigrationTests`, which needs Docker). A filter that executes fewer tests fails the row.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-merge-subset | batch | native default | merge-high-radius | scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json | CARD-1783 fixed subset | 0 failed | n/a | 15 | true |
+| CP-merge-subset-tests | batch | tests/Antiphon.Tests -> bin-merge-tests/ | merge-high-radius | `/*/*/(AppDbContextModelTests*)\|(CheckpointReceiptSafetyTests*)\|(HostCleanupCheckpointReceiptTests*)\|(TestTimingOperationLabelTests*)/*` | CARD-1783 fixed subset, Antiphon.Tests | 0 failed | 21 | 10 | true |
+| CP-merge-subset-e2e | batch | tests/Antiphon.E2E -> bin-merge-e2e/ | merge-high-radius | `/*/*/(ContractSnapshotTests*)/*` | CARD-1783 fixed subset, E2E contract snapshots | 0 failed | 5 | 10 | true |
+| CP-merge-subset-messaging | batch | tests/Antiphon.Messaging.Tests -> bin-merge-messaging/ | merge-high-radius | `/*/*/(InboxConversationMigrationTests*)/*` | CARD-1783 migration diff only | 0 failed | 1 | 5 | true |
 
 <a id="review-rounds"></a>
 ### Review rounds: at most three, diff-only after the first, then a human (operator, 2026-11-01; CARD-1635)

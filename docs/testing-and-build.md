@@ -303,7 +303,7 @@ dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --tr
 pwsh -NoProfile -File scripts/impacted-classes.ps1 -Range <base>..<tip> -Json
 ```
 
-The fixed high-radius subset always runs as well, including when no impacted row matches. Resolve it with `scripts/impacted-classes.ps1 -MergeSubset`. The [Merge process](orchestration-loop.md#merge-process) names the classes, its own CHECKPOINT row, and the rc-cut gate.
+The fixed high-radius subset always runs as well, including when no impacted row matches. Resolve it with `scripts/impacted-classes.ps1 -MergeSubset`. The [Merge process](orchestration-loop.md#merge-process) names the classes, one TUnit CHECKPOINT row per project, and the rc-cut gate.
 
 A malformed table exits 1 and names the row. That includes a root that is not an object, a schema other than 1, an unknown property, a kind with no id, a kind with no globs or added, a kind with no classes, methods, or derive, a methods entry that is not Class/Method, a class that does not end in Tests, and a named class that is absent from tests/. `-Range` cannot be combined with `-Path` or `-FileList` (exit 2).
 
