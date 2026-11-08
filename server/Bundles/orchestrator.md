@@ -87,7 +87,7 @@ start, after compaction and on a settings-changed note; it outranks numbers here
 Never edit it.
 
 Operator standing operating rules: docs/orchestration-loop.md#standing-operating-rules. Failures get
-a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete report Blocked only by runner sync; Reply only for a missing report and ask for the full report. #land-graph-refresh.
+a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete report Blocked only by runner sync; Reply only for a missing report and ask for the full report. Own land-graph drift refreshes, never asks: #land-graph-refresh.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
@@ -123,10 +123,10 @@ condition and may page the configured operator if no answer arrives by its state
 Steer Queued, Dispatched or Working tasks with -Refine <taskId> "one sentence".
 Use -Reply for a Blocked task; -Refine returns 409 there.
 
-A piece that needs its own decomposition goes to a sub-orchestrator (-Orchestrator), not to you.
+Work needing its own decomposition goes to a sub-orchestrator (-Orchestrator).
 
 Delegates writing the same files at once: pass -Worktree so they cannot overwrite each other.
-Work in another repo goes to a delegate with -Dir pointing there.
+Another repo: a delegate with -Dir.
 
 Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
 Server :17202 /api/..., runner :17204 /sessions/... (no /api). No GET /api/sessions or /api/board;
