@@ -7,7 +7,9 @@
 # CARD-1774 A-1/A-2 are not, so PostgreSql is an explicit env flip.
 # scripts/deploy-server2-server.ps1 is the entry. Default is -WhatIf.
 # Specialist directories are on the shared work volume, the same path in
-# the server and the session-runner sidecar.
+# the server and the session-runner sidecar. server-state-init chowns /work
+# and its top directories one level and walks only /work/specialists
+# (CARD-1788): a recursive /work chown would walk every repo and worktree.
 # Nothing here starts the project or touches the production database.
 name: antiphon-server2-server
 
@@ -21,7 +23,7 @@ services:
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "set -eu; uid=1654; gid=1654; for d in /state /state/logs /state/keyring /state/keyring-cert /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work /work/repos /work/worktrees /work/agents /work/.antiphon /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok /runner-state/claude /runner-state/codex; do mkdir -p \"$$d\"; done; for d in /state /work /runner-state; do owner=$$(stat -c %u \"$$d\"); if [ \"$$owner\" != 0 ] && [ \"$$owner\" != \"$$uid\" ]; then echo \"ForeignStateOwner path=$$d uid=$$owner\" >&2; exit 42; fi; done; cp /host-keyring-cert/cert.pem /state/keyring-cert/cert.pem; cp /host-keyring-cert/key.pem /state/keyring-cert/key.pem; cp /host-operator-token /state/operator-token; chmod 0600 /state/keyring-cert/cert.pem /state/keyring-cert/key.pem /state/operator-token; chmod 0755 /work/specialists /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work/agents /work/.antiphon; chown -R \"$$uid:$$gid\" /state /work /runner-state; echo \"server-state-init owned uid=$$uid\""
+      - "set -eu; uid=1654; gid=1654; for d in /state /state/logs /state/keyring /state/keyring-cert /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work /work/repos /work/worktrees /work/agents /work/.antiphon /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok /runner-state/claude /runner-state/codex; do mkdir -p \"$$d\"; done; for d in /state /work /runner-state; do owner=$$(stat -c %u \"$$d\"); if [ \"$$owner\" != 0 ] && [ \"$$owner\" != \"$$uid\" ]; then echo \"ForeignStateOwner path=$$d uid=$$owner\" >&2; exit 42; fi; done; cp /host-keyring-cert/cert.pem /state/keyring-cert/cert.pem; cp /host-keyring-cert/key.pem /state/keyring-cert/key.pem; cp /host-operator-token /state/operator-token; chmod 0600 /state/keyring-cert/cert.pem /state/keyring-cert/key.pem /state/operator-token; chmod 0755 /work/specialists /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work/agents /work/.antiphon; chown \"$$uid:$$gid\" /work /work/repos /work/worktrees /work/agents /work/.antiphon; chown -R \"$$uid:$$gid\" /state /work/specialists /runner-state; echo \"server-state-init owned uid=$$uid\""
     volumes:
       - work:/work
       - server-state:/state

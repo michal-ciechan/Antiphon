@@ -7,7 +7,9 @@
     gate. -WhatIf does not call docker. -Execute starts the project only when
     this process is on the server2 host daemon (not inside the runner
     container, not a sibling daemon), then runs scripts/restart-linux-server.ps1
-    verify-only. The env file is untracked, mode 0600, and outside the repo.
+    verify-only. Before up, the env SOURCE_REVISION and git rev-parse HEAD
+    of the compose build context must both equal -ExpectedServerSha.
+    The env file is untracked, mode 0600, and outside the repo.
     This script never prints the password or the phone-home secret.
     The compose runs only as project antiphon-server2-server.
     Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.
@@ -154,13 +156,30 @@ function Get-ServerComposeRefusal {
     return ''
 }
 
+function Get-ServerBuildContext {
+    param([string]$ComposePath)
+    # The compose builds with context '.', the directory of the compose file.
+    return (Split-Path -Parent ([System.IO.Path]::GetFullPath($ComposePath)))
+}
+
+function Get-ServerCheckoutHead {
+    param([string]$Context)
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $git) { return '' }
+    $head = (& $git.Source -C $Context rev-parse --verify HEAD 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { return '' }
+    if (-not (Test-ServerSha $head)) { return '' }
+    return $head.ToLowerInvariant()
+}
+
 function Get-ServerHostCommand {
     param([string]$EnvPath, [string]$ComposePath, [string]$Sha)
     $envArg = '<env-file>'
     if (-not [string]::IsNullOrWhiteSpace($EnvPath)) { $envArg = $EnvPath }
     $shaArg = '<expected-sha>'
     if (-not [string]::IsNullOrWhiteSpace($Sha)) { $shaArg = $Sha }
-    $revision = 'image label org.opencontainers.image.revision must equal SOURCE_REVISION ' + $shaArg + ' before up'
+    $context = Get-ServerBuildContext $ComposePath
+    $revision = 'before up: SOURCE_REVISION in the env file and git rev-parse HEAD of ' + $context + ' must equal ' + $shaArg
     $composeUp = 'docker compose --env-file ' + $envArg + ' -f ' + $ComposePath + ' -p ' + $script:ServerProject + ' up -d --build'
     $gate = 'verify-only: pwsh -NoProfile -File scripts/restart-linux-server.ps1 -Config ' + $script:GateConfig + ' -ExpectedServerSha ' + $shaArg
     return ($revision + "`n" + $composeUp + "`n" + $gate)
@@ -342,6 +361,17 @@ function Invoke-ServerDeploy {
     $revision = ([string]$envMap['SOURCE_REVISION']).Trim().ToLowerInvariant()
     if ($revision -cne $ExpectedServerSha.ToLowerInvariant()) {
         Write-ServerResult 'fail' 2 'revision-mismatch'
+        return
+    }
+    # The env names the revision; the build context is what up --build
+    # compiles. Both must be the expected SHA before any docker call.
+    $head = Get-ServerCheckoutHead (Get-ServerBuildContext $composePath)
+    if (-not $head) {
+        Write-ServerResult 'fail' 2 'head-unknown'
+        return
+    }
+    if ($head -cne $ExpectedServerSha.ToLowerInvariant()) {
+        Write-ServerResult 'fail' 2 'head-mismatch'
         return
     }
     $lane = Get-ServerObservedLane
