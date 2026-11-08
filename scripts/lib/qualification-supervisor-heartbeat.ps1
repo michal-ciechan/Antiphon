@@ -87,6 +87,8 @@ function Get-QualificationGroupPlannedSeconds {
 
 function Assert-QualificationJournalUnsettled {
     param([string]$Directory, $Active)
+    # Lists the journal and compares it before and after: queued evidence writes land first.
+    Sync-NightlyDeferredEvidenceWrites
     $journal=Join-Path $Directory 'groups-executed.journal'
     # Older isolated plan producers have no journal. Once a journal is present,
     # an absent generation or prefix is uncertainty, never proof of no settlement.
@@ -131,7 +133,7 @@ function Assert-QualificationJournalUnsettled {
 function Read-QualificationPlanJson {
     param([string]$Path)
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
-    return ([IO.File]::ReadAllText($Path)|ConvertFrom-Json)
+    return ((Read-NightlyEvidenceText $Path)|ConvertFrom-Json)
 }
 
 function Read-QualificationActiveChunkIdentity {
@@ -159,7 +161,7 @@ $script:QualificationPlanSnapshots = @{}
 function Read-QualificationPlanSnapshot {
     param([string]$Path)
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
-    $bytes=[IO.File]::ReadAllBytes($Path)
+    $bytes=Read-NightlyEvidenceBytes $Path
     $sha=[Security.Cryptography.SHA256]::Create()
     try { $hex=New-Object System.Text.StringBuilder; foreach($b in $sha.ComputeHash($bytes)){[void]$hex.Append($b.ToString('x2'))}; $digest=$hex.ToString() }
     finally { $sha.Dispose() }

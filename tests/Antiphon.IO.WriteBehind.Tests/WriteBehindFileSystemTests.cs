@@ -60,10 +60,13 @@ public class WriteBehindFileSystemTests
             fs.File.ReadAllLines(At("a.json")).ShouldBe(new[] { "new" });
             (await fs.File.ReadAllTextAsync(At("a.json"))).ShouldBe("new");
             fs.PendingWrites.ShouldBe(1);
+            fs.PendingLength(At("a.json")).ShouldBe(3);
+            fs.PendingLength(At("other.json")).ShouldBeNull();
         }
         fs.Flush();
         disk.File.ReadAllText(At("a.json")).ShouldBe("new");
         fs.PendingWrites.ShouldBe(0);
+        fs.PendingLength(At("a.json")).ShouldBeNull();
     }
 
     [Test]

@@ -75,6 +75,12 @@ public sealed class WriteBehindFileSystem : IFileSystem, IDisposable
     /// <summary>Waits until the path's queued write is on disk.</summary>
     public void Flush(string path) => Queue.Flush(path);
 
+    /// <summary>
+    /// The length in bytes of the path's queued write that has not landed yet, or null when none is queued
+    /// (what is on disk then is current).
+    /// </summary>
+    public long? PendingLength(string path) => Queue.TryGet(path, out var content) ? content.LongLength : null;
+
     /// <summary>Flushes, then refuses further writes.</summary>
     public void Dispose() => Queue.Dispose();
 }

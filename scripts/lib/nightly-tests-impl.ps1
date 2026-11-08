@@ -805,6 +805,8 @@ function Invoke-NightlyOwnedProcess {
         [string]$LogPath
     )
     Write-NightlyTrace -Kind 'proc' -Message ($FilePath + ' ' + (($ArgumentList) -join ' '))
+    # A child (or the seam standing in for one) reads the disk: queued evidence writes land first.
+    Sync-NightlyDeferredEvidenceWrites
     if ($script:NightlySeams -and $script:NightlySeams.StartProcess) {
         $r = $script:NightlySeams.StartProcess.Invoke($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
         if ($LogPath -and $r.LogText) {
@@ -1881,7 +1883,7 @@ function Invoke-AntiphonNightlyTests {
         $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
         $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
         $phaseIndex = Join-Path $phaseDir 'groups-planned-index.json'
-        if ((Test-Path -LiteralPath $phasePlanned) -or (Test-Path -LiteralPath $phaseIndex)) {
+        if ((Test-NightlyEvidencePath $phasePlanned) -or (Test-NightlyEvidencePath $phaseIndex)) {
             Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
         }
     } catch {

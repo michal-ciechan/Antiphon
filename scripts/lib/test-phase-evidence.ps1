@@ -161,9 +161,10 @@ function ConvertTo-TestPhaseJsonText {
 }
 
 function Write-TestPhaseTextAtomic {
-    # -Deferred: during a nightly run, written on the background writer (same steps, see nightly-core.ps1).
+    # During a nightly run every write is queued on the evidence file system (nightly-core.ps1). -Deferred is
+    # kept for callers written before that.
     param([string]$Path, [string]$Text, [switch]$Deferred)
-    if ($Deferred -and (Submit-NightlyDeferredEvidenceWrite $Path $Text $true)) { return }
+    if (Submit-NightlyDeferredEvidenceWrite $Path $Text $true) { return }
     $identity = Get-TestPhasePathIdentity -Path $Path
     if ($identity.Kind -eq 'unsupported' -or $identity.Kind -eq 'unreadable') { return }
     $dir = Split-Path -Parent $Path
@@ -944,6 +945,8 @@ function Get-TestPhasePathIdentity {
     param([string]$Path)
     $missing = [pscustomobject]@{ Kind = 'missing'; Size = [int64]0 }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $missing }
+    $queued = Get-NightlyEvidencePendingLength $Path
+    if ($queued -ge 0) { return [pscustomobject]@{ Kind = 'regular'; Size = [int64]$queued } }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         if (-not (Test-Path -LiteralPath $Path)) { return $missing }
         try { $attrs = [IO.File]::GetAttributes($Path) } catch {
@@ -1005,6 +1008,7 @@ function Open-TestPhaseReadStream {
     $handle = $null
     $fd = -1
     $owned = $true
+    Sync-NightlyDeferredEvidenceWrites $Path
     try {
         if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
             $share = [IO.FileShare]([int][IO.FileShare]::ReadWrite -bor [int][IO.FileShare]::Delete)
@@ -1323,7 +1327,7 @@ function Write-TestPhaseFailureMarker {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
         }
         $path = Join-Path $dir 'phase-summary-failed'
-        [System.IO.File]::WriteAllText($path, $Code)
+        Write-NightlyEvidenceText $path $Code
     } catch {
         # An unwritable timing directory must not change the caller's verdict.
     }
@@ -1416,6 +1420,7 @@ function Get-TestPhaseSha256Text {
 
 function Get-TestPhaseSha256File {
     param([string]$Path)
+    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::Sha256($Path) }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
     try {
@@ -1652,8 +1657,8 @@ function Get-TestPhaseJournalRoot {
 
 function Read-TestPhaseJsonFile {
     param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    try { return ([System.IO.File]::ReadAllText($Path) | ConvertFrom-Json) } catch { return $null }
+    if (-not (Test-NightlyEvidencePath $Path)) { return $null }
+    try { return ((Read-NightlyEvidenceText $Path) | ConvertFrom-Json) } catch { return $null }
 }
 
 function Test-TestPhaseRecordDigest {
@@ -1680,15 +1685,16 @@ function Write-TestPhaseDirectory {
 function Copy-TestPhaseBytes {
     param([string]$Source, [string]$Destination)
     Write-TestPhaseDirectory -Path (Split-Path -Parent $Destination)
+    Sync-NightlyDeferredEvidenceWrites
     [System.IO.File]::Copy($Source, $Destination, $true)
 }
 
 function Save-TestPhaseMalformedLegacy {
     param([string]$TimingRoot, [string]$Generation)
     $flat = Join-Path $TimingRoot 'groups-executed.json'
-    if (-not (Test-Path -LiteralPath $flat)) { return }
+    if (-not (Test-NightlyEvidencePath $flat)) { return }
     $dest = Join-Path (Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $TimingRoot) 'predecessors') $Generation) 'groups-executed.json'
-    if (Test-Path -LiteralPath $dest) { return }
+    if (Test-NightlyEvidencePath $dest) { return }
     Copy-TestPhaseBytes -Source $flat -Destination $dest
 }
 
@@ -1744,14 +1750,14 @@ function Write-TestPhaseSeedCache {
         $lines.Add((ConvertTo-TestPhaseB64 ([string]$row.SettledSuite)) + "`t" + (ConvertTo-TestPhaseB64 ([string]$row.SettledChunk)) + "`t" + [string]$row.SettledJson)
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines((Join-Path $genDir 'seed-cache.txt'), $lines.ToArray(), $utf8)
+    Write-NightlyEvidenceLines (Join-Path $genDir 'seed-cache.txt') $lines.ToArray()
 }
 
 function Read-TestPhaseSeedCache {
     param($Context, [string]$Generation)
     $path = Join-Path (Join-Path (Get-TestPhaseJournalRoot -TimingRoot $Context.TimingRoot) $Generation) 'seed-cache.txt'
-    if (-not (Test-Path -LiteralPath $path)) { return $false }
-    $lines = @([System.IO.File]::ReadAllLines($path))
+    if (-not (Test-NightlyEvidencePath $path)) { return $false }
+    $lines = @(Read-NightlyEvidenceLines $path)
     if ($lines.Count -lt 1) { return $false }
     $header = [string]$lines[0]
     if (-not $header.StartsWith('H' + "`t")) { return $false }
@@ -1875,9 +1881,9 @@ function Read-TestPhaseGenerationPrefix {
     while ($true) {
         $name = $expected.ToString('00000000') + '.json'
         $path = Join-Path $GenerationDir $name
-        if (-not (Test-Path -LiteralPath $path)) { break }
+        if (-not (Test-NightlyEvidencePath $path)) { break }
         $text = ''
-        try { $text = [System.IO.File]::ReadAllText($path) } catch { $corrupt = $true; $reason = 'unreadable-record'; break }
+        try { $text = Read-NightlyEvidenceText $path } catch { $corrupt = $true; $reason = 'unreadable-record'; break }
         if ([string]::IsNullOrWhiteSpace($text) -or -not (Test-TestPhaseRecordDigest -Text $text)) {
             $corrupt = $true
             $reason = 'bad-digest'
@@ -2031,8 +2037,8 @@ function Get-TestPhaseProjectedDocument {
     param($Context)
     $reduced = Get-TestPhaseReduction -Context $Context
     if ($reduced.ChunkCount -eq 0) {
-        if ($Context.HasSeed -and -not [string]::IsNullOrWhiteSpace([string]$Context.SeedPath) -and (Test-Path -LiteralPath $Context.SeedPath)) {
-            return [System.IO.File]::ReadAllText([string]$Context.SeedPath)
+        if ($Context.HasSeed -and -not [string]::IsNullOrWhiteSpace([string]$Context.SeedPath) -and (Test-NightlyEvidencePath $Context.SeedPath)) {
+            return (Read-NightlyEvidenceText ([string]$Context.SeedPath))
         }
         return $null
     }
@@ -2070,7 +2076,7 @@ function Import-TestPhaseExistingGeneration {
     }
     $prefix = Read-TestPhaseGenerationPrefix -GenerationDir $genDir
     $same = (Test-TestPhaseOrdinalEqual ([string]$meta.runId) ([string]$Context.RunId)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.attempt) ([string]$Context.Attempt)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.source) ([string]$Context.Source)) -and (Test-TestPhaseOrdinalEqual ([string]$meta.writerEnvironment) ([string]$Context.WriterEnvironment))
-    $sealed = Test-Path -LiteralPath (Join-Path $genDir 'seal.json')
+    $sealed = Test-NightlyEvidencePath (Join-Path $genDir 'seal.json')
     $resumeSealed = [bool]$Recover -and $sealed -and -not $prefix.Corrupt -and $same
     if ($ProjectOnly) {
         $Context.Generation = $Generation
@@ -2107,7 +2113,7 @@ function Import-TestPhaseExistingGeneration {
         Write-TestPhaseDirectory -Path $genNew
         $newSeed = Join-Path $genNew 'seed.json'
         $utf8 = New-Object System.Text.UTF8Encoding $false
-        [System.IO.File]::WriteAllText($newSeed, $parentText, $utf8)
+        Write-NightlyEvidenceText $newSeed $parentText
         $Context.SeedPath = $newSeed
         $Context.HasSeed = $true
         $Context.Records = New-Object System.Collections.Generic.List[object]
@@ -2180,7 +2186,7 @@ function Open-TestPhaseExecutedContext {
     elseif (-not [string]::IsNullOrWhiteSpace([string]$script:QualificationTimingRoot)) { $probe = [string]$script:QualificationTimingRoot }
     elseif (-not [string]::IsNullOrWhiteSpace($LogRoot)) { $probe = (Join-Path $LogRoot 'timing') }
     if (Test-TestPhaseUnsafeDirectory -Path $probe) { return (New-TestPhaseRefusedContext -Reason 'unsafe-root') }
-    if (Test-Path -LiteralPath $timing -PathType Leaf) { return (New-TestPhaseRefusedContext -Reason 'timing-root-is-file') }
+    if (Test-NightlyEvidencePath $timing 'Leaf') { return (New-TestPhaseRefusedContext -Reason 'timing-root-is-file') }
     Write-TestPhaseDirectory -Path $timing
     $journal = Get-TestPhaseJournalRoot -TimingRoot $timing
     Write-TestPhaseDirectory -Path $journal
@@ -2789,7 +2795,7 @@ function Complete-TestPhaseLaunch {
             Complete-TestPhaseExecutedProjection -Context $live | Out-Null
         }
         $planned = Join-Path (Get-TestPhaseTimingDirectory -RunDirectory $LogRoot) 'groups-planned.json'
-        if (Test-Path -LiteralPath $planned) {
+        if (Test-NightlyEvidencePath $planned) {
             Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
         }
     } catch {
@@ -2813,6 +2819,7 @@ function ConvertTo-TestPhaseSummaryRows {
     $plannedDocs = @(Read-TestPhasePlannedDocuments -RunDirectory $RunDirectory)
     $shards = @()
     $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
+    Sync-NightlyDeferredEvidenceWrites
     if (Test-Path -LiteralPath $timing) {
         $shards = @(Get-ChildItem -LiteralPath $timing -Filter 'cases-*.jsonl' -File -ErrorAction SilentlyContinue)
         foreach ($chunkDir in @(Get-ChildItem -LiteralPath $timing -Force -Filter 'chunk-*' -ErrorAction SilentlyContinue)) {
@@ -2920,7 +2927,7 @@ function ConvertTo-TestPhaseSummaryRows {
     }
     $executedPath = Join-Path $timing 'groups-executed.json'
     if ($null -eq $journalPrefix -and (Get-TestPhasePathIdentity -Path $executedPath).Kind -eq 'regular') {
-        $executed = [System.IO.File]::ReadAllText($executedPath) | ConvertFrom-Json
+        $executed = (Read-NightlyEvidenceText $executedPath) | ConvertFrom-Json
         foreach ($chunk in @($executed.chunks)) {
             if (-not [string]::IsNullOrWhiteSpace([string]$chunk.trx)) {
                 $fullTrx = [System.IO.Path]::GetFullPath((Join-Path $RunDirectory ([string]$chunk.trx)))
@@ -3221,7 +3228,7 @@ function Write-TestPhaseSummaryFiles {
         $lines.Add(($cells -join ','))
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines((Join-Path $timing 'tests.csv'), $lines.ToArray(), $utf8)
+    Write-NightlyEvidenceLines (Join-Path $timing 'tests.csv') $lines.ToArray()
 
     $limit = $Top
     if ($limit -lt 1) { $limit = 1 }
@@ -3242,7 +3249,7 @@ function Write-TestPhaseSummaryFiles {
     }
     $md.Add('')
     $md.Add('Shared fixture rows are separate from per-test totals.')
-    [System.IO.File]::WriteAllLines((Join-Path $timing 'summary.md'), $md.ToArray(), $utf8)
+    Write-NightlyEvidenceLines (Join-Path $timing 'summary.md') $md.ToArray()
 }
 
 function Invoke-TestPhaseRunSummary {
@@ -3255,7 +3262,7 @@ function Invoke-TestPhaseRunSummary {
         # and is not treated as the membership of every other suite.
         $planned = $docs[0]
         if ((Get-TestPhasePathIdentity -Path $plannedPath).Kind -eq 'regular') {
-            $planned = [System.IO.File]::ReadAllText($plannedPath) | ConvertFrom-Json
+            $planned = (Read-NightlyEvidenceText $plannedPath) | ConvertFrom-Json
         }
         $report = ConvertTo-TestPhaseSummaryRows -Planned $planned -RunDirectory $RunDirectory
         Write-TestPhaseSummaryFiles -Planned $planned -Report $report -RunDirectory $RunDirectory -Top $Top
@@ -3649,6 +3656,7 @@ function Get-QualificationPhaseSums {
         $empty.refused = $true
         return $empty
     }
+    Sync-NightlyDeferredEvidenceWrites
     $entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)
     $shards = @($entries | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $ourToken = ConvertTo-QualificationChunkIdentity -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite
@@ -4046,7 +4054,7 @@ function Update-TestPhasePlannedIndex {
     $path = Join-Path $Directory 'groups-planned-index.json'
     $kept = New-Object System.Collections.Generic.List[object]
     if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
-        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $existing = (Read-NightlyEvidenceText $path) | ConvertFrom-Json
         if ($existing.PSObject.Properties.Name -contains 'suites' -and $null -ne $existing.suites) {
             foreach ($row in @($existing.suites)) {
                 if ($null -eq $row) { continue }
@@ -4109,7 +4117,7 @@ function Read-TestPhasePlannedDocuments {
     $docs = New-Object System.Collections.Generic.List[object]
     $indexPath = Join-Path $dir 'groups-planned-index.json'
     if ((Get-TestPhasePathIdentity -Path $indexPath).Kind -eq 'regular') {
-        $index = [System.IO.File]::ReadAllText($indexPath) | ConvertFrom-Json
+        $index = (Read-NightlyEvidenceText $indexPath) | ConvertFrom-Json
         if ($index.PSObject.Properties.Name -contains 'suites' -and $null -ne $index.suites) {
             foreach ($row in @($index.suites)) {
                 if ($null -eq $row) { continue }
@@ -4118,14 +4126,14 @@ function Read-TestPhasePlannedDocuments {
                 if ($file -notmatch '^groups-planned-[a-z0-9][a-z0-9-]{0,40}\.json$') { continue }
                 $docPath = Join-Path $dir $file
                 if ((Get-TestPhasePathIdentity -Path $docPath).Kind -ne 'regular') { continue }
-                $docs.Add(([System.IO.File]::ReadAllText($docPath) | ConvertFrom-Json))
+                $docs.Add(((Read-NightlyEvidenceText $docPath) | ConvertFrom-Json))
             }
         }
     }
     if ($docs.Count -eq 0) {
         $singleton = Join-Path $dir 'groups-planned.json'
         if ((Get-TestPhasePathIdentity -Path $singleton).Kind -eq 'regular') {
-            $docs.Add(([System.IO.File]::ReadAllText($singleton) | ConvertFrom-Json))
+            $docs.Add(((Read-NightlyEvidenceText $singleton) | ConvertFrom-Json))
         }
     }
     return @($docs.ToArray())
@@ -4145,7 +4153,7 @@ function Write-QualificationRunPhase {
     $path = Join-Path $dir 'setup-phases.json'
     $kept = New-Object System.Collections.Generic.List[object]
     if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
-        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $existing = (Read-NightlyEvidenceText $path) | ConvertFrom-Json
         if ($existing.PSObject.Properties.Name -contains 'phases' -and $null -ne $existing.phases) {
             foreach ($row in @($existing.phases)) {
                 if ($null -eq $row) { continue }
@@ -4185,7 +4193,7 @@ function Get-QualificationSetupAccounting {
     $path = Join-Path $dir 'setup-phases.json'
     $intervals = New-Object System.Collections.Generic.List[object]
     if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') {
-        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $existing = (Read-NightlyEvidenceText $path) | ConvertFrom-Json
         $countedOnce = $true
         if ($existing.PSObject.Properties.Name -contains 'phases' -and $null -ne $existing.phases) {
             foreach ($row in @($existing.phases)) {

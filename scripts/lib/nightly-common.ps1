@@ -330,9 +330,10 @@ function Get-NightlySha256Text {
 
 function Get-NightlyFileSha256 {
     param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-NightlyEvidencePath $Path)) {
         throw ('missing file for hash {0}' -f $Path)
     }
+    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::Sha256($Path) }
     if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::FileSha256($Path) }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $stream = [System.IO.File]::OpenRead($Path)
@@ -442,6 +443,8 @@ function Start-NightlyProcess {
         [hashtable]$StartParams,
         [hashtable]$Environment = $null
     )
+    # A child reads the disk: queued evidence writes land first (nightly-core.ps1).
+    Sync-NightlyDeferredEvidenceWrites
     if ($null -eq $Environment) {
         return Start-Process @StartParams
     }

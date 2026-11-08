@@ -110,38 +110,87 @@ function Test-NightlyCoreAvailable {
     return $true
 }
 
-# Background evidence writes (DeferredEvidenceWriter in Antiphon.Nightly/NightlyCore.cs) for the files a nightly run rewrites
-# several times per batch. Off unless the run turns them on (nightly-tests.ps1), so a script calling the
-# evidence functions directly still reads back what it just wrote. ANTIPHON_NIGHTLY_DEFERRED_WRITES=off keeps
-# every write in line.
+# Evidence file system (EvidenceFiles in Antiphon.Nightly/EvidenceFiles.cs). Off unless a nightly run turns it
+# on (nightly-tests.ps1): then the evidence scripts' reads and writes go through one write-behind file system,
+# so writes land on a background thread and this process reads what it wrote. Off, every helper below is the
+# plain file call it replaced. ANTIPHON_NIGHTLY_DEFERRED_WRITES=off keeps it off.
 if ($null -eq $script:NightlyDeferEvidenceWrites) { $script:NightlyDeferEvidenceWrites = $false }
-if ($null -eq $script:NightlyDeferredEvidenceUsed) { $script:NightlyDeferredEvidenceUsed = $false }
 
 function Enable-NightlyDeferredEvidenceWrites {
     if ([string]$env:ANTIPHON_NIGHTLY_DEFERRED_WRITES -ieq 'off') { return }
-    if (Test-NightlyCoreAvailable) { $script:NightlyDeferEvidenceWrites = $true }
+    if (-not (Test-NightlyCoreAvailable)) { return }
+    [Antiphon.Nightly.EvidenceFiles]::EnableWriteBehind()
+    $script:NightlyDeferEvidenceWrites = $true
 }
 
 function Disable-NightlyDeferredEvidenceWrites {
-    Sync-NightlyDeferredEvidenceWrites
+    if (-not $script:NightlyDeferEvidenceWrites) { return }
     $script:NightlyDeferEvidenceWrites = $false
+    Write-NightlyEvidenceFailures ([Antiphon.Nightly.EvidenceFiles]::DisableWriteBehind())
 }
 
-# Queues the atomic write when deferral is on and returns $true; $false means the caller writes in line.
+function Write-NightlyEvidenceFailures([string[]]$Failures) {
+    foreach ($failure in @($Failures)) {
+        Write-Warning -WarningAction Continue ('deferred-evidence-write-failed: ' + $failure)
+    }
+}
+
+# Queues an atomic whole-file write when the evidence file system is on and returns $true; $false means the
+# caller writes it in line. SkipLinks: an existing directory or link is left alone.
 function Submit-NightlyDeferredEvidenceWrite([string]$Path, [string]$Text, [bool]$SkipLinks) {
     if (-not $script:NightlyDeferEvidenceWrites) { return $false }
-    [Antiphon.Nightly.DeferredEvidenceWriter]::Enqueue($Path, $Text, $SkipLinks)
-    $script:NightlyDeferredEvidenceUsed = $true
+    [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($Path, $Text, $SkipLinks)
     return $true
 }
 
-# Read barrier for the deferred files: waits for the queued writes (of -Path only, when given), so this
-# process reads what it wrote.
+# Barrier before anything that reads the disk directly (a listing, a copy, a stream, another process): waits
+# for the queued writes (of -Path only, when given).
 function Sync-NightlyDeferredEvidenceWrites([string]$Path = '') {
-    if (-not $script:NightlyDeferredEvidenceUsed) { return }
-    if ($Path) { $failures = [Antiphon.Nightly.DeferredEvidenceWriter]::Flush($Path) }
-    else { $failures = [Antiphon.Nightly.DeferredEvidenceWriter]::Flush() }
-    foreach ($failure in $failures) {
-        Write-Warning -WarningAction Continue ('deferred-evidence-write-failed: ' + $failure)
+    if (-not $script:NightlyDeferEvidenceWrites) { return }
+    if ($Path) { Write-NightlyEvidenceFailures ([Antiphon.Nightly.EvidenceFiles]::Flush($Path)) }
+    else { Write-NightlyEvidenceFailures ([Antiphon.Nightly.EvidenceFiles]::Flush()) }
+}
+
+# Test-Path -LiteralPath [-PathType Leaf|Container], seeing queued writes.
+function Test-NightlyEvidencePath([string]$Path, [string]$PathType = 'Any') {
+    if ($script:NightlyDeferEvidenceWrites) {
+        if ($PathType -eq 'Leaf') { return [Antiphon.Nightly.EvidenceFiles]::FileExists($Path) }
+        if ($PathType -eq 'Container') { return [Antiphon.Nightly.EvidenceFiles]::DirectoryExists($Path) }
+        return [Antiphon.Nightly.EvidenceFiles]::PathExists($Path)
     }
+    return (Test-Path -LiteralPath $Path -PathType $PathType)
+}
+
+# [IO.File]::ReadAllText / ReadAllBytes / ReadAllLines, seeing queued writes.
+function Read-NightlyEvidenceText([string]$Path) {
+    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::ReadAllText($Path) }
+    return [System.IO.File]::ReadAllText($Path)
+}
+
+function Read-NightlyEvidenceBytes([string]$Path) {
+    if ($script:NightlyDeferEvidenceWrites) { return ,[Antiphon.Nightly.EvidenceFiles]::ReadAllBytes($Path) }
+    return ,[System.IO.File]::ReadAllBytes($Path)
+}
+
+function Read-NightlyEvidenceLines([string]$Path) {
+    if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::ReadAllLines($Path) }
+    return [System.IO.File]::ReadAllLines($Path)
+}
+
+# Bytes of the path's queued write that has not landed yet, or -1.
+function Get-NightlyEvidencePendingLength([string]$Path) {
+    if (-not $script:NightlyDeferEvidenceWrites) { return -1 }
+    return [Antiphon.Nightly.EvidenceFiles]::PendingLength($Path)
+}
+
+# [IO.File]::WriteAllText / WriteAllLines with UTF-8 and no byte-order mark, queued when the evidence file
+# system is on.
+function Write-NightlyEvidenceText([string]$Path, [string]$Text) {
+    if ($script:NightlyDeferEvidenceWrites) { [Antiphon.Nightly.EvidenceFiles]::WriteAllText($Path, $Text); return }
+    [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding $false))
+}
+
+function Write-NightlyEvidenceLines([string]$Path, [string[]]$Lines) {
+    if ($script:NightlyDeferEvidenceWrites) { [Antiphon.Nightly.EvidenceFiles]::WriteAllLines($Path, $Lines); return }
+    [System.IO.File]::WriteAllLines($Path, $Lines, (New-Object System.Text.UTF8Encoding $false))
 }
