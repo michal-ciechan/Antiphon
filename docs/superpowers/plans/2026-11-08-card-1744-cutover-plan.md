@@ -309,7 +309,7 @@ change and must fail with assertion failures, not build errors.
 
 ### Checkpoints
 
-totalTimeoutMinutes: 50
+totalTimeoutMinutes: 52
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
