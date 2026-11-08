@@ -40,8 +40,8 @@ public sealed class C0824WorkspaceSlotRoleGateTests
     [Test]
     public async Task Case_reuses_one_scratch_repository_and_spawns_no_git()
     {
-        // The 1 s scratch-git deadline is per process start. Sharing the repository has to
-        // remove init, commit, clone and branch from the case, not widen that deadline.
+        // The scratch-git hang bound is per process start. Sharing the repository removes
+        // init, commit, clone and branch from the case. The bound is not an elapsed assertion.
         C0824SlotTransportWorld.EnsureSharedScratchRepository();
         using var counted = C0824SlotTransportWorld.BeginScratchGitCount();
         await using var world = await C0824SlotTransportWorld.StartAsync();
