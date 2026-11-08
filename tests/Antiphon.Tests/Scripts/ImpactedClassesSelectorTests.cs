@@ -209,6 +209,87 @@ public sealed partial class ImpactedClassesSelectorTests
             "HostCleanupCheckpointReceiptTests");
     }
 
+    [Test]
+    [Arguments("{}", "schema", "object without a kinds array")]
+    [Arguments("[]", "kinds", "json array root")]
+    [Arguments(
+        "{\"schema\":1,\"kind\":[{\"id\":\"migrations\",\"globs\":[\"server/Migrations/**\"],\"classes\":[\"AppDbContextModelTests\"]}]}",
+        "unknown property 'kind'",
+        "kind-key typo")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"bare\",\"classes\":[\"AppDbContextModelTests\"]}]}",
+        "bare: no globs",
+        "kind with no globs")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"glob-only\",\"globs\":[\"server/Migrations/**\"]}]}",
+        "glob-only: no classes",
+        "kind with no classes, methods, or derive")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"remote-scripts\",\"globs\":[\"scripts/*.sh\"],\"methods\":[\"RemoteScriptContractTests\"]}]}",
+        "RemoteScriptContractTests",
+        "methods entry without Class/Method")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"migrations\",\"globs\":[\"server/Migrations/**\"],\"classes\":[\"MigrationTestDatabase\"]}]}",
+        "MigrationTestDatabase",
+        "real class that is not a *Tests class")]
+    [Arguments("{\"schema\":2,\"kinds\":[]}", "schema", "schema other than 1")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"globs\":[\"server/Migrations/**\"],\"classes\":[\"AppDbContextModelTests\"]}]}",
+        "missing id",
+        "kind without an id")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"contracts\",\"globs\":[\"client/src/api/**\"],\"class\":[\"ContractSnapshotTests\"]}]}",
+        "unknown property 'class'",
+        "unknown kind property")]
+    public async Task malformed_table_is_refused(string table, string needle, string shape)
+    {
+        var root = Root();
+        var path = Path.Combine(Path.GetTempPath(), "impacted-classes-bad-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(path, table);
+        try
+        {
+            var audit = await RunAsync(root, "-Audit", "-Json", "-Table", path);
+            audit.Exit.ShouldBe(1, shape + " audit " + audit.Text);
+            audit.Text.ShouldContain(needle, Case.Sensitive, shape + " audit");
+            using (var json = JsonDocument.Parse(audit.Stdout))
+                json.RootElement.GetProperty("ok").GetBoolean().ShouldBeFalse(shape + " audit ok");
+
+            var selected = await RunAsync(root, "-Path", "server/Migrations/x.cs", "-Json", "-Table", path);
+            selected.Exit.ShouldBe(1, shape + " select " + selected.Text);
+            selected.Text.ShouldContain(needle, Case.Sensitive, shape + " select");
+            using var selectedJson = JsonDocument.Parse(selected.Stdout);
+            selectedJson.RootElement.GetProperty("ok").GetBoolean().ShouldBeFalse(shape + " select ok");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task malformed_range_and_path_are_refused()
+    {
+        var root = Root();
+        var both = await RunAsync(root, "-Range", "HEAD^..HEAD", "-Path", "server/Migrations/x.cs", "-Json");
+        both.Exit.ShouldNotBe(0, both.Text);
+        both.Text.ShouldContain("-Range", Case.Sensitive);
+        both.Text.ShouldContain("-Path", Case.Sensitive);
+
+        var list = Path.Combine(Path.GetTempPath(), "impacted-classes-list-" + Guid.NewGuid().ToString("N") + ".txt");
+        await File.WriteAllTextAsync(list, "server/Migrations/x.cs\n");
+        try
+        {
+            var withList = await RunAsync(root, "-Range", "HEAD^..HEAD", "-FileList", list, "-Json");
+            withList.Exit.ShouldNotBe(0, withList.Text);
+            withList.Text.ShouldContain("-Range", Case.Sensitive);
+            withList.Text.ShouldContain("-FileList", Case.Sensitive);
+        }
+        finally
+        {
+            File.Delete(list);
+        }
+    }
+
     private static async Task AssertKinds(string root, string sha, string[] kinds, params string[] needles)
     {
         var selected = await SelectAsync(root, sha + "^.." + sha);
