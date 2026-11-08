@@ -698,7 +698,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     // CARD-1764. Only a runner that names its stream is ever sent a cursor, so an old runner keeps
     // answering the full transcript to a request it has always served.
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-        TranscriptSinceRead.ReadAsync(sessionId, _transcriptHold, cursorEnabled: false,
+        TranscriptSinceRead.ReadAsync(sessionId, _transcriptHold, cursorEnabled: true,
             (since, stream, token) => ReadGeneratedAsync(
                 $"sessions/{sessionId:D}/transcript" + (stream is null ? "" : TranscriptSince.Query(since, stream)),
                 ResilienceOperations.RunnerTranscript, RunnerReadJson.PhoneTranscript, token),

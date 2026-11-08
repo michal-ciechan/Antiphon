@@ -4496,8 +4496,11 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             if (tailer is null)
                 return new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0)
                     with { AcceptedStartedAt = _acceptedStartedAt };
-            var delta = false;
+            var delta = TranscriptSince.IsCursor(since, stream) && string.Equals(stream, current, StringComparison.Ordinal);
             var read = delta ? tailer.SnapshotAfter(since) : tailer.Snapshot();
+            // A cursor past this stream end is not one this stream gave out: answer in full.
+            if (delta && read.LastSequence < since)
+                read = tailer.Snapshot();
             return read with { AcceptedStartedAt = _acceptedStartedAt, Stream = current };
         }
 
