@@ -59,6 +59,7 @@ public class AntiphonAppFixture
     internal string OwnedRunnerUrl => _isolatedSessionRunner?.BaseUrl ?? throw new InvalidOperationException("Runner not started");
     internal string OwnedRunnerDirectory => _isolatedSessionRunner?.RunDirectory ?? throw new InvalidOperationException("Runner not started");
     internal string OwnedDatabase => _container.GetConnectionString();
+    internal string OwnedWorkspace => _workspacePath ?? throw new InvalidOperationException("Workspace not created");
     internal bool RunnerCensusCompleted { get; private set; }
 
     /// <summary>
