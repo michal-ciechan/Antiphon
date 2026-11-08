@@ -548,15 +548,14 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     }
 
     /// <summary>
-    /// CARD-1157. While armed, the Nth command since <see cref="Arm"/> whose text starts
-    /// <c>SELECT a."Status", a."StartedAt" FROM "AgentSessions"</c> throws once from the executing
-    /// hook. <c>C1157_SentRowDestinationReceiptConfirms</c> <c>stopped-after-session-select-fault</c>
-    /// arms the second projection. Registered after <see cref="Commands"/> so that statement is counted.
+    /// CARD-1157. While armed, the Nth session projection since <see cref="Arm"/> throws once from
+    /// the executing hook. Recognition matches <see cref="IsSessionProjection"/>, including the
+    /// CARD-1769 compiled-query comment. <c>stopped-after-session-select-fault</c> arms the second
+    /// projection. Registered after <see cref="Commands"/> so that statement is counted.
     /// </summary>
     internal sealed class FaultNthSessionProjection : DbCommandInterceptor
     {
         public const string Message = "planned session projection fault";
-        private const string Prefix = "SELECT a.\"Status\", a.\"StartedAt\" FROM \"AgentSessions\"";
         private readonly object _gate = new();
         private int _armedNth;
         private int _seen;
@@ -578,8 +577,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
             lock (_gate)
             {
                 if (_armedNth == 0) return false;
-                var text = string.Join(' ', command.CommandText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-                if (!text.StartsWith(Prefix, StringComparison.Ordinal)) return false;
+                if (!IsSessionProjection(command.CommandText)) return false;
                 if (++_seen != _armedNth) return false;
                 _armedNth = 0;
                 return true;
