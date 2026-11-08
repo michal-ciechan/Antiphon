@@ -6731,6 +6731,7 @@ public sealed class RemoteScriptContractTests
             Block(remote, "c1008_rollout_lock") + "\n" +
             RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            WorkspaceSlotsReader(remote) +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
             mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/volumes/packages" "$root/volumes/npm"
@@ -7056,6 +7057,7 @@ public sealed class RemoteScriptContractTests
         var output = LinuxShell(Block(remote, "c849_no_temp_containers") + "\n" +
             RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            WorkspaceSlotsReader(remote) +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
@@ -7293,6 +7295,7 @@ public sealed class RemoteScriptContractTests
         var output = LinuxShell(Block(remote, "c849_require_ready") + "\n" +
             Block(remote, "c1008_rollout_lock") + "\n" + RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            WorkspaceSlotsReader(remote) +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
@@ -7390,7 +7393,8 @@ public sealed class RemoteScriptContractTests
                     .ShouldBe("sentinel:" + name + ":old\n");
             }
         }
-        var deployments = LinuxShell(Block(remote, "case_deploy_parent") + "\n" +
+        var deployments = LinuxShell(WorkspaceSlotsReader(remote) +
+            Block(remote, "case_deploy_parent") + "\n" +
             Block(remote, "c1008_rollout_lock") + "\n" + RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
@@ -7536,6 +7540,7 @@ public sealed class RemoteScriptContractTests
             Block(remote, "c849_budget_gate") + "\n" + Block(remote, "c849_prune_validate_tree") + "\n" +
             Block(remote, "c1008_rollout_lock") + "\n" + RetirementPrelude(remote) +
             Block(remote, "c1609_temp_retirement_clearable") + "\n" +
+            WorkspaceSlotsReader(remote) +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             ( c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 ) > "$root/observe" 2>&1
             printf 'OBSERVE_EXIT=%s\n' "$?"
@@ -9353,6 +9358,11 @@ public sealed class RemoteScriptContractTests
             .ToList();
 
     private static string EnsureDirsBody(string text) => Block(text, "ensure_dirs");
+
+    // case_deploy_parent and case_deploy_temp_runner read the saved slot flag
+    // before any side effect. Extracted harnesses must include that function.
+    private static string WorkspaceSlotsReader(string remote) =>
+        Block(remote, "runner_workspace_slots_enabled") + "\n";
 
     // Production copies c1008-retirement.sh beside the remote script. Extracted
     // harnesses must source that same file; clearable refuses until the loader
