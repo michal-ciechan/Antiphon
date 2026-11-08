@@ -299,7 +299,7 @@ internal static class HangfireConfiguration
         return builder.ConnectionString;
     }
 
-    /// <summary>CARD-1774. The lease session unlocks with a bounded command timeout. Schema install does not.</summary>
+    /// <summary>CARD-1774. Every command on the lease connection uses this timeout, including Dispose's unlock. Schema install does not.</summary>
     private static string LeaseConnectionString(string? connectionString)
     {
         var builder = new NpgsqlConnectionStringBuilder(ProbeConnectionString(connectionString))
@@ -442,7 +442,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     internal const int CrashExpirySeconds =
         KeepaliveIdleSeconds + (KeepaliveIntervalSeconds * KeepaliveCount);
 
-    /// <summary>CARD-1774. Dispose's unlock uses this command timeout.</summary>
+    /// <summary>CARD-1774. Every command on the lease connection uses this timeout, including Dispose's unlock.</summary>
     internal const int UnlockCommandTimeoutSeconds = 5;
 
     /// <summary>CARD-1774. How often the process re-confirms the lock. The successor overlap is longer.</summary>
@@ -606,9 +606,12 @@ internal sealed class HangfireWorkerLease : IDisposable
                 throw Lost();
 
             HangfireConfiguration.ApplyCrashExpiry(fresh);
+            // Read the new pid before the swap. A failure here must not leave the
+            // fresh session installed against the previous backend's pid (CARD-1774 A-1).
+            var newPid = ReadBackendPid(fresh);
             var previous = Interlocked.Exchange(ref _connection, fresh);
             owned = true;
-            _backendPid = ReadBackendPid(fresh);
+            _backendPid = newPid;
             MarkConfirmed();
             HangfireConfiguration.ReleaseConnection(previous);
         }
@@ -703,12 +706,16 @@ internal sealed class HangfireWorkerLease : IDisposable
     private static int? ReadGrantedHolder(NpgsqlConnection connection)
     {
         using var command = connection.CreateCommand();
+        // pg_try_advisory_lock(int, int) is local to this database (objsubid 2).
+        // pg_locks lists every database in the cluster.
         command.CommandText = """
             SELECT pid
             FROM pg_locks
             WHERE locktype = 'advisory'
               AND classid = @lockClass
               AND objid = @lockId
+              AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+              AND objsubid = 2
               AND granted
             """;
         command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer) { Value = ClassId });
