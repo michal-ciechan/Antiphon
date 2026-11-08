@@ -1660,6 +1660,15 @@ function Write-TestPhaseCommitFile {
     param([string]$FinalPath, [string]$Text)
     $dir = Split-Path -Parent $FinalPath
     Write-TestPhaseDirectory -Path $dir
+    # During a nightly run with no commit seam set, the record is queued on the evidence file system
+    # (nightly-core.ps1): the same refusal when it exists and the same read-back, without a temporary file
+    # and rename per record. The seams drive the on-disk steps below.
+    if ($script:NightlyDeferEvidenceWrites -and $null -eq $script:TestPhaseCommitBarrier -and $null -eq $script:TestPhaseCommitFault) {
+        if (Test-NightlyEvidencePath $FinalPath 'Leaf') { throw 'commit-exists' }
+        Write-NightlyEvidenceText $FinalPath $Text
+        if ((Read-NightlyEvidenceText $FinalPath) -ne $Text) { throw 'commit-unreadable' }
+        return
+    }
     Wait-TestPhaseCommitBarrier -Stage 'BeforeTempComplete'
     if (Test-TestPhaseCommitFault -Stage 'CreateTemp') { throw 'commit-fault-temp' }
     $tmp = Join-Path $dir ('.' + [guid]::NewGuid().ToString('n') + '.tmp')
@@ -1703,8 +1712,8 @@ function Add-TestPhaseJournalEnvelope {
         if ($attempt -gt 0 -and $watch.Elapsed.TotalSeconds -gt 2) { break }
         $attempt++
         try {
-            if ([System.IO.File]::Exists($final)) {
-                $existing = [System.IO.File]::ReadAllText($final)
+            if (Test-NightlyEvidencePath $final 'Leaf') {
+                $existing = Read-NightlyEvidenceText $final
                 if ((Test-TestPhaseRecordDigest -Text $existing) -and $existing.Contains($PublicationId)) { return $true }
                 throw 'commit-conflict'
             }

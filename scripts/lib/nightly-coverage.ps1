@@ -105,6 +105,18 @@ function ConvertFrom-NightlyDiscoveryDocument {
     if ([string]::IsNullOrWhiteSpace([string]$Object.assemblyHash)) {
         throw 'missing assemblyHash'
     }
+    if (Test-NightlyCoreAvailable) {
+        # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs): the same rows and the same refusals.
+        $compiled = [Antiphon.Nightly.NightlyDocuments]::DiscoveryNodes($Object.nodes)
+        if ($compiled.Error) { throw $compiled.Error }
+        return [pscustomobject]@{
+            Format = $format
+            TunitVersion = $tunit
+            MtpVersion = $mtp
+            AssemblyHash = [string]$Object.assemblyHash
+            Nodes = $compiled.Nodes
+        }
+    }
     $nodes = [Collections.Generic.List[object]]::new()
     $uids = @{}
     foreach ($n in @($Object.nodes)) {
@@ -574,6 +586,8 @@ function ConvertTo-NightlyDiscoveryDocument {
     )
     if ([string]::IsNullOrWhiteSpace($AssemblyHash)) { throw 'missing assemblyHash' }
     $mapped = @()
+    # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs); the loop below appended one row at a time.
+    if (Test-NightlyCoreAvailable) { $mapped = [Antiphon.Nightly.NightlyDocuments]::DocumentNodes($Nodes); $Nodes = @() }
     foreach ($n in @($Nodes)) {
         $uid = [string]$n.uid
         $typeName = [string]$n.type

@@ -266,6 +266,7 @@ function Test-NightlyRunContextOwnership {
 
 function ConvertTo-NightlyCanonicalJson {
     param($Object)
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Object) }
     function Write-Node {
         param($Node)
         if ($null -eq $Node) { return 'null' }

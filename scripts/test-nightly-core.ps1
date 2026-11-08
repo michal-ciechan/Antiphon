@@ -304,9 +304,50 @@ function Test-NCEvidenceFilesMatchFallback {
     Assert-NC ($deferred -and $before -ceq $after -and $after.Contains('second, longer')) 'queuedEvidence' ('queued ' + $before + ' landed ' + $after)
 }
 
+function Test-NCDocumentsMatchFallback {
+    $source = @(Get-NCFixtureNodes 3000)
+    $nodes = [Collections.Generic.List[object]]::new()
+    $i = 0
+    foreach ($n in $source) {
+        $row = [pscustomobject]@{ uid = $n.Uid; assembly = 'Antiphon.Tests'; namespace = $n.Namespace; type = $n.Type; method = $n.Method
+            signature = ('(' + $i + ')'); state = ''; categories = $n.Categories }
+        if ($i % 7 -eq 0) { $row | Add-Member NoteProperty excluded $true }
+        elseif ($i % 11 -eq 0) { $row | Add-Member NoteProperty excluded 'false' }
+        if ($i % 13 -eq 0) { $row.categories = @('OptIn') }
+        if ($i % 17 -eq 0) { $row.categories = 'explicit' }
+        if ($i % 19 -eq 0) { $row.namespace = '' }
+        if ($i % 23 -eq 0) { $row.state = 'Discovered' }
+        $nodes.Add($row); $i++
+    }
+    $nodes.Add([ordered]@{ uid = 'dict-node'; type = 'T'; method = 'M'; excluded = $true; categories = @('A', 'B') })
+    $r = Invoke-NCBothWays {
+        $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes.ToArray() -AssemblyHash 'abc'
+        $json = $doc | ConvertTo-Json -Depth 12
+        $back = ConvertFrom-NightlyDiscoveryDocument -Object ($json | ConvertFrom-Json) -ExpectedFormat $script:NightlyDiscoveryFormat
+        $refusals = @(foreach ($bad in @(
+            @([pscustomobject]@{ uid = 'Same'; type = 'T'; method = 'M' }, [pscustomobject]@{ uid = 'same'; type = 'T'; method = 'M' }),
+            @([pscustomobject]@{ uid = ''; type = 'T'; method = 'M' }),
+            @([pscustomobject]@{ uid = 'u'; type = 'T'; method = ' ' }),
+            $null)) {
+            $o = [pscustomobject]@{ format = $script:NightlyDiscoveryFormat; tunitVersion = $script:NightlySupportedTunit; mtpVersion = $script:NightlySupportedMtp; assemblyHash = 'h'; nodes = $bad }
+            try { [void](ConvertFrom-NightlyDiscoveryDocument -Object $o -ExpectedFormat $script:NightlyDiscoveryFormat); 'accepted' } catch { $_.Exception.Message }
+        })
+        [ordered]@{ json = $json; back = $back; canonical = (ConvertTo-NightlyCanonicalJson -Object $doc); refusals = $refusals }
+    }
+    Assert-NC ($r.Compiled -ceq $r.Fallback) 'discoveryDocuments' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+    $mixed = [ordered]@{
+        zeta = 1; Alpha = [long]2; beta = 1.5; Gamma = [decimal]2.25; '' = 'dropped'; flag = $false; none = $null
+        text = ('q"uote\back' + "`r`n`t" + [char]0xe9); list = @(1, 'two', $null, @(3)); single = @('one')
+        obj = [pscustomobject]@{ b = 2; a = 1 }; table = @{ Y = 'y'; x = 'x' }; ordered = [ordered]@{ m = @{}; l = @() }
+        small = [byte]7; float = [single]0.5
+    }
+    $r = Invoke-NCBothWays { @((ConvertTo-NightlyCanonicalJson -Object $mixed), (ConvertTo-NightlyCanonicalJson -Object @(1, 2)), (ConvertTo-NightlyCanonicalJson -Object 'plain'), (ConvertTo-NightlyCanonicalJson -Object $null)) }
+    Assert-NC ($r.Compiled -ceq $r.Fallback) 'canonicalJson' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCEvidenceFilesMatchFallback; $expected = 14 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; $expected = 16 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
