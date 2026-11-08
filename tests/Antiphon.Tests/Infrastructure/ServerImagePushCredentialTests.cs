@@ -231,6 +231,194 @@ public sealed class ServerImagePushCredentialTests
         finally { DeleteRoot(root); }
     }
 
+    // CARD-1787. Each case is a usable [user] identity plus one line the allow-list refuses, so the
+    // only defect in the file is the refused key or section.
+    private const string UsableUser = "[user]\n\tname = Card 1787 Witness\n\temail = card-1787-witness@example.invalid\n";
+
+    [Test]
+    [Arguments("credential", UsableUser + "[credential]\n\thelper = /tmp/card-1787-steal\n")]
+    [Arguments("credential-url", UsableUser + "[credential \"https://github.com\"]\n\thelper = /tmp/card-1787-steal\n")]
+    [Arguments("include", UsableUser + "[include]\n\tpath = /tmp/card-1787-other\n")]
+    [Arguments("include-if", UsableUser + "[includeIf \"gitdir:/work/\"]\n\tpath = /tmp/card-1787-other\n")]
+    [Arguments("core", UsableUser + "[core]\n\tsshCommand = /tmp/card-1787-ssh\n")]
+    [Arguments("core-hooks", UsableUser + "[core]\n\thooksPath = /tmp/card-1787-hooks\n")]
+    [Arguments("alias", UsableUser + "[alias]\n\tpush = !/tmp/card-1787-alias\n")]
+    [Arguments("url", UsableUser + "[url \"https://card-1787.example.invalid/\"]\n\tinsteadOf = https://github.com/\n")]
+    [Arguments("user-extra-key", UsableUser + "\tsigningKey = card-1787\n")]
+    [Arguments("user-bare-key", UsableUser + "\tuseConfigOnly\n")]
+    [Arguments("user-subsection", UsableUser + "[user \"card-1787\"]\n\tname = Other\n")]
+    [Arguments("user-dotted-subsection", UsableUser + "[user.card-1787]\n\tname = Other\n")]
+    [Arguments("key-before-section", "name = Card 1787 Witness\n" + UsableUser)]
+    [Arguments("key-on-header-line", "[user] name = Card 1787 Witness\n\temail = card-1787-witness@example.invalid\n")]
+    [Arguments("continuation", "[user]\n\tname = Card 1787 \\\n\temail = card-1787-witness@example.invalid\n")]
+    [Arguments("unclosed-header", UsableUser + "[credential\n\thelper = /tmp/card-1787-steal\n")]
+    public async Task Identity_file_key_outside_user_name_and_email_is_invalid_before_git_starts(string label, string text)
+    {
+        var root = NewRoot();
+        try
+        {
+            var path = Path.Combine(root, "gitconfig");
+            await File.WriteAllTextAsync(path, text);
+            ServerGitIdentity.Refusal(path).ShouldBe("git_identity_invalid", label);
+
+            var git = new StartCountingGit(Options.Create(new GitSettings { IdentityFile = path }));
+            var refused = await git.RunAsync(root, ["commit", "--allow-empty", "-m", "card-1787"], CancellationToken.None);
+            refused.Succeeded.ShouldBeFalse(label);
+            refused.Diagnostic.ShouldBe("git_identity_invalid", label);
+            git.Starts.ShouldBe(0, label);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Quoted_user_subsection_is_not_read_as_the_user_section()
+    {
+        var root = NewRoot();
+        try
+        {
+            // git reads these keys as user.card-1787.name and user.card-1787.email, so the file has no
+            // user.name or user.email at all.
+            var path = Path.Combine(root, "gitconfig");
+            await File.WriteAllTextAsync(path,
+                "[user \"card-1787\"]\n\tname = Card 1787 Witness\n\temail = card-1787-witness@example.invalid\n");
+            var (exit, error) = await RunGitAsync(root, root, new Dictionary<string, string?>(),
+                "config", "--file", path, "--get", "user.name");
+            exit.ShouldBe(1, error);
+            ServerGitIdentity.Refusal(path).ShouldBe("git_identity_invalid");
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Identity_file_written_by_git_config_and_case_variants_stay_usable()
+    {
+        var root = NewRoot();
+        try
+        {
+            // The deploy-parent path: git config --file writes the identity, quoting a value it must.
+            var written = Path.Combine(root, "written");
+            var (nameExit, nameError) = await RunGitAsync(root, root, new Dictionary<string, string?>(),
+                "config", "--file", written, "user.name", "Card 1787; Witness");
+            nameExit.ShouldBe(0, nameError);
+            var (emailExit, emailError) = await RunGitAsync(root, root, new Dictionary<string, string?>(),
+                "config", "--file", written, "user.email", "card-1787-witness@example.invalid");
+            emailExit.ShouldBe(0, emailError);
+            ServerGitIdentity.Refusal(written).ShouldBeNull();
+
+            var variants = Path.Combine(root, "variants");
+            await File.WriteAllTextAsync(variants,
+                "# CARD-1787 identity\r\n; operator note\r\n[User] # trailing comment\r\n\tName = Card 1787 Witness\r\n\r\n"
+                + "[USER]\r\n\tEMAIL=card-1787-witness@example.invalid ; inline\r\n");
+            ServerGitIdentity.Refusal(variants).ShouldBeNull();
+
+            var incomplete = Path.Combine(root, "incomplete");
+            await File.WriteAllTextAsync(incomplete, "[user]\n\tname = Card 1787 Witness\n");
+            ServerGitIdentity.Refusal(incomplete).ShouldBe(ServerGitIdentity.AbsentReason);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Configured_identity_outranks_inherited_git_identity_and_config_variables()
+    {
+        var root = NewRoot();
+        try
+        {
+            var (repo, home, identity) = await IdentityRepoAsync(root);
+            var git = new InheritingGit(home, Options.Create(new GitSettings { IdentityFile = identity }));
+            var result = await git.RunAsync(repo, ["commit", "-q", "--allow-empty", "-m", "card-1787"], CancellationToken.None);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            git.Starts.ShouldBe(1);
+            (await HeadIdentityAsync(repo, home)).ShouldBe(
+                "Card 1787 Witness|card-1787-witness@example.invalid|Card 1787 Witness|card-1787-witness@example.invalid");
+
+            var child = git.Environment!;
+            foreach (var name in InheritingGit.Planted.Keys.Where(name => !name.StartsWith("GIT_CONFIG_", StringComparison.Ordinal)))
+                child.ContainsKey(name).ShouldBeFalse(name);
+            child.ContainsKey("GIT_CONFIG_PARAMETERS").ShouldBeFalse();
+            // Only the fixed maintenance entries remain, renumbered from zero.
+            child["GIT_CONFIG_COUNT"].ShouldBe("2");
+            child["GIT_CONFIG_KEY_0"].ShouldBe("gc.auto");
+            child["GIT_CONFIG_KEY_1"].ShouldBe("maintenance.auto");
+            child.Keys.Count(name => name.StartsWith("GIT_CONFIG_KEY_", StringComparison.Ordinal)).ShouldBe(2);
+            child.Keys.Count(name => name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.Ordinal)).ShouldBe(2);
+            child["GIT_CONFIG_GLOBAL"].ShouldBe(identity);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Desktop_without_an_identity_file_keeps_the_inherited_git_environment()
+    {
+        var root = NewRoot();
+        try
+        {
+            var (repo, home, _) = await IdentityRepoAsync(root);
+            var git = new InheritingGit(home, Options.Create(new GitSettings()));
+            var result = await git.RunAsync(repo, ["commit", "-q", "--allow-empty", "-m", "card-1787"], CancellationToken.None);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            (await HeadIdentityAsync(repo, home)).ShouldBe(
+                "Inherited Author|inherited-author@example.invalid|Inherited Committer|inherited-committer@example.invalid");
+            var child = git.Environment!;
+            child["GIT_CONFIG_PARAMETERS"].ShouldBe(InheritingGit.Planted["GIT_CONFIG_PARAMETERS"]);
+            child["GIT_CONFIG_KEY_0"].ShouldBe("user.name");
+            child["GIT_CONFIG_COUNT"].ShouldBe("3");
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public void Credentials_doc_records_the_identity_allow_list_and_environment_scrub()
+    {
+        var credentials = DockerStackDocuments.Read("docs/agent-credentials.md");
+        var start = credentials.IndexOf("### Linux server land credential (CARD-1776)", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var section = credentials[start..];
+        var next = section.IndexOf("\n### ", 4, StringComparison.Ordinal);
+        if (next > 0)
+            section = section[..next];
+        section.ShouldContain("CARD-1787");
+        section.ShouldContain("git_identity_invalid");
+        section.ShouldContain("credential.*");
+        section.ShouldContain("include");
+        section.ShouldContain("GIT_CONFIG_PARAMETERS");
+        section.ShouldContain("GIT_CONFIG_COUNT");
+        section.ShouldContain("GIT_AUTHOR_*");
+        section.ShouldContain("GIT_COMMITTER_*");
+    }
+
+    private static async Task<(string Repo, string Home, string Identity)> IdentityRepoAsync(string root)
+    {
+        var home = Path.Combine(root, "home");
+        var repo = Path.Combine(root, "repo");
+        var identity = Path.Combine(root, "gitconfig");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(repo);
+        await File.WriteAllTextAsync(identity, UsableUser);
+        await SetupCommitAsync(repo, home, "init", "-q", "-b", "master");
+        await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "base");
+        return (repo, home, identity);
+    }
+
+    private static async Task<string> HeadIdentityAsync(string repo, string home)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repo, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["HOME"] = home;
+        start.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        foreach (var arg in new[] { "log", "-1", "--format=%an|%ae|%cn|%ce" })
+            start.ArgumentList.Add(arg);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git_start_failed");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0, stderr);
+        return stdout.Trim();
+    }
+
     [Test]
     public async Task Task_progress_and_github_push_use_the_configured_credential_probe()
     {
@@ -506,6 +694,53 @@ public sealed class ServerImagePushCredentialTests
         protected override Process? StartProcess(ProcessStartInfo start)
         {
             Starts++;
+            return base.StartProcess(start);
+        }
+    }
+
+    /// <summary>CARD-1787. Plants the git identity and config variables a server process could inherit
+    /// (the same names the server's own environment would hand the child) and records the environment
+    /// the child actually starts with.</summary>
+    private sealed class InheritingGit : LandingGit
+    {
+        public static readonly IReadOnlyDictionary<string, string> Planted = new Dictionary<string, string>
+        {
+            ["GIT_AUTHOR_NAME"] = "Inherited Author",
+            ["GIT_AUTHOR_EMAIL"] = "inherited-author@example.invalid",
+            ["GIT_AUTHOR_DATE"] = "2001-02-03T04:05:06Z",
+            ["GIT_COMMITTER_NAME"] = "Inherited Committer",
+            ["GIT_COMMITTER_EMAIL"] = "inherited-committer@example.invalid",
+            ["GIT_COMMITTER_DATE"] = "2001-02-03T04:05:06Z",
+            ["GIT_CONFIG_PARAMETERS"] = "'user.email'='inherited-parameters@example.invalid'",
+            ["GIT_CONFIG_COUNT"] = "1",
+            ["GIT_CONFIG_KEY_0"] = "user.name",
+            ["GIT_CONFIG_VALUE_0"] = "Inherited Count",
+            // Left behind past the count: still scrubbed, so no renumbered entry can pick it up.
+            ["GIT_CONFIG_KEY_7"] = "credential.helper",
+            ["GIT_CONFIG_VALUE_7"] = "/tmp/card-1787-steal",
+        };
+
+        private readonly string _home;
+        public int Starts;
+        public IReadOnlyDictionary<string, string?>? Environment;
+        public InheritingGit(string home, IOptions<GitSettings>? git) : base(null, git) => _home = home;
+
+        protected override void ConfigureProcess(ProcessStartInfo start)
+        {
+            start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            start.Environment["HOME"] = _home;
+            start.Environment.Remove("GIT_CONFIG_GLOBAL");
+            foreach (var pair in Planted)
+                start.Environment[pair.Key] = pair.Value;
+        }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            if (start.ArgumentList.Contains("commit"))
+            {
+                Starts++;
+                Environment = new Dictionary<string, string?>(start.Environment, StringComparer.Ordinal);
+            }
             return base.StartProcess(start);
         }
     }
