@@ -25,3 +25,5 @@ Antiphon.Messaging.InboundUnconsumedEvent.Topic.init -> void
 
 Antiphon.Messaging.Attachment.InlineLimitBytes.get -> long?
 Antiphon.Messaging.Attachment.InlineLimitBytes.init -> void
+Antiphon.Messaging.AttachmentSize
+static Antiphon.Messaging.AttachmentSize.Format(long bytes) -> string!

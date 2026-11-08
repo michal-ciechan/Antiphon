@@ -89,6 +89,11 @@ Unknown **properties** are ignored. Nulls are written (not omitted).
 **base64 strings** on the wire (`contentEncoding: base64` in the schema). The 20 MB bus
 cap is the serialized size, so raw attachment bytes must stay under ~14 MB.
 
+`Attachment.InlineLimitBytes` (optional, CARD-1799) is set by a gateway that kept an attachment
+metadata-only because the file is larger than its inline cap; the value is that cap in bytes.
+The server then names the file, its size and the limit in the agent note. Leave it null for an
+inlined file or a failed download.
+
 ## Compatibility
 
 Wire contract is additive-only within a major. New optional properties and new enum

@@ -798,7 +798,9 @@ public sealed partial class ChannelBridgeService : BackgroundService
     /// One message's deliverable body: its text line(s) plus one bracketed line per attachment.
     /// Inlined bytes are written into the agent's inbox and referenced by absolute path (the agent
     /// Reads them — photos included, it has vision); metadata-only attachments (download failed or
-    /// over the inline cap) become a visible note so the sender's file is never silently ignored.
+    /// over the inline cap) become a visible note so the sender's file is never silently ignored. A file
+    /// the gateway marked over its cap (<see cref="Attachment.InlineLimitBytes"/>) is named with its
+    /// size and the limit, so the agent can tell the sender exactly why it did not arrive (CARD-1799).
     /// </summary>
     private string RenderMessageBody(ChannelMessage message, string? inboxDir, Guid inboundId)
     {
@@ -810,6 +812,11 @@ public sealed partial class ChannelBridgeService : BackgroundService
         {
             var attachment = message.Attachments[i];
             var word = AttachmentWord(attachment.Kind);
+            if (attachment.Content is not { Length: > 0 } && attachment.InlineLimitBytes is { } limit)
+            {
+                parts.Add($"[{word} attached — {OverLimitSubject(attachment)} is over the {AttachmentSize.Format(limit)} limit and was not delivered]");
+                continue;
+            }
             if (attachment.Content is not { Length: > 0 } bytes)
             {
                 parts.Add($"[{word} attached — could not be imported (no content relayed)]");
@@ -837,6 +844,29 @@ public sealed partial class ChannelBridgeService : BackgroundService
         }
 
         return string.Join("\n", parts);
+    }
+
+    // "<name>" (<size>), either part when known, else "it". The name is untrusted channel data inside a
+    // bracketed prompt marker: control characters, brackets and quotes are neutralised so it can never
+    // close the note or forge an "[file attached: <path>]" line.
+    private static string OverLimitSubject(Attachment attachment)
+    {
+        var name = new string((attachment.Name ?? "").Select(c => c switch
+        {
+            '[' => '(',
+            ']' => ')',
+            '"' => '\'',
+            _ when char.IsControl(c) => ' ',
+            _ => c,
+        }).ToArray()).Trim();
+        var size = attachment.Size is { } bytes ? AttachmentSize.Format(bytes) : null;
+        return (name.Length > 0, size) switch
+        {
+            (true, not null) => $"\"{name}\" ({size})",
+            (true, null) => $"\"{name}\"",
+            (false, not null) => size,
+            _ => "it",
+        };
     }
 
     private static string AttachmentWord(AttachmentKind kind) => kind switch
