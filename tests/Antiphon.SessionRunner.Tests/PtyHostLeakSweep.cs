@@ -21,6 +21,7 @@ public static class TestSessionLogRoot
         "c514-gen", "c514-seq", "c514-gate", "c514-dest", "c649-prompt",
         "c79-stop", "c628-token", "c710-platform", "c1636-adopt",
         "c1653-adopt", "c1653-launch", "c1653-sock", "c1653-peer",
+        "c1778-trust",
     ];
 
     public static string Create(string prefix)

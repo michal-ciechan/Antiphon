@@ -21,7 +21,7 @@ services:
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "set -eu; uid=1654; gid=1654; for d in /state /state/logs /state/keyring /state/keyring-cert /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work /work/repos /work/worktrees /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok /runner-state/claude /runner-state/codex; do mkdir -p \"$$d\"; done; for d in /state /work /runner-state; do owner=$$(stat -c %u \"$$d\"); if [ \"$$owner\" != 0 ] && [ \"$$owner\" != \"$$uid\" ]; then echo \"ForeignStateOwner path=$$d uid=$$owner\" >&2; exit 42; fi; done; cp /host-keyring-cert/cert.pem /state/keyring-cert/cert.pem; cp /host-keyring-cert/key.pem /state/keyring-cert/key.pem; cp /host-operator-token /state/operator-token; chmod 0600 /state/keyring-cert/cert.pem /state/keyring-cert/key.pem /state/operator-token; chmod 0755 /work/specialists /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller; chown -R \"$$uid:$$gid\" /state /work /runner-state; echo \"server-state-init owned uid=$$uid\""
+      - "set -eu; uid=1654; gid=1654; for d in /state /state/logs /state/keyring /state/keyring-cert /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work /work/repos /work/worktrees /work/agents /work/.antiphon /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok /runner-state/claude /runner-state/codex; do mkdir -p \"$$d\"; done; for d in /state /work /runner-state; do owner=$$(stat -c %u \"$$d\"); if [ \"$$owner\" != 0 ] && [ \"$$owner\" != \"$$uid\" ]; then echo \"ForeignStateOwner path=$$d uid=$$owner\" >&2; exit 42; fi; done; cp /host-keyring-cert/cert.pem /state/keyring-cert/cert.pem; cp /host-keyring-cert/key.pem /state/keyring-cert/key.pem; cp /host-operator-token /state/operator-token; chmod 0600 /state/keyring-cert/cert.pem /state/keyring-cert/key.pem /state/operator-token; chmod 0755 /work/specialists /work/specialists/check-interpreter /work/specialists/diagnose /work/specialists/output-distiller /work/agents /work/.antiphon; chown -R \"$$uid:$$gid\" /state /work /runner-state; echo \"server-state-init owned uid=$$uid\""
     volumes:
       - work:/work
       - server-state:/state
@@ -49,6 +49,7 @@ services:
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required};No Reset On Close=true"
       SessionRunner__Enabled: "true"
       SessionRunner__BaseUrl: http://server-session-runner:8080
+      SessionRunner__VerifyExecutablesOnServer: "false"
       PhoneHomeRunner__Enabled: "true"
       PhoneHomeRunner__Runners__server2__Enabled: "true"
       PhoneHomeRunner__Runners__server2__AllowDelegatedTasks: "true"
@@ -78,6 +79,7 @@ services:
       Delegation__CheckInterpreterWorkingDirectory: /work/specialists/check-interpreter
       Delegation__DiagnoseWorkingDirectory: /work/specialists/diagnose
       Delegation__OutputDistillerWorkingDirectory: /work/specialists/output-distiller
+      Delegation__OrchestratorInstructions__Path: /work/.antiphon/orchestrator-instructions.md
       Delegation__CheckInterpreterEnabled: "true"
       Delegation__DiagnoseEnabled: "true"
       Delegation__OutputDistillerEnabled: "true"
@@ -142,6 +144,7 @@ services:
       ANTIPHON_PTY_BACKEND: inbox
       SessionRunner__Herdr__Enabled: "false"
       GROK_HOME: /state/grok
+      CLAUDE_CONFIG_DIR: /state/claude
     volumes:
       - runner-state:/state
       - work:/work

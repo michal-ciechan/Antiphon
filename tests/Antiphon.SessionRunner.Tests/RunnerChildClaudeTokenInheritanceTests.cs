@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -80,6 +81,58 @@ public class RunnerChildClaudeTokenInheritanceTests
                 catch { /* Already gone. */ }
             }
             try { File.Delete(outFile); } catch { /* Best effort. */ }
+        }
+    }
+
+    [Test]
+    public async Task Claude_launch_seeds_trust_in_the_runner_config_dir()
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("Claude trust spawn uses a claude symlink to sh.");
+
+        var root = Path.Combine(Path.GetTempPath(), "c1778-pc1-" + Guid.NewGuid().ToString("N"));
+        var configDir = Path.Combine(root, "claude");
+        var cwd = Path.Combine(root, "cwd");
+        var bin = Path.Combine(root, "bin");
+        Directory.CreateDirectory(configDir);
+        Directory.CreateDirectory(cwd);
+        Directory.CreateDirectory(bin);
+        var configFile = Path.Combine(configDir, ".claude.json");
+        await File.WriteAllTextAsync(configFile, """{"projects":{}}""");
+        var exe = Path.Combine(bin, "claude");
+        File.CreateSymbolicLink(exe, "/bin/sh");
+        var settings = new SessionRunnerSettings
+        {
+            SessionLogPath = TestSessionLogRoot.Create("c1778-trust"),
+            PtyHostLingerHours = 0.02,
+            PtyBackend = "inbox",
+        };
+        var sessionId = Guid.NewGuid();
+        var runtime = new SessionRunnerRuntime(settings: Options.Create(settings), logger: NullLogger<SessionRunnerRuntime>.Instance);
+        int? childPid = null;
+        int? hostPid = null;
+        try
+        {
+            var env = new Dictionary<string, string> { ["CLAUDE_CONFIG_DIR"] = configDir };
+            var dto = await runtime.StartAsync(
+                new RunnerLaunchRequest(sessionId, exe, ["-c", "true"], env, cwd, Cols: 80, Rows: 24),
+                CancellationToken.None);
+            childPid = dto.Pid;
+            hostPid = dto.HostPid;
+            ClaudeProjectTrust.IsTrusted(cwd, configFile).ShouldBeTrue();
+        }
+        finally
+        {
+            try { await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, hostPid); }
+            catch { /* The session may already have exited. */ }
+            await runtime.DisposeAsync();
+            if (childPid is int pid)
+            {
+                try { Process.GetProcessById(pid).Kill(entireProcessTree: true); }
+                catch { /* Already gone. */ }
+            }
+            try { Directory.Delete(root, recursive: true); }
+            catch { /* Best effort. */ }
         }
     }
 
