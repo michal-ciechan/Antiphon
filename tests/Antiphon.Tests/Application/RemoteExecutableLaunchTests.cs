@@ -297,6 +297,9 @@ public class RemoteExecutableLaunchTests
 
         public ISessionRunnerClient Resolve(string? runnerId) => throw new NotSupportedException();
 
+        // Start only probes this to refuse a draining runner. The return is discarded.
+        public ISessionRunnerClient ResolveForNewWork(string? runnerId) => null!;
+
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
