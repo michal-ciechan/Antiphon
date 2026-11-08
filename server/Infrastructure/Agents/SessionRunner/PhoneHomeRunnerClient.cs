@@ -94,6 +94,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     }
 
     private readonly PhoneHomeLiveConnection _connection;
+    private readonly PtyReadHold<SessionRunnerBufferDto> _bufferHold = new();
+    private readonly PtyReadHold<SessionRunnerSnapshotDto> _snapshotHold = new();
     private readonly RunnerContractMapper _mapper = new();
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly Func<bool>? _isCurrent;
@@ -243,21 +245,59 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return started;
     }
 
-    public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
-    {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.Buffer, new { sessionId }, ct);
-        ThrowIfError(frame);
-        var dto = RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneBuffer) ?? throw Missing("buffer");
-        return new SessionRunnerBufferDto(dto.SessionId, dto.Buffer, dto.LastSequence);
-    }
+    public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
+        ReadConditionalAsync(sessionId, PhoneHomeOperation.Buffer, _bufferHold, payload =>
+        {
+            var dto = RunnerReadJson.ReadElement(payload, RunnerReadJson.PhoneBuffer) ?? throw Missing("buffer");
+            return new SessionRunnerBufferDto(dto.SessionId, dto.Buffer, dto.LastSequence);
+        }, "buffer", ct);
 
-    public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+    public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+        ReadConditionalAsync(sessionId, PhoneHomeOperation.Snapshot, _snapshotHold, payload =>
+        {
+            var dto = RunnerReadJson.ReadElement(payload, RunnerReadJson.PhoneSnapshot) ?? throw Missing("snapshot");
+            return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence,
+                dto.StartedAt, dto.AcceptedStartedAt, dto.Dialog);
+        }, "snapshot", ct);
+
+    private async Task<T> ReadConditionalAsync<T>(
+        Guid sessionId,
+        PhoneHomeOperation operation,
+        PtyReadHold<T> hold,
+        Func<JsonElement?, T> read,
+        string missing,
+        CancellationToken ct) where T : class
     {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.Snapshot, new { sessionId }, ct);
+        var conditional = _connection.Capabilities?.Features?.Contains(
+            RunnerCapabilityFeatures.PtyConditionalReadV1, StringComparer.Ordinal) == true;
+        string? match = null;
+        if (conditional && hold.TryGet(sessionId, out var etag, out _))
+            match = etag;
+        object payload = match is null
+            ? new { sessionId }
+            : new { sessionId, ifNoneMatch = match };
+        var frame = await _connection.RequestAsync(operation, payload, ct);
         ThrowIfError(frame);
-        var dto = RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneSnapshot) ?? throw Missing("snapshot");
-        return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence,
-            dto.StartedAt, dto.AcceptedStartedAt, dto.Dialog);
+        if (PtyConditionalSignals.IsNotModified(frame.Payload))
+        {
+            if (match is not null
+                && hold.TryGet(sessionId, out var current, out var held)
+                && string.Equals(current, match, StringComparison.Ordinal)
+                && (frame.Match is null || string.Equals(frame.Match, current, StringComparison.Ordinal)))
+                return held;
+
+            frame = await _connection.RequestAsync(operation, new { sessionId }, ct);
+            ThrowIfError(frame);
+            if (PtyConditionalSignals.IsNotModified(frame.Payload))
+                throw new InvalidOperationException($"Phone-home repeated a conditional {missing} response with no held body.");
+        }
+
+        var body = read(frame.Payload);
+        if (!string.IsNullOrEmpty(frame.Match))
+            hold.Remember(sessionId, frame.Match, body);
+        else
+            hold.Forget(sessionId);
+        return body;
     }
 
     // CARD-1153 D-3/D-4: the authenticated, runner/store-bound connection is the authentication;

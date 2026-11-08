@@ -92,6 +92,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private RunnerCapabilitiesDto? _cachedCapabilities;
     private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
     private Task? _capabilityProbe;
+    private readonly PtyReadHold<SessionRunnerBufferDto> _bufferHold = new();
+    private readonly PtyReadHold<SessionRunnerSnapshotDto> _snapshotHold = new();
 
     public SessionRunnerHttpClient(
         HttpClient httpClient,
@@ -117,11 +119,14 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         string relative,
         string operation,
         CancellationToken ct,
-        ResilienceBudget? budget = null)
+        ResilienceBudget? budget = null,
+        string? ifNoneMatch = null)
     {
         var client = ResilienceReadClients.Select(
             _httpClientFactory, _httpClient, ResilienceClientNames.RunnerRead);
         var request = new HttpRequestMessage(HttpMethod.Get, relative);
+        if (!string.IsNullOrEmpty(ifNoneMatch))
+            request.Headers.TryAddWithoutValidation("If-None-Match", "\"" + ifNoneMatch + "\"");
         var settings = _resilience?.CurrentValue ?? new ResilienceSettings();
         var profile = operation == ResilienceOperations.RunnerList ? ResilienceProfiles.RunnerList : null;
         // The read client timeout is infinite while resilience is enabled, so the typed
@@ -607,28 +612,86 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
         Map(await ReadRequiredJsonAsync<RunnerSessionDto>($"sessions/{sessionId:D}", ResilienceOperations.RunnerGet, ct));
 
-    public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
+    public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
+        ReadHeldAsync(sessionId, $"sessions/{sessionId:D}/buffer", ResilienceOperations.RunnerBuffer, _bufferHold,
+            static (response, _) =>
+            {
+                response.EnsureSuccessStatusCode();
+                return Task.CompletedTask;
+            },
+            async (response, token) =>
+            {
+                var buffer = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.PhoneBuffer), token)
+                    ?? throw new InvalidOperationException("Session runner returned an empty buffer response.");
+                return new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence);
+            }, ct);
+
+    public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+        ReadHeldAsync(sessionId, $"sessions/{sessionId:D}/snapshot", ResilienceOperations.RunnerSnapshot, _snapshotHold,
+            EnsureRunnerSuccessAsync,
+            async (response, token) =>
+            {
+                var snapshot = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.PhoneSnapshot), token)
+                    ?? throw new InvalidOperationException("Session runner returned an empty snapshot response.");
+                return new SessionRunnerSnapshotDto(
+                    snapshot.SessionId,
+                    snapshot.RawOutput,
+                    snapshot.RenderedScreen,
+                    snapshot.LastSequence,
+                    snapshot.StartedAt,
+                    snapshot.AcceptedStartedAt,
+                    snapshot.Dialog);
+            }, ct);
+
+    private async Task<T> ReadHeldAsync<T>(
+        Guid sessionId,
+        string relative,
+        string operation,
+        PtyReadHold<T> hold,
+        Func<HttpResponseMessage, CancellationToken, Task> ensure,
+        Func<HttpResponseMessage, CancellationToken, Task<T>> readBody,
+        CancellationToken ct) where T : class
     {
-        var buffer = await ReadGeneratedAsync(
-            $"sessions/{sessionId:D}/buffer", ResilienceOperations.RunnerBuffer, RunnerReadJson.PhoneBuffer, ct);
-        return new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence);
+        var match = hold.TryGet(sessionId, out var etag, out _) ? etag : null;
+        var response = await SendReadAsync(relative, operation, ct, ifNoneMatch: match).ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+            {
+                if (match is not null
+                    && hold.TryGet(sessionId, out var current, out var held)
+                    && string.Equals(current, match, StringComparison.Ordinal))
+                    return held;
+
+                response.Dispose();
+                response = await SendReadAsync(relative, operation, ct).ConfigureAwait(false);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                    throw new InvalidOperationException("Session runner repeated a conditional read with no held body.");
+            }
+
+            await ensure(response, ct).ConfigureAwait(false);
+            var body = await readBody(response, ct).ConfigureAwait(false);
+            if (StrongToken(response) is { } token)
+                hold.Remember(sessionId, token, body);
+            else
+                hold.Forget(sessionId);
+            return body;
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
-    public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+    private static string? StrongToken(HttpResponseMessage response)
     {
-        using var response = await SendReadAsync(
-            $"sessions/{sessionId:D}/snapshot", ResilienceOperations.RunnerSnapshot, ct);
-        await EnsureRunnerSuccessAsync(response, ct);
-        var snapshot = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.PhoneSnapshot), ct)
-            ?? throw new InvalidOperationException("Session runner returned an empty snapshot response.");
-        return new SessionRunnerSnapshotDto(
-            snapshot.SessionId,
-            snapshot.RawOutput,
-            snapshot.RenderedScreen,
-            snapshot.LastSequence,
-            snapshot.StartedAt,
-            snapshot.AcceptedStartedAt,
-            snapshot.Dialog);
+        var tag = response.Headers.ETag;
+        if (tag is null || tag.IsWeak)
+            return null;
+        var text = tag.Tag;
+        if (text.Length >= 2 && text[0] == '"' && text[^1] == '"')
+            text = text[1..^1];
+        return text.Length == 0 || text.Contains('"', StringComparison.Ordinal) ? null : text;
     }
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)

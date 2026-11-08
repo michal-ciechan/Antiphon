@@ -21,6 +21,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         RunnerCapabilityFeatures.WorkspacePublishV1,
         RunnerCapabilityFeatures.WorkspaceCardBranchV1,
         CodexCliVersionProbe.Capability,
+        RunnerCapabilityFeatures.PtyConditionalReadV1,
     ];
     private readonly SessionRunnerRuntime _runtime;
     private readonly RunnerBuildDto _build;
@@ -153,6 +154,10 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         _runtime.StartAsync(request, ct);
     public RunnerBufferDto GetBuffer(Guid sessionId) => _runtime.GetBuffer(sessionId);
     public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => _runtime.GetSnapshotAsync(sessionId, ct);
+    public PtyRead<RunnerBufferDto> ReadBuffer(Guid sessionId, string? ifNoneMatch) =>
+        _runtime.ReadBuffer(sessionId, ifNoneMatch);
+    public Task<PtyRead<RunnerSnapshotDto>> ReadSnapshotAsync(Guid sessionId, string? ifNoneMatch, CancellationToken ct) =>
+        _runtime.ReadSnapshotAsync(sessionId, ifNoneMatch, ct);
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => _runtime.GetTranscript(sessionId);
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         _runtime.SendInputAsync(sessionId, input, ct);
