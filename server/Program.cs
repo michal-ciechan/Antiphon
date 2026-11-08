@@ -1224,7 +1224,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     }
 
     if (hangfireWorkerLease is { } heldLease)
-        app.Lifetime.ApplicationStopping.Register(heldLease.Dispose);
+    {
+        heldLease.StartSupervision(app.Lifetime);
+        HangfireConfiguration.ReleaseWorkerLeaseWhenHostStops(app.Lifetime, heldLease);
+    }
 
     setupTiming.Complete();
     setupTiming.Dispose();

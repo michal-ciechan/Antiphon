@@ -936,6 +936,8 @@ double-fire retention and legacy release. A second server on the production data
 at every step before CARD-1744, and forbidden after it too. A hot spare that is not opening the
 database and not registering Hangfire is a future idea, not this contract.
 
+The PostgreSql worker calls `pg_try_advisory_lock(1743, 1)` on a connection that does not use the pool. The lease is released on `ApplicationStopped`, after the Hangfire server has stopped. Every 15 seconds the process reads `pg_locks` for its own backend. The check stores nothing. A missing session opens a new non-pooled connection and takes the lock again. When another worker holds the lock, the host stops. A crashed host leaves the lock until Postgres closes the dead session. The lease sets `tcp_keepalives_idle` to 30, `tcp_keepalives_interval` to 10, and `tcp_keepalives_count` to 3, so that lock ends within 60 seconds of silence. An operator clears a leftover holder with `SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1743 AND objid = 1 AND granted`. `Hangfire.PostgreSql` 1.21.1 is LGPLv3. Its Dapper.AOT analyzers ship `Dapper.AOT.Analyzers.dll` and `Microsoft.SqlServer.TransactSql.ScriptDom.dll`. This repo resolves Npgsql 9.0.3. The schema install runs `CREATE SCHEMA`, which needs the database CREATE privilege. `AddOrUpdate` rewrites the type name stored on a recurring row. Enqueued or scheduled instances keep the invocation that was already queued.
+
 Desktop legacy release is on and executing (`server/appsettings.json:230-232`,
 `WorktreeLegacyReleaseSettings.cs:8-21`). Hangfire registers it whenever the worker is on and the
 flag is true (`Program.cs:1196-1199`). A Linux server with the worker on must set

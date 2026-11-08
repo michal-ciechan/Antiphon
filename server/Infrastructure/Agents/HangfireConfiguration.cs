@@ -230,36 +230,31 @@ internal static class HangfireConfiguration
         }
         catch (Exception ex) when (IsConnectivityFailure(ex))
         {
-            throw Unreachable();
+            throw StartupFailure(ex);
         }
     }
 
     public static HangfireWorkerLease AcquireSingleWorkerLease(string? connectionString)
     {
-        var connection = OpenProbe(connectionString);
+        var probe = ProbeConnectionString(connectionString);
+        var connection = new NpgsqlConnection(probe);
         try
         {
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT pg_try_advisory_lock(@lockClass, @lockId)";
-            command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer)
+            connection.Open();
+            if (!TryTakeWorkerLock(connection))
             {
-                Value = HangfireWorkerLease.ClassId
-            });
-            command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer)
-            {
-                Value = HangfireWorkerLease.LockId
-            });
-            if (command.ExecuteScalar() is true)
-                return new HangfireWorkerLease(connection);
+                connection.Dispose();
+                throw new InvalidOperationException(
+                    "Hangfire refused to start a second worker against this database.");
+            }
 
-            connection.Dispose();
-            throw new InvalidOperationException(
-                "Hangfire refused to start a second worker against this database.");
+            ApplyCrashExpiry(connection);
+            return new HangfireWorkerLease(connection, probe);
         }
         catch (Exception ex) when (IsConnectivityFailure(ex))
         {
-            connection.Dispose();
-            throw Unreachable();
+            ReleaseConnection(connection);
+            throw StartupFailure(ex);
         }
     }
 
@@ -276,6 +271,22 @@ internal static class HangfireConfiguration
 
     private static NpgsqlConnection OpenProbe(string? connectionString)
     {
+        var probe = ProbeConnectionString(connectionString);
+        var connection = new NpgsqlConnection(probe);
+        try
+        {
+            connection.Open();
+            return connection;
+        }
+        catch (Exception ex) when (IsConnectivityFailure(ex))
+        {
+            connection.Dispose();
+            throw StartupFailure(ex);
+        }
+    }
+
+    private static string ProbeConnectionString(string? connectionString)
+    {
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new InvalidOperationException(
                 "Hangfire PostgreSQL storage refused startup because ConnectionStrings:DefaultConnection is missing.");
@@ -285,33 +296,120 @@ internal static class HangfireConfiguration
             Timeout = 5,
             Pooling = false
         };
-        var connection = new NpgsqlConnection(builder.ConnectionString);
-        try
-        {
-            connection.Open();
-            return connection;
-        }
-        catch (Exception ex) when (IsConnectivityFailure(ex))
-        {
-            connection.Dispose();
-            throw Unreachable();
-        }
+        return builder.ConnectionString;
     }
 
-    private static bool IsConnectivityFailure(Exception ex) =>
+    internal static bool TryTakeWorkerLock(NpgsqlConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT pg_try_advisory_lock(@lockClass, @lockId)";
+        command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer)
+        {
+            Value = HangfireWorkerLease.ClassId
+        });
+        command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer)
+        {
+            Value = HangfireWorkerLease.LockId
+        });
+        return command.ExecuteScalar() is true;
+    }
+
+    /// <summary>
+    /// CARD-1768. A dead host's session ends after idle plus interval times count.
+    /// A failed SET refuses startup.
+    /// </summary>
+    internal static void ApplyCrashExpiry(NpgsqlConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT set_config('tcp_keepalives_idle', @idle, false),
+                   set_config('tcp_keepalives_interval', @interval, false),
+                   set_config('tcp_keepalives_count', @count, false)
+            """;
+        command.Parameters.Add(new NpgsqlParameter("idle", NpgsqlDbType.Text)
+        {
+            Value = HangfireWorkerLease.KeepaliveIdleSeconds.ToString(CultureInfo.InvariantCulture)
+        });
+        command.Parameters.Add(new NpgsqlParameter("interval", NpgsqlDbType.Text)
+        {
+            Value = HangfireWorkerLease.KeepaliveIntervalSeconds.ToString(CultureInfo.InvariantCulture)
+        });
+        command.Parameters.Add(new NpgsqlParameter("count", NpgsqlDbType.Text)
+        {
+            Value = HangfireWorkerLease.KeepaliveCount.ToString(CultureInfo.InvariantCulture)
+        });
+        command.ExecuteNonQuery();
+    }
+
+    internal static bool IsConnectivityFailure(Exception ex) =>
         ex is NpgsqlException or TimeoutException or SocketException or ArgumentException
         || (ex is InvalidOperationException && !ex.Message.StartsWith("Hangfire ", StringComparison.Ordinal));
 
-    private static InvalidOperationException Unreachable() =>
-        new("Hangfire PostgreSQL storage refused startup because the database is not reachable.");
+    internal static InvalidOperationException StartupFailure(Exception exception)
+    {
+        var postgres = FindPostgresException(exception);
+        var reason = postgres?.SqlState switch
+        {
+            PostgresErrorCodes.InvalidPassword
+                or PostgresErrorCodes.InvalidAuthorizationSpecification => "authentication failed",
+            PostgresErrorCodes.InsufficientPrivilege => "the database role lacks a required privilege",
+            PostgresErrorCodes.InvalidCatalogName => "the database does not exist",
+            _ => "the database is not reachable"
+        };
+        return new InvalidOperationException(
+            "Hangfire PostgreSQL storage refused startup because " + reason + ".",
+            exception);
+    }
+
+    private static PostgresException? FindPostgresException(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgres)
+                return postgres;
+        }
+
+        return null;
+    }
+
+    internal static void ReleaseConnection(NpgsqlConnection? connection)
+    {
+        if (connection is null)
+            return;
+
+        try
+        {
+            if (connection.State == System.Data.ConnectionState.Open)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT pg_advisory_unlock(@lockClass, @lockId)";
+                command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer)
+                {
+                    Value = HangfireWorkerLease.ClassId
+                });
+                command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer)
+                {
+                    Value = HangfireWorkerLease.LockId
+                });
+                command.ExecuteScalar();
+            }
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException)
+        {
+        }
+        finally
+        {
+            connection.Dispose();
+        }
+    }
 
     /// <summary>
-    /// CARD-1768. Released on <see cref="IHostApplicationLifetime.ApplicationStopping"/>.
-    /// That event runs before hosted services drain.
+    /// CARD-1768. Released on <see cref="IHostApplicationLifetime.ApplicationStopped"/>.
+    /// That event runs after hosted services drain.
     /// </summary>
     public static void ReleaseWorkerLeaseWhenHostStops(
         IHostApplicationLifetime lifetime, HangfireWorkerLease lease) =>
-        lifetime.ApplicationStopping.Register(lease.Dispose);
+        lifetime.ApplicationStopped.Register(lease.Dispose);
 }
 
 /// <summary>CARD-1743. One held session lock is the only Hangfire worker for a database.</summary>
@@ -339,20 +437,126 @@ internal sealed class HangfireWorkerLease : IDisposable
     /// </summary>
     internal static readonly TimeSpan ReacquireInterval = TimeSpan.FromSeconds(15);
 
+    private readonly object _gate = new();
+    private readonly string _probe;
     private NpgsqlConnection? _connection;
+    private Timer? _timer;
+    private IHostApplicationLifetime? _lifetime;
+    private int _disposed;
 
-    internal HangfireWorkerLease(NpgsqlConnection connection) => _connection = connection;
-
-    /// <summary>CARD-1768. The held connection is not re-checked.</summary>
-    internal void EnsureHeld()
+    internal HangfireWorkerLease(NpgsqlConnection connection, string probe)
     {
+        _connection = connection;
+        _probe = probe;
     }
 
-    /// <summary>CARD-1768. No periodic re-check is armed.</summary>
+    /// <summary>
+    /// CARD-1768. Confirms the lock on this session. A dead session opens a new
+    /// non-pooled connection. Nothing is stored between checks.
+    /// </summary>
+    internal void EnsureHeld()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        lock (_gate)
+        {
+            if (_disposed != 0)
+                return;
+            if (SessionStillHoldsLock(_connection))
+                return;
+            ReplaceConnection();
+        }
+    }
+
+    /// <summary>CARD-1768. The caller starts the re-check. Acquire does not.</summary>
     internal void StartSupervision(IHostApplicationLifetime lifetime, TimeSpan? interval = null)
     {
-        _ = lifetime;
-        _ = interval;
+        _lifetime = lifetime;
+        var period = interval ?? ReacquireInterval;
+        var timer = new Timer(static state => ((HangfireWorkerLease)state!).OnTick(), this, period, period);
+        if (Interlocked.CompareExchange(ref _timer, timer, null) is not null)
+            timer.Dispose();
+        if (Volatile.Read(ref _disposed) != 0)
+            Interlocked.Exchange(ref _timer, null)?.Dispose();
+    }
+
+    private void OnTick()
+    {
+        try
+        {
+            EnsureHeld();
+        }
+        catch (Exception)
+        {
+            try
+            {
+                _lifetime?.StopApplication();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    private void ReplaceConnection()
+    {
+        var fresh = new NpgsqlConnection(_probe);
+        try
+        {
+            fresh.Open();
+            if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
+                throw new InvalidOperationException(
+                    "Hangfire lost its worker lease and another worker holds it.");
+
+            HangfireConfiguration.ApplyCrashExpiry(fresh);
+        }
+        catch (Exception ex) when (HangfireConfiguration.IsConnectivityFailure(ex))
+        {
+            HangfireConfiguration.ReleaseConnection(fresh);
+            throw HangfireConfiguration.StartupFailure(ex);
+        }
+        catch
+        {
+            HangfireConfiguration.ReleaseConnection(fresh);
+            throw;
+        }
+
+        var previous = Interlocked.Exchange(ref _connection, fresh);
+        HangfireConfiguration.ReleaseConnection(previous);
+    }
+
+    private static bool SessionStillHoldsLock(NpgsqlConnection? connection)
+    {
+        if (connection is null || connection.State != System.Data.ConnectionState.Open)
+            return false;
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT 1
+                FROM pg_locks
+                WHERE locktype = 'advisory'
+                  AND classid = @lockClass
+                  AND objid = @lockId
+                  AND granted
+                  AND pid = pg_backend_pid()
+                """;
+            command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer)
+            {
+                Value = ClassId
+            });
+            command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer)
+            {
+                Value = LockId
+            });
+            return command.ExecuteScalar() is not null;
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>CARD-1768. Reads the session keepalive values the lease connection is using.</summary>
@@ -377,27 +581,14 @@ internal sealed class HangfireWorkerLease : IDisposable
 
     public void Dispose()
     {
-        var connection = Interlocked.Exchange(ref _connection, null);
-        if (connection is null)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        try
-        {
-            if (connection.State == System.Data.ConnectionState.Open)
-            {
-                using var command = connection.CreateCommand();
-                command.CommandText = "SELECT pg_advisory_unlock(@lockClass, @lockId)";
-                command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer) { Value = ClassId });
-                command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer) { Value = LockId });
-                command.ExecuteScalar();
-            }
-        }
-        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException)
-        {
-        }
-        finally
-        {
-            connection.Dispose();
-        }
+        var timer = Interlocked.Exchange(ref _timer, null);
+        timer?.Dispose();
+        NpgsqlConnection? connection;
+        lock (_gate)
+            connection = Interlocked.Exchange(ref _connection, null);
+        HangfireConfiguration.ReleaseConnection(connection);
     }
 }
