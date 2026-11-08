@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -25,6 +26,16 @@ public sealed class MergeHighRadiusSubsetTests
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)|(TestTimingOperationLabelTests*)/*";
 
     private const string E2EFilter = "/*/*/(ContractSnapshotTests*)/*";
+
+    private const string MessagingFilter = "/*/*/(InboxConversationMigrationTests*)/*";
+
+    // One TUnit row per selector filters entry: project, exact filter, measured minimum.
+    private static readonly (string Id, string Project, string Filter, int Min)[] MergeRows =
+    [
+        ("CP-merge-subset-tests", "tests/Antiphon.Tests", TestsFilter, 21),
+        ("CP-merge-subset-e2e", "tests/Antiphon.E2E", E2EFilter, 5),
+        ("CP-merge-subset-messaging", "tests/Antiphon.Messaging.Tests", MessagingFilter, 1),
+    ];
 
     private static readonly string[] FixedClasses =
     [
@@ -78,6 +89,81 @@ public sealed class MergeHighRadiusSubsetTests
             .Replace("StandingSessionOwnershipTests", "MissingDowngradeCallerTests", StringComparison.Ordinal);
         using var broken = JsonDocument.Parse(mutant);
         Should.Throw<ShouldAssertException>(() => AssertDowngrade(broken.RootElement));
+    }
+
+    [Test]
+    public async Task merge_process_rows_import_as_one_test_row_per_project_with_minimums()
+    {
+        var root = Root();
+        var loop = await File.ReadAllTextAsync(Path.Combine(root, "docs", "orchestration-loop.md"));
+        var table = MergeTable(loop);
+        AssertRows(table);
+
+        // A command row runs no tests, and a missing minimum hides zero executed tests.
+        var command = table.Replace(
+            "| `" + TestsFilter.Replace("|", "\\|", StringComparison.Ordinal) + "` |",
+            "| scripts/impacted-classes.ps1 -MergeSubset -Range <base>..<tip> -Json |",
+            StringComparison.Ordinal);
+        command.ShouldNotBe(table);
+        Should.Throw<ShouldAssertException>(() => AssertRows(command));
+        var noMin = table.Replace("| 0 failed | 5 |", "| 0 failed | n/a |", StringComparison.Ordinal);
+        noMin.ShouldNotBe(table);
+        Should.Throw<ShouldAssertException>(() => AssertRows(noMin));
+        var dropped = string.Join('\n', table.Split('\n')
+            .Where(line => !line.Contains("CP-merge-subset-messaging", StringComparison.Ordinal)));
+        dropped.ShouldNotBe(table);
+        Should.Throw<ShouldAssertException>(() => AssertRows(dropped));
+    }
+
+    [Test]
+    public async Task merge_subset_text_mode_prints_every_filter()
+    {
+        var root = Root();
+        using var json = await SelectMergeAsync(root, MigrationRange);
+        var ran = await RunAsync(root, "-MergeSubset", "-Range", MigrationRange);
+        ran.Exit.ShouldBe(0, ran.Text);
+        AssertTextFilters(ran.Stdout, json.RootElement);
+
+        var mutant = ran.Stdout.Replace("filter=tests/Antiphon.E2E " + E2EFilter, "", StringComparison.Ordinal);
+        mutant.ShouldNotBe(ran.Stdout);
+        Should.Throw<ShouldAssertException>(() => AssertTextFilters(mutant, json.RootElement));
+    }
+
+    private static string MergeTable(string loop)
+    {
+        var start = loop.IndexOf("### Merge process (CARD-1783)", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = loop.IndexOf("\n### ", start + 1, StringComparison.Ordinal);
+        var section = end < 0 ? loop[start..] : loop[start..end];
+        var lines = section.Replace("\r\n", "\n").Split('\n').Where(line => line.TrimStart().StartsWith('|'));
+        return string.Join('\n', lines);
+    }
+
+    private static void AssertRows(string table)
+    {
+        var imported = PlanTableImporter.ImportMarkdown("### Checkpoints\n\n" + table + "\n", "merge-process", isWindows: false);
+        imported.ExitCode.ShouldBe(ExitCodes.Green, imported.Error);
+        var manifest = imported.Manifest.ShouldNotBeNull();
+        manifest.Checkpoints.Count.ShouldBe(MergeRows.Length);
+        foreach (var expected in MergeRows)
+        {
+            var row = manifest.Checkpoints.SingleOrDefault(item => item.Id == expected.Id)
+                ?? throw new ShouldAssertException("missing " + expected.Id);
+            row.IsCommand.ShouldBeFalse(expected.Id);
+            row.Filter.ShouldBe(expected.Filter, expected.Id);
+            row.MinExecuted.ShouldBe(expected.Min, expected.Id);
+            row.Group.ShouldBe("merge-high-radius", expected.Id);
+            manifest.Builds.Single(build => build.Id == row.Build).Project.ShouldBe(expected.Project, expected.Id);
+        }
+    }
+
+    private static void AssertTextFilters(string stdout, JsonElement root)
+    {
+        var lines = stdout.Replace("\r\n", "\n").Split('\n');
+        var filters = root.GetProperty("filters").EnumerateArray().ToList();
+        filters.Count.ShouldBe(3);
+        foreach (var row in filters)
+            lines.ShouldContain("filter=" + row.GetProperty("project").GetString() + " " + row.GetProperty("treenodeFilter").GetString());
     }
 
     private static void AssertDocs(string loop, string guide)
