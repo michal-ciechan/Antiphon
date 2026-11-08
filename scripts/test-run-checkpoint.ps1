@@ -1362,6 +1362,7 @@ function Test-C1748_InheritedPhaseRootUsesTheRowRoot {
     $diag = @($r.Lines | Where-Object { $_ -like 'JOURNAL-DIAGNOSTIC *' })
     $receipt = ''
     if ($r.Checkpoint.Count -gt 0) { $receipt = [string]$r.Checkpoint[0] }
+    Write-Host ('C1748 DIAG ' + ($diag -join ' | '))
     Assert-C487 -Cond ($decoyChildren.Count -eq 0) -Name 'C1748 inherited root leaves the decoy empty' -Detail (($decoyChildren | ForEach-Object { $_.FullName }) -join ' | ')
     Assert-C487 -Cond ($ownPhase.Count -eq 1) -Name 'C1748 journal is under the row phase root' -Detail (($ownFiles | ForEach-Object { $_.FullName }) -join ' | ')
     Assert-C487 -Cond ($r.Exit -eq 2) -Name 'C1748 inherited root stays exit 2' -Detail $r.Text
