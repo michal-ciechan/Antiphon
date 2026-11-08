@@ -122,7 +122,8 @@ function Invoke-C585Runner {
         [string]$SlotScript = 'granted',
         [string]$SlotWaitSeconds = '',
         [string]$SlotGraceSeconds = '',
-        [string]$SlotRetryMs = '10'
+        [string]$SlotRetryMs = '10',
+        [string]$InheritedPhaseRoot = ''
     )
     if (-not $PSBoundParameters.ContainsKey('OutputPath')) { $OutputPath = $Fx.OutputPath }
     if ([string]::IsNullOrWhiteSpace($ResultsRoot)) { $ResultsRoot = $Fx.ResultsRoot }
@@ -171,6 +172,14 @@ function Invoke-C585Runner {
         $psi.RedirectStandardError = $true
         $psi.WorkingDirectory = $script:RepoRoot
         foreach ($token in @($callArgs)) { [void]$psi.ArgumentList.Add([string]$token) }
+        if (-not [string]::IsNullOrWhiteSpace($InheritedPhaseRoot)) {
+            $psi.Environment['ANTIPHON_TEST_PHASE_ROOT'] = $InheritedPhaseRoot
+            $psi.Environment['ANTIPHON_TEST_PHASE_RUN_ID'] = 'outer-run'
+            $psi.Environment['ANTIPHON_TEST_PHASE_GROUP_ID'] = 'outer-group'
+            $psi.Environment['ANTIPHON_TEST_PHASE_ATTEMPT'] = '9'
+            $psi.Environment['ANTIPHON_TEST_PHASE_SUITE'] = 'outer-suite'
+            $psi.Environment['ANTIPHON_TEST_PHASE_EXTRA'] = 'outer-extra'
+        }
         $proc = [System.Diagnostics.Process]::Start($psi)
         $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
         $stderrTask = $proc.StandardError.ReadToEndAsync()
@@ -1323,6 +1332,34 @@ function Test-C1748_KilledRowPrintsJournalCounts {
     Assert-C487 -Cond ($diag.Count -eq 1 -and $diag[0] -ceq 'JOURNAL-DIAGNOSTIC CP-1 completed=2 pending=1 outcome-passed=1 outcome-failed=0 outcome-skipped=1 in-flight=Antiphon.Tests.Sample.left') -Name 'C1748 journal diagnostic' -Detail ($diag -join ' | ')
     Assert-C487 -Cond ($receipt -match ' executed=0 passed=0 failed=0 skipped=0 ') -Name 'C1748 receipt counts stay the no-TRX receipt' -Detail $receipt
     Assert-C487 -Cond ($receipt -notmatch 'completed=') -Name 'C1748 receipt line has no journal token' -Detail $receipt
+}
+
+function Test-C1748_InheritedPhaseRootUsesTheRowRoot {
+    $fx = New-C585Case -Name 'c1748-decoy'
+    $decoy = Join-Path $fx.Root 'decoy-phase'
+    New-Item -ItemType Directory -Path $decoy -Force | Out-Null
+    $env:C1748_WRITE_JOURNAL = '1'
+    try {
+        $r = Invoke-C585Runner -Fx $fx -Name 'CP-1' -RunExit 134 -InheritedPhaseRoot $decoy
+    } finally {
+        Remove-Item -LiteralPath Env:C1748_WRITE_JOURNAL -ErrorAction SilentlyContinue
+    }
+    $decoyChildren = @(Get-ChildItem -LiteralPath $decoy -Force -ErrorAction SilentlyContinue)
+    $ownFiles = @(Get-ChildItem -LiteralPath $fx.ResultsRoot -Force -Recurse -Filter 'cases-4-c1748.jsonl' -File -ErrorAction SilentlyContinue)
+    $ownPhase = @($ownFiles | Where-Object {
+        $full = [string]$_.FullName
+        $phase = [IO.Path]::DirectorySeparatorChar + 'phase' + [IO.Path]::DirectorySeparatorChar + 'chunk-c1748' + [IO.Path]::DirectorySeparatorChar + 'cases-4-c1748.jsonl'
+        $full.EndsWith($phase, [StringComparison]::Ordinal)
+    })
+    $diag = @($r.Lines | Where-Object { $_ -like 'JOURNAL-DIAGNOSTIC *' })
+    $receipt = ''
+    if ($r.Checkpoint.Count -gt 0) { $receipt = [string]$r.Checkpoint[0] }
+    Assert-C487 -Cond ($decoyChildren.Count -eq 0) -Name 'C1748 inherited root leaves the decoy empty' -Detail (($decoyChildren | ForEach-Object { $_.FullName }) -join ' | ')
+    Assert-C487 -Cond ($ownPhase.Count -eq 1) -Name 'C1748 journal is under the row phase root' -Detail (($ownFiles | ForEach-Object { $_.FullName }) -join ' | ')
+    Assert-C487 -Cond ($r.Exit -eq 2) -Name 'C1748 inherited root stays exit 2' -Detail $r.Text
+    Assert-C487 -Cond ($diag.Count -eq 1 -and $diag[0] -ceq 'JOURNAL-DIAGNOSTIC CP-1 completed=2 pending=1 outcome-passed=1 outcome-failed=0 outcome-skipped=1 in-flight=Antiphon.Tests.Sample.left') -Name 'C1748 inherited root diagnostic' -Detail ($diag -join ' | ')
+    Assert-C487 -Cond ($receipt -match ' executed=0 passed=0 failed=0 skipped=0 ') -Name 'C1748 inherited root receipt counts stay the no-TRX receipt' -Detail $receipt
+    Assert-C487 -Cond ($receipt -notmatch 'completed=') -Name 'C1748 inherited root receipt line has no journal token' -Detail $receipt
 }
 
 $script:C585ExpectedRows = 62 + 28 + 21

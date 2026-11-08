@@ -120,6 +120,39 @@ public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
         text.ShouldContain(Diagnostic);
     }
 
+    [Test]
+    [Timeout(180_000)]
+    public async Task inherited_phase_root_uses_the_row_and_leaves_the_decoy_empty()
+    {
+        var results = Path.Combine(TempDir(), "c1748-decoy");
+        Directory.CreateDirectory(results);
+        var psi = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = CheckpointFixtures.RepoRoot,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var token in new[]
+        {
+            "-NoProfile", "-NonInteractive", "-File",
+            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "test-run-checkpoint.ps1"),
+            "-Case", "C1748_InheritedPhaseRootUsesTheRowRoot",
+            "-ResultsDirectory", results,
+        })
+            psi.ArgumentList.Add(token);
+        using var process = Process.Start(psi)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var done = new CancellationTokenSource(TimeSpan.FromSeconds(150));
+        await process.WaitForExitAsync(done.Token);
+        var text = await stdout + await stderr;
+        process.ExitCode.ShouldBe(0, text);
+        text.ShouldContain(Diagnostic);
+        text.ShouldContain("PASS C1748 inherited root leaves the decoy empty");
+        text.ShouldContain("PASS C1748 journal is under the row phase root");
+    }
+
     private async Task<RowRunResult> RunKilled(FakeDriver driver, string project)
     {
         var workingDirectory = TempDir();
