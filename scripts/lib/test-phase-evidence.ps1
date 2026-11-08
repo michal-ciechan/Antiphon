@@ -948,6 +948,7 @@ function Get-TestPhasePathIdentity {
     $queued = Get-NightlyEvidencePendingLength $Path
     if ($queued -ge 0) { return [pscustomobject]@{ Kind = 'regular'; Size = [int64]$queued } }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseFiles]::PathIdentity($Path) }
         if (-not (Test-Path -LiteralPath $Path)) { return $missing }
         try { $attrs = [IO.File]::GetAttributes($Path) } catch {
             return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
@@ -1055,6 +1056,10 @@ function Read-TestPhaseBoundedBytes {
     if ($MaxBytes -lt 1) { $MaxBytes = 1 }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    # Compiled for a real stopwatch; a scripted one (tests drive the budget through it) stays here.
+    if ($Watch -is [Diagnostics.Stopwatch] -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and (Test-NightlyCoreAvailable)) {
+        return [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($Path, $MaxBytes, $DeadlineMilliseconds, $Watch)
+    }
     $identity = Get-TestPhasePathIdentity -Path $Path
     if ($identity.Kind -ne 'regular') {
         return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = [string]$identity.Kind }
@@ -2278,7 +2283,9 @@ function Write-TestPhaseCommitFile {
         $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($Text)
         $stream.Write($bytes, 0, $bytes.Length)
         if (Test-TestPhaseCommitFault -Stage 'Flush') { throw 'commit-fault-flush' }
-        $stream.Flush($true)
+        # Flushed to the operating system, not forced to the disk: after a crash the latest record may be
+        # missing or empty, which the prefix reader reports as a shorter prefix or as corruption.
+        $stream.Flush()
         $stream.Dispose()
         $stream = $null
         Wait-TestPhaseCommitBarrier -Stage 'AfterFlushBeforeRename'

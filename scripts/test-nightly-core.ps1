@@ -252,9 +252,61 @@ function Test-NCProjectWalkMatchesFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('Kept') -and -not $r.Fallback.Contains('Skip')) 'projectWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+function Test-NCEvidenceFilesMatchFallback {
+    $dir = Join-Path $root 'nc-files'
+    [void][IO.Directory]::CreateDirectory((Join-Path $dir 'sub'))
+    [IO.File]::WriteAllText((Join-Path $dir 'small.json'), '{"a":1}')
+    [IO.File]::WriteAllText((Join-Path $dir 'empty.json'), '')
+    [IO.File]::WriteAllBytes((Join-Path $dir 'big.bin'), [byte[]](1..200 | ForEach-Object { [byte]$_ }))
+    [IO.File]::WriteAllBytes((Join-Path $dir 'exact.bin'), [byte[]](1..64 | ForEach-Object { [byte]$_ }))
+    [IO.File]::WriteAllText((Join-Path $dir 'hidden.json'), 'hidden')
+    $hidden = Get-Item -LiteralPath (Join-Path $dir 'hidden.json') -Force
+    $hidden.Attributes = $hidden.Attributes -bor [IO.FileAttributes]::Hidden
+    [IO.File]::WriteAllText((Join-Path $dir 'readonly.json'), 'ro')
+    [IO.File]::SetAttributes((Join-Path $dir 'readonly.json'), [IO.FileAttributes]::ReadOnly)
+    $names = @('', 'missing.json', 'sub', 'small.json', 'empty.json', 'big.bin', 'exact.bin', 'hidden.json', 'readonly.json', 'nope/x.json')
+    $paths = @(foreach ($n in $names) { if ($n) { Join-Path $dir $n } else { '' } })
+    $r = Invoke-NCBothWays { @(foreach ($p in $paths) { $i = Get-TestPhasePathIdentity -Path $p; [ordered]@{ path = $p; kind = $i.Kind; size = $i.Size } }) }
+    Assert-NC ($r.Compiled -ceq $r.Fallback) 'pathIdentity' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    $r = Invoke-NCBothWays {
+        $rows = @(foreach ($p in $paths) {
+            foreach ($max in 64, 262144) {
+                $b = Read-TestPhaseBoundedBytes -Path $p -MaxBytes $max -DeadlineMilliseconds 5000
+                [ordered]@{ path = $p; max = $max; bytes = $b.Bytes; complete = $b.Complete; refused = $b.Refused; kind = $b.Kind }
+            }
+        })
+        $spent = [Diagnostics.Stopwatch]::StartNew(); Start-Sleep -Milliseconds 20
+        $b = Read-TestPhaseBoundedBytes -Path (Join-Path $dir 'small.json') -DeadlineMilliseconds 5 -Watch $spent
+        $rows + @([ordered]@{ budget = $true; bytes = $b.Bytes; complete = $b.Complete; refused = $b.Refused; kind = $b.Kind })
+    }
+    Assert-NC ($r.Compiled -ceq $r.Fallback) 'boundedRead' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # Queued evidence writes answer as the landed files will: identity, existence, text, bytes and hash.
+    $queued = Join-Path $dir 'queued'
+    [void][IO.Directory]::CreateDirectory($queued)
+    $observe = {
+        @(foreach ($n in 'a.json', 'b.json', 'lines.txt') {
+            $p = Join-Path $queued $n
+            $i = Get-TestPhasePathIdentity -Path $p
+            [ordered]@{ name = $n; kind = $i.Kind; size = $i.Size; exists = (Test-NightlyEvidencePath $p); leaf = (Test-NightlyEvidencePath $p 'Leaf')
+                text = (Read-NightlyEvidenceText $p); bytes = (Read-NightlyEvidenceBytes $p); lines = @(Read-NightlyEvidenceLines $p); hash = (Get-NightlyFileSha256 $p) }
+        })
+    }
+    Enable-NightlyDeferredEvidenceWrites
+    try {
+        Write-TestPhaseTextAtomic -Path (Join-Path $queued 'a.json') -Text ('{"queued":"caf' + [char]0xe9 + '"}')
+        Write-TestPhaseTextAtomic -Path (Join-Path $queued 'b.json') -Text 'first'
+        Write-TestPhaseTextAtomic -Path (Join-Path $queued 'b.json') -Text 'second, longer'
+        Write-NightlyEvidenceLines (Join-Path $queued 'lines.txt') @('one', 'two')
+        $deferred = $script:NightlyDeferEvidenceWrites
+        $before = (& $observe) | ConvertTo-Json -Depth 6 -Compress
+    } finally { Disable-NightlyDeferredEvidenceWrites }
+    $after = (& $observe) | ConvertTo-Json -Depth 6 -Compress
+    Assert-NC ($deferred -and $before -ceq $after -and $after.Contains('second, longer')) 'queuedEvidence' ('queued ' + $before + ' landed ' + $after)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; $expected = 11 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCEvidenceFilesMatchFallback; $expected = 14 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
