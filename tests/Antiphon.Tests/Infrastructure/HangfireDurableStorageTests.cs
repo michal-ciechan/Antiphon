@@ -499,6 +499,97 @@ public sealed class HangfirePostgreSqlStorageTests
         await host.StopAsync();
     }
 
+    /// <summary>
+    /// CARD-1774 D-1. <c>pg_locks</c> is cluster-wide. A second database holding
+    /// (1743, 1), and a one-key lock that reuses classid/objid with objsubid 1,
+    /// are not another worker. A holder in this database still stops the host.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_ignores_another_database_holder_and_stops_for_its_own()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var ownPid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        var siblingName = "hf_sib_" + Guid.NewGuid().ToString("N");
+        await CreateDatabaseAsync(siblingName);
+        NpgsqlConnection? sibling = null;
+        NpgsqlConnection? decoy = null;
+        try
+        {
+            var siblingConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
+            {
+                Database = siblingName,
+                Pooling = false
+            }.ConnectionString;
+            sibling = new NpgsqlConnection(siblingConnection);
+            await sibling.OpenAsync();
+            await using (var take = new NpgsqlCommand(
+                "SELECT pg_try_advisory_lock(@lockClass, @lockId)", sibling))
+            {
+                take.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
+                take.Parameters.AddWithValue("lockId", HangfireWorkerLease.LockId);
+                (await take.ExecuteScalarAsync()).ShouldBe(true);
+            }
+
+            decoy = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(database.ConnectionString)
+            {
+                Pooling = false
+            }.ConnectionString);
+            await decoy.OpenAsync();
+            await using (var takeDecoy = new NpgsqlCommand(
+                $"SELECT pg_try_advisory_lock(({HangfireWorkerLease.ClassId}::bigint << 32) | {HangfireWorkerLease.LockId})",
+                decoy))
+            {
+                (await takeDecoy.ExecuteScalarAsync()).ShouldBe(true);
+            }
+
+            (await CountGrantedHoldersAsync(database.ConnectionString, siblingName)).ShouldBe(1);
+            (await CountObjSubIdAsync(database.ConnectionString, objSubId: 1)).ShouldBe(1);
+
+            await TerminateBackendAsync(database.ConnectionString, ownPid);
+            await WaitUntilWorkerLockDropsAsync(database.ConnectionString, ownPid);
+
+            var builder = Host.CreateApplicationBuilder();
+            using var host = builder.Build();
+            await host.StartAsync();
+            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lifetime.ApplicationStopping.Register(() => stopping.TrySetResult());
+
+            lease.EnsureHeld();
+
+            stopping.Task.IsCompleted.ShouldBeFalse();
+            var reacquired = await FindWorkerLockPidsAsync(database.ConnectionString);
+            reacquired.Count.ShouldBe(1);
+            reacquired[0].ShouldNotBe(ownPid);
+            var refused = Should.Throw<InvalidOperationException>(() =>
+                HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString));
+            refused.Message.ShouldContain("second worker");
+
+            lease.StartSupervision(lifetime, TimeSpan.FromMilliseconds(50));
+            var quiet = await Task.WhenAny(stopping.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+            quiet.ShouldNotBe(stopping.Task);
+
+            await TerminateBackendAsync(database.ConnectionString, reacquired[0]);
+            await WaitUntilWorkerLockDropsAsync(database.ConnectionString, reacquired[0]);
+            using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+            var stopped = await Task.WhenAny(stopping.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+            stopped.ShouldBe(stopping.Task);
+            (await FindWorkerLockPidsAsync(database.ConnectionString)).Count.ShouldBe(1);
+            second.ShouldNotBeNull();
+            await host.StopAsync();
+        }
+        finally
+        {
+            if (sibling is not null)
+                await sibling.DisposeAsync();
+            if (decoy is not null)
+                await decoy.DisposeAsync();
+            await DropDatabaseAsync(siblingName);
+        }
+    }
+
     [Test]
     [Timeout(180_000)]
     public async Task Worker_lease_sets_a_sixty_second_crash_expiry()
@@ -709,6 +800,8 @@ public sealed class HangfirePostgreSqlStorageTests
             WHERE locktype = 'advisory'
               AND classid = @lockClass
               AND objid = @lockId
+              AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+              AND objsubid = 2
               AND granted
             """, connection);
         command.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
@@ -733,6 +826,65 @@ public sealed class HangfirePostgreSqlStorageTests
                     "Backend " + pid + " still holds the Hangfire worker lock after pg_terminate_backend.");
             await Task.Delay(TimeSpan.FromMilliseconds(50));
         }
+    }
+
+    private static async Task<int> CountGrantedHoldersAsync(string connectionString, string databaseName)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("""
+            SELECT COUNT(*)
+            FROM pg_locks l
+            JOIN pg_database d ON d.oid = l.database
+            WHERE l.locktype = 'advisory'
+              AND l.classid = @lockClass
+              AND l.objid = @lockId
+              AND l.objsubid = 2
+              AND l.granted
+              AND d.datname = @databaseName
+            """, connection);
+        command.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
+        command.Parameters.AddWithValue("lockId", HangfireWorkerLease.LockId);
+        command.Parameters.AddWithValue("databaseName", databaseName);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<int> CountObjSubIdAsync(string connectionString, int objSubId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("""
+            SELECT COUNT(*)
+            FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND classid = @lockClass
+              AND objid = @lockId
+              AND objsubid = @objSubId
+              AND granted
+              AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+            """, connection);
+        command.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
+        command.Parameters.AddWithValue("lockId", HangfireWorkerLease.LockId);
+        command.Parameters.AddWithValue("objSubId", objSubId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task CreateDatabaseAsync(string name)
+    {
+        RequireSqlName(name);
+        await using var maintenance = new NpgsqlConnection(TestDbFixture.MaintenanceConnectionString);
+        await maintenance.OpenAsync();
+        await using var command = new NpgsqlCommand($"CREATE DATABASE {name}", maintenance);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task DropDatabaseAsync(string name)
+    {
+        RequireSqlName(name);
+        await using var maintenance = new NpgsqlConnection(TestDbFixture.MaintenanceConnectionString);
+        await maintenance.OpenAsync();
+        await using var command = new NpgsqlCommand($"DROP DATABASE IF EXISTS {name} WITH (FORCE)", maintenance);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task TerminateBackendAsync(string connectionString, int pid)
@@ -828,6 +980,9 @@ public sealed class HangfireLeaseDocumentationTests
             "A tick that cannot reach Postgres retries until 60 seconds after the last confirmed hold, then the host stops.");
         contract.ShouldContain("The host does not stop on the first unreachable tick.");
         contract.ShouldContain("Dispose bounds the unlock command timeout at 5 seconds.");
+        contract.ShouldContain("CommandTimeout=5 applies to every lease command.");
+        contract.ShouldContain(
+            "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1743 AND objid = 1 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND objsubid = 2");
         contract.ShouldContain("A paused process still answers TCP keepalives");
         contract.ShouldContain("Windows-native Postgres reports `tcp_keepalives_count` as 0.");
         contract.ShouldContain("pg_try_advisory_lock(1743, 1)");
