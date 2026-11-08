@@ -49,9 +49,9 @@ public sealed class Card1773TranscriptPromptStampMigrationTests
     }
 
     [Test, Timeout(180_000)]
-    public async Task Retry_replaces_an_interrupted_invalid_index()
+    public async Task Retry_replaces_an_interrupted_invalid_index(CancellationToken cancellationToken)
     {
-        await using var schema = await PrepareInterruptedAsync(renameLeftover: false);
+        await using var schema = await PrepareInterruptedAsync(renameLeftover: false, cancellationToken);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var before = await ReadIndexAsync(schema.ConnectionString, IndexName);
         before.ShouldNotBeNull();
@@ -73,9 +73,9 @@ public sealed class Card1773TranscriptPromptStampMigrationTests
     }
 
     [Test, Timeout(180_000)]
-    public async Task Retry_finishes_cleanup_after_invalid_index_rename()
+    public async Task Retry_finishes_cleanup_after_invalid_index_rename(CancellationToken cancellationToken)
     {
-        await using var schema = await PrepareInterruptedAsync(renameLeftover: true);
+        await using var schema = await PrepareInterruptedAsync(renameLeftover: true, cancellationToken);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         (await ReadIndexAsync(schema.ConnectionString, IndexName)).ShouldBeNull();
         var leftover = await ReadIndexAsync(schema.ConnectionString, IndexName + "_invalid");
@@ -93,9 +93,9 @@ public sealed class Card1773TranscriptPromptStampMigrationTests
         (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(Current);
     }
 
-    private static async Task<IsolatedTestSchema> PrepareInterruptedAsync(bool renameLeftover)
+    private static async Task<IsolatedTestSchema> PrepareInterruptedAsync(bool renameLeftover, CancellationToken cancellationToken)
     {
-        var schema = await MigrationTestDatabase.CreateAsync(Previous);
+        var schema = await MigrationTestDatabase.CreateAsync(Previous, cancellationToken);
         try
         {
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
