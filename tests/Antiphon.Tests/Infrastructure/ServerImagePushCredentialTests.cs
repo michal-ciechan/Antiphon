@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.GitHub;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -463,11 +464,8 @@ public sealed class ServerImagePushCredentialTests
         return root;
     }
 
-    private static void DeleteRoot(string root)
-    {
-        if (Directory.Exists(root))
-            Directory.Delete(root, recursive: true);
-    }
+    // Git for Windows writes read-only loose objects (rc run a6410818 group 118).
+    private static void DeleteRoot(string root) => GitFixtureCleanup.Delete(root);
 
     private static string Sha() => new('a', 40);
 
