@@ -48,7 +48,8 @@ public class GitSettings
     /// <summary>
     /// CARD-1776. Absolute path of the mounted GitHub token file. Empty, together with
     /// <see cref="PushCredentialPolicyPath"/>, leaves the desktop land path unchanged.
-    /// The probe reads presence only and does not cache it.
+    /// The probe opens the file for read and checks that it is non-empty. It does not
+    /// read or cache the bytes.
     /// </summary>
     public string PushCredentialTokenFile { get; set; } = "";
 
@@ -57,4 +58,12 @@ public class GitSettings
     /// <see cref="PushCredentialTokenFile"/>, leaves the desktop land path unchanged.
     /// </summary>
     public string PushCredentialPolicyPath { get; set; } = "";
+
+    /// <summary>
+    /// CARD-1776. Absolute path of the mounted git identity file (<c>user.name</c> and
+    /// <c>user.email</c>). Empty leaves the desktop path unchanged. When set, a missing or
+    /// incomplete file refuses before git starts, and a usable file is the child's
+    /// <c>GIT_CONFIG_GLOBAL</c>. Each command reads the file again, so the answer is not cached.
+    /// </summary>
+    public string IdentityFile { get; set; } = "";
 }

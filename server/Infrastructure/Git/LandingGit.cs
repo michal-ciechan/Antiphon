@@ -52,12 +52,15 @@ public class LandingGit : ILandingGit
     private readonly CardFileBoardLookup? _cardFiles;
     private readonly string? _pushCredentialTokenFile;
     private readonly string? _pushCredentialPolicyPath;
+    private readonly string? _identityFile;
 
     public LandingGit(CardFileBoardLookup? cardFiles = null, IOptions<GitSettings>? git = null)
     {
         _cardFiles = cardFiles;
         _pushCredentialTokenFile = git?.Value.PushCredentialTokenFile;
         _pushCredentialPolicyPath = git?.Value.PushCredentialPolicyPath;
+        var identity = git?.Value.IdentityFile?.Trim();
+        _identityFile = string.IsNullOrEmpty(identity) ? null : identity;
     }
 
     /// <summary>
@@ -68,6 +71,27 @@ public class LandingGit : ILandingGit
     {
         var reason = ServerPushCredential.Refusal(_pushCredentialTokenFile, _pushCredentialPolicyPath);
         return reason is null ? null : new LandingGitResult(1, "", reason);
+    }
+
+    /// <summary>
+    /// CARD-1776. A configured identity file that is missing or has no user.name and user.email
+    /// refuses before git starts. An empty path returns null (the desktop).
+    /// </summary>
+    private LandingGitResult? IdentityRefusal()
+    {
+        var reason = ServerGitIdentity.Refusal(_identityFile);
+        return reason is null ? null : new LandingGitResult(1, "", reason);
+    }
+
+    /// <summary>
+    /// The configured identity replaces the inherited global gitconfig, including one a subclass
+    /// cleared while making the rest of the environment identity-free. Called after
+    /// <see cref="ConfigureProcess"/> so the probe and the child agree.
+    /// </summary>
+    private void ApplyIdentity(ProcessStartInfo start)
+    {
+        if (_identityFile is not null)
+            start.Environment["GIT_CONFIG_GLOBAL"] = _identityFile;
     }
 
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
@@ -132,6 +156,8 @@ public class LandingGit : ILandingGit
     private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
+        if (IdentityRefusal() is { } identity)
+            return identity;
         if (ServerPushCredential.IsRemoteCommand(arguments) && PushCredentialRefusal() is { } missing)
             return missing;
         if (started is null && GitPushUrlCache.IsCommand(arguments) && InProcessGitReads.Enabled && InProcessEligible())
@@ -222,6 +248,7 @@ public class LandingGit : ILandingGit
         try
         {
             ConfigureProcess(probe);
+            ApplyIdentity(probe);
             _childEnvironment = new Dictionary<string, string?>(probe.Environment,
                 OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             eligible = InProcessGitReads.ChildReadsSameRepository(probe);
@@ -281,6 +308,7 @@ public class LandingGit : ILandingGit
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         ConfigureProcess(start);
+        ApplyIdentity(start);
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
@@ -1244,6 +1272,8 @@ public class LandingGit : ILandingGit
     protected virtual async Task<(int ExitCode, byte[] Output)> RunGitInputBytesAsync(
         string path, IReadOnlyList<string> arguments, byte[] input, CancellationToken ct)
     {
+        if (IdentityRefusal() is { } missing)
+            throw new IOException(missing.Diagnostic);
         using var span = ServerGitProcess.Span("landing", arguments);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromMinutes(5));
@@ -1253,6 +1283,7 @@ public class LandingGit : ILandingGit
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         ConfigureProcess(start);
+        ApplyIdentity(start);
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         // CARD-1432 D2 (Review 9e126982): the update-ref --stdin deletion batch is a mutating child like
@@ -1695,6 +1726,7 @@ public class LandingGit : ILandingGit
         CancellationToken ct)
     {
         if (deletes.Count == 0) return new(0, "", "");
+        if (IdentityRefusal() is { } identity) return identity;
         var batch = new StringBuilder();
         foreach (var (name, oid) in deletes)
         {
@@ -1784,6 +1816,7 @@ public class LandingGit : ILandingGit
     public async Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct)
     {
         if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
+        if (IdentityRefusal() is { } identity) return identity;
         if (PushCredentialRefusal() is { } missing) return missing;
         if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
@@ -1794,6 +1827,7 @@ public class LandingGit : ILandingGit
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
     {
         if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
+        if (IdentityRefusal() is { } identity) return identity;
         if (PushCredentialRefusal() is { } missing) return missing;
         if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
@@ -1807,6 +1841,7 @@ public class LandingGit : ILandingGit
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha)
             || expectedRemoteSha is not null && !IsOid(expectedRemoteSha))
             return new(1, "", "invalid_source_push_identity");
+        if (IdentityRefusal() is { } identity) return identity;
         if (PushCredentialRefusal() is { } missing) return missing;
         var (destination, endpoint) = await ReadDestinationAsync(repository, sourceFullRef, ct);
         if (destination.Fingerprint != expectedFingerprint)
@@ -1825,6 +1860,7 @@ public class LandingGit : ILandingGit
     {
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedRemoteSha))
             return new(1, "", "invalid_source_delete_identity");
+        if (IdentityRefusal() is { } identity) return identity;
         if (PushCredentialRefusal() is { } missing) return missing;
         string endpoint;
         try { endpoint = await EndpointAsync(repository, ct); }
@@ -1845,6 +1881,7 @@ public class LandingGit : ILandingGit
     {
         if (!targetFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha))
             return new(null, false, "invalid_observation_identity");
+        if (IdentityRefusal() is { } identity) return new(null, false, identity.Diagnostic);
         if (PushCredentialRefusal() is { } missing) return new(null, false, missing.Diagnostic);
         string endpoint;
         try { endpoint = await EndpointAsync(repository, ct); }

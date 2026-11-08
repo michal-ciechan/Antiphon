@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.GitHub;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -148,10 +150,112 @@ public sealed class ServerImagePushCredentialTests
             var bare = await RebaseAsync(repo, home, identityFile: null);
             bare.Exit.ShouldBe(128);
             bare.Error.ShouldContain("unable to auto-detect email address");
+            // The identity failure stops inside the rebase and leaves rebase-merge behind.
+            await SetupCommitAsync(repo, home, "rebase", "--abort");
 
             var withIdentity = await RebaseAsync(repo, home, identity);
             withIdentity.Exit.ShouldBe(0);
             withIdentity.Error.ShouldContain("Successfully rebased");
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Configured_identity_file_rebases_when_the_child_environment_has_no_other_identity()
+    {
+        var root = NewRoot();
+        try
+        {
+            var home = Path.Combine(root, "home");
+            var repo = Path.Combine(root, "repo");
+            var identity = Path.Combine(root, "gitconfig");
+            Directory.CreateDirectory(home);
+            Directory.CreateDirectory(repo);
+            await File.WriteAllTextAsync(identity,
+                "[user]\n\tname = Card 1776 Witness\n\temail = card-1776-witness@example.invalid\n");
+            await SetupCommitAsync(repo, home, "init", "-q", "-b", "master");
+            await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "base");
+            await SetupCommitAsync(repo, home, "checkout", "-q", "-b", "topic");
+            await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "topic");
+            await SetupCommitAsync(repo, home, "checkout", "-q", "master");
+            await SetupCommitAsync(repo, home, "commit", "-q", "--allow-empty", "-m", "advance");
+            await SetupCommitAsync(repo, home, "checkout", "-q", "topic");
+
+            var git = new IdentityFreeGit(home, Options.Create(new GitSettings { IdentityFile = identity }));
+            var result = await git.RunAsync(repo,
+                ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "master"],
+                CancellationToken.None);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            result.RebaseHeadSha.ShouldNotBeNullOrWhiteSpace();
+            git.Starts.ShouldBeGreaterThan(0);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Configured_unusable_identity_refuses_before_git_starts()
+    {
+        var root = NewRoot();
+        try
+        {
+            var missing = new StartCountingGit(Options.Create(new GitSettings
+            {
+                IdentityFile = Path.Combine(root, "missing"),
+            }));
+            var refused = await missing.RunAsync(root, ["rebase", "HEAD"], CancellationToken.None);
+            refused.Diagnostic.ShouldBe(ServerGitIdentity.AbsentReason);
+            refused.Succeeded.ShouldBeFalse();
+            missing.Starts.ShouldBe(0);
+
+            var incomplete = Path.Combine(root, "partial");
+            await File.WriteAllTextAsync(incomplete, "[user]\n\tname = only-name\n");
+            ServerGitIdentity.Refusal(incomplete).ShouldBe(ServerGitIdentity.AbsentReason);
+            var directory = Path.Combine(root, "dir");
+            Directory.CreateDirectory(directory);
+            ServerGitIdentity.Refusal(directory).ShouldBe(ServerGitIdentity.AbsentReason);
+            ServerGitIdentity.Refusal("relative-identity").ShouldBe(ServerGitIdentity.AbsentReason);
+            ServerGitIdentity.Refusal("").ShouldBeNull();
+
+            var good = Path.Combine(root, "good");
+            await File.WriteAllTextAsync(good,
+                "[user]\n\tname = Card 1776 Witness\n\temail = card-1776-witness@example.invalid\n");
+            var link = Path.Combine(root, "link");
+            File.CreateSymbolicLink(link, good);
+            ServerGitIdentity.Refusal(good).ShouldBeNull();
+            ServerGitIdentity.Refusal(link).ShouldBe(ServerGitIdentity.AbsentReason);
+
+            var desktop = new StartCountingGit(Options.Create(new GitSettings()));
+            var desktopResult = await CaptureAsync(desktop);
+            desktopResult.Diagnostic.ShouldNotBe(ServerGitIdentity.AbsentReason);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Task_progress_and_github_push_use_the_configured_credential_probe()
+    {
+        var root = NewRoot();
+        try
+        {
+            var settings = Options.Create(new GitSettings
+            {
+                PushCredentialTokenFile = Path.Combine(root, "missing-token"),
+                PushCredentialPolicyPath = Path.Combine(root, "missing-policy"),
+            });
+            var progress = new CountingProgress(settings);
+            var listed = await progress.RunAsync(root, ["ls-remote", "https://github.com/example/antiphon.git"], CancellationToken.None);
+            listed.Diagnostic.ShouldBe(ServerPushCredential.AbsentReason);
+            progress.Starts.ShouldBe(0);
+
+            using var http = new HttpClient();
+            var github = new GitHubService(
+                http,
+                Options.Create(new GithubSettings { BaseUrl = "https://api.github.test", PersonalAccessToken = "token-marker" }),
+                NullLogger<GitHubService>.Instance,
+                git: settings);
+            var pushed = await Should.ThrowAsync<InvalidOperationException>(
+                () => github.PushBranchAsync(root, "topic", CancellationToken.None));
+            pushed.Message.ShouldBe(ServerPushCredential.AbsentReason);
         }
         finally { DeleteRoot(root); }
     }
@@ -374,6 +478,42 @@ public sealed class ServerImagePushCredentialTests
     {
         public int Starts;
         public StartCountingGit(IOptions<GitSettings>? git) : base(null, git) { }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            Starts++;
+            throw new InvalidOperationException("git_must_not_start");
+        }
+    }
+
+    private sealed class IdentityFreeGit : LandingGit
+    {
+        private readonly string _home;
+        public int Starts;
+        public IdentityFreeGit(string home, IOptions<GitSettings>? git) : base(null, git) => _home = home;
+
+        protected override void ConfigureProcess(ProcessStartInfo start)
+        {
+            start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            start.Environment["HOME"] = _home;
+            foreach (var name in new[]
+            {
+                "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_CONFIG_GLOBAL",
+            })
+                start.Environment.Remove(name);
+        }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            Starts++;
+            return base.StartProcess(start);
+        }
+    }
+
+    private sealed class CountingProgress : TaskProgressGit
+    {
+        public int Starts;
+        public CountingProgress(IOptions<GitSettings> git) : base(null, git) { }
 
         protected override Process? StartProcess(ProcessStartInfo start)
         {

@@ -3,7 +3,9 @@ using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -13,7 +15,8 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
     public const string ProgressRefPrefix = "refs/antiphon/progress/";
     private readonly IRepositoryMutationLease? _leases;
 
-    public TaskProgressGit(IRepositoryMutationLease? leases = null) => _leases = leases;
+    public TaskProgressGit(IRepositoryMutationLease? leases = null, IOptions<GitSettings>? git = null)
+        : base(null, git) => _leases = leases;
 
     public async Task<ProgressRevParse> RevParseCommitAsync(string repository, string revision, CancellationToken ct)
     {
