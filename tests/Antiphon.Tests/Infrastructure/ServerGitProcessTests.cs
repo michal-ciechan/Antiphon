@@ -246,6 +246,7 @@ public sealed class ServerGitProcessTests
         var starts = tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>()
             .Where(node => node.Type.ToString() is "ProcessStartInfo" or "System.Diagnostics.ProcessStartInfo").ToList();
         var launchCount = 0;
+        var identityHelperInert = Path.GetFileName(file) == "LandingGit.cs" && IdentityHelperIsInert(tree.GetRoot());
         foreach (var start in starts)
         {
             var method = start.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
@@ -274,9 +275,10 @@ public sealed class ServerGitProcessTests
                     .Where(id => id.Identifier.ValueText == "probe")
                     .Any(id => !(id.Parent is MemberAccessExpressionSyntax member && member.Expression == id)
                         && !(id.Parent is ArgumentSyntax argument && argument.Parent?.Parent is InvocationExpressionSyntax call
-                            && call.Expression.ToString() is "ConfigureProcess" or "ServerGitProcess.DisableAutoMaintenance"
-                                or "InProcessGitReads.ChildReadsSameRepository"
-                                or "Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository"));
+                            && (call.Expression.ToString() is "ConfigureProcess" or "ServerGitProcess.DisableAutoMaintenance"
+                                    or "InProcessGitReads.ChildReadsSameRepository"
+                                    or "Antiphon.GitInProcess.InProcessGitReads.ChildReadsSameRepository"
+                                || identityHelperInert && call.Expression.ToString() == "ApplyIdentity")));
                 if (calls.Any(call => LaunchTarget(call) is not null) || escapes)
                     missing.Add(site + ": eligibility probe must never launch or escape to a launch helper");
                 continue;
@@ -299,6 +301,21 @@ public sealed class ServerGitProcessTests
             }
         }
         return (starts.Count, launchCount, missing);
+    }
+
+    // CARD-1776: the land probe may pass through ApplyIdentity only while that single helper
+    // neither launches nor lets its parameter go anywhere but the receiver of a member access.
+    private static bool IdentityHelperIsInert(SyntaxNode root)
+    {
+        var helpers = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Where(method => method.Identifier.ValueText == "ApplyIdentity").ToList();
+        if (helpers is not [{ ParameterList.Parameters: [var parameter] } helper]
+            || ((SyntaxNode?)helper.Body ?? helper.ExpressionBody) is not { } body)
+            return false;
+        return !body.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call => LaunchTarget(call) is not null)
+            && body.DescendantNodes().OfType<IdentifierNameSyntax>()
+                .Where(id => id.Identifier.ValueText == parameter.Identifier.ValueText)
+                .All(id => id.Parent is MemberAccessExpressionSyntax member && member.Expression == id);
     }
 
     private static bool PrecedesOnSamePath(InvocationExpressionSyntax before, InvocationExpressionSyntax after)
