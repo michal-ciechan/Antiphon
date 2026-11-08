@@ -1,0 +1,7 @@
+# CARD-1776. Baked at /etc/gitconfig. Non-secret: it only names the helper.
+# Land pushes HTTPS through the mounted PAT. The server image has no SSH
+# deploy key, so this file does not rewrite HTTPS URLs to SSH.
+[credential "https://github.com"]
+	helper = /usr/local/bin/antiphon-github-credential
+	useHttpPath = true
+	username = x-access-token

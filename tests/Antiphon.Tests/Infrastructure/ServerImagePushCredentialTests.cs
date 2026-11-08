@@ -1,4 +1,9 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Git;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -62,7 +67,11 @@ public sealed class ServerImagePushCredentialTests
         text.ShouldContain("Git__PushCredentialTokenFile: /run/antiphon/github-token/token");
         text.ShouldContain("Git__PushCredentialPolicyPath: /run/antiphon/push-allow-list");
         text.Contains("GH_TOKEN", StringComparison.Ordinal).ShouldBeFalse();
-        text.Contains("GITHUB_TOKEN", StringComparison.Ordinal).ShouldBeFalse();
+        // The required mount variable RUNNER_GITHUB_TOKEN_DIR contains the letters
+        // GITHUB_TOKEN. Remove that required spelling, then refuse every other occurrence.
+        text.Replace("RUNNER_GITHUB_TOKEN_DIR", "", StringComparison.Ordinal)
+            .Contains("GITHUB_TOKEN", StringComparison.Ordinal)
+            .ShouldBeFalse();
         text.Contains("privileged: true", StringComparison.Ordinal).ShouldBeFalse();
         text.Contains("docker.sock", StringComparison.Ordinal).ShouldBeFalse();
         text.Contains("ghp_", StringComparison.Ordinal).ShouldBeFalse();
@@ -116,5 +125,153 @@ public sealed class ServerImagePushCredentialTests
         text.Contains("GH_TOKEN", StringComparison.Ordinal).ShouldBeFalse();
         text.Contains("GITHUB_TOKEN", StringComparison.Ordinal).ShouldBeFalse();
         text.All(character => character <= 127).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Absent_credential_refuses_land_push_before_git_starts()
+    {
+        var root = NewRoot();
+        try
+        {
+            var token = Path.Combine(root, "token");
+            var policy = Path.Combine(root, "allow");
+            File.WriteAllText(token, "CANARY-TOKEN-VALUE-1776");
+            var git = new StartCountingGit(Options.Create(new GitSettings
+            {
+                PushCredentialTokenFile = token,
+                PushCredentialPolicyPath = policy,
+            }));
+            var started = 0;
+            var result = await git.PushOwnedAsync(Path.Combine(root, "missing-repo"), Destination(), Sha(),
+                (_, _, _) =>
+                {
+                    started++;
+                    return Task.CompletedTask;
+                }, CancellationToken.None);
+            result.Succeeded.ShouldBeFalse();
+            result.Diagnostic.ShouldBe(ServerPushCredential.AbsentReason);
+            result.Output.ShouldBeEmpty();
+            result.Diagnostic.ShouldNotContain("CANARY");
+            started.ShouldBe(0);
+            git.Starts.ShouldBe(0);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Present_credential_does_not_refuse_and_unconfigured_desktop_does_not()
+    {
+        var root = NewRoot();
+        try
+        {
+            var token = Path.Combine(root, "token");
+            var policy = Path.Combine(root, "allow");
+            await File.WriteAllTextAsync(token, "CANARY-TOKEN-VALUE-1776\n");
+            await File.WriteAllTextAsync(policy, "https://github.com/example/antiphon.git\n");
+            var armed = new StartCountingGit(Options.Create(new GitSettings
+            {
+                PushCredentialTokenFile = token,
+                PushCredentialPolicyPath = policy,
+            }));
+            var armedResult = await CaptureAsync(armed);
+            armedResult.Diagnostic.ShouldNotBe(ServerPushCredential.AbsentReason);
+            armedResult.Output.ShouldNotContain("CANARY-TOKEN-VALUE-1776");
+
+            var desktop = new StartCountingGit(Options.Create(new GitSettings()));
+            var desktopResult = await CaptureAsync(desktop);
+            desktopResult.Diagnostic.ShouldNotBe(ServerPushCredential.AbsentReason);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public void Probe_fails_closed_on_empty_directory_symlink_and_relative_paths()
+    {
+        var root = NewRoot();
+        try
+        {
+            var token = Path.Combine(root, "token");
+            var policy = Path.Combine(root, "allow");
+            var directory = Path.Combine(root, "dir");
+            var link = Path.Combine(root, "link");
+            File.WriteAllText(token, "CANARY-TOKEN-VALUE-1776");
+            Directory.CreateDirectory(directory);
+            File.CreateSymbolicLink(link, token);
+            ServerPushCredential.Refusal(token, policy).ShouldBe(ServerPushCredential.AbsentReason);
+            var empty = Path.Combine(root, "empty");
+            File.WriteAllText(empty, "");
+            File.WriteAllText(policy, "https://github.com/example/antiphon.git\n");
+            ServerPushCredential.Refusal(empty, policy).ShouldBe(ServerPushCredential.AbsentReason);
+            ServerPushCredential.Refusal(token, policy).ShouldBeNull();
+            ServerPushCredential.Refusal("", "").ShouldBeNull();
+            ServerPushCredential.Refusal(directory, policy).ShouldBe(ServerPushCredential.AbsentReason);
+            ServerPushCredential.Refusal(link, policy).ShouldBe(ServerPushCredential.AbsentReason);
+            ServerPushCredential.Refusal("relative-token", policy).ShouldBe(ServerPushCredential.AbsentReason);
+            ServerPushCredential.Refusal(token, "relative-policy").ShouldBe(ServerPushCredential.AbsentReason);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Test]
+    public async Task Direct_remote_command_refuses_without_starting_git()
+    {
+        var root = NewRoot();
+        try
+        {
+            var git = new StartCountingGit(Options.Create(new GitSettings
+            {
+                PushCredentialTokenFile = Path.Combine(root, "missing-token"),
+                PushCredentialPolicyPath = Path.Combine(root, "missing-policy"),
+            }));
+            var result = await git.RunAsync(root, ["ls-remote", "https://github.com/example/antiphon.git"], CancellationToken.None);
+            result.Diagnostic.ShouldBe(ServerPushCredential.AbsentReason);
+            git.Starts.ShouldBe(0);
+            ServerPushCredential.IsRemoteCommand(["status"]).ShouldBeFalse();
+            ServerPushCredential.IsRemoteCommand(["push", "origin", "master"]).ShouldBeTrue();
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    private static async Task<LandingGitResult> CaptureAsync(StartCountingGit git)
+    {
+        try
+        {
+            return await git.PushOwnedAsync(Path.Combine(Path.GetTempPath(), "card-1776-absent-repo"), Destination(), Sha(),
+                (_, _, _) => Task.CompletedTask, CancellationToken.None);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "git_must_not_start")
+        {
+            return new LandingGitResult(1, "", "git_started");
+        }
+    }
+
+    private static string NewRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "card-1776-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static void DeleteRoot(string root)
+    {
+        if (Directory.Exists(root))
+            Directory.Delete(root, recursive: true);
+    }
+
+    private static string Sha() => new('a', 40);
+
+    private static LandingDestination Destination() =>
+        new("origin", "refs/heads/master", new string('b', 64));
+
+    private sealed class StartCountingGit : LandingGit
+    {
+        public int Starts;
+        public StartCountingGit(IOptions<GitSettings>? git) : base(null, git) { }
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            Starts++;
+            throw new InvalidOperationException("git_must_not_start");
+        }
     }
 }

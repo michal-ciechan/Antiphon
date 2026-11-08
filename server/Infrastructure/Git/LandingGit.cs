@@ -7,7 +7,9 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -48,8 +50,25 @@ public class LandingGit : ILandingGit
         DestructiveGate.Value is { } gate ? gate(ct) : Task.FromResult<string?>(null);
 
     private readonly CardFileBoardLookup? _cardFiles;
+    private readonly string? _pushCredentialTokenFile;
+    private readonly string? _pushCredentialPolicyPath;
 
-    public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
+    public LandingGit(CardFileBoardLookup? cardFiles = null, IOptions<GitSettings>? git = null)
+    {
+        _cardFiles = cardFiles;
+        _pushCredentialTokenFile = git?.Value.PushCredentialTokenFile;
+        _pushCredentialPolicyPath = git?.Value.PushCredentialPolicyPath;
+    }
+
+    /// <summary>
+    /// CARD-1776. A configured Linux server refuses a remote command before git starts when the
+    /// mounted token or allow-list is absent. Unconfigured (both paths empty) returns null.
+    /// </summary>
+    private LandingGitResult? PushCredentialRefusal()
+    {
+        var reason = ServerPushCredential.Refusal(_pushCredentialTokenFile, _pushCredentialPolicyPath);
+        return reason is null ? null : new LandingGitResult(1, "", reason);
+    }
 
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 
@@ -113,6 +132,8 @@ public class LandingGit : ILandingGit
     private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
+        if (ServerPushCredential.IsRemoteCommand(arguments) && PushCredentialRefusal() is { } missing)
+            return missing;
         if (started is null && GitPushUrlCache.IsCommand(arguments) && InProcessGitReads.Enabled && InProcessEligible())
             return await PushUrlAsync(repository, arguments, options, ct);
         // Create-only land pins and the land worktree lock: written in process when libgit2's write is git's (no
@@ -1763,6 +1784,7 @@ public class LandingGit : ILandingGit
     public async Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct)
     {
         if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
+        if (PushCredentialRefusal() is { } missing) return missing;
         if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
         return await RunAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], ct);
@@ -1772,6 +1794,7 @@ public class LandingGit : ILandingGit
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
     {
         if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
+        if (PushCredentialRefusal() is { } missing) return missing;
         if (await ConfirmedEndpointAsync(repository, destination, ct) is not { } endpoint)
             return new(1, "", "remote_configuration_changed");
         return await RunOwnedAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], started, ct);
@@ -1784,6 +1807,7 @@ public class LandingGit : ILandingGit
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha)
             || expectedRemoteSha is not null && !IsOid(expectedRemoteSha))
             return new(1, "", "invalid_source_push_identity");
+        if (PushCredentialRefusal() is { } missing) return missing;
         var (destination, endpoint) = await ReadDestinationAsync(repository, sourceFullRef, ct);
         if (destination.Fingerprint != expectedFingerprint)
             return new(1, "", "source_remote_endpoint_changed");
@@ -1801,6 +1825,7 @@ public class LandingGit : ILandingGit
     {
         if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedRemoteSha))
             return new(1, "", "invalid_source_delete_identity");
+        if (PushCredentialRefusal() is { } missing) return missing;
         string endpoint;
         try { endpoint = await EndpointAsync(repository, ct); }
         catch (IOException) { return new(1, "", "source_remote_endpoint_ambiguous"); }
@@ -1820,6 +1845,7 @@ public class LandingGit : ILandingGit
     {
         if (!targetFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha))
             return new(null, false, "invalid_observation_identity");
+        if (PushCredentialRefusal() is { } missing) return new(null, false, missing.Diagnostic);
         string endpoint;
         try { endpoint = await EndpointAsync(repository, ct); }
         catch (IOException) { return new(null, false, "remote_endpoint_ambiguous"); }
