@@ -72,11 +72,16 @@ public class RunnerCapabilitiesTests
     public async Task Host_stats_feature_is_advertised_only_when_enabled()
     {
         var existing = new[] { "a", "b" };
+        // HistoryEnabled defaults to true, so a sampling-on runner advertises both features.
         var enabled = HostStatsRoutes.CapabilityFeatures(existing, new HostStatsSettings { Enabled = true });
-        enabled.ShouldBe(["a", "b", RunnerCapabilityFeatures.HostStatsV1]);
+        enabled.ShouldBe(["a", "b", RunnerCapabilityFeatures.HostStatsV1, RunnerCapabilityFeatures.HostLoadHistoryV1]);
+        var samplingOnly = HostStatsRoutes.CapabilityFeatures(
+            existing, new HostStatsSettings { Enabled = true, HistoryEnabled = false });
+        samplingOnly.ShouldBe(["a", "b", RunnerCapabilityFeatures.HostStatsV1]);
         var disabled = HostStatsRoutes.CapabilityFeatures(existing, new HostStatsSettings { Enabled = false });
         disabled.ShouldBe(existing);
         disabled.ShouldNotContain(RunnerCapabilityFeatures.HostStatsV1);
+        disabled.ShouldNotContain(RunnerCapabilityFeatures.HostLoadHistoryV1);
         await Task.CompletedTask;
     }
 
