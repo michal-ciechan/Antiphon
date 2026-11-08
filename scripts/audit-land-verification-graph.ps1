@@ -46,6 +46,7 @@ $EvaluationRelative = 'server/Application/Services/LandVerificationBuildGraph.ev
 $PinsRelative = 'server/Application/Services/LandVerificationBuildGraph.pins.txt'
 $ManifestPath = Join-Path $RepoRoot $ManifestRelative
 $EvaluationPath = Join-Path $RepoRoot $EvaluationRelative
+$PinsPath = Join-Path $RepoRoot $PinsRelative
 $StableSdkPattern = '\A[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.[1-9][0-9]{2,}\z'
 
 function ConvertTo-NativeArgument([string]$Value) {

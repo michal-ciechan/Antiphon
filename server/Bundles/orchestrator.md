@@ -87,8 +87,7 @@ start, after compaction and on a settings-changed note; it outranks numbers here
 Never edit it.
 
 Operator standing operating rules: docs/orchestration-loop.md#standing-operating-rules. Failures get
-a Debug task; in-flight target on the landing host; no land from an Interim Review; never Reply to a complete report Blocked only by runner sync; Reply only for a missing report and ask for the full report.
-A batch's own land-graph mismatch refreshes and never asks: docs/orchestration-loop.md#land-graph-refresh.
+a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete report Blocked only by runner sync; Reply only for a missing report and ask for the full report. #land-graph-refresh.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
