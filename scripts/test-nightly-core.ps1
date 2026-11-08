@@ -250,6 +250,18 @@ function Test-NCProjectWalkMatchesFallback {
     $hidden.Attributes = $hidden.Attributes -bor [IO.FileAttributes]::Hidden
     $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $tree) }
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('Kept') -and -not $r.Fallback.Contains('Skip')) 'projectWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # In a git checkout the walk skips ignored directories (nested ones too); untracked projects are kept.
+    $repo = Join-Path $root 'nc-git-projects'
+    foreach ($relative in @('kept/Untracked.csproj', 'deep/a/Kept.csproj', 'out/Skip.csproj', 'deep/cache/Skip.csproj', 'deep/a/scratch/Skip.csproj')) {
+        $path = Join-Path $repo $relative
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+        [IO.File]::WriteAllText($path, $test)
+    }
+    [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), "out/`ncache/`n")
+    [IO.File]::WriteAllText((Join-Path $repo 'deep/a/.gitignore'), "scratch/`n")
+    $null = & git -C $repo init -q 2>&1
+    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $repo) }
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback -ceq '["deep/a/Kept.csproj","kept/Untracked.csproj"]') 'gitIgnoredWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
 function Test-NCEvidenceFilesMatchFallback {
@@ -347,7 +359,7 @@ function Test-NCDocumentsMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; $expected = 16 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; $expected = 17 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

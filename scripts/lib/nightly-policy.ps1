@@ -99,14 +99,49 @@ function Read-NightlyExecutionPolicy {
     }
 }
 
+function Get-NightlyGitIgnoredDirectories {
+    param([string]$Root)
+    # Directories git ignores at the root of a checkout (run output, packages, build output): a project in
+    # one can never be committed, so the walk skips them. Not a checkout, or git unavailable: none.
+    # Returned as full paths ending in a separator.
+    if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) { return @() }
+    $saved = @{}
+    # A repository named by the environment (a hook, a caller's GIT_DIR) must not answer for this root.
+    foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR')) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($null -ne $value) { $saved[$name] = $value; Remove-Item -LiteralPath ('Env:' + $name) }
+    }
+    try {
+        $out = @(& git -C $Root ls-files -z --others --ignored --exclude-standard --directory 2>$null)
+        if ($LASTEXITCODE -ne 0) { return @() }
+    } catch {
+        return @()
+    } finally {
+        foreach ($name in @($saved.Keys)) { Set-Item -LiteralPath ('Env:' + $name) -Value $saved[$name] }
+    }
+    $dirs = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in (($out -join '') -split [char]0)) {
+        if (-not $entry.EndsWith('/')) { continue }
+        $full = [IO.Path]::GetFullPath([IO.Path]::Combine($Root, $entry.Replace('/', [IO.Path]::DirectorySeparatorChar)))
+        if (-not $full.EndsWith([string][IO.Path]::DirectorySeparatorChar)) { $full += [IO.Path]::DirectorySeparatorChar }
+        $dirs.Add($full)
+    }
+    return $dirs.ToArray()
+}
+
 function Get-NightlyIsTestProjectPaths {
     param([string]$RepoRoot)
     $root = ConvertTo-NightlyCanonicalPath -Path $RepoRoot
+    $ignored = @(Get-NightlyGitIgnoredDirectories -Root $root)
     if (Test-NightlyCoreAvailable) {
-        # Compiled walk that prunes bin/obj/bin-* instead of listing them (NightlyCore.cs NightlyRepository).
-        $fullNames = @([Antiphon.Nightly.NightlyRepository]::CandidateProjectFiles($root))
+        # Compiled walk that prunes bin/obj/bin-* and git-ignored directories instead of listing them
+        # (NightlyCore.cs NightlyRepository).
+        $fullNames = @([Antiphon.Nightly.NightlyRepository]::CandidateProjectFiles($root, [string[]]$ignored))
     } else {
         $fullNames = @(Get-ChildItem -Path $root -Filter '*.csproj' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        $comparison = [StringComparison]::Ordinal
+        if ([IO.Path]::DirectorySeparatorChar -eq [char]92) { $comparison = [StringComparison]::OrdinalIgnoreCase }
+        $fullNames = @($fullNames | Where-Object { $f = $_; -not @($ignored | Where-Object { $f.StartsWith($_, $comparison) }).Count })
     }
     $hits = @()
     foreach ($full in $fullNames) {

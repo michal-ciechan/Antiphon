@@ -812,10 +812,17 @@ namespace Antiphon.Nightly
         /// equal to bin or obj (case-insensitively) or starting with bin- (ordinally). Excluded directories are
         /// pruned rather than walked; unreadable directories are skipped, as -ErrorAction SilentlyContinue did.
         /// </summary>
-        public static string[] CandidateProjectFiles(string root)
+        public static string[] CandidateProjectFiles(string root) => CandidateProjectFiles(root, null);
+
+        /// <summary>
+        /// Every *.csproj under root outside bin/obj/bin-*, hidden entries, links and the pruned directories
+        /// (full paths ending in a separator: the git-ignored ones), sorted ordinal.
+        /// </summary>
+        public static string[] CandidateProjectFiles(string root, string[] prunedDirectories)
         {
-            // The same walk, one directory level at a time across threads (the repository holds tens of
-            // thousands of directories of run output and packages); sorted ordinal so the order is fixed.
+            var comparer = System.IO.Path.DirectorySeparatorChar == '\\' ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var pruned = new HashSet<string>(prunedDirectories ?? new string[0], comparer);
+            // One directory level at a time across threads (the tree holds tens of thousands of directories).
             var found = new System.Collections.Concurrent.ConcurrentBag<string>();
             var level = new List<string> { root };
             while (level.Count > 0)
@@ -833,6 +840,7 @@ namespace Antiphon.Nightly
                             var attributes = child.Attributes;
                             if ((attributes & System.IO.FileAttributes.Hidden) != 0 || (attributes & System.IO.FileAttributes.ReparsePoint) != 0) continue;
                             if (Excluded(child.Name)) continue;
+                            if (pruned.Count > 0 && pruned.Contains(child.FullName + System.IO.Path.DirectorySeparatorChar)) continue;
                             next.Add(child.FullName);
                         }
                     }
