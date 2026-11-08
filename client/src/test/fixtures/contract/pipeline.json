@@ -273,6 +273,7 @@
       "configured": null,
       "declared": null,
       "source": "config",
+      "load": null,
       "scope": "fleet",
       "remaining": 1
     }
@@ -864,7 +865,8 @@
       "codexCliVersion": "1.2.3",
       "codexCliVersionCheckedAtUtc": "2026-02-03T09:00:00Z",
       "codexCliVersionError": null,
-      "codexCliVersionStale": false
+      "codexCliVersionStale": false,
+      "load": null
     }
   ],
   "runnerDefaults": {
