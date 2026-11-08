@@ -18,7 +18,9 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1769. A hosted pass over a seeded set of AwaitingReceipt notes counts statements and
 /// UPDATEs. The next pass, with the target session unchanged, must not update them. A receipt
-/// prompt, a session status change, or a generation change reconciles that note again. Canceled
+/// prompt, a session status change, or a generation change reconciles that note again. A status
+/// change that lands after a note's reconcile and before the pass parks it is reconciled on the
+/// next pass. A parked note's queue delivery or cancel reconciles it on the next pass. Canceled
 /// is absent from the page. The cap revisits one parked note when its backoff is expired.
 /// </summary>
 [Category("Integration")]
@@ -42,6 +44,11 @@ public sealed class AgentTaskLandNotificationRescanTests
     private static Guid _generationSessionId;
     private static Guid _exhaustedNoteId;
     private static Guid _capNoteId;
+    private static Guid _deliveryNoteId;
+    private static Guid _cancelNoteId;
+    private static Guid _midPassNoteId;
+    private static Guid _midPassSessionId;
+    private static readonly MidPassBoundary _boundary = new();
     private static Guid[] _sampleIds = null!;
 
     [Before(Class), Timeout(180_000)]
@@ -58,6 +65,7 @@ public sealed class AgentTaskLandNotificationRescanTests
             {
                 services.AddSingleton<CompletionNoteFlushQueue>();
                 services.AddScoped<AgentTaskLandNotificationService>();
+                services.AddSingleton<LandDeliveryBoundary>(_boundary);
             },
         });
         _options = TestDbFixture.CreateDbContextOptions(_schema.ConnectionString, _observer);
@@ -104,7 +112,8 @@ public sealed class AgentTaskLandNotificationRescanTests
             failures.Add($"canceled note was loaded on the quiet scan ({_observer.NoteSelects(_canceledId)})");
         if (before.NoteSelects(_canceledId) != 0)
             failures.Add($"canceled note was loaded on the first scan ({before.NoteSelects(_canceledId)})");
-        foreach (var id in _sampleIds.Append(_exhaustedNoteId).Append(_capNoteId))
+        foreach (var id in _sampleIds.Append(_exhaustedNoteId).Append(_capNoteId)
+                     .Append(_deliveryNoteId).Append(_cancelNoteId).Append(_midPassNoteId))
         {
             if (quiet[id] != tokens[id])
                 failures.Add($"quiet scan changed {id}");
@@ -171,6 +180,75 @@ public sealed class AgentTaskLandNotificationRescanTests
                 failures.Add("expired backoff did not reconcile the parked note");
             if (_sampleIds.Any(id => woken[id] != quiet[id]))
                 failures.Add("expiring one note reconciled a note that was still inside its backoff");
+
+            await using (var db = new AppDbContext(_options))
+            {
+                var message = await db.SessionQueuedMessages.SingleAsync(
+                    m => m.SourceLandNotificationId == _deliveryNoteId, cancellationToken);
+                message.Status = QueuedMessageStatus.Sent;
+                message.DeliveryAttempts = 1;
+                // A Sent row records a delivery floor. Without one, receipt lookup returns before saving.
+                message.LastDeliveryBaselineSequence = 0;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            var beforeDelivery = woken;
+            _observer.Reset();
+            await worker.ScanLandNotificationsOnceAsync(cancellationToken);
+            woken = await TokensAsync();
+            if (woken[_deliveryNoteId] == beforeDelivery[_deliveryNoteId])
+                failures.Add("queue delivery did not reconcile the parked note");
+            if (_sampleIds.Any(id => woken[id] != beforeDelivery[id]))
+                failures.Add("queue delivery reconciled a note whose queue row was unchanged");
+            if (await StateAsync(_deliveryNoteId) != LandNotificationState.AwaitingReceipt)
+                failures.Add("queue delivery changed the note state to " + await StateAsync(_deliveryNoteId));
+
+            await using (var db = new AppDbContext(_options))
+            {
+                var message = await db.SessionQueuedMessages.SingleAsync(
+                    m => m.SourceLandNotificationId == _cancelNoteId, cancellationToken);
+                message.Status = QueuedMessageStatus.Canceled;
+                message.CanceledAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            var beforeCancel = woken;
+            _observer.Reset();
+            await worker.ScanLandNotificationsOnceAsync(cancellationToken);
+            woken = await TokensAsync();
+            if (woken[_cancelNoteId] == beforeCancel[_cancelNoteId])
+                failures.Add("queue cancel did not reconcile the parked note");
+            if (_sampleIds.Any(id => woken[id] != beforeCancel[id]))
+                failures.Add("queue cancel reconciled a note whose queue row was unchanged");
+            if (await StateAsync(_cancelNoteId) != LandNotificationState.Canceled)
+                failures.Add("queue cancel left the note " + await StateAsync(_cancelNoteId));
+
+            var midBefore = woken[_midPassNoteId];
+            var midFired = 0;
+            _boundary.Arm(_midPassNoteId, async (_, ct) =>
+            {
+                midFired++;
+                await using var db = new AppDbContext(_options);
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == _midPassSessionId, ct);
+                session.Status = SessionStatus.Stopped;
+                await db.SaveChangesAsync(ct);
+            });
+            worker.ExpireRescanPark(_midPassNoteId);
+            _observer.Reset();
+            await worker.ScanLandNotificationsOnceAsync(cancellationToken);
+            woken = await TokensAsync();
+            _boundary.Disarm();
+            if (midFired != 1)
+                failures.Add($"mid-pass boundary fired {midFired} times");
+            if (woken[_midPassNoteId] == midBefore)
+                failures.Add("expiring the mid-pass note did not reconcile it");
+            var beforeFollowUp = woken[_midPassNoteId];
+            var samplesAtFollowUp = woken;
+            _observer.Reset();
+            await worker.ScanLandNotificationsOnceAsync(cancellationToken);
+            woken = await TokensAsync();
+            if (woken[_midPassNoteId] == beforeFollowUp)
+                failures.Add("status change landed during the pass was absorbed and the next pass skipped the note");
+            if (_sampleIds.Any(id => woken[id] != samplesAtFollowUp[id]))
+                failures.Add("mid-pass follow-up reconciled a note on an unchanged session");
         }
 
         failures.ShouldBeEmpty(measure + " | " + string.Join("; ", failures));
@@ -180,7 +258,8 @@ public sealed class AgentTaskLandNotificationRescanTests
     private static async Task<Dictionary<Guid, Guid>> TokensAsync()
     {
         var ids = _sampleIds.Append(_statusNoteId).Append(_promptNoteId).Append(_generationNoteId)
-            .Append(_exhaustedNoteId).Append(_capNoteId).Append(_canceledId).ToArray();
+            .Append(_exhaustedNoteId).Append(_capNoteId).Append(_canceledId)
+            .Append(_deliveryNoteId).Append(_cancelNoteId).Append(_midPassNoteId).ToArray();
         await using var db = new AppDbContext(_options);
         return await db.AgentTaskLandNotifications.AsNoTracking()
             .Where(n => ids.Contains(n.Id))
@@ -210,6 +289,9 @@ public sealed class AgentTaskLandNotificationRescanTests
         _generationSessionId = AddSession(db, template);
         var exhaustedSession = AddSession(db, template);
         var capSession = AddSession(db, template);
+        var deliverySession = AddSession(db, template);
+        var cancelSession = AddSession(db, template);
+        _midPassSessionId = AddSession(db, template);
         await db.SaveChangesAsync();
 
         _sampleIds = new Guid[3];
@@ -233,6 +315,9 @@ public sealed class AgentTaskLandNotificationRescanTests
         _generationNoteId = AddAwaiting(db, _generationSessionId, ref sequence, deliveryAttempts: 0);
         _exhaustedNoteId = AddAwaiting(db, exhaustedSession, ref sequence, deliveryAttempts: 3);
         _capNoteId = AddAwaiting(db, capSession, ref sequence, deliveryAttempts: 0);
+        _deliveryNoteId = AddAwaiting(db, deliverySession, ref sequence, deliveryAttempts: 0);
+        _cancelNoteId = AddAwaiting(db, cancelSession, ref sequence, deliveryAttempts: 0);
+        _midPassNoteId = AddAwaiting(db, _midPassSessionId, ref sequence, deliveryAttempts: 0);
         await db.SaveChangesAsync();
     }
 
@@ -397,6 +482,29 @@ public sealed class AgentTaskLandNotificationRescanTests
             public int Commands { get; } = commands;
             public int NotificationUpdates { get; } = notificationUpdates;
             public int NoteSelects(Guid id) => selects.GetValueOrDefault(id);
+        }
+    }
+
+    private sealed class MidPassBoundary : LandDeliveryBoundary
+    {
+        private Guid _noteId;
+        private Func<Guid, CancellationToken, Task>? _mutate;
+
+        public void Arm(Guid noteId, Func<Guid, CancellationToken, Task> mutate)
+        {
+            _noteId = noteId;
+            _mutate = mutate;
+        }
+
+        public void Disarm() => _mutate = null;
+
+        public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary != AgentTaskLandNotificationHostedService.RescanReconciledBoundary
+                || taskId != _noteId || _mutate is not { } mutate)
+                return;
+            _mutate = null;
+            await mutate(identity, ct);
         }
     }
 }
