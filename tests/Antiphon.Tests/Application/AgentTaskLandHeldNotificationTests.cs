@@ -288,7 +288,7 @@ public sealed class AgentTaskLandHeldNotificationTests
     public async Task C641_Upgrade_preserves_existing_held_notification_debt()
     {
         await using var h = new LandingSafetyHarness();
-        await h.InitializeAsync(reversibleTip: true);
+        await h.InitializeAsync();
         var a = await AddWriterAsync(h, "A");
         await h.RequestAsync();
         await using (var db = h.CreateContext())
@@ -306,6 +306,7 @@ public sealed class AgentTaskLandHeldNotificationTests
 
         await using (var db = h.CreateContext())
         {
+            await MigrationTestDatabase.DetachHostLoadAsync(db);
             var migrations = db.Database.GetMigrations().ToArray();
             var added = Array.FindIndex(migrations, m => m.EndsWith("_AddLandHoldNotificationOwner", StringComparison.Ordinal));
             added.ShouldBeGreaterThan(0);

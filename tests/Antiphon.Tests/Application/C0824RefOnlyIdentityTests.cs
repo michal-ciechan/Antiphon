@@ -46,10 +46,14 @@ public sealed class C0824RefOnlyIdentityTests
         var migrations = MigrationTestDatabase.Names();
         var migration = Array.FindIndex(migrations, m => m.EndsWith("_Card0824RefOnlyDesktopCoordinates", StringComparison.Ordinal));
         migration.ShouldBeGreaterThan(0, "generated-upgrade-present");
-        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[migration - 1], CancellationToken.None);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var id = Guid.NewGuid();
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
+            // The class budget is 60s. A full walk from an empty database does not fit it.
+            // Drop only the throwing host-load suffix, then rewind the reversible predecessor.
+            await MigrationTestDatabase.DetachHostLoadAsync(db);
+            await db.Database.GetService<IMigrator>().MigrateAsync(migrations[migration - 1]);
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "AgentTasks" ("Id", "RootTaskId", "Depth", "Title", "Goal", "Kind", "Role", "ModelLevel",
                     "Attempt", "MaxAttempts", "Workspace", "WorkingDirectory", "Ephemeral", "Status", "ReplyTo",

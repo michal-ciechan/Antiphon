@@ -24,6 +24,36 @@ internal static class MigrationTestDatabase
         return db.Database.GetMigrations().ToArray();
     }
 
+    /// <summary>
+    /// Drops the additive host-load objects and their history rows. Their Down methods throw,
+    /// so a cloned tip has to be returned to <see cref="LastReversibleMigration"/> this way
+    /// before an older reversible migration can run.
+    /// </summary>
+    public static Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default) =>
+        db.Database.ExecuteSqlRawAsync(
+            """
+            DROP TABLE IF EXISTS "HostLoadRetentionStates";
+            DROP TABLE IF EXISTS "HostLoadTaskMetricBuckets";
+            DROP TABLE IF EXISTS "AgentTaskLoadWindows";
+            DROP TABLE IF EXISTS "HostLoadHourlyRollups";
+            DROP TABLE IF EXISTS "HostLoadIngestCursors";
+            DROP TABLE IF EXISTS "HostLoadObservedEvents";
+            DROP TABLE IF EXISTS "HostLoadSampleIdentities";
+            DROP TABLE IF EXISTS "HostLoadSamples";
+            DROP INDEX IF EXISTS "IX_AgentTaskEvents_LoadObservation";
+            ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadAttempt";
+            ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadDispatchedAt";
+            ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadQueuedAt";
+            ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadRunnerId";
+            ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadSessionId";
+            ALTER TABLE "AgentTaskEvents" DROP COLUMN IF EXISTS "LoadStatus";
+            DELETE FROM "__EFMigrationsHistory"
+            WHERE "MigrationId" IN (
+                '20261107034430_HostLoadTelemetryS1',
+                '20261107040142_HostLoadSnapshotMembership',
+                '20261107104114_HostLoadRetentionCatchup');
+            """, ct);
+
     public static async Task<IsolatedTestSchema> CreateAsync(string migration, CancellationToken ct)
     {
         await TestDbFixture.Lifecycle.EnsureReadyAsync();
