@@ -54,10 +54,9 @@ public sealed class Card1619ExitMigrationIdTests
     [Timeout(300_000)]
     public async Task Rc_ledger_upgrades_to_head_and_applies_card1610(CancellationToken cancellationToken)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateAsync(BeforeEitherChain, cancellationToken);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(BeforeEitherChain, cancellationToken);
 
         Applied(db).ShouldNotContain(RcExitMigrationId);
         foreach (var id in Card1610Migrations)
@@ -82,10 +81,9 @@ public sealed class Card1619ExitMigrationIdTests
     [Timeout(300_000)]
     public async Task Master_ledger_applies_rc_exit_migration_out_of_order(CancellationToken cancellationToken)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateAsync(Card1610Floor, cancellationToken);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(Card1610Floor, cancellationToken);
         Applied(db).ShouldContain(Card1610Floor);
         Applied(db).ShouldNotContain(RcExitMigrationId);
         Applied(db).ShouldNotContain(SupersededExitMigrationId);

@@ -82,7 +82,7 @@ public sealed class CardWorktreeMirrorBindingTests
     [Test]
     public async Task C1032_SchemaLegacyUpgrade()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var activeId = Guid.NewGuid();

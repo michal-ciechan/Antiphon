@@ -40,10 +40,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public DelegationSettings LandSettings { get; set; } = new();
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(bool reversibleTip = false)
     {
         await Fixture.InitializeAsync();
-        Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Schema = reversibleTip
+            ? await MigrationTestDatabase.CreateReversibleTipAsync()
+            : await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
         await SeedAsync();
     }

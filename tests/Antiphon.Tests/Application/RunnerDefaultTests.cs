@@ -522,8 +522,10 @@ public sealed class RunnerDefaultMigrationTests
     [Test]
     public async Task Existing_schema_upgrades_and_legacy_remote_imports_once()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await RewindToPlatformMigration(schema.ConnectionString);
+        var platform = MigrationTestDatabase.Names().Single(name => name.EndsWith("_AddTaskPlatformPlacement", StringComparison.Ordinal));
+        await using var schema = await MigrationTestDatabase.CreateAsync(platform, CancellationToken.None);
+        await using (var upgraded = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            await upgraded.Database.MigrateAsync();
         var kit = RunnerDefaultTestSupport.Kit(schema.ConnectionString, "server2");
         await using var db = kit.Context();
         var imported = await RunnerDefaultTestSupport.Service(db, kit).EnsureInitializedAsync(CancellationToken.None);
@@ -607,14 +609,6 @@ public sealed class RunnerDefaultMigrationTests
         return await RunnerDefaultTestSupport.Service(db, kit).EnsureInitializedAsync(CancellationToken.None);
     }
 
-    private static async Task RewindToPlatformMigration(string connectionString)
-    {
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
-        var applied = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
-        var platform = applied.Single(name => name.EndsWith("_AddTaskPlatformPlacement", StringComparison.Ordinal));
-        await db.GetService<IMigrator>().MigrateAsync(platform);
-        await db.GetService<IMigrator>().MigrateAsync();
-    }
 }
 
 file static class RunnerDefaultTestSupport

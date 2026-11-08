@@ -17,7 +17,7 @@ public class OutputDistillationMigrationTests
     [Test]
     public async Task Upgrade_preserves_historical_outcomes_and_nullable_deadlines()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var id = Guid.NewGuid();
         db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, Title = "legacy", Goal = "legacy",

@@ -180,8 +180,8 @@ public class Card1619ExitPersistenceTests
     [Test]
     public async Task Migration_preserves_old_rows_and_nullable_contract()
     {
-        // Upgrade itself is the subject: one isolated clone is taken back to the previous migration.
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        // Upgrade itself is the subject: start at the last reversible migration, then rewind.
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var migrations = db.Database.GetMigrations().ToArray();
         var added = migrations.SingleOrDefault(m => m.EndsWith("_AddSessionExitSignalEvidence", StringComparison.Ordinal));

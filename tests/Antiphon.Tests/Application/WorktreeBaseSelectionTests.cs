@@ -348,13 +348,12 @@ public partial class WorktreeBaseSelectionTests
     [Test]
     public async Task C508_BaseFieldsUpgradeAndRoundTrip()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
-        await using var db = new AppDbContext(options);
-        var migrations = db.Database.GetMigrations().ToArray();
+        var migrations = MigrationTestDatabase.Names();
         var cut = Array.FindIndex(migrations, m => m.EndsWith("_AddWorktreeBaseSelection", StringComparison.Ordinal));
         cut.ShouldBeGreaterThan(0);
-        await db.GetService<IMigrator>().MigrateAsync(migrations[cut - 1]);
+        await using var schema = await MigrationTestDatabase.CreateAsync(migrations[cut - 1], CancellationToken.None);
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
         var id = Guid.NewGuid();
         var old = DateTime.UtcNow.AddDays(-2);
         await db.Database.ExecuteSqlInterpolatedAsync($"""

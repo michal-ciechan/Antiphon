@@ -18,7 +18,7 @@ public class CapacityRecoveryCompatibilityTests
     [Test]
     public async Task Input_body_upgrade_preserves_a_preexisting_event_with_null_body()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations,
@@ -50,7 +50,7 @@ public class CapacityRecoveryCompatibilityTests
     [Test]
     public async Task Card0412_V22_migrate_forward_preserves_legacy_holds()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
         var holdId = Guid.NewGuid();
         var taskId = Guid.NewGuid();

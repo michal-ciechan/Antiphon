@@ -53,9 +53,12 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
             Log, states: _provider.GetRequiredService<SessionStateStore>());
     }
 
-    public static async Task<TranscriptHotPathFixture> CreateAsync(bool large = false)
+    public static async Task<TranscriptHotPathFixture> CreateAsync(bool large = false, bool reversibleTip = false)
     {
-        var f = new TranscriptHotPathFixture(await TestDbFixture.CreateIsolatedSchemaAsync());
+        var schema = reversibleTip
+            ? await MigrationTestDatabase.CreateReversibleTipAsync()
+            : await TestDbFixture.CreateIsolatedSchemaAsync();
+        var f = new TranscriptHotPathFixture(schema);
         try
         {
             await using var db = f.CreateDb();

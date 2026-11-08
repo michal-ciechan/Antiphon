@@ -30,7 +30,7 @@ public sealed class CardCleanupSchedulingSchemaTests
         shipped.Contains("\"Execute\": false,\n    \"CardDoneAfterUtc\": null", StringComparison.Ordinal)
             .ShouldBeTrue();
 
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var migrations = db.Database.GetMigrations().ToArray();
@@ -38,7 +38,8 @@ public sealed class CardCleanupSchedulingSchemaTests
             name.EndsWith("_AddCardCleanupScheduling", StringComparison.Ordinal));
         position.ShouldBeGreaterThan(0);
         migrations[position - 1].ShouldEndWith("_AddTaskWorktreeMirrorBinding");
-        (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+        (await db.Database.GetPendingMigrationsAsync()).ShouldBe(
+            migrations.Skip(Array.IndexOf(migrations, MigrationTestDatabase.LastReversibleMigration) + 1));
         db.Database.HasPendingModelChanges().ShouldBeFalse();
 
         var now = new DateTime(2026, 10, 12, 15, 0, 0, DateTimeKind.Utc);

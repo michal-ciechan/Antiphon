@@ -134,9 +134,12 @@ public sealed class DispatchConcurrencyShop : IAsyncDisposable
         }
     }
 
-    public static async Task<DispatchConcurrencyShop> Open(DelegationSettings? settings = null, TimeProvider? clock = null)
+    public static async Task<DispatchConcurrencyShop> Open(DelegationSettings? settings = null, TimeProvider? clock = null,
+        bool reversibleTip = false)
     {
-        var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var schema = reversibleTip
+            ? await MigrationTestDatabase.CreateReversibleTipAsync()
+            : await TestDbFixture.CreateIsolatedSchemaAsync();
         var shop = new DispatchConcurrencyShop(
             schema, settings ?? DispatchConcurrencyTestHost.BoundSettings(),
             clock ?? new FakeTimeProvider(DispatchConcurrencyTestHost.SeedInstant), new MockEventBus());

@@ -35,7 +35,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Clean_database_first_migration_creates_three_valid_indexes()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (_, current, _) = MigrationInfo(db);
         // This fixture owns a cloned database, so exercise the complete first startup migration.
@@ -50,7 +50,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Retry_finishes_cleanup_if_interrupted_after_invalid_index_rename()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
         await db.GetService<IMigrator>().MigrateAsync(previous);
@@ -70,7 +70,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Down_retries_after_an_index_was_already_dropped()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
         await db.Database.ExecuteSqlRawAsync($"DROP INDEX CONCURRENTLY \"{NewIndexNames()[0]}\";");
@@ -83,7 +83,7 @@ public class TranscriptHotPathMigrationTests
 
     private static async Task VerifyRetryAsync(int? validIndex)
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
         await db.GetService<IMigrator>().MigrateAsync(previous);
@@ -161,7 +161,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Generated_sql_and_model_preserve_unique_sequence_and_suppress_index_transactions()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, migration) = MigrationInfo(db);
         var indexes = db.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(TranscriptEntry))!.GetIndexes().ToArray();
@@ -208,7 +208,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Populated_prechange_upgrade_preserves_all_rows_and_uuid_kinds()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
         db.Database.SetCommandTimeout(300);
@@ -231,7 +231,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Down_up_roundtrip_preserves_data_and_old_query_compatibility()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
         await db.GetService<IMigrator>().MigrateAsync(current);
@@ -253,7 +253,7 @@ public class TranscriptHotPathMigrationTests
     [Test]
     public async Task Concurrent_index_build_waits_for_old_writer_without_blocking_another_insert()
     {
-        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var f = await TranscriptHotPathFixture.CreateAsync(reversibleTip: true);
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
         await db.GetService<IMigrator>().MigrateAsync(previous);

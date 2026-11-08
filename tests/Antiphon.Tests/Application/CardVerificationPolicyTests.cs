@@ -217,7 +217,7 @@ public sealed class CardVerificationPolicyTests
     public async Task C544_MigrationKeepsUnknown()
     {
         const string previous = "20260914233700_AddQueuedMessageDeliveryGeneration";
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var legacyOutcome = Guid.NewGuid();
         Guid cardId;
         await using (var seed = await CardHarness.CreateAsync(schema))

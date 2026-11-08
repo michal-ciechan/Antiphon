@@ -288,7 +288,7 @@ public sealed class AgentTaskLandHeldNotificationTests
     public async Task C641_Upgrade_preserves_existing_held_notification_debt()
     {
         await using var h = new LandingSafetyHarness();
-        await h.InitializeAsync();
+        await h.InitializeAsync(reversibleTip: true);
         var a = await AddWriterAsync(h, "A");
         await h.RequestAsync();
         await using (var db = h.CreateContext())

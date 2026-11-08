@@ -19,7 +19,7 @@ public class AgentTaskWorktreeBaseMigrationTests
     [Test]
     public async Task T0442_V18_upgrade_preserves_historical_base_and_roundtrips_intent()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var historicalSha = new string('a', 40);
         var historical = TaskRow("historical");

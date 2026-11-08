@@ -241,7 +241,7 @@ public sealed partial class PipelineSpeedIntegrationTests
     [Test]
     public async Task C1281_B1Schema()
     {
-        await using var w = await C544World.CreateAsync();
+        await using var w = await C544World.CreateAsync(reversibleTip: true);
         await using var db = w.CreateContext();
         await RequireTableAsync(db, "ReviewEvidenceCorrections");
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();

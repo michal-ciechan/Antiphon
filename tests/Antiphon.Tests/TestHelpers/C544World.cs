@@ -67,14 +67,15 @@ internal sealed class C544World : IAsyncDisposable
     };
 
     public static async Task<C544World> CreateAsync(IInterceptor? interceptor = null, bool cardAllowsInterim = true,
-        Action<IServiceCollection>? configure = null, Action<DelegationSettings>? delegation = null)
+        Action<IServiceCollection>? configure = null, Action<DelegationSettings>? delegation = null,
+        bool reversibleTip = false)
     {
         var world = new C544World { Interceptor = interceptor, ConfigureServices = configure };
         delegation?.Invoke(world.Delegation);
         world.Repo = new ScratchGitRepo("c544-world");
         world.RepositoryPath = world.Repo.Path;
         world._worktreeRoot = world.Repo.WorktreeRoot;
-        await world.InitializeAsync(cardAllowsInterim);
+        await world.InitializeAsync(cardAllowsInterim, reversibleTip);
         return world;
     }
 
@@ -145,7 +146,7 @@ internal sealed class C544World : IAsyncDisposable
         return result.StdOut;
     }
 
-    private async Task InitializeAsync(bool cardAllowsInterim)
+    private async Task InitializeAsync(bool cardAllowsInterim, bool reversibleTip = false)
     {
         Delegation.AllowedRoots = [Path.GetDirectoryName(RepositoryPath)!];
         await Repo.CommitFileAsync("README.md", "c544 base\n");
@@ -154,7 +155,9 @@ internal sealed class C544World : IAsyncDisposable
         await Repo.CommitFileAsync(SelectionPath.Replace('/', Path.DirectorySeparatorChar), SelectionMarkdown);
         SelectionSha = (await Repo.GitReadAsync("rev-parse", "HEAD")).Trim();
 
-        Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Schema = reversibleTip
+            ? await MigrationTestDatabase.CreateReversibleTipAsync()
+            : await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
         await SeedBoardAsync(cardAllowsInterim);
 

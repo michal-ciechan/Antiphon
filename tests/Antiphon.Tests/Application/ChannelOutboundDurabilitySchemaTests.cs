@@ -19,7 +19,12 @@ public sealed class ChannelOutboundDurabilitySchemaTests
     [Test]
     public async Task C519_Upgrade_preserves_ordinals_and_history()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var modelSchema = await MigrationTestDatabase.CreateAsync(
+            MigrationTestDatabase.Names().Last(), CancellationToken.None);
+        await using (var modelDb = CreateContext(modelSchema))
+            modelDb.Database.HasPendingModelChanges().ShouldBeFalse();
+
+        await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = CreateContext(schema);
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations,
@@ -29,10 +34,6 @@ public sealed class ChannelOutboundDurabilitySchemaTests
         migrations[position - 1].ShouldBe("20261004011911_CompletedCardWorktreeCleanup");
         var migrator = db.GetService<IMigrator>();
 
-        // Exercise the entire empty-database migration chain, independently of the template.
-        await migrator.MigrateAsync("0");
-        await migrator.MigrateAsync();
-        db.Database.HasPendingModelChanges().ShouldBeFalse();
         var now = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
         var channel = NewChannel(now);
         channel.LastReplyAt = now.AddMinutes(-1);
