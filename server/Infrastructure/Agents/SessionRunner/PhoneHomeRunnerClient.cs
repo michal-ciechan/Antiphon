@@ -392,12 +392,17 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         }
     }
 
-    public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
-    {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.Transcript, new { sessionId }, ct);
-        ThrowIfError(frame);
-        return _mapper.MapTranscript(RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneTranscript) ?? throw Missing("transcript"));
-    }
+    // CARD-1764. The cursor is sent only to a runner that advertises it; an unknown field could be refused.
+    public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+        TranscriptSinceRead.ReadAsync(sessionId, _connection.PtyReads.Transcript, cursorEnabled: false,
+            async (since, stream, token) =>
+            {
+                object payload = stream is null ? new { sessionId } : new { sessionId, since, stream };
+                var frame = await _connection.RequestAsync(PhoneHomeOperation.Transcript, payload, token);
+                ThrowIfError(frame);
+                return RunnerReadJson.ReadElement(frame.Payload, RunnerReadJson.PhoneTranscript) ?? throw Missing("transcript");
+            },
+            _mapper.MapTranscript, ct);
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {

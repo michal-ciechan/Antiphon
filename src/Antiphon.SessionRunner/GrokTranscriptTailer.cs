@@ -164,10 +164,12 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
         // Grok holds no claims — its path is deterministic from --session-id.
     }
 
-    public RunnerTranscriptDto Snapshot()
+    public RunnerTranscriptDto Snapshot() => SnapshotAfter(0);
+
+    public RunnerTranscriptDto SnapshotAfter(long since)
     {
         lock (_gate)
-            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq, _completion.IsComplete);
+            return new RunnerTranscriptDto(_sessionId, TranscriptEntries.After(_entries, since), _seq, _completion.IsComplete);
     }
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();

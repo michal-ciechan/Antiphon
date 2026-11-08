@@ -465,8 +465,8 @@ internal static class TerminalSeatReleaseRoutes
                 ? [SessionBackends.PtyHost, SessionBackends.Herdr]
                 : [SessionBackends.PtyHost];
             IReadOnlyList<string> features = herdrSettings.Value.Enabled
-                ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1]
-                : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1];
+                ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1, RunnerCapabilityFeatures.TranscriptSinceV1]
+                : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1, RunnerCapabilityFeatures.TranscriptSinceV1];
             if (runtime.VerificationCustodyBackend is not null)
                 features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
             features = [.. features, RunnerCapabilityFeatures.TerminalSeatReleaseV1,
