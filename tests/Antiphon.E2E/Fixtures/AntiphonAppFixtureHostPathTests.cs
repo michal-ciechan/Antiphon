@@ -30,63 +30,81 @@ public class AntiphonAppFixtureHostPathTests
         keys.ShouldContain("Delegation:CheckInterpreterWorkingDirectory");
         keys.ShouldContain("ZombieCensus:SessionLogPath");
 
-        var fixture = new AntiphonAppFixture();
-        try
-        {
-            await fixture.InitializeAsync();
-            var workspace = Path.GetFullPath(fixture.OwnedWorkspace);
-            var configuration = fixture.Services.GetRequiredService<IConfiguration>();
-            var inherited = keys
-                .Select(key => (Key: key, Value: configuration[key]))
-                .Where(pair => pair.Value is null || !IsInside(pair.Value, workspace))
-                .Select(pair => $"{pair.Key}={pair.Value}")
-                .ToList();
-            inherited.ShouldBeEmpty($"settings outside the fixture workspace {workspace}");
-        }
-        finally
-        {
-            await fixture.DisposeAsync();
-        }
+        await using var boot = await BootAsync();
+        var configuration = boot.Fixture.Services.GetRequiredService<IConfiguration>();
+        var inherited = keys
+            .Select(key => (Key: key, Value: configuration[key]))
+            .Where(pair => pair.Value is null || !IsInside(pair.Value, boot.Workspace))
+            .Select(pair => $"{pair.Key}={pair.Value}")
+            .ToList();
+        inherited.ShouldBeEmpty($"settings outside the fixture workspace {boot.Workspace}");
     }
 
     [Test]
     public async Task Fixture_boot_creates_no_backslash_named_entry_and_teardown_removes_the_interpreter_directory()
     {
+        string interpreterDirectory;
+        await using (var boot = await BootAsync())
+        {
+            boot.Created().ShouldBeEmpty("a fixture boot created backslash-named entries in the test output");
+            interpreterDirectory = boot.InterpreterDirectory;
+            IsInside(interpreterDirectory, boot.Workspace).ShouldBeTrue(
+                $"check interpreter directory {interpreterDirectory} is outside {boot.Workspace}");
+            Directory.Exists(interpreterDirectory).ShouldBeTrue(interpreterDirectory);
+        }
+
+        Directory.Exists(interpreterDirectory).ShouldBeFalse(
+            "fixture teardown left the check interpreter directory behind");
+    }
+
+    /// <summary>
+    /// Boots a fixture and waits for the check interpreter it provisions in the background, so the
+    /// census cannot race it. Disposal tears the fixture down and then removes any backslash-named
+    /// entry the boot created: a red run must not leave the residue that breaks the next build.
+    /// </summary>
+    private static async Task<FixtureBoot> BootAsync()
+    {
         var roots = OutputRoots();
-        var before = BackslashEntries(roots);
-        var fixture = new AntiphonAppFixture();
-        string? interpreterDirectory = null;
-        List<string> created = [];
+        var boot = new FixtureBoot(new AntiphonAppFixture(), roots, BackslashEntries(roots));
         try
         {
-            await fixture.InitializeAsync();
-            var workspace = Path.GetFullPath(fixture.OwnedWorkspace);
-
-            // The boot provisions the check interpreter in the background; its row is saved only
-            // after the working directory has been created, so the census below cannot race it.
-            interpreterDirectory = await WaitForInterpreterDirectoryAsync(fixture);
-            created = BackslashEntries(roots).Except(before).ToList();
-
-            created.ShouldBeEmpty("a fixture boot created backslash-named entries in the test output");
-            IsInside(interpreterDirectory, workspace).ShouldBeTrue(
-                $"check interpreter directory {interpreterDirectory} is outside {workspace}");
-            Directory.Exists(Path.GetFullPath(interpreterDirectory)).ShouldBeTrue(interpreterDirectory);
+            await boot.Fixture.InitializeAsync();
+            boot.Workspace = Path.GetFullPath(boot.Fixture.OwnedWorkspace);
+            boot.InterpreterDirectory = await WaitForInterpreterDirectoryAsync(boot.Fixture);
+            return boot;
         }
-        finally
+        catch
         {
-            await fixture.DisposeAsync();
-            // A red run must not leave the residue that breaks the next build in this output.
-            foreach (var entry in created)
+            await boot.DisposeAsync();
+            throw;
+        }
+    }
+
+    private sealed class FixtureBoot(AntiphonAppFixture fixture, string[] roots, HashSet<string> before) : IAsyncDisposable
+    {
+        public AntiphonAppFixture Fixture { get; } = fixture;
+        public string Workspace { get; set; } = "";
+        public string InterpreterDirectory { get; set; } = "";
+
+        public List<string> Created() => BackslashEntries(roots).Except(before).ToList();
+
+        public async ValueTask DisposeAsync()
+        {
+            try
             {
-                if (Directory.Exists(entry))
-                    Directory.Delete(entry, recursive: true);
-                else if (File.Exists(entry))
-                    File.Delete(entry);
+                await Fixture.DisposeAsync();
+            }
+            finally
+            {
+                foreach (var entry in Created())
+                {
+                    if (Directory.Exists(entry))
+                        Directory.Delete(entry, recursive: true);
+                    else if (File.Exists(entry))
+                        File.Delete(entry);
+                }
             }
         }
-
-        Directory.Exists(Path.GetFullPath(interpreterDirectory!)).ShouldBeFalse(
-            "fixture teardown left the check interpreter directory behind");
     }
 
     private static async Task<string> WaitForInterpreterDirectoryAsync(AntiphonAppFixture fixture)
