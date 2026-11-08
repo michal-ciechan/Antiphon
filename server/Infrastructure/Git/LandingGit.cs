@@ -75,7 +75,8 @@ public class LandingGit : ILandingGit
 
     /// <summary>
     /// CARD-1776. A configured identity file that is missing or has no user.name and user.email
-    /// refuses before git starts. An empty path returns null (the desktop).
+    /// refuses before git starts; CARD-1787: so does one with any other key or section
+    /// (git_identity_invalid). An empty path returns null (the desktop).
     /// </summary>
     private LandingGitResult? IdentityRefusal()
     {
@@ -86,12 +87,17 @@ public class LandingGit : ILandingGit
     /// <summary>
     /// The configured identity replaces the inherited global gitconfig, including one a subclass
     /// cleared while making the rest of the environment identity-free. Called after
-    /// <see cref="ConfigureProcess"/> so the probe and the child agree.
+    /// <see cref="ConfigureProcess"/> so the probe and the child agree. CARD-1787: it first removes
+    /// every variable that outranks the global file (<see cref="ServerGitIdentity.ScrubInherited"/>),
+    /// so the fixed maintenance entries appended after it are the only GIT_CONFIG_COUNT entries.
+    /// An empty setting (the desktop) leaves the environment as it was.
     /// </summary>
     private void ApplyIdentity(ProcessStartInfo start)
     {
-        if (_identityFile is not null)
-            start.Environment["GIT_CONFIG_GLOBAL"] = _identityFile;
+        if (_identityFile is null)
+            return;
+        ServerGitIdentity.ScrubInherited(start.Environment);
+        start.Environment["GIT_CONFIG_GLOBAL"] = _identityFile;
     }
 
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
