@@ -442,12 +442,63 @@ internal sealed class HangfireWorkerLease : IDisposable
     private NpgsqlConnection? _connection;
     private Timer? _timer;
     private IHostApplicationLifetime? _lifetime;
+    private TimeProvider _clock = TimeProvider.System;
+    private long _lastConfirmedTicks;
     private int _disposed;
 
     internal HangfireWorkerLease(NpgsqlConnection connection, string probe)
     {
         _connection = connection;
         _probe = probe;
+        _lastConfirmedTicks = _clock.GetUtcNow().UtcTicks;
+    }
+
+    /// <summary>CARD-1774. Tests move the expiry clock. Production keeps <see cref="TimeProvider.System"/>.</summary>
+    internal void SetClock(TimeProvider clock)
+    {
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        Volatile.Write(ref _lastConfirmedTicks, _clock.GetUtcNow().UtcTicks);
+    }
+
+    /// <summary>CARD-1774. True until <see cref="CrashExpirySeconds"/> after the last confirmed hold.</summary>
+    internal bool WithinCrashExpiryWindow()
+    {
+        var confirmed = new DateTime(Volatile.Read(ref _lastConfirmedTicks), DateTimeKind.Utc);
+        return _clock.GetUtcNow().UtcDateTime - confirmed < TimeSpan.FromSeconds(CrashExpirySeconds);
+    }
+
+    /// <summary>
+    /// CARD-1774. Leaves the open session in an aborted transaction so the lock check fails
+    /// while this backend still holds the advisory lock.
+    /// </summary>
+    internal void AbandonOpenTransaction()
+    {
+        var connection = _connection ?? throw new InvalidOperationException(
+            "Hangfire worker lease has no connection.");
+        using (var begin = connection.CreateCommand())
+        {
+            begin.CommandText = "BEGIN";
+            begin.ExecuteNonQuery();
+        }
+
+        using var bad = connection.CreateCommand();
+        bad.CommandText = "SELECT 1/0";
+        try
+        {
+            bad.ExecuteNonQuery();
+        }
+        catch (PostgresException)
+        {
+        }
+    }
+
+    /// <summary>CARD-1774. The command timeout Dispose uses when it unlocks.</summary>
+    internal int ReadUnlockCommandTimeoutSeconds()
+    {
+        var connection = _connection ?? throw new InvalidOperationException(
+            "Hangfire worker lease has no connection.");
+        using var command = connection.CreateCommand();
+        return command.CommandTimeout;
     }
 
     /// <summary>
