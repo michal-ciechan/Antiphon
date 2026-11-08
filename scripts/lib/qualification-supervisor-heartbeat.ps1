@@ -140,15 +140,17 @@ function Read-QualificationActiveChunkIdentity {
     param([string]$Directory)
     try {
         $path=Join-Path $Directory 'active-chunk.json'
-        Sync-NightlyDeferredEvidenceWrites $path
-        $digest=Get-NightlyFileSha256 $path
-        $record=Read-QualificationPlanJson $path
+        # One read: the digest is of exactly the bytes parsed (a queued write answers from memory).
+        if((Get-TestPhasePathIdentity $path).Kind -cne 'regular'){return $null}
+        $bytes=Read-NightlyEvidenceBytes $path
+        $digest=Get-QualificationBytesDigest $bytes
+        $reader=New-Object System.IO.StreamReader((New-Object System.IO.MemoryStream(,$bytes)), [Text.Encoding]::UTF8, $true)
+        try { $record=$reader.ReadToEnd()|ConvertFrom-Json } finally { $reader.Dispose() }
         foreach($field in @('format','state','runId','attempt','suite','chunk','planFile','planDigest','sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
             if($record.PSObject.Properties.Name -cnotcontains $field -or $record.$field -isnot [string]){return $null}
         }
         if(($record.generation -isnot [int] -and $record.generation -isnot [long]) -or $record.runId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or $record.attempt -cnotmatch '^[1-9][0-9]*$' -or $record.chunk -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'){return $null}
         if($record.format -cne 'antiphon-qualification-active-chunk-v1' -or $record.state -cnotin @('Active','Idle') -or [long]$record.generation -le 0 -or -not $record.runId -or -not $record.attempt -or $record.suite -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or -not $record.chunk -or $record.planFile -cne ('groups-planned-'+$record.suite+'.json') -or $record.planDigest -cnotmatch '^[a-f0-9]{64}$'){return $null}
-        if((Get-NightlyFileSha256 $path) -cne $digest){return $null}
         $record|Add-Member -NotePropertyName identityDigest -NotePropertyValue $digest
         return $record
     } catch {return $null}
@@ -157,14 +159,19 @@ function Read-QualificationActiveChunkIdentity {
 # The suite's planned-groups file is written once and re-validated on every active-chunk write (twice per
 # chunk). Its parse is reused while its bytes are unchanged: the key is the SHA-256 the record publishes as
 # planDigest, taken from the same bytes that are parsed. Validation still runs on every write.
+function Get-QualificationBytesDigest {
+    param([byte[]]$Bytes)
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($Bytes)).Replace('-','')).ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
 $script:QualificationPlanSnapshots = @{}
 function Read-QualificationPlanSnapshot {
     param([string]$Path)
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
     $bytes=Read-NightlyEvidenceBytes $Path
-    $sha=[Security.Cryptography.SHA256]::Create()
-    try { $hex=New-Object System.Text.StringBuilder; foreach($b in $sha.ComputeHash($bytes)){[void]$hex.Append($b.ToString('x2'))}; $digest=$hex.ToString() }
-    finally { $sha.Dispose() }
+    $digest=Get-QualificationBytesDigest $bytes
     $key=$Path+'|'+$digest
     if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
         # As [IO.File]::ReadAllText decodes: UTF-8 unless a byte-order mark says otherwise.

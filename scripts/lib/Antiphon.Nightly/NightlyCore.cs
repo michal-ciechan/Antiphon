@@ -814,27 +814,35 @@ namespace Antiphon.Nightly
         /// </summary>
         public static string[] CandidateProjectFiles(string root)
         {
-            var found = new List<string>();
-            var pending = new Stack<string>();
-            pending.Push(root);
-            while (pending.Count > 0)
+            // The same walk, one directory level at a time across threads (the repository holds tens of
+            // thousands of directories of run output and packages); sorted ordinal so the order is fixed.
+            var found = new System.Collections.Concurrent.ConcurrentBag<string>();
+            var level = new List<string> { root };
+            while (level.Count > 0)
             {
-                var directory = pending.Pop();
-                try
+                var next = new System.Collections.Concurrent.ConcurrentBag<string>();
+                System.Threading.Tasks.Parallel.ForEach(level, directory =>
                 {
-                    foreach (var file in new System.IO.DirectoryInfo(directory).EnumerateFiles("*.csproj"))
-                        if ((file.Attributes & System.IO.FileAttributes.Hidden) == 0 && !Excluded(file.Name)) found.Add(file.FullName);
-                    foreach (var child in new System.IO.DirectoryInfo(directory).EnumerateDirectories())
+                    try
                     {
-                        var attributes = child.Attributes;
-                        if ((attributes & System.IO.FileAttributes.Hidden) != 0 || (attributes & System.IO.FileAttributes.ReparsePoint) != 0) continue;
-                        if (Excluded(child.Name)) continue;
-                        pending.Push(child.FullName);
+                        var info = new System.IO.DirectoryInfo(directory);
+                        foreach (var file in info.EnumerateFiles("*.csproj"))
+                            if ((file.Attributes & System.IO.FileAttributes.Hidden) == 0 && !Excluded(file.Name)) found.Add(file.FullName);
+                        foreach (var child in info.EnumerateDirectories())
+                        {
+                            var attributes = child.Attributes;
+                            if ((attributes & System.IO.FileAttributes.Hidden) != 0 || (attributes & System.IO.FileAttributes.ReparsePoint) != 0) continue;
+                            if (Excluded(child.Name)) continue;
+                            next.Add(child.FullName);
+                        }
                     }
-                }
-                catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
+                    catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
+                });
+                level = new List<string>(next);
             }
-            return found.ToArray();
+            var result = found.ToArray();
+            Array.Sort(result, StringComparer.Ordinal);
+            return result;
         }
 
         private static bool Excluded(string segment) =>
