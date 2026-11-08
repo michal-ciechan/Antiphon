@@ -394,7 +394,9 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
 
     // CARD-1764. The cursor is sent only to a runner that advertises it; an unknown field could be refused.
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-        TranscriptSinceRead.ReadAsync(sessionId, _connection.PtyReads.Transcript, cursorEnabled: false,
+        TranscriptSinceRead.ReadAsync(sessionId, _connection.PtyReads.Transcript,
+            cursorEnabled: _connection.Capabilities?.Features?.Contains(
+                RunnerCapabilityFeatures.TranscriptSinceV1, StringComparer.Ordinal) == true,
             async (since, stream, token) =>
             {
                 object payload = stream is null ? new { sessionId } : new { sessionId, since, stream };
