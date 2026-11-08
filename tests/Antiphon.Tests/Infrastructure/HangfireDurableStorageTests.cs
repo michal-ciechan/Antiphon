@@ -9,6 +9,7 @@ using Hangfire.PostgreSql.Factories;
 using Hangfire.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -181,35 +182,35 @@ public sealed class HangfireStorageSelectionTests
     }
 
     [Test]
-    public async Task Program_releases_the_worker_lease_when_the_host_stops()
+    [Timeout(20_000)]
+    public async Task Unreachable_tick_retries_until_the_crash_expiry_then_stops_the_host()
     {
-        var program = DockerStackDocuments.Read("server/Program.cs");
-        program.ShouldContain("HangfireConfiguration.ReleaseWorkerLeaseWhenHostStops(");
-        program.ShouldContain("heldLease.StartSupervision(");
-        program.ShouldNotContain("ApplicationStopping.Register(heldLease");
-        await Task.CompletedTask;
-    }
+        const string password = "hangfire-tick-secret";
+        var unreachable =
+            "Host=127.0.0.1;Port=1;Database=antiphon;Username=antiphon;Password="
+            + password + ";Timeout=1;Pooling=false";
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 8, 0, 0, 0, TimeSpan.Zero));
+        using var connection = new NpgsqlConnection(unreachable);
+        using var lease = new HangfireWorkerLease(connection, unreachable);
+        lease.SetClock(clock);
+        lease.WithinCrashExpiryWindow().ShouldBeTrue();
 
-    [Test]
-    public async Task Durable_hangfire_documents_the_lease_the_package_and_renames()
-    {
-        var contract = DockerStackDocuments.Read("docs/docker-stack.md");
-        contract.ShouldContain("pg_try_advisory_lock(1743, 1)");
-        contract.ShouldContain("released on `ApplicationStopped`");
-        contract.ShouldContain("Every 15 seconds");
-        contract.ShouldContain("The check stores nothing.");
-        contract.ShouldContain("within 60 seconds of silence");
-        contract.ShouldContain("`tcp_keepalives_idle` to 30");
-        contract.ShouldContain("`tcp_keepalives_interval` to 10");
-        contract.ShouldContain("`tcp_keepalives_count` to 3");
-        contract.ShouldContain("pg_terminate_backend(pid)");
-        contract.ShouldContain("`Hangfire.PostgreSql` 1.21.1 is LGPLv3");
-        contract.ShouldContain("Dapper.AOT.Analyzers.dll");
-        contract.ShouldContain("Microsoft.SqlServer.TransactSql.ScriptDom.dll");
-        contract.ShouldContain("resolves Npgsql 9.0.3");
-        contract.ShouldContain("database CREATE privilege");
-        contract.ShouldContain("Enqueued or scheduled instances");
-        await Task.CompletedTask;
+        var builder = Host.CreateApplicationBuilder();
+        using var host = builder.Build();
+        await host.StartAsync();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lifetime.ApplicationStopping.Register(() => stopping.TrySetResult());
+        lease.StartSupervision(lifetime, TimeSpan.FromMilliseconds(50));
+
+        await Task.Delay(TimeSpan.FromMilliseconds(800));
+        stopping.Task.IsCompleted.ShouldBeFalse();
+
+        clock.Advance(TimeSpan.FromSeconds(HangfireWorkerLease.CrashExpirySeconds));
+        lease.WithinCrashExpiryWindow().ShouldBeFalse();
+        var completed = await Task.WhenAny(stopping.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBe(stopping.Task);
+        await host.StopAsync();
     }
 
     [Test]
@@ -443,6 +444,7 @@ public sealed class HangfirePostgreSqlStorageTests
         var before = await FindWorkerLockPidsAsync(database.ConnectionString);
         before.Count.ShouldBe(1);
         await TerminateBackendAsync(database.ConnectionString, before[0]);
+        await WaitUntilWorkerLockDropsAsync(database.ConnectionString, before[0]);
         (await FindWorkerLockPidsAsync(database.ConnectionString)).ShouldBeEmpty();
 
         lease.EnsureHeld();
@@ -463,6 +465,7 @@ public sealed class HangfirePostgreSqlStorageTests
         using var first = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
         var pid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
         await TerminateBackendAsync(database.ConnectionString, pid);
+        await WaitUntilWorkerLockDropsAsync(database.ConnectionString, pid);
         using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
 
         var lost = Should.Throw<InvalidOperationException>(first.EnsureHeld);
@@ -479,6 +482,7 @@ public sealed class HangfirePostgreSqlStorageTests
         using var first = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
         var pid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
         await TerminateBackendAsync(database.ConnectionString, pid);
+        await WaitUntilWorkerLockDropsAsync(database.ConnectionString, pid);
         using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
 
         var builder = Host.CreateApplicationBuilder();
@@ -516,6 +520,36 @@ public sealed class HangfirePostgreSqlStorageTests
 
         var pids = await FindWorkerLockPidsAsync(database.ConnectionString);
         pids.Count.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_keeps_its_own_backend_when_the_check_query_fails()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var before = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        lease.AbandonOpenTransaction();
+
+        lease.EnsureHeld();
+
+        var after = await FindWorkerLockPidsAsync(database.ConnectionString);
+        after.Count.ShouldBe(1);
+        after[0].ShouldBe(before);
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString));
+        refused.Message.ShouldContain("second worker");
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_bounds_the_unlock_command_timeout()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var timeout = lease.ReadUnlockCommandTimeoutSeconds();
+        timeout.ShouldBeGreaterThan(0);
+        timeout.ShouldBeLessThanOrEqualTo(5);
     }
 
     [Test]
@@ -686,6 +720,21 @@ public sealed class HangfirePostgreSqlStorageTests
         return pids;
     }
 
+    private static async Task WaitUntilWorkerLockDropsAsync(string connectionString, int pid)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            var holders = await FindWorkerLockPidsAsync(connectionString);
+            if (!holders.Contains(pid))
+                return;
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException(
+                    "Backend " + pid + " still holds the Hangfire worker lock after pg_terminate_backend.");
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+    }
+
     private static async Task TerminateBackendAsync(string connectionString, int pid)
     {
         await using var connection = new NpgsqlConnection(connectionString);
@@ -746,5 +795,56 @@ public sealed class HangfirePostgreSqlStorageTests
             _onStop();
             return Task.CompletedTask;
         }
+    }
+}
+
+/// <summary>CARD-1774. Prose and Program wiring pins stay out of <see cref="HangfireStorageSelectionTests"/>.</summary>
+[Category("Unit")]
+public sealed class HangfireLeaseDocumentationTests
+{
+    [Test]
+    public async Task Program_releases_the_worker_lease_when_the_host_stops()
+    {
+        var program = DockerStackDocuments.Read("server/Program.cs");
+        program.ShouldContain("HangfireConfiguration.ReleaseWorkerLeaseWhenHostStops(");
+        program.ShouldContain("heldLease.StartSupervision(");
+        program.ShouldNotContain("ApplicationStopping.Register(heldLease");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Durable_hangfire_documents_the_lease_the_package_and_renames()
+    {
+        new BackgroundJobServerOptions().ShutdownTimeout.ShouldBe(TimeSpan.FromSeconds(15));
+        new HostOptions().ShutdownTimeout.ShouldBe(TimeSpan.FromSeconds(30));
+
+        var contract = DockerStackDocuments.Read("docs/docker-stack.md");
+        contract.ShouldContain("That 15 seconds is the detection bound");
+        contract.ShouldContain(
+            "plus the Hangfire drain (`BackgroundJobServerOptions.ShutdownTimeout`, 15 seconds by default) plus host shutdown (`HostOptions.ShutdownTimeout`, 30 seconds by default)");
+        contract.ShouldContain("A holder that is this process's own previous backend is not another worker.");
+        contract.ShouldContain("When another worker holds the lock, the host stops on that tick.");
+        contract.ShouldContain(
+            "A tick that cannot reach Postgres retries until 60 seconds after the last confirmed hold, then the host stops.");
+        contract.ShouldContain("The host does not stop on the first unreachable tick.");
+        contract.ShouldContain("Dispose bounds the unlock command timeout at 5 seconds.");
+        contract.ShouldContain("A paused process still answers TCP keepalives");
+        contract.ShouldContain("Windows-native Postgres reports `tcp_keepalives_count` as 0.");
+        contract.ShouldContain("pg_try_advisory_lock(1743, 1)");
+        contract.ShouldContain("released on `ApplicationStopped`");
+        contract.ShouldContain("Every 15 seconds");
+        contract.ShouldContain("The check stores nothing.");
+        contract.ShouldContain("within 60 seconds of silence");
+        contract.ShouldContain("`tcp_keepalives_idle` to 30");
+        contract.ShouldContain("`tcp_keepalives_interval` to 10");
+        contract.ShouldContain("`tcp_keepalives_count` to 3");
+        contract.ShouldContain("pg_terminate_backend(pid)");
+        contract.ShouldContain("`Hangfire.PostgreSql` 1.21.1 is LGPLv3");
+        contract.ShouldContain("Dapper.AOT.Analyzers.dll");
+        contract.ShouldContain("Microsoft.SqlServer.TransactSql.ScriptDom.dll");
+        contract.ShouldContain("resolves Npgsql 9.0.3");
+        contract.ShouldContain("database CREATE privilege");
+        contract.ShouldContain("Enqueued or scheduled instances");
+        await Task.CompletedTask;
     }
 }
