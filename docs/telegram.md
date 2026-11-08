@@ -360,6 +360,33 @@ to Family reaches a real family group, so this check is manual and operator-init
 An agent must not send test traffic there on its own. Follow the
 [round-trip procedure](telegram-bot-ops.md#deploying-an-optional-remote-messaging-service).
 
+### Inbound file size cap (CARD-1799)
+
+The gateway downloads each attachment with `getFile` and sends its bytes inline, as base64,
+inside the one `channels.inbound` Kafka record. That record is capped at **20 MiB** by the bus
+(topic `max.message.bytes`, producer `MessageMaxBytes`, consumer fetch limits; see the
+[messaging contract](messaging/contract/v1/CONTRACT.md)). Base64 grows bytes by 4/3, so
+`Telegram:MaxInlineAttachmentBytes` defaults to **14 MiB** (14,680,064 bytes) raw. Do not raise
+it to fit a bigger file: a 17.6 MiB file is about 24.6 MB of base64, so the failure only moves to
+produce or broker rejection. Files between about 14.6 MiB and Telegram's own 20 MB `getFile`
+limit cannot be delivered until out-of-band transfer exists (CARD-1799 slice 2).
+
+A file over the cap (by its declared size, the size `getFile` reports, or the bytes actually
+downloaded) is never inlined and the message still goes through:
+
+- The attachment travels metadata-only with `InlineLimitBytes` set to the cap. The agent's
+  prompt then names it, for example
+  `[file attached — "Homework.pptx" (17.6 MiB) is over the 14 MiB limit and was not delivered]`.
+  A failed download carries no `InlineLimitBytes` and keeps the
+  `[file attached — could not be imported (no content relayed)]` note.
+- The gateway replies once to the sender in the same chat, as a reply to their message and in
+  the same forum topic: `File too large (17.6 MiB): the limit is 14 MiB, so it was not delivered.
+  Send a smaller file, compress it, or split it.` The notice is plain text and never repeats the
+  file name or caption. It is one best-effort attempt: a rejected notice is logged and never costs
+  the inbound message. An edit of the same message sends no second notice.
+- `MaxInlineAttachmentBytes = 0` turns inbound downloads off; then no file is marked over a limit
+  and no notice is sent.
+
 ## Settings reference (`Telegram` section / `Telegram__*` env)
 
 | Setting | Default | Purpose |
@@ -373,6 +400,7 @@ An agent must not send test traffic there on its own. Follow the
 | `SendRetryAttempts` | 2 | Extra attempts for transient send failures |
 | `ErrorBackoffSeconds` | 3 | Backoff when no `retry_after` is provided |
 | `MaxRetryAfterSeconds` | 60 | Cap on honoured `retry_after` |
+| `MaxInlineAttachmentBytes` | 14 MiB | Largest inbound file inlined on the bus; bigger files are named in the agent note and get an automatic notice ([cap](#inbound-file-size-cap-card-1799)) |
 
 ## Bot-side switches that matter (BotFather / group admin)
 

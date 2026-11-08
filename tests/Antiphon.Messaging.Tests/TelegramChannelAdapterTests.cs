@@ -411,7 +411,7 @@ public sealed class TelegramChannelAdapterTests
             + "Send a smaller file, compress it, or split it.");
         sent.RawBody.ContainsKey("parse_mode").ShouldBeFalse("the notice is plain text");
         sent.Text!.ShouldNotContain("Homework", Case.Insensitive, "the notice never echoes the sender's content");
-        sent.Text.ShouldNotContain("printable", Case.Insensitive, "the notice never echoes the sender's content");
+        sent.Text!.ShouldNotContain("printable", Case.Insensitive, "the notice never echoes the sender's content");
     }
 
     [Test]

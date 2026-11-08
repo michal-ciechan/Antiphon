@@ -21,6 +21,13 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
     private readonly ILogger<TelegramChannelAdapter> _logger;
     private readonly HashSet<long> _allowed;
 
+    // Messages already sent an over-cap notice ("<chat>:<message_id>"), so an edit of the same
+    // message (Telegram re-delivers the document in edited_message) never sends a second one.
+    // Bounded FIFO: the receive loop is the only writer.
+    private const int NoticeMemory = 512;
+    private readonly HashSet<string> _noticed = [];
+    private readonly Queue<string> _noticedOrder = new();
+
     public TelegramChannelAdapter(HttpClient http, TelegramSettings settings, ILogger<TelegramChannelAdapter> logger)
     {
         _http = http;
@@ -149,6 +156,9 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                 if (messages[i].Attachments.Count > 0)
                     messages[i] = messages[i] with { Attachments = await HydrateAttachmentsAsync(messages[i].Attachments, ct) };
 
+            foreach (var message in messages)
+                await NoticeOverLimitAsync(message, ct);
+
             return new PollOutcome(messages, next, null);
         }
     }
@@ -157,7 +167,8 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
     /// Downloads each attachment's bytes via <c>getFile</c> + the file endpoint and inlines them as
     /// <see cref="Attachment.Content"/>. Files over <see cref="TelegramSettings.MaxInlineAttachmentBytes"/>
     /// (or any download failure) pass through metadata-only — an inbound message must never be lost
-    /// to a broken download.
+    /// to a broken download. An over-cap file carries the cap in <see cref="Attachment.InlineLimitBytes"/>
+    /// so the consumer can name the reason; a failed download does not.
     /// </summary>
     private async Task<IReadOnlyList<Attachment>> HydrateAttachmentsAsync(
         IReadOnlyList<Attachment> attachments, CancellationToken ct)
@@ -173,7 +184,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                 _logger.LogInformation(
                     "[telegram] attachment {Ref} is {Bytes} bytes — over the {Max} inline cap; keeping metadata only",
                     attachment.ChannelRef, declared, _settings.MaxInlineAttachmentBytes);
-                hydrated.Add(attachment);
+                hydrated.Add(attachment with { InlineLimitBytes = _settings.MaxInlineAttachmentBytes });
                 continue;
             }
 
@@ -217,12 +228,12 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             _logger.LogInformation(
                 "[telegram] attachment {Ref} resolved to {Bytes} bytes — over the inline cap; keeping metadata only",
                 attachment.ChannelRef, actual);
-            return null;
+            return OverLimit(attachment, actual);
         }
 
         var bytes = await _http.GetByteArrayAsync($"{_settings.ApiBaseUrl}/file/bot{_settings.BotToken}/{filePath}", ct);
         if (bytes.Length > _settings.MaxInlineAttachmentBytes)
-            return null;
+            return OverLimit(attachment, bytes.Length);
 
         return attachment with
         {
@@ -230,6 +241,44 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             Size = attachment.Size ?? bytes.Length,
             Name = attachment.Name ?? Path.GetFileName(filePath),
         };
+    }
+
+    private Attachment OverLimit(Attachment attachment, long actualBytes) =>
+        attachment with { Size = actualBytes, InlineLimitBytes = _settings.MaxInlineAttachmentBytes };
+
+    /// <summary>
+    /// Tells the sender, in their own chat (and forum topic), that a file was over the inline cap and
+    /// was not delivered — once per message. Plain text, never echoing the file name or caption.
+    /// Best-effort and single-attempt: a rejected notice is logged and never costs the inbound message.
+    /// </summary>
+    private async Task NoticeOverLimitAsync(ChannelMessage message, CancellationToken ct)
+    {
+        var over = message.Attachments.FirstOrDefault(a => a.InlineLimitBytes is not null);
+        if (over?.InlineLimitBytes is not { } limit)
+            return;
+
+        var key = $"{message.Conversation.Id}:{message.ChannelMessageId}";
+        if (!_noticed.Add(key))
+            return;
+        _noticedOrder.Enqueue(key);
+        if (_noticedOrder.Count > NoticeMemory)
+            _noticed.Remove(_noticedOrder.Dequeue());
+
+        var size = over.Size is { } bytes ? $" ({AttachmentSize.Format(bytes)})" : "";
+        var payload = new Dictionary<string, object?>
+        {
+            ["chat_id"] = long.TryParse(message.Conversation.Id, out var chatId) ? chatId : message.Conversation.Id,
+            ["text"] = $"File too large{size}: the limit is {AttachmentSize.Format(limit)}, so it was not delivered. "
+                + "Send a smaller file, compress it, or split it.",
+        };
+        if (long.TryParse(message.ChannelMessageId, out var messageId))
+            payload["reply_to_message_id"] = messageId;
+        if (NativeMessage(message.Raw) is { } native && GetLong(native, "message_thread_id") is { } threadId)
+            payload["message_thread_id"] = threadId;
+
+        var (result, _) = await TrySendOnceAsync(JsonSerializer.Serialize(payload), lastAttempt: true, ct);
+        if (result is { Ok: false })
+            _logger.LogWarning("[telegram] over-cap notice for message {Message} was not sent: {Error}", key, result.Error);
     }
 
     /// <summary>Result of one getUpdates poll. <see cref="Backoff"/> is non-null when Telegram returned a
@@ -247,19 +296,20 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
     private static bool IsTransient(int? code, int? retryAfter)
         => retryAfter is not null || code == 429 || code is >= 500 and <= 599;
 
-    private ChannelMessage? TryNormalize(JsonElement update)
+    /// <summary>The message object an update carries (new or edited message or channel post), or null.</summary>
+    private static JsonElement? NativeMessage(JsonElement update)
     {
-        JsonElement m = default;
-        var found = false;
         foreach (var field in new[] { "message", "edited_message", "channel_post", "edited_channel_post" })
         {
-            if (update.TryGetProperty(field, out m))
-            {
-                found = true;
-                break;
-            }
+            if (update.TryGetProperty(field, out var m))
+                return m.ValueKind == JsonValueKind.Object ? m : null;
         }
-        if (!found || m.ValueKind != JsonValueKind.Object)
+        return null;
+    }
+
+    private ChannelMessage? TryNormalize(JsonElement update)
+    {
+        if (NativeMessage(update) is not { } m)
             return null;
 
         if (!m.TryGetProperty("chat", out var chat) || !chat.TryGetProperty("id", out var chatIdEl) || !chatIdEl.TryGetInt64(out var chatId))

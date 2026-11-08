@@ -43,7 +43,11 @@ public sealed class TelegramSettings
     /// Largest inbound attachment the adapter downloads (getFile) and inlines into the
     /// <see cref="Antiphon.Messaging.Attachment.Content"/> bytes. Bounded by the 20 MB bus message
     /// cap after base64 (hence 14 MB raw) — and the Bot API won't serve files over 20 MB anyway.
-    /// Bigger files keep metadata only. 0 disables inbound downloads entirely.
+    /// Bigger files keep metadata only, carry this cap in
+    /// <see cref="Antiphon.Messaging.Attachment.InlineLimitBytes"/> (so the agent's note names the file,
+    /// its size and the limit) and get one automatic plain-text notice to the sender in their chat.
+    /// Raising it does not help: the base64 overflows the bus instead (CARD-1799, docs/telegram.md).
+    /// 0 disables inbound downloads entirely (no limit marker, no notice).
     /// </summary>
     public long MaxInlineAttachmentBytes { get; set; } = 14 * 1024 * 1024;
 }
