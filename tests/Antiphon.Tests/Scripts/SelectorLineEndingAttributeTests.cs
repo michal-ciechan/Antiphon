@@ -20,6 +20,7 @@ public sealed class SelectorLineEndingAttributeTests
         "scripts/lib/test-selection.ps1",
         "scripts/lib/nightly-common.ps1",
         "scripts/lib/nightly-policy.ps1",
+        "scripts/lib/nightly-core.ps1",
         "scripts/lib/checkpoint-process-runner.ps1",
         "scripts/lib/checkpoint-file-reader.ps1",
     ];

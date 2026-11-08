@@ -367,10 +367,12 @@ function New-C1313CrlfScriptRoot {
     [void](New-Item -ItemType Directory (Join-Path $scripts 'lib') -Force)
     $pinned=@('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
     # Direct dot-sources plus the lib files test-selection.ps1 loads from its own directory.
+    # nightly-common.ps1 and nightly-policy.ps1 dot-source nightly-core.ps1 beside themselves.
     $copied=@(
         'scripts/select-test-rosters.ps1',
         'scripts/lib/nightly-common.ps1',
         'scripts/lib/nightly-policy.ps1',
+        'scripts/lib/nightly-core.ps1',
         'scripts/lib/test-selection.ps1',
         'scripts/lib/checkpoint-process-runner.ps1',
         'scripts/lib/checkpoint-file-reader.ps1'
