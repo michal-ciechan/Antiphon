@@ -257,6 +257,14 @@ public sealed class Server2ProductionServerContractTests
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("docker-compose.server2-server.yml");
             ran.Stdout.ShouldContain("-p antiphon-server2-server up -d");
+            ran.Stdout.ShouldContain("up -d --build");
+            var revision = ran.Stdout.IndexOf(
+                "image label org.opencontainers.image.revision must equal SOURCE_REVISION",
+                StringComparison.Ordinal);
+            var up = ran.Stdout.IndexOf(" up -d", StringComparison.Ordinal);
+            revision.ShouldBeGreaterThanOrEqualTo(0);
+            up.ShouldBeGreaterThan(revision);
+            ran.Stdout.ShouldContain("before up");
             ran.Stdout.ShouldContain("verify-only");
             ran.Stdout.ShouldContain("restart-linux-server.ps1");
             ran.Stdout.ShouldContain("SERVER2-SERVER plan exit=0 reason=ok");
@@ -361,6 +369,22 @@ public sealed class Server2ProductionServerContractTests
                 ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", new string('b', 40)],
                 "not-server2-host",
                 marker);
+
+            await WriteSecretFileAsync(
+                envFile,
+                EnvBody("fixture-password-1775", cert, key, token, "InMemory") + "SOURCE_REVISION=" + new string('c', 40) + "\n");
+            await AssertRefusalAsync(
+                bin,
+                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", new string('b', 40)],
+                "revision-mismatch",
+                marker);
+
+            await WriteSecretFileAsync(envFile, EnvBody("fixture-password-1775", cert, key, token, "InMemory"));
+            await AssertRefusalAsync(
+                bin,
+                ["-Execute", "-EnvFile", envFile, "-ExpectedServerSha", new string('d', 40)],
+                "revision-mismatch",
+                marker);
         }
         finally
         {
@@ -379,6 +403,90 @@ public sealed class Server2ProductionServerContractTests
         }
     }
 
+    [Test]
+    public void Specialist_working_directories_are_on_a_mount_both_services_share()
+    {
+        var server = Service("server");
+        var sidecar = Service("server-session-runner");
+        var serverMounts = VolumeMounts(server);
+        var sidecarMounts = VolumeMounts(sidecar);
+        var init = Service("server-state-init");
+        var script = Script();
+        var doc = DockerStackDocuments.Read("docs/docker-stack.md");
+        string[] paths =
+        [
+            Env(server, "Delegation__CheckInterpreterWorkingDirectory"),
+            Env(server, "Delegation__DiagnoseWorkingDirectory"),
+            Env(server, "Delegation__OutputDistillerWorkingDirectory"),
+        ];
+        paths.Distinct(StringComparer.Ordinal).Count().ShouldBe(3);
+        foreach (var path in paths)
+        {
+            var shared = serverMounts.Where(mount =>
+                PathIsUnder(path, mount.Destination)
+                && !mount.ReadOnly
+                && sidecarMounts.Any(other =>
+                    !other.ReadOnly
+                    && string.Equals(other.Source, mount.Source, StringComparison.Ordinal)
+                    && string.Equals(other.Destination, mount.Destination, StringComparison.Ordinal))).ToList();
+            shared.Count.ShouldBeGreaterThan(0, path);
+            init.ShouldContain(path);
+            init.ShouldContain("chmod 0755");
+            init.ShouldContain("chown -R");
+            init.ShouldContain("1654");
+            script.ShouldContain(path);
+            doc.ShouldContain(path);
+        }
+    }
+
+    [Test]
+    [NativeLinuxOnly("Linux-only by construction: the compose drain witness runs a Unix fake docker that writes both streams.")]
+    public async Task Execute_drains_large_compose_output_without_echoing_a_secret()
+    {
+        ReadRequired(ScriptPath);
+        const string secret = "fixture-secret-1775-drain";
+        var bin = Path.Combine(Path.GetTempPath(), "card1775-drain-bin-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(bin);
+        var docker = Path.Combine(bin, "docker");
+        await File.WriteAllTextAsync(docker, FakeDockerScript(secret));
+        File.SetUnixFileMode(docker, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        using var process = StartDeployProbe(bin);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            try
+            {
+                await process.WaitForExitAsync(deadline.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                KillTree(process);
+                var hungOut = await stdoutTask;
+                var hungErr = await stderrTask;
+                hungOut.ShouldNotContain(secret);
+                hungErr.ShouldNotContain(secret);
+                false.ShouldBeTrue("Invoke-ServerUp did not return within 15s after the fake docker wrote more than 64 KiB to stdout and stderr.");
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            process.ExitCode.ShouldBe(0, stdout + stderr);
+            UpLine(stdout).ShouldBe("SERVER2-UP result=");
+            stdout.ShouldNotContain(secret);
+            stderr.ShouldNotContain(secret);
+        }
+        finally
+        {
+            KillTree(process);
+            if (File.Exists(docker))
+                File.Delete(docker);
+            if (Directory.Exists(bin))
+                Directory.Delete(bin);
+        }
+    }
+
     private static async Task AssertRefusalAsync(string bin, string[] args, string reason, string marker)
     {
         var ran = await RunDeployAsync(args, bin);
@@ -389,6 +497,9 @@ public sealed class Server2ProductionServerContractTests
 
     private static string ResultLine(string stdout) =>
         stdout.Replace("\r\n", "\n").Split('\n').Last(line => line.StartsWith("SERVER2-SERVER ", StringComparison.Ordinal));
+
+    private static string UpLine(string stdout) =>
+        stdout.Replace("\r\n", "\n").Split('\n').Last(line => line.StartsWith("SERVER2-UP ", StringComparison.Ordinal));
 
     private static async Task<(int Code, string Stdout, string Stderr)> RunDeployAsync(string[] args, string bin)
     {
@@ -457,4 +568,84 @@ public sealed class Server2ProductionServerContractTests
     private static string Service(string name) => DockerStackDocuments.Service(Compose(), name);
 
     private static string Env(string block, string key) => DockerStackDocuments.Env(block, key);
+
+    private readonly record struct VolumeMount(string Source, string Destination, bool ReadOnly);
+
+    private static List<VolumeMount> VolumeMounts(string block)
+    {
+        var mounts = new List<VolumeMount>();
+        foreach (var spec in DockerStackDocuments.List(block, "volumes"))
+        {
+            var parts = spec.Split(':');
+            if (parts.Length < 2 || parts[0].Length == 0 || parts[1].Length == 0)
+                continue;
+            var readOnly = parts.Length >= 3 && parts[2].Split(',').Any(flag => flag == "ro");
+            mounts.Add(new VolumeMount(parts[0], parts[1], readOnly));
+        }
+
+        return mounts;
+    }
+
+    private static bool PathIsUnder(string path, string destination)
+    {
+        var root = destination.TrimEnd('/');
+        if (root.Length == 0)
+            root = "/";
+        if (string.Equals(path, root, StringComparison.Ordinal))
+            return true;
+        var prefix = root == "/" ? "/" : root + "/";
+        return path.StartsWith(prefix, StringComparison.Ordinal);
+    }
+
+    private static string FakeDockerScript(string secret) =>
+        "#!/bin/sh\n" +
+        "n=0\n" +
+        "while [ \"$n\" -lt 80 ]; do\n" +
+        "  dd if=/dev/zero bs=1024 count=1 2>/dev/null\n" +
+        "  n=$((n + 1))\n" +
+        "done\n" +
+        "printf '%s\\n' '" + secret + "'\n" +
+        "n=0\n" +
+        "while [ \"$n\" -lt 80 ]; do\n" +
+        "  dd if=/dev/zero bs=1024 count=1 1>&2 2>/dev/null\n" +
+        "  n=$((n + 1))\n" +
+        "done\n" +
+        "printf '%s\\n' '" + secret + "' 1>&2\n" +
+        "exit 0\n";
+
+    private static Process StartDeployProbe(string bin)
+    {
+        var script = Path.Combine(DockerStackDocuments.RepoRoot, ScriptPath);
+        var command =
+            "$ErrorActionPreference = 'Stop'\n" +
+            ". '" + script.Replace("'", "''") + "'\n" +
+            "$result = Invoke-ServerUp -EnvPath '/tmp/card1775-drain.env' -ComposePath '/tmp/card1775-drain.yml'\n" +
+            "Write-Output ('SERVER2-UP result=' + [string]$result)\n";
+        var encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command));
+        var start = new ProcessStartInfo("pwsh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-EncodedCommand");
+        start.ArgumentList.Add(encoded);
+        start.Environment["PATH"] = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+        start.Environment["TEMP"] = "/tmp";
+        start.Environment["TMP"] = "/tmp";
+        return Process.Start(start)!;
+    }
+
+    private static void KillTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
 }

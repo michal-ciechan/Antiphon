@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "e89665e29bbff3feede73459b1050889b9fec9596e24703d61ffa6d767c09952",
+  "policyHash": "50c33c11acb18e79a69b58e846112c99d428e8f34da99aa5df8b2da9d7e271e0",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1558,6 +1558,16 @@
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: deploy refusals check Unix mode 0600 and the container marker /.dockerenv.",
+          "owner": "CARD-1775"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Server2ProductionServerContractTests",
+          "methods": [
+            "Execute_drains_large_compose_output_without_echoing_a_secret"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the compose drain witness runs a Unix fake docker that writes both streams.",
           "owner": "CARD-1775"
         }
       ]
