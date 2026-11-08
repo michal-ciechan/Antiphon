@@ -163,8 +163,9 @@ public sealed class TestClassificationPolicyTests
             .Where(line => !string.Equals(line.Trim(), dropped, StringComparison.Ordinal))
             .ToArray();
         kept.ShouldNotContain(dropped);
-        var path = WriteTempRegistry(string.Join("\n", kept) + "\n");
-        var errors = TestClassificationMetadata.AssertRegistryMatches(assembly, path, repositoryMode: true);
+        var errors = "";
+        C1383WithRegistry(string.Join("\n", kept) + "\n",
+            path => errors = TestClassificationMetadata.AssertRegistryMatches(assembly, path, repositoryMode: true));
         errors.ShouldContain("missing classes: ");
         errors.ShouldContain(dropped);
         errors.ShouldContain("unregistered-marked " + dropped);
@@ -182,9 +183,7 @@ public sealed class TestClassificationPolicyTests
     [Test]
     public void C487_G061()
     {
-        var path = WriteTempRegistry("# CARD-0487 unknown\nAntiphon.Tests.DoesNotExistAtAll\n");
-        var errors = TestClassificationMetadata.AssertRegistryMatches(
-            typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: true);
+        var errors = C1383Errors("# CARD-0487 unknown\nAntiphon.Tests.DoesNotExistAtAll\n");
         errors.ShouldContain("unknown Antiphon.Tests.DoesNotExistAtAll");
     }
 
@@ -211,13 +210,15 @@ public sealed class TestClassificationPolicyTests
     [Test]
     public void C487_G063()
     {
-        var path = WriteTempRegistry("# CARD-0487 legacy simple\nSmokeTests\n");
-        var repo = TestClassificationMetadata.AssertRegistryMatches(
-            typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: true);
-        repo.ShouldContain("simple-name-refused SmokeTests");
-        var legacy = TestClassificationMetadata.AssertRegistryMatches(
-            typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: false);
-        legacy.ShouldNotContain("simple-name-refused");
+        C1383WithRegistry("# CARD-0487 legacy simple\nSmokeTests\n", path =>
+        {
+            var repo = TestClassificationMetadata.AssertRegistryMatches(
+                typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: true);
+            repo.ShouldContain("simple-name-refused SmokeTests");
+            var legacy = TestClassificationMetadata.AssertRegistryMatches(
+                typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: false);
+            legacy.ShouldNotContain("simple-name-refused");
+        });
     }
 
     [Test]
@@ -230,14 +231,18 @@ public sealed class TestClassificationPolicyTests
     [Test]
     public async Task C487_G065()
     {
-        var probe = await RunProbeAsync(includeMethodSlow: true);
+        var errors = "";
+        // The probe directory is deleted when RunProbeAsync returns, so read the build inside it.
+        var probe = await RunProbeAsync(includeMethodSlow: true, inspect: dir =>
+        {
+            var dll = Directory.GetFiles(dir, "Probe.dll", SearchOption.AllDirectories)
+                .FirstOrDefault(p => p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                ?? Directory.GetFiles(dir, "Probe.dll", SearchOption.AllDirectories).First();
+            var asm = System.Reflection.Assembly.LoadFrom(dll);
+            C1383WithRegistry("# CARD-0487 probe SlowCases\nC487.Probe.SlowCases\n",
+                registry => errors = TestClassificationMetadata.AssertRegistryMatches(asm, registry, repositoryMode: true));
+        });
         probe.Source.ShouldContain("MethodSlow");
-        var dll = Directory.GetFiles(probe.Dir, "Probe.dll", SearchOption.AllDirectories)
-            .FirstOrDefault(p => p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
-            ?? Directory.GetFiles(probe.Dir, "Probe.dll", SearchOption.AllDirectories).First();
-        var asm = System.Reflection.Assembly.LoadFrom(dll);
-        var registry = WriteTempRegistry("# CARD-0487 probe SlowCases\nC487.Probe.SlowCases\n");
-        var errors = TestClassificationMetadata.AssertRegistryMatches(asm, registry, repositoryMode: true);
         errors.ShouldContain("method-level-slow");
         errors.ShouldContain("C487.Probe.MethodSlow");
     }
@@ -250,6 +255,40 @@ public sealed class TestClassificationPolicyTests
         probe.SlowCount.ShouldBe(2);
         probe.DiscoveryCount.ShouldBeGreaterThanOrEqualTo(8);
         probe.Source.ShouldContain("partial class SlowCases");
+        // Each probe build is ~48 MB; one left per run filled server2's /tmp (120 GB, 2026-11-08).
+        Directory.Exists(probe.Dir).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C487_probe_temp_directory_is_removed_after_the_body()
+    {
+        string? seen = null;
+        var result = await WithTempDirectoryAsync("c487-probe-", async dir =>
+        {
+            seen = dir;
+            var output = Directory.CreateDirectory(Path.Combine(dir, "bin", "Debug"));
+            var readOnly = Path.Combine(output.FullName, "Probe.dll");
+            await File.WriteAllTextAsync(readOnly, "probe");
+            File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+            return 7;
+        });
+        result.ShouldBe(7);
+        seen.ShouldNotBeNull();
+        Directory.Exists(seen).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C487_probe_temp_directory_is_removed_when_the_body_throws()
+    {
+        string? seen = null;
+        await Should.ThrowAsync<InvalidOperationException>(() => WithTempDirectoryAsync<int>("c487-probe-", async dir =>
+        {
+            seen = dir;
+            await File.WriteAllTextAsync(Path.Combine(dir, "Probe.cs"), "probe");
+            throw new InvalidOperationException("probe build failed");
+        }));
+        seen.ShouldNotBeNull();
+        Directory.Exists(seen).ShouldBeFalse();
     }
 
     [Test]
@@ -376,6 +415,7 @@ public sealed class TestClassificationPolicyTests
         var empty = await InvokeTripwireAsync(trx, "");
         empty.ExitCode.ShouldNotBe(0);
         empty.Output.ShouldContain("expanded rows=4");
+        Directory.Exists(empty.Root).ShouldBeFalse();
     }
 
     [Test]
@@ -422,15 +462,23 @@ public sealed class TestClassificationPolicyTests
         return path;
     }
 
-    private static async Task<(int ExitCode, string Output)> InvokeTripwireAsync(string trxXml, string allowlist)
+    private static Task<(int ExitCode, string Output, string Root)> InvokeTripwireAsync(string trxXml, string allowlist)
+        => WithTempDirectoryAsync("c487-tw-", async root =>
+        {
+            var trxPath = Path.Combine(root, "run.trx");
+            var allowPath = Path.Combine(root, "allow.txt");
+            await File.WriteAllTextAsync(trxPath, trxXml);
+            await File.WriteAllTextAsync(allowPath, allowlist);
+            var run = await InvokeTripwireAsyncPath(trxPath, allowPath);
+            return (run.ExitCode, run.Output, root);
+        });
+
+    // Every temp directory this class makes is its own; the body's result is all that survives it.
+    private static async Task<T> WithTempDirectoryAsync<T>(string prefix, Func<string, Task<T>> body)
     {
-        var root = Path.Combine(Path.GetTempPath(), "c487-tw-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        var trxPath = Path.Combine(root, "run.trx");
-        var allowPath = Path.Combine(root, "allow.txt");
-        await File.WriteAllTextAsync(trxPath, trxXml);
-        await File.WriteAllTextAsync(allowPath, allowlist);
-        return await InvokeTripwireAsyncPath(trxPath, allowPath);
+        var dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return await body(dir);
     }
 
     private static async Task<(int ExitCode, string Output)> InvokeTripwireAsyncPath(string trxPath, string allowPath)
@@ -464,10 +512,11 @@ public sealed class TestClassificationPolicyTests
 
     private sealed record ProbeResult(string Dir, string Source, int DiscoveryCount, int DefaultPassed, int SlowCount, bool ManualAbsent, string DiscoveryJson);
 
-    private static async Task<ProbeResult> RunProbeAsync(bool includeMethodSlow = false)
+    private static Task<ProbeResult> RunProbeAsync(bool includeMethodSlow = false, Action<string>? inspect = null)
+        => WithTempDirectoryAsync("c487-probe-", dir => BuildAndRunProbeAsync(dir, includeMethodSlow, inspect));
+
+    private static async Task<ProbeResult> BuildAndRunProbeAsync(string dir, bool includeMethodSlow, Action<string>? inspect)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "c487-probe-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
         var source = """
             using TUnit.Core;
             namespace C487.Probe;
@@ -539,6 +588,7 @@ public sealed class TestClassificationPolicyTests
         var slowCount = CountTrx(Path.Combine(slowDir, "slow.trx"));
         var json = "{\"discovery\":" + discoveryCount + (includeMethodSlow ? ",\"method-level\":true" : "") + "}";
         var trxAll = File.Exists(Path.Combine(allDir, "all.trx")) ? File.ReadAllText(Path.Combine(allDir, "all.trx")) : "";
+        inspect?.Invoke(dir);
         return new ProbeResult(dir, source, discoveryCount, defaultPassed, slowCount, trxAll.IndexOf("ManualOne", StringComparison.Ordinal) < 0, json);
     }
 
