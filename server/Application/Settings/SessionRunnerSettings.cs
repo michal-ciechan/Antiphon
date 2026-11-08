@@ -14,6 +14,15 @@ public sealed class SessionRunnerSettings
     /// </summary>
     public int HeldEventDeliveryTimeoutSeconds { get; set; } = 3;
 
+    /// <summary>
+    /// When <see langword="true"/> (the default), a launch that is not runner-bound checks that
+    /// the agent executable exists on this server's own disk before the runner is asked to spawn
+    /// it. Topology B sets <c>SessionRunner:VerifyExecutablesOnServer</c> to <see langword="false"/>:
+    /// the server image does not contain the sidecar's executables, and the runner's spawn failure
+    /// is the refusal. The desktop leaves the setting unset, so this default still applies.
+    /// </summary>
+    public bool VerifyExecutablesOnServer { get; set; } = true;
+
     /// <summary>Timeout for ordinary request/response calls to the runner (HttpClient.Timeout).</summary>
     public int RequestTimeoutSeconds { get; set; } = 100;
 
