@@ -794,10 +794,9 @@ public sealed class LandGraphLandRefreshTests
 
         public string LogText() => File.Exists(_log) ? File.ReadAllText(_log) : "";
 
-        // Production dispose. The witness requires this delegate to be StartRefGit.DeleteDirectory.
-        // Directory.Delete cannot clear a Windows read-only loose object.
-        internal static Action<string> DeleteRoot { get; set; } =
-            path => Directory.Delete(path, recursive: true);
+        // Directory.Delete throws on Windows when a loose object is read-only.
+        // AuditRepo already clears that bit through StartRefGit.DeleteDirectory.
+        internal static Action<string> DeleteRoot { get; set; } = StartRefGit.DeleteDirectory;
 
         internal static Fixture Adopt(string root) => new(root);
 
