@@ -570,6 +570,9 @@ public sealed class HangfirePostgreSqlStorageTests
         }
         finally
         {
+            await using (var revoke = new NpgsqlCommand(
+                $"REVOKE ALL PRIVILEGES ON DATABASE {adminBuilder.Database} FROM {role}", admin))
+                await revoke.ExecuteNonQueryAsync();
             await using var drop = new NpgsqlCommand($"DROP ROLE IF EXISTS {role}", admin);
             await drop.ExecuteNonQueryAsync();
         }
@@ -715,7 +718,7 @@ public sealed class HangfirePostgreSqlStorageTests
     {
         await using var command = new NpgsqlCommand($"""
             INSERT INTO "{Schema}".job (invocationdata, arguments, createdat, statename)
-            VALUES (CAST(@invocation AS text), '[]', NOW() AT TIME ZONE 'UTC', 'Scheduled')
+            VALUES (CAST(@invocation AS jsonb), CAST('[]' AS jsonb), NOW() AT TIME ZONE 'UTC', 'Scheduled')
             """, connection);
         command.Parameters.AddWithValue("invocation", invocation);
         (await command.ExecuteNonQueryAsync()).ShouldBe(1);
