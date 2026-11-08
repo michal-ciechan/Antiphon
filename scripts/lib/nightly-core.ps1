@@ -25,6 +25,9 @@ function Get-NightlyCoreBuildIdentity {
                 if ($rel -match '^(bin|obj)/' -or $rel -notmatch '\.(cs|csproj)$') { continue }
                 $files.Add($rel)
             }
+            # A project file without its source (a fixture's census copy of every .csproj) cannot build:
+            # use the PowerShell fallback without trying, instead of failing a build in every process.
+            if (@($files | Where-Object { $_.EndsWith('.cs') }).Count -eq 0) { return $null }
             $files.Sort([StringComparer]::Ordinal)
             foreach ($rel in $files) {
                 $name = [Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFileName($project) + '/' + $rel + "`n")

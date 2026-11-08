@@ -80,6 +80,13 @@ function New-C1336Candidate {
     foreach ($path in (Git-C1336 $repoRoot @('ls-files', '*.csproj')).Split("`n")) {
         Write-C1336File $seed $path ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
     }
+    # The compiled nightly core (scripts/lib/Antiphon.Nightly) builds against this library, as in a real clone.
+    foreach ($path in (Git-C1336 $repoRoot @('ls-files', 'src/Antiphon.IO.WriteBehind/*.cs')).Split("`n")) {
+        if (-not $path) { continue }
+        $target = Join-Path $seed $path
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+        [IO.File]::Copy((Join-Path $repoRoot $path), $target, $true)
+    }
     Add-Content (Join-Path $seed 'scripts/nightly-run.ps1') '# C1336 owned clone self-hop'
     Write-C1336File $seed '.antiphon-nightly-owned' '{"kind":"nightly-clone"}'
     Write-C1336File $seed 'fixture.txt' 'A'
