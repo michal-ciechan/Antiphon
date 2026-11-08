@@ -1,0 +1,75 @@
+# CARD-1764 Review (round 1, Final): gap-safe transcript since-cursor — CLEAN
+
+Review task 934cdb25 on `feat/card-task-934cdb25` (runner mirror `/work/worktrees/task-934cdb25`).
+Subject: Code task `a2a41764-cc0d-4511-bf70-96b0f2d66cd4`, branch `feat/card-task-a2a41764`.
+
+- Base / origin/master: `57bbfc99d1810c99f2bf6e1a928427918c05d1fd`
+- Code tip (product + tests): `de94d95ec6b11f706551655a7b40202e45085542` (red `fac28ae88077f424b6ba20ca969e849f7b5cfa83`)
+- Branch tip reviewed and tested: `c126f1b6cddde68db926b2c35e1a6044296824e9` = Code tip + `.antiphon/task-a2a41764.md` only (`git diff --stat de94d95e c126f1b6`: 1 file, the report)
+- Range reviewed: `57bbfc99d1810c99f2bf6e1a928427918c05d1fd..c126f1b6cddde68db926b2c35e1a6044296824e9`
+- `git merge-tree --write-tree origin/master de94d95e`: clean (tree `c78ce4061ea84be5aaac6010a60a53507760288d`, exit 0); origin/master unchanged since the Code run.
+- check-evidence-diff: `57bbfc99..de94d95e` commits=2 entries=0 violations=0 exit 0; `57bbfc99..c126f1b6` commits=3 entries=1 violations=0 exit 0 (the entry is the committed Code report).
+
+## Verdict
+
+CLEAN. No blocker, no regression. Four advisories below go to cards and do not hold the land.
+
+## Adversarial checks (brief items 1–5)
+
+1. **Runner join rules.** `RunnerSession.GetTranscript(since, stream)` reads `_tailer` and `_transcriptStream` under `_gate`, so the rows and the `Stream` it answers always belong to the same tailer. A delta is served only when `IsCursor(since, stream)` and the stream equals the bound tailer's id; a cursor past the stream's `LastSequence`, an unknown or missing stream, `since<=0`, a non-numeric or signed `since` (`NumberStyles.None`), or a multi-valued `stream` all give the full body. The three production tailers only ever `_entries.Add(... ++_seq ...)` under their own lock (one add site each, no Clear/Insert/Remove/Sort), so within one stream sequences are strictly increasing and append-only; `TranscriptEntries.After` is a binary search over that list taken under the tailer lock. A truncated or rewritten file sets `_readinessBindingInvalidated` and the tailer never rewinds or renumbers (TranscriptTailer.cs:287, :524). Every tailer rebind goes through the `Tailer` setter (10 production sites plus the test seams), which mints a fresh `Guid` whenever the reference changes, so rotation/rebind/adoption/runner restart all change the stream and force a full read. Server `Join` requires same session, non-empty stream equal to the held stream, `SessionGeneration.Equal` (false when either side is null), rows exactly `held.LastSequence+1 ..` with no gap, and the last row equal to `delta.LastSequence` (an empty delta only when `LastSequence == cursor`). Race results: tailer rebind between polls → stream mismatch → full; file truncated/rewritten → no renumbering, same stream, contiguous rows → correct join; runner restart → new `RunnerSession`, new stream → full; concurrent polls sharing the hold → each joins against the body it read, the hold ends with one of the whole bodies, the next poll fetches from that `LastSequence` (no row lost, each caller gets a whole transcript); duplicate row / lower sequence later / `LastSequence` backwards → impossible within a stream, and `Join`/`Holdable` refuse them anyway (full read, body not held); held body that was itself a join → contiguous by induction (`Holdable` 1..N, delta N+1..M); cursor beyond `LastSequence` → runner answers full, and a stale-cursor empty answer fails `expected != LastSequence` on the server → full. No path returns a missing or stale row.
+2. **Whole transcript to every consumer.** `TranscriptSinceRead.ReadAsync` is the only new path and always returns `joined` (held + delta, new array) or the fresh full `body`; every `ISessionRunnerClient.GetTranscriptAsync` consumer (catch-up `AgentSessionRuntime.cs:971/1026/1069/1254`, receipt readiness, recovery pump, Codex/Grok boot-turn verdicts, channel outbound transcript, routing/scoped wrappers) still receives a `SessionRunnerTranscriptDto` whose `Entries` are rows 1..LastSequence. No consumer mutates `Entries` (grep: none), so the shared held array is safe. UserPrompt confirm, Herdr `pane.read`, idle detection and poll intervals are untouched (no settings file in the diff).
+3. **Mixed versions.** HTTP: `cursorEnabled: true` but a hold is only taken when the full body carries a non-null `Stream`, so an old runner is never sent `?since=`; an old minimal-API runner that ignored the query would answer rows from 1 and `Join` refuses them (full). Phone-home: the cursor needs `transcriptSinceV1` in the connection's registration capabilities (set once at construction) and a held stream. Old server → no query/field → runner's `since=0` path → full body. `RunnerTranscriptDto.Stream` is `JsonIgnore(WhenWritingNull)`; the CARD-1762 byte pins (`RunnerReadJsonTests`, `RunnerReadJsonClientTests`) ran green, so today's bytes are unchanged when `Stream` is null.
+4. **Memory / lifetime.** `TranscriptReadHold` is a field of `SessionRunnerHttpClient`, which is resolved once inside the singleton `PhoneHomeRunnerDirectory` factory (server/Program.cs:357, :372; no other resolution), so it is not a per-call object (CARD-1763 lesson). It caps at 256 sessions by least-recent touch. Phone-home holds live on `PhoneHomeLiveConnection.PtyReads` (a reconnect is a new instance) and `PhoneHomePtyReads.Forget` now drops the transcript on `NoteSessionGone` and on the List-diff end path. A recycled session id is guarded three ways: new stream Guid, generation mismatch, and (phone-home) the Forget. See A-2 for the HTTP-side gap.
+5. **Witnesses can go red.** Code showed 4/7 runner and 13/15 server red at `fac28ae8`. Read against the mutants: drop the stream check → `A_replaced_tailer_…` and `Unknown_stream_…` (runner), `Http_changed_stream_or_generation_…` restream leg (server) red; drop the gap check → gap/lower/overlap/hole-inside cases red; accept an empty delta wrongly → empty-behind/empty-ahead/short-of-last red; drop the generation check → the `Queries` five-element assertion in `Http_changed_stream_or_generation_…` red (the entry/generation assertions alone would pass under that mutant, see A-4). Capability, LRU and `After` have their own guards. PCs stay pending for method-scoped SourceLanding Mutation.
+
+## Re-run at the reviewed tip (checkpoint run 20261108-194753-3bf9, GREEN, validate exit 0)
+
+Plan extract (review-only, ignored): `/work/worktrees/task-934cdb25/.antiphon/review-934cdb25-checkpoints.md`. Report: `/work/worktrees/task-934cdb25/.antiphon/checkpoints/20261108-194753-3bf9/report.md`. Two cold builds (`bin-r934c/`, `bin-s934c/`, deleted by the tool), one lease per row, TEMP/TMP/TMPDIR=/tmp, UseAppHost=false confined by the tool. Wall 31m53s under host load ~26/24 cores with two other worktrees' runs active.
+
+| Row | Project | Selection | Executed | Failed | Skipped | TRX classes |
+|---|---|---|---:|---:|---:|---|
+| CP-1 | Antiphon.SessionRunner.Tests | 20 touched/neighbour patterns incl. `TranscriptSinceReadTests`, `PtyConditionalReadTests`, tailer classes, runner guards | 254 | 0 | 0 | 22 (TranscriptSinceReadTests=7, PtyConditionalReadTests=11, TranscriptTailer*=13, Codex/Grok tailers 19/32, PhoneHomeCommandDispatcherTests=45, RunnerCapabilitiesTests=7, …) |
+| CP-2 | Antiphon.SessionRunner.Tests | `RunnerSessionGenerationTests/(C502_V27*)\|(C502_V26*)` (the Windows-only `C502_V25` skip excluded by method filter) | 4 | 0 | 0 | 1 |
+| CP-3 | Antiphon.Tests | 19 touched/neighbour patterns incl. `TranscriptSinceClientTests`, `PtyConditionalReadClientTests`, `Card1761RunnerReadPollTests`, phone-home, watchdog, recovery | 274 | 0 | 0 | 20 (TranscriptSinceClientTests=15, PtyConditionalReadClientTests=8, WorkingTranscriptRecoveryTests=54, StaleWorkingTranscriptWatchdogTests=53, …) |
+| CP-4 | Antiphon.Tests | `TranscriptHotPathQueryTests`, `TranscriptHotPathMigrationTests`, `TranscriptWorkingStateQueryTests` | 27 | 0 | 0 | 3 |
+| CP-5 | Antiphon.Tests | guard batch: TestClassificationPolicy/Guard, SlowTestRegistryMerge, SlowTestTripwire, NativeLinuxPolicyWitnessTests, MechanicalPcContract, TaskPlatformGuidance, C1729LayeringGuard | 77 | 0 | 0 | 8 |
+
+Against Code's CP lines: Code reported 255/254/1-skipped on 21 runner classes (the skip is `C502_V25`, Windows-only) → here 254 + 4 across CP-1/CP-2 with zero skipped; 267/267 on 19 server classes → 274 here (same classes, `CodexCliObservation*` expands to two classes); 77/77 guards → 77; 4/4 runner-suite guards → inside CP-1. There is no plan `### Checkpoints` table for this card (the brief set the verification); Code's unlisted runs (4 builds, the two red runs) carry their reason. The whole Unit lane did not run here: per docs/testing-and-build.md ("Per-task Final", line 286) it is owned by the nightly backstop and rc qualification, not per-task Final, and Code reported the same.
+
+Not applicable: no OS-selected production behaviour changed (no `check-os-witnesses` obligation); no migration; nothing ran on the desktop.
+
+## Advisories (cards, never hold the land)
+
+- **A-1 (perf, low):** when a cursor is refused (rebind, relaunch, stale stream) the runner already answered with the full body on its new stream, but `TranscriptSinceRead.ReadAsync` discards it and fetches again, so every rebind costs two full round trips. Accepting that answer when `Holdable(sessionId, answer.Stream, delta)` holds saves one read; the decision doc's slice-4 text ("a lower first sequence is the full snapshot") describes that shape.
+- **A-2 (memory, low):** the HTTP hold (`SessionRunnerHttpClient._transcriptHold`) has no session-end `Forget` (same shape as the CARD-1763 buffer/snapshot holds), and unlike those bodies a transcript is not capped at 256 KiB, so up to 256 whole transcripts of ended sessions stay resident until LRU eviction. Dropping the hold on the HTTP event pump's exit event, or capping the held body, bounds it. Correctness is unaffected (stream + generation guards).
+- **A-3 (perf, minor):** `Join` copies the whole held entry array on every delta, including an empty one, so a quiet long transcript still pays O(n) per poll (far cheaper than the old deserialise, still avoidable by returning `held with { TerminalComplete, Readiness, CodexTokenCountAt }` on an empty delta).
+- **A-4 (test clarity, minor):** the generation-check mutant (PC-9) is caught only by the `Queries` length assertion in `Http_changed_stream_or_generation_is_read_again_in_full`; a direct assertion that the relaunch body was fetched in full would make the witness self-explanatory. It does go red, so no gap.
+
+## PCs pending for SourceLanding Mutation (method-scoped)
+
+PC-1 … PC-16 as listed in the Code report `.antiphon/task-a2a41764.md`; none discharged here.
+
+## Receipt provenance (unedited)
+
+commit: c126f1b6cddde68db926b2c35e1a6044296824e9  branch: feat/card-task-934cdb25  worktree: /work/worktrees/task-934cdb25  host: Debian GNU/Linux 12 (bookworm) cores=24
+source: c126f1b6cddde68db926b2c35e1a6044296824e9 state=clean buildSource=verified
+CHECKPOINT CP-1 commit=c126f1b6cddde68db926b2c35e1a6044296824e9 build=ok filter=/*/*/(TranscriptSinceReadTests*)|(PtyConditionalReadTests*)|(RunnerReadJsonTests*)|(PhoneHomeCommandDispatcherTests*)|(RunnerCapabilitiesTests*)|(C1022BackendCapabilitiesTests*)|(CodexTranscriptTailerTests*)|(GrokTranscriptTailerTests*)|(TranscriptTailer*)|(TranscriptAdoptionSafetyTests*)|(ClaudeDialogInputGuardTests*)|(RunnerStartupDiagnosticsTests*)|(HerdrStatusPushTests*)|(ResumeReceiptReadinessTests*)|(TerminalSeatReleaseTests*)|(BlockedParkWireTests*)|(TranscriptIngestionLatencyProbeTests*)|(RunnerPlatformContractTests*)|(TestClassificationGuardTests*)|(NativeLinuxPolicyWitnessTests*)/* executed=254 passed=254 failed=0 skipped=0 trx=/work/worktrees/task-934cdb25/.antiphon/checkpoints/20261108-194753-3bf9/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=c126f1b6cddde68db926b2c35e1a6044296824e9 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-1 waited=0s executed=226.798s wall=226.834s
+CHECKPOINT CP-2 commit=c126f1b6cddde68db926b2c35e1a6044296824e9 build=reused filter=/*/*/RunnerSessionGenerationTests/(C502_V27*)|(C502_V26*) executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-934cdb25/.antiphon/checkpoints/20261108-194753-3bf9/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=c126f1b6cddde68db926b2c35e1a6044296824e9 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-2 waited=0s executed=8.968s wall=9.257s
+CHECKPOINT CP-3 commit=c126f1b6cddde68db926b2c35e1a6044296824e9 build=ok filter=/*/*/(TranscriptSinceClientTests*)|(PtyConditionalReadClientTests*)|(RunnerReadJsonClientTests*)|(Card1761RunnerReadPollTests*)|(RunnerContractMapperTranscriptEventTests*)|(PhoneHomeTranscriptIncidentTests*)|(WorkingTranscriptRecoveryTests*)|(StaleWorkingTranscriptWatchdogTests*)|(StandingResumeReceiptReadinessTests*)|(SessionRunnerGenerationWireTests*)|(SessionRunnerHttpClientHerdrWireTests*)|(PhoneHomeSessionRoutingTests*)|(PhoneHomeConnectionTests*)|(PhoneHomeDirectoryTests*)|(PhoneHomeEventPumpTests*)|(CodexCliObservation*)|(SessionRunnerCapabilityGateTests*)|(DesktopCapabilitiesSnapshotTests*)|(CompactionContinuationWireTests*)/* executed=274 passed=274 failed=0 skipped=0 trx=/work/worktrees/task-934cdb25/.antiphon/checkpoints/20261108-194753-3bf9/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=c126f1b6cddde68db926b2c35e1a6044296824e9 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-3 waited=0s executed=704.279s wall=704.311s
+CHECKPOINT CP-4 commit=c126f1b6cddde68db926b2c35e1a6044296824e9 build=reused filter=/*/*/(TranscriptHotPathQueryTests*)|(TranscriptHotPathMigrationTests*)|(TranscriptWorkingStateQueryTests*)/* executed=27 passed=27 failed=0 skipped=0 trx=/work/worktrees/task-934cdb25/.antiphon/checkpoints/20261108-194753-3bf9/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=c126f1b6cddde68db926b2c35e1a6044296824e9 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-4 waited=0s executed=264.413s wall=264.459s
+CHECKPOINT CP-5 commit=c126f1b6cddde68db926b2c35e1a6044296824e9 build=reused filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)/* executed=77 passed=77 failed=0 skipped=0 trx=/work/worktrees/task-934cdb25/.antiphon/checkpoints/20261108-194753-3bf9/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=c126f1b6cddde68db926b2c35e1a6044296824e9 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-5 waited=0s executed=128.757s wall=128.800s
+
+validate: CHECKPOINT SOURCE VALID source=c126f1b6cddde68db926b2c35e1a6044296824e9 rows=5 (exit 0)
+
+--- review evidence ---
+subjectTaskId: a2a41764-cc0d-4511-bf70-96b0f2d66cd4
+reviewedSourceSha: c126f1b6cddde68db926b2c35e1a6044296824e9
+reviewedSourceClean: true
+ordinaryScopeCompleted: Full
+reviewRound: 1
+reviewedRange: 57bbfc99d1810c99f2bf6e1a928427918c05d1fd..c126f1b6cddde68db926b2c35e1a6044296824e9
