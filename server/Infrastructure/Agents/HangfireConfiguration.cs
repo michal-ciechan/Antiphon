@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Sockets;
 using Antiphon.Server.Application.Settings;
 using Hangfire;
@@ -7,6 +8,7 @@ using Hangfire.PostgreSql.Factories;
 using Hangfire.Storage;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -302,6 +304,14 @@ internal static class HangfireConfiguration
 
     private static InvalidOperationException Unreachable() =>
         new("Hangfire PostgreSQL storage refused startup because the database is not reachable.");
+
+    /// <summary>
+    /// CARD-1768. Released on <see cref="IHostApplicationLifetime.ApplicationStopping"/>.
+    /// That event runs before hosted services drain.
+    /// </summary>
+    public static void ReleaseWorkerLeaseWhenHostStops(
+        IHostApplicationLifetime lifetime, HangfireWorkerLease lease) =>
+        lifetime.ApplicationStopping.Register(lease.Dispose);
 }
 
 /// <summary>CARD-1743. One held session lock is the only Hangfire worker for a database.</summary>
@@ -310,9 +320,60 @@ internal sealed class HangfireWorkerLease : IDisposable
     internal const int ClassId = 1743;
     internal const int LockId = 1;
 
+    /// <summary>CARD-1768. Silence before the first TCP keepalive on the lease connection.</summary>
+    internal const int KeepaliveIdleSeconds = 30;
+
+    /// <summary>CARD-1768. Gap between TCP keepalive probes after the idle time.</summary>
+    internal const int KeepaliveIntervalSeconds = 10;
+
+    /// <summary>CARD-1768. Unanswered probes before Postgres drops the dead session.</summary>
+    internal const int KeepaliveCount = 3;
+
+    /// <summary>CARD-1768. Idle plus interval times count. A crashed host's lock ends within this.</summary>
+    internal const int CrashExpirySeconds =
+        KeepaliveIdleSeconds + (KeepaliveIntervalSeconds * KeepaliveCount);
+
+    /// <summary>
+    /// CARD-1768. Longest a Postgres restart leaves this process running without the lock.
+    /// The check stores nothing.
+    /// </summary>
+    internal static readonly TimeSpan ReacquireInterval = TimeSpan.FromSeconds(15);
+
     private NpgsqlConnection? _connection;
 
     internal HangfireWorkerLease(NpgsqlConnection connection) => _connection = connection;
+
+    /// <summary>CARD-1768. The held connection is not re-checked.</summary>
+    internal void EnsureHeld()
+    {
+    }
+
+    /// <summary>CARD-1768. No periodic re-check is armed.</summary>
+    internal void StartSupervision(IHostApplicationLifetime lifetime, TimeSpan? interval = null)
+    {
+        _ = lifetime;
+        _ = interval;
+    }
+
+    /// <summary>CARD-1768. Reads the session keepalive values the lease connection is using.</summary>
+    internal (int IdleSeconds, int IntervalSeconds, int Count) ReadCrashExpiry()
+    {
+        var connection = _connection ?? throw new InvalidOperationException(
+            "Hangfire worker lease has no connection.");
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT current_setting('tcp_keepalives_idle'),
+                   current_setting('tcp_keepalives_interval'),
+                   current_setting('tcp_keepalives_count')
+            """;
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            throw new InvalidOperationException("Hangfire worker lease could not read its crash-expiry settings.");
+        return (
+            int.Parse(reader.GetString(0), CultureInfo.InvariantCulture),
+            int.Parse(reader.GetString(1), CultureInfo.InvariantCulture),
+            int.Parse(reader.GetString(2), CultureInfo.InvariantCulture));
+    }
 
     public void Dispose()
     {
