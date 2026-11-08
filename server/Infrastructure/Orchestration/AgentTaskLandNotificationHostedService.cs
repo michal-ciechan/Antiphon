@@ -111,8 +111,8 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
     }
 
     /// <summary>
-    /// CARD-1769. Fired after one note's reconcile and before this pass records its park stamp.
-    /// A witness uses it to land a session change in that window.
+    /// CARD-1769. Fired after one note's reconcile. That note's park stamp was read before the
+    /// reconcile, so a session or queue change made here is visible on the next pass.
     /// </summary>
     internal const string RescanReconciledBoundary = "land-rescan-reconciled";
 
@@ -122,8 +122,7 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
     /// </summary>
     internal async Task ScanLandNotificationsOnceAsync(CancellationToken stoppingToken, ISet<Guid>? busySessions = null)
     {
-        var stamps = await LoadRescanStampsAsync(_rescanPark.SessionIds(), stoppingToken);
-        var parked = new List<(Guid NoteId, Guid SessionId)>();
+        var wake = await LoadParkedStampsAsync(stoppingToken);
         await using var boundaryScope = scopes.CreateAsyncScope();
         var rescanBoundary = boundaryScope.ServiceProvider.GetService<LandDeliveryBoundary>();
         Guid? cursor = null;
@@ -136,10 +135,10 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             // first, so it stays in the page. The clock is this page's read. A note that becomes
             // due after it waits out the rest of this scan and the 5-second period below.
             // The compiled page caches the plan, not the rows.
-            // CARD-1769. Canceled is absent from that page. A linked AwaitingReceipt note whose
-            // session stamp still matches stays parked until its backoff. The stamp is this
-            // pass's read: a status, start, or prompt-sequence change is reconciled here, and
-            // anything else that leaves the note AwaitingReceipt waits out the backoff.
+            // CARD-1769. Canceled is absent from that page. A linked AwaitingReceipt note stays
+            // parked until its backoff when the stamp still matches. The stamp compared here was
+            // read at the start of this pass. The stamp recorded for a note this pass reconciles
+            // is read before that page's reconciles.
             var now = (scope.ServiceProvider.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().UtcDateTime;
             var ids = new List<Guid>(128);
             var page = cursor is Guid after
@@ -147,10 +146,18 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 : LandNotificationReconcileQueries.DueNoteIds(db, now);
             await foreach (var id in page.WithCancellation(stoppingToken))
                 ids.Add(id);
+            var pending = new List<Guid>(ids.Count);
             foreach (var id in ids)
             {
-                if (_rescanPark.Unchanged(id, now, stamps))
-                    continue;
+                if (!_rescanPark.Unchanged(id, now, wake.Sessions, wake.Queues))
+                    pending.Add(id);
+            }
+
+            var pre = pending.Count == 0
+                ? PreReconcile.Empty
+                : await LoadPreReconcileStampsAsync(pending, stoppingToken);
+            foreach (var id in pending)
+            {
                 try
                 {
                     await using var rowScope = scopes.CreateAsyncScope();
@@ -161,8 +168,10 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                     var observedSession = Guid.Empty;
                     if (tracked is { State: LandNotificationState.AwaitingReceipt, ParentSessionId: Guid parent })
                     {
-                        parked.Add((id, parent));
                         observedSession = parent;
+                        var parkedAt = (rowScope.ServiceProvider.GetService<TimeProvider>() ?? TimeProvider.System)
+                            .GetUtcNow().UtcDateTime;
+                        RememberPreReconcile(id, parent, tracked.QueueMessageId, pre, parkedAt);
                     }
                     else
                         _rescanPark.Forget(id);
@@ -178,37 +187,71 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             if (ids.Count < 128) break;
             cursor = ids[^1];
         }
-
-        await RememberRescansAsync(parked, stoppingToken);
     }
 
     /// <summary>CARD-1769. The rescan park's cap. A note past its backoff is reconciled on the next pass.</summary>
     internal void ExpireRescanPark(Guid noteId) => _rescanPark.Expire(noteId);
 
-    private async Task<Dictionary<Guid, SessionRescanStamp>> LoadRescanStampsAsync(Guid[] sessionIds, CancellationToken ct)
+    private async Task<(Dictionary<Guid, SessionRescanStamp> Sessions, Dictionary<Guid, QueueRescanStamp> Queues)> LoadParkedStampsAsync(
+        CancellationToken ct)
     {
-        if (sessionIds.Length == 0)
-            return new();
+        var sessionIds = _rescanPark.SessionIds();
+        var queueIds = _rescanPark.QueueMessageIds();
+        if (sessionIds.Length == 0 && queueIds.Length == 0)
+            return (new(), new());
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await LoadStampsAsync(db, sessionIds, ct);
+        return (await LoadStampsAsync(db, sessionIds, ct), await LoadQueueStampsAsync(db, queueIds, ct));
     }
 
-    private async Task RememberRescansAsync(List<(Guid NoteId, Guid SessionId)> parked, CancellationToken ct)
+    private async Task<PreReconcile> LoadPreReconcileStampsAsync(List<Guid> noteIds, CancellationToken ct)
     {
-        if (parked.Count == 0)
-            return;
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var now = (scope.ServiceProvider.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().UtcDateTime;
-        var stamps = await LoadStampsAsync(db, parked.Select(row => row.SessionId).Distinct().ToArray(), ct);
-        foreach (var (noteId, sessionId) in parked)
+        var rows = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => noteIds.Contains(n.Id))
+            .Select(n => new { n.Id, n.ParentSessionId, n.QueueMessageId })
+            .ToListAsync(ct);
+        var notes = new Dictionary<Guid, NoteIdentity>(rows.Count);
+        foreach (var row in rows)
+            notes[row.Id] = new NoteIdentity(row.ParentSessionId, row.QueueMessageId);
+        var sessionIds = rows.Select(row => row.ParentSessionId).OfType<Guid>().Distinct().ToArray();
+        var queueIds = rows.Select(row => row.QueueMessageId).OfType<Guid>().Distinct().ToArray();
+        return new PreReconcile(
+            notes,
+            await LoadStampsAsync(db, sessionIds, ct),
+            await LoadQueueStampsAsync(db, queueIds, ct));
+    }
+
+    /// <summary>
+    /// Park with the stamp read before this page's reconciles. A parent or queue id that reconcile
+    /// itself changed has no pre-reconcile stamp, so the note is left unparked and the next pass
+    /// reads it.
+    /// </summary>
+    private void RememberPreReconcile(Guid noteId, Guid parent, Guid? queueId, PreReconcile pre, DateTime parkedAt)
+    {
+        if (!pre.Notes.TryGetValue(noteId, out var prior)
+            || prior.SessionId != parent
+            || prior.QueueMessageId != queueId
+            || !pre.Sessions.TryGetValue(parent, out var sessionStamp))
         {
-            if (stamps.TryGetValue(sessionId, out var stamp))
-                _rescanPark.Remember(noteId, sessionId, stamp, now);
-            else
-                _rescanPark.Forget(noteId);
+            _rescanPark.Forget(noteId);
+            return;
         }
+
+        QueueRescanStamp? queueStamp = null;
+        if (queueId is Guid queued)
+        {
+            if (!pre.Queues.TryGetValue(queued, out var loaded))
+            {
+                _rescanPark.Forget(noteId);
+                return;
+            }
+
+            queueStamp = loaded;
+        }
+
+        _rescanPark.Remember(noteId, parent, queueId, sessionStamp, queueStamp, parkedAt);
     }
 
     /// <summary>
@@ -218,6 +261,8 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
     private static async Task<Dictionary<Guid, SessionRescanStamp>> LoadStampsAsync(
         AppDbContext db, Guid[] sessionIds, CancellationToken ct)
     {
+        if (sessionIds.Length == 0)
+            return new();
         var sessions = await db.AgentSessions.AsNoTracking()
             .Where(s => sessionIds.Contains(s.Id))
             .Select(s => new { s.Id, s.Status, s.StartedAt })
@@ -234,19 +279,61 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             row => new SessionRescanStamp(row.Status, row.StartedAt, sequences.GetValueOrDefault(row.Id)));
     }
 
+    /// <summary>
+    /// One read of the parked queue rows. Parameters are queue message ids, not note ids.
+    /// </summary>
+    private static async Task<Dictionary<Guid, QueueRescanStamp>> LoadQueueStampsAsync(
+        AppDbContext db, Guid[] messageIds, CancellationToken ct)
+    {
+        if (messageIds.Length == 0)
+            return new();
+        var rows = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(message => messageIds.Contains(message.Id))
+            .Select(message => new
+            {
+                message.Id,
+                message.Status,
+                message.DeliveryAttempts,
+                message.DeliveryVerdict,
+                message.CanceledAt,
+            })
+            .ToListAsync(ct);
+        return rows.ToDictionary(
+            row => row.Id,
+            row => new QueueRescanStamp(row.Status, row.DeliveryAttempts, row.DeliveryVerdict, row.CanceledAt));
+    }
+
     private readonly record struct SessionRescanStamp(SessionStatus Status, DateTime StartedAt, long PromptSequence);
+
+    private readonly record struct QueueRescanStamp(
+        QueuedMessageStatus Status, int DeliveryAttempts, DeliveryVerdict? Verdict, DateTime? CanceledAt);
+
+    private readonly record struct NoteIdentity(Guid? SessionId, Guid? QueueMessageId);
+
+    private sealed class PreReconcile(
+        Dictionary<Guid, NoteIdentity> notes,
+        Dictionary<Guid, SessionRescanStamp> sessions,
+        Dictionary<Guid, QueueRescanStamp> queues)
+    {
+        public static PreReconcile Empty { get; } = new(new(), new(), new());
+        public Dictionary<Guid, NoteIdentity> Notes { get; } = notes;
+        public Dictionary<Guid, SessionRescanStamp> Sessions { get; } = sessions;
+        public Dictionary<Guid, QueueRescanStamp> Queues { get; } = queues;
+    }
 
     /// <summary>
     /// CARD-1769. After a reconcile leaves a note <see cref="LandNotificationState.AwaitingReceipt"/>,
-    /// the next hosted passes skip it while two things are still true: the backoff has not elapsed,
-    /// and the target session's status, start, and max UserPrompt/QueuedUserPrompt sequence still
-    /// match the stamp taken after that reconcile. The first backoff is one minute and doubles
-    /// until <see cref="MaximumBackoff"/>.
-    /// A database-visible status, start, or prompt-sequence change is reconciled on the next hosted
-    /// pass (the five-second period, plus whatever remains of a pass already in flight, plus that
-    /// page's clock read). A queue cancel, a queue-identity mismatch, or a receipt that exists only
-    /// on the runner until catch-up runs waits for the backoff. That wait is at most five minutes.
-    /// A missing session is not a match, so the note is reconciled.
+    /// the next hosted passes skip it while the backoff has not elapsed and the stamp still matches.
+    /// The stamp is the target session's status, start, and max UserPrompt/QueuedUserPrompt sequence,
+    /// plus the queue row's status, delivery attempts, delivery verdict, and canceled-at. It is read
+    /// before that page's reconciles and remembered as that read. Already-parked notes are compared
+    /// with the session and prompt reads plus one <c>Id IN (parked queue ids)</c> read at the start of the pass.
+    /// The first backoff is one minute and doubles until <see cref="MaximumBackoff"/>.
+    /// A database-visible change to any stamped field is reconciled on the next hosted pass (the
+    /// five-second period, plus whatever remains of a pass already in flight, plus that pass's stamp
+    /// read). A receipt that exists only on the runner, with none of those fields changed, waits for
+    /// the backoff. That wait is at most five minutes. A missing session or queue row is not a match,
+    /// so the note is reconciled.
     /// </summary>
     private sealed class RescanPark
     {
@@ -259,6 +346,11 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             public SessionStatus Status { get; init; }
             public DateTime StartedAt { get; init; }
             public long PromptSequence { get; init; }
+            public Guid? QueueMessageId { get; init; }
+            public QueuedMessageStatus QueueStatus { get; init; }
+            public int DeliveryAttempts { get; init; }
+            public DeliveryVerdict? DeliveryVerdict { get; init; }
+            public DateTime? CanceledAt { get; init; }
             public DateTime ParkedUntil { get; set; }
             public int Observations { get; init; }
         }
@@ -273,6 +365,17 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             return [.. ids];
         }
 
+        internal Guid[] QueueMessageIds()
+        {
+            var ids = new HashSet<Guid>();
+            foreach (var entry in _entries.Values)
+            {
+                if (entry.QueueMessageId is Guid id)
+                    ids.Add(id);
+            }
+            return [.. ids];
+        }
+
         internal void Expire(Guid noteId)
         {
             if (_entries.TryGetValue(noteId, out var entry))
@@ -281,32 +384,60 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
 
         internal void Forget(Guid noteId) => _entries.Remove(noteId);
 
-        internal bool Unchanged(Guid noteId, DateTime now, IReadOnlyDictionary<Guid, SessionRescanStamp> stamps)
+        internal bool Unchanged(
+            Guid noteId,
+            DateTime now,
+            IReadOnlyDictionary<Guid, SessionRescanStamp> sessions,
+            IReadOnlyDictionary<Guid, QueueRescanStamp> queues)
         {
             if (!_entries.TryGetValue(noteId, out var entry))
                 return false;
             if (now >= entry.ParkedUntil)
                 return false;
-            if (!stamps.TryGetValue(entry.SessionId, out var stamp))
+            if (!sessions.TryGetValue(entry.SessionId, out var session))
                 return false;
-            return stamp.Status == entry.Status
-                && stamp.PromptSequence == entry.PromptSequence
-                && SessionGeneration.Equal(stamp.StartedAt, entry.StartedAt);
+            if (session.Status != entry.Status
+                || session.PromptSequence != entry.PromptSequence
+                || !SessionGeneration.Equal(session.StartedAt, entry.StartedAt))
+                return false;
+            if (entry.QueueMessageId is not Guid queueId)
+                return true;
+            if (!queues.TryGetValue(queueId, out var queue))
+                return false;
+            return queue.Status == entry.QueueStatus
+                && queue.DeliveryAttempts == entry.DeliveryAttempts
+                && queue.Verdict == entry.DeliveryVerdict
+                && SameCanceledAt(queue.CanceledAt, entry.CanceledAt);
         }
 
-        internal void Remember(Guid noteId, Guid sessionId, SessionRescanStamp stamp, DateTime now)
+        internal void Remember(
+            Guid noteId,
+            Guid sessionId,
+            Guid? queueMessageId,
+            SessionRescanStamp session,
+            QueueRescanStamp? queue,
+            DateTime now)
         {
             var observations = _entries.TryGetValue(noteId, out var prior) ? prior.Observations + 1 : 1;
             _entries[noteId] = new Entry
             {
                 SessionId = sessionId,
-                Status = stamp.Status,
-                StartedAt = stamp.StartedAt,
-                PromptSequence = stamp.PromptSequence,
+                Status = session.Status,
+                StartedAt = session.StartedAt,
+                PromptSequence = session.PromptSequence,
+                QueueMessageId = queueMessageId,
+                QueueStatus = queue?.Status ?? default,
+                DeliveryAttempts = queue?.DeliveryAttempts ?? 0,
+                DeliveryVerdict = queue?.Verdict,
+                CanceledAt = queue?.CanceledAt,
                 ParkedUntil = now.Add(Backoff(observations)),
                 Observations = observations,
             };
         }
+
+        private static bool SameCanceledAt(DateTime? left, DateTime? right) =>
+            left is null && right is null
+            || left is not null && right is not null && SessionGeneration.Equal(left.Value, right.Value);
 
         private static TimeSpan Backoff(int observations)
         {
