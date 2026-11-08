@@ -116,6 +116,10 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 break;
             case "dispatch-base-canceled-row":
                 await h.UpdateNoteAsync(note.Id, n => n.Kind = LandNotificationKind.DispatchBase);
+                // CARD-1773: Canceled is terminal. Pass 1 loads the note, session and row, saves Canceled and
+                // returns before the pull and receipt scan; passes 2 and 3 load the Canceled note and stop.
+                // C1773_CanceledNoteDoesNotLateConfirm pins the no-late-confirm intent.
+                expected = [4, 1, 1];
                 break;
             case "task-completion-unprofiled-404":
                 await h.UpdateNoteAsync(note.Id, n => n.Kind = LandNotificationKind.TaskCompletion);
@@ -139,19 +143,31 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             Console.WriteLine(string.Join("\n----\n", passes.Select(p => p.Roster)));
 
         passes.Select(p => p.Commands).ShouldBe(expected, string.Join("\n----\n", passes.Select(p => p.Roster)));
-        passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
-        passes.Select(p => p.ReceiptRows).ShouldBe([48, 0, 0]);
-        passes.ShouldAllBe(p => p.Pulls == 1, "the catch-up pull runs on every pass, hit or miss");
-        passes[0].Floors.ShouldBe([Floor]);
-        passes[0].Sessions.ShouldBe([h.SessionId]);
-        if (shape == "one-kind-legacy-outcome-null-verdict-404")
-            passes[0].Sql.Single().ShouldContain("t.\"Kind\" = 'UserPrompt'");
-        else if (shape != "dispatch-base-canceled-row" && shape != "task-completion-unprofiled-404")
-            passes[0].Sql.Single().ShouldContain("t.\"Kind\" IN ('UserPrompt', 'QueuedUserPrompt')");
         var metrics = h.Cache!.GetMetrics();
-        metrics.Proofs.ShouldBe(1);
-        metrics.Publishes.ShouldBe(1);
-        metrics.Hits.ShouldBe(2);
+        if (shape == "dispatch-base-canceled-row")
+        {
+            // CARD-1773: a terminal Canceled note neither pulls nor scans, so the cache holds no proof.
+            passes.Select(p => p.ReceiptSelects).ShouldBe([0, 0, 0]);
+            passes.ShouldAllBe(p => p.Pulls == 0, "a Canceled note is terminal before the catch-up pull");
+            metrics.Proofs.ShouldBe(0);
+            metrics.Publishes.ShouldBe(0);
+            metrics.Hits.ShouldBe(0);
+        }
+        else
+        {
+            passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
+            passes.Select(p => p.ReceiptRows).ShouldBe([48, 0, 0]);
+            passes.ShouldAllBe(p => p.Pulls == 1, "the catch-up pull runs on every pass, hit or miss");
+            passes[0].Floors.ShouldBe([Floor]);
+            passes[0].Sessions.ShouldBe([h.SessionId]);
+            if (shape == "one-kind-legacy-outcome-null-verdict-404")
+                passes[0].Sql.Single().ShouldContain("t.\"Kind\" = 'UserPrompt'");
+            else if (shape != "task-completion-unprofiled-404")
+                passes[0].Sql.Single().ShouldContain("t.\"Kind\" IN ('UserPrompt', 'QueuedUserPrompt')");
+            metrics.Proofs.ShouldBe(1);
+            metrics.Publishes.ShouldBe(1);
+            metrics.Hits.ShouldBe(2);
+        }
         if (shape == "dispatch-base-canceled-row")
         {
             await ShouldStayOpenAsync(h, note, LandNotificationState.Canceled);
