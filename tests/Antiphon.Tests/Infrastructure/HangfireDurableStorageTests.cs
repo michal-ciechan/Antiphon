@@ -8,6 +8,7 @@ using Hangfire.PostgreSql;
 using Hangfire.PostgreSql.Factories;
 using Hangfire.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -16,6 +17,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>CARD-1743. Desktop storage stays in-memory unless Hangfire:Storage is PostgreSql.</summary>
 [Category("Unit")]
+[NotInParallel("HangfireStorage")]
 public sealed class HangfireStorageSelectionTests
 {
     [Test]
@@ -172,7 +174,41 @@ public sealed class HangfireStorageSelectionTests
         var refused = Should.Throw<InvalidOperationException>(() =>
             HangfireConfiguration.PreparePostgreSqlStorage(settings, unreachable));
         refused.Message.ShouldContain("not reachable");
+        refused.Message.ShouldNotContain("authentication");
+        refused.InnerException.ShouldNotBeNull();
         refused.ToString().ShouldNotContain(password);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Program_releases_the_worker_lease_when_the_host_stops()
+    {
+        var program = DockerStackDocuments.Read("server/Program.cs");
+        program.ShouldContain("HangfireConfiguration.ReleaseWorkerLeaseWhenHostStops(");
+        program.ShouldContain("heldLease.StartSupervision(");
+        program.ShouldNotContain("ApplicationStopping.Register(heldLease");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Durable_hangfire_documents_the_lease_the_package_and_renames()
+    {
+        var contract = DockerStackDocuments.Read("docs/docker-stack.md");
+        contract.ShouldContain("pg_try_advisory_lock(1743, 1)");
+        contract.ShouldContain("released on `ApplicationStopped`");
+        contract.ShouldContain("Every 15 seconds");
+        contract.ShouldContain("The check stores nothing.");
+        contract.ShouldContain("within 60 seconds of silence");
+        contract.ShouldContain("`tcp_keepalives_idle` to 30");
+        contract.ShouldContain("`tcp_keepalives_interval` to 10");
+        contract.ShouldContain("`tcp_keepalives_count` to 3");
+        contract.ShouldContain("pg_terminate_backend(pid)");
+        contract.ShouldContain("`Hangfire.PostgreSql` 1.21.1 is LGPLv3");
+        contract.ShouldContain("Dapper.AOT.Analyzers.dll");
+        contract.ShouldContain("Microsoft.SqlServer.TransactSql.ScriptDom.dll");
+        contract.ShouldContain("resolves Npgsql 9.0.3");
+        contract.ShouldContain("database CREATE privilege");
+        contract.ShouldContain("Enqueued or scheduled instances");
         await Task.CompletedTask;
     }
 
@@ -213,6 +249,8 @@ public sealed class HangfireStorageSelectionTests
         var refused = Should.Throw<InvalidOperationException>(() =>
             HangfireConfiguration.PreparePostgreSqlStorage(settings, unreachable));
         refused.Message.ShouldContain("not reachable");
+        refused.Message.ShouldNotContain("authentication");
+        refused.InnerException.ShouldNotBeNull();
         refused.ToString().ShouldNotContain(password);
         await Task.CompletedTask;
     }
@@ -362,6 +400,232 @@ public sealed class HangfirePostgreSqlStorageTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_stays_held_until_hosted_services_finish_stopping()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var heldDuringDrain = false;
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddHostedService(_ => new DrainProbe(() =>
+        {
+            try
+            {
+                using var contender = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+                heldDuringDrain = false;
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("second worker", StringComparison.Ordinal))
+            {
+                heldDuringDrain = true;
+            }
+        }));
+        using var host = builder.Build();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        HangfireConfiguration.ReleaseWorkerLeaseWhenHostStops(lifetime, lease);
+        await host.StartAsync();
+        // app.Run stops by firing ApplicationStopping, then StopAsync drains hosted services
+        // and only then fires ApplicationStopped.
+        lifetime.StopApplication();
+        await host.StopAsync();
+
+        heldDuringDrain.ShouldBeTrue();
+        using var restarted = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        restarted.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_is_reacquired_after_its_backend_is_terminated()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var before = await FindWorkerLockPidsAsync(database.ConnectionString);
+        before.Count.ShouldBe(1);
+        await TerminateBackendAsync(database.ConnectionString, before[0]);
+        (await FindWorkerLockPidsAsync(database.ConnectionString)).ShouldBeEmpty();
+
+        lease.EnsureHeld();
+
+        var reacquired = await FindWorkerLockPidsAsync(database.ConnectionString);
+        reacquired.Count.ShouldBe(1);
+        reacquired[0].ShouldNotBe(before[0]);
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString));
+        refused.Message.ShouldContain("second worker");
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_refuses_to_continue_when_another_worker_holds_the_lock()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var first = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var pid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        await TerminateBackendAsync(database.ConnectionString, pid);
+        using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+
+        var lost = Should.Throw<InvalidOperationException>(first.EnsureHeld);
+        lost.Message.ShouldContain("another worker");
+        (await FindWorkerLockPidsAsync(database.ConnectionString)).Count.ShouldBe(1);
+        second.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_stops_the_host_when_another_worker_holds_the_lock()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var first = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var pid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        await TerminateBackendAsync(database.ConnectionString, pid);
+        using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+
+        var builder = Host.CreateApplicationBuilder();
+        using var host = builder.Build();
+        await host.StartAsync();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lifetime.ApplicationStopping.Register(() => stopping.TrySetResult());
+        first.StartSupervision(lifetime, TimeSpan.FromMilliseconds(200));
+
+        var completed = await Task.WhenAny(stopping.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBe(stopping.Task);
+        second.ShouldNotBeNull();
+        await host.StopAsync();
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_sets_a_sixty_second_crash_expiry()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        HangfireWorkerLease.ClassId.ShouldBe(1743);
+        HangfireWorkerLease.LockId.ShouldBe(1);
+        HangfireWorkerLease.KeepaliveIdleSeconds.ShouldBe(30);
+        HangfireWorkerLease.KeepaliveIntervalSeconds.ShouldBe(10);
+        HangfireWorkerLease.KeepaliveCount.ShouldBe(3);
+        HangfireWorkerLease.CrashExpirySeconds.ShouldBe(60);
+        HangfireWorkerLease.ReacquireInterval.ShouldBe(TimeSpan.FromSeconds(15));
+
+        var expiry = lease.ReadCrashExpiry();
+        expiry.IdleSeconds.ShouldBe(HangfireWorkerLease.KeepaliveIdleSeconds);
+        expiry.IntervalSeconds.ShouldBe(HangfireWorkerLease.KeepaliveIntervalSeconds);
+        expiry.Count.ShouldBe(HangfireWorkerLease.KeepaliveCount);
+
+        var pids = await FindWorkerLockPidsAsync(database.ConnectionString);
+        pids.Count.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Authentication_failure_names_authentication_and_keeps_the_inner_exception()
+    {
+        const string password = "hangfire-auth-secret";
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var builder = new NpgsqlConnectionStringBuilder(database.ConnectionString) { Password = password };
+        var settings = PostgreSqlSettings();
+
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.PreparePostgreSqlStorage(settings, builder.ConnectionString));
+        refused.Message.ShouldContain("authentication");
+        refused.Message.ShouldNotContain("not reachable");
+        PostgresFailure(refused).SqlState.ShouldBe(PostgresErrorCodes.InvalidPassword);
+        refused.ToString().ShouldNotContain(password);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Privilege_failure_names_privilege_and_keeps_the_inner_exception()
+    {
+        const string password = "hf-priv-secret";
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var adminBuilder = new NpgsqlConnectionStringBuilder(database.ConnectionString);
+        var role = "hf_nopriv_" + Guid.NewGuid().ToString("N")[..16];
+        RequireSqlName(role);
+        RequireSqlName(adminBuilder.Database!);
+        await using var admin = new NpgsqlConnection(adminBuilder.ConnectionString);
+        await admin.OpenAsync();
+        try
+        {
+            await using (var create = new NpgsqlCommand(
+                $"CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE", admin))
+                await create.ExecuteNonQueryAsync();
+            await using (var grant = new NpgsqlCommand(
+                $"GRANT CONNECT ON DATABASE {adminBuilder.Database} TO {role}", admin))
+                await grant.ExecuteNonQueryAsync();
+
+            var limited = new NpgsqlConnectionStringBuilder(adminBuilder.ConnectionString)
+            {
+                Username = role,
+                Password = password
+            }.ConnectionString;
+            var refused = Should.Throw<InvalidOperationException>(() =>
+                HangfireConfiguration.PreparePostgreSqlStorage(PostgreSqlSettings(), limited));
+            refused.Message.ShouldContain("privilege");
+            refused.Message.ShouldNotContain("not reachable");
+            PostgresFailure(refused).SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
+            refused.ToString().ShouldNotContain(password);
+        }
+        finally
+        {
+            await using var drop = new NpgsqlCommand($"DROP ROLE IF EXISTS {role}", admin);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Missing_database_names_the_missing_database_and_keeps_the_inner_exception()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var builder = new NpgsqlConnectionStringBuilder(database.ConnectionString)
+        {
+            Database = "hangfire_missing_c1768"
+        };
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.PreparePostgreSqlStorage(PostgreSqlSettings(), builder.ConnectionString));
+        refused.Message.ShouldContain("does not exist");
+        refused.Message.ShouldNotContain("not reachable");
+        PostgresFailure(refused).SqlState.ShouldBe(PostgresErrorCodes.InvalidCatalogName);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task Recurring_job_type_is_rewritten_and_an_enqueued_row_is_left_alone()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var settings = PostgreSqlSettings();
+        var storage = HangfireConfiguration.CreateStorage(settings, database.ConnectionString);
+        var residue = new WorktreeResidueSettings();
+        HangfireConfiguration.AddOrUpdateWorktreeResidueJob(new RecurringJobManager(storage), residue);
+
+        await using var db = new NpgsqlConnection(database.ConnectionString);
+        await db.OpenAsync();
+        var stored = await ReadRecurringTypeAsync(db);
+        var current = typeof(WorktreeResidueJob).FullName!;
+        stored.ShouldContain(current);
+        stored.ShouldContain("Antiphon.Server");
+        var retired = stored.Replace(current, current + "Retired", StringComparison.Ordinal);
+        retired.ShouldContain("WorktreeResidueJobRetired");
+        (await RewriteRecurringTypeAsync(db, retired)).ShouldBe(1);
+        await InsertEnqueuedJobAsync(db, retired);
+
+        HangfireConfiguration.AddOrUpdateWorktreeResidueJob(new RecurringJobManager(storage), residue);
+
+        var rewritten = await ReadRecurringTypeAsync(db);
+        rewritten.ShouldContain(current);
+        rewritten.ShouldNotContain("WorktreeResidueJobRetired");
+        (await ReadEnqueuedInvocationAsync(db)).ShouldContain("WorktreeResidueJobRetired");
+
+        var again = HangfireConfiguration.CreateStorage(settings, database.ConnectionString);
+        using var connection = again.GetConnection();
+        var job = connection.GetRecurringJobs().Single(item => item.Id == residue.RecurringJobId);
+        job.Job.ShouldNotBeNull();
+        job.Job!.Type.ShouldBe(typeof(WorktreeResidueJob));
+    }
+
     private static HangfireSettings PostgreSqlSettings() => new()
     {
         Storage = HangfireSettings.PostgreSqlStorageName,
@@ -376,5 +640,108 @@ public sealed class HangfirePostgreSqlStorageTests
         command.Parameters.AddWithValue("schema", schema);
         command.Parameters.AddWithValue("table", table);
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static PostgresException PostgresFailure(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgres)
+                return postgres;
+        }
+
+        throw new ShouldAssertException("Expected a PostgresException on the startup failure.");
+    }
+
+    private static void RequireSqlName(string name)
+    {
+        foreach (var character in name)
+        {
+            if (character is not ((>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_'))
+                throw new InvalidOperationException("SQL name has a character this test will not interpolate.");
+        }
+    }
+
+    private static async Task<List<int>> FindWorkerLockPidsAsync(string connectionString)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("""
+            SELECT pid
+            FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND classid = @lockClass
+              AND objid = @lockId
+              AND granted
+            """, connection);
+        command.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
+        command.Parameters.AddWithValue("lockId", HangfireWorkerLease.LockId);
+        var pids = new List<int>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            pids.Add(Convert.ToInt32(reader.GetValue(0)));
+        return pids;
+    }
+
+    private static async Task TerminateBackendAsync(string connectionString, int pid)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT pg_terminate_backend(@pid)", connection);
+        command.Parameters.AddWithValue("pid", pid);
+        var ended = await command.ExecuteScalarAsync();
+        ended.ShouldBe(true);
+    }
+
+    private static async Task<string> ReadRecurringTypeAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand(
+            $"""SELECT value FROM "{Schema}".hash WHERE field = 'Job' AND value LIKE '%WorktreeResidueJob%'""",
+            connection);
+        var value = await command.ExecuteScalarAsync();
+        return value.ShouldBeOfType<string>();
+    }
+
+    private static async Task<int> RewriteRecurringTypeAsync(NpgsqlConnection connection, string value)
+    {
+        await using var command = new NpgsqlCommand(
+            $"""UPDATE "{Schema}".hash SET value = @value WHERE field = 'Job' AND value LIKE '%WorktreeResidueJob%'""",
+            connection);
+        command.Parameters.AddWithValue("value", value);
+        return await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertEnqueuedJobAsync(NpgsqlConnection connection, string invocation)
+    {
+        await using var command = new NpgsqlCommand($"""
+            INSERT INTO "{Schema}".job (invocationdata, arguments, createdat, statename)
+            VALUES (CAST(@invocation AS text), '[]', NOW() AT TIME ZONE 'UTC', 'Scheduled')
+            """, connection);
+        command.Parameters.AddWithValue("invocation", invocation);
+        (await command.ExecuteNonQueryAsync()).ShouldBe(1);
+    }
+
+    private static async Task<string> ReadEnqueuedInvocationAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand(
+            $"""SELECT invocationdata::text FROM "{Schema}".job""",
+            connection);
+        var value = await command.ExecuteScalarAsync();
+        return value.ShouldBeOfType<string>();
+    }
+
+    private sealed class DrainProbe : IHostedService
+    {
+        private readonly Action _onStop;
+
+        public DrainProbe(Action onStop) => _onStop = onStop;
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            _onStop();
+            return Task.CompletedTask;
+        }
     }
 }
