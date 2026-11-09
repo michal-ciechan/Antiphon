@@ -25,7 +25,9 @@ The first C1483 run after the fix failed 17/17 because `ShouldNotContain("SetTar
 
 ## Land graph
 
-`origin/master` is still `25b347f493cb781b693abc450e7090491c8638ae`. `git merge-tree --write-tree origin/master HEAD` exits 0 and the written tree equals `HEAD^{tree}`.
+The refresh ran while `origin/master` was `25b347f493cb781b693abc450e7090491c8638ae`. At that tip, `git merge-tree --write-tree origin/master HEAD` exited 0 and the written tree equalled `HEAD^{tree}`.
+
+A later fetch moved `origin/master` to `ed162195eb07f0be8ae79868a9119266467ea6f4`. `git merge-tree --write-tree origin/master HEAD` then exited 1. The only content conflict is `scripts/audit-land-verification-precheck.ps1`. `bc96c71bef39761b4dbc5c05e1030312396a0e16` replaced that script's PowerShell pre-check with a wrapper that runs the C# pre-check. The pin this branch removed now lives on master in `tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs`, `PinnedMetadata`, as `projectReference["SetTargetFramework"] = "TargetFramework=net10.0"`. Master's `tests/Antiphon.Tests/Antiphon.Tests.csproj` still has that attribute. This branch was not merged with master. A land has to drop that C# pin and keep this branch's reference, solution entry, and `C1483` test. A scratch `git merge-file` of `LandNonCodeSkipTests.cs` exits 0 and keeps this branch's assertion.
 
 `-Check` before the refresh refused in 11 seconds with `manifest does not match the selected graph` and `land graph pre-check refused` (digest `3ED4A38CAA52947D313A1BAD14BA15203DD7F261A219BBC20704CB13E329EB46`, count 75). That is a record mismatch. `scripts/land-graph-land-refresh.ps1 -Base 25b347f493cb781b693abc450e7090491c8638ae` printed `action=refresh` and its second `-Check` passed. Digest `3BE0F9C518C0B4A9F92CCCAB63B26452F832F728483F66AB92F2C1D720C7D075` to `3ED4A38CAA52947D313A1BAD14BA15203DD7F261A219BBC20704CB13E329EB46`, count stayed 75, pins blob stayed `7a2586e58bd4768648c6f670f6f2c4432f68936a`. Changed records: `Antiphon.sln`, `tests/Antiphon.Tests/Antiphon.Tests.csproj`. The refresh commit contains `LandVerificationBuildGraph.manifest.txt` and `LandVerificationBuildGraph.evaluation.txt` only.
 
