@@ -30,6 +30,7 @@ public class RunnerReadJsonTests
     private static readonly DateTimeOffset Stamp = new(2026, 11, 7, 7, 16, 35, TimeSpan.FromHours(-5));
     private static readonly Guid SessionId = Guid.Parse("4142c507-241f-4234-aa07-c03ebcc7f7d2");
     private const string Unicode = "café\n日本語 \"quote\" \\slash 😀";
+    private const string Ansi = "\u001b[31mred\r\n\u001b[0m";
     private static readonly string Large = new string('A', 256 * 1024) + "ü";
 
     [Test]
@@ -54,6 +55,13 @@ public class RunnerReadJsonTests
             Same(shape.Transcript, RunnerReadJson.HttpTranscript, ReflectionHttp, "http transcript " + shape.Name);
             OldPeerRoundTrip(shape);
         }
+
+        var ansi = Shapes().Single(shape => shape.Name == "ansi");
+        ansi.Buffer.Buffer.ShouldBe(Ansi);
+        ansi.Snapshot.RawOutput.ShouldBe(Ansi);
+        ansi.Transcript.Entries[0].Text.ShouldBe(Ansi);
+        Escaped(ansi.Buffer, RunnerReadJson.PhoneBuffer, ReflectionPhone);
+        Escaped(ansi.Buffer, RunnerReadJson.HttpBuffer, ReflectionHttp);
 
         var phone = JsonSerializer.SerializeToUtf8Bytes(UnicodeBuffer(), RunnerReadJson.PhoneBuffer);
         var http = JsonSerializer.SerializeToUtf8Bytes(UnicodeBuffer(), RunnerReadJson.HttpBuffer);
@@ -179,7 +187,21 @@ public class RunnerReadJsonTests
             new(SessionId, "", "", 1, Started, null, null),
             new(SessionId, [], 1, false, null, null, null));
         yield return new Shape("unicode", UnicodeBuffer(), UnicodeSnapshot(Unicode), UnicodeTranscript(Unicode));
+        yield return new Shape("ansi", new(SessionId, Ansi, 5), UnicodeSnapshot(Ansi), UnicodeTranscript(Ansi));
         yield return new Shape("large", new(SessionId, Large, 9), UnicodeSnapshot(Large), UnicodeTranscript(Large));
+    }
+
+    private static void Escaped<T>(T value, JsonTypeInfo<T> contract, JsonSerializerOptions reflection)
+    {
+        var generated = JsonSerializer.SerializeToUtf8Bytes(value, contract);
+        var old = JsonSerializer.SerializeToUtf8Bytes(value, reflection);
+        generated.AsSpan().SequenceEqual(old).ShouldBeTrue();
+        var text = Encoding.UTF8.GetString(generated);
+        text.Contains('\u001b').ShouldBeFalse();
+        text.Contains('\r').ShouldBeFalse();
+        text.Contains('\n').ShouldBeFalse();
+        text.Contains("\\u001B", StringComparison.Ordinal).ShouldBeTrue();
+        JsonSerializer.Deserialize(generated, contract)!.ShouldBe(value);
     }
 
     private static RunnerSnapshotDto UnicodeSnapshot(string text) =>

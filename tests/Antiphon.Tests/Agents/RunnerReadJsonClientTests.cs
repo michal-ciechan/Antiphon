@@ -54,6 +54,9 @@ public class RunnerReadJsonClientTests
         readSnapshot.RawOutput.ShouldBe(Unicode);
         readTranscript.Entries.Single().Text.ShouldBe(Unicode);
         watch.Count.ShouldBe(3);
+        watch.Admitted[0].ShouldBeSameAs(RunnerReadJson.HttpBuffer);
+        watch.Admitted[1].ShouldBeSameAs(RunnerReadJson.HttpSnapshot);
+        watch.Admitted[2].ShouldBeSameAs(RunnerReadJson.HttpTranscript);
     }
 
     private sealed class StubFactory : IHttpClientFactory
