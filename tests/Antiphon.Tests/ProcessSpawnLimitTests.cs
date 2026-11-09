@@ -82,7 +82,7 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests),
         // CARD-1747: checkpoint-tool classes name CheckpointToolSpawnLimit.
-        // These six start a child with the shared checkout as its working directory
+        // These seven start a child with the shared checkout as its working directory
         // (RepeatHost output, run-checkpoint.ps1, or dotnet against RepoRoot). They stay on
         // the strict lane so two of them cannot write one checkout.
         typeof(Antiphon.Tests.Checkpoints.RerunFilterHostTests),
@@ -91,6 +91,8 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests),
+        // CARD-1748: its two script cases run test-run-checkpoint.ps1 under pwsh from RepoRoot.
+        typeof(Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests),
         // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
@@ -188,6 +190,7 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests),
+        typeof(Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests),
     ];
 
     [Test]
