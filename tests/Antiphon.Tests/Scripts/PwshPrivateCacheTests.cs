@@ -79,6 +79,122 @@ public sealed class PwshPrivateCacheTests
         }
     }
 
+    [Test]
+    [Timeout(90_000)]
+    public async Task Install_removes_dead_owner_caches_and_keeps_live_unmarked_and_linked_ones()
+    {
+        var temp = Directory.CreateTempSubdirectory("c1793-sweep-").FullName;
+        try
+        {
+            var dead = DeadPid(temp);
+            var stale = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var staleSession = Seed(temp, $"antiphon-pwsh-cache-session-{Guid.NewGuid():N}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var live = Seed(temp, $"antiphon-pwsh-cache-{Environment.ProcessId}-{Guid.NewGuid():N}", Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+            var unmarked = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", null);
+            var garbled = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture) + "x");
+            var foreign = Seed(temp, $"other-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var target = Seed(temp, "c1793-link-target", dead.ToString(CultureInfo.InvariantCulture));
+            var link = Path.Combine(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}");
+            var linked = TryLink(link, target);
+
+            var seen = await ProbeAsync(temp, "sweep", static environment => environment.Remove("XDG_CACHE_HOME"));
+
+            Directory.Exists(stale).ShouldBeFalse(stale);
+            Directory.Exists(staleSession).ShouldBeFalse(staleSession);
+            foreach (var kept in new[] { live, unmarked, garbled, foreign, target })
+                File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
+            if (linked)
+                Directory.Exists(link).ShouldBeTrue(link);
+            Directory.Exists(seen).ShouldBeFalse(seen);
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task Checkpoint_tool_installs_a_private_cache_that_sweeps_dead_owners()
+    {
+        var temp = Directory.CreateTempSubdirectory("c1793-tool-").FullName;
+        try
+        {
+            var dead = DeadPid(temp);
+            var stale = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var tool = Path.Combine(AppContext.BaseDirectory, "Antiphon.Checkpoints.dll");
+            File.Exists(tool).ShouldBeTrue(tool);
+            var start = new ProcessStartInfo("dotnet")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = temp,
+            };
+            start.Environment["TMPDIR"] = temp;
+            start.Environment["TMP"] = temp;
+            start.Environment["TEMP"] = temp;
+            start.Environment.Remove("XDG_CACHE_HOME");
+            start.ArgumentList.Add(tool);
+            start.ArgumentList.Add("--help");
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("checkpoint tool did not start.");
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await process.WaitForExitAsync(timeout.Token);
+            _ = await stdout;
+            var error = await stderr;
+            process.ExitCode.ShouldBe(0, error);
+
+            Directory.Exists(stale).ShouldBeFalse(stale);
+            Directory.GetDirectories(temp, "antiphon-pwsh-cache-*").ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    private static int DeadPid(string workingDirectory)
+    {
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = workingDirectory,
+        };
+        start.ArgumentList.Add("--version");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet --version did not start.");
+        process.StandardOutput.ReadToEnd();
+        process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.Id;
+    }
+
+    private static string Seed(string root, string name, string? owner)
+    {
+        var directory = Path.Combine(root, name);
+        Directory.CreateDirectory(Path.Combine(directory, "powershell"));
+        File.WriteAllText(Path.Combine(directory, "powershell", "StartupProfileData-NonInteractive"), "profile");
+        if (owner is not null)
+            File.WriteAllText(Path.Combine(directory, "owner.pid"), owner);
+        return directory;
+    }
+
+    private static bool TryLink(string link, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     private static ProcessStartInfo InheritedPwsh()
     {
         var start = new ProcessStartInfo("pwsh")
