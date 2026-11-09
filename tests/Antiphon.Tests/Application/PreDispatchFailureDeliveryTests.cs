@@ -415,6 +415,22 @@ public sealed class PreDispatchFailureDeliveryTests
         await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
         await RecoverAsync(provider, CancellationToken.None);
+        if (state == "canceled")
+        {
+            // CARD-1773: Canceled is terminal. The restored row's complete prompt must not late-confirm
+            // the note (C1773_CanceledNoteDoesNotLateConfirm pins the same rule for the land family).
+            var prompts = await verify.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == parent.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+            prompts.Count(p => PromptSubmissionMatch.IsCompleteIn(debt.Body, p.Text)).ShouldBe(1);
+            var canceled = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == debt.Id);
+            canceled.State.ShouldBe(LandNotificationState.Canceled);
+            canceled.ConfirmedAt.ShouldBeNull();
+            canceled.ConfirmingPromptSequence.ShouldBeNull();
+            canceled.LastErrorCode.ShouldBe("queue_canceled_unconfirmed");
+            canceled.QueueMessageId.ShouldBe(original.Id);
+            (await RowsAsync(schema.ConnectionString, parent.SessionId)).Count.ShouldBe(1);
+            return;
+        }
         await AssertReceiptAsync(parent, debt, taskId, CancellationToken.None);
     }
 
