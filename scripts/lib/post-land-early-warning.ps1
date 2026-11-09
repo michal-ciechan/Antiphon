@@ -135,7 +135,7 @@ function Get-PostLandPinnedDocMarks {
             if (-not [string]::IsNullOrWhiteSpace($name)) { [void]$marks.Add($name) }
         }
     }
-    return $marks
+    return ,$marks
 }
 
 function Test-PostLandDocsOnly {
@@ -932,7 +932,9 @@ function Invoke-PostLandSlot {
         $trxSource = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_TRX')
         if ($kind -eq 'shard' -and -not [string]::IsNullOrWhiteSpace($trxSource) -and -not [string]::IsNullOrWhiteSpace($fileName) -and -not [string]::IsNullOrWhiteSpace($results) -and (Test-Path -LiteralPath $trxSource)) {
             $null = [IO.Directory]::CreateDirectory($results)
-            [IO.File]::Copy($trxSource, (Join-Path $results $fileName), $true)
+            $copied = Join-Path $results $fileName
+            [IO.File]::Copy($trxSource, $copied, $true)
+            [IO.File]::SetLastWriteTimeUtc($copied, [datetime]::UtcNow)
         }
         $exitName = 'POST_LAND_WARNING_SLOT_BUILD_EXIT'
         if ($kind -eq 'shard') { $exitName = 'POST_LAND_WARNING_SLOT_SHARD_EXIT' }
@@ -1034,8 +1036,9 @@ function Invoke-PostLandLane {
     $Payload.finishedAt = [datetime]::UtcNow.ToString('o')
     if ($buildExit -ne 0) {
         $owedCount = 0
-        if ($null -ne $Payload.owedWindows) { $owedCount = @($Payload.owedWindows).Count }
-        $Payload.summaryLine = Format-PostLandSummary $Payload.tipSha $Payload.baseSha @() @() $owedCount $buildExit
+        if ($null -ne $Payload.owedWindows) { $owedCount = $Payload.owedWindows.Count }
+        $emptyNames = New-PostLandStringList
+        $Payload.summaryLine = Format-PostLandSummary -Tip ([string]$Payload.tipSha) -Base ([string]$Payload.baseSha) -NewReds $emptyNames -UnknownShards $emptyNames -OwedCount $owedCount -BuildExit $buildExit
         $Payload.state = 'incomplete'
         Write-PostLandReceipt $ReceiptRoot $Payload
         [Console]::Out.WriteLine([string]$Payload.summaryLine)
