@@ -33,14 +33,20 @@ public class C1793SessionPwshCacheTests
             var firstDto = await runtime.StartAsync(Launch(first, firstOut, new Dictionary<string, string>()), CancellationToken.None);
             started.Add((first, firstDto));
             var firstTicks = HostStartTicks(firstDto);
+            var firstKernel = OperatingSystem.IsLinux() ? HostKernelTicks(firstDto) : 0;
             var secondDto = await runtime.StartAsync(Launch(second, secondOut, new Dictionary<string, string>()), CancellationToken.None);
             started.Add((second, secondDto));
             var secondTicks = HostStartTicks(secondDto);
+            var secondKernel = OperatingSystem.IsLinux() ? HostKernelTicks(secondDto) : 0;
 
             var firstSeen = (await ReadWhenWrittenAsync(firstOut)).Split('|');
             var secondSeen = (await ReadWhenWrittenAsync(secondOut)).Split('|');
             var runnerCache = Environment.GetEnvironmentVariable(Variable);
-            foreach (var (seen, id, dto, ticks) in new[] { (firstSeen, first, firstDto, firstTicks), (secondSeen, second, secondDto, secondTicks) })
+            foreach (var (seen, id, dto, ticks, kernel) in new[]
+            {
+                (firstSeen, first, firstDto, firstTicks, firstKernel),
+                (secondSeen, second, secondDto, secondTicks, secondKernel),
+            })
             {
                 var directory = seen[0];
                 Path.GetDirectoryName(Path.GetFullPath(directory)).ShouldBe(
@@ -51,10 +57,7 @@ public class C1793SessionPwshCacheTests
                 owner[0].ShouldBe(dto.HostPid?.ToString(CultureInfo.InvariantCulture), "the host owns the session cache");
                 owner.Length.ShouldBe(2, seen[1]);
                 if (OperatingSystem.IsLinux())
-                {
-                    Antiphon.Hosting.PwshPrivateCache.TryReadKernelStartTicks(dto.HostPid.Value, out var kernel).ShouldBeTrue(seen[1]);
                     owner[1].ShouldBe("k" + kernel.ToString(CultureInfo.InvariantCulture), seen[1]);
-                }
                 else
                 {
                     var recorded = long.Parse(owner[1], CultureInfo.InvariantCulture);
@@ -128,6 +131,14 @@ public class C1793SessionPwshCacheTests
         dto.HostPid.ShouldNotBeNull();
         using var host = Process.GetProcessById(dto.HostPid.Value);
         return host.StartTime.ToUniversalTime().Ticks;
+    }
+
+    // Read while the host is still alive. The script's exit can reap it before the marker text is checked.
+    private static long HostKernelTicks(RunnerSessionDto dto)
+    {
+        dto.HostPid.ShouldNotBeNull();
+        Antiphon.Hosting.PwshPrivateCache.TryReadKernelStartTicks(dto.HostPid.Value, out var kernel).ShouldBeTrue();
+        return kernel;
     }
 
     private static string ResolvePwsh()
