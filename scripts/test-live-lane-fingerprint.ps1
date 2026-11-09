@@ -12,7 +12,7 @@ $script:Library=Join-Path $PSScriptRoot 'lib/live-lane-fingerprint.ps1'
 $script:StatusScript=Join-Path $PSScriptRoot 'live-lane-status.ps1'
 $script:Pwsh=(Get-Process -Id $PID).Path
 
-function Git([string[]]$a, [string]$At=$script:root) { return (Invoke-TestSelectionGit $At $a).Stdout.Trim() }
+function Git([string[]]$a, [string]$At=$script:root) { return (Invoke-C487FixtureGit $At $a) }
 function Put([string]$path, [string]$text) {
     $full=Join-Path $script:root $path
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $full))

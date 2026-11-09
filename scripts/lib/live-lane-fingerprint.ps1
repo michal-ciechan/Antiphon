@@ -212,6 +212,18 @@ function Get-LiveLaneEntryDigest {
 }
 
 function Get-LiveLaneFingerprint {
+    # Every git call below reads objects of one commit; none can change the filter/textconv driver settings the
+    # runner asks git for before each command. That answer is reused for this computation (60 s per directory)
+    # and the caller's setting is restored after it.
+    param([string]$RepositoryRoot, [string]$Sha, [string]$Lane, [hashtable]$DocumentCache = @{}, [string]$Attestation)
+    . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+    $savedDriverCache=[Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds
+    [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds=60000
+    try { return Get-LiveLaneFingerprintCore -RepositoryRoot $RepositoryRoot -Sha $Sha -Lane $Lane -DocumentCache $DocumentCache -Attestation $Attestation }
+    finally { [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds=$savedDriverCache }
+}
+
+function Get-LiveLaneFingerprintCore {
     param([string]$RepositoryRoot, [string]$Sha, [string]$Lane, [hashtable]$DocumentCache = @{}, [string]$Attestation)
     if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     if ($Lane -cnotmatch '^[a-z0-9][a-z0-9.-]*$') { throw 'declaration-invalid' }
