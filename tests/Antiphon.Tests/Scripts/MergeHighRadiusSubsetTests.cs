@@ -57,8 +57,8 @@ public sealed class MergeHighRadiusSubsetTests
         ("CP-merge-subset-messaging", "tests/Antiphon.Messaging.Tests", MessagingFilter, 1),
     ];
 
-    // The fixed Antiphon.Tests classes executed on server2 Linux (CARD-1801 counting run).
-    private const int MeasuredTestsMin = 21;
+    // The fixed Antiphon.Tests classes executed on server2 Linux (CARD-1801 counting run, 182 in 5m58s).
+    private const int MeasuredTestsMin = 182;
 
     private static readonly string[] FixedClasses =
     [
