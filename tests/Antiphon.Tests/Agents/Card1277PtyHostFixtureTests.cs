@@ -94,7 +94,11 @@ public sealed class Card1277PtyHostFixtureTests
                 .ShouldBeTrue("fakeclaude banner missing. screen=" + runner.SnapshotText());
             await DeliverTwoWriteAsync(runner, prompt);
 
+            // fakeclaude appends the user record, paints the response, then appends the assistant
+            // record last. Wait for both things asserted below before capturing either.
             var jsonl = await PollFileAsync(transcript, ClaudeTurnRecorded, TimeSpan.FromSeconds(8));
+            await runner.WaitForOutputAsync(
+                s => s.Contains("FAKE response to: " + prompt[..60], StringComparison.Ordinal), TimeSpan.FromSeconds(8));
             var screen = runner.SnapshotText();
             var parts = NormalizeClaude(jsonl);
             var user = string.Join("\n", parts.Where(p => p.Kind == TranscriptKinds.UserPrompt).Select(p => p.Text));
@@ -128,7 +132,7 @@ public sealed class Card1277PtyHostFixtureTests
     }
 
     internal static bool ClaudeTurnRecorded(string jsonl) =>
-        jsonl.Contains("\"type\":\"user\"", StringComparison.Ordinal) || jsonl.Contains("\"type\": \"user\"", StringComparison.Ordinal);
+        jsonl.Contains("\"type\":\"assistant\"", StringComparison.Ordinal) || jsonl.Contains("\"type\": \"assistant\"", StringComparison.Ordinal);
 
     private static (string Prompt, string Nonce) ChannelWire()
     {
