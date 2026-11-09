@@ -1,6 +1,6 @@
 Implement landed plan, verification design and tests.
 
-SCOPE: Closed rows plus the named affected integration classes; the Unit lane is nightly/rc. Plus the impacted-classes rows whose globs match git diff --name-only base..HEAD. Unit omits delivery, landing, leases, persistence. Name invariant, unbounded classes, cost before full-assembly.
+SCOPE: Closed rows plus the named affected integration classes; the Unit lane is nightly/rc. Plus impacted-classes rows whose globs match git diff --name-only base..HEAD. Unit omits delivery, landing, leases, persistence. Name invariant, unbounded classes, cost before full-assembly.
 
 CHECKPOINTS: Run the ### Checkpoints closed list via checkpoint tool per committed group. inspect fresh TRX for each intended class/method and nonzero counts. Rerun red rows. Explain unlisted; report slot= and waited=. Guarded defects fail; self-compare or constant is a stub, not done.
 
@@ -18,6 +18,6 @@ next: review when implementation and ordinary V/R are complete, even with zero P
 
 next: code; decide for a blocking human choice. Never next: land/deploy. Caller commissions SourceLanding Mutation.
 
-MIGRATION: grep tests/ for MigrateAsync(<target>), .Down(, CreateIsolatedSchemaAsync then back; run model classes; report red/green counts
-Platform: read GET /api/runner-defaults and /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
+MIGRATION: additive, sorted after master's latest; Down fails safely. Run migrations row (downgrade selector, model classes); report red/green counts
+Platform: GET /api/runner-defaults, /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
 Apply docs/testing-and-build.md#os-branch-witnesses.

@@ -34,7 +34,7 @@ public sealed class AdditiveMigrationRuleWitnessTests
         "migrations, public DTOs/routes, operation labels, remote script functions and statement budgets";
 
     private const string CodeLine =
-        "MIGRATION: additive, sorted after master's latest; Down fails safely. Run the migrations row (downgrade selector, model classes); report red/green counts";
+        "MIGRATION: additive, sorted after master's latest; Down fails safely. Run migrations row (downgrade selector, model classes); report red/green counts";
 
     private const string ReviewLine = "MIGRATION: run downgrade selector; report its count.";
 
