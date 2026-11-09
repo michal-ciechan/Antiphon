@@ -35,6 +35,9 @@ public sealed class C1677RetentionServerTests
     {
         public Rig Rig { get; init; } = null!;
         public RunnerWorktreeRetentionSettings Settings { get; init; } = null!;
+
+        /// <summary>CARD-1804: the settings monitor every tick reads (its <see cref="Monitor.Hold"/> parks the background tick).</summary>
+        public Monitor SettingsMonitor { get; init; } = null!;
         public List<WorkspaceRetentionEntry> Inventory { get; } = [];
 
         /// <summary>CARD-1794: the inventory answer's Complete flag (an incomplete inventory proves no absence).</summary>
@@ -47,15 +50,16 @@ public sealed class C1677RetentionServerTests
             {
                 Enabled = true, Execute = true, PauseBetweenSeconds = 0, MinTerminalHours = 12, MaxRemovalsPerTick = 25,
             };
+            var monitor = new Monitor(settings);
             var rig = await Rig.StartAsync(capabilities: RetentionRunner(capable), configure: services =>
             {
-                services.AddSingleton<IOptionsMonitor<RunnerWorktreeRetentionSettings>>(new Monitor(settings));
+                services.AddSingleton<IOptionsMonitor<RunnerWorktreeRetentionSettings>>(monitor);
                 services.AddSingleton<RunnerWorktreeRetentionTicks>();
                 services.AddScoped<RunnerWorktreeRetentionService>();
                 configure?.Invoke(services);
             });
             settings.Runners.Add(rig.RunnerId);
-            var world = new World { Rig = rig, Settings = settings };
+            var world = new World { Rig = rig, Settings = settings, SettingsMonitor = monitor };
             rig.Peer.Reply = world.Answer;
             return world;
         }
@@ -95,15 +99,20 @@ public sealed class C1677RetentionServerTests
         /// CARD-1796: the execute route's own call with the operator credential (or <paramref name="header"/>), off the
         /// test thread, so a route that ran the tick on the request would show as a reply that never comes.
         /// </summary>
-        public Task<RunnerWorktreeRetentionTicks.ExecuteStarted> ExecuteRouteAsync(string? runnerId = null, string? header = null)
+        public Task<RunnerWorktreeRetentionTicks.ExecuteStarted> ExecuteRouteAsync(string? runnerId = null, string? header = null,
+            RunnerWorktreeRetentionTicks? ticks = null)
         {
             var operatorSettings = new PhoneHomeRunnerSettings { OperatorTokenPath = Rig.Host.OperatorTokenPath };
             var token = Antiphon.Server.Infrastructure.Security.OperatorTokenFile.ReadOrCreate(operatorSettings.OperatorTokenPath);
             var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
             if (header != "")
                 http.Request.Headers[Antiphon.Server.Infrastructure.Security.OperatorTokenFile.Header] = header ?? token;
-            return Task.Run(() => Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetention(
-                runnerId ?? Rig.RunnerId, http, operatorSettings, Ticks));
+            return Task.Run(() =>
+            {
+                Monitor.RouteFlow.Value = true;
+                return Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetention(
+                    runnerId ?? Rig.RunnerId, http, operatorSettings, ticks ?? Ticks);
+            });
         }
 
         public async Task<WorktreeResidueRun> RunAsync(Guid? runId)
@@ -150,6 +159,15 @@ public sealed class C1677RetentionServerTests
             return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunExecuteOnceAsync(runnerId ?? Rig.RunnerId, ct);
         }
 
+        /// <summary>CARD-1804: the rows one run wrote that name no task (stop, failure and cancel rows).</summary>
+        public async Task<List<WorktreeResidueRunCandidate>> RunRowsAsync(Guid? runId)
+        {
+            await using var db = Rig.NewDb();
+            return await db.WorktreeResidueRunCandidates.AsNoTracking()
+                .Where(r => r.RunId == runId && r.TaskId == null && r.Lane == RunnerWorktreeRetentionService.LaneMirror)
+                .OrderBy(r => r.EvaluatedAt).ToListAsync();
+        }
+
         public async Task<List<WorktreeResidueRunCandidate>> RowsAsync(Guid? taskId = null)
         {
             await using var db = Rig.NewDb();
@@ -164,9 +182,24 @@ public sealed class C1677RetentionServerTests
     private static PhoneHomeWorkspaceRetainResponse Removed() =>
         new(WorkspaceRetentionCodes.Removed, HeadSha: new string('a', 40), OriginTip: new string('a', 40), PhaseAMs: 3, PhaseBMs: 7);
 
-    private sealed class Monitor(RunnerWorktreeRetentionSettings value) : IOptionsMonitor<RunnerWorktreeRetentionSettings>
+    internal sealed class Monitor(RunnerWorktreeRetentionSettings value) : IOptionsMonitor<RunnerWorktreeRetentionSettings>
     {
-        public RunnerWorktreeRetentionSettings CurrentValue => value;
+        /// <summary>CARD-1804: set on the execute route's own flow (the background tick does not inherit it).</summary>
+        public static readonly AsyncLocal<bool> RouteFlow = new();
+
+        /// <summary>CARD-1804: while set and unsignalled, a read outside the route's flow (the background tick) waits for it.</summary>
+        public ManualResetEventSlim? Hold { get; set; }
+
+        public RunnerWorktreeRetentionSettings CurrentValue
+        {
+            get
+            {
+                if (Hold is { } hold && !RouteFlow.Value)
+                    hold.Wait(TimeSpan.FromSeconds(30));
+                return value;
+            }
+        }
+
         public RunnerWorktreeRetentionSettings Get(string? name) => value;
         public IDisposable? OnChange(Action<RunnerWorktreeRetentionSettings, string?> listener) => null;
     }
@@ -1326,6 +1359,194 @@ public sealed class C1677RetentionServerTests
             row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
         }
         (await w.RowsAsync()).ShouldContain(r => r.ReasonCode == result.Stopped && r.Outcome == nameof(WorktreeResidueCandidateOutcome.Deferred));
+    }
+
+    private sealed class StoppingLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
+    {
+        private readonly CancellationTokenSource _stopping = new();
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() => _stopping.Cancel();
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1804_a_second_server_process_refuses_while_this_one_ticks()
+    {
+        // CARD-1804 (review 437ceb6c A-1). The tick turn was per process, so a second server process (its own turn, its own
+        // connection, the same database) censused the same population at once. The tick now also holds a database-wide
+        // advisory lock: the other process's preview and execute refuse 409 tick_in_progress, and its scheduled tick skips
+        // without a census. Once this process's tick ends, the other process ticks normally.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync(TimeSpan.FromHours(30));
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+        var tick = w.TickAsync();
+        var held = await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+
+        // The other process: its own tick turn, its own scope and connection.
+        var other = new RunnerWorktreeRetentionTicks(w.Rig.Provider.GetRequiredService<IServiceScopeFactory>(), w.SettingsMonitor,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<RunnerWorktreeRetentionTicks>.Instance);
+        async Task<T> OtherAsync<T>(Func<RunnerWorktreeRetentionService, Task<T>> call)
+        {
+            await using var scope = w.Rig.Provider.CreateAsyncScope();
+            return await call(ActivatorUtilities.CreateInstance<RunnerWorktreeRetentionService>(scope.ServiceProvider, other));
+        }
+
+        var preview = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            OtherAsync(s => s.RunPreviewAsync(w.Rig.RunnerId, CancellationToken.None)).WaitAsync(TimeSpan.FromSeconds(10)));
+        preview.Code.ShouldBe(RunnerWorktreeRetentionTicks.TickInProgressCode);
+        var execute = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            w.ExecuteRouteAsync(ticks: other).WaitAsync(TimeSpan.FromSeconds(10)));
+        execute.Code.ShouldBe(RunnerWorktreeRetentionTicks.TickInProgressCode);
+        (await OtherAsync(s => s.RunTickAsync(CancellationToken.None)).WaitAsync(TimeSpan.FromSeconds(10)))
+            .ShouldBeEmpty("the other process skips its scheduled tick while this one holds the lock");
+        other.TryEnter().ShouldBeTrue("a refused or skipped tick gives its process turn back");
+        other.Exit();
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(1, "only this process censused");
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        await using (var db = w.Rig.NewDb())
+            (await db.WorktreeResidueRuns.CountAsync()).ShouldBe(1, "a refused or skipped tick writes no run");
+
+        w.Rig.Peer.Speak(PhoneHomeOperation.WorkspaceRetain);
+        await w.Rig.Peer.EmitAsync(World.Answer(held, Removed()));
+        (await tick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldHaveSingleItem().Sent.ShouldBe(1);
+        var after = (await OtherAsync(s => s.RunTickAsync(CancellationToken.None)).WaitAsync(TimeSpan.FromSeconds(15))).ShouldHaveSingleItem();
+        (await w.RunAsync(after.RunId)).FinishedAt.ShouldNotBeNull();
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(2, "the lock is released when the tick ends");
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1804_execute_route_saves_its_run_before_it_answers_and_a_switched_off_tick_finishes_it()
+    {
+        // CARD-1804 (A-2). The 202 came before the run row existed (a GET right after it could 404), and a kill switch
+        // flipped between the route's check and the tick body left a run id with no run at all. The run now exists when
+        // the route answers; a tick that then finds retention off finishes it with a Deferred tick_stopped_disabled row.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        var id = await w.EligibleAsync();
+        using var hold = new ManualResetEventSlim(false);
+        w.SettingsMonitor.Hold = hold;
+
+        var started = await w.ExecuteRouteAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var pending = await w.RunAsync(started.RunId);
+        pending.FinishedAt.ShouldBeNull();
+        pending.Execute.ShouldBeTrue();
+        pending.Scope.ShouldBe("runner-retention:" + w.Rig.RunnerId);
+        w.Ticks.Background.IsCompleted.ShouldBeFalse("the background tick is parked on its settings read");
+
+        w.Settings.Enabled = false;
+        hold.Set();
+        await w.Ticks.Background.WaitAsync(TimeSpan.FromSeconds(15));
+        (await w.RunAsync(started.RunId)).FinishedAt.ShouldNotBeNull();
+        var row = (await w.RunRowsAsync(started.RunId)).ShouldHaveSingleItem();
+        row.ReasonCode.ShouldBe("tick_stopped_disabled");
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+    }
+
+    [Test]
+    [Arguments("execute-route")]
+    [Arguments("scheduled")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1804_a_failed_tick_finishes_its_run_with_tick_failed(string shape)
+    {
+        // CARD-1804 (A-2). A tick that threw left its run with no FinishedAt and no failure row. Here the send cursor the
+        // tick inserts after a kept answer collides with one another writer saved meanwhile (the cross-process cursor
+        // race), so the tick's save throws; the run is still finished, with a Deferred tick_failed row.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        w.Retain = (_, frame) =>
+        {
+            using var db = w.Rig.NewDb();
+            db.WorktreeResidueCandidateCursors.Add(new WorktreeResidueCandidateCursor
+            {
+                Id = Guid.NewGuid(), CandidateKey = RunnerWorktreeRetentionService.SendCursorKey(id), LastEvaluatedAt = w.Rig.Now,
+            });
+            db.SaveChanges();
+            return World.Answer(frame, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, WorkspaceRetentionCodes.Dirty));
+        };
+
+        Guid? runId;
+        if (shape == "execute-route")
+        {
+            runId = (await w.ExecuteRouteAsync().WaitAsync(TimeSpan.FromSeconds(10))).RunId;
+            await w.Ticks.Background.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        else
+        {
+            await Should.ThrowAsync<DbUpdateException>(w.TickAsync().WaitAsync(TimeSpan.FromSeconds(15)));
+            await using var db = w.Rig.NewDb();
+            runId = (await db.WorktreeResidueRuns.AsNoTracking().SingleAsync()).Id;
+        }
+
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        (await w.RunAsync(runId)).FinishedAt.ShouldNotBeNull();
+        var row = (await w.RunRowsAsync(runId)).ShouldHaveSingleItem();
+        row.ReasonCode.ShouldBe("tick_failed");
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        w.Ticks.TryEnter().ShouldBeTrue("a failed tick gives the turn back");
+        w.Ticks.Exit();
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1804_host_stop_awaits_a_running_execute_tick_and_its_run_is_finished_cancelled()
+    {
+        // CARD-1804 (A-2). Nothing awaited the background execute tick on host stop, and a shutdown-cancelled tick left its
+        // run unfinished. Host stop now waits for the tick, which finishes its run with a Deferred tick_cancelled row.
+        var lifetime = new StoppingLifetime();
+        await using var w = await World.StartAsync(configure: services =>
+            services.AddSingleton<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(lifetime));
+        w.Settings.Execute = false;
+        var id = await w.EligibleAsync();
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+        var started = await w.ExecuteRouteAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+
+        lifetime.StopApplication();
+        await ((Microsoft.Extensions.Hosting.IHostedService)w.Ticks).StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+
+        w.Ticks.Background.IsCompleted.ShouldBeTrue("host stop waited for the running tick");
+        (await w.RunAsync(started.RunId)).FinishedAt.ShouldNotBeNull();
+        var row = (await w.RunRowsAsync(started.RunId)).ShouldHaveSingleItem();
+        row.ReasonCode.ShouldBe("tick_cancelled");
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1804_a_preview_cancelled_by_its_request_finishes_its_run_cancelled()
+    {
+        // CARD-1804 (A-3). The preview runs on its request, so a client or proxy timeout cancels it mid-tick; that is
+        // accepted explicitly: the cancel no longer leaves an unfinished run, it finishes with a Deferred tick_cancelled
+        // row and the turn is free for the next tick.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync(TimeSpan.FromHours(30));
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+        using var aborted = new CancellationTokenSource();
+        var preview = w.PreviewAsync(aborted.Token);
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+
+        await aborted.CancelAsync();
+        Exception? thrown = null;
+        try { await preview.WaitAsync(TimeSpan.FromSeconds(15)); }
+        catch (Exception ex) { thrown = ex; }
+        thrown.ShouldBeAssignableTo<OperationCanceledException>();
+
+        WorktreeResidueRun run;
+        await using (var db = w.Rig.NewDb())
+            run = await db.WorktreeResidueRuns.AsNoTracking().SingleAsync();
+        run.Preview.ShouldBeTrue();
+        run.FinishedAt.ShouldNotBeNull();
+        var row = (await w.RunRowsAsync(run.Id)).ShouldHaveSingleItem();
+        row.ReasonCode.ShouldBe("tick_cancelled");
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        w.Ticks.TryEnter().ShouldBeTrue("a cancelled preview gives the turn back");
+        w.Ticks.Exit();
     }
 
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)

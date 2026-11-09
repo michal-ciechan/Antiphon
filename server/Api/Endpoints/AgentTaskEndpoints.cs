@@ -19,11 +19,11 @@ public static class AgentTaskEndpoints
     /// anyone else, a task token included), then one Execute tick for one allow-listed runner. CARD-1796: the tick runs in
     /// the background, never on the request; the reply names its run (409 tick_in_progress while another tick runs).
     /// </summary>
-    public static RunnerWorktreeRetentionTicks.ExecuteStarted ExecuteRunnerRetention(string runnerId,
+    public static Task<RunnerWorktreeRetentionTicks.ExecuteStarted> ExecuteRunnerRetention(string runnerId,
         HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionTicks ticks)
     {
         OperatorCredential.Require(http, operatorSettings, "The one-shot runner retention execute requires the operator credential.");
-        return ticks.StartExecute(runnerId);
+        return ticks.StartExecuteAsync(runnerId, http.RequestAborted);
     }
 
     /// <summary>Header the delegate script sends; matches ANTIPHON_TASK_TOKEN in the agent's env.</summary>
@@ -170,13 +170,13 @@ public static class AgentTaskEndpoints
         // CARD-1794 (4). The sanctioned one-shot reclaim: one Execute tick for one allow-listed runner, operator only.
         // Enabled must be on and Runners must name it; it executes even while the scheduled job is DryRun. CARD-1796:
         // 202 with the run id at once; the tick runs in the background and the run page shows it (FinishedAt when done).
-        tasks.MapPost("/worktree-residue/runner-retention/{runnerId}/execute", (
+        tasks.MapPost("/worktree-residue/runner-retention/{runnerId}/execute", async (
             string runnerId,
             HttpContext http,
             IOptions<PhoneHomeRunnerSettings> operatorSettings,
             RunnerWorktreeRetentionTicks ticks) =>
         {
-            var started = ExecuteRunnerRetention(runnerId, http, operatorSettings.Value, ticks);
+            var started = await ExecuteRunnerRetention(runnerId, http, operatorSettings.Value, ticks);
             return Results.Accepted($"/api/agent-tasks/worktree-residue/runs/{started.RunId}", started);
         });
 
