@@ -292,8 +292,10 @@ function New-ReleaseSelectionAttempt {
         if ($PSVersionTable.PSVersion.Major -ge 7) {
             . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
             # The compiled command (Antiphon.Scripts select-release) answers a no-baseline attempt exactly as
-            # the worker would; exit 10 means not this input, and the worker below decides instead.
-            $cli = Get-AntiphonScriptsCli
+            # the worker would; exit 10 means not this input, and the worker below decides instead. It declines
+            # every request that names a baseline (ReleaseSelection.cs Attempt: baseline-requested, or request-type
+            # for a value that is not a string), so it is not started for one.
+            $cli = if ($Request.BaselineSha -or $Request.BaselineReceiptPath) { $null } else { Get-AntiphonScriptsCli }
             if ($cli) {
                 $start = New-Object Diagnostics.ProcessStartInfo($cli)
                 foreach ($arg in @('select-release', $requestPath, $responsePath)) { $start.ArgumentList.Add($arg) }
