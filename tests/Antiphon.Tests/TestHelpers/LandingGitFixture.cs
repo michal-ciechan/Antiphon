@@ -37,6 +37,15 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     }
 
     /// <summary>
+    /// Another template of the default fixture (token <c>task</c>, value <c>seed</c>) to clone instead, for a test
+    /// class that always extends the fixture the same way. <see cref="FromTemplate"/> says whether it was used.
+    /// </summary>
+    internal Func<Task<GitTreeTemplate>>? TemplateSource { get; set; }
+
+    /// <summary>True when <see cref="InitializeAsync"/> cloned a template rather than building with git.</summary>
+    internal bool FromTemplate { get; private set; }
+
+    /// <summary>
     /// Builds the fixture's repositories. With the default source branch they are cloned from a template built
     /// once per process (<see cref="GitTreeTemplate"/>: the task id is a token, so branch names, the committed
     /// <c>fixture-owner.txt</c> and the seed commit come out as a fresh build would make them), which saves the
@@ -49,7 +58,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             GitTreeTemplate? template = null;
             try
             {
-                template = await TemplateAsync();
+                template = await (TemplateSource ?? TemplateAsync)();
             }
             catch (Exception ex)
             {
@@ -59,6 +68,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             {
                 var clone = template.CloneTo(Root, new Dictionary<string, string> { ["task"] = TaskId.ToString("N") });
                 SeedSha = clone.Map(template.Values["seed"]);
+                FromTemplate = true;
                 return;
             }
         }
@@ -74,7 +84,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             return new() { ["seed"] = builder.SeedSha };
         }, cacheVersion: CacheVersion.Value);
 
-    /// <summary>What the built template depends on: this test assembly's build (the fixture code) and git's version.</summary>
+    /// <summary>What a built template depends on: this test assembly's build (the fixture code) and git's version.</summary>
+    internal static string TemplateCacheVersion => CacheVersion.Value;
+
     private static readonly Lazy<string> CacheVersion = new(() =>
     {
         var start = new ProcessStartInfo("git", "--version") { RedirectStandardOutput = true, UseShellExecute = false };

@@ -2685,8 +2685,9 @@ public sealed class LandNonCodeSkipTests
             Options.Create(new LandingSettings { ForceVerificationBuild = force }));
         try
         {
+            h.Fixture.TemplateSource = GraphTemplateAsync;
             await h.InitializeAsync();
-            await SeedGraphAsync(h);
+            if (!h.Fixture.FromTemplate) await SeedGraphAsync(h);
             return h;
         }
         catch { await h.DisposeAsync(); throw; }
@@ -2726,13 +2727,37 @@ public sealed class LandNonCodeSkipTests
     }
 
     // Seed the real committed graph, independently of checkout line endings or missing worktree files.
-    private static async Task SeedGraphAsync(LandingSafetyHarness h)
+    private static Task SeedGraphAsync(LandingSafetyHarness h) => SeedGraphAsync(h.Fixture);
+
+    private static async Task SeedGraphAsync(LandingGitFixture fixture)
     {
-        await CopyGraphAsync(h.Fixture, DelegateScriptRunner.RepoRoot);
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "audited build graph");
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "master");
-        await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "master");
+        await CopyGraphAsync(fixture, DelegateScriptRunner.RepoRoot);
+        await fixture.RequiredAsync(fixture.Repository, "commit", "-m", "audited build graph");
+        await fixture.RequiredAsync(fixture.Repository, "push", "origin", "master");
+        await fixture.RequiredAsync(fixture.Source, "rebase", "master");
     }
+
+    // The default landing fixture with the real graph already seeded, built once per process (and cached on
+    // disk per test build, git version and real HEAD tree, which the copied graph comes from). Every landing
+    // test here starts from that same tree, so each clones it instead of seeding (~1.2 s of git per test).
+    private static Task<GitTreeTemplate> GraphTemplateAsync() =>
+        GitTreeTemplate.BuildOnceAsync("landing-git-fixture-graph", ["task"], async (root, tokens) =>
+        {
+            var builder = new LandingGitFixture(root, Guid.ParseExact(tokens["task"], "N"));
+            await builder.BuildAsync();
+            await SeedGraphAsync(builder);
+            return new() { ["seed"] = builder.SeedSha };
+        }, cacheVersion: LandingGitFixture.TemplateCacheVersion + "|" + RealHeadTree.Value);
+
+    private static readonly Lazy<string> RealHeadTree = new(() =>
+    {
+        var start = GitStart(DelegateScriptRunner.RepoRoot, "rev-parse", "HEAD^{tree}");
+        using var process = Process.Start(start)!;
+        var tree = process.StandardOutput.ReadToEnd().Trim();
+        process.WaitForExit();
+        process.ExitCode.ShouldBe(0);
+        return tree;
+    });
 
     private static async Task CopyGraphAsync(LandingGitFixture fixture, string root)
     {
