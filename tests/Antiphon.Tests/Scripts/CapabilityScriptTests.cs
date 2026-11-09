@@ -3,10 +3,12 @@ using System.Net;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -53,6 +55,36 @@ public sealed class CapabilityScriptTests
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldNotContain(canary);
         run.Output.ShouldNotContain("AllowedRoots");
+    }
+
+    /// <summary>
+    /// CARD-1811: ProtectedData is Windows-only, so the DPAPI case skips off Windows
+    /// before it starts capability.ps1 and the Linux rc profile excludes exactly that
+    /// method. The error-path sibling stays required on every platform.
+    /// </summary>
+    [Test]
+    public async Task C1811_Dpapi_case_is_windows_required_and_linux_excluded()
+    {
+        var policyPath = Path.Combine(DelegateScriptRunner.RepoRoot, "tests", "test-execution-policy.json");
+        using var policy = JsonDocument.Parse(await File.ReadAllTextAsync(policyPath));
+        var rows = policy.RootElement.GetProperty("profiles").GetProperty("rc").GetProperty("exclusions")
+            .EnumerateArray()
+            .Where(row => row.GetProperty("class").GetString() == nameof(CapabilityScriptTests))
+            .ToArray();
+        rows.Length.ShouldBe(1, "one rc exclusion row for CapabilityScriptTests");
+        var row = rows[0];
+        row.GetProperty("suite").GetString().ShouldBe("antiphon");
+        row.GetProperty("platform").GetString().ShouldBe("linux");
+        row.GetProperty("methods").EnumerateArray().Select(method => method.GetString()).ToArray()
+            .ShouldBe([nameof(issue_does_not_print_the_token_and_dpapi_round_trips)]);
+        row.GetProperty("reason").GetString().ShouldNotStartWith("Linux-only by construction:");
+        row.GetProperty("owner").GetString().ShouldBe("CARD-1811");
+
+        if (OperatingSystem.IsWindows())
+            return; // The DPAPI case itself is the Windows witness.
+
+        var skip = await Should.ThrowAsync<SkipTestException>(issue_does_not_print_the_token_and_dpapi_round_trips());
+        skip.Message.ShouldContain("DPAPI");
     }
 
     private static async Task<(int ExitCode, string Output)> RunAsync(
