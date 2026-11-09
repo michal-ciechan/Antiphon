@@ -2,7 +2,6 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
-using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -23,7 +22,7 @@ public sealed class SiblingToolReportBoundaryTests
     [Test]
     public async Task Same_response_tool_siblings_do_not_nudge_or_settle()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
         var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
         var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
@@ -59,7 +58,7 @@ public sealed class SiblingToolReportBoundaryTests
     [Test]
     public async Task Genuine_text_only_final_still_settles()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
         var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
         var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
@@ -83,7 +82,7 @@ public sealed class SiblingToolReportBoundaryTests
     [Test]
     public async Task Max_tokens_with_tool_evidence_remains_terminal()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
         var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
         var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
@@ -108,7 +107,7 @@ public sealed class SiblingToolReportBoundaryTests
     [Test]
     public async Task Other_response_tools_do_not_hide_a_real_boundary()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
         var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
         var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
@@ -132,7 +131,7 @@ public sealed class SiblingToolReportBoundaryTests
     [Test]
     public async Task New_real_prompt_is_still_an_attribution_barrier()
     {
-        using var workspace = new TempWorkspace();
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
         var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
         var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
