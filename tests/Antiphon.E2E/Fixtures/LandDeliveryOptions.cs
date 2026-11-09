@@ -6,12 +6,15 @@ using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.Orchestration;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -74,6 +77,14 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandMonitorService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandNotificationService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AttentionService>(p, clock));
+        // CARD-1759 pages due notices on the scan scope's TimeProvider, and the monitor stamps
+        // NextAttemptAt with this clock. Replace in place so hosted start order is unchanged.
+        var scan = services.SingleOrDefault(d => d.ServiceType == typeof(IHostedService)
+            && d.ImplementationType == typeof(AgentTaskLandNotificationHostedService));
+        if (scan is not null)
+            services[services.IndexOf(scan)] = ServiceDescriptor.Singleton<IHostedService>(p => new AgentTaskLandNotificationHostedService(
+                new LandClockScopes(p.GetRequiredService<IServiceScopeFactory>(), clock),
+                p.GetRequiredService<ILogger<AgentTaskLandNotificationHostedService>>()));
         services.AddSingleton<ILandingGit>(new EvidenceGit(Root));
         // The real verifier (build slot + dotnet build), recorded as receipt-wait progress.
         var verifier = services.Last(d => d.ServiceType == typeof(ILandingVerifier));
@@ -253,6 +264,22 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
             while (!File.Exists(Path.Combine(options.Root, boundary + ".release"))
                 && !(boundary == "before-execution" && File.Exists(Path.Combine(options.Root, "execute.release"))))
                 await Task.Delay(50, ct);
+        }
+    }
+
+    /// <summary>Scopes for the hosted land-notification scan: the land clock, everything else unchanged.</summary>
+    private sealed class LandClockScopes(IServiceScopeFactory inner, TimeProvider clock) : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => new Scope(inner.CreateScope(), clock);
+
+        private sealed class Scope(IServiceScope scope, TimeProvider clock) : IServiceScope, IServiceProvider, IAsyncDisposable
+        {
+            public IServiceProvider ServiceProvider => this;
+            public object? GetService(Type serviceType)
+                => serviceType == typeof(TimeProvider) ? clock : scope.ServiceProvider.GetService(serviceType);
+            public void Dispose() => scope.Dispose();
+            public ValueTask DisposeAsync() => scope is IAsyncDisposable owned ? owned.DisposeAsync() : DisposeSync();
+            private ValueTask DisposeSync() { scope.Dispose(); return ValueTask.CompletedTask; }
         }
     }
 
