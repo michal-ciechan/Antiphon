@@ -919,6 +919,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     {
         var response = await _httpClient.PostAsync($"sessions/{sessionId:D}/kill", null, ct);
         await EnsureRunnerSuccessAsync(response, ct);
+        _transcriptHold.Forget(sessionId);
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty kill response."));
     }
@@ -933,8 +934,11 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             ct);
         await ThrowForRunnerProblemAsync(response, ct);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<RunnerKillGenerationResult>(JsonOptions, ct)
+        var result = await response.Content.ReadFromJsonAsync<RunnerKillGenerationResult>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty kill-generation response.");
+        if (result.Killed)
+            _transcriptHold.Forget(sessionId);
+        return result;
     }
 
     public async Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
@@ -1030,6 +1034,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                     var parsed = ParseEvent(eventName, data.ToString());
                     if (parsed is not null)
                     {
+                        // CARD-1798: an ended session's transcript is not held until LRU eviction.
+                        if (parsed.Exited is not null)
+                            _transcriptHold.Forget(parsed.SessionId);
                         if (!readinessEmitted)
                         {
                             readinessEmitted = true;
