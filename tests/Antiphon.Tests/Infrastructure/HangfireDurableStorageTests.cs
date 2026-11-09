@@ -1185,7 +1185,7 @@ public sealed class HangfirePostgreSqlStorageTests
         {
             lock (_relays)
             {
-                foreach (var relay in _relays.Where(r => !r.Severed))
+                foreach (var relay in _relays.Where(r => !r.Severed && !r.Ended))
                 {
                     relay.Severed = true;
                     relay.Client.Close();
@@ -1238,6 +1238,7 @@ public sealed class HangfirePostgreSqlStorageTests
             // A severed relay keeps its server side open. Otherwise an ended side ends the other.
             if (relay.Severed)
                 return;
+            relay.Ended = true;
             if (clientToServer)
                 relay.Server.Close();
             else
@@ -1266,6 +1267,7 @@ public sealed class HangfirePostgreSqlStorageTests
             public System.Net.Sockets.Socket Client { get; } = client;
             public System.Net.Sockets.Socket Server { get; } = server;
             public volatile bool Severed;
+            public volatile bool Ended;
         }
     }
 
