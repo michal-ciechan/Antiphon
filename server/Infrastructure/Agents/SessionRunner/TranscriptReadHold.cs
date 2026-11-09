@@ -5,8 +5,8 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 /// <summary>
 /// CARD-1764. The last whole transcript a session's read returned, with the runner stream it
-/// belongs to. Only a gap-free body is held. Nothing expires it; the oldest session is dropped
-/// past <see cref="MaxSessions"/>.
+/// belongs to. Only a gap-free body is held. A session end forgets it; otherwise the least recently
+/// read session is dropped past <see cref="MaxSessions"/> or past the byte cap (CARD-1798).
 /// </summary>
 internal sealed class TranscriptReadHold
 {
@@ -53,13 +53,17 @@ internal sealed class TranscriptReadHold
         {
             if (_held.Remove(sessionId, out var prior))
                 _bytes -= prior.Bytes;
+            // A body past the whole cap is still answered; it is just not held.
+            if (bytes > _maxBytes)
+                return;
             _held[sessionId] = (stream, body, bytes, ++_touch);
             _bytes += bytes;
-            if (_held.Count <= MaxSessions)
-                return;
-            var oldest = _held.MinBy(entry => entry.Value.Touched);
-            _held.Remove(oldest.Key);
-            _bytes -= oldest.Value.Bytes;
+            while (_held.Count > MaxSessions || _bytes > _maxBytes)
+            {
+                var oldest = _held.MinBy(entry => entry.Value.Touched);
+                _held.Remove(oldest.Key);
+                _bytes -= oldest.Value.Bytes;
+            }
         }
     }
 
@@ -116,7 +120,8 @@ internal sealed class TranscriptReadHold
 /// CARD-1764. One transcript read through a since-cursor. A delta is applied only when it is the
 /// same stream and generation, starts at the cursor plus one, and ends at the runner's
 /// <c>LastSequence</c> with no gap. Anything else is a full read, so a missed row is never read
-/// as nothing having arrived.
+/// as nothing having arrived. A refused cursor whose answer is already the whole stream is that
+/// full read (CARD-1798).
 /// </summary>
 internal static class TranscriptSinceRead
 {
@@ -129,15 +134,22 @@ internal static class TranscriptSinceRead
         CancellationToken ct)
     {
         if (cursorEnabled
-            && hold.TryGet(sessionId, out var stream, out var held, out _)
+            && hold.TryGet(sessionId, out var stream, out var held, out var heldBytes)
             && TranscriptSince.IsCursor(held.LastSequence, stream))
         {
             var answer = await fetch(held.LastSequence, stream, ct).ConfigureAwait(false);
             var delta = map(answer);
             if (Join(sessionId, stream, held, answer.Stream, delta) is { } joined)
             {
-                hold.Remember(sessionId, stream, joined, TranscriptReadHold.Weigh(joined.Entries));
+                hold.Remember(sessionId, stream, joined, heldBytes + TranscriptReadHold.Weigh(delta.Entries));
                 return joined;
+            }
+
+            // The runner answers a cursor it cannot serve with the whole transcript of its stream.
+            if (Holdable(sessionId, answer.Stream, delta))
+            {
+                hold.Remember(sessionId, answer.Stream!, delta, TranscriptReadHold.Weigh(delta.Entries));
+                return delta;
             }
         }
 
@@ -170,6 +182,10 @@ internal static class TranscriptSinceRead
 
         if (expected != delta.LastSequence)
             return null;
+
+        // Nothing arrived: the held rows are answered as they are.
+        if (delta.Entries.Count == 0)
+            return delta with { Entries = held.Entries };
 
         var entries = new SessionRunnerTranscriptEvent[held.Entries.Count + delta.Entries.Count];
         for (var i = 0; i < held.Entries.Count; i++)
