@@ -634,15 +634,15 @@ internal sealed class HangfireWorkerLease : IDisposable
             // fresh session installed against the previous backend (CARD-1774 A-1).
             var identity = ReadBackendIdentity(fresh);
             var holder = ReadGrantedHolder(fresh);
-            var reclaim = holder is { } held && IsOwn(held);
-            if (holder is not null && !reclaim)
+            BackendIdentity? reclaim = holder is { } held && IsOwn(held) ? held : null;
+            if (holder is not null && reclaim is null)
                 throw Lost();
 
             // Recorded before the take: a link that breaks after it leaves a holder that
             // is still this process's own backend (CARD-1791 A-8).
             _pending = identity;
-            if (reclaim)
-                ReclaimOwnBackend(fresh, holder.Value);
+            if (reclaim is { } own)
+                ReclaimOwnBackend(fresh, own);
             else if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
                 throw Lost();
 
