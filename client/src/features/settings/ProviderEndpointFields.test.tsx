@@ -211,6 +211,54 @@ describe('ProviderEndpointFields on the project settings modal', () => {
     expect(put).not.toHaveBeenCalled()
   })
 
+  it('does not send a project endpoint whose base URL contains a username or password', async () => {
+    const put = vi.fn()
+    seedProject(put)
+    await openProjectEditor()
+
+    const url = 'http://operator:SENTINEL1509@proxy.test/v1'
+    const field = await screen.findByRole('textbox', { name: 'Grok base URL' })
+    fireEvent.change(field, { target: { value: url } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    const error = await screen.findByText(
+      'Grok base URL cannot include a username or password. Reference a stored key by name instead.',
+    )
+    expect(error.textContent ?? '').not.toContain('SENTINEL1509')
+    expect(error.textContent ?? '').not.toContain(url)
+    expect(put).not.toHaveBeenCalled()
+    expect(field).toHaveValue(url)
+  })
+
+  it('still shows a server refusal for a normal https URL the server rejects', async () => {
+    const put = vi.fn()
+    seedProject(put)
+    server.use(
+      http.put('/api/projects/:id', async ({ request }) => {
+        put(await request.json())
+        return HttpResponse.json(
+          {
+            errors: {
+              'providerEndpoints.Grok.baseUrl': ['A base URL cannot carry a query string or a fragment.'],
+            },
+          },
+          { status: 422 },
+        )
+      }),
+    )
+    await openProjectEditor()
+
+    const field = await screen.findByRole('textbox', { name: 'Grok base URL' })
+    fireEvent.change(field, { target: { value: 'https://proxy.example/v1?q=1' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    expect(await screen.findByText('A base URL cannot carry a query string or a fragment.')).toBeInTheDocument()
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const body = JSON.stringify(put.mock.calls[0][0])
+    expect(body).toContain('https://proxy.example/v1?q=1')
+    expect(body).not.toContain('SENTINEL1509')
+  })
+
   it('shows the projected names from the runner-types descriptor, supported kinds only', async () => {
     seedProject(vi.fn())
     await openProjectEditor()
@@ -319,4 +367,23 @@ describe('ProviderEndpointFields on the agent settings modal', () => {
     expect(submitted).toHaveProperty('providerEndpoint', null)
     expect(document.body.textContent ?? '').not.toContain(SENTINEL)
   }, 19_000)
+
+  it('does not send an agent endpoint whose base URL contains a username or password', async () => {
+    const patch = vi.fn()
+    seedAgent(patch)
+    renderWithProviders(<AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />)
+
+    const url = 'https://operator:SENTINEL1509@proxy.test/v1'
+    const field = await screen.findByRole('textbox', { name: 'Claude Code base URL' })
+    fireEvent.change(field, { target: { value: url } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    const error = await screen.findByText(
+      'Agent base URL cannot include a username or password. Reference a stored key by name instead.',
+    )
+    expect(error.textContent ?? '').not.toContain('SENTINEL1509')
+    expect(error.textContent ?? '').not.toContain(url)
+    expect(patch).not.toHaveBeenCalled()
+    expect(field).toHaveValue(url)
+  })
 })
