@@ -66,6 +66,7 @@ public sealed class Server2SidecarStandingAgentsTests
         var init = Service("server-state-init");
         init.ShouldContain("/work/.antiphon");
         init.ShouldContain("chmod 0755");
+        InitMkdirTargets(init).ShouldContain("/work/.antiphon");
         InitChmodTargets(init).ShouldContain("/work/.antiphon");
     }
 

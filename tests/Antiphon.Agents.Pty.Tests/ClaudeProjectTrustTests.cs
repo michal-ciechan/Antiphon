@@ -156,6 +156,116 @@ public class ClaudeProjectTrustTests
     }
 
     [Test]
+    public void Seed_preserves_the_config_file_mode()
+    {
+        using var cfg = new TempConfig("""{"projects":{}}""");
+        var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
+        try
+        {
+            File.SetUnixFileMode(cfg.Path, expected);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            throw new SkipTestException("Unix file mode is not available on this host");
+        }
+
+        var directory = Directory.CreateTempSubdirectory("antiphon-trust-mode").FullName;
+        try
+        {
+            var result = ClaudeProjectTrust.Seed(directory, cfg.Path);
+            result.Outcome.ShouldBe(ClaudeProjectTrustOutcome.Seeded);
+            File.GetUnixFileMode(cfg.Path).ShouldBe(expected);
+            ClaudeProjectTrust.IsTrusted(directory, cfg.Path).ShouldBeTrue();
+        }
+        finally
+        {
+            ClaudeProjectTrust.Remove(directory, cfg.Path);
+            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Test]
+    public void Seed_keeps_every_concurrent_project_key()
+    {
+        using var cfg = new TempConfig("""{"numStartups":1,"projects":{}}""");
+        const int writers = 8;
+        var directories = Enumerable.Range(0, writers)
+            .Select(_ => Directory.CreateTempSubdirectory("antiphon-trust-race").FullName)
+            .ToArray();
+        try
+        {
+            var barrier = new Barrier(writers);
+            var results = new ClaudeProjectTrustResult[writers];
+            Parallel.For(0, writers, i =>
+            {
+                barrier.SignalAndWait();
+                results[i] = ClaudeProjectTrust.Seed(directories[i], cfg.Path);
+            });
+
+            foreach (var result in results)
+            {
+                (result.Outcome is ClaudeProjectTrustOutcome.Seeded or ClaudeProjectTrustOutcome.AlreadyTrusted)
+                    .ShouldBeTrue(result.Error);
+            }
+
+            var node = JsonNode.Parse(File.ReadAllText(cfg.Path)) as JsonObject;
+            node.ShouldNotBeNull();
+            node!["numStartups"]!.GetValue<int>().ShouldBe(1);
+            foreach (var directory in directories)
+                ClaudeProjectTrust.IsTrusted(directory, cfg.Path).ShouldBeTrue();
+        }
+        finally
+        {
+            foreach (var directory in directories)
+            {
+                ClaudeProjectTrust.Remove(directory, cfg.Path);
+                try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+            }
+        }
+    }
+
+    [Test]
+    public void Seed_waits_for_the_shared_config_lock()
+    {
+        using var cfg = new TempConfig("""{"projects":{}}""");
+        var directory = Directory.CreateTempSubdirectory("antiphon-trust-lock").FullName;
+        var lockPath = cfg.Path + ".antiphon-lock";
+        FileStream? held = null;
+        Thread? worker = null;
+        try
+        {
+            held = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            var started = new ManualResetEventSlim(false);
+            var box = new ClaudeProjectTrustResult[1];
+            worker = new Thread(() =>
+            {
+                started.Set();
+                box[0] = ClaudeProjectTrust.Seed(directory, cfg.Path);
+            })
+            {
+                IsBackground = true,
+            };
+            worker.Start();
+            started.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            var finishedEarly = worker.Join(TimeSpan.FromMilliseconds(300));
+            held.Dispose();
+            held = null;
+            finishedEarly.ShouldBeFalse();
+            worker.Join(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            box[0].Outcome.ShouldBe(ClaudeProjectTrustOutcome.Seeded);
+            ClaudeProjectTrust.IsTrusted(directory, cfg.Path).ShouldBeTrue();
+        }
+        finally
+        {
+            held?.Dispose();
+            if (worker is { IsAlive: true })
+                worker.Join(TimeSpan.FromSeconds(5));
+            ClaudeProjectTrust.Remove(directory, cfg.Path);
+            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Test]
     public void Remove_deletes_only_the_key_it_is_given()
     {
         using var cfg = new TempConfig();
