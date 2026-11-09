@@ -99,3 +99,49 @@ grep its class for an `OperatingSystem.IsWindows()` skip and an rc exclusion
 row. `[SupportedOSPlatform]` alone is the signature of this miss. Linux
 `linux-test-roster.json` `native:` exclusions with no runtime gate are
 candidates for the same defect.
+
+## Follow-up (CARD-1814)
+
+The grep finds one remaining class that calls `ProtectedData`:
+`DelegateScriptCapabilityTests`. Five methods call `WriteBlob`, which already
+`Skip.Test`s off Windows, and had no Linux rc row. One method-scoped
+`platform: linux` row now excludes exactly those five.
+`missing_capability_file_does_not_advise_AllowedRoots` does not call `WriteBlob`
+and stays required. No other test class calls `ProtectedData`. Other
+`[SupportedOSPlatform("windows")]` sites are private helpers behind an
+`OperatingSystem.IsWindows()` branch, not class-level DPAPI gates.
+
+Legacy records: 92 -> 93. Witnessed count stays 95, so no witnessed identity
+moved into legacy. Digest
+`25dae45aca52b4b8de5dee6bf4abb4ebcae13b455dab8018e9d64221d10313ff` ->
+`3d964fa87df4b92ddd8fa5230061131a1debde4d82668dacee5938a3c74fc115`.
+`policyHash`
+`9cf98d229e32ca52e76d6b8946856776c7c390e3027e2eae191f5042aca3b697` ->
+`70cb2f24a7c124f1ee6962ebb6d3dcbd37a84888d3f8940bb21b5d5e097f8898`.
+`PinnedInputDigest`
+`b587b96f62c5d652f2de4db1488fabcd0d050a5b34d35aa83af2cca04d10f031` ->
+`c618d0cdeea6f0188ff9d58efee81326aa7b8ffcb6f7a6121d7300d936aa9bfb`.
+
+The only added record is:
+
+```json
+{
+  "suite": "antiphon",
+  "class": "DelegateScriptCapabilityTests",
+  "methods": [
+    "delegate_Capability_sends_header_and_does_not_assign_env_token",
+    "delegate_ANTIPHON_CAPABILITY_name_sends_header",
+    "capability_and_task_token_together_is_refused_before_request",
+    "auto_load_of_the_only_store_file_is_forbidden",
+    "error_paths_never_contain_the_token"
+  ],
+  "platform": "linux",
+  "reason": "Windows DPAPI store: these five methods call WriteBlob, which protects the bearer with ProtectedData CurrentUser and skips off Windows. They stay required on Windows. missing_capability_file_does_not_advise_AllowedRoots never reads a blob and stays required on both platforms.",
+  "owner": "CARD-1814"
+}
+```
+
+`tests/linux-test-roster.json` `CapabilityScriptTests` had `directTestMethods` 2
+and the pre-CARD-1811 source hash. No script reads those fields. The entry stays
+`exclude`; the method count is 3 and the hash matches the file. The
+`DelegateScriptCapabilityTests` row's count and hash were refreshed the same way.

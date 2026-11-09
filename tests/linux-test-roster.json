@@ -8687,7 +8687,7 @@
       "sourceFiles": [
         "tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs"
       ],
-      "directTestMethods": 6,
+      "directTestMethods": 7,
       "disposition": "exclude",
       "lane": null,
       "shard": null,
@@ -8699,7 +8699,7 @@
         "Antiphon.Tests.TestHelpers.ProcessSpawnLimit"
       ],
       "sourceSha256": {
-        "tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs": "6cdbe90892673403ce72f1d09bb72c5a6b70e04548b846c51a9d8b12bc90b21c"
+        "tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs": "99cba2db1f4bcc741ffbd755186ea40fb637a9c6f33e65c0b06050866efb2a5c"
       },
       "auditSignals": {
         "spawn": [
@@ -18087,7 +18087,7 @@
       "sourceFiles": [
         "tests/Antiphon.Tests/Scripts/CapabilityScriptTests.cs"
       ],
-      "directTestMethods": 2,
+      "directTestMethods": 3,
       "disposition": "exclude",
       "lane": null,
       "shard": null,
@@ -18098,7 +18098,7 @@
         "Antiphon.Tests.TestHelpers.ProcessSpawnLimit"
       ],
       "sourceSha256": {
-        "tests/Antiphon.Tests/Scripts/CapabilityScriptTests.cs": "e4ac7b7588497ddcff85608381d9de85f77f9857527b357e6bc38b06f0402b79"
+        "tests/Antiphon.Tests/Scripts/CapabilityScriptTests.cs": "f3284bb224e35e6f5f04a33e8e1afd44a651740b955fa962cdbfe387963e2c7b"
       },
       "auditSignals": {
         "spawn": [
