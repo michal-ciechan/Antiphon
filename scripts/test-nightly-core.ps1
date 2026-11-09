@@ -246,14 +246,15 @@ function Test-NCProjectWalkMatchesFallback {
     $test = '<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>'
     $files = @('a/One.csproj', 'a/b/Two.csproj', 'bin/Skip.csproj', 'BIN/Skip.csproj', 'obj/Skip.csproj', 'x/obj/Skip.csproj',
         'bin-debug/Skip.csproj', 'a/bin-named.csproj', 'Bin-Upper/Kept.csproj', 'objects/Kept.csproj', 'binary/Kept.csproj',
-        'hidden/Skip.csproj', 'c/NotTest.csproj', 'c/Other.txt')
+        '.hidden/Skip.csproj', 'c/NotTest.csproj', 'c/Other.txt')
     foreach ($relative in $files) {
         $path = Join-Path $tree $relative
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
         $text = $test; if ($relative -like 'c/*') { $text = '<Project />' }
         [IO.File]::WriteAllText($path, $text)
     }
-    $hidden = Get-Item -LiteralPath (Join-Path $tree 'hidden') -Force
+    # Hidden is the attribute on Windows and the leading dot on Linux, which ignores the attribute; .NET reports both.
+    $hidden = Get-Item -LiteralPath (Join-Path $tree '.hidden') -Force
     $hidden.Attributes = $hidden.Attributes -bor [IO.FileAttributes]::Hidden
     $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $tree) }
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('Kept') -and -not $r.Fallback.Contains('Skip')) 'projectWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
