@@ -262,6 +262,14 @@ and `C1281_B1Authorization`, `C1281_B1ReceiptImport`, `C1281_B1CorrectionTransac
 `test-rc-platform.ps1 -Case C1415_SkipExclusions` checks the shipped rows and that the pack cases
 are launched on both platforms.
 
+CARD-1811 adds one Linux-only, method-scoped `antiphon` row for
+`CapabilityScriptTests.issue_does_not_print_the_token_and_dpapi_round_trips`: it reads a
+Windows DPAPI (`ProtectedData`, CurrentUser) blob and skips off Windows. It stays required on
+Windows; its sibling `error_paths_never_contain_the_token` stays required on both platforms.
+`C1811_Dpapi_case_is_windows_required_and_linux_excluded` pins the row and the Linux skip. A
+class-level `[SupportedOSPlatform("windows")]` is a CA1416 analyzer contract only, never a
+runtime gate.
+
 Rows whose reason starts with `Linux-only by construction:` are Windows-only exclusions for
 tests whose skip is a POSIX mechanism (FIFOs, statx, `/proc`, setsid, unshare, Unix modes, or
 POSIX sh). Linux keeps those cases required. Skips the qualification inventory treats as

@@ -21,6 +21,8 @@ public sealed class CapabilityScriptTests
     [Test]
     public async Task issue_does_not_print_the_token_and_dpapi_round_trips()
     {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1811: Windows DPAPI (ProtectedData CurrentUser) round trip; required on Windows, excluded from the Linux rc profile.");
         var canary = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         using var store = new TempDir("cap-store");
         using var root = new TempDir("cap-root");

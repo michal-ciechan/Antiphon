@@ -44,7 +44,8 @@ public static class NativeLinuxPolicyWitness
     public const string AttributeSha256 = "31ca5740f4127fe7b3b0fc18639e75262cdb3ae49c3bc545e62a130b99d68ac4";
     // Includes CARD-1614 tracked-linger and the separately commissioned CARD-1545 parity / CARD-1605 load obligations.
     // Exact two-record addition: docs/superpowers/plans/2026-11-05-rc-coverage-admission-repair.md.
-    public const string LegacyExclusionDigest = "be806b71aa6cdf11edc0961cb1babd782034c0556e5f2e985dbbe8f2f7d7592f";
+    // CARD-1811 one-record addition (Linux CapabilityScriptTests DPAPI row): docs/investigations/2026-11-09-why-missed-capability-script-dpapi-linux.md.
+    public const string LegacyExclusionDigest = "25dae45aca52b4b8de5dee6bf4abb4ebcae13b455dab8018e9d64221d10313ff";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";
