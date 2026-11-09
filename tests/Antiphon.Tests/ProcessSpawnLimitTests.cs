@@ -3,6 +3,7 @@ using System.Reflection.Emit;
 using Antiphon.Tests.AgentTui;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Checkpoints;
 using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -274,6 +275,183 @@ public class ProcessSpawnLimitTests
             string.Join(Environment.NewLine, misses));
     }
 
+    // The seven classes the old roster named. The source walk must still find each of them, and every
+    // class it finds — these seven and any later one — keeps the marker and the strict limiter.
+    private static readonly string[] SharedCheckoutFloor =
+    [
+        "Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests",
+        "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests",
+        "Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests",
+        "Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests",
+        "Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests",
+        "Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests",
+        "Antiphon.Tests.Checkpoints.RerunFilterHostTests",
+    ];
+
+    [Test]
+    public void C1810_shared_checkout_source_keeps_marker_and_strict_limiter()
+    {
+        var directory = Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Tests", "Checkpoints");
+        var starters = SharedCheckoutSourceCensus.ClassesStartingInSharedCheckout(directory);
+        foreach (var name in SharedCheckoutFloor)
+            starters.ShouldContain(name);
+        var assembly = typeof(ProcessSpawnLimitTests).Assembly;
+        var misses = new List<string>();
+        foreach (var name in starters)
+        {
+            var type = assembly.GetType(name);
+            if (type is null
+                || !IsSharedCheckoutChild(type)
+                || !HasSpawnLimiter(type, typeof(ProcessSpawnLimit))
+                || HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)))
+            {
+                misses.Add(name + " assigns CheckpointFixtures.RepoRoot to a ProcessStartInfo working directory"
+                    + " and must carry [SharedCheckoutChild] and [ParallelLimiter<ProcessSpawnLimit>]");
+            }
+        }
+
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1810_process_start_working_directory_is_the_shared_checkout_use()
+    {
+        const string source = """
+            namespace Antiphon.Tests.Checkpoints;
+            public sealed class BareSharedTests
+            {
+                private static readonly string Root = CheckpointFixtures.RepoRoot;
+                private static void Run()
+                {
+                    var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+                    var qualified = new System.Diagnostics.ProcessStartInfo("pwsh") { WorkingDirectory = Root };
+                    _ = (psi, qualified);
+                }
+            }
+            """;
+        SharedCheckoutSourceCensus.ClassesIn(source).ShouldBe(["Antiphon.Tests.Checkpoints.BareSharedTests"]);
+    }
+
+    [Test]
+    public void C1810_repo_root_read_or_other_working_directory_is_not_that_use()
+    {
+        const string source = """
+            namespace Antiphon.Tests.Checkpoints;
+            public sealed class ReadsRootTests
+            {
+                private static void Run()
+                {
+                    var path = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
+                    var request = new SchedulerRequest { WorkingDirectory = CheckpointFixtures.RepoRoot };
+                    var root = Path.GetTempPath();
+                    var other = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
+                    var text = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot.ToString() };
+                    _ = (path, request, other, text);
+                }
+            }
+            """;
+        SharedCheckoutSourceCensus.ClassesIn(source).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void C1810_target_typed_and_nested_process_start_is_the_shared_checkout_use()
+    {
+        const string source = """
+            namespace Antiphon.Tests.Checkpoints
+            {
+                public sealed class TargetTypedTests
+                {
+                    private static ProcessStartInfo Arrow() => new("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+                    private static ProcessStartInfo Block()
+                    {
+                        return new("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+                    }
+                }
+                public sealed class OuterTests
+                {
+                    public sealed class InnerTests
+                    {
+                        private static void Run()
+                        {
+                            var alias = CheckpointFixtures.RepoRoot;
+                            var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = alias };
+                            _ = psi;
+                        }
+                    }
+                }
+            }
+            namespace Antiphon.Tests.Checkpoints.Sub
+            {
+                public sealed class HostTests
+                {
+                    private static void Run()
+                    {
+                        ProcessStartInfo psi = new("dotnet") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+                        _ = psi;
+                    }
+                }
+            }
+            """;
+        SharedCheckoutSourceCensus.ClassesIn(source).ShouldBe(
+        [
+            "Antiphon.Tests.Checkpoints.OuterTests+InnerTests",
+            "Antiphon.Tests.Checkpoints.Sub.HostTests",
+            "Antiphon.Tests.Checkpoints.TargetTypedTests",
+        ]);
+    }
+
+    [Test]
+    public void C1810_nested_unmarked_strict_class_is_named()
+    {
+        var type = FakeNestedClass(CheckpointsNamespace, "OuterTests", "InnerStrictTests", typeof(ProcessSpawnLimit), marked: false);
+        type.IsNested.ShouldBeTrue();
+        type.Namespace.ShouldBe(CheckpointsNamespace);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal) && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+        misses.Count.ShouldBe(1, string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1810_nested_marked_strict_class_passes()
+    {
+        var type = FakeNestedClass(CheckpointsNamespace, "OuterTests", "InnerMarkedTests", typeof(ProcessSpawnLimit), marked: true);
+        var misses = CheckpointLimiterMisses([type], out var limited);
+        limited.ShouldBe(1);
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1810_sub_namespace_unmarked_strict_class_is_named()
+    {
+        var type = FakeClass(CheckpointsNamespace + ".Sub", "HostStrictTests", typeof(ProcessSpawnLimit), marked: false);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal) && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+        misses.Count.ShouldBe(1, string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1810_sub_namespace_marked_strict_class_passes()
+    {
+        var type = FakeClass(CheckpointsNamespace + ".Sub", "HostMarkedTests", typeof(ProcessSpawnLimit), marked: true);
+        var misses = CheckpointLimiterMisses([type], out var limited);
+        limited.ShouldBe(1);
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1810_namespace_sharing_only_the_checkpoints_prefix_is_outside()
+    {
+        var type = FakeClass(CheckpointsNamespace + "Extra", "MarkedStrictTests", typeof(ProcessSpawnLimit), marked: true);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal) && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+    }
+
     private const string CheckpointsNamespace = "Antiphon.Tests.Checkpoints";
 
     /// <summary>A public class in its own collectible in-memory assembly, carrying only the given attributes.</summary>
@@ -283,6 +461,30 @@ public class ProcessSpawnLimitTests
             .DefineDynamicAssembly(new AssemblyName("C1807CensusFake" + Guid.NewGuid().ToString("N")), AssemblyBuilderAccess.RunAndCollect)
             .DefineDynamicModule("C1807CensusFake");
         var builder = module.DefineType(ns + "." + name, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class);
+        ApplyCensusAttributes(builder, limit, marked);
+        var type = builder.CreateType();
+        HasSpawnLimiter(type, typeof(ProcessSpawnLimit)).ShouldBe(limit == typeof(ProcessSpawnLimit));
+        HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)).ShouldBe(limit == typeof(CheckpointToolSpawnLimit));
+        return type;
+    }
+
+    private static Type FakeNestedClass(string outerNamespace, string outerName, string innerName, Type? limit, bool marked)
+    {
+        var module = AssemblyBuilder
+            .DefineDynamicAssembly(new AssemblyName("C1810CensusFake" + Guid.NewGuid().ToString("N")), AssemblyBuilderAccess.RunAndCollect)
+            .DefineDynamicModule("C1810CensusFake");
+        var outer = module.DefineType(outerNamespace + "." + outerName, TypeAttributes.Public | TypeAttributes.Class);
+        var inner = outer.DefineNestedType(innerName, TypeAttributes.NestedPublic | TypeAttributes.Sealed | TypeAttributes.Class);
+        ApplyCensusAttributes(inner, limit, marked);
+        outer.CreateType();
+        var type = inner.CreateType();
+        HasSpawnLimiter(type, typeof(ProcessSpawnLimit)).ShouldBe(limit == typeof(ProcessSpawnLimit));
+        HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)).ShouldBe(limit == typeof(CheckpointToolSpawnLimit));
+        return type;
+    }
+
+    private static void ApplyCensusAttributes(TypeBuilder builder, Type? limit, bool marked)
+    {
         if (limit is not null)
         {
             var limiter = typeof(ParallelLimiterAttribute<>).MakeGenericType(limit).GetConstructor(Type.EmptyTypes)
@@ -292,10 +494,6 @@ public class ProcessSpawnLimitTests
 
         if (marked)
             builder.SetCustomAttribute(new CustomAttributeBuilder(typeof(SharedCheckoutChildAttribute).GetConstructor(Type.EmptyTypes)!, []));
-        var type = builder.CreateType();
-        HasSpawnLimiter(type, typeof(ProcessSpawnLimit)).ShouldBe(limit == typeof(ProcessSpawnLimit));
-        HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)).ShouldBe(limit == typeof(CheckpointToolSpawnLimit));
-        return type;
     }
 
     private static bool IsSharedCheckoutChild(Type type) =>
