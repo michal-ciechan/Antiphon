@@ -1682,7 +1682,9 @@ public sealed class LandNonCodeSkipTests
         var real = files[RealTestProjectPath];
         real.ShouldContain(helper + htf);
         real.ShouldContain(skipClose);
-        real.ShouldNotContain("SetTargetFramework");
+        // The comment may name the metadata. The attribute and the child element must be absent.
+        real.ShouldNotContain("SetTargetFramework=");
+        real.ShouldNotContain("<SetTargetFramework");
         real.ShouldContain(inTarget);
         if (shape == "tree")
         {
