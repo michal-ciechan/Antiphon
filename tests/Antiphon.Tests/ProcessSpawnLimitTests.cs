@@ -226,12 +226,112 @@ public class ProcessSpawnLimitTests
     [Test]
     public void Checkpoint_tool_classes_carry_their_own_limiter()
     {
+        var misses = CheckpointLimiterMisses(LoadableTypes(typeof(ProcessSpawnLimitTests).Assembly), out var limited);
+        limited.ShouldBeGreaterThan(0, "the Checkpoints namespace has process-limited classes");
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    // CARD-1807: the census reads only attributes, so a negative fixture is a type emitted in memory with
+    // the attributes a new Checkpoints class would carry. None of these types is in the test assembly.
+    [Test]
+    public void C1807_strict_checkpoint_class_without_the_marker_is_named_with_the_fix()
+    {
+        var type = FakeClass(CheckpointsNamespace, "UnmarkedStrictTests", typeof(ProcessSpawnLimit), marked: false);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal) && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+        misses.Count.ShouldBe(1, string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1807_new_marked_strict_class_passes_without_a_roster_entry()
+    {
+        var type = FakeClass(CheckpointsNamespace, "MarkedStrictTests", typeof(ProcessSpawnLimit), marked: true);
+        var misses = CheckpointLimiterMisses([type], out var limited);
+        limited.ShouldBe(1);
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1807_new_tool_class_passes_without_a_roster_entry()
+    {
+        var type = FakeClass(CheckpointsNamespace, "ToolLaneTests", typeof(CheckpointToolSpawnLimit), marked: false);
+        var misses = CheckpointLimiterMisses([type], out var limited);
+        limited.ShouldBe(1);
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1807_marker_on_a_tool_class_is_named()
+    {
+        var type = FakeClass(CheckpointsNamespace, "MarkedToolTests", typeof(CheckpointToolSpawnLimit), marked: true);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal)
+                && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal)
+                && line.Contains("must not carry [ParallelLimiter<CheckpointToolSpawnLimit>]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1807_marker_without_the_strict_limiter_is_named()
+    {
+        var type = FakeClass(CheckpointsNamespace, "MarkedUnlimitedTests", limit: null, marked: true);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal)
+                && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal)
+                && line.Contains("must keep [ParallelLimiter<ProcessSpawnLimit>]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+        misses.Count.ShouldBe(1, string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1807_marker_outside_the_checkpoints_namespace_is_named()
+    {
+        var type = FakeClass("Antiphon.Tests.Application", "MarkedElsewhereTests", typeof(ProcessSpawnLimit), marked: true);
+        var misses = CheckpointLimiterMisses([type], out _);
+        misses.ShouldContain(
+            line => line.Contains(type.FullName!, StringComparison.Ordinal) && line.Contains("[SharedCheckoutChild]", StringComparison.Ordinal),
+            string.Join(Environment.NewLine, misses));
+    }
+
+    private const string CheckpointsNamespace = "Antiphon.Tests.Checkpoints";
+
+    /// <summary>A public class in its own collectible in-memory assembly, carrying only the given attributes.</summary>
+    private static Type FakeClass(string ns, string name, Type? limit, bool marked)
+    {
+        var module = AssemblyBuilder
+            .DefineDynamicAssembly(new AssemblyName("C1807CensusFake" + Guid.NewGuid().ToString("N")), AssemblyBuilderAccess.RunAndCollect)
+            .DefineDynamicModule("C1807CensusFake");
+        var builder = module.DefineType(ns + "." + name, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class);
+        if (limit is not null)
+        {
+            var limiter = typeof(ParallelLimiterAttribute<>).MakeGenericType(limit).GetConstructor(Type.EmptyTypes)
+                .ShouldNotBeNull("ParallelLimiter<T> has a parameterless constructor");
+            builder.SetCustomAttribute(new CustomAttributeBuilder(limiter, []));
+        }
+
+        if (marked)
+            builder.SetCustomAttribute(new CustomAttributeBuilder(typeof(SharedCheckoutChildAttribute).GetConstructor(Type.EmptyTypes)!, []));
+        var type = builder.CreateType();
+        HasSpawnLimiter(type, typeof(ProcessSpawnLimit)).ShouldBe(limit == typeof(ProcessSpawnLimit));
+        HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)).ShouldBe(limit == typeof(CheckpointToolSpawnLimit));
+        return type;
+    }
+
+    /// <summary>The Checkpoints limiter census over <paramref name="types"/>; one line per miss.</summary>
+    private static List<string> CheckpointLimiterMisses(IEnumerable<Type> types, out int limited)
+    {
         const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
             | BindingFlags.Static | BindingFlags.DeclaredOnly;
         var misses = new List<string>();
-        var limited = 0;
-        foreach (var type in CheckpointCandidateTypes())
+        limited = 0;
+        foreach (var type in types)
         {
+            if (type.Namespace != CheckpointsNamespace || type.IsNested)
+                continue;
             var shared = SharedCheckoutCheckpointClasses.Contains(type);
             var strict = HasSpawnLimiter(type, typeof(ProcessSpawnLimit));
             var tool = HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit));
@@ -273,8 +373,7 @@ public class ProcessSpawnLimitTests
             }
         }
 
-        limited.ShouldBeGreaterThan(0, "the Checkpoints namespace has process-limited classes");
-        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+        return misses;
     }
 
     [Test]
