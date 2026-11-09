@@ -29,14 +29,14 @@ internal static class PwshPrivateCache
 
     // Tests replace the platform start read. Null uses /proc starttime on Linux and
     // Process.StartTime on Windows.
-    internal static Func<int, StartIdentity>? StartIdentitySource;
+    internal static Func<int, StartIdentity>? StartIdentitySource = null;
 
     // Tests supply /proc/<pid>/stat text. FileNotFoundException stands for a missing stat
     // (hidepid or no /proc). Null reads the real file.
-    internal static Func<int, string>? ProcStatReader;
+    internal static Func<int, string>? ProcStatReader = null;
 
     // Tests report that a pid whose stat is missing may still be alive. Null uses kill(pid, 0).
-    internal static Func<int, bool>? LinuxProcessPresence;
+    internal static Func<int, bool>? LinuxProcessPresence = null;
 
     internal readonly record struct StartIdentity(StartReadKind Kind, long? KernelTicks, long? WallTicks)
     {
