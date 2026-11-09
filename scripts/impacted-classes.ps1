@@ -4,7 +4,8 @@
 # CARD-1801. -MergeSubset with -Range, -Path or -FileList also emits every row those paths select
 # (the migrations row brings the downgrade selector), each filters entry with its CHECKPOINT row id.
 # A kind with "windows": "required" also lands in windowsFilters ("windowsFilter=" lines): the
-# native Windows lane owes that filter, and a Linux row of it is not that lane. An added block with
+# native Windows lane owes that filter, and the Linux row of it still runs. A kind with
+# "windows": "only" lands in windowsFilters only and is omitted from the Linux filters. An added block with
 # "removed": true also matches a removed line that carries one of its literals.
 # Under -MergeSubset a project row naming more than four land classes is split into <id>-land-<n> rows
 # (CARD-1801 D-1); the non-merge output keeps each project selection in one row (R2-D-1).
@@ -339,13 +340,13 @@ foreach ($node in $kindNodes) {
     $methods = New-Object System.Collections.Generic.List[string]
     if ($null -ne $node.PSObject.Properties['methods']) { $methods = As-List $node.methods }
 
-    $windowsLane = $false
+    $windowsLane = ''
     if ($null -ne $node.PSObject.Properties['windows']) {
         $laneValue = $node.windows
-        if (-not ($laneValue -is [string]) -or $laneValue -cne 'required') {
-            Refuse-Table $where "windows must be 'required'"
+        if (-not ($laneValue -is [string]) -or (($laneValue -cne 'required') -and ($laneValue -cne 'only'))) {
+            Refuse-Table $where "windows must be 'required' or 'only'"
         }
-        $windowsLane = $true
+        $windowsLane = [string]$laneValue
     }
 
     $addedGlob = ''
@@ -847,7 +848,7 @@ function Convert-Rows($Rows, [bool]$WithId) {
     return ,$out
 }
 
-# The Windows lane: the same selection restricted to kinds whose notes require a native Windows run.
+# The Windows lane: required and only both land here. only is omitted from the Linux selection.
 $windowsWhole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $windowsMethods = @{}
 $kindOut = New-StringList
@@ -905,6 +906,7 @@ if ($MergeSubset) {
     $migrationsHit = $false
     foreach ($kind in $matched) {
         if ($kind.Id -eq 'migrations') { $migrationsHit = $true }
+        if ($kind.Windows -eq 'only') { continue }
         Add-KindSelection $kind $wholeSubset $subsetMethods $null
     }
     $subsetRows = New-FilterRows $wholeSubset $subsetMethods 'CP-merge-subset-' $fixedNames
@@ -943,7 +945,10 @@ if ($MergeSubset) {
 $whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $methodsByClass = @{}
 $fileSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-foreach ($kind in $matched) { Add-KindSelection $kind $whole $methodsByClass $fileSet }
+foreach ($kind in $matched) {
+    if ($kind.Windows -eq 'only') { continue }
+    Add-KindSelection $kind $whole $methodsByClass $fileSet
+}
 
 $rows = New-FilterRows $whole $methodsByClass '' $null
 $windowsRows = New-FilterRows $windowsWhole $windowsMethods '' $null
