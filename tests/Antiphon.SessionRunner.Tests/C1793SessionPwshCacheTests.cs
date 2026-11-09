@@ -50,7 +50,7 @@ public class C1793SessionPwshCacheTests
             {
                 var directory = seen[0];
                 Path.GetDirectoryName(Path.GetFullPath(directory)).ShouldBe(
-                    Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar));
+                    Antiphon.Hosting.PwshPrivateCache.ConfiguredCacheParent());
                 Path.GetFileName(directory).ShouldStartWith("antiphon-pwsh-cache-session-" + id.ToString("N") + "-");
                 directory.ShouldNotBe(runnerCache);
                 var owner = seen[1].Split('@');
@@ -95,7 +95,7 @@ public class C1793SessionPwshCacheTests
             seen[0].ShouldBe(named);
             await WaitExitedAsync(runtime, id);
             Directory.Exists(named).ShouldBeTrue(named);
-            Directory.GetDirectories(Path.GetTempPath(), "antiphon-pwsh-cache-session-" + id.ToString("N") + "-*")
+            Directory.GetDirectories(Antiphon.Hosting.PwshPrivateCache.ConfiguredCacheParent(), "antiphon-pwsh-cache-session-" + id.ToString("N") + "-*")
                 .ShouldBeEmpty();
         }
         finally

@@ -31,6 +31,13 @@ internal static class PwshPrivateCache
     // Process.StartTime on Windows.
     internal static Func<int, StartIdentity>? StartIdentitySource;
 
+    // Tests supply /proc/<pid>/stat text. FileNotFoundException stands for a missing stat
+    // (hidepid or no /proc). Null reads the real file.
+    internal static Func<int, string>? ProcStatReader;
+
+    // Tests report that a pid whose stat is missing may still be alive. Null uses kill(pid, 0).
+    internal static Func<int, bool>? LinuxProcessPresence;
+
     internal readonly record struct StartIdentity(StartReadKind Kind, long? KernelTicks, long? WallTicks)
     {
         internal static StartIdentity Absent { get; } = new(StartReadKind.Absent, null, null);
@@ -211,6 +218,16 @@ internal static class PwshPrivateCache
     // the sweep and creates under the process temp root.
     internal static string CacheRoot() => ChooseRoot().Path;
 
+    // Where a witness looks. The configured override when it is set, otherwise the process
+    // temp root. Independent of ChooseRoot, so a lookup that hard-codes the temp parent
+    // fails while the override names a real directory.
+    internal static string ConfiguredCacheParent()
+    {
+        var configured = Environment.GetEnvironmentVariable(RootVariable);
+        var parent = string.IsNullOrWhiteSpace(configured) ? Path.GetTempPath() : configured;
+        return Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
     private readonly record struct RootChoice(string Path, bool Sweep);
 
     private static RootChoice ChooseRoot()
@@ -379,13 +396,19 @@ internal static class PwshPrivateCache
     {
         try
         {
-            var stat = File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat");
+            var stat = ProcStatReader is { } read
+                ? read(pid)
+                : File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat");
             return TryParseProcStartTicks(stat, out var ticks)
                 ? StartIdentity.Kernel(ticks)
                 : StartIdentity.Unknown;
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
+            // A missing stat is still treated as dead. LinuxProcessPresence is observed so a
+            // witness can show that a live pid does not keep the cache yet.
+            if (LinuxProcessPresence is { } presence)
+                _ = presence(pid);
             return StartIdentity.Absent;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
