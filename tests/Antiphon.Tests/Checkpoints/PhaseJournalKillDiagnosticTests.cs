@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 public sealed class PhaseJournalKillDiagnosticTests : CheckpointTestBase
 {
     public const string Diagnostic =

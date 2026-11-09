@@ -81,18 +81,8 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests),
-        // CARD-1747: checkpoint-tool classes name CheckpointToolSpawnLimit.
-        // These seven start a child with the shared checkout as its working directory
-        // (RepeatHost output, run-checkpoint.ps1, or dotnet against RepoRoot). They stay on
-        // the strict lane so two of them cannot write one checkout.
-        typeof(Antiphon.Tests.Checkpoints.RerunFilterHostTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests),
-        // CARD-1748: its two script cases run test-run-checkpoint.ps1 under pwsh from RepoRoot.
-        typeof(Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests),
+        // CARD-1807: no Checkpoints class is listed here. A Checkpoints class joins the strict lane by
+        // carrying [SharedCheckoutChild], and the census below derives that set from the attributes.
         // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
@@ -179,20 +169,6 @@ public class ProcessSpawnLimitTests
         }
     }
 
-    // Checkpoint-tool classes that start a child in the shared checkout. The census below
-    // keeps these on ProcessSpawnLimit and requires every other limited Checkpoints type
-    // to name CheckpointToolSpawnLimit.
-    private static readonly Type[] SharedCheckoutCheckpointClasses =
-    [
-        typeof(Antiphon.Tests.Checkpoints.RerunFilterHostTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests),
-        typeof(Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests),
-        typeof(Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests),
-    ];
-
     [Test]
     [Arguments(1)]
     [Arguments(2)]
@@ -228,6 +204,7 @@ public class ProcessSpawnLimitTests
     {
         var misses = CheckpointLimiterMisses(LoadableTypes(typeof(ProcessSpawnLimitTests).Assembly), out var limited);
         limited.ShouldBeGreaterThan(0, "the Checkpoints namespace has process-limited classes");
+        SharedCheckoutCheckpointClasses().ShouldNotBeEmpty("Checkpoints classes that start a child in the shared checkout carry [SharedCheckoutChild]");
         misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
     }
 
@@ -321,7 +298,18 @@ public class ProcessSpawnLimitTests
         return type;
     }
 
-    /// <summary>The Checkpoints limiter census over <paramref name="types"/>; one line per miss.</summary>
+    private static bool IsSharedCheckoutChild(Type type) =>
+        Attribute.GetCustomAttribute(type, typeof(SharedCheckoutChildAttribute), inherit: false) is not null;
+
+    /// <summary>The Checkpoints classes the census keeps on the strict lane: those carrying [SharedCheckoutChild].</summary>
+    private static List<Type> SharedCheckoutCheckpointClasses() =>
+        CheckpointCandidateTypes().Where(IsSharedCheckoutChild).ToList();
+
+    /// <summary>
+    /// The Checkpoints limiter census over <paramref name="types"/>, from attributes alone; one line per miss.
+    /// A limited Checkpoints class carries CheckpointToolSpawnLimit unless it carries [SharedCheckoutChild],
+    /// which requires ProcessSpawnLimit. The marker is refused outside the Checkpoints namespace.
+    /// </summary>
     private static List<string> CheckpointLimiterMisses(IEnumerable<Type> types, out int limited)
     {
         const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
@@ -330,28 +318,32 @@ public class ProcessSpawnLimitTests
         limited = 0;
         foreach (var type in types)
         {
-            if (type.Namespace != CheckpointsNamespace || type.IsNested)
+            var shared = IsSharedCheckoutChild(type);
+            if (type.IsNested || type.Namespace != CheckpointsNamespace)
+            {
+                if (shared)
+                    misses.Add(type.FullName + " carries [SharedCheckoutChild] outside a top-level " + CheckpointsNamespace
+                        + " class; remove it, the marker only selects the strict lane for such a class");
                 continue;
-            var shared = SharedCheckoutCheckpointClasses.Contains(type);
+            }
+
             var strict = HasSpawnLimiter(type, typeof(ProcessSpawnLimit));
             var tool = HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit));
             if (strict || tool)
-            {
                 limited++;
-                if (shared)
-                {
-                    if (!strict)
-                        misses.Add(type.FullName + " shares the checkout and must keep [ParallelLimiter<ProcessSpawnLimit>]");
-                    if (tool)
-                        misses.Add(type.FullName + " shares the checkout and must not carry [ParallelLimiter<CheckpointToolSpawnLimit>]");
-                }
-                else
-                {
-                    if (!tool)
-                        misses.Add(type.FullName + " must carry [ParallelLimiter<CheckpointToolSpawnLimit>]");
-                    if (strict)
-                        misses.Add(type.FullName + " must not keep [ParallelLimiter<ProcessSpawnLimit>]");
-                }
+            if (shared)
+            {
+                if (!strict)
+                    misses.Add(type.FullName + " carries [SharedCheckoutChild] and must keep [ParallelLimiter<ProcessSpawnLimit>]");
+                if (tool)
+                    misses.Add(type.FullName + " carries [SharedCheckoutChild] and must not carry [ParallelLimiter<CheckpointToolSpawnLimit>]"
+                        + "; remove the marker if its children run in a fixture-owned root");
+            }
+            else if (strict)
+            {
+                misses.Add(type.FullName + " carries [ParallelLimiter<ProcessSpawnLimit>] without [SharedCheckoutChild]: add [SharedCheckoutChild]"
+                    + " if it starts a child with the shared checkout as its working directory, else use"
+                    + " [ParallelLimiter<CheckpointToolSpawnLimit>] instead");
             }
 
             foreach (var method in type.GetMethods(declared))
@@ -364,7 +356,7 @@ public class ProcessSpawnLimitTests
                 if (shared)
                 {
                     if (!methodStrict || methodTool)
-                        misses.Add(type.FullName + "." + method.Name + " shares the checkout and must keep the strict limiter");
+                        misses.Add(type.FullName + "." + method.Name + " is in a [SharedCheckoutChild] class and must keep only [ParallelLimiter<ProcessSpawnLimit>]");
                 }
                 else if (!methodTool || methodStrict)
                 {
@@ -379,7 +371,7 @@ public class ProcessSpawnLimitTests
     [Test]
     public void Process_spawn_guard_still_covers_classes_outside_the_checkpoint_tool_lane()
     {
-        foreach (var type in StrictClasses)
+        foreach (var type in StrictClasses.Concat(SharedCheckoutCheckpointClasses()))
         {
             HasSpawnLimiter(type, typeof(ProcessSpawnLimit))
                 .ShouldBeTrue($"{type.Name} must carry [ParallelLimiter<ProcessSpawnLimit>]");
@@ -387,15 +379,14 @@ public class ProcessSpawnLimitTests
                 .ShouldBeFalse($"{type.Name} is outside the checkpoint-tool lane");
         }
 
-        SharedCheckoutCheckpointClasses.Except(StrictClasses).ShouldBeEmpty(
-            "every shared-checkout checkpoint class stays on the strict roster");
+        StrictClasses.Where(type => type.Namespace == CheckpointsNamespace).Select(type => type.Name).ShouldBeEmpty(
+            "a Checkpoints class joins the strict lane through [SharedCheckoutChild], not a roster entry");
     }
 
     [Test]
     public void No_class_carries_both_limiters()
     {
         StrictClasses.Intersect(GitOnlyClasses).ShouldBeEmpty("a class belongs to one roster");
-        StrictClasses.Intersect(SharedCheckoutCheckpointClasses).Count().ShouldBe(SharedCheckoutCheckpointClasses.Length);
         var seen = new HashSet<Type>();
         var both = new List<string>();
         foreach (var type in StrictClasses.Concat(GitOnlyClasses).Concat(CheckpointCandidateTypes()))

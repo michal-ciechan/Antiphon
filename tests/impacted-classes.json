@@ -229,6 +229,24 @@
       "classes": [
         "TestSelectionTests"
       ]
+    },
+    {
+      "id": "spawn-limit-rosters",
+      "globs": [
+        "tests/Antiphon.Tests/TestHelpers/*SpawnLimit.cs",
+        "tests/Antiphon.Tests/TestHelpers/SharedCheckoutChildAttribute.cs",
+        "tests/Antiphon.Tests/Checkpoints/**",
+        "Directory.Build.targets"
+      ],
+      "added": {
+        "glob": "tests/Antiphon.Tests/**",
+        "literals": [
+          "ParallelLimiter<"
+        ]
+      },
+      "classes": [
+        "ProcessSpawnLimitTests"
+      ]
     }
   ]
 }

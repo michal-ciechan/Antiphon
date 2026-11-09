@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 public sealed class CheckpointStatePublicationTests : CheckpointTestBase
 {
     [Test]

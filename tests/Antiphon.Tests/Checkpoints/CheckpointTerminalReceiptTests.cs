@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Slow")]
 [NativeLinuxOnly("native signal and shell process witnesses require Linux")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 public sealed class CheckpointTerminalReceiptTests : CheckpointTestBase
 {
     // B-1: a real waiter must not return during the gap between executor death

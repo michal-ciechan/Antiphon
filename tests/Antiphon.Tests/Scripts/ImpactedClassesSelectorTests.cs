@@ -161,8 +161,9 @@ public sealed partial class ImpactedClassesSelectorTests
         var root = Root();
         var selected = await SelectAsync(root, BatchSpan);
         // CARD-1801: the span also edits HostStats*.cs, the C1514 host-load fixture and the policy file.
+        // CARD-1807: and it adds ParallelLimiter< lines under tests/Antiphon.Tests.
         Names(selected, "kinds").ShouldBe(
-            ["contracts", "host-stats", "linux-only-policy", "migrations", "task-load-window", "timing-labels"],
+            ["contracts", "host-stats", "linux-only-policy", "migrations", "spawn-limit-rosters", "task-load-window", "timing-labels"],
             ignoreOrder: false);
         var files = Names(selected, "files").ToHashSet(StringComparer.Ordinal);
         var repair = Git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", RepairFilesCommit);
@@ -202,10 +203,11 @@ public sealed partial class ImpactedClassesSelectorTests
     {
         var root = Root();
         // CARD-1801: dcb973d8 also edits the policy file and c6eee1a0 the C1514 host-load fixture.
+        // CARD-1807: c6eee1a0 adds a ParallelLimiter< class and ceda26b3 edits tests/Antiphon.Tests/Checkpoints.
         await AssertKinds(
             root, "dcb973d896f1d12776a796b71466977b22737b79", ["linux-only-policy", "timing-labels"], "TestTimingOperationLabelTests");
         await AssertKinds(
-            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
+            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
@@ -223,7 +225,7 @@ public sealed partial class ImpactedClassesSelectorTests
         await AssertKinds(
             root,
             "ceda26b31ef344bc07efd590fa9bdb59bae0f23f",
-            ["checkpoint-tool"],
+            ["checkpoint-tool", "spawn-limit-rosters"],
             "CheckpointReceiptSafetyTests",
             "CheckpointTerminalReceiptTests",
             "HostCleanupCheckpointReceiptTests");
@@ -339,6 +341,7 @@ public sealed partial class ImpactedClassesSelectorTests
         ("tests/Antiphon.Tests/Application/C0824SlotTransportWorld.cs", "workspace-slot-role-gate", "C0824WorkspaceSlotRoleGateTests", true),
         ("tests/Antiphon.Tests/Application/LandGraphLandRefreshTests.cs", "land-graph-land-refresh", "LandGraphLandRefreshTests", true),
         ("scripts/lib/nightly-core.ps1", "test-selection", "TestSelectionTests", false),
+        ("tests/Antiphon.Tests/Checkpoints/PhaseJournalKillDiagnosticTests.cs", "spawn-limit-rosters", "ProcessSpawnLimitTests", false),
     ];
 
     private static readonly string[] LandNotificationClasses =
