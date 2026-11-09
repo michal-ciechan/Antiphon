@@ -1,6 +1,7 @@
 # CARD-1584 source-derived expanded roster. The e5a867361937752b959c1451824ab9716fac83c0
 # census recorded 177 identities. C467_RetainedEvidenceCompletesCleanup is the later case (178).
 # rc-0b05506b adds three land-verifier progress probes (186); CARD-1703 adds two verifier wiring/tie probes (188).
+# CARD-1795/1797 add three host-path cases and 906533773 adds the land-clock probe (192).
 # Planner-only identities, not captured TUnit UIDs or native execution evidence.
 # class|original method|Arguments contents (empty for a non-data test)
 Antiphon.E2E.AgentE2ETests|Agents_page_creates_agent_and_assigns_card_to_queue|
@@ -109,6 +110,9 @@ Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests|C540_ProjectionCrashRecoversOri
 Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests|C540_QueueInsertCrashReusesRows|
 Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests|C540_ReceiptCrashDoesNotRetype|
 Antiphon.E2E.DispatchConcurrencySettingsE2ETests|Project_override_clear_and_live_receipts_preserve_inheritance|
+Antiphon.E2E.Fixtures.AntiphonAppFixtureHostPathTests|Every_windows_path_setting_resolves_inside_the_fixture_workspace|
+Antiphon.E2E.Fixtures.AntiphonAppFixtureHostPathTests|Fixture_boot_creates_no_backslash_named_entry_and_teardown_removes_the_interpreter_directory|
+Antiphon.E2E.Fixtures.AntiphonAppFixtureHostPathTests|Fixture_boot_leaves_the_user_claude_config_byte_identical_and_seeds_its_own|
 Antiphon.E2E.Fixtures.IsolatedSessionRunnerTeardownTests|Crashed_run_sweep_skips_concurrent_runner_and_reaps_only_dead_run_hosts|
 Antiphon.E2E.Fixtures.IsolatedSessionRunnerTeardownTests|Snapshot_then_kill_all_then_census_preserves_every_listed_host|
 Antiphon.E2E.Fixtures.PtyBackendEnvGuardTests|The_suite_ignores_an_inherited_pty_backend|
@@ -123,6 +127,7 @@ Antiphon.E2E.LandDeliveryFixtureProbeTests|Stalled_receipt_names_the_last_verifi
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Verifier_evidence_heartbeats_in_flight_stops_at_its_budget_and_records_the_end|
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Fixture_wraps_the_registered_verifier_and_forwards_its_correlation|
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Stalled_receipt_names_the_last_verifier_record_when_write_times_tie|
+Antiphon.E2E.LandDeliveryFixtureProbeTests|Notification_scan_reads_the_land_clock|
 Antiphon.E2E.OrchestratorE2ETests|Orchestrator_user_can_view_snapshot_and_pause_resume|
 Antiphon.E2E.OutputDistillationApplyCanaryTests|Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup|
 Antiphon.E2E.OutputDistillationCanaryGuardTests|Configuration_refuses_unowned_resources_before_start|"absent"
