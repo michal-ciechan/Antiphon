@@ -197,8 +197,10 @@ $SdkRemovalItems = @('_SourceItemsToCopyToOutputDirectory', '_SourceItemsToCopyT
 # item type, seeded from the tracked definition files. A type absent here allows none. The global-property
 # metadata (AdditionalProperties, Properties, GlobalProperties, SetConfiguration, SetPlatform,
 # SetTargetFramework, UndefineProperties) and every other name refuse: they reopen the R2 property imports.
-# CARD-1483: the exceptions are the pinned entries below, each allowed only as its one tree literal
-# (the LandGraphAudit tool is built for net10.0); any other value, the child-element form or a Remove refuses.
+# CARD-1483: the exceptions are the pinned entries below, each allowed only as its one tree literal.
+# SetTargetFramework is not one of them: the tool is single-targeted net10.0, and that metadata
+# is a second global-property set beside the solution build. Any value, the child-element form
+# or a Remove refuses.
 $ItemMetadata = New-Object 'System.Collections.Generic.Dictionary[string,string[]]' ([System.StringComparer]::OrdinalIgnoreCase)
 $ItemMetadata['PackageReference'] = @('Version', 'GeneratePathProperty', 'ExcludeAssets', 'PrivateAssets', 'IncludeAssets')
 # Aspire uses IsAspireProjectResource only for application-resource registration/validation;
@@ -210,10 +212,11 @@ $ItemMetadata['EmbeddedResource'] = @('LogicalName')
 $ItemMetadata['None'] = @('Pack', 'PackagePath', 'CopyToOutputDirectory')
 $ItemMetadata['StagedHelper'] = @('Folder', 'Glob')
 # Item type -> metadata attribute name -> the only value (ordinal) under which that name is allowed.
-# HelperTargetFramework and SetTargetFramework reach an MSBuild Properties string, which splits on ';'
-# (Review cff23aba D-1); SkipGetTargetFrameworkProperties is held to its tree value as well.
+# HelperTargetFramework reaches an MSBuild Properties string, which splits on ';'
+# (Review cff23aba D-1). SkipGetTargetFrameworkProperties is held to its tree value.
+# SetTargetFramework is refused: it would build LandGraphAudit a second time.
 $PinnedItemMetadata = @{
-    'ProjectReference' = @{ 'SetTargetFramework' = 'TargetFramework=net10.0'; 'SkipGetTargetFrameworkProperties' = 'true' }
+    'ProjectReference' = @{ 'SkipGetTargetFrameworkProperties' = 'true' }
     'StagedHelper' = @{ 'HelperTargetFramework' = 'net10.0' }
     # CARD-1613: *.cs.txt is Czech to AssignCulture. The fixture include and the post-split
     # target hold culture off. Only these exact attribute values are admitted; any other value,

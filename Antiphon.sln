@@ -116,6 +116,7 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.TestTiming.Probe", "tests\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj", "{E9336DA6-AD9B-46C8-84E0-F3D27B1B3A65}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.LandGraphAudit", "tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj", "{CF29C723-55F3-4C34-BE86-A23187C9FF52}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.IO.WriteBehind", "src\Antiphon.IO.WriteBehind\Antiphon.IO.WriteBehind.csproj", "{06A86080-B018-4ECD-A18E-F92C1D62C298}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Nightly", "scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj", "{A9973DED-704A-4334-8ACA-6D83757128CD}"
