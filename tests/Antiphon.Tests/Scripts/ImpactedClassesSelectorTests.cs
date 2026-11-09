@@ -686,4 +686,158 @@ public sealed partial class ImpactedClassesSelectorTests
             dir = dir.Parent;
         return dir?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln was not found.");
     }
+
+    // CARD-1819. One fake diff per why-missed row that was still absent from the table.
+    // spawn-limit-rosters is already a CARD-1807 row and is not repeated here.
+    [Test]
+    public async Task C1819_pty_host_fixture_selects_the_fixture_class_on_windows()
+    {
+        await AssertFakeDiff(
+            "src/Antiphon.SessionRunner/TranscriptNormalizer.cs",
+            "pty-host-fixture",
+            "Card1277PtyHostFixtureTests",
+            windows: true);
+    }
+
+    [Test]
+    public async Task C1819_dispatcher_selects_pre_dispatch_failure_delivery()
+    {
+        await AssertFakeDiff(
+            "server/Application/Services/AgentTaskDispatcher.cs",
+            "land-notification",
+            "PreDispatchFailureDeliveryTests",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_migration_sql_text_selects_both_migration_classes_on_windows()
+    {
+        await AssertFakeDiff(
+            "server/Migrations/20261108121426_Card1773TranscriptPromptStampIndex.cs",
+            "migration-generated-sql-text",
+            "Card1773TranscriptPromptStampMigrationTests",
+            windows: true,
+            also: "TranscriptHotPathMigrationTests");
+    }
+
+    [Test]
+    public async Task C1819_landing_git_selects_repository_mutation_lease_tests()
+    {
+        await AssertFakeDiff(
+            "server/Infrastructure/Git/LandingGit.cs",
+            "repository-lease-reflected-constructors",
+            "RepositoryMutationLeaseTests",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_land_graph_core_selects_the_evaluation_class()
+    {
+        await AssertFakeDiff(
+            "tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs",
+            "land-graph-precheck",
+            "LandGraphEvaluationTests",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_test_project_selects_the_land_graph_project_instance_class()
+    {
+        await AssertFakeDiff(
+            "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+            "land-graph-audit-project",
+            "LandGraphAuditProjectInstanceTests",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_antiphon_tests_edit_selects_the_lane_category_guard()
+    {
+        await AssertFakeDiff(
+            "tests/Antiphon.Tests/Application/C1708ReflogSalvageTests.cs",
+            "test-lane-category",
+            "TestLaneCategoryGuardTests",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_e2e_source_edit_selects_the_expanded_budget_method()
+    {
+        await AssertFakeDiff(
+            "tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs",
+            "e2e-source-roster",
+            "C1584_E2EExpandedBudget",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_capability_script_selects_the_dpapi_classes_on_windows()
+    {
+        await AssertFakeDiff(
+            "scripts/capability.ps1",
+            "dpapi-protected-data",
+            "CapabilityScriptTests",
+            windows: true,
+            also: "DelegateScriptCapabilityTests");
+    }
+
+    [Test]
+    public async Task C1819_land_notification_host_selects_the_delivery_e2e_and_the_linux_probe()
+    {
+        await AssertFakeDiff(
+            "server/Infrastructure/Orchestration/AgentTaskLandNotificationHostedService.cs",
+            "e2e-land-delivery",
+            "AgentTaskLandDeliveryE2ETests",
+            windows: true,
+            also: "LandDeliveryFixtureProbeTests");
+    }
+
+    [Test]
+    public async Task C1819_pty_test_root_selects_the_temp_family_registry()
+    {
+        await AssertFakeDiff(
+            "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs",
+            "temp-family-registry",
+            "C1677TempFamilyRegistryTests",
+            windows: false);
+    }
+
+    [Test]
+    public async Task C1819_nightly_policy_selects_the_live_lane_and_nightly_core_classes()
+    {
+        await AssertFakeDiff(
+            "tests/test-execution-policy.json",
+            "nightly-live-lane",
+            "LiveLaneRunnerTests",
+            windows: false,
+            also: "NightlyCoreTests");
+    }
+
+    private static async Task AssertFakeDiff(
+        string path, string kind, string needle, bool windows, string? also = null)
+    {
+        var root = Root();
+        var ran = await RunAsync(root, "-Path", path, "-Json");
+        ran.Exit.ShouldBe(0, path + " " + ran.Text);
+        using var json = JsonDocument.Parse(ran.Stdout);
+        AssertSelected(json.RootElement, kind, needle, windows, also);
+
+        var mutant = ran.Stdout.Replace(needle, "MissingC1819" + needle, StringComparison.Ordinal);
+        mutant.ShouldNotBe(ran.Stdout, needle);
+        using var broken = JsonDocument.Parse(mutant);
+        Should.Throw<ShouldAssertException>(() => AssertSelected(broken.RootElement, kind, needle, windows, also));
+    }
+
+    private static void AssertSelected(JsonElement root, string kind, string needle, bool windows, string? also)
+    {
+        root.GetProperty("kinds").EnumerateArray().Select(row => row.GetString() ?? "")
+            .ShouldContain(kind);
+        var rendered = root.GetRawText();
+        rendered.ShouldContain(needle, Case.Sensitive, kind + " " + needle);
+        if (also is not null)
+            rendered.ShouldContain(also, Case.Sensitive, kind + " " + also);
+        var windowsHit = root.GetProperty("windowsFilters").EnumerateArray()
+            .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(needle, StringComparison.Ordinal));
+        windowsHit.ShouldBe(windows, kind + " windows lane " + needle);
+    }
 }
