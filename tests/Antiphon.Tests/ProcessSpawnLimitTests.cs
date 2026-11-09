@@ -86,7 +86,9 @@ public class ProcessSpawnLimitTests
         // sub-namespace, or a nested class of either joins the strict lane by carrying
         // [SharedCheckoutChild]. The census derives that set from the attributes, and the source walk
         // still requires the marker when the class assigns CheckpointFixtures.RepoRoot to a
-        // ProcessStartInfo working directory (CARD-1810).
+        // ProcessStartInfo working directory, including an assignment statement and a call that
+        // reaches one (CARD-1810, CARD-1816). The walk follows the namespace, so a class file
+        // outside the Checkpoints folder is still named.
         // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
