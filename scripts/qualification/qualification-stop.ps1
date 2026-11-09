@@ -1,5 +1,6 @@
 #requires -Version 5.1
-# CARD-1507: stop a recorded rc qualification by supervisor pid, then launch-child pid.
+# CARD-1507: stop a recorded rc qualification by the supervisor tree. The second
+# taskkill runs only when the recorded launch-child driver outlived that tree.
 # Dot-source only. The entry point is stop-supervisor.ps1. ASCII-only, Windows PowerShell 5.1 safe.
 # Nothing in this file runs at load.
 . (Join-Path $PSScriptRoot '../lib/qualification-supervisor.ps1')
@@ -56,6 +57,111 @@ function Test-QualificationStopReason {
         if ($code -lt 32 -or $code -gt 126) { return $false }
     }
     return $true
+}
+
+function Format-QualificationStopReason {
+    param([string]$Reason)
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($ch in $Reason.ToCharArray()) {
+        if ($ch -eq '\') {
+            [void]$builder.Append([string]'\')
+            [void]$builder.Append([string]'\')
+            continue
+        }
+        if ($ch -eq '"') {
+            [void]$builder.Append([string]'\')
+            [void]$builder.Append([string]'"')
+            continue
+        }
+        [void]$builder.Append($ch)
+    }
+    return $builder.ToString()
+}
+
+function Get-QualificationStopCommandLine {
+    param([Parameter(Mandatory)][int]$ProcessId)
+    if ($ProcessId -le 0) { return $null }
+    if ((Get-QualificationStopPlatform) -ceq 'Windows') {
+        try {
+            $proc = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + [string]$ProcessId) -ErrorAction Stop
+            if ($proc) { return [string]$proc.CommandLine }
+        } catch { return $null }
+        return $null
+    }
+    $path = '/proc/' + [string]$ProcessId + '/cmdline'
+    try {
+        if (-not [IO.File]::Exists($path)) { return $null }
+        $bytes = [IO.File]::ReadAllBytes($path)
+        if ($bytes.Length -eq 0) { return $null }
+        $text = (New-Object System.Text.UTF8Encoding $false).GetString($bytes)
+        $text = $text.TrimEnd([char]0)
+        $text = $text.Replace([string]([char]0), ' ')
+        if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+        return $text
+    } catch { return $null }
+}
+
+function Get-QualificationStopObserved {
+    param($Record, [scriptblock]$Observe)
+    $obs = & $Observe $Record
+    if ($obs.status -cne 'alive') { return $obs }
+    if (-not $Record -or -not $Record.PSObject.Properties['commandLine']) { return $obs }
+    $expected = [string]$Record.commandLine
+    if ([string]::IsNullOrWhiteSpace($expected)) { return $obs }
+    $actual = Get-QualificationStopCommandLine -ProcessId ([int]$Record.pid)
+    if ([string]::IsNullOrWhiteSpace($actual)) {
+        return [pscustomobject]@{ status = 'unknown'; reason = 'command-unreadable' }
+    }
+    if ($actual -cne $expected) {
+        return [pscustomobject]@{ status = 'reused'; reason = 'command-mismatch' }
+    }
+    return $obs
+}
+
+function Format-QualificationStopDryRunIdentity {
+    param([string]$Phase, [string]$Path)
+    $read = Read-RcQualificationRecord -Path $Path
+    if ($read.status -cne 'ok') { return ('planned kill phase=' + $Phase + ' status=' + [string]$read.status) }
+    $started = ''
+    if ($read.record.PSObject.Properties['processStartedAt']) {
+        $value = $read.record.processStartedAt
+        if ($value -is [datetime]) { $started = $value.ToUniversalTime().ToString('o') }
+        else { $started = [string]$value }
+    }
+    $command = 'absent'
+    if ($read.record.PSObject.Properties['commandLine'] -and -not [string]::IsNullOrWhiteSpace([string]$read.record.commandLine)) { $command = 'recorded' }
+    return ('planned kill phase=' + $Phase + ' pid=' + [string]$read.record.pid + ' processStartedAt=' + $started + ' commandLine=' + $command)
+}
+
+function Get-QualificationStopDryRunText {
+    param(
+        [Parameter(Mandatory)][string]$TaskRoot,
+        [Parameter(Mandatory)][string]$CoordinationRoot,
+        [Parameter(Mandatory)][string]$RunId
+    )
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('stop-supervisor: dry-run; -Confirm is required; no process was stopped')
+    $taskFull = $null
+    $coordFull = $null
+    try { $taskFull = [IO.Path]::GetFullPath($TaskRoot) } catch { $taskFull = $null }
+    try { $coordFull = [IO.Path]::GetFullPath($CoordinationRoot) } catch { $coordFull = $null }
+    if (-not $taskFull -or -not [IO.Directory]::Exists($taskFull)) {
+        $lines.Add('planned kill phase=supervisor status=task-root')
+        $lines.Add('planned kill phase=driver status=task-root')
+    } else {
+        $lines.Add((Format-QualificationStopDryRunIdentity 'supervisor' ([IO.Path]::Combine($taskFull, 'supervisor-identity.json'))))
+        $lines.Add((Format-QualificationStopDryRunIdentity 'driver' ([IO.Path]::Combine($taskFull, 'launch-child.json'))))
+    }
+    if (-not $coordFull -or -not [IO.Directory]::Exists($coordFull)) {
+        $lines.Add('planned lock action=coordination-root')
+    } else {
+        $lock = Read-RcQualificationRecord -Path ([IO.Path]::Combine($coordFull, 'native-run.lock'))
+        if ($lock.status -ceq 'missing') { $lines.Add('planned lock action=absent') }
+        elseif ($lock.status -cne 'ok') { $lines.Add('planned lock action=retained-' + [string]$lock.status) }
+        else { $lines.Add('planned lock ownerPid=' + [string]$lock.record.pid + ' runId=' + [string]$lock.record.runId + ' action=move-if-owner-dead') }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RunId)) { $lines.Add('planned runId=' + $RunId) }
+    return ($lines -join [Environment]::NewLine)
 }
 
 function Read-QualificationExactBytes {
@@ -184,19 +290,22 @@ function Invoke-QualificationRecordedStop {
         $preserved = Read-QualificationExactBytes $lockPath
     } elseif ($lock.status -cne 'missing') { $lockState = 'unreadable' }
 
-    $supervisorObs = & $Observe $identity.record
+    $supervisorObs = Get-QualificationStopObserved $identity.record $Observe
     if ($supervisorObs.status -cin @('reused', 'unknown')) {
         return (New-QualificationStopResult 2 'refused' ('supervisor-' + $supervisorObs.status) $null 'not-attempted' $null $null)
     }
     $driverObs = [pscustomobject]@{ status = 'absent'; reason = 'not-recorded' }
     if ($driverRecord) {
-        $driverObs = & $Observe $driverRecord
+        $driverObs = Get-QualificationStopObserved $driverRecord $Observe
         if ($driverObs.status -cin @('reused', 'unknown')) {
             return (New-QualificationStopResult 2 'refused' ('driver-' + $driverObs.status) $null 'not-attempted' $null $null)
         }
     }
 
-    # Sanctioned replacement order: the supervisor tree, then the recorded launch-child driver.
+    # Supervisor tree first. descendant-already-absent: a later recorded pid that is
+    # already gone was killed with that tree, so the stop continues to the census.
+    # The second taskkill runs only for a driver that outlived the tree.
+    # reused or unknown after a kill stays incomplete.
     $supervisorStep = [pscustomobject]@{ phase = 'supervisor'; record = $identity.record; status = [string]$supervisorObs.status }
     $driverStep = [pscustomobject]@{ phase = 'driver'; record = $driverRecord; status = [string]$driverObs.status }
     $kills = New-Object System.Collections.Generic.List[object]
@@ -204,11 +313,12 @@ function Invoke-QualificationRecordedStop {
     foreach ($step in @($supervisorStep, $driverStep)) {
         if ($failed) { break }
         if (-not $step.record -or $step.status -cne 'alive') { continue }
-        $again = & $Observe $step.record
+        $again = Get-QualificationStopObserved $step.record $Observe
         if ($again.status -cne 'alive') {
             if ($kills.Count -eq 0) {
                 return (New-QualificationStopResult 2 'refused' ($step.phase + '-generation') $null 'not-attempted' $null $null)
             }
+            if ($again.status -ceq 'absent') { continue }
             $failed = $true
             break
         }
@@ -228,9 +338,9 @@ function Invoke-QualificationRecordedStop {
     if ($censusOk) {
         $deadline = [datetime]::UtcNow.AddMilliseconds([Math]::Max(0, $CensusMilliseconds))
         do {
-            $supervisorNow = & $Observe $identity.record
+            $supervisorNow = Get-QualificationStopObserved $identity.record $Observe
             $driverNow = [pscustomobject]@{ status = 'absent' }
-            if ($driverRecord) { $driverNow = & $Observe $driverRecord }
+            if ($driverRecord) { $driverNow = Get-QualificationStopObserved $driverRecord $Observe }
             $pending = ($supervisorNow.status -cne 'absent') -or ($driverRecord -and $driverNow.status -cne 'absent')
             if (-not $pending) { break }
             if ($CensusMilliseconds -le 0 -or [datetime]::UtcNow -ge $deadline) { $censusOk = $false; break }
@@ -256,7 +366,7 @@ function Invoke-QualificationRecordedStop {
             $exit = 4
             $outcome = 'lock-retained'
         } else {
-            $ownerObs = & $Observe $lock.record
+            $ownerObs = Get-QualificationStopObserved $lock.record $Observe
             if ($ownerObs.status -cne 'absent') {
                 $lockAction = 'retained-' + [string]$ownerObs.status
                 $exit = 4
@@ -306,8 +416,9 @@ function Invoke-QualificationRecordedStop {
 
     $phases = @()
     foreach ($kill in $kills) { $phases += ($kill.phase + ':' + [string]$kill.pid) }
-    $line = 'STOP reason="' + $Reason + '" outcome=' + $outcome + ' lock=' + $lockAction
+    $line = 'STOP reason="' + (Format-QualificationStopReason $Reason) + '" outcome=' + $outcome + ' lock=' + $lockAction
     if ($phases.Count -gt 0) { $line = $line + ' killed=' + ($phases -join ',') }
-    Write-QualificationSupervisorLine -Path $logPath -Text $line
+    try { Write-QualificationSupervisorLine -Path $logPath -Text $line }
+    catch { }
     return (New-QualificationStopResult $exit $outcome $line $kills.ToArray() $lockAction $retained $logPath)
 }
