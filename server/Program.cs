@@ -627,6 +627,8 @@ try
     builder.Services.AddScoped<AbandonedLandingReconciler>();
     builder.Services.AddScoped<WorktreeResidueJob>();
     builder.Services.AddSingleton<RunnerWorktreeRetentionTicks>();
+    // CARD-1804 (A-2): host stop waits for a running one-shot execute tick.
+    builder.Services.AddHostedService(provider => provider.GetRequiredService<RunnerWorktreeRetentionTicks>());
     builder.Services.AddScoped<RunnerWorktreeRetentionService>();
     builder.Services.AddScoped<RunnerWorktreeRetentionJob>();
     builder.Services.AddScoped<IRunnerBranchRefs, PhoneHomeRunnerBranchRefs>();

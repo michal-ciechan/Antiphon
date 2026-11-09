@@ -86,14 +86,16 @@ public sealed class RunnerWorktreeRetentionService
     /// CARD-1794 (4). The operator's one-shot reclaim (the execute route): one Execute tick for one allow-listed runner,
     /// even while the scheduled job runs DryRun (<c>Execute=false</c>). The kill switch (<c>Enabled</c>), the allow-list,
     /// the tick budget and every server and runner check still apply; the temp sweep stays DryRun. It waits for the
-    /// process's tick turn; the route itself starts it in the background (<see cref="RunnerWorktreeRetentionTicks.StartExecute"/>).
+    /// process's tick turn; the route itself starts it in the background (<see cref="RunnerWorktreeRetentionTicks.StartExecuteAsync"/>).
     /// </summary>
     public Task<IReadOnlyList<TickResult>> RunExecuteOnceAsync(string runnerId, CancellationToken ct) =>
         RunTickAsync(ct, executeRunner: runnerId);
 
     /// <summary>
-    /// The preview route's DryRun tick for one runner. CARD-1796: it never waits behind another tick; while one runs it
-    /// refuses 409 <c>tick_in_progress</c>.
+    /// The preview route's DryRun tick for one runner. CARD-1796: it never waits behind another tick; while one runs here
+    /// or in another server process (CARD-1804) it refuses 409 <c>tick_in_progress</c>. CARD-1804 (A-3): it runs on the
+    /// request, so a client or proxy timeout cancels it mid-tick; that is accepted (a DryRun deletes nothing) and the run
+    /// is finished with a Deferred <c>tick_cancelled</c> row.
     /// </summary>
     public async Task<IReadOnlyList<TickResult>> RunPreviewAsync(string runnerId, CancellationToken ct)
     {
@@ -101,7 +103,16 @@ public sealed class RunnerWorktreeRetentionService
             throw RunnerWorktreeRetentionTicks.TickInProgress();
         try
         {
-            return await RunEnteredAsync(ct, previewRunner: runnerId);
+            if (!await TryLockAcrossProcessesAsync())
+                throw RunnerWorktreeRetentionTicks.TickInProgress();
+            try
+            {
+                return await RunEnteredAsync(ct, previewRunner: runnerId);
+            }
+            finally
+            {
+                await UnlockAcrossProcessesAsync();
+            }
         }
         finally
         {
@@ -112,19 +123,120 @@ public sealed class RunnerWorktreeRetentionService
     /// <summary>
     /// One tick over every allow-listed runner. <paramref name="previewRunner"/> forces DryRun for one runner (the preview
     /// route); <paramref name="executeRunner"/> forces Execute for one runner (the operator's one-shot execute route).
-    /// CARD-1796 (A-1): it first waits for the process's tick turn, so it never overlaps another tick.
+    /// CARD-1796 (A-1): it first waits for the process's tick turn, so it never overlaps another tick. CARD-1804 (A-1): then
+    /// it takes the database-wide tick lock; while another server process ticks it skips (no run, no census), and that
+    /// process's tick covers the population.
     /// </summary>
     public async Task<IReadOnlyList<TickResult>> RunTickAsync(CancellationToken ct, string? previewRunner = null, string? executeRunner = null)
     {
         await _ticks.EnterAsync(ct);
         try
         {
-            return await RunEnteredAsync(ct, previewRunner, executeRunner);
+            if (!await TryLockAcrossProcessesAsync())
+            {
+                _logger.LogInformation("Runner worktree retention tick skipped: another server process holds the tick lock");
+                return [];
+            }
+            try
+            {
+                return await RunEnteredAsync(ct, previewRunner, executeRunner);
+            }
+            finally
+            {
+                await UnlockAcrossProcessesAsync();
+            }
         }
         finally
         {
             _ticks.Exit();
         }
+    }
+
+    // CARD-1804 (A-1). One key per database: every server process on it shares the tick (a cloned test database has its own).
+    private const string TickLockKey = "antiphon.runner-worktree-retention.tick";
+    private bool _lockHeld;
+
+    /// <summary>
+    /// CARD-1804 (A-1). The cross-process half of the tick turn: a session advisory lock on this context's connection, kept
+    /// open until <see cref="UnlockAcrossProcessesAsync"/>. The caller holds the process's turn. It never waits; false
+    /// means another server process is ticking. The lock query itself takes no cancellation, so a granted lock is never
+    /// left unrecorded on a pooled connection (a pooled connection is also reset on return).
+    /// </summary>
+    internal async Task<bool> TryLockAcrossProcessesAsync()
+    {
+        await _db.Database.OpenConnectionAsync(CancellationToken.None);
+        try
+        {
+            await using var command = _db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = $"SELECT pg_try_advisory_lock(hashtextextended('{TickLockKey}', 0))";
+            _lockHeld = await command.ExecuteScalarAsync(CancellationToken.None) is true;
+        }
+        finally
+        {
+            if (!_lockHeld)
+                await _db.Database.CloseConnectionAsync();
+        }
+        return _lockHeld;
+    }
+
+    /// <summary>CARD-1804 (A-1). Releases the lock <see cref="TryLockAcrossProcessesAsync"/> took; a no-op when none is held.</summary>
+    internal async Task UnlockAcrossProcessesAsync()
+    {
+        if (!_lockHeld)
+            return;
+        _lockHeld = false;
+        try
+        {
+            await using var command = _db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = $"SELECT pg_advisory_unlock(hashtextextended('{TickLockKey}', 0))";
+            await command.ExecuteScalarAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Closing the connection below returns it to the pool, which resets it and so releases the lock as well.
+            _logger.LogWarning("Runner worktree retention tick lock release failed: {Reason}", ex.Message);
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-1804 (A-2). The execute route saves its run before it answers 202, so the run id it hands out always names a
+    /// row (unfinished until the background tick finishes it). The caller holds the turn and the tick lock.
+    /// </summary>
+    internal async Task<Guid> StartExecuteRunAsync(string runnerId, RunnerWorktreeRetentionSettings settings, CancellationToken ct)
+    {
+        var run = NewRun(Guid.NewGuid(), runnerId, settings, execute: true);
+        _db.WorktreeResidueRuns.Add(run);
+        await _db.SaveChangesAsync(ct);
+        return run.Id;
+    }
+
+    private WorktreeResidueRun NewRun(Guid id, string runnerId, RunnerWorktreeRetentionSettings settings, bool execute) => new()
+    {
+        Id = id, StartedAt = Now(), Execute = execute, Preview = !execute,
+        ActionBudget = settings.MaxRemovalsPerTick, Scope = "runner-retention:" + runnerId,
+    };
+
+    /// <summary>
+    /// CARD-1804 (A-2). Finishes a run its tick left unfinished, with one Deferred row naming why: <paramref name="reason"/>
+    /// (<c>tick_failed</c>, <c>tick_cancelled</c>), or, for a tick that returned without running this runner,
+    /// <c>tick_stopped_disabled</c> or <c>runner_not_listed</c>. A finished or missing run is left alone. It takes no caller
+    /// cancellation (host stop is what cancelled the tick), only its own bound.
+    /// </summary>
+    internal async Task FinishUnfinishedRunAsync(Guid runId, string runnerId, string? reason)
+    {
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var run = await _db.WorktreeResidueRuns.SingleOrDefaultAsync(r => r.Id == runId, bound.Token);
+        if (run is null || run.FinishedAt is not null)
+            return;
+        reason ??= _settings.CurrentValue.Enabled ? "runner_not_listed" : "tick_stopped_disabled";
+        Row(run, LaneMirror, WorktreeResidueCandidateOutcome.Deferred, reason, null, null, null, runnerId);
+        run.FinishedAt = Now();
+        await _db.SaveChangesAsync(bound.Token);
+        _logger.LogWarning("Runner worktree retention {RunnerId} run {RunId} finished without its tick: {Reason}", runnerId, runId, reason);
     }
 
     /// <summary>The tick body; the caller holds the tick turn. <paramref name="executeRunId"/> names the forced runner's run.</summary>
@@ -155,14 +267,62 @@ public sealed class RunnerWorktreeRetentionService
         bool writeAll, DateTime tickStarted, Guid? runId, CancellationToken ct)
     {
         var now = Now();
-        var run = new WorktreeResidueRun
+        // CARD-1804 (A-2): the execute route saved its run before answering; any other tick creates its own here.
+        var run = runId is { } existing ? await _db.WorktreeResidueRuns.SingleOrDefaultAsync(r => r.Id == existing, ct) : null;
+        if (run is null)
         {
-            Id = runId ?? Guid.NewGuid(), StartedAt = now, Execute = execute, Preview = !execute,
-            ActionBudget = settings.MaxRemovalsPerTick, Scope = "runner-retention:" + runnerId,
-        };
-        _db.WorktreeResidueRuns.Add(run);
-        // CARD-1796 (A-2): the run is readable while it runs (no FinishedAt yet); the execute route returns its id at once.
-        await _db.SaveChangesAsync(ct);
+            run = NewRun(runId ?? Guid.NewGuid(), runnerId, settings, execute);
+            _db.WorktreeResidueRuns.Add(run);
+            // CARD-1796 (A-2): the run is readable while it runs (no FinishedAt yet).
+            await _db.SaveChangesAsync(ct);
+        }
+
+        try
+        {
+            return await CensusRunnerAsync(run, runnerId, settings, execute, forced, writeAll, tickStarted, now, ct);
+        }
+        catch (Exception ex)
+        {
+            await FailRunAsync(run, runnerId, ex is OperationCanceledException && ct.IsCancellationRequested ? "tick_cancelled" : "tick_failed", ex);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// CARD-1804 (A-2). A tick that threw or was cancelled finishes its run with a Deferred <c>tick_failed</c> or
+    /// <c>tick_cancelled</c> row. The rows it had evaluated are saved with it; when that save fails too (the tracked state
+    /// may be what failed), only the run is finished.
+    /// </summary>
+    private async Task FailRunAsync(WorktreeResidueRun run, string runnerId, string reason, Exception failure)
+    {
+        _logger.LogWarning("Runner worktree retention {RunnerId} run {RunId} {Reason}: {Failure}", runnerId, run.Id, reason, failure.Message);
+        try
+        {
+            using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            Row(run, LaneMirror, WorktreeResidueCandidateOutcome.Deferred, reason, null, null, null, runnerId);
+            run.FinishedAt = Now();
+            await _db.SaveChangesAsync(bound.Token);
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Runner worktree retention {RunnerId} run {RunId} could not save its evaluated rows: {Reason}", runnerId, run.Id, ex.Message);
+        }
+
+        _db.ChangeTracker.Clear();
+        try
+        {
+            await FinishUnfinishedRunAsync(run.Id, runnerId, reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Runner worktree retention {RunnerId} run {RunId} could not be finished", runnerId, run.Id);
+        }
+    }
+
+    private async Task<TickResult> CensusRunnerAsync(WorktreeResidueRun run, string runnerId, RunnerWorktreeRetentionSettings settings,
+        bool execute, bool forced, bool writeAll, DateTime tickStarted, DateTime now, CancellationToken ct)
+    {
 
         var client = await EligibleClientAsync(runnerId, ct);
         if (client is null)
