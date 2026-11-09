@@ -15,7 +15,7 @@ namespace Antiphon.Server.Application.Services;
 /// while it is held. The execute route runs its tick in the background on the host's lifetime, not the request's, and
 /// answers with the run id at once, so a client or proxy timeout no longer cancels a paced tick mid-way.
 /// </summary>
-public sealed class RunnerWorktreeRetentionTicks
+public sealed class RunnerWorktreeRetentionTicks : IHostedService
 {
     public const string TickInProgressCode = "tick_in_progress";
 
@@ -54,6 +54,14 @@ public sealed class RunnerWorktreeRetentionTicks
     /// its run id without waiting for it. The kill switch and the allow-list are checked here (409
     /// <c>retention_disabled</c> / <c>runner_not_listed</c>) and again by the tick itself.
     /// </summary>
+    // RED (CARD-1804): the async route surface over the old body; the fix commit replaces it.
+    public Task<ExecuteStarted> StartExecuteAsync(string runnerId, CancellationToken ct = default) => Task.FromResult(StartExecute(runnerId));
+
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    // RED (CARD-1804): host stop does not await the background tick yet.
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     public ExecuteStarted StartExecute(string runnerId)
     {
         var settings = _settings.CurrentValue;
