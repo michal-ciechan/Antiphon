@@ -6,7 +6,8 @@
 # A kind with "windows": "required" also lands in windowsFilters ("windowsFilter=" lines): the
 # native Windows lane owes that filter, and a Linux row of it is not that lane. An added block with
 # "removed": true also matches a removed line that carries one of its literals.
-# A project row naming more than four land classes is split into <id>-land-<n> rows (CARD-1801 D-1).
+# Under -MergeSubset a project row naming more than four land classes is split into <id>-land-<n> rows
+# (CARD-1801 D-1); the non-merge output keeps each project selection in one row (R2-D-1).
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
@@ -743,11 +744,14 @@ function Get-ProjectSlug([string]$Project) {
 # Class rows first, one per project in ordinal order, then one method row per class.
 # A whole class wins over a method row of the same class. Id is the CHECKPOINT row name.
 # CARD-1801 D-1: a land class is a class name containing "Land" (case-sensitive), which is what
-# the checkpoint importer counts. When a project's class row would name more than four, its land
-# classes leave that row and go four at a time, in ordinal order, to rows <id>-land-1, -land-2, ...;
+# the checkpoint importer counts. Only under -MergeSubset ($FirstLand not null), when a project's class
+# row would name more than four, its land classes leave that row and go four at a time, in ordinal
+# order, to rows <id>-land-1, -land-2, ...;
 # the other classes stay in the project row, which is omitted when none remain. Land classes named in
 # $FirstLand (the -MergeSubset fixed classes) fill the first rows and the others start a new row, so a
 # batch class never shifts a fixed land row and each fixed row keeps its measured floor.
+# With $FirstLand null (the non-merge output a Code or Review stage runs) each project keeps its whole
+# class selection in one row, so the printed treenodeFilter names every class (R2-D-1).
 function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) {
     $rows = New-Object System.Collections.Generic.List[object]
     $byProject = @{}
@@ -769,10 +773,10 @@ function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) 
         $otherNames = New-StringList
         foreach ($className in $sortedNames) {
             if (-not $className.Contains('Land')) { [void]$otherNames.Add($className) }
-            elseif ($null -ne $FirstLand -and @($FirstLand) -contains $className) { [void]$firstNames.Add($className) }
+            elseif ($null -ne $FirstLand -and [Array]::IndexOf([string[]]@($FirstLand), $className) -ge 0) { [void]$firstNames.Add($className) }
             else { [void]$laterNames.Add($className) }
         }
-        if ($firstNames.Count + $laterNames.Count -le 4) {
+        if ($null -eq $FirstLand -or $firstNames.Count + $laterNames.Count -le 4) {
             [void]$rows.Add([pscustomobject]@{ Id = $projectId; Project = $project; Filter = (New-ClassFilter $sortedNames) })
             continue
         }
