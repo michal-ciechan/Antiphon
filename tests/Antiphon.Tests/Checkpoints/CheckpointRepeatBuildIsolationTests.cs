@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 public sealed class CheckpointRepeatBuildIsolationTests : CheckpointTestBase
 {
     // One real FilterHost build, not three. A loaded Windows repeat-2 invocation

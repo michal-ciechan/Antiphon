@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Slow")]
 [Category("C835")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
 {
     private static readonly string Sha = new('a', 40);

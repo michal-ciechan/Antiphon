@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 public sealed class RerunFilterHostTests
 {
     [Test]
