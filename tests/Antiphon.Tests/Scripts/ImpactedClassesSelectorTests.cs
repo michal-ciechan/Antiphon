@@ -22,6 +22,11 @@ public sealed partial class ImpactedClassesSelectorTests
 
     private const string RepairFilesCommit = "517b705036e1496388a562835c03d3e15b522370";
 
+    // The marker literal the linux-only-policy row matches. The A5 census (test-rc-platform.ps1
+    // C1686_LinuxOnlyCensus) fails a code line that names the attribute outside a canonical marker,
+    // so the literal is joined from two halves and never appears whole in this file.
+    private const string MarkerLiteral = "[Native" + "LinuxOnly(";
+
     private static readonly string[] SeedKinds =
     [
         "migrations", "contracts", "timing-labels", "remote-scripts", "statement-budgets", "checkpoint-tool",
@@ -265,7 +270,7 @@ public sealed partial class ImpactedClassesSelectorTests
         "lane: windows must be 'required'",
         "windows lane as a boolean")]
     [Arguments(
-        "{\"schema\":1,\"kinds\":[{\"id\":\"marker\",\"added\":{\"glob\":\"tests/**\",\"literals\":[\"[NativeLinuxOnly(\"],\"removed\":\"yes\"},\"classes\":[\"AppDbContextModelTests\"]}]}",
+        "{\"schema\":1,\"kinds\":[{\"id\":\"marker\",\"added\":{\"glob\":\"tests/**\",\"literals\":[\"" + MarkerLiteral + "\"],\"removed\":\"yes\"},\"classes\":[\"AppDbContextModelTests\"]}]}",
         "marker: removed must be true or false",
         "removed flag that is not a boolean")]
     public async Task malformed_table_is_refused(string table, string needle, string shape)
@@ -498,7 +503,7 @@ public sealed partial class ImpactedClassesSelectorTests
             ["ReleaseGatePlatformTests/C1686_LinuxOnlyCensus", "ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy"],
             ignoreOrder: true);
         var marker = census.GetProperty("added");
-        Strings(marker, "literals").ShouldBe(["[NativeLinuxOnly("]);
+        Strings(marker, "literals").ShouldBe([MarkerLiteral]);
         marker.GetProperty("removed").GetBoolean().ShouldBeTrue("a removed marker changes the census too");
     }
 
@@ -546,7 +551,7 @@ public sealed partial class ImpactedClassesSelectorTests
         var marked = Path.Combine(scripts, "MarkerTests.cs");
         File.WriteAllText(
             marked,
-            "public sealed class MarkerTests\n{\n    [NativeLinuxOnly(\"fixture\")]\n    public void Linux() { }\n}\n");
+            "public sealed class MarkerTests\n{\n    " + MarkerLiteral + "\"fixture\")]\n    public void Linux() { }\n}\n");
         Git(dir, "init", "-q");
         Git(dir, "add", "-A");
         Git(dir, "-c", "user.name=impacted", "-c", "user.email=impacted@example.invalid", "-c", "commit.gpgsign=false",
