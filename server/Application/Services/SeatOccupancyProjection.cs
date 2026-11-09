@@ -62,9 +62,10 @@ public static class SeatOccupancyProjection
 
     public static int Divergence(int inFlight, int dispatchedWorking) => inFlight - dispatchedWorking;
 
-    /// <summary>A runner host is neither kind <c>local</c> nor host id <c>local</c>. CARD-1803 seam; behaviour follows.</summary>
+    /// <summary>A runner host is neither kind <c>local</c> nor host id <c>local</c>.</summary>
     public static bool IsRunnerHost(string? kind, string? hostId) =>
-        throw new NotImplementedException("CARD-1803");
+        !string.Equals(kind, "local", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(hostId, "local", StringComparison.OrdinalIgnoreCase);
 
     /// <summary><c>yes</c> only when the bound attempt has a publication receipt; otherwise <c>unknown</c>.</summary>
     public static string Pushed(bool receipt) => receipt ? "yes" : "unknown";

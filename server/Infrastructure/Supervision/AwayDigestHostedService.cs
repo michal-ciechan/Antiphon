@@ -4,7 +4,9 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Supervision;
 
-/// <summary>Runs the blocked-task wake sweep and the scheduled digest check in fresh scopes.</summary>
+/// <summary>
+/// Runs each digest sweep call in its own scope and its own try, so one failure does not skip the rest.
+/// </summary>
 public sealed class AwayDigestHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopes;
@@ -20,18 +22,25 @@ public sealed class AwayDigestHostedService : BackgroundService
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                try
-                {
-                    await using var scope = _scopes.CreateAsyncScope();
-                    await scope.ServiceProvider.GetRequiredService<BlockedTaskNotifier>().SweepAsync(stoppingToken);
-                    await scope.ServiceProvider.GetRequiredService<DecisionCardNotifier>().SweepAsync(stoppingToken);
-                    await scope.ServiceProvider.GetRequiredService<IncidentPageNotifier>().SweepAsync(stoppingToken);
-                    await scope.ServiceProvider.GetRequiredService<AwayDigestNotifier>().SendDueAsync(null, null, false, stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception ex) { _logger.LogWarning(ex, "Away digest sweep failed"); }
+                await SweepOneAsync<BlockedTaskNotifier>(n => n.SweepAsync(stoppingToken), stoppingToken);
+                await SweepOneAsync<BlockedSeatEscalationNotifier>(n => n.SweepAsync(stoppingToken), stoppingToken);
+                await SweepOneAsync<DecisionCardNotifier>(n => n.SweepAsync(stoppingToken), stoppingToken);
+                await SweepOneAsync<IncidentPageNotifier>(n => n.SweepAsync(stoppingToken), stoppingToken);
+                await SweepOneAsync<AwayDigestNotifier>(n => n.SendDueAsync(null, null, false, stoppingToken), stoppingToken);
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    private async Task SweepOneAsync<T>(Func<T, Task> call, CancellationToken stoppingToken)
+        where T : notnull
+    {
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            await call(scope.ServiceProvider.GetRequiredService<T>());
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+        catch (Exception ex) { _logger.LogWarning(ex, "Away digest sweep failed"); }
     }
 }

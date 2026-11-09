@@ -47,8 +47,14 @@ public static class AwayDigestFormatter
     }
 
     /// <summary>CARD-1803. Detection-only page for a Blocked seat whose caller note is still undelivered.</summary>
-    public static string FormatBlockedSeatEscalation(Guid taskId, string? evidence) =>
-        throw new NotImplementedException("CARD-1803");
+    public static string FormatBlockedSeatEscalation(Guid taskId, string? evidence)
+    {
+        var id = taskId.ToString("N")[..8];
+        var detail = string.IsNullOrWhiteSpace(evidence)
+            ? "Detection only."
+            : "Detection only. " + Clean(evidence, SentenceChars);
+        return Cap($"⛔ task {id} still holds a seat — caller note undelivered\n{detail}", MaxChars);
+    }
 
     public static string FormatDecisionPing(AttentionItemDto decision, DigestSettings? settings = null)
     {

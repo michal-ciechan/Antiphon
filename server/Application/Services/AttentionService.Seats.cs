@@ -15,7 +15,7 @@ public sealed partial class AttentionService
         var items = new List<AttentionItemDto>();
         foreach (var host in snapshot.Hosts)
         {
-            if (!IsRunnerHost(host)) continue;
+            if (!SeatOccupancyProjection.IsRunnerHost(host.Kind, host.HostId)) continue;
             foreach (var seat in host.Seats)
             {
                 if (!seat.Occupies || !IsIdle(seat.Class)) continue;
@@ -43,7 +43,7 @@ public sealed partial class AttentionService
         var items = new List<AttentionItemDto>();
         foreach (var host in snapshot.Hosts)
         {
-            if (!IsRunnerHost(host)) continue;
+            if (!SeatOccupancyProjection.IsRunnerHost(host.Kind, host.HostId)) continue;
             var divergence = SeatOccupancyProjection.Divergence(host.InFlight, host.DispatchedWorking);
             if (divergence <= 0) continue;
             // Desktop idle count, not the seat list: an unavailable inventory still has no seats.
@@ -69,7 +69,7 @@ public sealed partial class AttentionService
         var items = new List<AttentionItemDto>();
         foreach (var host in snapshot.Hosts)
         {
-            if (!IsRunnerHost(host)) continue;
+            if (!SeatOccupancyProjection.IsRunnerHost(host.Kind, host.HostId)) continue;
             foreach (var seat in host.Seats)
             {
                 if (!seat.Orphan || !seat.Occupies) continue;
@@ -88,10 +88,6 @@ public sealed partial class AttentionService
         }
         return items;
     }
-
-    private static bool IsRunnerHost(HostOccupancyObservation host) =>
-        !string.Equals(host.Kind, "local", StringComparison.OrdinalIgnoreCase)
-        && !string.Equals(host.HostId, "local", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsIdle(SeatClass seat) =>
         seat is SeatClass.IdleBlocked or SeatClass.IdleTerminal or SeatClass.IdleUnbound;

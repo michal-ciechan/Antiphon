@@ -293,6 +293,13 @@ public enum AgentTaskEventType
 
     /// <summary>CARD-0824 S2. One origin branch deletion state or reason change on a landing row. 42: master's S1c holds 41.</summary>
     LandingBranchDeletion = 42,
+
+    /// <summary>
+    /// CARD-1803. A digest page that a Blocked seat is still held and its caller note is undelivered.
+    /// Detection only: the session is not stopped and the task is not canceled. Detail is the channel id.
+    /// Appended; never renumber.
+    /// </summary>
+    BlockedSeatEscalated = 43,
 }
 
 /// <summary>
