@@ -8,6 +8,8 @@ using Antiphon.TestSupport;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Shouldly;
 using TUnit.Core;
 
@@ -281,6 +283,41 @@ public class LandDeliveryFixtureProbeTests
             calls.Plain.ShouldBe(1, "an uncorrelated verification stays uncorrelated");
             calls.Correlations.Count.ShouldBe(1);
             Records().Length.ShouldBe(4);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>
+    /// rc a6410818 e2e-split-5: CARD-1759 filters the hosted land-notification page on
+    /// NextAttemptAt against the scope's TimeProvider. The monitor stamps an Aged notice with the
+    /// land clock, so a scan on the system clock never pages it and C467_V32(busy) reads
+    /// "not yet enqueued". The scan's scopes must read the same land clock.
+    /// </summary>
+    [Test]
+    public async Task Notification_scan_reads_the_land_clock()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c467-scan-clock-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var services = new ServiceCollection();
+        // Program.cs registers these three this way.
+        services.AddSingleton(TimeProvider.System);
+        services.AddLogging();
+        services.AddHostedService<AgentTaskLandNotificationHostedService>();
+        services.AddSingleton<VerifierCalls>();
+        services.AddSingleton<ILandingVerifier, RecordingVerifier>();
+        new LandDeliveryOptions(root).ConfigureServices(services);
+        await using var provider = services.BuildServiceProvider();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "land-clock-seconds.txt"), "301");
+            var scan = provider.GetServices<IHostedService>().OfType<AgentTaskLandNotificationHostedService>().ShouldHaveSingleItem();
+            var scopes = (IServiceScopeFactory)typeof(AgentTaskLandNotificationHostedService)
+                .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+                .Single(field => field.FieldType == typeof(IServiceScopeFactory)).GetValue(scan)!;
+            await using var scope = scopes.CreateAsyncScope();
+            var ahead = scope.ServiceProvider.GetRequiredService<TimeProvider>().GetUtcNow() - DateTimeOffset.UtcNow;
+            ahead.ShouldBeGreaterThan(TimeSpan.FromSeconds(300), "the due-page clock must be the clock that stamps NextAttemptAt");
+            provider.GetRequiredService<TimeProvider>().ShouldBeSameAs(TimeProvider.System, "only the scan reads the land clock");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
