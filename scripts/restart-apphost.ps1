@@ -28,7 +28,9 @@
 .PARAMETER NoBuild            Pass -NoBuild through to dev-aspire.ps1 (skip restore/npm).
 .PARAMETER TimeoutSec         No-progress window, in seconds, for the dashboard + backend health (default 150).
                               CARD-1680: log or launcher output growth, the dashboard URL file, the server
-                              port opening or a non-200 /health answer restart the window.
+                              port opening or a non-200 /health answer restart the window. CARD-1806: with no
+                              URL file (dev-aspire.ps1 stops looking after 90 s, build included) the dashboard
+                              is found by asking 17205, and its first answer is progress too.
 .PARAMETER MaxWaitSec         Hard cap on the whole health wait (default 600; never below TimeoutSec).
 .PARAMETER LockMaxAgeMinutes  Ignore a lock older than this (default 15, the watchdog's number).
 .PARAMETER AllowWorktree      Intentionally allow a linked worktree to control the shared local stack.
@@ -320,6 +322,13 @@ try {
             $u = (Get-Content -LiteralPath $urlFile -Raw -ErrorAction SilentlyContinue).Trim()
             if ($u -match '^https?://') { $dashUrl = $u }
         }
+        # CARD-1806: dev-aspire.ps1 gives up on the URL file 90 s after launch, build
+        # included; a cold build outlasts that. Ask the pinned dashboard port instead.
+        $dashFound = $null
+        if (-not $dashUrl) {
+            $dashProbe = Invoke-AppHostDashboardProbe
+            if ($null -ne $dashProbe -and $dashProbe.Url) { $dashUrl = $dashProbe.Url; $dashFound = $dashUrl }
+        }
         $verdict = Get-AppHostLogVerdict -LogPath $logFile
         if ($verdict.Kind -eq 'BuildFailed') {
             $keepRestartLock = $false
@@ -351,6 +360,7 @@ try {
         $previousSnapshot = $snapshot
         $snapshot = Get-AppHostLaunchSnapshot -Files $progressFiles
         $progress = Get-AppHostLaunchProgress -Before $previousSnapshot -After $snapshot
+        if (-not $progress -and $dashFound) { $progress = "dashboard answered on $dashFound" }
         $health = $null
         if ($dashUrl) { $health = Invoke-AppHostHealthProbe }
         $healthOk = $null -ne $health -and [string]$health.StatusCode -eq '200'

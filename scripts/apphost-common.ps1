@@ -569,6 +569,30 @@ function Invoke-AppHostVersionProbe {
     }
 }
 
+function Invoke-AppHostDashboardProbe {
+    <#
+      CARD-1806: the dashboard is pinned to 17205 (AppHost launchSettings.json).
+      dev-aspire.ps1 stops looking for its URL 90 s after launch, build included,
+      so a cold build can leave apphost-dashboard-url.txt unwritten while the
+      dashboard comes up later. Any HTTP answer from 17205 is the dashboard
+      (it redirects to /login); no answer leaves Url null.
+    #>
+    param([int]$TimeoutSec = 3)
+    $url = 'http://localhost:17205'
+    try {
+        $r = Invoke-WebRequest "$url/" -UseBasicParsing -TimeoutSec $TimeoutSec
+        return [pscustomobject]@{ StatusCode = [int]$r.StatusCode; Url = $url; Error = $null }
+    } catch {
+        $code = $null
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+            $code = [int]$_.Exception.Response.StatusCode
+        }
+        $answered = $null
+        if ($null -ne $code) { $answered = $url }
+        return [pscustomobject]@{ StatusCode = $code; Url = $answered; Error = $_.Exception.Message }
+    }
+}
+
 function Wait-AppHostPollInterval {
     param([int]$Seconds = 3)
     if ($Seconds -gt 0) { Start-Sleep -Seconds $Seconds }

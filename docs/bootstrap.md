@@ -572,7 +572,7 @@ Open **http://localhost:17282** in your browser.
 | 17208   | Fake messaging gateway (dev/test Kafka tool — real gateway is NOT run locally) |
 | 17209   | Storybook (component workshop, AppHost-managed npm app) |
 
-Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antiphon.AppHost/Properties/launchSettings.json`. `dev-aspire.ps1` discovers it and saves to `logs/apphost-dashboard-url.txt`.
+Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antiphon.AppHost/Properties/launchSettings.json`. `dev-aspire.ps1` discovers it and saves to `logs/apphost-dashboard-url.txt`; it stops looking 90 s after launch, build included, so `restart-apphost.ps1` also asks 17205 directly when the file is missing (CARD-1806).
 
 ## Always-on backend (auto-start)
 
