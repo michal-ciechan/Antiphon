@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -91,6 +92,8 @@ public sealed class CheckpointPerEntryRefusalReasonTests
         };
         ReportValidator.Validate(model, new string('a', 40)).ShouldBe("cleanup_refused", label + ":validator");
         ReportWriter.Markdown(model).ShouldContain("refused: " + reason, Case.Sensitive, label + ":markdown");
-        ReportWriter.JsonText(model).ShouldContain(reason, Case.Sensitive, label + ":json");
+        using var document = JsonDocument.Parse(ReportWriter.JsonText(model));
+        document.RootElement.GetProperty("cleanupRefusals")[0].GetString()
+            .ShouldBe(reason, label + ":json");
     }
 }
