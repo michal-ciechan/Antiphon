@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -148,6 +149,32 @@ public class BlockedTaskNotifierTests
         }
     }
 
+    [Test]
+    public async Task C1803_SeatIdleBesideTheQuestionStillPingsOnce()
+    {
+        await using var h = await Harness.CreateAsync();
+        try
+        {
+            await h.SeedChannelAsync();
+            var task = await h.SeedBlockedAsync("Need a decision.");
+            h.PublishBlockedSeat(task, TimeSpan.FromMinutes(31));
+
+            await h.Notifier.SweepAsync(CancellationToken.None);
+            await h.Notifier.SweepAsync(CancellationToken.None);
+
+            var pings = PingsFor(h, task);
+            pings.Count.ShouldBe(1);
+            pings[0].Text.ShouldNotBeNull();
+            pings[0].Text!.ShouldContain("❓");
+            pings[0].Text.ShouldContain("Need a decision.");
+            pings[0].Text.ShouldNotContain("Idle seat");
+        }
+        finally
+        {
+            await h.CleanupAsync();
+        }
+    }
+
     private static IReadOnlyList<ChannelReply> PingsFor(Harness h, Guid taskId)
     {
         var shortId = taskId.ToString("N")[..8];
@@ -191,6 +218,20 @@ public class BlockedTaskNotifierTests
         public FakeTimeProvider Clock { get; }
         public FakeAntiphonMessagingClient Messaging { get; private set; }
         public BlockedTaskNotifier Notifier { get; private set; }
+        public SeatOccupancyState Seats { get; } = new();
+
+        public void PublishBlockedSeat(Guid taskId, TimeSpan idleAge)
+        {
+            var now = Clock.GetUtcNow().UtcDateTime;
+            var idleSince = now - idleAge;
+            var seat = new SeatObservation(
+                "server2", Guid.NewGuid(), "running", 4242, idleSince, true, false, false,
+                "Running", taskId, AgentTaskStatus.Blocked, 1, AgentTaskRole.Code,
+                null, null, null, SeatClass.IdleBlocked, idleSince, "unknown");
+            var host = new HostOccupancyObservation(
+                "server2", "runner", "listed", null, 1, 0, 1, 0, 0, 1, 0, 0, null, null, idleSince, [seat]);
+            Seats.Publish(new SeatOccupancySnapshot(now, [host]));
+        }
 
         public void ReplaceProducer(FakeAntiphonMessagingClient producer)
         {
@@ -293,7 +334,8 @@ public class BlockedTaskNotifierTests
         {
             var attention = new AttentionService(
                 Db, new RefusingSessionRunnerClient(), Options.Create(new SupervisionSettings()),
-                Options.Create(new DelegationSettings()), Clock, NullLogger<AttentionService>.Instance);
+                Options.Create(new DelegationSettings()), Clock, NullLogger<AttentionService>.Instance,
+                seats: Seats);
             return new BlockedTaskNotifier(
                 Db, attention, _channels, Options.Create(_settings), Clock,
                 NullLogger<BlockedTaskNotifier>.Instance);

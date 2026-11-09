@@ -42,6 +42,26 @@ public sealed class AttentionSettingsValidatorTests
         validator.Validate(null, new AttentionSettings { InventoryTimeoutMs = 1 }).Succeeded.ShouldBeTrue();
     }
 
+    [Test]
+    public void C1803_EscalationHoursDefaultAndBound()
+    {
+        var settings = new AttentionSettings();
+        settings.BlockedSeatEscalationHours.ShouldBe(6);
+        new AttentionSettingsValidator().Validate(null, settings).Succeeded.ShouldBeTrue();
+
+        AssertNamed(new AttentionSettings { BlockedSeatEscalationHours = 0 }, "Attention:BlockedSeatEscalationHours");
+        AssertNamed(new AttentionSettings { BlockedSeatEscalationHours = 721 }, "Attention:BlockedSeatEscalationHours");
+        AssertNamed(
+            new AttentionSettings { BlockedSeatEscalationHours = 3, SeatIdleErrorMinutes = 180 },
+            "Attention:BlockedSeatEscalationHours");
+
+        new AttentionSettingsValidator().Validate(null, new AttentionSettings
+        {
+            BlockedSeatEscalationHours = 4,
+            SeatIdleErrorMinutes = 180,
+        }).Succeeded.ShouldBeTrue();
+    }
+
     private static void AssertNamed(AttentionSettings settings, string key)
     {
         var result = new AttentionSettingsValidator().Validate(null, settings);

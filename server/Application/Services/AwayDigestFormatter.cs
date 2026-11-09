@@ -46,6 +46,10 @@ public static class AwayDigestFormatter
         return Cap($"❓ task {id} needs an answer — {blocked.Title}\n{Clean(blocked.Evidence, SentenceChars)} (blocked {blocked.SinceUtc?.ToLocalTime():HH:mm}, ${(blocked.SubtreeCostUsd ?? 0m):F2} so far)", MaxChars);
     }
 
+    /// <summary>CARD-1803. Detection-only page for a Blocked seat whose caller note is still undelivered.</summary>
+    public static string FormatBlockedSeatEscalation(Guid taskId, string? evidence) =>
+        throw new NotImplementedException("CARD-1803");
+
     public static string FormatDecisionPing(AttentionItemDto decision, DigestSettings? settings = null)
     {
         var title = decision.Title.Split(" — ", 2);

@@ -105,6 +105,18 @@ public class AwayDigestFormatterTests
         ping.ShouldContain("https://antiphon.example/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     }
 
+    [Test]
+    public void C1803_SeatPageNamesTheSeatAndDoesNotAskForACancel()
+    {
+        var id = Guid.Parse("1a2b3c4d-0000-0000-0000-000000000000");
+        var text = AwayDigestFormatter.FormatBlockedSeatEscalation(id, "runner=server2");
+
+        text.Split('\n')[0].ShouldBe("⛔ task 1a2b3c4d still holds a seat — caller note undelivered");
+        text.ShouldContain("Detection only");
+        text.ShouldNotContain("Cancel");
+        text.ShouldNotContain("release");
+    }
+
     private static AwayDigestDto Empty() => new(DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, false, [], [], [], [], [],
         new AwayDigestRunningDto(0, null, null, null), new AwayDigestSpendDto(0, 0, 0), []);
 }
