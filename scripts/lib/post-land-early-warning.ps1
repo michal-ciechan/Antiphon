@@ -225,6 +225,12 @@ function Enter-PostLandLock {
             if ($kind -eq 'ours') { return $true }
             if ($kind -eq 'busy') { return $false }
             if ($kind -eq 'stale') {
+                $delayText = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_RECLAIM_DELAY_MS')
+                if (-not [string]::IsNullOrWhiteSpace($delayText)) {
+                    $delayMs = 0
+                    try { $delayMs = [int]$delayText } catch { $delayMs = 0 }
+                    if ($delayMs -gt 0) { Start-Sleep -Milliseconds $delayMs }
+                }
                 try { Remove-Item -LiteralPath $Path -Force } catch { }
                 continue
             }
@@ -906,6 +912,9 @@ function Write-PostLandReceipt {
     [IO.File]::WriteAllText($path, $json + "`n")
 }
 
+# POST_LAND_WARNING_SLOT_SCRIPT, when set, replaces scripts/build-slot.ps1.
+# The lane still invokes that path as pwsh -File <path> -Label post-land-early-warning -- <command>.
+# POST_LAND_WARNING_RECLAIM_DELAY_MS sleeps after a stale classification and before the reclaim.
 function Invoke-PostLandSlot {
     param([string[]]$Command)
     $shim = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_SHIM')
@@ -949,6 +958,8 @@ function Invoke-PostLandSlot {
         $PSNativeCommandUseErrorActionPreference = $false
     }
     $slot = Join-Path $script:PostLandScriptsRoot 'build-slot.ps1'
+    $slotOverride = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_SCRIPT')
+    if (-not [string]::IsNullOrWhiteSpace($slotOverride)) { $slot = $slotOverride }
     try {
         & pwsh -NoProfile -NonInteractive -File $slot -Label 'post-land-early-warning' -- @Command
         $code = $LASTEXITCODE

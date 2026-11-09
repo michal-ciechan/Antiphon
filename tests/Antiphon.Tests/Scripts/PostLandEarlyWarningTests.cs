@@ -479,6 +479,114 @@ public sealed class PostLandEarlyWarningTests
     }
 
     [Test]
+    [Timeout(60_000)]
+    public async Task Real_slot_exit_zero_runs_shards_and_completes()
+    {
+        var ran = await RunRealSlotAsync(buildExit: 0, shardExit: 0, trxBody: Trx(("Synthetic.Ancient", "Ok", "Passed")));
+        ran.Receipt.RootElement.GetProperty("state").GetString().ShouldBe("completed");
+        ran.Receipt.RootElement.GetProperty("buildExit").GetInt32().ShouldBe(0);
+        var shard = ran.Receipt.RootElement.GetProperty("shards").EnumerateArray().Single();
+        shard.GetProperty("exit").GetInt32().ShouldBe(0);
+        ran.Marker.ShouldContain("--no-build", Case.Sensitive);
+        (ran.Receipt.RootElement.GetProperty("summaryLine").GetString() ?? "").ShouldNotContain("build=4", Case.Sensitive);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Real_slot_exit_four_is_incomplete_and_skips_shards()
+    {
+        var ran = await RunRealSlotAsync(buildExit: 4, shardExit: 0, trxBody: Trx(("Synthetic.Ancient", "Ok", "Passed")));
+        ran.Receipt.RootElement.GetProperty("state").GetString().ShouldBe("incomplete");
+        ran.Receipt.RootElement.GetProperty("buildExit").GetInt32().ShouldBe(4);
+        (ran.Receipt.RootElement.GetProperty("summaryLine").GetString() ?? "").ShouldContain("new-reds=unknown build=4", Case.Sensitive);
+        ran.Marker.ShouldNotContain("--no-build", Case.Sensitive);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Real_slot_shard_exit_records_an_int_and_the_failures()
+    {
+        var ran = await RunRealSlotAsync(buildExit: 0, shardExit: 2, trxBody: Trx(("Synthetic.Ancient", "Boom", "Failed")));
+        ran.Receipt.RootElement.GetProperty("state").GetString().ShouldBe("completed");
+        var shard = ran.Receipt.RootElement.GetProperty("shards").EnumerateArray().Single();
+        shard.GetProperty("exit").GetInt32().ShouldBe(2);
+        Names(ran.Receipt.RootElement, "newReds").ShouldBe(new[] { "Ancient.Boom" });
+        ran.Marker.ShouldContain("--no-build", Case.Sensitive);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task Stale_lock_reclaim_is_exclusive()
+    {
+        using var fixture = Fixture.Create();
+        fixture.WriteLockAt(DeadPid(), DateTime.UtcNow.AddHours(-1));
+        var lib = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "post-land-early-warning.ps1");
+        var lockPath = Path.Combine(fixture.ReceiptRoot, "lock.json");
+        var leftOut = Path.Combine(fixture.ReceiptRoot, "reclaim-left.txt");
+        var rightOut = Path.Combine(fixture.ReceiptRoot, "reclaim-right.txt");
+        var left = StartReclaim(lib, lockPath, leftOut, 200);
+        var right = StartReclaim(lib, lockPath, rightOut, 800);
+        using var leftProcess = Process.Start(left) ?? throw new InvalidOperationException("left reclaim did not start");
+        using var rightProcess = Process.Start(right) ?? throw new InvalidOperationException("right reclaim did not start");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await leftProcess.WaitForExitAsync(timeout.Token);
+        await rightProcess.WaitForExitAsync(timeout.Token);
+        leftProcess.ExitCode.ShouldBe(0);
+        rightProcess.ExitCode.ShouldBe(0);
+        var leftText = await File.ReadAllTextAsync(leftOut);
+        var rightText = await File.ReadAllTextAsync(rightOut);
+        var acquired = new[] { leftText, rightText }.Count(text => text.StartsWith("acquired ", StringComparison.Ordinal));
+        acquired.ShouldBe(1, leftText + " | " + rightText);
+        var winner = leftText.StartsWith("acquired ", StringComparison.Ordinal) ? leftText : rightText;
+        var winnerPid = int.Parse(winner.Substring("acquired ".Length).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var held = JsonDocument.Parse(await File.ReadAllTextAsync(lockPath));
+        held.RootElement.GetProperty("pid").GetInt32().ShouldBe(winnerPid);
+    }
+
+    [Test]
+    public async Task Reused_pid_with_an_older_start_does_not_hold_the_lock()
+    {
+        using var fixture = Fixture.Create();
+        fixture.WriteUnitClass("Antiphon.Tests.Fixture", "FixtureUnitTests");
+        fixture.WriteTable("src/Fixture.cs", "FixtureUnitTests");
+        var started = Process.GetCurrentProcess().StartTime.ToUniversalTime().AddHours(-1);
+        fixture.WriteLockAt(Environment.ProcessId, started);
+
+        var plan = await fixture.PlanAsync(fixture.Paths("src/Widget.cs"));
+        plan.Exit.ShouldBe(0, plan.Text);
+        plan.State.ShouldBe("run", plan.Text);
+        plan.State.ShouldNotBe("skipped-busy");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Zero_executed_shard_is_incomplete()
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var trxPath = Path.Combine(repo.ReceiptRoot, "empty.trx");
+        await File.WriteAllTextAsync(
+            trxPath,
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun xmlns=\"http://microsoft.com/schemas/VisualStudio/TeamTest/2010\"><TestDefinitions></TestDefinitions><Results></Results></TestRun>");
+        var shim = Path.Combine(repo.ReceiptRoot, "slot-shim.txt");
+        var parent = repo.CommitParent(tip);
+        var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
+            ["POST_LAND_WARNING_SLOT_SHARD_EXIT"] = "8",
+            ["POST_LAND_WARNING_SLOT_TRX"] = trxPath,
+        });
+        run.Exit.ShouldBe(0, run.Text);
+        var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
+        receipt.RootElement.GetProperty("state").GetString().ShouldBe("incomplete");
+        (receipt.RootElement.GetProperty("summaryLine").GetString() ?? "").ShouldContain("new-reds=unknown", Case.Sensitive);
+        var shard = receipt.RootElement.GetProperty("shards").EnumerateArray().Single();
+        shard.GetProperty("exit").GetInt32().ShouldBe(8);
+        shard.GetProperty("executed").GetInt32().ShouldBe(0);
+    }
+
+    [Test]
     public async Task Doc_sentences_are_present_in_both_owner_files()
     {
         var root = DelegateScriptRunner.RepoRoot;
@@ -486,6 +594,102 @@ public sealed class PostLandEarlyWarningTests
         var loop = await File.ReadAllTextAsync(Path.Combine(root, "docs", "orchestration-loop.md"));
         testing.ShouldContain(TestingSentence, Case.Sensitive);
         loop.ShouldContain(OrchestratorSentence, Case.Sensitive);
+    }
+
+    private static int DeadPid()
+    {
+        for (var pid = 400000; pid < 420000; pid++)
+        {
+            if (!Directory.Exists("/proc/" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                return pid;
+        }
+
+        return 400000;
+    }
+
+    private static ProcessStartInfo StartReclaim(string lib, string lockPath, string outPath, int delayMs)
+    {
+        var script = Path.Combine(Path.GetDirectoryName(outPath)!, "reclaim-" + delayMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".ps1");
+        File.WriteAllText(
+            script,
+            "$ErrorActionPreference = 'Stop'\n"
+            + ". '" + lib + "'\n"
+            + "$ok = Enter-PostLandLock -Path '" + lockPath + "' -RunId 'cccccccccccccccccccccccccccccccc'\n"
+            + "if ($ok) { [IO.File]::WriteAllText('" + outPath + "', 'acquired ' + [string]$PID) }\n"
+            + "else { [IO.File]::WriteAllText('" + outPath + "', 'refused ' + [string]$PID) }\n"
+            + "Start-Sleep -Milliseconds 2000\n");
+        var start = new ProcessStartInfo("pwsh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(script);
+        start.Environment["POST_LAND_WARNING_RECLAIM_DELAY_MS"] = delayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return start;
+    }
+
+    private static async Task<RealSlotRun> RunRealSlotAsync(int buildExit, int shardExit, string trxBody)
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var trxPath = Path.Combine(repo.ReceiptRoot, "stub-source.trx");
+        await File.WriteAllTextAsync(trxPath, trxBody);
+        var marker = Path.Combine(repo.ReceiptRoot, "slot-marker.txt");
+        var stub = Path.Combine(repo.ReceiptRoot, "stub-build-slot.ps1");
+        File.WriteAllText(stub, SlotStub(marker, trxPath, buildExit, shardExit));
+        var parent = repo.CommitParent(tip);
+        var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SCRIPT"] = stub,
+        });
+        run.Exit.ShouldBe(0, run.Text);
+        var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
+        var markerText = File.Exists(marker) ? await File.ReadAllTextAsync(marker) : "";
+        return new RealSlotRun(receipt, markerText);
+    }
+
+    private static string SlotStub(string marker, string trxSource, int buildExit, int shardExit)
+    {
+        return "$ErrorActionPreference = 'Continue'\n"
+            + "Write-Output 'BUILD SLOT granted'\n"
+            + "Write-Output 'Build succeeded.'\n"
+            + "$marker = '" + marker + "'\n"
+            + "$trxSource = '" + trxSource + "'\n"
+            + "$joined = [string]::Join([char]10, @($args))\n"
+            + "[IO.File]::AppendAllText($marker, $joined + [char]10)\n"
+            + "$results = ''\n"
+            + "$fileName = ''\n"
+            + "for ($i = 0; $i -lt $args.Count; $i++) {\n"
+            + "    if ([string]$args[$i] -eq '--results-directory' -and ($i + 1) -lt $args.Count) { $results = [string]$args[$i + 1] }\n"
+            + "    if ([string]$args[$i] -eq '--report-trx-filename' -and ($i + 1) -lt $args.Count) { $fileName = [string]$args[$i + 1] }\n"
+            + "}\n"
+            + "if ($joined.Contains('--no-build')) {\n"
+            + "    if (-not [string]::IsNullOrWhiteSpace($results) -and -not [string]::IsNullOrWhiteSpace($fileName)) {\n"
+            + "        $null = [IO.Directory]::CreateDirectory($results)\n"
+            + "        $dest = Join-Path $results $fileName\n"
+            + "        [IO.File]::Copy($trxSource, $dest, $true)\n"
+            + "        [IO.File]::SetLastWriteTimeUtc($dest, [datetime]::UtcNow)\n"
+            + "    }\n"
+            + "    exit " + shardExit.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n"
+            + "}\n"
+            + "exit " + buildExit.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n";
+    }
+
+    private sealed class RealSlotRun
+    {
+        internal RealSlotRun(JsonDocument receipt, string marker)
+        {
+            Receipt = receipt;
+            Marker = marker;
+        }
+
+        internal JsonDocument Receipt { get; }
+        internal string Marker { get; }
     }
 
     private static string Trx(params (string ClassName, string Method, string Outcome)[] rows)
@@ -656,7 +860,12 @@ public sealed class PostLandEarlyWarningTests
         }
 
         internal void WriteLock(int pid) =>
-            File.WriteAllText(Path.Combine(ReceiptRoot, "lock.json"), "{\"pid\":" + pid.ToString() + ",\"startedAt\":\"2026-11-09T00:00:00Z\"}\n");
+            WriteLockAt(pid, DateTime.UtcNow);
+
+        internal void WriteLockAt(int pid, DateTime startedAt) =>
+            File.WriteAllText(
+                Path.Combine(ReceiptRoot, "lock.json"),
+                "{\"pid\":" + pid.ToString() + ",\"startedAt\":\"" + startedAt.ToUniversalTime().ToString("o") + "\"}\n");
 
         internal void WriteLastStart(DateTime utc) =>
             File.WriteAllText(
