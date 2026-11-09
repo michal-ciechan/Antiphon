@@ -630,9 +630,9 @@ public sealed class PwshPrivateCacheTests
         foreach (var file in files)
         {
             var text = File.ReadAllText(file);
-            text.ShouldContain("ConfiguredCacheParent()", file);
-            text.Contains(hardCodedDirectories).ShouldBeFalse(file);
-            text.Contains(hardCodedFull).ShouldBeFalse(file);
+            text.Contains("ConfiguredCacheParent()", StringComparison.Ordinal).ShouldBeTrue(file);
+            text.Contains(hardCodedDirectories, StringComparison.Ordinal).ShouldBeFalse(file);
+            text.Contains(hardCodedFull, StringComparison.Ordinal).ShouldBeFalse(file);
         }
     }
 
