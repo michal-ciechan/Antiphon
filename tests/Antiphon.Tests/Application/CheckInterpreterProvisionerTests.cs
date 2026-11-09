@@ -257,6 +257,23 @@ public class CheckInterpreterProvisionerTests
             .ShouldBe(Path.Combine(Path.GetTempPath(), "antiphon", "check-interpreter"));
     }
 
+    [Test]
+    public async Task the_configured_specialist_claude_config_receives_the_trust_seed()
+    {
+        // CARD-1797: with no explicit path, the setting alone routes the seed, so a test host can keep
+        // it out of the runner user's real .claude.json.
+        await using var scratch = await TempWorkspace.CreateAsync();
+        var settings = SettingsFor(scratch.Path);
+        settings.SpecialistClaudeConfigPath = scratch.ClaudeConfigPath;
+        await using var db = CreateContext(scratch);
+        var provisioner = new CheckInterpreterProvisioner(
+            db, Options.Create(settings), TimeProvider.System, NullLogger<CheckInterpreterProvisioner>.Instance);
+
+        (await provisioner.EnsureAsync(CancellationToken.None)).ShouldNotBeNull();
+
+        ClaudeProjectTrust.IsTrusted(scratch.Path, scratch.ClaudeConfigPath).ShouldBeTrue();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static DelegationSettings SettingsFor(string directory) => new()

@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -187,6 +188,23 @@ public class OutputDistillerProvisionerTests
 
         OutputDistillerProvisioner.ResolveWorkingDirectory(settings)
             .ShouldBe(Path.Combine(Path.GetTempPath(), "antiphon", "output-distiller"));
+    }
+
+    [Test]
+    public async Task the_configured_specialist_claude_config_receives_the_trust_seed()
+    {
+        // CARD-1797: with no explicit path, the setting alone routes the seed, so a test host can keep
+        // it out of the runner user's real .claude.json.
+        using var scratch = new TempWorkspace();
+        var settings = SettingsFor(scratch.Path);
+        settings.SpecialistClaudeConfigPath = scratch.ClaudeConfigPath;
+        await using var db = CreateContext();
+        var provisioner = new OutputDistillerProvisioner(
+            db, Options.Create(settings), TimeProvider.System, NullLogger<OutputDistillerProvisioner>.Instance);
+
+        (await provisioner.EnsureAsync(CancellationToken.None)).ShouldNotBeNull();
+
+        ClaudeProjectTrust.IsTrusted(scratch.Path, scratch.ClaudeConfigPath).ShouldBeTrue();
     }
 
     private static DelegationSettings SettingsFor(string directory) => new()

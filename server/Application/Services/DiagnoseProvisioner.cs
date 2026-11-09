@@ -36,7 +36,8 @@ public sealed class DiagnoseProvisioner
     {
         _settings = settings.Value;
         _inner = new StandingSpecialistProvisioner(
-            db, timeProvider, logger, control, workspace, claudeConfigJsonPath);
+            db, timeProvider, logger, control, workspace,
+            claudeConfigJsonPath ?? _settings.SpecialistClaudeConfigPath);
     }
 
     /// <summary>

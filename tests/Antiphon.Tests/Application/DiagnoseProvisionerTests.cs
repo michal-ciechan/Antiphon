@@ -223,6 +223,23 @@ public class DiagnoseProvisionerTests
             .ShouldBe(Path.Combine(Path.GetTempPath(), "antiphon", "diagnose"));
     }
 
+    [Test]
+    public async Task the_configured_specialist_claude_config_receives_the_trust_seed()
+    {
+        // CARD-1797: with no explicit path, the setting alone routes the seed, so a test host can keep
+        // it out of the runner user's real .claude.json.
+        using var scratch = new TempWorkspace();
+        var settings = SettingsFor(scratch.Path);
+        settings.SpecialistClaudeConfigPath = scratch.ClaudeConfigPath;
+        await using var db = CreateContext();
+        var provisioner = new DiagnoseProvisioner(
+            db, Options.Create(settings), TimeProvider.System, NullLogger<DiagnoseProvisioner>.Instance);
+
+        (await provisioner.EnsureAsync(CancellationToken.None)).ShouldNotBeNull();
+
+        ClaudeProjectTrust.IsTrusted(scratch.Path, scratch.ClaudeConfigPath).ShouldBeTrue();
+    }
+
     private static DelegationSettings SettingsFor(string directory) => new()
     {
         DiagnoseAgentSlug = $"diagnose-{Guid.NewGuid():N}"[..24],

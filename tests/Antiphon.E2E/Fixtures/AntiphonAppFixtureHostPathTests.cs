@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Services;
@@ -70,8 +71,7 @@ public class AntiphonAppFixtureHostPathTests
         using var user = new UserClaudeConfig();
         await using (var boot = await BootAsync())
         {
-            File.ReadAllBytes(user.ConfigPath).ShouldBe(user.Original,
-                $"a fixture boot rewrote the user's Claude config {user.ConfigPath}");
+            user.AssertUnchanged("a fixture boot");
 
             // Redirected, not dropped: the interpreter's first launch still skips the trust dialog.
             var configuration = boot.Fixture.Services.GetRequiredService<IConfiguration>();
@@ -82,8 +82,7 @@ public class AntiphonAppFixtureHostPathTests
                 $"the check interpreter directory was not seeded in the fixture's config {owned}");
         }
 
-        File.ReadAllBytes(user.ConfigPath).ShouldBe(user.Original,
-            "fixture teardown rewrote the user's Claude config");
+        user.AssertUnchanged("fixture teardown");
     }
 
     private const string OwnedClaudeConfigKey = "Delegation:SpecialistClaudeConfigPath";
@@ -113,6 +112,13 @@ public class AntiphonAppFixtureHostPathTests
 
         public string ConfigPath { get; }
         public byte[] Original { get; }
+
+        public void AssertUnchanged(string actor)
+        {
+            var now = File.ReadAllBytes(ConfigPath);
+            now.SequenceEqual(Original).ShouldBeTrue(
+                $"{actor} rewrote the user's Claude config {ConfigPath}; it now reads:\n{Encoding.UTF8.GetString(now)}");
+        }
 
         public void Dispose()
         {
