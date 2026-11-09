@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "7e54681b56c7925bef082d528cde3285ec579a13d51f34625c8c3aad1ee2dbb0",
+  "policyHash": "9cf98d229e32ca52e76d6b8946856776c7c390e3027e2eae191f5042aca3b697",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -620,6 +620,16 @@
           "platform": "windows",
           "reason": "The #!/bin/sh sleep post-checkout hook does not delay git worktree add under Git for Windows, so the timeout boundary is proven only off Windows.",
           "owner": "CARD-1415"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CapabilityScriptTests",
+          "methods": [
+            "issue_does_not_print_the_token_and_dpapi_round_trips"
+          ],
+          "platform": "linux",
+          "reason": "Windows DPAPI round trip: capability.ps1 writes and the test reads a ProtectedData CurrentUser blob, which only Windows supports. The method remains required on Windows; error_paths_never_contain_the_token stays required on both platforms.",
+          "owner": "CARD-1811"
         },
         {
           "suite": "antiphon",

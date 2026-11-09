@@ -821,7 +821,10 @@ or bind a speculative method as passing evidence while that repair is pending.
 Force an existing OS parameter while retaining the real type when possible.
 Native-only APIs require a separately scoped native witness with its exact OS,
 source, command and budget; do not add a production bypass for testing. A native
-witness not executed stays pending, never a passed skip. Read runtime placement
+witness not executed stays pending, never a passed skip. A Windows-native test
+(DPAPI, ACLs, junctions) needs a runtime `OperatingSystem.IsWindows()` skip plus a
+Linux rc exclusion row; `[SupportedOSPlatform("windows")]` only satisfies the CA1416
+analyzer and still runs, and fails, on Linux (CARD-1811). Read runtime placement
 from `GET /api/runner-defaults` and `GET /api/session-runners`; leave portable work
 unpinned and use `-Platform Windows` only for the native Windows piece.
 
