@@ -65,6 +65,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     {
         Fixture.Git.BeforeObservedCommand = async arguments =>
         {
+            // The read below only feeds the optional evidence file; without ANTIPHON_C448_EVIDENCE it is skipped.
+            if (!LandingEvidence.Enabled) return;
             if (!arguments.Any(a => a is "rebase" or "merge" or "push" or "remove" or "update-ref")) return;
             // Separate connection at the mutation boundary: a tracked phase is not a receipt.
             await using var observer = CreateContext();
