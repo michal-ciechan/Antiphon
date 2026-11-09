@@ -38,7 +38,7 @@ Runner default at authoring was `globalRunnerId=server2`; this slice pins neithe
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | fix | `tests/Antiphon.Agents.Pty.Tests -> bin-c1792-pty/` | trust-write | `/*/*/ClaudeProjectTrustTests/*` | W-mode, W-race, W-lock and the existing seed contract | 9 passed, 0 failed/skipped | 9 | 3 | true |
+| CP-1 | fix | `tests/Antiphon.Agents.Pty.Tests -> bin-c1792-pty/` | trust-write | `/*/*/ClaudeProjectTrustTests/*` | W-mode, W-race, W-lock and the existing seed contract | 10 passed, 0 failed/skipped | 10 | 3 | true |
 | CP-2 | fix | `tests/Antiphon.Tests -> bin-c1792-guards/` | guards | `/*/*/(Server2SidecarStandingAgentsTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | A-1 pin and the Final guard batch | 0 failed/skipped | 50 | 12 | true |
 
 Code executes these filters once through `scripts/build-slot.ps1` on the worktree's native default output (`UseAppHost=false`), which is the task profile. The cold `bin-c1792-*` cells name the rows for the OS-witness checker; they are not a second build.
