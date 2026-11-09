@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class PwshPrivateCacheTests
 {
     private const string ProbeVariable = "ANTIPHON_PWSH_CACHE_PROBE";
+    private static readonly object SeamGate = new();
 
     [Test]
     [Timeout(60_000)]
@@ -247,6 +248,153 @@ public sealed class PwshPrivateCacheTests
         finally
         {
             Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    // CARD-1813 review D-1: the recorded start is /proc stat ticks. A wall-clock value that
+    // differs must not make that live owner look replaced.
+    [Test]
+    [Timeout(60_000)]
+    public void Kernel_ticks_stay_live_when_the_wall_clock_differs()
+    {
+        lock (SeamGate)
+        {
+            var root = Directory.CreateTempSubdirectory("c1813-clock-").FullName;
+            try
+            {
+                const long kernel = 1000;
+                var wall = Process.GetCurrentProcess().StartTime.ToUniversalTime();
+                var wallTicks = wall.Ticks - wall.Ticks % 10;
+                var pid = Environment.ProcessId;
+                var pidText = pid.ToString(CultureInfo.InvariantCulture);
+                Antiphon.Hosting.PwshPrivateCache.StartIdentitySource = id => id == pid
+                    ? Antiphon.Hosting.PwshPrivateCache.StartIdentity.Kernel(kernel, wallTicks)
+                    : Antiphon.Hosting.PwshPrivateCache.StartIdentity.Absent;
+
+                var owned = Path.Combine(root, "antiphon-pwsh-cache-clock-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(owned);
+                Antiphon.Hosting.PwshPrivateCache.AssignOwner(owned, pid, wall);
+                File.ReadAllText(Path.Combine(owned, "owner.pid")).Trim()
+                    .ShouldBe(pidText + "@k" + kernel.ToString(CultureInfo.InvariantCulture));
+
+                var mismatch = Seed(root, "antiphon-pwsh-cache-clock-" + Guid.NewGuid().ToString("N"), pidText + "@k" + (kernel + 1).ToString(CultureInfo.InvariantCulture));
+                var legacy = Seed(root, "antiphon-pwsh-cache-clock-" + Guid.NewGuid().ToString("N"), pidText + "@" + wallTicks.ToString(CultureInfo.InvariantCulture));
+                var pidOnly = Seed(root, "antiphon-pwsh-cache-clock-" + Guid.NewGuid().ToString("N"), pidText);
+                var dead = DeadPid(root);
+                var deadDir = Seed(root, "antiphon-pwsh-cache-clock-" + Guid.NewGuid().ToString("N"), dead.ToString(CultureInfo.InvariantCulture) + "@k" + kernel.ToString(CultureInfo.InvariantCulture));
+
+                Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
+
+                Directory.Exists(owned).ShouldBeTrue(owned);
+                Directory.Exists(mismatch).ShouldBeFalse(mismatch);
+                File.Exists(Path.Combine(legacy, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(legacy);
+                File.Exists(Path.Combine(pidOnly, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(pidOnly);
+                Directory.Exists(deadDir).ShouldBeFalse(deadDir);
+            }
+            finally
+            {
+                Antiphon.Hosting.PwshPrivateCache.StartIdentitySource = null;
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    // CARD-1813 review D-2: a stamp dated in the future is not current, so sweeping stays on.
+    [Test]
+    [Timeout(90_000)]
+    public async Task A_future_sweep_stamp_does_not_keep_a_dead_owner_cache()
+    {
+        var temp = Directory.CreateTempSubdirectory("c1813-future-").FullName;
+        try
+        {
+            var dead = DeadPid(temp);
+            var stale = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var stamp = Path.Combine(temp, "antiphon-pwsh-cache-sweep.stamp");
+            File.WriteAllText(stamp, "future");
+            File.SetLastWriteTimeUtc(stamp, DateTime.UtcNow.AddYears(1));
+
+            var seen = await ProbeAsync(temp, "future", static environment => environment.Remove("XDG_CACHE_HOME"));
+
+            Directory.Exists(stale).ShouldBeFalse(stale);
+            var rewritten = File.GetLastWriteTimeUtc(stamp);
+            rewritten.ShouldBeLessThan(DateTime.UtcNow.AddMinutes(1));
+            rewritten.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(-2));
+            Directory.Exists(seen).ShouldBeFalse(seen);
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    // CARD-1813 review A-1: a symlink override skips the sweep instead of cleaning the real temp root.
+    [Test]
+    [Timeout(90_000)]
+    public async Task An_unusable_root_override_skips_the_sweep()
+    {
+        var work = Directory.CreateTempSubdirectory("c1813-link-").FullName;
+        try
+        {
+            var fallback = Path.Combine(work, "fallback");
+            var target = Path.Combine(work, "target");
+            var link = Path.Combine(work, "link");
+            Directory.CreateDirectory(fallback);
+            Directory.CreateDirectory(target);
+            Directory.CreateSymbolicLink(link, target);
+            var dead = DeadPid(work);
+            var owner = dead.ToString(CultureInfo.InvariantCulture);
+            var inFallback = Seed(fallback, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", owner);
+            var inTarget = Seed(target, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", owner);
+
+            var seen = await ProbeAsync(work, "link", environment =>
+            {
+                environment.Remove("XDG_CACHE_HOME");
+                environment["TMPDIR"] = fallback;
+                environment["TMP"] = fallback;
+                environment["TEMP"] = fallback;
+                environment["ANTIPHON_PWSH_CACHE_ROOT"] = link;
+            });
+
+            File.Exists(Path.Combine(inFallback, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(inFallback);
+            File.Exists(Path.Combine(inTarget, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(inTarget);
+            Under(fallback, seen).ShouldBeTrue(seen);
+            Under(target, seen).ShouldBeFalse(seen);
+        }
+        finally
+        {
+            Directory.Delete(work, recursive: true);
+        }
+    }
+
+    // CARD-1813 review A-2: a start read that throws is not proof the owner is dead.
+    [Test]
+    [Timeout(60_000)]
+    public void An_unknown_start_read_keeps_the_owner_cache()
+    {
+        lock (SeamGate)
+        {
+            var root = Directory.CreateTempSubdirectory("c1813-unknown-").FullName;
+            try
+            {
+                var pid = Environment.ProcessId;
+                var wall = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks + TimeSpan.FromHours(1).Ticks;
+                Antiphon.Hosting.PwshPrivateCache.StartIdentitySource = id => id == pid
+                    ? Antiphon.Hosting.PwshPrivateCache.StartIdentity.Unknown
+                    : Antiphon.Hosting.PwshPrivateCache.StartIdentity.Absent;
+                var kept = Seed(root, "antiphon-pwsh-cache-unknown-" + Guid.NewGuid().ToString("N"), pid.ToString(CultureInfo.InvariantCulture) + "@" + wall.ToString(CultureInfo.InvariantCulture));
+                var dead = DeadPid(root);
+                var deadDir = Seed(root, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+
+                Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
+
+                File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
+                Directory.Exists(deadDir).ShouldBeFalse(deadDir);
+            }
+            finally
+            {
+                Antiphon.Hosting.PwshPrivateCache.StartIdentitySource = null;
+                Directory.Delete(root, recursive: true);
+            }
         }
     }
 

@@ -24,6 +24,28 @@ internal static class PwshPrivateCache
     // Fifty milliseconds still rejects pid reuse: the replacement cannot have started
     // until the recorded process had already exited.
     internal static readonly long StartMatchToleranceTicks = TimeSpan.FromMilliseconds(50).Ticks;
+
+    // Tests replace the platform start read. Null uses /proc starttime on Linux and
+    // Process.StartTime on Windows. The repair wires this; until then the platform read stands.
+    internal static Func<int, StartIdentity>? StartIdentitySource;
+
+    internal readonly record struct StartIdentity(StartReadKind Kind, long? KernelTicks, long? WallTicks)
+    {
+        internal static StartIdentity Absent { get; } = new(StartReadKind.Absent, null, null);
+
+        internal static StartIdentity Unknown { get; } = new(StartReadKind.Unknown, null, null);
+
+        internal static StartIdentity Kernel(long ticks, long? wallTicks = null) =>
+            new(StartReadKind.Present, ticks, wallTicks);
+    }
+
+    internal enum StartReadKind
+    {
+        Absent,
+        Unknown,
+        Present,
+    }
+
     private const string MarkerName = "owner.pid";
     private const string StampName = "antiphon-pwsh-cache-sweep.stamp";
     private const long MicrosecondTicks = 10;
