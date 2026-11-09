@@ -2745,7 +2745,12 @@ public sealed class LandNonCodeSkipTests
         {
             var builder = new LandingGitFixture(root, Guid.ParseExact(tokens["task"], "N"));
             await builder.BuildAsync();
+            // The graph push carries more than receive.unpackLimit (100) objects, so the remote would keep a
+            // pack, and a template with a pack makes every clone rewrite objects with libgit2 (~0.5 s). Keep
+            // them loose while seeding; the setting is removed again, so clones hold the fixture's own config.
+            await builder.RequiredAsync(builder.Remote, "config", "receive.unpackLimit", "100000");
             await SeedGraphAsync(builder);
+            await builder.RequiredAsync(builder.Remote, "config", "--unset", "receive.unpackLimit");
             return new() { ["seed"] = builder.SeedSha };
         }, cacheVersion: LandingGitFixture.TemplateCacheVersion + "|" + RealHeadTree.Value);
 
