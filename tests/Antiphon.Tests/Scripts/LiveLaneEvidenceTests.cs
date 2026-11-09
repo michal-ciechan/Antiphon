@@ -798,12 +798,21 @@ public class LiveLaneEvidenceTests
         return (process.ExitCode, stdout + "\n" + stderr.Result);
     }
 
-    private static Assembly Compile(string source)
+    // The references are read once per process, not once per compile; a source compiled before (the restored
+    // sanitizer, or the LF and CRLF forms that normalize to the same text) reuses its assembly.
+    private static readonly Lazy<MetadataReference[]> TrustedReferences = new(() =>
+        ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Distinct().Select(path => (MetadataReference)MetadataReference.CreateFromFile(path)).ToArray());
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Assembly>> Compiled = new(StringComparer.Ordinal);
+
+    private static Assembly Compile(string source) =>
+        Compiled.GetOrAdd(source, text => new Lazy<Assembly>(() => CompileNew(text))).Value;
+
+    private static Assembly CompileNew(string source)
     {
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Distinct().Select(path => (MetadataReference)MetadataReference.CreateFromFile(path));
         var compilation = CSharpCompilation.Create("c1545-c680-" + Guid.NewGuid().ToString("N"),
-            [CSharpSyntaxTree.ParseText(source)], references,
+            [CSharpSyntaxTree.ParseText(source)], TrustedReferences.Value,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         using var bytes = new MemoryStream();
         var emit = compilation.Emit(bytes);
