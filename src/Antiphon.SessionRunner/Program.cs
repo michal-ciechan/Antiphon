@@ -74,6 +74,7 @@ builder.Services.AddOptions<CodexCliVersionSettings>()
 builder.Services.AddSingleton<CodexCliVersionProbe>();
 builder.Services.AddHostedService<CodexCliVersionRefreshService>();
 builder.Services.AddSingleton(sp => new RunnerCapacityState(sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value));
+builder.Services.AddSingleton<RunnerRepositoryActivity>();
 builder.Services.AddSingleton<IPhoneHomeAdoptionGate, PhoneHomeAdoptionGate>();
 builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
 {
@@ -109,7 +110,8 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
         sp.GetRequiredService<TimeProvider>(),
         sp.GetRequiredService<PhoneHomeProcessIdentity>(),
         sp.GetRequiredService<RunnerCapacityState>(),
-        hostStatsOptions.Enabled && hostStatsOptions.HistoryEnabled ? sp.GetRequiredService<IHostLoadHistorySource>() : null);
+        hostStatsOptions.Enabled && hostStatsOptions.HistoryEnabled ? sp.GetRequiredService<IHostLoadHistorySource>() : null,
+        sp.GetRequiredService<RunnerRepositoryActivity>());
 });
 // CARD-0628 D-7 / CARD-0647 / CARD-0660: the Claude, Grok and Codex probes behind one router.
 builder.Services.AddProviderAuthProbes();
@@ -151,6 +153,20 @@ builder.Services.AddHostedService<SessionLivenessSweepService>();
 // process stays hot for the whole sustained window, the session is killed with reason
 // CpuSpinKilled, which the server maps to a clean, resumable stop.
 builder.Services.AddSingleton(TimeProvider.System);
+// CARD-1817: the runner's own gc. The tick waits five minutes and then an hourly check; it no-ops
+// unless phone-home and RepositoryMaintenance are both enabled. The route is the in-process view.
+builder.Services.AddSingleton(sp =>
+{
+    var phoneHome = sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value;
+    return new RunnerRepositoryMaintenance(
+        phoneHome.RepositoryPolicy().RepositoriesRoot,
+        sp.GetRequiredService<RunnerRepositoryActivity>(),
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<ILogger<RunnerRepositoryMaintenance>>(),
+        phoneHome.RepositoryMaintenance,
+        phoneHome.ResolvedRepositoryMaintenanceStatePath());
+});
+builder.Services.AddHostedService<RunnerRepositoryMaintenanceService>();
 builder.Services.AddSingleton<IProcessCpuProbe, SystemProcessCpuProbe>();
 builder.Services.AddHostedService<SessionCpuWatchdogService>();
 // CARD-0589 D-3: the host build/test driver budget (/build-slots). Registered after the liveness probe and
@@ -222,6 +238,7 @@ ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext contex
 
 app.MapGet("/diagnostics/startup", () => liveTiming.ReadStartup());
 app.MapHealthChecks("/health");
+app.MapGet("/repository-maintenance", (RunnerRepositoryMaintenance maintenance) => Results.Json(maintenance.Last));
 app.MapCodexCliVersionRoutes();
 
 // Which pseudoconsole every session here gets, on request. The server's delivery ceilings are

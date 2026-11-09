@@ -103,6 +103,12 @@ public sealed partial class RunnerWorkspaceService
     internal RunnerWorkspaceUseGate? WorkspaceUseGate { get; set; }
     internal Func<Task>? WorkspaceAdmissionForTest { get; set; }
 
+    /// <summary>CARD-1817. Shared with the maintenance pass. Null in a test that does not install one.</summary>
+    internal RunnerRepositoryActivity? Activity { get; set; }
+
+    /// <summary>CARD-1817. Extra environment applied to this service's non-inspection git children. Tests plant an invalid <c>GIT_CONFIG_COUNT</c> here.</summary>
+    internal IReadOnlyDictionary<string, string>? GitEnvironmentForTest { get; set; }
+
     public async Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
     {
@@ -592,6 +598,8 @@ public sealed partial class RunnerWorkspaceService
     public async Task<PhoneHomeWorkspacePublishResponse> PublishAsync(
         PhoneHomeWorkspacePublishRequest request, CancellationToken ct)
     {
+        // CARD-1817. The whole publish is the land, including the reads before the push.
+        using var land = Activity?.EnterWorktreeOrLand();
         var path = request.Path ?? "";
         var name = Path.GetFileName(path.TrimEnd('/', '\\'));
         // CARD-0824 S1: a slot leaf is admitted only for its current lessee's own branch (by ledger).
@@ -959,9 +967,15 @@ public sealed partial class RunnerWorkspaceService
         return rest.Length > 0 && !rest.Contains('/', StringComparison.Ordinal) && rest is not ("." or "..");
     }
 
-    internal Task<(int ExitCode, string Stdout, string Stderr)> GitAsync(
-        string workingDirectory, CancellationToken ct, params string[] args) =>
-        RunGitAsync(workingDirectory, _startProcess, _timeout, ct, args);
+    internal async Task<(int ExitCode, string Stdout, string Stderr)> GitAsync(
+        string workingDirectory, CancellationToken ct, params string[] args)
+    {
+        // Held for the whole call, including an in-process read: that is still this task's git call.
+        using var git = Activity?.EnterGit();
+        using var add = args is ["worktree", "add", ..] ? Activity?.EnterWorktreeOrLand() : null;
+        return await RunGitCoreAsync(workingDirectory, _startProcess, _timeout, ct, args, inspection: false,
+            extraEnvironment: GitEnvironmentForTest);
+    }
 
     internal Task<(int ExitCode, string Stdout, string Stderr)> InspectionGitAsync(
         string workingDirectory, CancellationToken ct, params string[] args) =>
@@ -995,7 +1009,8 @@ public sealed partial class RunnerWorkspaceService
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitCoreAsync(
         string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
-        CancellationToken ct, string[] args, bool inspection)
+        CancellationToken ct, string[] args, bool inspection,
+        IReadOnlyDictionary<string, string>? extraEnvironment = null)
     {
         // Same shape as the server's ServerGitProcess spans, so traces attribute runner-side git too.
         using var span = Antiphon.Observability.AntiphonTrace.Span(
@@ -1009,6 +1024,11 @@ public sealed partial class RunnerWorkspaceService
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        if (extraEnvironment is not null)
+        {
+            foreach (var pair in extraEnvironment)
+                psi.Environment[pair.Key] = pair.Value;
+        }
         if (inspection)
         {
             // Read-only eligibility must never execute repository/user-configured commands,
@@ -1047,18 +1067,15 @@ public sealed partial class RunnerWorkspaceService
                 psi.Environment["GIT_CONFIG_VALUE_" + i] = overrides[i].Value;
             }
         }
-        else
-        {
-            // CARD-1441: non-inspection children append the same two keys. Inspection already
-            // sets them inside the isolated list above and must not be appended again.
-            RunnerGitProcess.DisableAutoMaintenance(psi);
-        }
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         // No interactive credential prompt can ever block this process: the deploy key is the only
         // credential and it is BatchMode.
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+
+        if (!inspection)
+            RunnerGitProcess.DisableAutoMaintenance(psi);
 
         if (!inspection && InProcessAnswer(workingDirectory, startProcess, psi, args) is { } answered)
         {

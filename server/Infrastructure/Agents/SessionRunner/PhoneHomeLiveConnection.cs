@@ -68,7 +68,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         int maxCapacity = int.MaxValue,
         Func<string, int, int, CancellationToken, Task>? capacityReconciled = null,
         Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? codexCliObserved = null,
-        PhoneHomeEventWindowOptions? eventWindow = null)
+        PhoneHomeEventWindowOptions? eventWindow = null,
+        Action<PhoneHomeLiveConnection, RunnerRepositoryMaintenanceStatus>? repositoryMaintenanceObserved = null)
     {
         eventWindow?.Validate();
         EventWindow = eventWindow;
@@ -86,6 +87,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         Platform = platform;
         Capabilities = capabilities;
         _codexCliObserved = codexCliObserved;
+        _repositoryMaintenanceObserved = repositoryMaintenanceObserved;
         LastHeartbeatUtc = clock.GetUtcNow();
         StartedAtUtc = LastHeartbeatUtc;
     }
@@ -112,6 +114,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     /// <summary>CARD-1763. Pty read validators for this connection. A reconnect is a new instance.</summary>
     internal PhoneHomePtyReads PtyReads { get; } = new();
     private readonly Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? _codexCliObserved;
+    private readonly Action<PhoneHomeLiveConnection, RunnerRepositoryMaintenanceStatus>? _repositoryMaintenanceObserved;
     public TimeProvider Clock { get; }
     public DateTimeOffset LastHeartbeatUtc { get; private set; }
     public bool DispatchEligible { get; set; }
@@ -513,6 +516,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                     var reported = payload.Deserialize<PhoneHomeCapacityHeartbeat>(PhoneHomeFraming.Json);
                     ProducerPressure = reported?.EventPressure;
                     if (reported?.CodexCli is { } cli) _codexCliObserved?.Invoke(this, cli);
+                    if (reported?.RepositoryMaintenance is { } maintenance)
+                        _repositoryMaintenanceObserved?.Invoke(this, maintenance);
                     if (reported is { Capacity: >= 1 } && reported.Capacity <= _maxCapacity
                         && reported.Capacity != Capacity)
                     {

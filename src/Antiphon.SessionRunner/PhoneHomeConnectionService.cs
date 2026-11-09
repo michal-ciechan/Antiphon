@@ -21,6 +21,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     private readonly ILogger<PhoneHomeConnectionService> _logger;
     private readonly Guid _bootId;
     private readonly LiveTiming? _timing;
+    private readonly RunnerRepositoryMaintenance? _maintenance;
     private int _retiring;
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PhoneHomeFrame>> _waiters = new();
     private long _epoch;
@@ -37,9 +38,11 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         ILogger<PhoneHomeConnectionService> logger,
         PhoneHomeProcessIdentity? identity = null,
         RunnerCapacityState? capacity = null,
-        LiveTiming? timing = null)
+        LiveTiming? timing = null,
+        RunnerRepositoryMaintenance? maintenance = null)
     {
         _timing = timing;
+        _maintenance = maintenance;
         _settings = settings.Value;
         _capacity = capacity ?? new RunnerCapacityState(_settings);
         _adoption = adoption;
@@ -403,7 +406,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     internal Task SendHeartbeatAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct) =>
         writer.SendAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, epoch, Guid.NewGuid(),
             Payload: JsonSerializer.SerializeToElement(
-                new PhoneHomeCapacityHeartbeat(_capacity.Capacity, _runtime.CodexCliProbe?.Snapshot, EventPressure), PhoneHomeFraming.Json)), ct);
+                new PhoneHomeCapacityHeartbeat(_capacity.Capacity, _runtime.CodexCliProbe?.Snapshot, EventPressure,
+                    _maintenance?.Last), PhoneHomeFraming.Json)), ct);
 
     internal Task SendEventAsync(PhoneHomeConnectionWriter writer, long epoch, RunnerServerSentEvent evt, CancellationToken ct)
     {

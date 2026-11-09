@@ -129,13 +129,14 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
     private RunnerWorkspaceService? _workspace;
     private readonly RunnerWorkspaceActivity _workspaceActivity;
+    private readonly RunnerRepositoryActivity? _repositoryActivity;
 
     public PhoneHomeCommandDispatcher(
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
         ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null,
         IHostApplicationLifetime? lifetime = null, TimeProvider? time = null,
         PhoneHomeProcessIdentity? identity = null, RunnerCapacityState? capacity = null,
-        IHostLoadHistorySource? hostLoad = null)
+        IHostLoadHistorySource? hostLoad = null, RunnerRepositoryActivity? activity = null)
     {
         _runtime = runtime;
         _settings = settings;
@@ -149,6 +150,7 @@ public sealed class PhoneHomeCommandDispatcher
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _launchGenerations = new PhoneHomeLaunchGenerationStore(settings.LaunchGenerationsPath);
         _workspaceActivity = new RunnerWorkspaceActivity(_time);
+        _repositoryActivity = activity;
     }
 
     /// <summary>
@@ -188,10 +190,11 @@ public sealed class PhoneHomeCommandDispatcher
     {
         _workspace ??= new RunnerWorkspaceService(_settings.RepositoryPolicy(), _settings.AllowedCwd);
         _workspace.WorkspaceUseGate = _runtime.WorkspaceUseGate;
+        _workspace.Activity = _repositoryActivity;
         // CARD-0824 S1: the pool exists only when the runner flag is on; off keeps task-<id> mirrors.
         if (_settings.WorkspaceSlots.Enabled && _workspace.SlotPool is null)
             _workspace.SlotPool = new RunnerWorkspaceSlotPool(
-                _workspace, _settings.WorkspaceSlots, _capacity.Capacity, _time);
+                _workspace, _settings.WorkspaceSlots, _capacity.Capacity, _time, activity: _repositoryActivity);
         return _workspace;
     }
 

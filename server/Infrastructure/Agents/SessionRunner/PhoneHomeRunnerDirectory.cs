@@ -386,7 +386,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, ticket.Limits, _clock,
                 ticket.Capacity, ticket.Platform, ticket.Capabilities, slot.Entry.MaxCapacity,
-                RecordHeartbeatCapacityChangeAsync, ObserveCodexCli, ticket.EventWindow);
+                RecordHeartbeatCapacityChangeAsync, ObserveCodexCli, ticket.EventWindow, ObserveRepositoryMaintenance);
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;
@@ -710,12 +710,14 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         var available = live is not null && !leaseExpired && live.SocketOpen;
         LastDisconnectRecord? last;
         RunnerCodexCliVersionDto? cli;
+        RunnerRepositoryMaintenanceStatus? maintenance;
         long reconnects;
         lock (_gate)
         {
             last = slot.LastDisconnect;
             reconnects = slot.Reconnects;
             cli = slot.CodexCli;
+            maintenance = slot.RepositoryMaintenance;
         }
 
         // CARD-0679 D-1: name why the runner is not available instead of a constant: the live
@@ -766,7 +768,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: CodexCliObservation.DisplayError(cli, _clock.GetUtcNow()),
             CodexCliVersionStale: CodexCliObservation.DisplayStale(cli, _clock.GetUtcNow()),
-            EventMode: live is null ? null : live.EventWindow is null ? "legacy" : "window-v1");
+            EventMode: live is null ? null : live.EventWindow is null ? "legacy" : "window-v1",
+            RepositoryMaintenance: maintenance);
     }
 
     /// <summary>Null when this process has no database. Otherwise every non-terminal bound session and every queued unlaunched task.</summary>
@@ -926,6 +929,15 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         }
     }
 
+    private void ObserveRepositoryMaintenance(PhoneHomeLiveConnection connection, RunnerRepositoryMaintenanceStatus sample)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent(connection)) return;
+            _slots[connection.RunnerId].RepositoryMaintenance = sample;
+        }
+    }
+
     private RunnerCapabilitiesDto? LatestCapabilities(RunnerSlot slot, PhoneHomeLiveConnection? live)
     {
         lock (_gate)
@@ -1014,6 +1026,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         public DateTimeOffset? PlatformObservedAt;
         public RunnerCapabilitiesDto? Capabilities;
         public RunnerCodexCliVersionDto? CodexCli;
+        public RunnerRepositoryMaintenanceStatus? RepositoryMaintenance;
         public int RegisteredCapacity;
         public RunnerState? State;
     }
