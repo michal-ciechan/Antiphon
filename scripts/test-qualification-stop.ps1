@@ -329,7 +329,7 @@ try {
     }
     foreach ($name in $selected) { & $name }
 } catch {
-    Write-Host "FAIL C1507 harness error: $($_.Exception.Message)"
+    Write-Host ('FAIL C1507 harness error: ' + $_.Exception.Message)
     $script:failed++
 } finally {
     if ([IO.Directory]::Exists($script:scratch)) { [IO.Directory]::Delete($script:scratch, $true) }
