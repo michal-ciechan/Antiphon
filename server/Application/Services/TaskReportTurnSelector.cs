@@ -82,10 +82,20 @@ internal static class TaskReportTurnSelector
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd
                 && (boundaryCeiling == null || t.Sequence <= boundaryCeiling))
             .OrderByDescending(t => t.Sequence)
-            .Select(t => new BoundaryRow(t.Sequence, t.Kind, t.StopReason))
+            .Select(t => new BoundaryRow(t.Sequence, t.Kind, t.StopReason, t.ApiCallId))
+            .ToListAsync(ct);
+
+        // Stored tool rows only. A tool that has not been ingested yet is not proof.
+        var toolRows = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.ToolCall
+                && t.ApiCallId != null)
+            .Select(t => new ToolSiblingRow(t.Sequence, t.ApiCallId!))
             .ToListAsync(ct);
 
         var skipped = new List<TaskReportSkip>();
+        TranscriptPromptSpan.PromptRow? phantomBarrier = null;
+        long phantomBarrierBoundary = 0;
         for (var index = 0; index < boundaries.Count; index++)
         {
             var end = boundaries[index];
@@ -95,6 +105,12 @@ internal static class TaskReportTurnSelector
             {
                 skipped.Add(new TaskReportSkip(end.Sequence, "promptless"));
                 continue;
+            }
+
+            if (phantomBarrier is not null && rawPrompt.Sequence < phantomBarrier.Sequence)
+            {
+                return SelectionBehindPhantomBarrier(
+                    phantomBarrier, phantomBarrierBoundary, task, raw, rulesIds, invoked, sessionKind, skipped);
             }
 
             if (TaskReportHousekeeping.IsAllowlistedPrompt(sessionKind, rawPrompt.Text, rulesIds))
@@ -151,6 +167,23 @@ internal static class TaskReportTurnSelector
             if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
             {
                 return Finish(TaskReportSelectionKind.Interrupted, end.Sequence, rawPrompt, rawPrompt, raw, rulesIds, invoked, sessionKind, skipped);
+            }
+
+            // CARD-1473: an end_turn that shares its ApiCallId with a ToolCall in this
+            // prompt span is a sibling phantom, not a finished report. max_tokens and
+            // other stop reasons stay terminal. A different response id does not count,
+            // and a newer real prompt remains the attribution barrier.
+            var nextReal = NextRealPromptSequence(raw, rawPrompt.Sequence, sessionKind, rulesIds, invoked);
+            if (IsEndTurnSiblingPhantom(end, rawPrompt, nextReal, toolRows))
+            {
+                skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
+                if (phantomBarrier is null)
+                {
+                    phantomBarrier = rawPrompt;
+                    phantomBarrierBoundary = end.Sequence;
+                }
+
+                continue;
             }
 
             if (rawPrompt.Text is not string promptText
@@ -407,6 +440,78 @@ internal static class TaskReportTurnSelector
     }
 
     /// <summary>
+    /// A newer real prompt whose <c>end_turn</c> was a sibling phantom still blocks
+    /// older boundaries. A marked brief in that position has not finished.
+    /// </summary>
+    private static TaskReportSelection SelectionBehindPhantomBarrier(
+        TranscriptPromptSpan.PromptRow blocker,
+        long boundarySequence,
+        AgentTask task,
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked,
+        AgentKind sessionKind,
+        List<TaskReportSkip> skipped)
+    {
+        if (task.RepliedAtSequence is long watermark && blocker.Sequence <= watermark)
+        {
+            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, blocker, blocker, raw, rulesIds, invoked, sessionKind, skipped);
+        }
+
+        if (blocker.Text is not string text
+            || !text.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
+        {
+            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, blocker, blocker, raw, rulesIds, invoked, sessionKind, skipped);
+        }
+
+        return new TaskReportSelection(TaskReportSelectionKind.None, null, null, null, null, null, skipped);
+    }
+
+    private static long? NextRealPromptSequence(
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
+        long after,
+        AgentKind sessionKind,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked)
+    {
+        foreach (var row in rows)
+        {
+            if (row.Sequence <= after)
+                continue;
+            if (!IsTurnOwningKind(row.Kind) || IsHousekeepingRow(sessionKind, row, rulesIds, invoked))
+                continue;
+            return row.Sequence;
+        }
+
+        return null;
+    }
+
+    private static bool IsEndTurnSiblingPhantom(
+        BoundaryRow end,
+        TranscriptPromptSpan.PromptRow rawPrompt,
+        long? nextRealPrompt,
+        IReadOnlyList<ToolSiblingRow> tools)
+    {
+        if (!string.Equals(end.StopReason, TranscriptKinds.StopReasons.EndTurn, StringComparison.Ordinal))
+            return false;
+        if (string.IsNullOrEmpty(end.ApiCallId))
+            return false;
+
+        foreach (var tool in tools)
+        {
+            if (!string.Equals(tool.ApiCallId, end.ApiCallId, StringComparison.Ordinal))
+                continue;
+            if (tool.Sequence <= rawPrompt.Sequence)
+                continue;
+            if (nextRealPrompt is long cap && tool.Sequence >= cap)
+                continue;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The last row whose sequence is strictly below <paramref name="sequence"/>.
     /// <paramref name="rows"/> is ordered by sequence. Each call reads that list;
     /// nothing is cached, so the answer is not stale.
@@ -434,5 +539,7 @@ internal static class TaskReportTurnSelector
         return found < 0 ? null : rows[found];
     }
 
-    private readonly record struct BoundaryRow(long Sequence, string? Kind, string? StopReason);
+    private readonly record struct BoundaryRow(long Sequence, string? Kind, string? StopReason, string? ApiCallId);
+
+    private readonly record struct ToolSiblingRow(long Sequence, string ApiCallId);
 }
