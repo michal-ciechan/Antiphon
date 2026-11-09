@@ -10,6 +10,7 @@ namespace Antiphon.IO.WriteBehind.Tests;
 /// The write-behind file system: queued writes are readable at once, land in order with only the newest
 /// content of each path, and every other operation sees them; on a real disk the bytes match System.IO.
 /// </summary>
+[Category("Unit")]
 public class WriteBehindFileSystemTests
 {
     private static readonly string Root = OperatingSystem.IsWindows() ? @"C:\data" : "/data";
