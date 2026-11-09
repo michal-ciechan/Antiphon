@@ -293,6 +293,26 @@ through a `1>` wrapper buffer; the run itself survived.
   event 4689 then records which process exited, when, and its exit status. It does not say who
   terminated it. Agents never change audit policy, and this is not a recommendation to do so.
 
+### Stopping a recorded qualification (CARD-1507)
+
+`scripts/qualification/stop-supervisor.ps1` is the operator's stop tool. Stopping the live
+qualification run stays human-only (2026-10-31). Agents must not aim this script at the live
+run, its task directory, or `C:\Antiphon\verification`.
+
+The script is Windows-only and requires `-Confirm`. Without `-Confirm` it exits 2 and changes
+nothing. On a non-Windows host it exits 5 before any kill or file change. It reads
+`TaskRoot\supervisor-identity.json` and `TaskRoot\launch-child.json`, re-observes each recorded
+pid and start, then runs `taskkill /PID <supervisor> /T /F` and then
+`taskkill /PID <driver> /T /F`. The native-lock pid is not a kill target. `native-run.lock` is
+moved into `TaskRoot\stop-evidence` only when its owner pid is dead, its run id matches, and its
+bytes are unchanged. A live, reused, unknown, foreign, or changed lock is retained. The stop
+reason is appended to `TaskRoot\supervisor.log`. The script does not rewrite `last-run.json` and
+does not remove `run.lock`.
+
+When the script refuses, the manual steps in `docs/release-gates.md` remain the proof. A native
+Windows `taskkill` against a private sleeper tree, and a Windows PowerShell 5.1 run of these
+scripts, stay pending. A Linux green does not discharge them.
+
 ### Pre-run workspace slot cold reset (CARD-0824 S1)
 
 Before starting a whole rc qualification run, run
