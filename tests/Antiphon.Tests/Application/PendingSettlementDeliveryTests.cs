@@ -40,8 +40,10 @@ public sealed class PendingSettlementDeliveryTests
     public async Task C1082_LeaseBusySettlementNoteIsAcceptedComplete(string producer, string delivery)
     {
         var pending = producer == "pending";
+        // CARD-1802: with sync debt on, lease contention never blocks a complete report, so the
+        // blocked producer is the kill switch's lease-busy block (Delegation:RunnerSyncDebtOnSettlement off).
         await using var world = await RunnerSettlementWorld.CreateAsync(
-            profiled: pending, controlledSyncClock: true);
+            profiled: pending, controlledSyncClock: true, syncDebt: pending);
         if (pending)
         {
             var source = await world.Git.RunnerPushAsync("work.txt", "runner work");
