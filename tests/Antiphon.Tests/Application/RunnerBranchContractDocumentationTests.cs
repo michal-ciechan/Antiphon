@@ -91,7 +91,7 @@ public class RunnerBranchContractDocumentationTests
         script.ShouldContain("Runner sync: Pending $($r.reason); origin=$($r.observedSha)");
         script.ShouldContain("Desktop sync debt:");
         script.ShouldContain(
-            "Pending evidence without a debt row means the task stayed Blocked and a reply is required.");
+            "Pending evidence without a debt row: the progress read blocked this task; repair what the handoff names, then reply.");
         Read("server/Application/Services/SettlementSyncDebtAttention.cs").ShouldContain(
             "The task attempt, baseline or worktree changed; this debt will not be fast-forwarded.");
         Read("server/Application/Services/AttentionService.cs").ShouldContain(
@@ -334,10 +334,10 @@ public class RunnerBranchContractDocumentationTests
         "runner_sync_lease_busy",
         "Pending is never Confirmed.",
         "A debt row is created only for the lease-contention case of a complete report that settles Succeeded or Failed.",
-        "Dirty, diverged, and unfetched Code stay Blocked with no debt row.",
+        "Dirty, diverged and rewound Code stay Blocked with no debt row; an unfetched owned tip under lease contention is Pending with a debt row, and the sweep fetches its objects under the lease before the fast-forward (CARD-1802).",
         "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked.",
-        "A Blocked lease-busy settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending.",
-        "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
+        "A Blocked Pending settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending, and its block reason is never runner_sync_lease_busy (runner_sync_progress_unverified when the progress read gave no reason).",
+        "Pending evidence without a debt row means the progress read, not the lease, blocked the task; repair what the handoff names, then reply.",
         "desktop-sync=pending",
         "synced later",
         "No reply is needed",
@@ -365,7 +365,7 @@ public class RunnerBranchContractDocumentationTests
         "Pending is never Confirmed.",
         "desktop-sync=pending",
         "synced later",
-        "Dirty, diverged, and unfetched Code stay Blocked",
+        "Dirty, diverged and rewound Code stay Blocked",
         "then reply",
         "backoff is 1, 2, 4, then 5 minutes",
         "-Land does not read RemoteSync.",
@@ -382,7 +382,7 @@ public class RunnerBranchContractDocumentationTests
         "Delegation:RunnerSyncDebtOnSettlement defaults to true.",
         "runner_sync_lease_busy",
         "synced later",
-        "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
+        "the progress read, not the lease, blocked the task; repair what the handoff names, then reply.",
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
         "Held debt is re-checked hourly and stays Held, so the re-check does not clear its attention row.",
     ];
