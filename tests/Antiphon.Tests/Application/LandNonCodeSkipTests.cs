@@ -2838,11 +2838,7 @@ public sealed class LandNonCodeSkipTests
         File.Copy(
             Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-precheck.ps1"),
             Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
-        await GitAsync(root, "init", "-b", "master");
-        await GitAsync(root, "config", "user.email", "c1390@example.invalid");
-        await GitAsync(root, "config", "user.name", "CARD-1390");
-        await GitAsync(root, "add", "--", "server/App.csproj", "scripts/audit-land-verification-graph.ps1");
-        await GitAsync(root, "commit", "-m", "fixture");
+        CommitFixture(root, "c1390@example.invalid", "CARD-1390", ["server/App.csproj", "scripts/audit-land-verification-graph.ps1"]);
         return root;
     }
 
@@ -2861,11 +2857,16 @@ public sealed class LandNonCodeSkipTests
             await File.WriteAllTextAsync(full, content);
         }
 
+        if (entries is null || entries.Count == 0)
+        {
+            CommitFixture(root, "c1400@example.invalid", "CARD-1400", null);
+            return root;
+        }
         await GitAsync(root, "init", "-b", "master");
         await GitAsync(root, "config", "user.email", "c1400@example.invalid");
         await GitAsync(root, "config", "user.name", "CARD-1400");
         await GitAsync(root, "add", "--", ".");
-        foreach (var (mode, path, content) in entries ?? [])
+        foreach (var (mode, path, content) in entries)
         {
             var oid = await GitHashObjectAsync(root, content);
             // This index-only fixture deliberately holds paths Win32 cannot materialize.
@@ -2873,6 +2874,21 @@ public sealed class LandNonCodeSkipTests
         }
         await GitAsync(root, "commit", "-m", "fixture");
         return root;
+    }
+
+    // The fixture repository is made in-process (LibGit2Sharp): init on master, the fixture identity in its
+    // config, the paths (or every untracked file) staged and one commit, as the git commands did, without the
+    // five git processes. Index-only entries still go through git update-index (see InitAuditTreeAsync).
+    private static void CommitFixture(string root, string email, string name, IReadOnlyList<string>? paths)
+    {
+        using var repo = new LibGit2Sharp.Repository(LibGit2Sharp.Repository.Init(root));
+        repo.Refs.UpdateTarget("HEAD", "refs/heads/master");
+        repo.Config.Set("user.email", email);
+        repo.Config.Set("user.name", name);
+        if (paths is null) LibGit2Sharp.Commands.Stage(repo, "*");
+        else LibGit2Sharp.Commands.Stage(repo, paths);
+        var signature = new LibGit2Sharp.Signature(name, email, DateTimeOffset.Now);
+        repo.Commit("fixture", signature, signature, new LibGit2Sharp.CommitOptions());
     }
 
     private static async Task<string> GitHashObjectAsync(string root, string content)
