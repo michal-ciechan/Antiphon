@@ -29,8 +29,10 @@ public sealed class LandGraphLandRefreshTests
         if ($Update) {
             Add-Content -LiteralPath $log -Value ('update landrefresh=' + $LandRefresh.IsPresent)
             if ($env:C1753_UPDATE_CODE -eq '1') { exit 1 }
-            Copy-Item -LiteralPath $env:C1753_NEW_MANIFEST -Destination $env:C1753_MANIFEST -Force
-            Copy-Item -LiteralPath $env:C1753_NEW_EVAL -Destination $env:C1753_EVAL -Force
+            # Write the bytes (a fresh modification time), as the real -Update does. Copy-Item keeps the
+            # source's older time, and a same-size record then looks unchanged to git's stat check.
+            [System.IO.File]::WriteAllBytes($env:C1753_MANIFEST, [System.IO.File]::ReadAllBytes($env:C1753_NEW_MANIFEST))
+            [System.IO.File]::WriteAllBytes($env:C1753_EVAL, [System.IO.File]::ReadAllBytes($env:C1753_NEW_EVAL))
             exit 0
         }
         $prior = 0
