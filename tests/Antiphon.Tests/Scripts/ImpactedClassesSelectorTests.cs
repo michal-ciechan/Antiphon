@@ -458,7 +458,10 @@ public sealed partial class ImpactedClassesSelectorTests
     {
         var root = Root();
         var expected = "/*/*/" + string.Join("|", LandNotificationClasses.Select(name => "(" + name + "*)")) + "/*";
-        const string e2e = "/*/*/(AgentTaskLandDeliveryE2ETests*)|(LandDeliveryFixtureProbeTests*)/*";
+        // CARD-1819 repair: AgentTaskLandDeliveryE2ETests asserts Windows in LandDeliveryFixture
+        // and must not be on the Linux filter. The probe stays the Linux half.
+        const string e2e = "/*/*/(LandDeliveryFixtureProbeTests*)/*";
+        const string windowsE2e = "/*/*/(AgentTaskLandDeliveryE2ETests*)/*";
         const string path = "server/Application/Services/AgentTaskLandNotificationService.cs";
 
         var text = await RunAsync(root, "-Path", path);
@@ -471,11 +474,13 @@ public sealed partial class ImpactedClassesSelectorTests
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         json.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(expected);
-        // CARD-1819: the same service path also selects the E2E delivery class and its Linux probe.
-        // The printed treenodeFilter stays the Antiphon.Tests row; the E2E row is the second filter.
+        // The printed treenodeFilter stays the Antiphon.Tests row; the E2E row is the Linux probe only.
         FilterRows(json.RootElement, "filters").ShouldBe([
             ("tests/Antiphon.E2E", e2e),
             ("tests/Antiphon.Tests", expected),
+        ]);
+        FilterRows(json.RootElement, "windowsFilters").ShouldBe([
+            ("tests/Antiphon.E2E", windowsE2e),
         ]);
     }
 
@@ -798,7 +803,9 @@ public sealed partial class ImpactedClassesSelectorTests
             "dpapi-protected-data",
             "CapabilityScriptTests",
             windows: true,
-            also: "DelegateScriptCapabilityTests");
+            also: "DelegateScriptCapabilityTests",
+            windowsOnly: true,
+            alsoWindowsOnly: true);
     }
 
     [Test]
@@ -809,7 +816,74 @@ public sealed partial class ImpactedClassesSelectorTests
             "e2e-land-delivery",
             "AgentTaskLandDeliveryE2ETests",
             windows: true,
-            also: "LandDeliveryFixtureProbeTests");
+            also: "LandDeliveryFixtureProbeTests",
+            windowsOnly: true);
+    }
+
+    // CARD-1819 repair. "windows": "only" is the form that owes the class on Windows and
+    // leaves every Linux filter free of it. "required" still runs on Linux and is owed too.
+    [Test]
+    public async Task C1819_windows_only_lane_stays_out_of_linux_filters()
+    {
+        var root = Root();
+        var only = await SelectLaneAsync(root, "only");
+        AssertLane(only.RootElement, linux: false);
+        var dropped = only.RootElement.GetRawText().Replace(
+            "AppDbContextModelTests", "DroppedC1819Selection", StringComparison.Ordinal);
+        dropped.ShouldNotBe(only.RootElement.GetRawText());
+        using (var broken = JsonDocument.Parse(dropped))
+            Should.Throw<ShouldAssertException>(() => AssertLane(broken.RootElement, linux: false));
+
+        var required = await SelectLaneAsync(root, "required");
+        AssertLane(required.RootElement, linux: true);
+    }
+
+    // The ProtectedData literal must not match the table or a roster JSON. A real Antiphon.Tests
+    // source line still selects the DPAPI classes.
+    [Test]
+    public async Task C1819_protected_data_literal_does_not_select_the_table()
+    {
+        var root = Root();
+        var table = Path.Combine(root, "tests", "impacted-classes.json");
+        var source = Path.Combine(Path.GetTempPath(), "impacted-classes-protected-source-" + Guid.NewGuid().ToString("N"));
+        var tableDiff = Path.Combine(Path.GetTempPath(), "impacted-classes-protected-table-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            CreateLiteralDiffRepository(
+                source,
+                "tests/Antiphon.Tests/Application/OtherProtectedTests.cs",
+                "public sealed class OtherProtectedTests\n{\n}\n",
+                "public sealed class OtherProtectedTests\n{\n    // ProtectedData\n}\n");
+            var selected = await RunAsync(root, "-Repo", source, "-Table", table, "-Range", "HEAD^..HEAD", "-Json");
+            selected.Exit.ShouldBe(0, selected.Text);
+            using (var json = JsonDocument.Parse(selected.Stdout))
+                Names(json, "kinds").ShouldContain("dpapi-protected-data");
+            var dropped = selected.Stdout.Replace("dpapi-protected-data", "DroppedC1819Selection", StringComparison.Ordinal);
+            dropped.ShouldNotBe(selected.Stdout);
+            using (var broken = JsonDocument.Parse(dropped))
+                Should.Throw<ShouldAssertException>(() => Names(broken, "kinds").ShouldContain("dpapi-protected-data"));
+
+            CreateLiteralDiffRepository(
+                tableDiff,
+                "tests/impacted-classes.json",
+                "{\n  \"schema\": 1\n}\n",
+                "{\n  \"schema\": 1,\n  \"note\": \"ProtectedData\"\n}\n");
+            var self = await RunAsync(root, "-Repo", tableDiff, "-Table", table, "-Range", "HEAD^..HEAD", "-Json");
+            self.Exit.ShouldBe(0, self.Text);
+            using var selfJson = JsonDocument.Parse(self.Stdout);
+            Names(selfJson, "kinds").ShouldNotContain("dpapi-protected-data");
+            var injected = self.Stdout.Contains("\"kinds\": []", StringComparison.Ordinal)
+                ? self.Stdout.Replace("\"kinds\": []", "\"kinds\": [\"dpapi-protected-data\"]", StringComparison.Ordinal)
+                : self.Stdout.Replace("\"kinds\": [", "\"kinds\": [\"dpapi-protected-data\", ", StringComparison.Ordinal);
+            injected.ShouldNotBe(self.Stdout);
+            using var brokenSelf = JsonDocument.Parse(injected);
+            Should.Throw<ShouldAssertException>(() => Names(brokenSelf, "kinds").ShouldNotContain("dpapi-protected-data"));
+        }
+        finally
+        {
+            DeleteTree(source);
+            DeleteTree(tableDiff);
+        }
     }
 
     [Test]
@@ -834,22 +908,39 @@ public sealed partial class ImpactedClassesSelectorTests
     }
 
     private static async Task AssertFakeDiff(
-        string path, string kind, string needle, bool windows, string? also = null)
+        string path, string kind, string needle, bool windows, string? also = null,
+        bool windowsOnly = false, bool alsoWindowsOnly = false)
     {
         var root = Root();
         var ran = await RunAsync(root, "-Path", path, "-Json");
         ran.Exit.ShouldBe(0, path + " " + ran.Text);
-        using var json = JsonDocument.Parse(ran.Stdout);
-        AssertSelected(json.RootElement, kind, needle, windows, also);
+        using (var json = JsonDocument.Parse(ran.Stdout))
+            AssertSelected(json.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly);
+
+        if (windowsOnly)
+        {
+            var merged = await RunAsync(root, "-MergeSubset", "-Path", path, "-Json");
+            merged.Exit.ShouldBe(0, path + " merge " + merged.Text);
+            using var mergeJson = JsonDocument.Parse(merged.Stdout);
+            AssertSelected(mergeJson.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly);
+            var mergeMutant = merged.Stdout.Replace(needle, "DroppedC1819Selection", StringComparison.Ordinal);
+            mergeMutant.ShouldNotBe(merged.Stdout, needle);
+            using var brokenMerge = JsonDocument.Parse(mergeMutant);
+            Should.Throw<ShouldAssertException>(() =>
+                AssertSelected(brokenMerge.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly));
+        }
 
         // The replacement must not contain the needle: ShouldContain would still match a prefixed copy.
         var mutant = ran.Stdout.Replace(needle, "DroppedC1819Selection", StringComparison.Ordinal);
         mutant.ShouldNotBe(ran.Stdout, needle);
         using var broken = JsonDocument.Parse(mutant);
-        Should.Throw<ShouldAssertException>(() => AssertSelected(broken.RootElement, kind, needle, windows, also));
+        Should.Throw<ShouldAssertException>(() =>
+            AssertSelected(broken.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly));
     }
 
-    private static void AssertSelected(JsonElement root, string kind, string needle, bool windows, string? also)
+    private static void AssertSelected(
+        JsonElement root, string kind, string needle, bool windows, string? also,
+        bool windowsOnly = false, bool alsoWindowsOnly = false)
     {
         root.GetProperty("kinds").EnumerateArray().Select(row => row.GetString() ?? "")
             .ShouldContain(kind);
@@ -860,5 +951,70 @@ public sealed partial class ImpactedClassesSelectorTests
         var windowsHit = root.GetProperty("windowsFilters").EnumerateArray()
             .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(needle, StringComparison.Ordinal));
         windowsHit.ShouldBe(windows, kind + " windows lane " + needle);
+        if (!windowsOnly)
+            return;
+
+        LinuxFilters(root).Any(filter => filter.Contains(needle, StringComparison.Ordinal))
+            .ShouldBeFalse(kind + " linux filter " + needle);
+        if (also is null)
+            return;
+        if (alsoWindowsOnly)
+        {
+            LinuxFilters(root).Any(filter => filter.Contains(also, StringComparison.Ordinal))
+                .ShouldBeFalse(kind + " linux filter " + also);
+            root.GetProperty("windowsFilters").EnumerateArray()
+                .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(also, StringComparison.Ordinal))
+                .ShouldBeTrue(kind + " windows lane " + also);
+        }
+        else
+        {
+            LinuxFilters(root).Any(filter => filter.Contains(also, StringComparison.Ordinal))
+                .ShouldBeTrue(kind + " linux filter " + also);
+        }
+    }
+
+    private static async Task<JsonDocument> SelectLaneAsync(string root, string lane)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "impacted-classes-lane-" + Guid.NewGuid().ToString("N") + ".json");
+        var table = "{\"schema\":1,\"kinds\":[{\"id\":\"lane\",\"globs\":[\"server/Migrations/**\"],\"classes\":[\"AppDbContextModelTests\"],\"windows\":\""
+            + lane + "\"}]}";
+        await File.WriteAllTextAsync(path, table);
+        try
+        {
+            var ran = await RunAsync(root, "-Path", "server/Migrations/x.cs", "-Json", "-Table", path);
+            ran.Exit.ShouldBe(0, lane + " " + ran.Text);
+            return JsonDocument.Parse(ran.Stdout);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static void AssertLane(JsonElement root, bool linux)
+    {
+        const string needle = "AppDbContextModelTests";
+        root.GetProperty("kinds").EnumerateArray().Select(row => row.GetString() ?? "").ShouldContain("lane");
+        LinuxFilters(root).Any(filter => filter.Contains(needle, StringComparison.Ordinal)).ShouldBe(linux, needle);
+        root.GetProperty("windowsFilters").EnumerateArray()
+            .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(needle, StringComparison.Ordinal))
+            .ShouldBeTrue(needle);
+    }
+
+    private static List<string> LinuxFilters(JsonElement root) =>
+        FilterRows(root, "filters").Select(row => row.Filter).ToList();
+
+    private static void CreateLiteralDiffRepository(string dir, string relative, string before, string after)
+    {
+        var file = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file, before);
+        Git(dir, "init", "-q");
+        Git(dir, "add", "-A");
+        Git(dir, "-c", "user.name=impacted", "-c", "user.email=impacted@example.invalid", "-c", "commit.gpgsign=false",
+            "commit", "-q", "-m", "before");
+        File.WriteAllText(file, after);
+        Git(dir, "-c", "user.name=impacted", "-c", "user.email=impacted@example.invalid", "-c", "commit.gpgsign=false",
+            "commit", "-q", "-am", "after");
     }
 }
