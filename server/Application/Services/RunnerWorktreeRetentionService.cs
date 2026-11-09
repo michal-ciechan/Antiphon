@@ -54,16 +54,18 @@ public sealed class RunnerWorktreeRetentionService
     private readonly IOptionsMonitor<RunnerWorktreeRetentionSettings> _settings;
     private readonly TimeProvider _clock;
     private readonly ILogger<RunnerWorktreeRetentionService> _logger;
+    private readonly RunnerWorktreeRetentionTicks _ticks;
 
     public RunnerWorktreeRetentionService(AppDbContext db, ISessionRunnerDirectory runners,
         IOptionsMonitor<RunnerWorktreeRetentionSettings> settings, TimeProvider clock,
-        ILogger<RunnerWorktreeRetentionService> logger)
+        ILogger<RunnerWorktreeRetentionService> logger, RunnerWorktreeRetentionTicks ticks)
     {
         _db = db;
         _runners = runners;
         _settings = settings;
         _clock = clock;
         _logger = logger;
+        _ticks = ticks;
     }
 
     public const string SendCursorPrefix = "runner-retention-sent:";
@@ -74,7 +76,7 @@ public sealed class RunnerWorktreeRetentionService
     /// eligible ones skipped because the runner kept them recently, <paramref name="Stopped"/> why the tick stopped
     /// sending early (null when it did not). CARD-1794: <paramref name="Sent"/> counts the requests for present trees (the
     /// <c>MaxRemovalsPerTick</c> bound), <paramref name="AbsentSent"/> those for mirrors a complete inventory showed gone,
-    /// <paramref name="Queued"/> the eligible tasks left for a later tick by either bound, and
+    /// <paramref name="Queued"/> the eligible tasks left for a later tick by either bound or by a stop (CARD-1796), and
     /// <paramref name="MinTerminalHours"/> the age floor this tick applied (so a configuration override is visible).
     /// </summary>
     public sealed record TickResult(string RunnerId, int Sent, Guid? RunId, int Examined = 0, int Eligible = 0,
@@ -83,16 +85,51 @@ public sealed class RunnerWorktreeRetentionService
     /// <summary>
     /// CARD-1794 (4). The operator's one-shot reclaim (the execute route): one Execute tick for one allow-listed runner,
     /// even while the scheduled job runs DryRun (<c>Execute=false</c>). The kill switch (<c>Enabled</c>), the allow-list,
-    /// the tick budget and every server and runner check still apply; the temp sweep stays DryRun.
+    /// the tick budget and every server and runner check still apply; the temp sweep stays DryRun. It waits for the
+    /// process's tick turn; the route itself starts it in the background (<see cref="RunnerWorktreeRetentionTicks.StartExecute"/>).
     /// </summary>
     public Task<IReadOnlyList<TickResult>> RunExecuteOnceAsync(string runnerId, CancellationToken ct) =>
         RunTickAsync(ct, executeRunner: runnerId);
 
     /// <summary>
+    /// The preview route's DryRun tick for one runner. CARD-1796: it never waits behind another tick; while one runs it
+    /// refuses 409 <c>tick_in_progress</c>.
+    /// </summary>
+    public async Task<IReadOnlyList<TickResult>> RunPreviewAsync(string runnerId, CancellationToken ct)
+    {
+        if (!_ticks.TryEnter())
+            throw RunnerWorktreeRetentionTicks.TickInProgress();
+        try
+        {
+            return await RunEnteredAsync(ct, previewRunner: runnerId);
+        }
+        finally
+        {
+            _ticks.Exit();
+        }
+    }
+
+    /// <summary>
     /// One tick over every allow-listed runner. <paramref name="previewRunner"/> forces DryRun for one runner (the preview
     /// route); <paramref name="executeRunner"/> forces Execute for one runner (the operator's one-shot execute route).
+    /// CARD-1796 (A-1): it first waits for the process's tick turn, so it never overlaps another tick.
     /// </summary>
     public async Task<IReadOnlyList<TickResult>> RunTickAsync(CancellationToken ct, string? previewRunner = null, string? executeRunner = null)
+    {
+        await _ticks.EnterAsync(ct);
+        try
+        {
+            return await RunEnteredAsync(ct, previewRunner, executeRunner);
+        }
+        finally
+        {
+            _ticks.Exit();
+        }
+    }
+
+    /// <summary>The tick body; the caller holds the tick turn. <paramref name="executeRunId"/> names the forced runner's run.</summary>
+    internal async Task<IReadOnlyList<TickResult>> RunEnteredAsync(CancellationToken ct, string? previewRunner = null,
+        string? executeRunner = null, Guid? executeRunId = null)
     {
         var settings = _settings.CurrentValue;
         if (!settings.Enabled)
@@ -107,19 +144,20 @@ public sealed class RunnerWorktreeRetentionService
                 continue;
             var forced = executeRunner is not null && previewRunner is null;
             var execute = forced || (settings.Execute && previewRunner is null);
-            results.Add(await RunRunnerAsync(runnerId, settings, execute, forced, writeAll: previewRunner is not null || forced, tickStarted, ct));
+            results.Add(await RunRunnerAsync(runnerId, settings, execute, forced, writeAll: previewRunner is not null || forced, tickStarted,
+                forced ? executeRunId : null, ct));
         }
 
         return results;
     }
 
     private async Task<TickResult> RunRunnerAsync(string runnerId, RunnerWorktreeRetentionSettings settings, bool execute, bool forced,
-        bool writeAll, DateTime tickStarted, CancellationToken ct)
+        bool writeAll, DateTime tickStarted, Guid? runId, CancellationToken ct)
     {
         var now = Now();
         var run = new WorktreeResidueRun
         {
-            Id = Guid.NewGuid(), StartedAt = now, Execute = execute, Preview = !execute,
+            Id = runId ?? Guid.NewGuid(), StartedAt = now, Execute = execute, Preview = !execute,
             ActionBudget = settings.MaxRemovalsPerTick, Scope = "runner-retention:" + runnerId,
         };
         _db.WorktreeResidueRuns.Add(run);
@@ -194,9 +232,11 @@ public sealed class RunnerWorktreeRetentionService
 
         var sent = 0;
         var absentSent = 0;
+        var queued = 0;
         string? stopped = null;
-        foreach (var (candidate, gone) in queue)
+        for (var index = 0; index < queue.Count; index++)
         {
+            var (candidate, gone) = queue[index];
             if (!gone && sent > 0 && settings.PauseBetweenSeconds > 0)
                 await Task.Delay(TimeSpan.FromSeconds(settings.PauseBetweenSeconds), _clock, ct);
             stopped = StopReason(execute, forced, tickStarted);
@@ -238,7 +278,6 @@ public sealed class RunnerWorktreeRetentionService
         }
 
         // CARD-1794 (1): every eligible task past a bound is a census row, never a missing one.
-        var queued = 0;
         foreach (var task in presentQueue.Skip(settings.MaxRemovalsPerTick).Concat(goneQueue.Skip(settings.MaxAbsentPerTick)))
         {
             queued++;

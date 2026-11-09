@@ -43,6 +43,7 @@ public sealed class C1677TempSweepServerTests
                 configure: services =>
                 {
                     services.AddSingleton<IOptionsMonitor<RunnerWorktreeRetentionSettings>>(new Monitor(settings));
+                    services.AddSingleton<RunnerWorktreeRetentionTicks>();
                     services.AddScoped<RunnerWorktreeRetentionService>();
                 });
             settings.Runners.Add(rig.RunnerId);
