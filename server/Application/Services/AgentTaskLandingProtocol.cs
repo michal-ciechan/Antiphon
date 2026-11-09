@@ -704,9 +704,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (ticket.SourceCanonical is not null)
         {
             // CARD-1463 (CARD-0688 D-2/D-12): the task worktree is a live checkout whose tree is guarded-cleanup
-            // residue, never a landing precondition. The same three probes run there read-only (every LandingGit
-            // child carries GIT_OPTIONAL_LOCKS=0, so the status refreshes no index and takes no lock) and a
-            // finding is logged; cleanup re-inspects the tree and records it Refused with its own reason.
+            // residue, never a landing precondition. The same three probes run there read-only. CARD-1453:
+            // ServerGitProcess.SuppressOptionalLocks sets GIT_OPTIONAL_LOCKS=0 after configuration, so the
+            // status refreshes no index and takes no lock. A finding is logged; cleanup re-inspects the tree
+            // and records it Refused with its own reason.
             var residue = await ObserveSourceResidueAsync(ticket.Identity.SourcePath, ct);
             if (residue is not null)
                 try { logger?.LogInformation(

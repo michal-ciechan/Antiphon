@@ -25,6 +25,15 @@ public static class ServerGitProcess
     }
 
     /// <summary>
+    /// CARD-1453: <c>git status</c> refreshes the index and creates <c>index.lock</c> unless optional
+    /// locks are off. The environment form of <c>git --no-optional-locks</c> keeps the argument vector
+    /// unchanged. Call it after configuration and immediately before the process starts, so a
+    /// <c>ConfigureProcess</c> that clears the variable cannot re-enable the refresh in a live checkout.
+    /// </summary>
+    public static void SuppressOptionalLocks(ProcessStartInfo start) =>
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+
+    /// <summary>
     /// A trace span ("git &lt;verb&gt;") over one git command of <paramref name="runner"/>, tagged
     /// <c>git.runner</c> and <c>git.spawned</c> (true; a runner that answers the command in process
     /// sets it false) so a test trace can tell which runner started which processes. The verb only:
