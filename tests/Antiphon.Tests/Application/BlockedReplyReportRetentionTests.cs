@@ -828,11 +828,13 @@ public sealed class BlockedReplyReportRetentionTests
 
     /// <summary>
     /// A runner Code task whose complete marked report was settled while the desktop repository
-    /// lease was busy: Blocked on <c>runner_sync_lease_busy</c> with the report retained.
+    /// lease was busy: Blocked on <c>runner_sync_lease_busy</c> with the report retained. CARD-1802:
+    /// with sync debt on that settles with a debt row, so this block is the kill switch's
+    /// (Delegation:RunnerSyncDebtOnSettlement off).
     /// </summary>
     private static async Task<RunnerSettlementWorld> BlockedBySyncAsync()
     {
-        var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true, syncDebt: false);
         try
         {
             await world.Git.RunnerPushAsync("work.txt", "runner work");
