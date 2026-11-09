@@ -1438,8 +1438,9 @@ the same private directory on that test-host process. A private directory on a p
 does not contain the initializer's sweep. `ANTIPHON_PWSH_CACHE_ROOT` also confines the
 initializer; the cache tests remove it from probe children and set it only when a test is
 proving the override, so a Mutation host may set it as well as the temp variables. The
-override must be an ordinary directory. A symlink, a file, or an unreadable path skips the
-sweep instead of falling back onto the process temp root.
+override must be an existing ordinary absolute directory. A relative path, a missing
+path, a symlink, a file, or an unreadable path skips the sweep and creates the cache
+under the process temp root. The sweep does not create a missing override.
 
 Use the unchanged local `scripts/run-checkpoint.ps1` driver for each phase. In a SourceLanding
 snapshot, copy that driver and `scripts/lib/build-slot.ps1` to the external evidence root

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Antiphon.Hosting;
 
@@ -212,10 +213,11 @@ internal static class PwshPrivateCache
         return removed;
     }
 
-    // ANTIPHON_PWSH_CACHE_ROOT, when it is an ordinary directory, is the sweep and create root.
-    // Mutation sets TMPDIR, TMP and TEMP (or this override) on the test host so a sweep mutant
-    // cannot see /tmp. A missing path is created. A symlink, a file, or an access error skips
-    // the sweep and creates under the process temp root.
+    // ANTIPHON_PWSH_CACHE_ROOT, when it is an existing ordinary absolute directory, is the
+    // sweep and create root. Mutation sets TMPDIR, TMP and TEMP (or this override) on the test
+    // host so a sweep mutant cannot see /tmp. A relative path, a missing path, a symlink, a
+    // file, or an access error skips the sweep and creates under the process temp root. The
+    // sweep does not create the override.
     internal static string CacheRoot() => ChooseRoot().Path;
 
     // Where a witness looks. The configured override when it is set, otherwise the process
@@ -235,13 +237,12 @@ internal static class PwshPrivateCache
         var configured = Environment.GetEnvironmentVariable(RootVariable);
         if (string.IsNullOrWhiteSpace(configured))
             return new(Path.GetTempPath(), true);
+        if (!Path.IsPathRooted(configured))
+            return new(Path.GetTempPath(), false);
 
         try
         {
             var full = Path.GetFullPath(configured);
-            if (IsUnusableRoot(full))
-                return new(Path.GetTempPath(), false);
-            Directory.CreateDirectory(full);
             if (IsUnusableRoot(full))
                 return new(Path.GetTempPath(), false);
             return new(full, true);
@@ -257,8 +258,8 @@ internal static class PwshPrivateCache
         var link = new FileInfo(full);
         if (link.LinkTarget is not null)
             return true;
-        if (!link.Exists && !Directory.Exists(full))
-            return false;
+        if (!Directory.Exists(full))
+            return true;
         var attributes = File.GetAttributes(full);
         return (attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0;
     }
@@ -405,11 +406,9 @@ internal static class PwshPrivateCache
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
-            // A missing stat is still treated as dead. LinuxProcessPresence is observed so a
-            // witness can show that a live pid does not keep the cache yet.
-            if (LinuxProcessPresence is { } presence)
-                _ = presence(pid);
-            return StartIdentity.Absent;
+            // hidepid and a missing /proc also return ENOENT for a pid that is still alive.
+            // kill(pid, 0) distinguishes: success or any error other than ESRCH keeps the cache.
+            return ProcessMayExist(pid) ? StartIdentity.Unknown : StartIdentity.Absent;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -438,6 +437,24 @@ internal static class PwshPrivateCache
             return StartIdentity.Unknown;
         }
     }
+
+    // ESRCH is the only kill(pid, 0) result that proves the pid is gone. EPERM (hidepid,
+    // another user) and any other errno leave the owner unknown, so the cache stays.
+    private const int Esrch = 3;
+
+    private static bool ProcessMayExist(int pid)
+    {
+        if (LinuxProcessPresence is { } presence)
+            return presence(pid);
+        if (pid <= 0 || !OperatingSystem.IsLinux())
+            return false;
+        if (Kill(pid, 0) == 0)
+            return true;
+        return Marshal.GetLastPInvokeError() != Esrch;
+    }
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int Kill(int pid, int signal);
 
     internal static bool TryReadKernelStartTicks(int pid, out long ticks)
     {
