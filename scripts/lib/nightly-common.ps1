@@ -117,9 +117,12 @@ function Test-NightlyAncestorReparse {
     $root = [System.IO.Path]::GetPathRoot($canonical)
     $cursor = $canonical
     while ($cursor.Length -gt $root.Length) {
-        if (Test-Path -LiteralPath $cursor) {
-            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
-            if (Test-NightlyReparseItem -Item $item) { return $true }
+        # Exists follows links like Test-Path (a dangling link is skipped); GetAttributes reads the entry itself
+        # like Get-Item. Direct calls instead of the provider: this runs for every ancestor of every state path.
+        if ([System.IO.File]::Exists($cursor) -or [System.IO.Directory]::Exists($cursor)) {
+            $attributes = $null
+            try { $attributes = [System.IO.File]::GetAttributes($cursor) } catch { $attributes = $null }
+            if ($null -ne $attributes -and (([int]$attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -ne 0)) { return $true }
         }
         $parent = Split-Path -Parent $cursor
         if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) { break }
@@ -435,7 +438,9 @@ function Write-NightlyTrace {
     param([string]$Kind, [string]$Message)
     $line = ('{0} {1} {2}' -f (Get-NightlyUtcNow).ToString('o'), $Kind, $Message)
     if ($script:NightlySeams -and $script:NightlySeams.TracePath) {
-        Add-Content -LiteralPath ([string]$script:NightlySeams.TracePath) -Value $line -Encoding ASCII
+        # Add-Content's line, ASCII and the platform newline, without the provider's cost per trace line.
+        $tracePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath([string]$script:NightlySeams.TracePath)
+        [System.IO.File]::AppendAllText($tracePath, $line + [Environment]::NewLine, [System.Text.Encoding]::ASCII)
     }
 }
 

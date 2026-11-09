@@ -457,10 +457,18 @@ function Get-NightlyProfileExclusions {
         }
         # Validate every row before filtering: another suite or host must not hide
         # a malformed exclusion. Omission alone means all platforms, never null.
-        $map = ConvertTo-NightlyPolicyMap -Object $row
+        # The 'platform' entry as ConvertTo-NightlyPolicyMap would key it (exact name, note properties only,
+        # first wins), without building a map of every row on every call.
+        $hasPlatform = $false
         $rowPlatform = $null
-        if ($map.Contains('platform')) {
-            $rowPlatform = $map['platform']
+        if ($row -is [System.Collections.IDictionary]) {
+            foreach ($k in @($row.Keys)) { if ([string]$k -ceq 'platform') { $hasPlatform = $true; $rowPlatform = $row[$k]; break } }
+        } else {
+            foreach ($prop in $row.PSObject.Properties) {
+                if ($prop.MemberType -eq 'NoteProperty' -and [string]$prop.Name -ceq 'platform') { $hasPlatform = $true; $rowPlatform = $prop.Value; break }
+            }
+        }
+        if ($hasPlatform) {
             if ($rowPlatform -isnot [string] -or $rowPlatform -cnotin @('windows', 'linux')) {
                 throw ('profile {0} exclusion for {1} has invalid platform' -f $p.Name, ([string]$row.class))
             }
