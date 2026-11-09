@@ -16,7 +16,7 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # the evidence loaded flag set, so the next in-process lock decision could not
 # find Resolve-QualificationTimingRoot.
 if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
-    . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
+    . (Join-Path $PSScriptRoot 'test-phase-paths.ps1')
 }
 
 function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
@@ -271,7 +271,7 @@ function Invoke-AntiphonNightlyRunCore {
     if ([string]::IsNullOrWhiteSpace($LogRoot)) { $LogRoot = $paths.Logs }
     if ([string]::IsNullOrWhiteSpace($TimingRoot) -and [string]::IsNullOrWhiteSpace($SelectionAttemptPath)) {
         if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
-            . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
+            . (Join-Path $PSScriptRoot 'test-phase-paths.ps1')
         }
         $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot $LogRoot -RunId $RunId)
     }

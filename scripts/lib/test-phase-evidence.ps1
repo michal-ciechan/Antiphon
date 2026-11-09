@@ -5,10 +5,12 @@
 
 # Visibility, not the script flag. A function-scoped dot-source used to set the
 # flag and drop Resolve-QualificationTimingRoot when that call returned, and the
-# next lock decision then failed with command-not-found.
+# next lock decision then failed with command-not-found. The probe is a function
+# only this file defines: the path helpers (test-phase-paths.ps1) load on their
+# own in processes that need nothing else from here.
 if ($script:TestPhaseEvidenceLoading) { return }
 $script:TestPhaseEvidenceResolver = $null
-try { $script:TestPhaseEvidenceResolver = Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue } catch { $script:TestPhaseEvidenceResolver = $null }
+try { $script:TestPhaseEvidenceResolver = Get-Command Update-QualificationChunkTiming -ErrorAction SilentlyContinue } catch { $script:TestPhaseEvidenceResolver = $null }
 if ($script:TestPhaseEvidenceResolver) {
     $script:TestPhaseEvidenceLoaded = $true
     return
@@ -306,15 +308,7 @@ function Get-TestPhaseNativeIds {
     return @($ids.ToArray())
 }
 
-function Initialize-TestPhaseLinuxIdentity {
-    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { return }
-    if ('Antiphon.TestPhase.FileIdentity' -as [type]) { return }
-    # Antiphon.Nightly carries these types (Antiphon.Nightly/TestPhaseLinuxIdentity.cs); without it (Windows PowerShell 5.1,
-    # ANTIPHON_NIGHTLY_CORE=off) the same source is compiled here.
-    if (Test-NightlyCoreAvailable) { return }
-    Add-Type -Path (Join-Path $PSScriptRoot 'Antiphon.Nightly/TestPhaseLinuxIdentity.cs')
-}
-
+. (Join-Path $PSScriptRoot 'test-phase-paths.ps1')
 Initialize-TestPhaseLinuxIdentity
 
 function Initialize-TestPhaseStreamReaders {
@@ -326,42 +320,6 @@ function Initialize-TestPhaseStreamReaders {
 }
 
 Initialize-TestPhaseStreamReaders
-
-function Get-TestPhasePathIdentity {
-    param([string]$Path)
-    $missing = [pscustomobject]@{ Kind = 'missing'; Size = [int64]0 }
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $missing }
-    $queued = Get-NightlyEvidencePendingLength $Path
-    if ($queued -ge 0) { return [pscustomobject]@{ Kind = 'regular'; Size = [int64]$queued } }
-    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseFiles]::PathIdentity($Path) }
-        if (-not (Test-Path -LiteralPath $Path)) { return $missing }
-        try { $attrs = [IO.File]::GetAttributes($Path) } catch {
-            return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
-        }
-        $directory = [IO.FileAttributes]::Directory
-        $reparse = [IO.FileAttributes]::ReparsePoint
-        if (($attrs -band $directory) -eq $directory) { return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]0 } }
-        if (($attrs -band $reparse) -eq $reparse) { return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]0 } }
-        $length = [int64]0
-        try { $length = [int64](Get-Item -LiteralPath $Path).Length } catch { $length = [int64]0 }
-        return [pscustomobject]@{ Kind = 'regular'; Size = $length }
-    }
-    Initialize-TestPhaseLinuxIdentity
-    if (-not ('Antiphon.TestPhase.FileIdentity' -as [type])) {
-        return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
-    }
-    $stat = New-Object Antiphon.TestPhase.LinuxStat
-    $code = [Antiphon.TestPhase.FileIdentity]::LStat($Path, [ref]$stat)
-    if ($code -ne 0) {
-        $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        if ($err -eq 2) { return $missing }
-        return [pscustomobject]@{ Kind = 'unreadable'; Size = [int64]0 }
-    }
-    $kind = ([uint32]$stat.Mode) -band 61440
-    if ($kind -eq 32768) { return [pscustomobject]@{ Kind = 'regular'; Size = [int64]$stat.Size } }
-    return [pscustomobject]@{ Kind = 'unsupported'; Size = [int64]$stat.Size }
-}
 
 function Read-TestPhaseStreamBytes {
     param($Stream, [int]$MaxBytes, [int]$DeadlineMilliseconds, $Watch)
@@ -2671,14 +2629,6 @@ function Invoke-TestPhaseRunSummary {
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $RunDirectory -Code 'phase-summary-failed'
     }
-}
-
-function Resolve-QualificationTimingRoot {
-    param([string]$TimingRoot, [string]$LogRoot, [string]$RunId)
-    if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) { return [string]$TimingRoot }
-    if ([string]::IsNullOrWhiteSpace($LogRoot)) { return '' }
-    if (-not [string]::IsNullOrWhiteSpace($RunId)) { return (Join-Path $LogRoot ('timing-' + $RunId)) }
-    return (Join-Path $LogRoot 'timing')
 }
 
 function Get-QualificationNearestRank {

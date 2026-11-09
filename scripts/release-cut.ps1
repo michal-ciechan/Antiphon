@@ -118,7 +118,7 @@ try {
             $TimingRoot = $sealedTiming
         } elseif ([string]::IsNullOrWhiteSpace($TimingRoot)) {
             if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
-                . (Join-Path $lib 'test-phase-evidence.ps1')
+                . (Join-Path $lib 'test-phase-paths.ps1')
             }
             $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot '' -LogRoot (Join-Path $candidateRoot 'logs') -RunId $RunId)
         }
