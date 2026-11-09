@@ -29,8 +29,8 @@ export function draftsFromMap(map?: ProviderEndpointMap | null): ProviderEndpoin
 
 /**
  * The request value for one draft: null when both fields are blank (no endpoint for that kind), an
- * error when the draft cannot be saved. The server re-validates the URL; this only catches what the
- * operator can see is incomplete.
+ * error when the draft cannot be saved. The server re-validates the URL. This catches a missing
+ * base URL, a missing required key name, and a username or password in the base URL.
  */
 export function endpointFromDraft(
   draft: ProviderEndpointDraft | undefined,
@@ -41,8 +41,36 @@ export function endpointFromDraft(
   const apiKeyName = draft?.apiKeyName?.trim() || null
   if (!baseUrl && !apiKeyName) return { endpoint: null, error: null }
   if (!baseUrl) return { endpoint: null, error: `${displayName} endpoint needs a base URL.` }
+  // CARD-1509: project PUT and agent PATCH both come through here. Refuse before either request.
+  // The message names the field only; it does not repeat the submitted URL.
+  if (baseUrlCarriesUserInfo(baseUrl)) return { endpoint: null, error: userInfoError(displayName) }
   if (keyRequired && !apiKeyName) return { endpoint: null, error: `${displayName} endpoint needs a key name.` }
   return { endpoint: { baseUrl, apiKeyName }, error: null }
+}
+
+function userInfoError(displayName: string): string {
+  return `${displayName} base URL cannot include a username or password. Reference a stored key by name instead.`
+}
+
+/**
+ * True when posting the base URL would send a username or password.
+ * `mailto:` stays a server scheme refusal. An `@` that is only in the path, and `http://@host`
+ * (empty userinfo), are not credentials.
+ */
+function baseUrlCarriesUserInfo(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl)
+    if (url.protocol === 'http:' || url.protocol === 'https:')
+      return url.username.length > 0 || url.password.length > 0
+    if (url.protocol === 'mailto:') return false
+    return !baseUrl.includes('://') && baseUrl.includes('@')
+  } catch {
+    if (/^https?:\/\//i.test(baseUrl)) {
+      const authority = /^https?:\/\/([^/?#]*)/i.exec(baseUrl)
+      return authority !== null && authority[1].includes('@')
+    }
+    return /^[^:/@\s]+@[^:/@\s]+$/.test(baseUrl)
+  }
 }
 
 /** The project's `providerEndpoints` request map, and per-kind errors that block the save. */
