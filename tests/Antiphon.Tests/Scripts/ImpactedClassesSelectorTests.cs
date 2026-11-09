@@ -217,18 +217,14 @@ public sealed partial class ImpactedClassesSelectorTests
             ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
             "TestTimingOperationLabelTests");
         await AssertKinds(
-            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2",
-            ["spawn-limit-rosters", "task-load-window", "test-lane-category", "timing-labels"],
-            "TestTimingOperationLabelTests");
+            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
+        // CARD-1820. The index selects RemoteScriptContractTests as a class, so the method row is
+        // dropped and those five deploy cases run inside the class filter.
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
-            ["remote-scripts", "test-lane-category"],
-            "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
-            "C0995_Deploy_temp_checks_host_absence_before_checkout",
-            "C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle",
-            "C849_Deploy_ordering_contract_is_pinned",
-            "C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo");
+            ["remote-scripts"],
+            "RemoteScriptContractTests");
         await AssertKinds(
             root,
             "43d819da7189349c548b07ebd2677e6be086d95b",
@@ -389,6 +385,35 @@ public sealed partial class ImpactedClassesSelectorTests
     private const string WindowsTestsFilter =
         "/*/*/(C0824WorkspaceSlotRoleGateTests*)|(Card1761RunnerReadPollTests*)|(LandGraphLandRefreshTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)/*";
+
+    // CARD-1820. Declaration plus uncapped index edges widen the non-merge rows. The windows lane
+    // stays the five hand classes above.
+    private const string WhyMissedTestsFilter =
+        "/*/*/(AdvisoryChangePolicyTests*)|(AgentSessionServiceIntegrationTests*)|(AgentTaskDeliveryWatchdogTests*)"
+        + "|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandApprovalRequestTests*)|(AgentTaskLandBoundaryTests*)"
+        + "|(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
+        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)"
+        + "|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
+        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
+        + "|(AgentTaskLandRequestTests*)|(AgentTaskLandSweepTests*)|(C0824TransportGitTests*)"
+        + "|(C0824WorkspaceSlotRoleGateTests*)|(C0824WorkspaceSlotServerTests*)|(C1514HostLoadApiTests*)"
+        + "|(C1514HostLoadHistoryTests*)|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)"
+        + "|(C1677RetentionServerTests*)|(Card1761RunnerReadPollTests*)|(DelegateBranchNameTests*)"
+        + "|(DelegationTestServicesTests*)|(DelegationWorktreeTests*)|(ExternalTrackerSyncIdentifierTests*)"
+        + "|(ImpactedClassesSelectorTests*)|(InProcessGitCommandsTests*)|(LandGraphLandRefreshTests*)"
+        + "|(LandWorkspaceTests*)|(MergeHighRadiusSubsetTests*)|(PhaseJournalKillDiagnosticTests*)"
+        + "|(PostLandMutationWorktreeTests*)|(ProcessSpawnLimitTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(RunnerStartupStaleObservationTests*)|(RunnerTerminalSessionGenerationTests*)"
+        + "|(RunnerTerminalSessionInputEncodingTests*)|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
+        + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
+        + "|(SessionTerminationSourcePersistenceTests*)|(TestSelectionTests*)|(TimeoutAuditTests*)"
+        + "|(WindowsUnitPlatformAdmissionTests*)|(WorktreeBaseSelectionTests*)|(WorktreeManagerGitIntegrationTests*)"
+        + "|(WorktreeManagerSafetyTests*)|(WorktreeManagerStartRefLocalOnlyTests*)|(WorktreeManagerTests*)"
+        + "|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
+
+    private const string WhyMissedSessionRunnerFilter =
+        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)|(HostStatsStoreTests*)"
+        + "|(PhoneHomeCommandDispatcherTests*)|(RunnerCapabilitiesTests*)/*";
 
     private const string LinuxOnlyCensusFilter =
         "/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)|(LinuxOnlyWindowsExclusionPolicy*)";
@@ -573,8 +598,9 @@ public sealed partial class ImpactedClassesSelectorTests
                 .ShouldBe(row.Windows, row.Path + " windows lane " + needle);
         }
 
+        filters.ShouldContain(("tests/Antiphon.Tests", WhyMissedTestsFilter));
         filters.ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
-        filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", "/*/*/(RunnerCapabilitiesTests*)/*"));
+        filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", WhyMissedSessionRunnerFilter));
         windows.ShouldBe([
             ("tests/Antiphon.E2E", "/*/*/(AgentTaskLandDeliveryE2ETests*)/*"),
             ("tests/Antiphon.Tests", WindowsTestsFilter),
