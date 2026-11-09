@@ -1,9 +1,18 @@
 namespace Antiphon.Tests.TestHelpers;
 
-// The path can only originate from this fixture's own temp-directory creation.
+// The path can only originate from this fixture's own temp-directory creation,
+// or from the witness seam below. Cleanup still refuses an unowned path.
 internal sealed class AuditGitFixture
 {
-    public string Root { get; } = Directory.CreateTempSubdirectory("antiphon-audit-").FullName;
+    public string Root { get; }
+
+    public AuditGitFixture()
+        : this(Directory.CreateTempSubdirectory("antiphon-audit-").FullName)
+    {
+    }
+
+    // CARD-1568 witness seam. Production callers keep the parameterless constructor.
+    internal AuditGitFixture(string root) => Root = root;
 
     public static implicit operator string(AuditGitFixture fixture) => fixture.Root;
 
@@ -22,11 +31,13 @@ internal sealed class AuditGitFixture
         }
     }
 
-    private void DeleteOwnedRoot()
+    private void DeleteOwnedRoot() => CleanupOwnedRoot(Root, Path.GetTempPath());
+
+    internal static void CleanupOwnedRoot(string root, string tempRoot)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
-        var full = Path.GetFullPath(Root);
+        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(tempRoot));
+        var full = Path.GetFullPath(root);
         if (!string.Equals(Path.GetDirectoryName(full), temp, comparison)
             || !Path.GetFileName(full).StartsWith("antiphon-audit-", StringComparison.Ordinal))
             throw new IOException("Audit cleanup escaped its owned temp root.");
