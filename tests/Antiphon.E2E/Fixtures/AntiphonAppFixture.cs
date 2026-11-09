@@ -62,6 +62,9 @@ public class AntiphonAppFixture
     internal string OwnedWorkspace => _workspacePath ?? throw new InvalidOperationException("Workspace not created");
     internal bool RunnerCensusCompleted { get; private set; }
 
+    /// <summary>The fixture's own Claude config, which the standing specialists seed trust into.</summary>
+    internal static string OwnedClaudeConfigPath(string workspace) => Path.Combine(workspace, "claude", ".claude.json");
+
     /// <summary>
     /// Where the app writes its Serilog file sink. Defaults to the running test's
     /// <see cref="TestDiagnostics"/> directory, so every E2E test gets its own server log rather
@@ -122,6 +125,10 @@ public class AntiphonAppFixture
         var connectionString = _container.GetConnectionString();
         _workspacePath = Path.Combine(Path.GetTempPath(), "antiphon-e2e", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_workspacePath);
+        // CARD-1797: the specialists seed Claude trust here, never in the runner user's real config.
+        var claudeConfig = OwnedClaudeConfigPath(_workspacePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(claudeConfig)!);
+        File.WriteAllText(claudeConfig, "{}");
 
         await StartHostAsync(connectionString);
     }
@@ -655,6 +662,9 @@ public class AntiphonAppFixture
                     ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),
                     // CARD-0676 F-2: this host's own operator token, never the machine's real file.
                     [OperatorTokenFile.PathKey] = Path.Combine(_workspacePath, "operator-token"),
+                    // CARD-1797: each boot's fresh check-interpreter directory would otherwise add one
+                    // more trust entry to the runner user's real .claude.json.
+                    ["Delegation:SpecialistClaudeConfigPath"] = OwnedClaudeConfigPath(_workspacePath),
                 };
 
                 if (_diagnosticsDirectory is not null)

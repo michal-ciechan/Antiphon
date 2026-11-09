@@ -980,6 +980,15 @@ public sealed class DelegationSettings
     public string? OutputDistillerWorkingDirectory { get; set; }
 
     /// <summary>
+    /// The Claude <c>.claude.json</c> the standing specialists (check interpreter, diagnose, output
+    /// distiller) seed project trust into when they are provisioned. Null is the runner user's own
+    /// config (<c>CLAUDE_CONFIG_DIR</c>, else the home directory). A test host points it inside its
+    /// own workspace so each boot's fresh specialist directory never lands in the real profile
+    /// (CARD-1797); a missing file is left missing and the launch-time answerer remains the fallback.
+    /// </summary>
+    public string? SpecialistClaudeConfigPath { get; set; }
+
+    /// <summary>
     /// How long a distillation may hold a queued completion note before the raw body delivers.
     /// Shorter than the interpreter's 60 s: the raw note is already queued, so a slow distillation
     /// costs nothing but the improvement.
