@@ -136,9 +136,21 @@ function Invoke-TestSelectionGit {
     $start.WorkingDirectory=[IO.Path]::GetFullPath($RepositoryRoot)
     $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
     foreach($arg in $Arguments){$start.ArgumentList.Add($arg)}
+    # An object's type, and a path's bytes at a full commit id, cannot change (the runner disables replace
+    # objects): one selection reads the same contract blobs dozens of times. Only answered reads (exit 0) of
+    # those two shapes are kept, per process; a missing object or any refusal is asked of git every time.
+    $memoKey=$null
+    if($Arguments.Count -eq 3 -and $Arguments[0] -ceq 'cat-file' -and
+        (($Arguments[1] -ceq '-t' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}$') -or ($Arguments[1] -ceq 'blob' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}:[^:]'))){
+        if($null -eq $script:TestSelectionGitMemo){$script:TestSelectionGitMemo=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)}
+        $memoKey=$start.WorkingDirectory+[char]0+($Arguments -join [char]0)
+        $memo=$null
+        if($script:TestSelectionGitMemo.TryGetValue($memoKey,[ref]$memo) -and $AllowedExit -contains $memo.Exit){return $memo}
+    }
     $result=[Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,30000,$true)
     if($result.TimedOut -or $AllowedExit -notcontains $result.Exit){throw "git-read-failed:$($Arguments[0]):$($result.Exit)"}
     if($result.Stdout.Length -gt 16777216){throw 'git-output-too-large'}
+    if($null -ne $memoKey -and $result.Exit -eq 0 -and $result.Stdout.Length -le 4194304 -and $script:TestSelectionGitMemo.Count -lt 1024){$script:TestSelectionGitMemo[$memoKey]=$result}
     return $result
 }
 
