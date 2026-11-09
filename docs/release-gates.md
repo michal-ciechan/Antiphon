@@ -118,10 +118,13 @@ specific launch record; do not select the newest directory or infer the state ro
 from the candidate. Run on the **execution host**: PID observations on copied state
 describe the wrong host. The operator script
 `scripts/qualification/stop-supervisor.ps1` performs that kill order (the
-supervisor tree, then the recorded launch-child driver) and step 4's stale-lock
-move. It is Windows-only and requires `-Confirm`. Manual steps 3 and 4 remain
-the proof when the script refuses. Agents do not point it at a live
-qualification.
+supervisor tree, then the recorded launch-child driver only when that driver
+outlived the tree) and step 4's stale-lock move in the same call. A driver
+already gone after the supervisor tree kill was ended as a descendant and is
+not a failed stop. It is Windows-only and requires `-Confirm`. Without
+`-Confirm` it prints the planned pids, identities and lock action and kills
+nothing. Manual steps 3 and 4 remain the proof when the script refuses.
+Agents do not point it at a live qualification.
 
 ```powershell
 pwsh -NoProfile -File scripts/rc-qualification-status.ps1 `

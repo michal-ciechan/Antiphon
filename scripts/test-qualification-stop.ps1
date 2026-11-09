@@ -100,23 +100,31 @@ function New-C1507Observe($World) {
     }.GetNewClosure()
 }
 function New-C1507Stop($World) {
+    if (-not $World.ContainsKey('children')) { $World.children = @{ '4100' = @('4200') } }
     return {
         param([int]$ProcessId)
         $World.calls.Add($ProcessId)
-        $World.map[[string]$ProcessId] = 'absent'
+        $pending = New-Object System.Collections.Generic.List[string]
+        $pending.Add([string]$ProcessId)
+        $seen = @{}
+        $index = 0
+        while ($index -lt $pending.Count) {
+            $current = $pending[$index]
+            $index++
+            if ($seen.ContainsKey($current)) { continue }
+            $seen[$current] = $true
+            $World.map[$current] = 'absent'
+            $kids = $null
+            if ($World.children -and $World.children.ContainsKey($current)) { $kids = $World.children[$current] }
+            if ($kids) {
+                foreach ($kid in @($kids)) { $pending.Add([string]$kid) }
+            }
+        }
         return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
     }.GetNewClosure()
 }
 function Get-C1507CommandLine([int]$ProcessId) {
-    $path = '/proc/' + [string]$ProcessId + '/cmdline'
-    if (-not [IO.File]::Exists($path)) { return $null }
-    $bytes = [IO.File]::ReadAllBytes($path)
-    if ($bytes.Length -eq 0) { return $null }
-    $text = (New-Object System.Text.UTF8Encoding $false).GetString($bytes)
-    $text = $text.TrimEnd([char]0)
-    $text = $text.Replace([string]([char]0), ' ')
-    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
-    return $text
+    return Get-QualificationStopCommandLine -ProcessId $ProcessId
 }
 
 function C1507_StopOrder {
@@ -127,10 +135,21 @@ function C1507_StopOrder {
     $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
     $result = Invoke-C1507 $fixture (New-C1507Observe $world) (New-C1507Stop $world)
     $calls = $world.calls.ToArray()
-    Assert-C1507 ($result.exitCode -eq 0 -and $calls.Count -eq 2 -and $calls[0] -eq 4100 -and $calls[1] -eq 4200 -and $result.lockAction -ceq 'moved') `
-        'stop kills the supervisor tree before the driver and never the lock owner' (($calls -join ',') + ' lock=' + $result.lockAction + ' ' + $result.detail)
-    Assert-C1507 ($result.kills[0].phase -ceq 'supervisor' -and $result.kills[1].phase -ceq 'driver' -and $result.kills[0].command -ceq 'taskkill.exe /PID 4100 /T /F' -and $result.kills[1].command -ceq 'taskkill.exe /PID 4200 /T /F') `
-        'recorded stop command is taskkill /T /F in supervisor then driver order' (($result.kills | ForEach-Object { $_.phase + '=' + $_.command }) -join ';')
+    Assert-C1507 ($result.exitCode -eq 0 -and $calls.Count -eq 1 -and $calls[0] -eq 4100 -and $result.kills.Count -eq 1 -and $result.lockAction -ceq 'moved') `
+        'stop kills the supervisor tree once when the driver is its child and never the lock owner' (($calls -join ',') + ' lock=' + $result.lockAction + ' ' + $result.detail)
+    Assert-C1507 ($result.kills[0].phase -ceq 'supervisor' -and $result.kills[0].command -ceq 'taskkill.exe /PID 4100 /T /F') `
+        'recorded stop command is taskkill /T /F and the child driver is not killed again' $result.kills[0].command
+
+    $worldOut = New-C1507World
+    $worldOut.map['4100'] = 'alive'
+    $worldOut.map['4200'] = 'alive'
+    $worldOut.map['4300'] = 'absent'
+    $worldOut.children = @{}
+    $outlived = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    $outResult = Invoke-C1507 $outlived (New-C1507Observe $worldOut) (New-C1507Stop $worldOut)
+    $outCalls = $worldOut.calls.ToArray()
+    Assert-C1507 ($outResult.exitCode -eq 0 -and $outCalls.Count -eq 2 -and $outCalls[0] -eq 4100 -and $outCalls[1] -eq 4200 -and $outResult.kills.Count -eq 2 -and $outResult.kills[1].phase -ceq 'driver' -and $outResult.kills[1].command -ceq 'taskkill.exe /PID 4200 /T /F' -and $outResult.lockAction -ceq 'moved') `
+        'a driver that outlived the supervisor tree gets the second taskkill and the lock moves' (($outCalls -join ',') + ' ' + $outResult.detail)
 
     $world2 = New-C1507World
     $world2.map['4100'] = 'reused'
@@ -402,8 +421,10 @@ function C1507_QuotedReason {
     $logPath = Join-Path $fixture.Task 'supervisor.log'
     $log = ''
     if ([IO.File]::Exists($logPath)) { $log = [IO.File]::ReadAllText($logPath) }
-    $escaped = $log -match 'reason="probe \\"outcome=forged\\" lock=forged" outcome=stopped lock=absent'
-    Assert-C1507 ($result.exitCode -eq 0 -and $result.outcome -ceq 'stopped' -and $escaped -and $log -notmatch 'outcome=forged' -and $log -notmatch 'lock=forged') `
+    $expected = 'reason="probe \"outcome=forged\" lock=forged" outcome=stopped lock=absent'
+    $escaped = $log.Contains($expected)
+    $tail = $log.TrimEnd().EndsWith('outcome=stopped lock=absent')
+    Assert-C1507 ($result.exitCode -eq 0 -and $result.outcome -ceq 'stopped' -and $escaped -and $tail) `
         'a quoted stop reason is escaped and cannot forge outcome or lock fields' $log
 }
 
@@ -457,6 +478,12 @@ function C1507_CommandLineIdentity {
     $plainResult = Invoke-C1507 $plain $observe $stop
     Assert-C1507 ($plainResult.exitCode -eq 0 -and $calls.Count -eq 1 -and $calls[0] -eq $self.Id) `
         'a record without a command line keeps the pid and start-time check' ($plainResult.detail + ' calls=' + $calls.Count)
+    $calls.Clear()
+    $state.dead = $false
+    $blankCommand = New-C1507Fixture ([ordered]@{ pid = $self.Id; processStartedAt = $started; commandLine = '' }) $null $null
+    $blankCommandResult = Invoke-C1507 $blankCommand $observe $stop
+    Assert-C1507 ($blankCommandResult.exitCode -eq 0 -and $calls.Count -eq 1 -and $calls[0] -eq $self.Id) `
+        'a blank recorded command line does not change the pid and start-time check' ($blankCommandResult.detail + ' calls=' + $calls.Count)
 }
 
 function C1507_EntryRefusesOffWindows {
