@@ -8,8 +8,10 @@ namespace Antiphon.Hosting;
 /// One process-private XDG cache so concurrent pwsh starts do not share a JIT profile.
 /// CARD-1793: the runner gives each agent session its own owned cache, and every install
 /// removes family directories whose recorded owner is no longer a live process.
-/// CARD-1813: the owner token is pid plus process-start ticks, unmarked directories expire,
-/// and a stamp limits the scan to once per <see cref="SweepInterval"/>.
+/// CARD-1813: the owner token is pid plus a start generation, unmarked directories expire,
+/// and a stamp limits the scan to once per <see cref="SweepInterval"/>. On Linux the
+/// generation is /proc stat starttime (clock ticks since boot), which does not move when
+/// the wall clock steps. Windows keeps <see cref="Process.StartTime"/>.
 /// </summary>
 internal static class PwshPrivateCache
 {
@@ -20,13 +22,13 @@ internal static class PwshPrivateCache
     internal static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(10);
     internal static readonly TimeSpan UnmarkedGrace = TimeSpan.FromMinutes(10);
 
-    // Two processes reading Process.StartTime disagree by a few milliseconds on Linux.
+    // Windows Process.StartTime can disagree by a few milliseconds across readers.
     // Fifty milliseconds still rejects pid reuse: the replacement cannot have started
-    // until the recorded process had already exited.
+    // until the recorded process had already exited. Linux compares /proc starttime exactly.
     internal static readonly long StartMatchToleranceTicks = TimeSpan.FromMilliseconds(50).Ticks;
 
     // Tests replace the platform start read. Null uses /proc starttime on Linux and
-    // Process.StartTime on Windows. The repair wires this; until then the platform read stands.
+    // Process.StartTime on Windows.
     internal static Func<int, StartIdentity>? StartIdentitySource;
 
     internal readonly record struct StartIdentity(StartReadKind Kind, long? KernelTicks, long? WallTicks)
@@ -77,9 +79,10 @@ internal static class PwshPrivateCache
             if (OwnedByThisProcess(current))
                 return Path.GetFullPath(current!);
 
-            var root = CacheRoot();
-            SweepStale(root);
-            var directory = Path.Combine(root, DirectoryName());
+            var choice = ChooseRoot();
+            if (choice.Sweep)
+                SweepStale(choice.Path);
+            var directory = Path.Combine(choice.Path, DirectoryName());
             Directory.CreateDirectory(directory);
             WriteOwner(directory, Environment.ProcessId, null);
             Environment.SetEnvironmentVariable(VariableName, directory);
@@ -189,7 +192,7 @@ internal static class PwshPrivateCache
                 if (!UnmarkedExpired(directory))
                     continue;
             }
-            else if (IsLive(owner.Pid, owner.StartedUtcTicks))
+            else if (IsLive(owner))
             {
                 continue;
             }
@@ -203,49 +206,76 @@ internal static class PwshPrivateCache
     }
 
     // ANTIPHON_PWSH_CACHE_ROOT, when it is an ordinary directory, is the sweep and create root.
-    // Mutation sets it (or TMPDIR/TMP/TEMP) on the test host so a sweep mutant cannot see /tmp.
-    // A missing path is created. A reparse point falls back to the process temp root.
-    internal static string CacheRoot()
+    // Mutation sets TMPDIR, TMP and TEMP (or this override) on the test host so a sweep mutant
+    // cannot see /tmp. A missing path is created. A symlink, a file, or an access error skips
+    // the sweep and creates under the process temp root.
+    internal static string CacheRoot() => ChooseRoot().Path;
+
+    private readonly record struct RootChoice(string Path, bool Sweep);
+
+    private static RootChoice ChooseRoot()
     {
         var configured = Environment.GetEnvironmentVariable(RootVariable);
         if (string.IsNullOrWhiteSpace(configured))
-            return Path.GetTempPath();
+            return new(Path.GetTempPath(), true);
 
         try
         {
             var full = Path.GetFullPath(configured);
+            if (IsUnusableRoot(full))
+                return new(Path.GetTempPath(), false);
             Directory.CreateDirectory(full);
-            var attributes = File.GetAttributes(full);
-            if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
-                return Path.GetTempPath();
-            return full;
+            if (IsUnusableRoot(full))
+                return new(Path.GetTempPath(), false);
+            return new(full, true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.ComponentModel.Win32Exception)
         {
-            return Path.GetTempPath();
+            return new(Path.GetTempPath(), false);
         }
     }
 
-    private static bool IsLive(int pid, long? startedUtcTicks)
+    private static bool IsUnusableRoot(string full)
     {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return startedUtcTicks is not long expected || SameStart(expected, process.StartTime);
-        }
-        catch (ArgumentException)
-        {
+        var link = new FileInfo(full);
+        if (link.LinkTarget is not null)
+            return true;
+        if (!link.Exists && !Directory.Exists(full))
             return false;
-        }
-        catch (InvalidOperationException)
-        {
+        var attributes = File.GetAttributes(full);
+        return (attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0;
+    }
+
+    private static bool IsLive(OwnerRecord owner)
+    {
+        if (owner.Pid <= 0)
             return false;
-        }
-        catch (System.ComponentModel.Win32Exception)
+        var identity = ReadStart(owner.Pid);
+        return identity.Kind switch
         {
-            // Process enumeration can fail closed on Windows. Keeping the directory is the safe side.
+            StartReadKind.Absent => false,
+            StartReadKind.Unknown => true,
+            _ => StampMatches(owner, identity),
+        };
+    }
+
+    // Linux records /proc/<pid>/stat field 22 (clock ticks since boot) and compares it exactly.
+    // A wall-clock step does not move that field. Windows keeps Process.StartTime. An old
+    // pid-only marker, and on Linux an old pid@wallTicks marker, stays while the pid exists.
+    private static bool StampMatches(OwnerRecord owner, StartIdentity identity)
+    {
+        if (owner.KernelTicks is long kernel)
+            return identity.KernelTicks == kernel;
+        if (owner.WallTicks is long wall)
+        {
+            if (identity.KernelTicks is not null)
+                return true;
+            if (identity.WallTicks is long observed)
+                return SameStart(wall, observed);
             return true;
         }
+
+        return true;
     }
 
     private static bool IsFamilyDirectory(string root, string directory)
@@ -280,7 +310,10 @@ internal static class PwshPrivateCache
         }
     }
 
-    // "pid" (legacy) or "pid@startTicks". Anything else is garbled and kept.
+    // "pid" (legacy), "pid@wallTicks" (Windows, and Linux markers written before kernel ticks),
+    // or "pid@k<starttime>" (Linux /proc stat field 22). Anything else is garbled and kept.
+    // The k prefix keeps an older reader, which only accepts a bare integer after @, from
+    // treating the kernel generation as a wall-clock instant and deleting a live cache.
     private static OwnerRecord ParseOwner(string text)
     {
         var separator = text.IndexOf('@');
@@ -288,42 +321,125 @@ internal static class PwshPrivateCache
         if (!int.TryParse(pidText, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) || pid <= 0)
             return OwnerRecord.Garbled;
 
-        long? ticks = null;
-        if (separator >= 0)
-        {
-            if (!long.TryParse(text[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed <= 0)
-                return OwnerRecord.Garbled;
-            ticks = parsed;
-        }
+        if (separator < 0)
+            return new OwnerRecord(OwnerKind.Owned, pid, null, null);
 
-        return new OwnerRecord(OwnerKind.Owned, pid, ticks);
+        var suffix = text[(separator + 1)..];
+        if (suffix.Length >= 2 && suffix[0] == 'k'
+            && long.TryParse(suffix[1..], NumberStyles.None, CultureInfo.InvariantCulture, out var kernel)
+            && kernel >= 0)
+            return new OwnerRecord(OwnerKind.Owned, pid, kernel, null);
+
+        if (!long.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var wall) || wall <= 0)
+            return OwnerRecord.Garbled;
+        return new OwnerRecord(OwnerKind.Owned, pid, null, wall);
     }
 
     // Write then move, so a concurrent sweep never reads a truncated pid. Retry the replace:
     // on Windows a concurrent reader can refuse the first MoveFileEx.
     private static void WriteOwner(string directory, int ownerPid, DateTime? startedUtc)
     {
-        var ticks = startedUtc is DateTime supplied ? NormalizeTicks(supplied) : TryStartTicks(ownerPid);
         var token = ownerPid.ToString(CultureInfo.InvariantCulture);
-        if (ticks is long value)
-            token += "@" + value.ToString(CultureInfo.InvariantCulture);
+        var identity = ReadStart(ownerPid);
+        if (identity.Kind == StartReadKind.Present)
+        {
+            if (identity.KernelTicks is long kernel)
+                token += "@k" + kernel.ToString(CultureInfo.InvariantCulture);
+            else if (WallToken(startedUtc, identity) is long wall)
+                token += "@" + wall.ToString(CultureInfo.InvariantCulture);
+        }
 
         var temporary = Path.Combine(directory, MarkerName + "." + Guid.NewGuid().ToString("N") + ".tmp");
         File.WriteAllText(temporary, token);
         MoveIntoPlace(temporary, Path.Combine(directory, MarkerName));
     }
 
-    private static long? TryStartTicks(int pid)
+    // Linux production ignores a caller-supplied wall clock: AssignOwner reads /proc itself.
+    // Windows prefers the caller's StartTime, then the live process. An injected wall-only
+    // source supplies the ticks directly.
+    private static long? WallToken(DateTime? startedUtc, StartIdentity identity)
+    {
+        if (OperatingSystem.IsLinux() && StartIdentitySource is null)
+            return null;
+        if (StartIdentitySource is null && startedUtc is DateTime supplied)
+            return NormalizeTicks(supplied);
+        return identity.WallTicks;
+    }
+
+    private static StartIdentity ReadStart(int pid)
+    {
+        if (StartIdentitySource is { } source)
+            return source(pid);
+        if (pid <= 0)
+            return StartIdentity.Absent;
+        return OperatingSystem.IsLinux() ? ReadLinuxStart(pid) : ReadWindowsStart(pid);
+    }
+
+    private static StartIdentity ReadLinuxStart(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat");
+            return TryParseProcStartTicks(stat, out var ticks)
+                ? StartIdentity.Kernel(ticks)
+                : StartIdentity.Unknown;
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return StartIdentity.Absent;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return StartIdentity.Unknown;
+        }
+    }
+
+    private static StartIdentity ReadWindowsStart(int pid)
     {
         try
         {
             using var process = Process.GetProcessById(pid);
-            return NormalizeTicks(process.StartTime);
+            return new StartIdentity(StartReadKind.Present, null, NormalizeTicks(process.StartTime));
         }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (ArgumentException)
         {
-            return null;
+            return StartIdentity.Absent;
         }
+        catch (InvalidOperationException)
+        {
+            // The process existed but its start could not be read. Keeping the cache is the safe side.
+            return StartIdentity.Unknown;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return StartIdentity.Unknown;
+        }
+    }
+
+    internal static bool TryReadKernelStartTicks(int pid, out long ticks)
+    {
+        ticks = 0;
+        if (!OperatingSystem.IsLinux() || pid <= 0)
+            return false;
+        var identity = ReadLinuxStart(pid);
+        if (identity.KernelTicks is not long value)
+            return false;
+        ticks = value;
+        return true;
+    }
+
+    // comm (field 2) can contain spaces and parentheses. Only the final ')' ends it.
+    // Field 22, starttime, is then fields[19]. Same parse as LinuxProcessIdentity.
+    internal static bool TryParseProcStartTicks(string stat, out long ticks)
+    {
+        ticks = 0;
+        var endName = stat.LastIndexOf(')');
+        if (endName < 0 || endName + 2 >= stat.Length)
+            return false;
+        var fields = stat[(endName + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return fields.Length > 19 && fields[0].Length == 1
+            && long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out ticks)
+            && ticks >= 0;
     }
 
     private static void MoveIntoPlace(string temporary, string destination)
@@ -372,7 +488,8 @@ internal static class PwshPrivateCache
             var stamp = Path.Combine(root, StampName);
             if (!File.Exists(stamp))
                 return false;
-            return DateTime.UtcNow - File.GetLastWriteTimeUtc(stamp) < SweepInterval;
+            var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(stamp);
+            return age >= TimeSpan.Zero && age < SweepInterval;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or System.ComponentModel.Win32Exception)
         {
@@ -503,7 +620,7 @@ internal static class PwshPrivateCache
             var owner = ParseOwner(File.ReadAllText(marker).Trim());
             return owner.Kind == OwnerKind.Owned
                 && owner.Pid == Environment.ProcessId
-                && (owner.StartedUtcTicks is null || SameStart(owner.StartedUtcTicks.Value, Process.GetCurrentProcess().StartTime));
+                && IsLive(owner);
         }
         catch (IOException)
         {
@@ -519,9 +636,9 @@ internal static class PwshPrivateCache
         }
     }
 
-    private static bool SameStart(long recordedTicks, DateTime observed)
+    private static bool SameStart(long recordedTicks, long observedTicks)
     {
-        var delta = recordedTicks - NormalizeTicks(observed);
+        var delta = recordedTicks - observedTicks;
         if (delta < 0)
             delta = -delta;
         return delta <= StartMatchToleranceTicks;
@@ -547,12 +664,12 @@ internal static class PwshPrivateCache
         Owned,
     }
 
-    private readonly record struct OwnerRecord(OwnerKind Kind, int Pid, long? StartedUtcTicks)
+    private readonly record struct OwnerRecord(OwnerKind Kind, int Pid, long? KernelTicks, long? WallTicks)
     {
-        internal static OwnerRecord Absent { get; } = new(OwnerKind.Absent, 0, null);
+        internal static OwnerRecord Absent { get; } = new(OwnerKind.Absent, 0, null, null);
 
-        internal static OwnerRecord Unreadable { get; } = new(OwnerKind.Unreadable, 0, null);
+        internal static OwnerRecord Unreadable { get; } = new(OwnerKind.Unreadable, 0, null, null);
 
-        internal static OwnerRecord Garbled { get; } = new(OwnerKind.Garbled, 0, null);
+        internal static OwnerRecord Garbled { get; } = new(OwnerKind.Garbled, 0, null, null);
     }
 }

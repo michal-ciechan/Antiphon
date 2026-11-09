@@ -20,15 +20,25 @@ public sealed class PwshPrivateCacheTests
         var root = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
         root.ShouldNotBeNullOrWhiteSpace();
         var full = Path.GetFullPath(root);
-        Under(Path.GetTempPath(), full).ShouldBeTrue();
+        var configured = Environment.GetEnvironmentVariable("ANTIPHON_PWSH_CACHE_ROOT");
+        var parent = string.IsNullOrWhiteSpace(configured) ? Path.GetTempPath() : configured;
+        Under(parent, full).ShouldBeTrue(full);
         Directory.Exists(full).ShouldBeTrue();
         var markerText = File.ReadAllText(Path.Combine(full, "owner.pid")).Trim();
         var parts = markerText.Split('@');
         parts[0].ShouldBe(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
         parts.Length.ShouldBe(2, markerText);
-        var recorded = long.Parse(parts[1], CultureInfo.InvariantCulture);
-        var observed = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
-        Math.Abs(recorded - observed).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+        if (OperatingSystem.IsLinux())
+        {
+            Antiphon.Hosting.PwshPrivateCache.TryReadKernelStartTicks(Environment.ProcessId, out var kernel).ShouldBeTrue(markerText);
+            parts[1].ShouldBe("k" + kernel.ToString(CultureInfo.InvariantCulture), markerText);
+        }
+        else
+        {
+            var recorded = long.Parse(parts[1], CultureInfo.InvariantCulture);
+            var observed = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+            Math.Abs(recorded - observed).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+        }
         var seen = await ReadProcessAsync(InheritedPwsh(), "inherited");
         seen.ShouldBe(full);
     }
@@ -141,6 +151,7 @@ public sealed class PwshPrivateCacheTests
             start.Environment["TMP"] = temp;
             start.Environment["TEMP"] = temp;
             start.Environment.Remove("XDG_CACHE_HOME");
+            start.Environment.Remove("ANTIPHON_PWSH_CACHE_ROOT");
             start.ArgumentList.Add(tool);
             start.ArgumentList.Add("--help");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("checkpoint tool did not start.");
@@ -234,15 +245,36 @@ public sealed class PwshPrivateCacheTests
         var temp = Directory.CreateTempSubdirectory("c1813-start-").FullName;
         try
         {
-            var ticks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
             var pid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
-            var reused = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + (ticks + TimeSpan.FromSeconds(1).Ticks).ToString(CultureInfo.InvariantCulture));
-            var same = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + ticks.ToString(CultureInfo.InvariantCulture));
+            string reusedToken;
+            string sameToken;
+            string? legacyToken = null;
+            if (OperatingSystem.IsLinux())
+            {
+                Antiphon.Hosting.PwshPrivateCache.TryReadKernelStartTicks(Environment.ProcessId, out var kernel).ShouldBeTrue();
+                var kernelText = kernel.ToString(CultureInfo.InvariantCulture);
+                reusedToken = pid + "@k" + (kernel + 1).ToString(CultureInfo.InvariantCulture);
+                sameToken = pid + "@k" + kernelText;
+                var wall = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks + TimeSpan.FromSeconds(1).Ticks;
+                legacyToken = pid + "@" + wall.ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                var ticks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+                reusedToken = pid + "@" + (ticks + TimeSpan.FromSeconds(1).Ticks).ToString(CultureInfo.InvariantCulture);
+                sameToken = pid + "@" + ticks.ToString(CultureInfo.InvariantCulture);
+            }
+
+            var reused = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", reusedToken);
+            var same = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", sameToken);
+            var legacy = legacyToken is null ? null : Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", legacyToken);
 
             var seen = await ProbeAsync(temp, "start", static environment => environment.Remove("XDG_CACHE_HOME"));
 
             Directory.Exists(reused).ShouldBeFalse(reused);
             File.Exists(Path.Combine(same, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(same);
+            if (legacy is not null)
+                File.Exists(Path.Combine(legacy, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(legacy);
             Directory.Exists(seen).ShouldBeFalse(seen);
         }
         finally
@@ -492,6 +524,7 @@ public sealed class PwshPrivateCacheTests
         start.Environment["TMPDIR"] = tempRoot;
         start.Environment["TMP"] = tempRoot;
         start.Environment["TEMP"] = tempRoot;
+        start.Environment.Remove("ANTIPHON_PWSH_CACHE_ROOT");
         start.Environment[ProbeVariable] = output;
         configure(start.Environment);
         start.ArgumentList.Add(helper);
