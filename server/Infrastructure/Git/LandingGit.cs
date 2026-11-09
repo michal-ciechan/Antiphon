@@ -312,7 +312,6 @@ public class LandingGit : ILandingGit
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
         };
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         ConfigureProcess(start);
         ApplyIdentity(start);
         ServerGitProcess.DisableAutoMaintenance(start);
@@ -329,6 +328,8 @@ public class LandingGit : ILandingGit
         }
         using var owned = journal is null ? null : CreateOwnedMarker(WriteChildLog);
         owned?.Apply(start);
+        // After configuration: a ConfigureProcess that clears GIT_OPTIONAL_LOCKS must not win (CARD-1453).
+        ServerGitProcess.SuppressOptionalLocks(start);
         Process? child;
         try { child = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
@@ -1286,7 +1287,6 @@ public class LandingGit : ILandingGit
         var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             CreateNoWindow = true };
-        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         ConfigureProcess(start);
         ApplyIdentity(start);
@@ -1299,6 +1299,7 @@ public class LandingGit : ILandingGit
         var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(path, tag: null, ct) : null;
         using var owned = journal is null ? null : CreateOwnedMarker(WriteChildLog);
         owned?.Apply(start);
+        ServerGitProcess.SuppressOptionalLocks(start);
         Process? started;
         try { started = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
