@@ -323,6 +323,7 @@ public class ProcessSpawnLimitTests
     {
         const string source = """
             namespace Antiphon.Tests.Checkpoints;
+            [Category("Unit")]
             public sealed class BareSharedTests
             {
                 private static readonly string Root = CheckpointFixtures.RepoRoot;
@@ -342,6 +343,7 @@ public class ProcessSpawnLimitTests
     {
         const string source = """
             namespace Antiphon.Tests.Checkpoints;
+            [Category("Unit")]
             public sealed class ReadsRootTests
             {
                 private static void Run()
@@ -397,6 +399,7 @@ public class ProcessSpawnLimitTests
             """;
         const string other = """
             namespace Antiphon.Tests.Checkpoints;
+            [Category("Unit")]
             public sealed class OtherAssignmentTests
             {
                 private static void Run()
@@ -448,6 +451,7 @@ public class ProcessSpawnLimitTests
             {
                 private static void Go() { ParameterHelper.Run(CheckpointFixtures.RepoRoot); }
             }
+            [Category("Unit")]
             public sealed class ParameterOtherTests
             {
                 private static void Go() { ParameterHelper.Run(Path.GetTempPath()); }
@@ -499,6 +503,7 @@ public class ProcessSpawnLimitTests
             }
             namespace Antiphon.Tests.Checkpoints.Sub
             {
+                [Category("Unit")]
                 public sealed class HostTests
                 {
                     private static void Run()
