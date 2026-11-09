@@ -34,6 +34,13 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(120_000)] public Task UnfinishedRunLaneResume(CancellationToken token) => Run(nameof(UnfinishedRunLaneResume), token);
     [Test, Timeout(180_000)] public Task SkipRowsCountAsCompleted(CancellationToken token) => Run(nameof(SkipRowsCountAsCompleted), token);
     [Test, Timeout(120_000)] public Task WindowsAncestorSwapRefused(CancellationToken token) => Run(nameof(WindowsAncestorSwapRefused), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeUnion(CancellationToken token) => Run(nameof(CumulativeMergeUnion), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeProvenDrop(CancellationToken token) => Run(nameof(CumulativeMergeProvenDrop), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeUnfixedGreen(CancellationToken token) => Run(nameof(CumulativeMergeUnfixedGreen), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeCherryPick(CancellationToken token) => Run(nameof(CumulativeMergeCherryPick), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeExplicitProven(CancellationToken token) => Run(nameof(CumulativeMergeExplicitProven), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeDigestStable(CancellationToken token) => Run(nameof(CumulativeMergeDigestStable), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeLaunchDefaults(CancellationToken token) => Run(nameof(CumulativeMergeLaunchDefaults), token);
 
     // Provisional: one measured export of a 3,300 + 1,700 file layout (see the harness detail).
     // The harness budget is the file-creation plus export ceiling, wider than the 2x export bound.
