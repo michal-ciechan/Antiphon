@@ -12,6 +12,13 @@ The C467 fixture (`tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs`) passes i
 
 Classification: a fixture defect that the product change exposed. Production gives both sides the same `TimeProvider`, so the product is not affected. The failure is deterministic, not a race, and it is not specific to Windows. It only shows up on Windows because the class asserts `OperatingSystem.IsWindows()` and needs ConPTY and a native `fakegrok.exe`. The extract's history fits this: the `busy` arm passed in all nine earlier desktop runs, all at cuts without `4d91773c1`. Its 73 s duration on a6410818 was its fastest ever. Earlier rc cuts 74a8004f4 (run e737e9fe) and 3364197bf (run 4e0d1159) already contained `4d91773c1`, but the extract found no TRX for this test in those runs. So a6410818 was the first E2E execution of this class with the commit.
 
+### Hypotheses ruled out
+
+- Timing race on its own: no. Every earlier pass waited only for the Aged rows to exist, and the scan still enqueued the Warning within a pass or two. After `4d91773c1`, the scan skips the Warning until real time reaches land-clock time. No scan cadence can enqueue it within this test.
+- Lock-held skip (CARD-1705, `b48989fa6`): no. That commit is on the last passing cut `0e7aef0379a0`. A skip only delays the notice to the next pass.
+- CARD-1769 park (`593ba300b`): no. It parks only linked `AwaitingReceipt` notes. The Warning is unlinked and `Queued`. Both `593ba300b` and `4d91773c1` are absent from `0e7aef0379a0`, so CARD-1769 is not the only new change on the path.
+- Reproducing by delaying the scan on Linux: not possible. The class asserts Windows, and the fixture has no scan-interval option (the hosted period is a fixed 5 s). The Linux probe below covers the clock wiring directly.
+
 ## Approving reviews
 
 approving review(s) with scope (Full/Interim) and the selection they actually ran:
@@ -42,4 +49,5 @@ Test-only, on `feat/card-task-61d7498e` from master `ccd3909780fe3e7a177effac627
 
 - Red `026f497d053536bc42d943d7889a4302f75e0d75`: `LandDeliveryFixtureProbeTests.Notification_scan_reads_the_land_clock` 1 total, 1 failed (`ahead should be greater than 00:05:00 but was -00:00:00.0000002`).
 - Fix `680fecc47464aacbf307de71b8f212ebc99e27f9`: `LandDeliveryOptions.ConfigureServices` replaces the `AgentTaskLandNotificationHostedService` registration in place. The new registration hands the scan a scope factory whose scopes resolve `TimeProvider` to the `LandClock`. The rest of DI keeps `TimeProvider.System`.
-- Green at `680fecc47`, Linux: `/*/*/LandDeliveryFixtureProbeTests/(Notification_scan_reads_the_land_clock*)|(Fixture_wraps_the_registered_verifier*)` 2 total, 2 passed. The Windows E2E `C467_V32` was not run. Server2 cannot run it.
+- Wait `dd711ab7ea26846cbd84646d212c0dc68d9a0486`: the `busy` arm now waits up to 60 s for the oldest Aged notice (the Warning) to get a queue row before it reads attention. This follows the 11-04 `(attempt)` repair `7c9c4cb15`. The headline assertion is unchanged. Without the clock fix, this wait times out with `busy caller warning enqueued`.
+- Green at `680fecc47` and again at `dd711ab7e`, Linux: `/*/*/LandDeliveryFixtureProbeTests/(Notification_scan_reads_the_land_clock*)|(Fixture_wraps_the_registered_verifier*)` 2 total, 2 passed. The Windows E2E `C467_V32` was not run. Server2 cannot run it.
