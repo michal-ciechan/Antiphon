@@ -8,6 +8,7 @@ param(
     [string]$Repo,
     [string]$Table,
     [string]$FileList,
+    [string]$RunId,
     [switch]$Plan,
     [switch]$Force
 )
@@ -36,7 +37,7 @@ if (-not $Plan) {
         $allowed = $true
     }
     if (-not $allowed) {
-        [Console]::Error.WriteLine('refused=not-linux')
+        [Console]::Error.WriteLine('refused=not-linux: run this lane on the Linux host. The desktop does not run it.')
         exit 3
     }
 }
@@ -68,40 +69,75 @@ if (-not $Plan) {
     }
 }
 
-$decision = Get-PostLandDecision -Repo $Repo -ReceiptRoot $ReceiptRoot -BaseSha $base -TipSha $tip -FileList $FileList -Table $Table -Force:([bool]$Force)
 if ($Plan) {
+    $decision = Get-PostLandDecision -Repo $Repo -ReceiptRoot $ReceiptRoot -BaseSha $base -TipSha $tip -FileList $FileList -Table $Table -Force:([bool]$Force)
     Write-PostLandJson $decision.Payload
     exit $decision.Exit
 }
 
-if ([string]$decision.Payload.state -ne 'run') {
-    $decision.Payload.finishedAt = [datetime]::UtcNow.ToString('o')
-    Write-PostLandReceipt $ReceiptRoot $decision.Payload
-    [Console]::Out.WriteLine([string]$decision.Payload.summaryLine)
-    exit 0
+if ([string]::IsNullOrWhiteSpace($RunId)) {
+    $RunId = [guid]::NewGuid().ToString('N')
+}
+if ($RunId -notmatch '^[0-9a-fA-F]{32}$') {
+    [Console]::Error.WriteLine('refused=bad-run-id')
+    exit 2
 }
 
+$marker = Join-Path $ReceiptRoot ('lane-' + $RunId + '.json')
+$lockPath = Join-Path $ReceiptRoot 'lock.json'
+
 if ([Environment]::GetEnvironmentVariable('POST_LAND_WARNING_CHILD') -eq '1') {
-    $manifest = Read-PostLandManifest (Join-Path $script:PostLandProductRoot 'tests/post-land-unit-shards.json')
-    $code = Invoke-PostLandLane -Repo $Repo -ReceiptRoot $ReceiptRoot -Payload $decision.Payload -Manifest $manifest
-    exit $code
+    $acquired = Enter-PostLandLock -Path $lockPath -RunId $RunId
+    if (-not $acquired) {
+        $busy = Get-PostLandDecision -Repo $Repo -ReceiptRoot $ReceiptRoot -BaseSha $base -TipSha $tip -FileList $FileList -Table $Table -Force:([bool]$Force)
+        $busy.Payload.finishedAt = [datetime]::UtcNow.ToString('o')
+        Write-PostLandReceipt $ReceiptRoot $busy.Payload
+        Write-PostLandRunMarker $marker $RunId 'skipped-busy'
+        [Console]::Out.WriteLine([string]$busy.Payload.summaryLine)
+        exit 0
+    }
+    try {
+        Write-PostLandRunMarker $marker $RunId 'started'
+        $decision = Get-PostLandDecision -Repo $Repo -ReceiptRoot $ReceiptRoot -BaseSha $base -TipSha $tip -FileList $FileList -Table $Table -Force:([bool]$Force)
+        if ([string]$decision.Payload.state -ne 'run') {
+            $decision.Payload.finishedAt = [datetime]::UtcNow.ToString('o')
+            Write-PostLandReceipt $ReceiptRoot $decision.Payload
+            [Console]::Out.WriteLine([string]$decision.Payload.summaryLine)
+            exit 0
+        }
+        $manifest = Read-PostLandManifest (Join-Path $script:PostLandProductRoot 'tests/post-land-unit-shards.json')
+        $code = Invoke-PostLandLane -Repo $Repo -ReceiptRoot $ReceiptRoot -Payload $decision.Payload -Manifest $manifest
+        exit $code
+    }
+    finally {
+        Exit-PostLandLock -Path $lockPath
+    }
 }
 
 $tipDir = Join-Path $ReceiptRoot $tip
 $null = [IO.Directory]::CreateDirectory($tipDir)
-$stdoutLog = Join-Path $tipDir 'lane.log'
-$stderrLog = Join-Path $tipDir 'lane.err'
-$forward = @('-Range', ($base + '..' + $tip), '-Repo', $Repo, '-ReceiptRoot', $ReceiptRoot)
+$stdoutLog = Join-Path $tipDir ('lane-' + $RunId + '.log')
+$stderrLog = Join-Path $tipDir ('lane-' + $RunId + '.err')
+$forward = @('-Range', ($base + '..' + $tip), '-Repo', $Repo, '-ReceiptRoot', $ReceiptRoot, '-RunId', $RunId)
 if (-not [string]::IsNullOrWhiteSpace($FileList)) { $forward += @('-FileList', $FileList) }
 if (-not [string]::IsNullOrWhiteSpace($Table)) { $forward += @('-Table', $Table) }
 if ($Force) { $forward += '-Force' }
 $env:POST_LAND_WARNING_CHILD = '1'
-$argumentList = @('pwsh', '-NoProfile', '-NonInteractive', '-File', $PSCommandPath) + $forward
-$null = Start-Process -FilePath 'setsid' -ArgumentList $argumentList -WorkingDirectory $Repo -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
-$marker = Join-Path $ReceiptRoot 'lane-started.json'
+$childArgs = @('-NoProfile', '-NonInteractive', '-File', $PSCommandPath) + $forward
+$setsid = Get-Command setsid -ErrorAction SilentlyContinue
+if ($null -ne $setsid) {
+    $null = Start-Process -FilePath 'setsid' -ArgumentList (@('pwsh') + $childArgs) -WorkingDirectory $Repo -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+}
+else {
+    $null = Start-Process -FilePath 'pwsh' -ArgumentList $childArgs -WorkingDirectory $Repo -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+}
 $deadline = [datetime]::UtcNow.AddSeconds(20)
 while ([datetime]::UtcNow -lt $deadline) {
-    if (Test-Path -LiteralPath $marker) { exit 0 }
+    if (Test-Path -LiteralPath $marker) {
+        [Console]::Out.WriteLine('runId=' + $RunId)
+        [Console]::Out.WriteLine([IO.File]::ReadAllText($marker))
+        exit 0
+    }
     Start-Sleep -Milliseconds 200
 }
 [Console]::Error.WriteLine('refused=detach')

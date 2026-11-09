@@ -117,17 +117,46 @@ function Get-PostLandChangedPaths {
     return [pscustomobject]@{ Ok = $true; Error = ''; Paths = $paths }
 }
 
+function Get-PostLandPinnedDocMarks {
+    param([string]$Repo)
+    $marks = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $root = Join-Path $Repo 'tests'
+    if (-not (Test-Path -LiteralPath $root)) { return $marks }
+    $pattern = [regex]::new('docs/[A-Za-z0-9_./-]+\.md|[A-Za-z0-9_.-]+\.md', 'CultureInvariant')
+    foreach ($file in [IO.Directory]::EnumerateFiles($root, '*.cs', [IO.SearchOption]::AllDirectories)) {
+        $norm = ([string]$file).Replace('\', '/')
+        if ($norm.Contains('/bin/') -or $norm.Contains('/obj/')) { continue }
+        $text = [IO.File]::ReadAllText($file)
+        foreach ($match in $pattern.Matches($text)) {
+            $value = ([string]$match.Value).Replace('\', '/').Trim()
+            if ([string]::IsNullOrWhiteSpace($value)) { continue }
+            [void]$marks.Add($value)
+            $name = [IO.Path]::GetFileName($value)
+            if (-not [string]::IsNullOrWhiteSpace($name)) { [void]$marks.Add($name) }
+        }
+    }
+    return $marks
+}
+
 function Test-PostLandDocsOnly {
-    param($Paths)
+    param([string]$Repo, $Paths)
     $count = 0
+    $docs = New-PostLandStringList
     foreach ($path in @($Paths)) {
         if ($null -eq $path) { continue }
         $norm = ([string]$path).Replace('\', '/').Trim()
         if ($norm.StartsWith('./')) { $norm = $norm.Substring(2) }
         if ([string]::IsNullOrWhiteSpace($norm)) { continue }
         $count++
-        $docs = $norm.StartsWith('docs/') -or $norm.EndsWith('.md')
-        if (-not $docs) { return $false }
+        $underDocs = $norm.StartsWith('docs/') -and $norm.EndsWith('.md')
+        if (-not $underDocs) { return $false }
+        [void]$docs.Add($norm)
+    }
+    if ($count -eq 0) { return $true }
+    $pinned = Get-PostLandPinnedDocMarks $Repo
+    foreach ($path in $docs) {
+        $name = [IO.Path]::GetFileName($path)
+        if ($pinned.Contains($path) -or $pinned.Contains($name)) { return $false }
     }
     return $true
 }
@@ -146,19 +175,80 @@ function Test-PostLandPidAlive {
     }
 }
 
-function Test-PostLandLockBusy {
+function Get-PostLandLockKind {
     param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
     try {
         $doc = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
     }
     catch {
-        return $false
+        return 'stale'
     }
-    if ($null -eq $doc.PSObject.Properties['pid']) { return $false }
+    if ($null -eq $doc.PSObject.Properties['pid']) { return 'stale' }
     $processId = 0
-    try { $processId = [int]$doc.pid } catch { return $false }
-    return (Test-PostLandPidAlive $processId)
+    try { $processId = [int]$doc.pid } catch { return 'stale' }
+    if ($processId -eq $PID) { return 'ours' }
+    if (Test-PostLandPidAlive $processId) { return 'busy' }
+    if ($null -eq $doc.PSObject.Properties['startedAt']) { return 'busy' }
+    if ([string]::IsNullOrWhiteSpace([string]$doc.startedAt)) { return 'busy' }
+    return 'stale'
+}
+
+function Test-PostLandLockBusy {
+    param([string]$Path)
+    $kind = Get-PostLandLockKind $Path
+    if ($kind -eq 'busy') { return $true }
+    return $false
+}
+
+function Enter-PostLandLock {
+    param([string]$Path, [string]$RunId)
+    $parentDir = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($parentDir)) {
+        $null = [IO.Directory]::CreateDirectory($parentDir)
+    }
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $now = [datetime]::UtcNow.ToString('o')
+        $body = '{"pid":' + [string]$PID + ',"startedAt":"' + $now + '","runId":"' + $RunId + '"}' + "`n"
+        $temp = $Path + '.' + [string]$PID + '.' + [string]$attempt + '.tmp'
+        [IO.File]::WriteAllText($temp, $body)
+        try {
+            [IO.File]::Move($temp, $Path)
+            return $true
+        }
+        catch {
+            if (Test-Path -LiteralPath $temp) {
+                try { Remove-Item -LiteralPath $temp -Force } catch { }
+            }
+            $kind = 'absent'
+            if (Test-Path -LiteralPath $Path) { $kind = Get-PostLandLockKind $Path }
+            if ($kind -eq 'ours') { return $true }
+            if ($kind -eq 'busy') { return $false }
+            if ($kind -eq 'stale') {
+                try { Remove-Item -LiteralPath $Path -Force } catch { }
+                continue
+            }
+            return $false
+        }
+    }
+    return $false
+}
+
+function Exit-PostLandLock {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    if ((Get-PostLandLockKind $Path) -ne 'ours') { return }
+    try { Remove-Item -LiteralPath $Path -Force } catch { }
+}
+
+function Write-PostLandRunMarker {
+    param([string]$Path, [string]$RunId, [string]$State)
+    $parentDir = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($parentDir)) {
+        $null = [IO.Directory]::CreateDirectory($parentDir)
+    }
+    $body = '{"runId":"' + $RunId + '","state":"' + $State + '"}' + "`n"
+    [IO.File]::WriteAllText($Path, $body)
 }
 
 function Test-PostLandHourly {
@@ -309,6 +399,8 @@ function New-PostLandShard {
         passed = $null
         failed = $null
         skipped = $null
+        exit = $null
+        slow = $false
     }
 }
 
@@ -329,7 +421,8 @@ function Format-PostLandSummary {
         [string]$Base,
         $NewReds,
         $UnknownShards,
-        [int]$OwedCount
+        [int]$OwedCount,
+        [int]$BuildExit = -1
     )
     $baseEnd = $Base
     $tipEnd = $Tip
@@ -342,6 +435,9 @@ function Format-PostLandSummary {
     if ($names.Count -gt 0) { $listed = ' ' + ($names -join ',') }
     $unknown = New-PostLandStringList
     Add-PostLandStrings $unknown $UnknownShards
+    if ($BuildExit -gt 0) {
+        return 'post-land tip=' + $Tip + ' batch=' + $batch + ' new-reds=unknown build=' + $BuildExit + ' ' + $owed
+    }
     if ($unknown.Count -gt 0) {
         return 'post-land tip=' + $Tip + ' batch=' + $batch + ' new-reds=unknown no-trx=' + ($unknown -join ',') + $listed + ' ' + $owed
     }
@@ -384,6 +480,8 @@ function New-PostLandPayload {
         previousTipSha = $Previous
         summaryLine = $Summary
         manifest = $ManifestPath
+        buildExit = $null
+        slowShards = (New-PostLandStringList)
         startedAt = $null
         finishedAt = $null
     }
@@ -486,61 +584,40 @@ function Build-PostLandShards {
     param($Manifest, $Classes, $SelectorClasses, $WindowNames)
     $shards = New-PostLandObjectList
     $checkpoints = [string]$Manifest.checkpointsNamespace
-    # A Checkpoints class is not contiguous by letter, and the census walks files.
-    # Those trees keep that walk. Other trees sort namespace shards ordinally.
-    $hasCheckpoints = $false
+    # One shard per namespace, and one per Checkpoints initial letter.
+    # File-walk order repeats a letter and would duplicate the receipt row.
+    $byKey = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
     if ($null -ne $Classes) {
-        foreach ($class in $Classes) {
-            if ($null -ne $class -and $class.Unit -and [string]$class.Namespace -eq $checkpoints) {
-                $hasCheckpoints = $true
-                break
-            }
-        }
-    }
-    if ($hasCheckpoints) {
-        $run = $null
-        $runMode = ''
-        $runKey = ''
-        $runNamespace = ''
         foreach ($class in $Classes) {
             if ($null -eq $class -or -not $class.Unit) { continue }
             $ns = [string]$class.Namespace
             $name = [string]$class.Name
             $mode = 'ns'
-            $key = $ns
+            $key = 'ns:' + $ns
+            $letter = ''
             if ($ns -eq $checkpoints -and $name.Length -gt 0) {
                 $mode = 'cp'
-                $key = $name.Substring(0, 1)
+                $letter = $name.Substring(0, 1)
+                $key = 'cp:' + $letter
             }
-            $same = $false
-            if ($null -ne $run -and $runMode -eq $mode -and $runKey -eq $key) { $same = $true }
-            if (-not $same) {
-                Add-PostLandUnitRun $shards $Manifest $checkpoints $runMode $runKey $runNamespace $run
-                $run = New-PostLandObjectList
-                $runMode = $mode
-                $runKey = $key
-                $runNamespace = $ns
+            if (-not $byKey.ContainsKey($key)) {
+                $items = New-Object System.Collections.Generic.List[object]
+                $byKey[$key] = [pscustomobject]@{ Mode = $mode; Namespace = $ns; Letter = $letter; Items = $items }
             }
-            [void]$run.Add($class)
+            [void]$byKey[$key].Items.Add($class)
         }
-        Add-PostLandUnitRun $shards $Manifest $checkpoints $runMode $runKey $runNamespace $run
     }
-    else {
-        $byNamespace = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
-        if ($null -ne $Classes) {
-            foreach ($class in $Classes) {
-                if ($null -eq $class -or -not $class.Unit) { continue }
-                $ns = [string]$class.Namespace
-                if (-not $byNamespace.ContainsKey($ns)) { $byNamespace[$ns] = New-PostLandObjectList }
-                [void]$byNamespace[$ns].Add($class)
-            }
+    $sortedKeys = New-PostLandStringList
+    foreach ($key in $byKey.Keys) { [void]$sortedKeys.Add($key) }
+    $keyArray = $sortedKeys.ToArray()
+    [Array]::Sort($keyArray, [StringComparer]::Ordinal)
+    foreach ($key in $keyArray) {
+        $bucket = $byKey[$key]
+        if ($bucket.Mode -eq 'cp') {
+            Add-PostLandUnitRun $shards $Manifest $checkpoints 'cp' $bucket.Letter $checkpoints $bucket.Items
         }
-        $nsKeys = New-PostLandStringList
-        foreach ($key in $byNamespace.Keys) { [void]$nsKeys.Add($key) }
-        $nsSorted = $nsKeys.ToArray()
-        [Array]::Sort($nsSorted, [StringComparer]::Ordinal)
-        foreach ($ns in $nsSorted) {
-            Add-PostLandUnitRun $shards $Manifest $checkpoints 'ns' $ns $ns $byNamespace[$ns]
+        else {
+            Add-PostLandUnitRun $shards $Manifest $checkpoints 'ns' $bucket.Namespace $bucket.Namespace $bucket.Items
         }
     }
     $selected = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -610,7 +687,7 @@ function Read-PostLandTrx {
         $executed++
         $outcome = [string]$result.outcome
         if ($outcome -eq 'Passed') { $passed++ }
-        elseif ($outcome -eq 'Failed') {
+        elseif ($outcome -eq 'Failed' -or $outcome -eq 'Error' -or $outcome -eq 'Timeout' -or $outcome -eq 'Aborted') {
             $failed++
             $id = [string]$result.testId
             if ($byId.ContainsKey($id)) {
@@ -754,7 +831,7 @@ function Get-PostLandDecision {
         $payload = New-PostLandPayload -State 'refused' -Reason $changed.Error -BaseSha $BaseSha -TipSha $TipSha -Shards $emptyShards -Summary $summary -ManifestPath $manifestPath -Ok $false
         return [pscustomobject]@{ Payload = $payload; Exit = 2 }
     }
-    if (Test-PostLandDocsOnly $changed.Paths) {
+    if (Test-PostLandDocsOnly $Repo $changed.Paths) {
         $summary = Format-PostLandSummary $TipSha $BaseSha @() @() 0
         $payload = New-PostLandPayload -State 'skipped-docs' -Reason 'docs-only' -BaseSha $BaseSha -TipSha $TipSha -Shards $emptyShards -Summary $summary -ManifestPath $manifestPath
         return [pscustomobject]@{ Payload = $payload; Exit = 0 }
@@ -780,6 +857,12 @@ function Get-PostLandDecision {
         $summary = Format-PostLandSummary $TipSha $BaseSha @() @() 0
         $payload = New-PostLandPayload -State 'skipped-completed' -Reason 'already-completed' -BaseSha $BaseSha -TipSha $TipSha -Shards $emptyShards -Summary $summary -ManifestPath $manifestPath
         return [pscustomobject]@{ Payload = $payload; Exit = 0 }
+    }
+    $delayText = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_PLAN_DELAY_MS')
+    if (-not [string]::IsNullOrWhiteSpace($delayText)) {
+        $delayMs = 0
+        try { $delayMs = [int]$delayText } catch { $delayMs = 0 }
+        if ($delayMs -gt 0) { Start-Sleep -Milliseconds $delayMs }
     }
     $selector = Invoke-PostLandSelector $Repo $BaseSha $TipSha $FileList $Table
     if (-not $selector.Ok) {
@@ -829,8 +912,33 @@ function Invoke-PostLandSlot {
     if (-not [string]::IsNullOrWhiteSpace($shim)) {
         $parent = Split-Path -Parent $shim
         if (-not [string]::IsNullOrWhiteSpace($parent)) { $null = [IO.Directory]::CreateDirectory($parent) }
-        [IO.File]::AppendAllText($shim, ($Command -join ' ') + "`n")
-        return 0
+        $joined = @($Command) -join ' '
+        [IO.File]::AppendAllText($shim, $joined + "`n")
+        $delayText = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_DELAY_MS')
+        if (-not [string]::IsNullOrWhiteSpace($delayText)) {
+            $delayMs = 0
+            try { $delayMs = [int]$delayText } catch { $delayMs = 0 }
+            if ($delayMs -gt 0) { Start-Sleep -Milliseconds $delayMs }
+        }
+        $kind = 'build'
+        $fileName = ''
+        $results = ''
+        $args = @($Command)
+        for ($i = 0; $i -lt $args.Count; $i++) {
+            if ($args[$i] -eq '--no-build') { $kind = 'shard' }
+            if ($args[$i] -eq '--report-trx-filename' -and ($i + 1) -lt $args.Count) { $fileName = [string]$args[$i + 1] }
+            if ($args[$i] -eq '--results-directory' -and ($i + 1) -lt $args.Count) { $results = [string]$args[$i + 1] }
+        }
+        $trxSource = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_TRX')
+        if ($kind -eq 'shard' -and -not [string]::IsNullOrWhiteSpace($trxSource) -and -not [string]::IsNullOrWhiteSpace($fileName) -and -not [string]::IsNullOrWhiteSpace($results) -and (Test-Path -LiteralPath $trxSource)) {
+            $null = [IO.Directory]::CreateDirectory($results)
+            [IO.File]::Copy($trxSource, (Join-Path $results $fileName), $true)
+        }
+        $exitName = 'POST_LAND_WARNING_SLOT_BUILD_EXIT'
+        if ($kind -eq 'shard') { $exitName = 'POST_LAND_WARNING_SLOT_SHARD_EXIT' }
+        $exitText = [Environment]::GetEnvironmentVariable($exitName)
+        if ([string]::IsNullOrWhiteSpace($exitText)) { return 0 }
+        try { return [int]$exitText } catch { return 1 }
     }
     $saved = $null
     $hasNative = Test-Path variable:PSNativeCommandUseErrorActionPreference
@@ -862,53 +970,88 @@ function Invoke-PostLandLane {
     $null = [IO.Directory]::CreateDirectory($ReceiptRoot)
     $tipDir = Join-Path $ReceiptRoot ([string]$Payload.tipSha)
     $null = [IO.Directory]::CreateDirectory($tipDir)
-    $lockBody = '{"pid":' + [string]$PID + ',"startedAt":"' + $now + '"}'
-    [IO.File]::WriteAllText((Join-Path $ReceiptRoot 'lock.json'), $lockBody + "`n")
     [IO.File]::WriteAllText((Join-Path $ReceiptRoot 'last-start.json'), '{"startedAt":"' + $now + '"}' + "`n")
-    [IO.File]::WriteAllText((Join-Path $ReceiptRoot 'lane-started.json'), '{"tipSha":"' + [string]$Payload.tipSha + '"}' + "`n")
     $budget = 30.0
     if ($null -ne $Manifest -and $null -ne $Manifest.PSObject.Properties['shardBudgetMinutes']) {
         $budget = [double]$Manifest.shardBudgetMinutes
     }
+    $budgetText = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SHARD_BUDGET_MINUTES')
+    if (-not [string]::IsNullOrWhiteSpace($budgetText)) {
+        $parsedBudget = 0.0
+        $parsed = [double]::TryParse($budgetText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsedBudget)
+        if ($parsed) { $budget = $parsedBudget }
+    }
+    $slowIds = New-PostLandStringList
+    $buildExit = 1
     Push-Location $Repo
     try {
         $build = @('dotnet', 'build', 'tests/Antiphon.Tests', '--property:UseAppHost=false', '--nologo')
-        $null = Invoke-PostLandSlot $build
-        $launched = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-        if ($null -ne $Payload.shards) {
-        foreach ($shard in $Payload.shards) {
-            if ($null -eq $shard) { continue }
-            if (-not $launched.Add([string]$shard.filter)) { continue }
-            $phase = Join-Path $tipDir ('phase/' + [string]$shard.id)
-            $null = [IO.Directory]::CreateDirectory($phase)
-            $env:ANTIPHON_TEST_PHASE_ROOT = $phase
-            $run = @(
-                'dotnet', 'run', '--project', 'tests/Antiphon.Tests', '--no-build', '--property:UseAppHost=false',
-                '--', '--treenode-filter', [string]$shard.filter, '--report-trx', '--report-trx-filename', ([string]$shard.id + '.trx'),
-                '--results-directory', $tipDir
-            )
-            $watch = [Diagnostics.Stopwatch]::StartNew()
-            try { $null = Invoke-PostLandSlot $run } catch { [Console]::Error.WriteLine($_.Exception.Message) }
-            $watch.Stop()
-            if ($watch.Elapsed.TotalMinutes -gt $budget) {
-                [Console]::Error.WriteLine('R1 debug shard=' + [string]$shard.id)
+        $buildExit = Invoke-PostLandSlot $build
+        $Payload.buildExit = $buildExit
+        if ($buildExit -eq 0 -and $null -ne $Payload.shards) {
+            $launched = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+            foreach ($shard in $Payload.shards) {
+                if ($null -eq $shard) { continue }
+                if (-not $launched.Add([string]$shard.filter)) { continue }
+                $phase = Join-Path $tipDir ('phase/' + [string]$shard.id)
+                $null = [IO.Directory]::CreateDirectory($phase)
+                $env:ANTIPHON_TEST_PHASE_ROOT = $phase
+                $trxPath = Join-Path $tipDir ([string]$shard.id + '.trx')
+                if (Test-Path -LiteralPath $trxPath) { Remove-Item -LiteralPath $trxPath -Force }
+                $run = @(
+                    'dotnet', 'run', '--project', 'tests/Antiphon.Tests', '--no-build', '--property:UseAppHost=false',
+                    '--', '--treenode-filter', [string]$shard.filter, '--report-trx', '--report-trx-filename', ([string]$shard.id + '.trx'),
+                    '--results-directory', $tipDir
+                )
+                $started = [datetime]::UtcNow
+                $watch = [Diagnostics.Stopwatch]::StartNew()
+                $shardExit = 1
+                try { $shardExit = Invoke-PostLandSlot $run } catch { [Console]::Error.WriteLine($_.Exception.Message) }
+                $watch.Stop()
+                $shard.exit = $shardExit
+                $fresh = $false
+                if (Test-Path -LiteralPath $trxPath) {
+                    $written = [IO.File]::GetLastWriteTimeUtc($trxPath)
+                    if ($written -ge $started.AddSeconds(-2)) { $fresh = $true }
+                }
+                if (-not $fresh -and (Test-Path -LiteralPath $trxPath)) {
+                    Remove-Item -LiteralPath $trxPath -Force
+                }
+                $shard.slow = $false
+                if ($watch.Elapsed.TotalMinutes -gt $budget) {
+                    $shard.slow = $true
+                    [void]$slowIds.Add([string]$shard.id)
+                    [Console]::Error.WriteLine('R1 debug shard=' + [string]$shard.id)
+                }
             }
-        }
         }
     }
     finally {
         Pop-Location
     }
-    $null = Complete-PostLandOutcome $Payload $Repo $ReceiptRoot
-    $Payload.state = 'completed'
-    $Payload.finishedAt = [datetime]::UtcNow.ToString('o')
+    $Payload.slowShards = $slowIds
     $Payload.slot = $true
+    $Payload.finishedAt = [datetime]::UtcNow.ToString('o')
+    if ($buildExit -ne 0) {
+        $owedCount = 0
+        if ($null -ne $Payload.owedWindows) { $owedCount = @($Payload.owedWindows).Count }
+        $Payload.summaryLine = Format-PostLandSummary $Payload.tipSha $Payload.baseSha @() @() $owedCount $buildExit
+        $Payload.state = 'incomplete'
+        Write-PostLandReceipt $ReceiptRoot $Payload
+        [Console]::Out.WriteLine([string]$Payload.summaryLine)
+        return 1
+    }
+    $null = Complete-PostLandOutcome $Payload $Repo $ReceiptRoot
+    if (([string]$Payload.summaryLine).Contains('new-reds=unknown')) {
+        $Payload.state = 'incomplete'
+    }
+    else {
+        $Payload.state = 'completed'
+    }
     Write-PostLandReceipt $ReceiptRoot $Payload
     [Console]::Out.WriteLine([string]$Payload.summaryLine)
-    $lockPath = Join-Path $ReceiptRoot 'lock.json'
-    if (Test-Path -LiteralPath $lockPath) { Remove-Item -LiteralPath $lockPath -Force }
     $exit = 0
-    if ($null -ne $Payload.newReds -and $Payload.newReds.Count -gt 0) { $exit = 1 }
+    if ($null -ne $Payload.newReds -and @($Payload.newReds).Count -gt 0) { $exit = 1 }
     if (([string]$Payload.summaryLine).Contains('new-reds=unknown')) { $exit = 1 }
     return $exit
 }
