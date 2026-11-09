@@ -110,11 +110,55 @@ namespace Antiphon.Scripts
             return result;
         }
 
-        private static string Blob(string root, string sha, string path) =>
-            Git(root, new[] { "cat-file", "blob", sha + ":" + path }, new[] { 0 }).Stdout;
+        private static readonly string[] ContractPaths = { "tests/test-execution-policy.json", "tests/test-selection-policy.json",
+            "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1", "global.json" };
+
+        /// <summary>The contract's blobs in two git processes: ls-tree -l gives each blob's size, and one show of
+        /// every blob writes their bytes back to back, split by those sizes. Anything but five regular blobs whose
+        /// sizes add up to exactly the bytes written, or a blob that is not BOM-less strict UTF-8, is NotHandled.</summary>
+        private static Dictionary<string, string> Blobs(string root, string sha)
+        {
+            var listing = Git(root, new[] { "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", sha, "--" }.Concat(ContractPaths).ToArray(), new[] { 0 }).Stdout;
+            var sizes = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (string entry in listing.Split('\0'))
+            {
+                if (entry.Length == 0) continue;
+                int tab = entry.IndexOf('\t');
+                string[] meta = tab < 0 ? new string[0] : entry.Substring(0, tab).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (meta.Length != 4 || meta[0] != "100644" && meta[0] != "100755" || meta[1] != "blob" || !long.TryParse(meta[3], out long size) || size < 0)
+                    throw new NotHandledException("contract-entry-shape");
+                string path = entry.Substring(tab + 1);
+                if (Array.IndexOf(ContractPaths, path) < 0 || sizes.ContainsKey(path)) throw new NotHandledException("contract-entry-shape");
+                sizes.Add(path, size);
+            }
+            if (sizes.Count != ContractPaths.Length) throw new NotHandledException("contract-entry-missing");
+            var start = new ProcessStartInfo("git") { WorkingDirectory = Path.GetFullPath(root) };
+            foreach (string argument in new[] { "show", "--no-textconv", "--no-color" }) start.ArgumentList.Add(argument);
+            foreach (string path in ContractPaths) start.ArgumentList.Add(sha + ":" + path);
+            CheckpointProcessRunner.BytesResult shown;
+            try { shown = CheckpointProcessRunner.RunBytes(start, 30000, true); }
+            catch (Exception e) when (!(e is NotHandledException)) { throw new NotHandledException("git-failed:" + e.GetType().Name); }
+            if (shown.TimedOut || shown.Exit != 0) throw new NotHandledException("git-read-failed:show");
+            byte[] bytes = shown.Stdout;
+            if (bytes.LongLength != sizes.Values.Sum() || bytes.LongLength > 16777216) throw new NotHandledException("contract-blob-size");
+            var strict = new UTF8Encoding(false, true);
+            var blobs = new Dictionary<string, string>(StringComparer.Ordinal);
+            int offset = 0;
+            foreach (string path in ContractPaths)
+            {
+                int length = (int)sizes[path];
+                if (length >= 3 && bytes[offset] == 0xEF && bytes[offset + 1] == 0xBB && bytes[offset + 2] == 0xBF) throw new NotHandledException("contract-blob-bom");
+                try { blobs.Add(path, strict.GetString(bytes, offset, length)); }
+                catch (DecoderFallbackException) { throw new NotHandledException("contract-blob-encoding"); }
+                offset += length;
+            }
+            return blobs;
+        }
 
         private static PsObject Contract(string root, string sha, string profile)
         {
+            var blob = Blobs(root, sha);
+            string Blob(string unusedRoot, string unusedSha, string path) => blob[path];
             if (!(PsJson.Parse(Blob(root, sha, "tests/test-execution-policy.json")) is PsObject policy)) throw new NotHandledException("policy-shape");
             if (!(policy.Get("policyHash") is string policyHash) || policyHash != PolicyHash(policy)) throw new NotHandledException("policy-hash-stale");
             AssertProfile(policy, profile);
