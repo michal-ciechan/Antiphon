@@ -117,6 +117,80 @@ public class ComplexityDispatcherTests
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(1);
     }
 
+    // CARD-1513: the walk skips a held tier alias and returns Rerouted, but a standing agent
+    // still launches its own ModelId. Falling through used to deliver that held model.
+    [Test]
+    public async Task A_queued_chain_on_a_standing_agent_whose_model_is_held_blocks_instead_of_spawning_after_rewalk()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        await SeedHardChainAsync(schema);
+        var until = new DateTime(2099, 10, 23, 8, 0, 0, DateTimeKind.Utc);
+        await SeedHoldAsync(schema, ModelAlias.Fable, until);
+        var (agentId, sessionId) = await SeedStandingModelAgentAsync(schema, workspace.Path, ModelAlias.Fable);
+        var task = await SeedQueuedChainTaskAsync(schema, workspace.Path, agentId);
+        var dispatcher = CreateDispatcher(schema);
+
+        var result = await dispatcher.TickAsync(CancellationToken.None);
+
+        result.Dispatched.ShouldBe(0, "C1513-tick-no-spawn");
+        result.BlockedRoutingExhausted.ShouldBe(1, "C1513-tick-accounted");
+        result.SkippedModelAvailability.ShouldBe(0, "C1513-tick-not-parked");
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Blocked, "C1513-tick-standing-held-blocked");
+        stored.FailureReason.ShouldNotBeNull("C1513-tick-reason-set");
+        stored.FailureReason.ShouldStartWith(
+            AgentTaskService.HeldStandingAgentModelPrefix, customMessage: "C1513-tick-named-reason");
+        stored.FailureReason.ShouldContain("fable", customMessage: "C1513-tick-names-model");
+        stored.FailureReason.ShouldContain("until 2099-10-23T08:00:00Z", customMessage: "C1513-tick-names-until");
+        stored.FailureReason.ShouldContain("Not rerouted", customMessage: "C1513-tick-not-rerouted");
+        stored.FailureReason.ShouldNotStartWith(
+            ComplexityRoutingService.RoutingExhaustedPrefix, customMessage: "C1513-tick-not-auto-resumed");
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode, "C1513-tick-kind-unchanged");
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier, "C1513-tick-level-unchanged");
+        stored.Attempt.ShouldBe(task.Attempt, "C1513-tick-no-new-attempt");
+        stored.AgentId.ShouldBe(agentId, "C1513-tick-agent-kept");
+        stored.AgentSessionId.ShouldBeNull("C1513-tick-session-not-adopted");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(0, "C1513-tick-no-reroute-event");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Blocked))
+            .ShouldBe(1, "C1513-tick-one-block");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched))
+            .ShouldBe(0, "C1513-tick-no-dispatched-event");
+        (await verify.AgentSessions.CountAsync(s => s.Id == sessionId)).ShouldBe(1, "C1513-tick-no-extra-session");
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId))
+            .ShouldBe(0, "C1513-tick-no-brief");
+    }
+
+    [Test]
+    public async Task An_ephemeral_agent_whose_model_is_held_still_rewalks_and_dispatches()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        await SeedHardChainAsync(schema);
+        await SeedHoldAsync(schema, ModelAlias.Fable, DateTime.UtcNow.AddHours(1));
+        var (agentId, sessionId) = await SeedStandingModelAgentAsync(schema, workspace.Path, ModelAlias.Fable);
+        var task = await SeedQueuedChainTaskAsync(schema, workspace.Path, agentId, ephemeral: true);
+        var dispatcher = CreateDispatcher(schema);
+
+        var result = await dispatcher.TickAsync(CancellationToken.None);
+
+        result.BlockedRoutingExhausted.ShouldBe(0, "C1513-ephemeral-not-blocked");
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched, "C1513-ephemeral-dispatched");
+        stored.ModelLevel.ShouldBe(AgentModelLevel.High, "C1513-ephemeral-next-candidate");
+        stored.AgentSessionId.ShouldBe(sessionId, "C1513-ephemeral-live-session");
+        stored.FailureReason.ShouldBeNull("C1513-ephemeral-no-block-reason");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(1, "C1513-ephemeral-rerouted");
+    }
+
     [Test]
     public async Task All_held_blocks_the_queued_chain_task()
     {
@@ -450,7 +524,7 @@ public class ComplexityDispatcherTests
     }
 
     private static async Task<AgentTask> SeedQueuedChainTaskAsync(
-        IsolatedTestSchema schema, string directory, Guid pinnedAgentId, Guid? cardId = null)
+        IsolatedTestSchema schema, string directory, Guid pinnedAgentId, Guid? cardId = null, bool ephemeral = false)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -468,7 +542,7 @@ public class ComplexityDispatcherTests
             WorkingDirectory = directory,
             Status = AgentTaskStatus.Queued,
             AgentId = pinnedAgentId,
-            Ephemeral = false,
+            Ephemeral = ephemeral,
             CreatedAt = DateTime.UtcNow,
         };
         await using var db = CreateContext(schema);
@@ -510,6 +584,47 @@ public class ComplexityDispatcherTests
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-3),
             PoolClaudeEffort = "high",
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        return (agentId, sessionId);
+    }
+
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedStandingModelAgentAsync(
+        IsolatedTestSchema schema, string directory, string modelId)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext(schema);
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = "standing-fable",
+            Slug = $"standing-{agentId:N}"[..20],
+            WorkingDirectory = directory,
+            Details = "A standing agent pinned to a held model.",
+            Status = AgentStatus.Running,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier,
+            ModelId = modelId,
+            IsPoolDelegate = false,
+            AlwaysOn = false,
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,
