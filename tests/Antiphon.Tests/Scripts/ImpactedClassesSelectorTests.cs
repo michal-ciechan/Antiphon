@@ -436,6 +436,29 @@ public sealed partial class ImpactedClassesSelectorTests
         }
     }
 
+    // CARD-1801 R2-D-1: the non-merge output is what a Code or Review stage runs for its diff, so its
+    // treenodeFilter (text line and -Json top level) keeps every selected class in one filter; only
+    // -MergeSubset splits land classes into -land-<n> rows.
+    [Test]
+    public async Task C1801_non_merge_land_notification_filter_names_every_class()
+    {
+        var root = Root();
+        var expected = "/*/*/" + string.Join("|", LandNotificationClasses.Select(name => "(" + name + "*)")) + "/*";
+        const string path = "server/Application/Services/AgentTaskLandNotificationService.cs";
+
+        var text = await RunAsync(root, "-Path", path);
+        text.Exit.ShouldBe(0, text.Text);
+        text.Stdout.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("treenodeFilter=", StringComparison.Ordinal))
+            .ShouldBe(["treenodeFilter=" + expected]);
+
+        var ran = await RunAsync(root, "-Path", path, "-Json");
+        ran.Exit.ShouldBe(0, ran.Text);
+        using var json = JsonDocument.Parse(ran.Stdout);
+        json.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(expected);
+        FilterRows(json.RootElement, "filters").ShouldBe([("tests/Antiphon.Tests", expected)]);
+    }
+
     [Test]
     public async Task C1801_native_linux_only_marker_edits_select_the_census_pair()
     {
