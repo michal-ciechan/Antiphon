@@ -32,20 +32,26 @@ public class C1793SessionPwshCacheTests
         {
             var firstDto = await runtime.StartAsync(Launch(first, firstOut, new Dictionary<string, string>()), CancellationToken.None);
             started.Add((first, firstDto));
+            var firstTicks = HostStartTicks(firstDto);
             var secondDto = await runtime.StartAsync(Launch(second, secondOut, new Dictionary<string, string>()), CancellationToken.None);
             started.Add((second, secondDto));
+            var secondTicks = HostStartTicks(secondDto);
 
             var firstSeen = (await ReadWhenWrittenAsync(firstOut)).Split('|');
             var secondSeen = (await ReadWhenWrittenAsync(secondOut)).Split('|');
             var runnerCache = Environment.GetEnvironmentVariable(Variable);
-            foreach (var (seen, id, dto) in new[] { (firstSeen, first, firstDto), (secondSeen, second, secondDto) })
+            foreach (var (seen, id, dto, ticks) in new[] { (firstSeen, first, firstDto, firstTicks), (secondSeen, second, secondDto, secondTicks) })
             {
                 var directory = seen[0];
                 Path.GetDirectoryName(Path.GetFullPath(directory)).ShouldBe(
                     Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar));
                 Path.GetFileName(directory).ShouldStartWith("antiphon-pwsh-cache-session-" + id.ToString("N") + "-");
                 directory.ShouldNotBe(runnerCache);
-                seen[1].ShouldBe(dto.HostPid?.ToString(CultureInfo.InvariantCulture), "the host owns the session cache");
+                var owner = seen[1].Split('@');
+                owner[0].ShouldBe(dto.HostPid?.ToString(CultureInfo.InvariantCulture), "the host owns the session cache");
+                owner.Length.ShouldBe(2, seen[1]);
+                var recorded = long.Parse(owner[1], CultureInfo.InvariantCulture);
+                (recorded - recorded % 10).ShouldBe(ticks - ticks % 10);
             }
             firstSeen[0].ShouldNotBe(secondSeen[0]);
 
@@ -107,6 +113,13 @@ public class C1793SessionPwshCacheTests
             $"[System.IO.File]::Move('{output}.tmp', '{output}')";
         return new RunnerLaunchRequest(id, ResolvePwsh(), ["-NoProfile", "-NonInteractive", "-Command", script],
             env, Path.GetTempPath(), Cols: 100, Rows: 25);
+    }
+
+    private static long HostStartTicks(RunnerSessionDto dto)
+    {
+        dto.HostPid.ShouldNotBeNull();
+        using var host = Process.GetProcessById(dto.HostPid.Value);
+        return host.StartTime.ToUniversalTime().Ticks;
     }
 
     private static string ResolvePwsh()
