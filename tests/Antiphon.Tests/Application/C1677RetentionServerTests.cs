@@ -8,8 +8,10 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Antiphon.TestSupport;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 using Rig = Antiphon.Tests.Application.RemoteWorkspacePreparerTests.Rig;
@@ -1547,6 +1549,179 @@ public sealed class C1677RetentionServerTests
         row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
         w.Ticks.TryEnter().ShouldBeTrue("a cancelled preview gives the turn back");
         w.Ticks.Exit();
+    }
+
+    private const string TickLockId = "antiphon.runner-worktree-retention.tick";
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1812_a_failed_unlock_does_not_return_the_pooled_connection_still_holding_the_lock()
+    {
+        // CARD-1812 (R-1). pg_advisory_unlock throws while the session is still healthy and still holds the lock.
+        // CloseConnectionAsync must not return that connection to the pool: Npgsql's DISCARD ALL is lazy, so the
+        // lock would stay held until the handle is reused. The release warning names the tick id.
+        var logs = new LogCapture();
+        await using var w = await World.StartAsync(configure: services => services.AddSingleton<ILoggerProvider>(logs));
+        await using var scope = w.Rig.Provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>();
+        var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
+        w.Ticks.TryEnter().ShouldBeTrue();
+        try
+        {
+            (await service.TryLockAcrossProcessesAsync()).ShouldBeTrue();
+            await db.Database.ExecuteSqlRawAsync("CREATE SCHEMA IF NOT EXISTS c1812_trap");
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE OR REPLACE FUNCTION c1812_trap.pg_advisory_unlock(bigint) RETURNS boolean
+                LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'c1812 unlock refused'; END $$;
+                """);
+            await db.Database.ExecuteSqlRawAsync("SET search_path = c1812_trap, pg_catalog");
+            await service.UnlockAcrossProcessesAsync();
+        }
+        finally
+        {
+            w.Ticks.Exit();
+        }
+
+        logs.Items.Any(e => e.Level == LogLevel.Warning && e.Category.Contains(nameof(RunnerWorktreeRetentionService), StringComparison.Ordinal)
+                && e.Message.Contains("tick lock release failed", StringComparison.Ordinal))
+            .ShouldBeTrue("the unlock must fail on the live session; saw: " + logs.Render());
+        logs.Items.Any(e => e.Level == LogLevel.Warning && e.Category.Contains(nameof(RunnerWorktreeRetentionService), StringComparison.Ordinal)
+                && e.Message.Contains(TickLockId, StringComparison.Ordinal))
+            .ShouldBeTrue("the release warning must name the tick id; saw: " + logs.Render());
+
+        var probeCs = new NpgsqlConnectionStringBuilder(w.Rig.Schema.ConnectionString) { Pooling = false }.ConnectionString;
+        await using var probe = new NpgsqlConnection(probeCs);
+        await probe.OpenAsync();
+        await using var command = probe.CreateCommand();
+        command.CommandText = $"SELECT pg_try_advisory_lock(hashtextextended('{TickLockId}', 0))";
+        var acquired = await command.ExecuteScalarAsync() is true;
+        if (acquired)
+        {
+            command.CommandText = $"SELECT pg_advisory_unlock(hashtextextended('{TickLockId}', 0))";
+            await command.ExecuteScalarAsync();
+        }
+
+        acquired.ShouldBeTrue("a failed unlock must not leave the advisory lock on a pooled connection");
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1812_a_skipped_scheduled_tick_warns_with_the_tick_id()
+    {
+        // CARD-1812 (R-1). A scheduled tick that finds the lock held writes no run. That skip was Information and did
+        // not name the tick, so a lock stuck in the pool was invisible. It is a Warning that names the tick id.
+        var logs = new LogCapture();
+        await using var w = await World.StartAsync(configure: services => services.AddSingleton<ILoggerProvider>(logs));
+        var holderCs = new NpgsqlConnectionStringBuilder(w.Rig.Schema.ConnectionString) { Pooling = false }.ConnectionString;
+        await using var holder = new NpgsqlConnection(holderCs);
+        await holder.OpenAsync();
+        await using var hold = holder.CreateCommand();
+        hold.CommandText = $"SELECT pg_try_advisory_lock(hashtextextended('{TickLockId}', 0))";
+        (await hold.ExecuteScalarAsync() is true).ShouldBeTrue();
+        try
+        {
+            (await w.TickAsync().WaitAsync(TimeSpan.FromSeconds(20))).ShouldBeEmpty();
+            await using var db = w.Rig.NewDb();
+            (await db.WorktreeResidueRuns.CountAsync()).ShouldBe(0);
+            logs.Items.Any(e => e.Level == LogLevel.Warning && e.Category.Contains(nameof(RunnerWorktreeRetentionService), StringComparison.Ordinal)
+                    && e.Message.Contains(TickLockId, StringComparison.Ordinal)
+                    && e.Message.Contains("skipped", StringComparison.OrdinalIgnoreCase))
+                .ShouldBeTrue("a skipped tick must warn with the tick id; saw: " + logs.Render());
+        }
+        finally
+        {
+            hold.CommandText = $"SELECT pg_advisory_unlock(hashtextextended('{TickLockId}', 0))";
+            await hold.ExecuteScalarAsync();
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1812_an_aborted_execute_save_finishes_the_run_and_does_not_send()
+    {
+        // CARD-1812 (R-2). The execute route saved its run with the request abort token. A cancel in the window before
+        // the 202 left either no finisher or an unfinished row. The save ignores that token, and an abort before the
+        // background tick starts finishes the run with tick_cancelled and does not send.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        using var aborted = new CancellationTokenSource();
+        await aborted.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            w.Ticks.StartExecuteAsync(w.Rig.RunnerId, aborted.Token).WaitAsync(TimeSpan.FromSeconds(15)));
+        await w.Ticks.Background.WaitAsync(TimeSpan.FromSeconds(15));
+
+        WorktreeResidueRun run;
+        await using (var db = w.Rig.NewDb())
+            run = await db.WorktreeResidueRuns.AsNoTracking().SingleAsync();
+        run.Execute.ShouldBeTrue();
+        run.FinishedAt.ShouldNotBeNull();
+        var row = (await w.RunRowsAsync(run.Id)).ShouldHaveSingleItem();
+        row.ReasonCode.ShouldBe("tick_cancelled");
+        row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+        w.Ticks.TryEnter().ShouldBeTrue("an aborted execute gives the turn back");
+        w.Ticks.Exit();
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1812_a_lost_tick_lock_sends_no_destructive_retain()
+    {
+        // CARD-1812 (R-3). The session lock can be gone while this connection is still up (released, or noticed only
+        // at the next query after a drop). An Execute WorkspaceRetain is destructive: the tick re-checks ownership
+        // and does not send when this session no longer holds the lock. The run finishes with tick_lock_lost and the
+        // path stays. A retain already in flight is still the runner's to refuse.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        await using var scope = w.Rig.Provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>();
+        var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
+        w.Ticks.TryEnter().ShouldBeTrue();
+        try
+        {
+            (await service.TryLockAcrossProcessesAsync()).ShouldBeTrue();
+            await db.Database.ExecuteSqlRawAsync(
+                $"SELECT pg_advisory_unlock(hashtextextended('{TickLockId}', 0))");
+            var result = (await service.RunEnteredAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20))).ShouldHaveSingleItem();
+            result.Sent.ShouldBe(0);
+            result.Stopped.ShouldBe("tick_lock_lost");
+            (await w.RunAsync(result.RunId)).FinishedAt.ShouldNotBeNull();
+            var row = (await w.RunRowsAsync(result.RunId)).Single(r => r.ReasonCode == "tick_lock_lost");
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+            w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+        }
+        finally
+        {
+            await service.UnlockAcrossProcessesAsync();
+            w.Ticks.Exit();
+        }
+    }
+
+    private sealed class LogCapture : ILoggerProvider
+    {
+        public List<Item> Items { get; } = [];
+        public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
+        public void Dispose() { }
+        public string Render() => string.Join(" | ", Items.Select(e => e.Level + ":" + e.Message));
+
+        internal sealed record Item(LogLevel Level, string Category, string Message);
+
+        private sealed class Logger(LogCapture owner, string category) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (owner.Items)
+                    owner.Items.Add(new Item(level, category, formatter(state, exception)));
+            }
+        }
     }
 
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
