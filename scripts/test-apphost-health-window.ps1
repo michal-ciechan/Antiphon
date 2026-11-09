@@ -11,12 +11,13 @@
     exit 0 or unreadable exit code is not a failure, a foreign restart stamp
     survives, a listening 17202 vetoes the vanished-AppHost exit, the port
     signal counts both ways, and rotation keeps exactly ten files.
+    W12 (CARD-1806): with no dashboard URL file the restart asks 17205 itself.
 
     Copied script tree in a temp git repo plus inert seams; a fake launcher
     acts per poll. Never touches live ports, processes, tasks or logs/ under
     the checkout. Runs on Linux and Windows. ASCII-only for Windows PowerShell 5.1.
 #>
-param([ValidateSet('','W1','W2','W3','W4','W5','W6','W7','W8','W9','W10','W11')][string]$Case = '')
+param([ValidateSet('','W1','W2','W3','W4','W5','W6','W7','W8','W9','W10','W11','W12')][string]$Case = '')
 
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -121,6 +122,11 @@ function Invoke-AppHostHealthProbe { param($TimeoutSec)
     if (Test-C1680At 'healthAt') { return [pscustomobject]@{ StatusCode = 200; Body = 'Healthy'; Error = $null } }
     if (Test-C1680At 'answerAt') { return [pscustomobject]@{ StatusCode = 503; Body = $null; Error = 'migrating' } }
     return [pscustomobject]@{ StatusCode = $null; Body = $null; Error = 'Connection refused' }
+}
+function Invoke-AppHostDashboardProbe { param($TimeoutSec)
+    Write-C1680Trace "dashboard $script:C1680Poll"
+    if (Test-C1680At 'dashUpAt') { return [pscustomobject]@{ StatusCode = 200; Url = 'http://localhost:17205'; Error = $null } }
+    return [pscustomobject]@{ StatusCode = $null; Url = $null; Error = 'Connection refused' }
 }
 function Invoke-AppHostVersionProbe { param($TimeoutSec)
     $sha = ((& git -C $script:C1680Root rev-parse HEAD) | Select-Object -First 1).Trim()
@@ -392,9 +398,30 @@ $cases = @{
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    # CARD-1806: the cold build outlasts dev-aspire.ps1's 90 s dashboard-URL wait. The
+    # launcher prints "Dashboard URL not found" and exits 0 without writing the URL file;
+    # the build log then stops growing, and the dashboard (17205) and /health come up
+    # after it gave up (poll 16 here, past the launcher's give-up at poll 10).
+    W12 = {
+        Invoke-C1680Case 'W12' @{ pollMs = 250; growUntil = 12; outUntil = 10; launcherExitAt = 10; launcherExitCode = 0; dashUpAt = 16; healthAt = 16 } @('-TimeoutSec', '2', '-MaxWaitSec', '60') {
+            param($run, $lock, $root)
+            Assert-C1680 ($run.Exit -eq 0) 'W12 no URL file, dashboard and health up after the launcher gave up: exit 0' "exit=$($run.Exit) polls=$(Get-C1680Polls $run)"
+            Assert-C1680 ($run.Text -match 'dashboard http://localhost:17205, backend healthy') 'W12 names the dashboard found on 17205' $run.Text
+            Assert-C1680 (-not (Test-Path -LiteralPath (Join-Path $root 'logs/apphost-dashboard-url.txt'))) 'W12 the launcher wrote no URL file'
+            Assert-C1680 (-not (Test-Path -LiteralPath $lock)) 'W12 healthy exit releases the restart lock'
+        }
+        # The dashboard answering is launch progress; the stall after it names it.
+        Invoke-C1680Case 'W12d' @{ pollMs = 250; growUntil = 3; dashUpAt = 6 } @('-TimeoutSec', '2', '-MaxWaitSec', '60') {
+            param($run, $lock)
+            Assert-C1680 ($run.Exit -eq 1) 'W12d dashboard without backend health exits 1' "exit=$($run.Exit)"
+            Assert-C1680 ($run.Text -match 'Dashboard up \(http://localhost:17205\) but backend health not confirmed') 'W12d reports the dashboard found on 17205' $run.Text
+            Assert-C1680 ($run.Text -match 'last progress: dashboard answered on http://localhost:17205') 'W12d the dashboard answering counts as progress' $run.Text
+            Assert-C1680 (Test-Path -LiteralPath $lock) 'W12d timeout keeps the restart lock'
+        }
+    }
 }
 
-$ids = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11')
+$ids = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12')
 if ($Case) { $ids = @($Case) }
 foreach ($id in $ids) { & $cases[$id] }
 
