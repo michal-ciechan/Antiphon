@@ -966,10 +966,11 @@ public sealed class PhoneHomeCommandDispatcher
         // CARD-0604 D-15: the workspace root itself, or a mirror worktree directly under it. A
         // path that merely starts with the same characters ("/workspace") is not under "/work",
         // and "/work/worktrees/../.." must not escape it.
+        // CARD-1695: one standing checkout directly under <AllowedCwd>/agents/<segment>.
         if (!IsAdmittedCwd(launch.Cwd))
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget,
-                $"cwd must be '{_settings.AllowedCwd}' or a worktree directly under '{_settings.AllowedCwd}/worktrees/'.",
+                $"cwd must be '{_settings.AllowedCwd}' or a worktree directly under '{_settings.AllowedCwd}/worktrees/' or a standing checkout directly under '{_settings.AllowedCwd}/agents/<segment>'.",
                 409);
         if (!string.Equals(launch.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)
             && launch.Backend is not null)
