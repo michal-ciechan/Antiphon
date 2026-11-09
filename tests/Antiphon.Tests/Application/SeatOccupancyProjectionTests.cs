@@ -86,4 +86,14 @@ public sealed class SeatOccupancyProjectionTests
         SeatOccupancyProjection.Pushed(false).ShouldBe("unknown");
         SeatOccupancyProjection.Divergence(4, 1).ShouldBe(3);
     }
+
+    [Test]
+    public void C1803_RunnerHostExcludesLocal()
+    {
+        SeatOccupancyProjection.IsRunnerHost("runner", "server2").ShouldBeTrue();
+        SeatOccupancyProjection.IsRunnerHost("local", "server2").ShouldBeFalse();
+        SeatOccupancyProjection.IsRunnerHost("LOCAL", "desktop").ShouldBeFalse();
+        SeatOccupancyProjection.IsRunnerHost("runner", "local").ShouldBeFalse();
+        SeatOccupancyProjection.IsRunnerHost("runner", "LOCAL").ShouldBeFalse();
+    }
 }

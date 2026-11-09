@@ -17,6 +17,12 @@ public sealed class AttentionSettings
     /// <summary>Age at which those conditions become Error. Must exceed the warning age.</summary>
     public int SeatIdleErrorMinutes { get; set; } = 180;
 
+    /// <summary>
+    /// CARD-1803. Hours a Blocked runner seat must hold, with an undelivered caller note, before the digest page.
+    /// Detection only. Valid range is 1..720, and the page stays after the seat-idle Error age.
+    /// </summary>
+    public int BlockedSeatEscalationHours { get; set; } = 6;
+
     /// <summary>Sampler period, inclusive range 10..3600 seconds.</summary>
     public int OccupancySampleIntervalSeconds { get; set; } = 60;
 

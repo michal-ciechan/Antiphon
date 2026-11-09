@@ -24,4 +24,15 @@ public class AgentTaskEventTypeLedgerTests
 
         duplicates.ShouldBeEmpty("an appended AgentTaskEventType takes the next free value");
     }
+
+    /// <summary>CARD-1803. The digest seat page is a new event, appended after LandingBranchDeletion.</summary>
+    [Test]
+    public void C1803_BlockedSeatEscalatedIs43()
+    {
+        var names = Enum.GetNames<AgentTaskEventType>();
+        names.ShouldContain("BlockedSeatEscalated");
+        ((int)Enum.Parse<AgentTaskEventType>("BlockedSeatEscalated")).ShouldBe(43);
+        ((int)AgentTaskEventType.LandingBranchDeletion).ShouldBe(42);
+        Enum.GetValues<AgentTaskEventType>().Select(value => (int)value).Max().ShouldBe(43);
+    }
 }
