@@ -101,8 +101,11 @@ public sealed class DerivedImpactIndexTests
         foreach (var broad in DerivedImpactIndexBuilder.Allowlist)
             index.Edges.Any(edge => edge.Path == broad).ShouldBeFalse(broad);
 
-        Edge(index, LeakSweepPath).ShouldContain("C1677TempFamilyRegistryTests");
-        Edge(index, LandingGitPath).ShouldContain("RepositoryMutationLeaseTests");
+        // D-3. LandingGit.cs and PtyHostLeakSweep.cs are named by more than 25 test classes, so the
+        // reverse edge is omitted. The fixture witnesses still select those classes on a small repo.
+        Capped(index, LandingGitPath);
+        Capped(index, LeakSweepPath);
+        index.Edges.Any(edge => edge.Path == LandingGitPath || edge.Path == LeakSweepPath).ShouldBeFalse();
         Edge(index, PrecheckPath).ShouldContain("LandGraphEvaluationTests");
     }
 
@@ -308,16 +311,24 @@ public sealed class DerivedImpactIndexTests
         filter.ShouldBe("/*/*/LandGraphEvaluationTests/(EvaluationBudgetRefusesSlowDotnet*)");
         Strings(methodJson.RootElement, "derivedClasses").ShouldContain("LandGraphEvaluationTests");
 
-        var whole = await SelectAsync(
-            fixture.Root,
-            "-Path", PrecheckPath,
-            "-Path", "tests/Antiphon.Tests/Application/LandGraphEvaluationTests.cs",
-            "-Json");
-        whole.Exit.ShouldBe(0, whole.Text);
-        using var wholeJson = JsonDocument.Parse(whole.Stdout);
-        Strings(wholeJson.RootElement, "filters").ShouldNotBeEmpty();
-        wholeJson.RootElement.GetProperty("treenodeFilter").GetString()
-            .ShouldBe("/*/*/(LandGraphEvaluationTests*)/*");
+        // pwsh -File rejects a repeated -Path. -FileList is the supported multi-path form.
+        var list = Path.Combine(Path.GetTempPath(), "derived-index-both-" + Guid.NewGuid().ToString("N") + ".txt");
+        try
+        {
+            await File.WriteAllTextAsync(
+                list,
+                PrecheckPath + "\ntests/Antiphon.Tests/Application/LandGraphEvaluationTests.cs\n");
+            var whole = await SelectAsync(fixture.Root, "-FileList", list, "-Json");
+            whole.Exit.ShouldBe(0, whole.Text);
+            using var wholeJson = JsonDocument.Parse(whole.Stdout);
+            var wholeFilter = wholeJson.RootElement.GetProperty("filters")[0].GetProperty("treenodeFilter").GetString();
+            wholeFilter.ShouldBe("/*/*/(LandGraphEvaluationTests*)/*");
+            wholeJson.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(wholeFilter);
+        }
+        finally
+        {
+            File.Delete(list);
+        }
     }
 
     [Test]
@@ -389,6 +400,13 @@ public sealed class DerivedImpactIndexTests
 
     private static List<string> Edge(DerivedImpactIndex index, string path) =>
         index.Edges.Single(edge => edge.Path == path).Classes.ToList();
+
+    private static void Capped(DerivedImpactIndex index, string path)
+    {
+        var row = index.CappedPaths.Single(item => item.Path == path);
+        row.Reason.ShouldBe("cap", path);
+        row.Classes.ShouldBeGreaterThan(DerivedImpactIndexBuilder.Cap, path);
+    }
 
     private static bool Declares(string source, string className)
     {

@@ -255,7 +255,7 @@ Existing tests affected: `ImpactedClassesSelectorTests` (the hand table and the 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1820-s1/` | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-3, R-4 | 0 failed | 25 | 8 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1820-s1/` | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-3, R-4 | 0 failed | 37 | 8 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1820-s2/` | keyword-guards | `/*/*/(KeywordTriggerTests*)\|(GeneratedTextNewlineGuardTests*)\|(DpapiPlatformGuardTests*)/*` | V-7, V-8, V-9 | 0 failed | 6 | 8 | true |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1820-s3/` | rosters | `/*/*/(RosterRegistryTests*)\|(LandGraphAuditProjectShapeTests*)/*` | V-10, V-11, V-12 | 0 failed | 5 | 8 | true |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1820-s4/` | what-ran | `/*/*/(WhatRanReceiptContractTests*)/*` | V-13, R-2 | 0 failed | 2 | 8 | true |
