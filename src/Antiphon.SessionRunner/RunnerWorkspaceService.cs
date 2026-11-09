@@ -1074,14 +1074,27 @@ public sealed partial class RunnerWorkspaceService
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
 
-        if (!inspection)
-            RunnerGitProcess.DisableAutoMaintenance(psi);
-
         if (!inspection && InProcessAnswer(workingDirectory, startProcess, psi, args) is { } answered)
         {
             ct.ThrowIfCancellationRequested();
             span?.SetTag("git.spawned", false);
             return answered;
+        }
+
+        if (!inspection)
+        {
+            // CARD-1441: non-inspection children append the same two keys. Inspection already
+            // sets them inside the isolated list above and must not be appended again.
+            // CARD-1817: an invalid count is a named refusal, and it is raised only once an
+            // in-process read has had its chance. Those reads do not consult the count.
+            try
+            {
+                RunnerGitProcess.DisableAutoMaintenance(psi);
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "git_config_count_invalid")
+            {
+                throw new PhoneHomeAdmissionException("git_config_count_invalid", "git_config_count_invalid", 409);
+            }
         }
 
         // CARD-0631 D-8: a git that cannot start (missing binary, missing or unreadable cwd, access

@@ -1835,3 +1835,37 @@ diagnosis, and a ToolCall retains the local-execution budget. Every actual failu
 uses a new bounded read after transcript catch-up. No diagnostic sends approval,
 cancellation, restart, stop or retry. Failed remains Failed; its session, seat,
 source and pending queue can remain. Preserve them before explicit recovery.
+
+## Runner repository gc (CARD-1817)
+
+CARD-1441 sets `gc.auto=0` and `maintenance.auto=false` on a non-inspection runner
+git child, so those children do not pack the runner repositories. CARD-1432 S3,
+the server Hangfire `RepositoryMaintenance` job (plan D-6 step 4), never landed.
+This pass is the owner. It is not that job, and it does not sweep refs or raise
+attention items.
+
+When phone-home and `PhoneHome:RepositoryMaintenance:Enabled` are both on, the
+runner waits five minutes after start, then checks every `CheckIntervalMinutes`
+(60). A repository directly under the runner repository root is due when its loose
+objects reach `LooseObjectThreshold` (6700, git's own `gc.auto`) or the last armed
+or completed pass was at least `IntervalDays` (7) ago. The first pass below the
+threshold only records that week. A skip while the lease is held does not start it.
+
+The child is `git gc --prune=2.weeks.ago`. It is not `git gc --auto` and it is not
+`--prune=now`. `BudgetSeconds` (600, at most 10800) kills it. The child drops
+inherited `GIT_CONFIG_*` so a bad count cannot block the owner. The pass skips
+while the slot-pool repository lease is held, a worktree add or a land is in
+flight, or a task git call is in flight. A task git call that starts during gc is
+not blocked. The pass never enters `antiphon_pgdata`, never follows a symlink out
+of the root, and keeps its last-run stamp in `repository-maintenance.json` beside
+`PhoneHome:StoreIdPath`, not inside a repository.
+
+One log line per repository names the outcome and the before/after loose-object
+and pack counts. The last result is the runner's `GET /repository-maintenance` and
+the phone-home heartbeat, which the server copies onto
+`GET /api/session-runners/{runnerId}/status`. A null result is omitted.
+
+An invalid `GIT_CONFIG_COUNT` still fails the existing helper with
+`git_config_count_invalid`. That throw happens only after an in-process read has
+had its chance, and the caller receives `PhoneHomeAdmissionException` with that
+code and status 409. The helper's reject set is unchanged.
