@@ -116,8 +116,12 @@ limiters are per test project and are **not** cross-process locks; this file is.
 The repository provides a read-only observer. Populate every variable from the
 specific launch record; do not select the newest directory or infer the state root
 from the candidate. Run on the **execution host**: PID observations on copied state
-describe the wrong host. No automatic stop command is supplied; that remains a
-separate supervisor-ownership follow-up (CARD-1500 scope decision D-1).
+describe the wrong host. The operator script
+`scripts/qualification/stop-supervisor.ps1` performs that kill order (the
+supervisor tree, then the recorded launch-child driver) and step 4's stale-lock
+move. It is Windows-only and requires `-Confirm`. Manual steps 3 and 4 remain
+the proof when the script refuses. Agents do not point it at a live
+qualification.
 
 ```powershell
 pwsh -NoProfile -File scripts/rc-qualification-status.ps1 `

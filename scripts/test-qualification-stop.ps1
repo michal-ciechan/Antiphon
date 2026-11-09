@@ -115,7 +115,7 @@ function C1507_StopOrder {
     $world.map['4300'] = 'absent'
     $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
     $result = Invoke-C1507 $fixture (New-C1507Observe $world) (New-C1507Stop $world)
-    $calls = @($world.calls)
+    $calls = $world.calls.ToArray()
     Assert-C1507 ($result.exitCode -eq 0 -and $calls.Count -eq 2 -and $calls[0] -eq 4100 -and $calls[1] -eq 4200 -and $result.lockAction -ceq 'moved') `
         'stop kills the supervisor tree before the driver and never the lock owner' (($calls -join ',') + ' lock=' + $result.lockAction + ' ' + $result.detail)
     Assert-C1507 ($result.kills[0].phase -ceq 'supervisor' -and $result.kills[1].phase -ceq 'driver' -and $result.kills[0].command -ceq 'taskkill.exe /PID 4100 /T /F' -and $result.kills[1].command -ceq 'taskkill.exe /PID 4200 /T /F') `
@@ -127,7 +127,7 @@ function C1507_StopOrder {
     $reused = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
     $lockBefore = Get-C1507Hash (Join-Path $reused.Coord 'native-run.lock')
     $refused = Invoke-C1507 $reused (New-C1507Observe $world2) (New-C1507Stop $world2)
-    Assert-C1507 ($refused.exitCode -eq 2 -and @($world2.calls).Count -eq 0 -and -not [IO.File]::Exists((Join-Path $reused.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $reused.Coord 'native-run.lock')) -ceq $lockBefore) `
+    Assert-C1507 ($refused.exitCode -eq 2 -and $world2.calls.Count -eq 0 -and -not [IO.File]::Exists((Join-Path $reused.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $reused.Coord 'native-run.lock')) -ceq $lockBefore) `
         'a reused supervisor pid is not killed and the lock stays' $refused.detail
 
     $hits = @{ n = 0 }
@@ -151,7 +151,7 @@ function C1507_StopOrder {
     $world4.map['4200'] = 'alive'
     $goneSuper = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } $null
     $onlyDriver = Invoke-C1507 $goneSuper (New-C1507Observe $world4) (New-C1507Stop $world4)
-    Assert-C1507 ($onlyDriver.exitCode -eq 0 -and @($world4.calls).Count -eq 1 -and $world4.calls[0] -eq 4200 -and $onlyDriver.kills[0].phase -ceq 'driver') `
+    Assert-C1507 ($onlyDriver.exitCode -eq 0 -and $world4.calls.Count -eq 1 -and $world4.calls[0] -eq 4200 -and $onlyDriver.kills[0].phase -ceq 'driver') `
         'an already-dead supervisor still stops the recorded driver' (($world4.calls -join ',') + ' ' + $onlyDriver.detail)
 
     $foreign = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } $null
