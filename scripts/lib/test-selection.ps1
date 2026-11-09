@@ -122,6 +122,20 @@ function Assert-TestSelectionCatalog {
     return $Catalog
 }
 
+# Parses committed catalog text and checks it. The check is a pure function of the text, so a text
+# that already passed in this process is not checked again; every call still returns a fresh object.
+function ConvertFrom-TestSelectionCatalogText {
+    param([string]$Text)
+    $catalog = $Text | ConvertFrom-Json -AsHashtable
+    if ($null -eq $script:TestSelectionCheckedCatalogs) { $script:TestSelectionCheckedCatalogs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
+    $key = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([string]$Text)))
+    if (-not $script:TestSelectionCheckedCatalogs.Contains($key)) {
+        [void](Assert-TestSelectionCatalog $catalog)
+        [void]$script:TestSelectionCheckedCatalogs.Add($key)
+    }
+    return $catalog
+}
+
 function Read-TestSelectionCatalog {
     param([string]$Path, [string]$ExpectedHash)
     $catalog = [IO.File]::ReadAllText($Path) | ConvertFrom-Json -AsHashtable
@@ -156,8 +170,65 @@ function Invoke-TestSelectionGit {
     return $result
 }
 
+function Read-TestSelectionBlobBatch {
+    # The text of many paths at one commit in two git processes per hundred paths: ls-tree -l gives each blob's
+    # size and one show writes their bytes back to back. Each blob is decoded as a single
+    # Invoke-TestSelectionGit read decodes it (strict UTF-8, byte order marks detected). A path left out of the
+    # answer -- a mismatch anywhere, or bytes that do not decode -- is read on its own as before.
+    param([string]$Root, [string]$Sha, [string[]]$Paths)
+    $texts=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    if ($Sha -cnotmatch '^[0-9a-f]{40}$') { return ,$texts }
+    $all=@($Paths)
+    for ($at=0; $at -lt $all.Count; $at+=100) {
+        $chunk=@($all[$at..([Math]::Min($at+100,$all.Count)-1)])
+        try {
+            $listing=(Invoke-TestSelectionGit $Root (@('--literal-pathspecs','ls-tree','-l','-z','--full-tree',$Sha,'--')+$chunk)).Stdout
+            $sizes=[Collections.Generic.Dictionary[string,long]]::new([StringComparer]::Ordinal)
+            foreach ($entry in $listing.Split([char]0)) {
+                if (-not $entry) { continue }
+                if ($entry -cnotmatch "^100(?:644|755) blob [0-9a-f]{40} +([0-9]+)`t(.+)$") { throw 'batch-entry-shape' }
+                $sizes[$Matches[2]]=[long]$Matches[1]
+            }
+            $total=[long]0
+            foreach ($path in $chunk) { if (-not $sizes.ContainsKey($path)) { throw 'batch-entry-missing' }; $total+=$sizes[$path] }
+            if ($sizes.Count -ne $chunk.Count -or $total -gt 16777216) { throw 'batch-entry-count' }
+            $start=[Diagnostics.ProcessStartInfo]::new('git')
+            $start.WorkingDirectory=[IO.Path]::GetFullPath($Root)
+            foreach ($arg in @('show','--no-textconv','--no-color')) { $start.ArgumentList.Add($arg) }
+            foreach ($path in $chunk) { $start.ArgumentList.Add("${Sha}:$path") }
+            $shown=[Antiphon.Checkpoints.CheckpointProcessRunner]::RunBytes($start,30000,$true)
+            if ($shown.TimedOut -or $shown.Exit -ne 0 -or $shown.Stdout.LongLength -ne $total) { throw 'batch-show-failed' }
+            $offset=0
+            foreach ($path in $chunk) {
+                $length=[int]$sizes[$path]
+                $reader=[IO.StreamReader]::new([IO.MemoryStream]::new($shown.Stdout,$offset,$length,$false),[Text.UTF8Encoding]::new($false,$true),$true)
+                try { $texts[$path]=$reader.ReadToEnd() } catch { } finally { $reader.Dispose() }
+                $offset+=$length
+            }
+        } catch { foreach ($path in $chunk) { [void]$texts.Remove($path) } }
+    }
+    return ,$texts
+}
+
+# Reads several paths at one full commit id in one batch and keeps the answered texts for this process,
+# for Get-TestSelectionBlob. A path the batch leaves out is read on its own when asked for, as before.
+function Add-TestSelectionBlobPrefetch {
+    param([string]$Root, [string]$Sha, [string[]]$Paths)
+    if ($Sha -cnotmatch '^[0-9a-f]{40}$') { return }
+    if ($null -eq $script:TestSelectionBlobPrefetch) { $script:TestSelectionBlobPrefetch = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal) }
+    $prefix = [IO.Path]::GetFullPath($Root) + [char]0 + $Sha + [char]0
+    $missing = @($Paths | Where-Object { -not $script:TestSelectionBlobPrefetch.ContainsKey($prefix + $_) })
+    if ($missing.Count -lt 2 -or $script:TestSelectionBlobPrefetch.Count -ge 1024) { return }
+    $texts = Read-TestSelectionBlobBatch $Root $Sha $missing
+    foreach ($path in $texts.Keys) { if ($texts[$path].Length -le 4194304) { $script:TestSelectionBlobPrefetch[$prefix + $path] = $texts[$path] } }
+}
+
 function Get-TestSelectionBlob {
     param([string]$Root,[string]$Sha,[string]$Path)
+    if ($null -ne $script:TestSelectionBlobPrefetch) {
+        $text = $null
+        if ($script:TestSelectionBlobPrefetch.TryGetValue([IO.Path]::GetFullPath($Root) + [char]0 + $Sha + [char]0 + $Path, [ref]$text)) { return $text }
+    }
     return (Invoke-TestSelectionGit $Root @('cat-file','blob',"${Sha}:$Path")).Stdout
 }
 
@@ -188,6 +259,7 @@ function Get-TestSelectionCore {
     }
     $BaselineSha=$BaselineSha.ToLowerInvariant();$CandidateSha=$CandidateSha.ToLowerInvariant()
     $policyPath='tests/test-execution-policy.json'
+    Add-TestSelectionBlobPrefetch $RepositoryRoot $CandidateSha @($policyPath,'tests/test-selection-policy.json','scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
     $policyText=Get-TestSelectionBlob $RepositoryRoot $CandidateSha $policyPath
     $policy=$policyText|ConvertFrom-Json
     if($policy.schemaVersion -notin @(3,4)){throw 'policy-schema-unsupported'}
@@ -196,8 +268,7 @@ function Get-TestSelectionCore {
     Test-NightlyProjectDispositions $policy
     if($policy.selectionCatalog.path -cne 'tests/test-selection-policy.json'){throw 'catalog-path-unsupported'}
     $catalogPath=[string]$policy.selectionCatalog.path
-    $catalog=Get-TestSelectionBlob $RepositoryRoot $CandidateSha $catalogPath | ConvertFrom-Json -AsHashtable
-    [void](Assert-TestSelectionCatalog $catalog)
+    $catalog=ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $CandidateSha $catalogPath)
     if($policy.selectionCatalog.hash -cne $catalog.catalogHash){throw 'catalog-pin-mismatch'}
     $selectorFiles=@('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
     $selectorBytes=@{}
@@ -213,8 +284,7 @@ function Get-TestSelectionCore {
     $baselineCatalog=$null
     $oldTree=(Invoke-TestSelectionGit $RepositoryRoot @('ls-tree','--name-only','-z',$BaselineSha,'--',$catalogPath)).Stdout
     if($oldTree){
-        $baselineCatalog=Get-TestSelectionBlob $RepositoryRoot $BaselineSha $catalogPath | ConvertFrom-Json -AsHashtable
-        [void](Assert-TestSelectionCatalog $baselineCatalog)
+        $baselineCatalog=ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $BaselineSha $catalogPath)
         $baselinePolicy=Get-TestSelectionBlob $RepositoryRoot $BaselineSha $policyPath | ConvertFrom-Json
         if($baselinePolicy.policyHash -cne (Get-NightlyPolicyHash $baselinePolicy) -or $baselinePolicy.selectionCatalog.hash -cne $baselineCatalog.catalogHash){throw 'baseline-policy-hash-stale'}
     }

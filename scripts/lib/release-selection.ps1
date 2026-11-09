@@ -45,11 +45,12 @@ function Write-ReleaseSelectionOnce {
 
 function Get-ReleaseSelectionContract {
     param([string]$RepositoryRoot, [string]$Sha, [string]$Profile)
+    Add-TestSelectionBlobPrefetch $RepositoryRoot $Sha @('tests/test-execution-policy.json', 'tests/test-selection-policy.json',
+        'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1', 'global.json')
     $policy = Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-execution-policy.json' | ConvertFrom-Json
     if ($policy.policyHash -cne (Get-NightlyPolicyHash $policy)) { throw 'policy-hash-stale' }
     [void](Get-NightlyPolicyProfile $policy $Profile)
-    $catalog = Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-selection-policy.json' | ConvertFrom-Json -AsHashtable
-    [void](Assert-TestSelectionCatalog $catalog)
+    $catalog = ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-selection-policy.json')
     if ($policy.selectionCatalog.hash -cne $catalog.catalogHash) { throw 'catalog-pin-mismatch' }
     $selectors = @{}
     foreach ($path in @('scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
