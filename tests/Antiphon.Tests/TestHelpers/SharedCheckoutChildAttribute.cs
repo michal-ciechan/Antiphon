@@ -9,8 +9,10 @@ namespace Antiphon.Tests.TestHelpers;
 /// carries <see cref="CheckpointToolSpawnLimit"/>. <c>ProcessSpawnLimitTests</c> derives the
 /// limiter census from this marker and the limiter attributes. A syntax walk still requires the
 /// marker when a class assigns <c>CheckpointFixtures.RepoRoot</c> to a <c>ProcessStartInfo</c>
-/// working directory and both attributes are absent (CARD-1810). A new class needs no roster
-/// entry. Not inherited: each class states its own reason.
+/// working directory and both attributes are absent, including a simple assignment and a call
+/// that reaches one (CARD-1810, CARD-1816). The walk follows the namespace, including a file
+/// outside the Checkpoints folder. A new class needs no roster entry. Not inherited: each class
+/// states its own reason.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class SharedCheckoutChildAttribute : Attribute
