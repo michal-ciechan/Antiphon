@@ -82,8 +82,11 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyExecutionTests),
         typeof(Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests),
-        // CARD-1807: no Checkpoints class is listed here. A Checkpoints class joins the strict lane by
-        // carrying [SharedCheckoutChild], and the census below derives that set from the attributes.
+        // CARD-1807: no Checkpoints class is listed here. A class in Antiphon.Tests.Checkpoints, a
+        // sub-namespace, or a nested class of either joins the strict lane by carrying
+        // [SharedCheckoutChild]. The census derives that set from the attributes, and the source walk
+        // still requires the marker when the class assigns CheckpointFixtures.RepoRoot to a
+        // ProcessStartInfo working directory (CARD-1810).
         // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
         // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
         // still counts, so the class stays strict and is not moved (repair task 4721be7c).
@@ -505,8 +508,10 @@ public class ProcessSpawnLimitTests
 
     /// <summary>
     /// The Checkpoints limiter census over <paramref name="types"/>, from attributes alone; one line per miss.
-    /// A limited Checkpoints class carries CheckpointToolSpawnLimit unless it carries [SharedCheckoutChild],
-    /// which requires ProcessSpawnLimit. The marker is refused outside the Checkpoints namespace.
+    /// A limited class in <see cref="CheckpointsNamespace"/>, a sub-namespace, or a nested class of either
+    /// carries CheckpointToolSpawnLimit unless it carries [SharedCheckoutChild], which requires ProcessSpawnLimit.
+    /// The marker is refused outside that namespace. A class that lost both attributes is caught by the
+    /// source walk, not by this attribute pass.
     /// </summary>
     private static List<string> CheckpointLimiterMisses(IEnumerable<Type> types, out int limited)
     {
@@ -517,11 +522,11 @@ public class ProcessSpawnLimitTests
         foreach (var type in types)
         {
             var shared = IsSharedCheckoutChild(type);
-            if (type.IsNested || type.Namespace != CheckpointsNamespace)
+            if (!IsCheckpointsCensusType(type))
             {
                 if (shared)
-                    misses.Add(type.FullName + " carries [SharedCheckoutChild] outside a top-level " + CheckpointsNamespace
-                        + " class; remove it, the marker only selects the strict lane for such a class");
+                    misses.Add(type.FullName + " carries [SharedCheckoutChild] outside " + CheckpointsNamespace
+                        + " (including its sub-namespaces and nested classes); remove it, the marker only selects the strict lane there");
                 continue;
             }
 
@@ -577,7 +582,7 @@ public class ProcessSpawnLimitTests
                 .ShouldBeFalse($"{type.Name} is outside the checkpoint-tool lane");
         }
 
-        StrictClasses.Where(type => type.Namespace == CheckpointsNamespace).Select(type => type.Name).ShouldBeEmpty(
+        StrictClasses.Where(IsCheckpointsCensusType).Select(type => type.Name).ShouldBeEmpty(
             "a Checkpoints class joins the strict lane through [SharedCheckoutChild], not a roster entry");
     }
 
@@ -607,11 +612,18 @@ public class ProcessSpawnLimitTests
     private static bool HasSpawnLimiter(MemberInfo member, Type limit) =>
         Attribute.GetCustomAttribute(member, typeof(ParallelLimiterAttribute<>).MakeGenericType(limit)) is not null;
 
+    private static bool IsCheckpointsCensusType(Type type)
+    {
+        var ns = type.Namespace;
+        return ns == CheckpointsNamespace
+            || (ns is not null && ns.StartsWith(CheckpointsNamespace + ".", StringComparison.Ordinal));
+    }
+
     private static IEnumerable<Type> CheckpointCandidateTypes()
     {
         foreach (var type in LoadableTypes(typeof(ProcessSpawnLimitTests).Assembly))
         {
-            if (type.Namespace != "Antiphon.Tests.Checkpoints" || type.IsNested)
+            if (!IsCheckpointsCensusType(type))
                 continue;
             yield return type;
         }
