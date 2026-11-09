@@ -22,7 +22,7 @@ public class C1793SessionPwshCacheTests
     [Test]
     public async Task Each_pty_session_gets_a_host_owned_cache_that_its_exit_deletes()
     {
-        var runtime = Runtime("c1793-session");
+        var runtime = Runtime();
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
         var firstOut = OutFile();
@@ -63,7 +63,7 @@ public class C1793SessionPwshCacheTests
     [Test]
     public async Task A_launch_that_names_its_cache_keeps_it()
     {
-        var runtime = Runtime("c1793-named");
+        var runtime = Runtime();
         var id = Guid.NewGuid();
         var output = OutFile();
         var named = Directory.CreateTempSubdirectory("c1793-named-cache-").FullName;
@@ -89,10 +89,11 @@ public class C1793SessionPwshCacheTests
         }
     }
 
-    private static SessionRunnerRuntime Runtime(string name) =>
+    // The runner-child environment family (CARD-0628) already owns a registered pty test root.
+    private static SessionRunnerRuntime Runtime() =>
         new(Options.Create(new SessionRunnerSettings
         {
-            SessionLogPath = TestSessionLogRoot.Create(name),
+            SessionLogPath = TestSessionLogRoot.Create("c628-token"),
             PtyHostLingerHours = 0.02,
             PtyBackend = "inbox",
         }), NullLogger<SessionRunnerRuntime>.Instance);
