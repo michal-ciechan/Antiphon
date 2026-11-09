@@ -34,9 +34,12 @@ public static class SettlementSyncDebtPolicy
 
     /// <summary>
     /// Today's runner-sync block, plus the Pending arm. Pending blocks only a Code task:
-    /// no progress evidence blocks with the lease reason, and an indeterminate read blocks
-    /// with that evidence's reason, or the lease reason when the reason is absent. Every
-    /// other Pending result may keep its own verdict. The non-Pending arms are unchanged.
+    /// no progress evidence blocks as <see cref="RemoteSettlementSyncReasons.ProgressUnverified"/>,
+    /// and an indeterminate read blocks with that evidence's reason, or ProgressUnverified when
+    /// the reason is absent or is the lease reason. CARD-1802 D-2: an unfetched owned tip
+    /// (<see cref="RemoteSettlementSyncReasons.SourceUnfetched"/>) does not block, because the
+    /// debt sweep fetches it; so no Pending block reason is ever the lease reason. Every other
+    /// Pending result may keep its own verdict. The non-Pending arms are unchanged.
     /// </summary>
     public static string? BlockReason(
         AgentTask task, RemoteSettlementSyncResult? prepared, CompletionProgressEvidence? evidence)
@@ -49,9 +52,14 @@ public static class SettlementSyncDebtPolicy
             if (task.Role != AgentTaskRole.Code)
                 return null;
             if (evidence is null)
-                return RemoteSettlementSyncReasons.LeaseBusy;
+                return RemoteSettlementSyncReasons.ProgressUnverified;
             if (evidence.Assessment == CompletionProgressAssessment.Indeterminate)
-                return evidence.Reason ?? RemoteSettlementSyncReasons.LeaseBusy;
+                return evidence.Reason switch
+                {
+                    RemoteSettlementSyncReasons.SourceUnfetched => null,
+                    null or RemoteSettlementSyncReasons.LeaseBusy => RemoteSettlementSyncReasons.ProgressUnverified,
+                    var reason => reason,
+                };
             return null;
         }
 
@@ -65,7 +73,8 @@ public static class SettlementSyncDebtPolicy
 
     /// <summary>
     /// Caller warning for a Pending settlement. Names the observed tip and says the desktop
-    /// checkout will be fast-forwarded later. The text does not ask for a reply.
+    /// checkout will be fast-forwarded later. The text does not ask for a reply. CARD-1802 D-5:
+    /// when the server never read ancestry (the objects are not local) it says the sweep fetches them.
     /// </summary>
     public static string PendingWarning(AgentTask task, RemoteSettlementSyncResult result)
     {
@@ -77,7 +86,11 @@ public static class SettlementSyncDebtPolicy
             + ". Origin " + result.FullRef + " is at " + sha
             + "; the desktop checkout " + task.WorktreePath
             + " will be fast-forwarded by the settlement sync sweep (synced later). "
-            + "No reply is needed; Review and -Land use the pushed branch at " + sha + ".";
+            + "No reply is needed; Review and -Land use the pushed branch at " + sha + "."
+            + (result.SourceDescends is null
+                ? " The pushed objects are not yet in the desktop repository; the settlement sync sweep "
+                  + "fetches them under the lease before the fast-forward."
+                : "");
     }
 
     /// <summary>Workspace header bit: the branch is left for review against the observed tip.</summary>

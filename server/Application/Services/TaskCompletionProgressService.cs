@@ -265,7 +265,19 @@ public sealed class TaskCompletionProgressService
                 };
             }
 
-            return Unknown(RemoteSettlementSyncReasons.LeaseBusy);
+            // CARD-1802 D-1. The observation fetch spent the lease budget: S is the task's own
+            // server-read tip, it is not b, and it is not a local object, so no ancestry or claim
+            // read is possible here. The sync-debt sweep fetches S under the lease before the
+            // fast-forward. Indeterminate, never ProgressObserved; SourceDescends stays null.
+            if (prepared.SourceDescends is null
+                && prepared.RemoteSha is { } unfetched
+                && GitObjectId.IsFull(unfetched)
+                && !string.Equals(unfetched, baseline.LocalSha, StringComparison.Ordinal)
+                && await _git.RevParseCommitAsync(pendingRepo, unfetched, ct) is { Succeeded: false } absent
+                && absent.Reason != "rev_parse_failed")
+                return Unknown(RemoteSettlementSyncReasons.SourceUnfetched);
+
+            return Unknown(RemoteSettlementSyncReasons.ProgressUnverified);
         }
 
         if (prepared.State != RemoteSettlementSyncState.Synchronized || !prepared.Confirmed)
