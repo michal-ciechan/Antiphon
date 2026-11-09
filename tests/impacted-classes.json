@@ -345,7 +345,7 @@
         "tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs"
       ],
       "added": {
-        "glob": "tests/**",
+        "glob": "tests/Antiphon.Tests/**/*.cs",
         "literals": [
           "ProtectedData"
         ]
@@ -354,7 +354,7 @@
         "CapabilityScriptTests",
         "DelegateScriptCapabilityTests"
       ],
-      "windows": "required"
+      "windows": "only"
     },
     {
       "id": "e2e-land-delivery",
@@ -367,7 +367,7 @@
       "classes": [
         "AgentTaskLandDeliveryE2ETests"
       ],
-      "windows": "required"
+      "windows": "only"
     },
     {
       "id": "e2e-land-delivery-probe",
