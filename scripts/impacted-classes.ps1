@@ -9,6 +9,9 @@
 # "removed": true also matches a removed line that carries one of its literals.
 # Under -MergeSubset a project row naming more than four land classes is split into <id>-land-<n> rows
 # (CARD-1801 D-1); the non-merge output keeps each project selection in one row (R2-D-1).
+# CARD-1820. A changed tests file selects the classes it declares. tests/derived-impact-index.json
+# adds reverse edges. JSON gains derivedClasses, keywordIds, rosterIds and skippedByCap.
+# A missing index adds no derived class. Keyword and roster lists stay empty in this slice.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
@@ -459,6 +462,8 @@ foreach ($pattern in $derivePatterns) { [void]$deriveRegexes.Add([regex]::new($p
 $classDecl = [regex]::new('(?m)^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b')
 $classWord = @{}
 $filesByClass = @{}
+$script:classesByFile = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]' ([StringComparer]::Ordinal)
+$script:derivedIndexState = $null
 $derivedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $testsRoot = Join-Path $Repo 'tests'
 $repoSlash = $Repo.Replace('\', '/').TrimEnd('/')
@@ -485,6 +490,12 @@ if (Test-Path -LiteralPath $testsRoot) {
                     $classWord[$className] = New-Object System.Collections.Generic.List[string]
                 }
                 [void]$classWord[$className].Add($relative)
+                $declared = $null
+                if (-not $script:classesByFile.TryGetValue($relative, [ref]$declared)) {
+                    $declared = New-Object System.Collections.Generic.List[string]
+                    $script:classesByFile[$relative] = $declared
+                }
+                if (-not $declared.Contains($className)) { [void]$declared.Add($className) }
             }
             $hit = $false
             foreach ($regex in $deriveRegexes) {
@@ -848,6 +859,168 @@ function Convert-Rows($Rows, [bool]$WithId) {
     return ,$out
 }
 
+function Refuse-Index([string]$Problem) {
+    $message = 'derived-impact index refused: ' + $Problem
+    Write-Err $message
+    if ($script:Json) {
+        Exit-Json ([pscustomobject]@{
+            ok = $false
+            error = $message
+            derivedClasses = (New-Object System.Collections.Generic.List[string])
+            keywordIds = (New-Object System.Collections.Generic.List[string])
+            rosterIds = (New-Object System.Collections.Generic.List[string])
+            skippedByCap = (New-Object System.Collections.Generic.List[string])
+        }) 1
+    }
+    exit 1
+}
+
+function Get-DerivedIndex {
+    if ($null -ne $script:derivedIndexState) { return $script:derivedIndexState }
+    $edges = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]' ([StringComparer]::Ordinal)
+    $capped = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $allow = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $state = [pscustomobject]@{ Edges = $edges; Capped = $capped; Allow = $allow }
+    $indexPath = Join-Path $Repo 'tests/derived-impact-index.json'
+    if (-not (Test-Path -LiteralPath $indexPath)) {
+        $script:derivedIndexState = $state
+        return $state
+    }
+    try {
+        $doc = [IO.File]::ReadAllText($indexPath) | ConvertFrom-Json
+    }
+    catch {
+        Refuse-Index $_.Exception.Message
+    }
+    if (-not ($doc -is [System.Management.Automation.PSCustomObject])) {
+        Refuse-Index 'expected an object'
+    }
+    $schemaText = ''
+    $schemaProp = $doc.PSObject.Properties['schema']
+    if ($null -ne $schemaProp -and $null -ne $schemaProp.Value) { $schemaText = [string]$schemaProp.Value }
+    if ($schemaText -ne '1') { Refuse-Index 'schema must be 1' }
+    $edgesProp = $doc.PSObject.Properties['edges']
+    $cappedProp = $doc.PSObject.Properties['cappedPaths']
+    if ($null -eq $edgesProp -or $null -eq $edgesProp.Value -or $null -eq $cappedProp -or $null -eq $cappedProp.Value) {
+        Refuse-Index 'edges and cappedPaths are required'
+    }
+    foreach ($edge in @($doc.edges)) {
+        if ($null -eq $edge) { continue }
+        if (-not ($edge -is [System.Management.Automation.PSCustomObject])) { continue }
+        $path = ''
+        $pathProp = $edge.PSObject.Properties['path']
+        if ($null -ne $pathProp -and $null -ne $pathProp.Value) { $path = ([string]$pathProp.Value).Replace('\', '/') }
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        $names = New-Object System.Collections.Generic.List[string]
+        $classProp = $edge.PSObject.Properties['classes']
+        if ($null -ne $classProp -and $null -ne $classProp.Value) {
+            foreach ($name in @($classProp.Value)) {
+                if ($null -eq $name) { continue }
+                $text = [string]$name
+                if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$names.Add($text) }
+            }
+        }
+        $edges[$path] = $names
+    }
+    foreach ($row in @($doc.cappedPaths)) {
+        if ($null -eq $row) { continue }
+        if (-not ($row -is [System.Management.Automation.PSCustomObject])) { continue }
+        $path = ''
+        $pathProp = $row.PSObject.Properties['path']
+        if ($null -ne $pathProp -and $null -ne $pathProp.Value) { $path = ([string]$pathProp.Value).Replace('\', '/') }
+        if (-not [string]::IsNullOrWhiteSpace($path)) { [void]$capped.Add($path) }
+    }
+    $allowProp = $doc.PSObject.Properties['allowlist']
+    if ($null -ne $allowProp -and $null -ne $allowProp.Value) {
+        foreach ($item in @($allowProp.Value)) {
+            if ($null -eq $item) { continue }
+            $text = ([string]$item).Replace('\', '/')
+            if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$allow.Add($text) }
+        }
+    }
+    $script:derivedIndexState = $state
+    return $state
+}
+
+function Test-LandGraphToolOnly($Paths) {
+    $any = $false
+    foreach ($path in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
+        $any = $true
+        $norm = ([string]$path).Replace('\', '/')
+        $core = $norm.StartsWith('tools/Antiphon.LandGraphAudit.Core/')
+        $audit = $norm -cmatch '^scripts/audit-land-verification.*\.ps1$'
+        if (-not ($core -or $audit)) { return $false }
+    }
+    return $any
+}
+
+function Resolve-Derived($Paths) {
+    $whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $methods = New-Object System.Collections.Generic.List[string]
+    $skippedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $index = Get-DerivedIndex
+    $toolOnly = Test-LandGraphToolOnly $Paths
+    foreach ($path in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
+        $norm = ([string]$path).Replace('\', '/')
+        $isTestFile = $norm.StartsWith('tests/') -and $norm.EndsWith('.cs')
+        if ($isTestFile -and $script:classesByFile.ContainsKey($norm)) {
+            foreach ($className in $script:classesByFile[$norm]) {
+                if ($className.EndsWith('Tests')) { [void]$whole.Add($className) }
+            }
+        }
+        $capped = $index.Allow.Contains($norm) -or $index.Capped.Contains($norm)
+        if ($capped) { [void]$skippedSet.Add($norm) }
+        if ($capped) { continue }
+        if (-not $index.Edges.ContainsKey($norm)) { continue }
+        foreach ($className in $index.Edges[$norm]) {
+            if (-not $census.Contains($className)) { continue }
+            $methodOnly = $toolOnly -and ($className -eq 'LandGraphEvaluationTests') -and (-not $whole.Contains($className))
+            if ($methodOnly) {
+                [void]$methods.Add('LandGraphEvaluationTests/EvaluationBudgetRefusesSlowDotnet')
+            }
+            else {
+                [void]$whole.Add($className)
+            }
+        }
+    }
+    $derived = New-Object System.Collections.Generic.List[string]
+    Fill-Sorted @($whole) $derived
+    foreach ($method in $methods) {
+        $slash = $method.IndexOf('/')
+        if ($slash -gt 0) {
+            $className = $method.Substring(0, $slash)
+            if (-not $whole.Contains($className)) { [void]$derived.Add($className) }
+        }
+    }
+    if ($methods.Count -gt 0) {
+        $resorted = New-Object System.Collections.Generic.List[string]
+        Fill-Sorted $derived $resorted
+        $derived = $resorted
+    }
+    $skipped = New-Object System.Collections.Generic.List[string]
+    Fill-Sorted @($skippedSet) $skipped
+    return [pscustomobject]@{
+        Whole = $whole
+        Methods = $methods
+        Derived = $derived
+        Skipped = $skipped
+    }
+}
+
+function Apply-Derived($Selection, $Whole, $MethodsByClass) {
+    foreach ($className in @($Selection.Whole)) { [void]$Whole.Add([string]$className) }
+    foreach ($method in @($Selection.Methods)) { Add-MethodEntry ([string]$method) $MethodsByClass $null }
+}
+
+function New-EmptyNameList {
+    $list = New-Object System.Collections.Generic.List[string]
+    return ,$list
+}
+
+$derivedSelection = Resolve-Derived $changed
+
 # The Windows lane: required and only both land here. only is omitted from the Linux selection.
 $windowsWhole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $windowsMethods = @{}
@@ -909,6 +1082,7 @@ if ($MergeSubset) {
         if ($kind.Windows -eq 'only') { continue }
         Add-KindSelection $kind $wholeSubset $subsetMethods $null
     }
+    Apply-Derived $derivedSelection $wholeSubset $subsetMethods
     $subsetRows = New-FilterRows $wholeSubset $subsetMethods 'CP-merge-subset-' $fixedNames
     $windowsRows = New-FilterRows $windowsWhole $windowsMethods 'CP-merge-windows-' $fixedNames
     $subsetTop = Get-TopFilter $subsetRows
@@ -925,6 +1099,10 @@ if ($MergeSubset) {
         fixedClasses = $fixedOut
         fixedMethods = $fixedMethodOut
         classes = $classOut
+        derivedClasses = $derivedSelection.Derived
+        keywordIds = (New-EmptyNameList)
+        rosterIds = (New-EmptyNameList)
+        skippedByCap = $derivedSelection.Skipped
         treenodeFilter = [string]$subsetTop
         filters = @((Convert-Rows $subsetRows $true).ToArray())
         windowsFilters = @((Convert-Rows $windowsRows $true).ToArray())
@@ -949,6 +1127,7 @@ foreach ($kind in $matched) {
     if ($kind.Windows -eq 'only') { continue }
     Add-KindSelection $kind $whole $methodsByClass $fileSet
 }
+Apply-Derived $derivedSelection $whole $methodsByClass
 
 $rows = New-FilterRows $whole $methodsByClass '' $null
 $windowsRows = New-FilterRows $windowsWhole $windowsMethods '' $null
@@ -960,6 +1139,10 @@ $payload = [pscustomobject]@{
     kinds = $k
     classes = $c
     files = $f
+    derivedClasses = $derivedSelection.Derived
+    keywordIds = (New-EmptyNameList)
+    rosterIds = (New-EmptyNameList)
+    skippedByCap = $derivedSelection.Skipped
     treenodeFilter = [string]$top
     filters = @((Convert-Rows $rows $false).ToArray())
     windowsFilters = @((Convert-Rows $windowsRows $false).ToArray())
