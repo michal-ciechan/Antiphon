@@ -10,6 +10,7 @@ Debug task 4f9a7df9 reproduced and fixed them on Linux at master `ccd3909780fe3e
    and `crlf-inputs`. `$script:PinnedInputDigest` in `scripts/test-live-lane-run.ps1` was still `b507aab8...` (set by e9679ba96).
    The tree printed `c5cf05b5...` at 251dee88e and `b499df30...` at ccd390978. The `policyHash` in
    `tests/test-execution-policy.json` stayed equal to its computed value (`7e54681b...`), so only the pin was stale.
+   While this Debug ran, the operator re-pinned the same `b499df30...` value in 7fd3f1e3a, on master at 9c21f7e74.
 2. Lane-xor on `WriteBehindFileSystemTests`. This caused 9 guard-batch reds. It has its own note,
    [2026-11-09-why-missed-write-behind-category](2026-11-09-why-missed-write-behind-category.md). The fix is commit 337624e9d (Debug b73aeb1d),
    which is cherry-picked here.
