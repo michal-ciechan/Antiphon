@@ -852,7 +852,14 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   another tick runs (read that tick's run, or retry once it has finished). CARD-1804: every tick also holds a
   database-wide Postgres advisory lock, so a second server process on the same database (AppHost beside the
   server2 server container) does not census the same population: its preview and execute answer 409
-  `tick_in_progress` and its scheduled tick is skipped (no run) while the other process ticks.
+  `tick_in_progress` and its scheduled tick is skipped (no run) while the other process ticks. CARD-1812: a failed
+  `pg_advisory_unlock` terminates that backend and clears it from the pool, so the session is not returned still
+  holding the lock (Npgsql applies `DISCARD ALL` only on the next use). The failure and a skipped scheduled tick are
+  both Warnings naming the tick id `antiphon.runner-worktree-retention.tick`. Before each destructive call (an
+  Execute `WorkspaceRetain`, or an Execute temp sweep) the tick re-checks that this session still holds the lock
+  and, if not, stops with a Deferred `tick_lock_lost` row and sends nothing further. A `WorkspaceRetain` already in
+  flight when the connection drops can still overlap another process's tick; the runner's deletion guards and its
+  `already_absent` answer cover that window.
 - **Unfinished runs (CARD-1804):** a tick that fails or is cancelled (host stop, or the preview's client or proxy
   timeout: the preview stays on its request, use a generous `curl --max-time`) finishes its run with a Deferred
   `tick_failed` / `tick_cancelled` row; an execute run whose tick finds retention switched off or the runner
@@ -878,7 +885,9 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   the tick bound and every runner check still apply, and the temp sweep stays DryRun. It is the sanctioned
   replacement for hand deletion. CARD-1796: it answers 202 `{ runnerId, runId }` at once and runs the tick in the
   background (a client or proxy timeout no longer cancels it); follow `GET /api/agent-tasks/worktree-residue/runs/{runId}`
-  until the run has `finishedAt`. CARD-1804: the run exists when the 202 is answered.
+  until the run has `finishedAt`. CARD-1804: the run exists when the 202 is answered. CARD-1812: the run row is saved
+  without the request abort token. If the client is already gone before the 202, the run is finished with a Deferred
+  `tick_cancelled` row and the tick does not start.
 - **Disk floor (CARD-1794):** the `WorkspaceDiskLow` attention row (Warning at `WorkspaceDiskAlarm:UsedPercent`, 85)
   turns Error when the volume has less than `WorkspaceDiskAlarm:MinFreeGiB` free (50 in `server/appsettings.json`,
   10 in code, 0 off), even below the percentage.
