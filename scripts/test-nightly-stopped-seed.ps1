@@ -153,7 +153,79 @@ function Enter-SeedUnreadableTiming([string]$Path){
     Write-SeedCustodyNotApplicable
     return $null
 }
+function Write-MergeSeed {
+    param([string]$Path,[string]$RunId,[string]$Candidate,[string]$Sha,[string]$Observed,[string]$Created,[object[]]$Chunks,[object[]]$Failed,[object[]]$Evidence)
+    if($null -eq $Failed -or @($Failed).Count -eq 0){$Failed=New-Object object[] 0}
+    if($null -eq $Evidence -or @($Evidence).Count -eq 0){$Evidence=New-Object object[] 0}
+    $payload=[ordered]@{sourceObservedAtUtc=$Observed;chunks=$Chunks;failedTests=$Failed;evidence=$Evidence}
+    $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId=$RunId;sourceCandidateId=$Candidate;sourceSha=$Sha;createdAtUtc=$Created;payload=($payload|ConvertTo-Json -Depth 30 -Compress);contentHash=''}
+    $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+    $utf8=New-Object System.Text.UTF8Encoding $false
+    [IO.File]::WriteAllText($Path,($envelope|ConvertTo-Json -Depth 35),$utf8)
+}
+function New-MergeChunk([string]$Suite,[string]$Chunk,[string[]]$Classes,[bool]$Completed,[bool]$Started,[string]$Last){
+    return [ordered]@{suite=$Suite;chunk=$Chunk;classes=@($Classes);completed=$Completed;started=$Started;lastRunAtUtc=$Last}
+}
+function New-MergeFail([string]$Suite,[string]$Chunk,[string]$Class,[string]$Method,[string]$Outcome){
+    return [ordered]@{suite=$Suite;chunk=$Chunk;className=$Class;method=$Method;outcome=$Outcome}
+}
+function Invoke-MergeNightlySeeds {
+    param([string[]]$Seeds,[string]$Decision='',[string[]]$Proven=@(),[string]$Repo='',[string]$OutputPath,[string]$ReportPath,[switch]$Strict)
+    $scriptPath=Join-Path $PSScriptRoot 'merge-nightly-seeds.ps1'
+    if(-not [IO.File]::Exists($scriptPath)){throw 'merge-nightly-seeds.ps1 missing'}
+    $argv=New-Object System.Collections.Generic.List[string]
+    [void]$argv.Add('-NoProfile');[void]$argv.Add('-File');[void]$argv.Add($scriptPath)
+    foreach($seedPath in @($Seeds)){[void]$argv.Add('-Seed');[void]$argv.Add($seedPath)}
+    if(-not [string]::IsNullOrWhiteSpace($Decision)){[void]$argv.Add('-Decision');[void]$argv.Add($Decision)}
+    foreach($row in @($Proven)){if(-not [string]::IsNullOrWhiteSpace($row)){[void]$argv.Add('-Proven');[void]$argv.Add($row)}}
+    if(-not [string]::IsNullOrWhiteSpace($Repo)){[void]$argv.Add('-Repo');[void]$argv.Add($Repo)}
+    if($Strict){[void]$argv.Add('-Strict')}
+    [void]$argv.Add('-OutputPath');[void]$argv.Add($OutputPath)
+    [void]$argv.Add('-ReportPath');[void]$argv.Add($ReportPath)
+    $text=& pwsh @($argv.ToArray()) 2>&1 | Out-String
+    return [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}
+}
+function Read-MergeReport([string]$Path){return ([IO.File]::ReadAllText($Path)|ConvertFrom-Json)}
+function Find-MergeIdentity($Report,[string]$Method){return @($Report.identities|Where-Object {[string]$_.method -ceq $Method})[0]}
+function Test-MergeFileBytes([string]$Left,[string]$Right){
+    $a=[IO.File]::ReadAllBytes($Left);$b=[IO.File]::ReadAllBytes($Right)
+    if($a.Length -ne $b.Length){return $false}
+    for($i=0;$i -lt $a.Length;$i++){if($a[$i] -ne $b[$i]){return $false}}
+    return $true
+}
+function New-MergeGitRepo([string]$Repo){
+    # Invoke-TestSelectionGit is loaded at script scope before the switch. A dot-source
+    # inside this function would vanish on return, and the commits run after that.
+    if(-not (Get-Command Invoke-TestSelectionGit -ErrorAction SilentlyContinue)){throw 'Invoke-TestSelectionGit missing'}
+    [void][IO.Directory]::CreateDirectory($Repo)
+    Invoke-C487FixtureGit $Repo @('init','-b','master')
+    Invoke-C487FixtureGit $Repo @('config','user.email','merge-seed@example.com')
+    Invoke-C487FixtureGit $Repo @('config','user.name','merge-seed')
+}
+function Add-MergeGitCommit([string]$Repo,[string]$Name,[string]$Content,[string]$Title,[string]$Body){
+    $utf8=New-Object System.Text.UTF8Encoding $false
+    [IO.File]::WriteAllText((Join-Path $Repo $Name),$Content,$utf8)
+    [void](Invoke-C487FixtureGit $Repo @('add','--',$Name))
+    if([string]::IsNullOrWhiteSpace($Body)){[void](Invoke-C487FixtureGit $Repo @('commit','-m',$Title))}
+    else{[void](Invoke-C487FixtureGit $Repo @('commit','-m',$Title,'-m',$Body))}
+    return (Invoke-C487FixtureGit $Repo @('rev-parse','HEAD'))
+}
+function Invoke-MergeChunkOrder($Doc,$Chunks,$Now){
+    $suiteNodes=New-Object System.Collections.Generic.List[object]
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($chunk in @($Chunks)){
+        $class=[string]@($chunk.classes)[0]
+        $key=$class+'/Run'
+        if($seen.Add($key)){[void]$suiteNodes.Add([pscustomobject]@{Uid=$key;ClassName=$class;Method='Run';Type='T';Categories=@()})}
+    }
+    $suite=@([pscustomobject]@{id='antiphon';chunks=@($Chunks);nodes=@($suiteNodes.ToArray());exclusions=@()})
+    $resolved=Resolve-NightlyPriorFailures $Doc $suite Full
+    return New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $Now
+}
 try {
+    if($Case -in @('CumulativeMergeProvenDrop','CumulativeMergeUnfixedGreen','CumulativeMergeCherryPick')){
+        . (Join-Path $PSScriptRoot 'lib/test-selection.ps1')
+    }
     $before=@(Snapshot)
     $seedPath=Join-Path $root 'seed.json'
     if(-not (Get-Command Export-NightlyStoppedRunSeed -ErrorAction SilentlyContinue)){throw 'stopped-run builder missing'}
@@ -1245,6 +1317,236 @@ try {
             $rows=@($doc.chunks).Count
             # Provisional n=1 on this host: export 13.175s. Bound is 27s, 2x that sample.
             Check ($seconds -le 27 -and $rows -gt 0 -and $doc.sourceRunId -ceq $runId) ('exportSeconds='+$seconds+'; boundSeconds=27; measuredSampleSeconds=13.175; runFiles=3300; timingFiles=1700; summaryBytes='+(Get-Item -LiteralPath (Join-Path $runDir 'summary.json')).Length+'; chunks='+$rows)
+        }
+        'CumulativeMergeUnion' {
+            $alpha='Fixture.Alpha';$beta='Fixture.Beta';$gamma='Fixture.Gamma'
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00';$newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            $olderCreated='2026-11-01T01:00:00.0000000+00:00';$newerCreated='2026-11-02T01:00:00.0000000+00:00'
+            $stamp=$olderObserved
+            $older=Join-Path $root 'union-older.json';$newer=Join-Path $root 'union-newer.json'
+            Write-MergeSeed $older 'run-older' 'rc-older' ('a'*40) $olderObserved $olderCreated @(
+                (New-MergeChunk 'antiphon' 'g0' @($gamma) $true $true $stamp),
+                (New-MergeChunk 'antiphon' 'g1' @($alpha) $true $true $stamp)
+            ) @(
+                (New-MergeFail 'antiphon' 'g1' $alpha 'M1' 'Failed'),
+                (New-MergeFail 'antiphon' 'g0' $gamma 'M3' 'Failed')
+            ) @([ordered]@{path='older.json';sha256=('ab'*32)})
+            Write-MergeSeed $newer 'run-newer' 'rc-newer' ('b'*40) $newerObserved $newerCreated @(
+                (New-MergeChunk 'antiphon' 'g1' @($alpha) $true $true $newerObserved),
+                (New-MergeChunk 'antiphon' 'g2' @($beta) $true $true $newerObserved)
+            ) @(
+                (New-MergeFail 'antiphon' 'g1' $alpha 'M2(canceled)' 'Failed')
+            ) @([ordered]@{path='newer.json';sha256=('cd'*32)})
+            $out=Join-Path $root 'union-merged.json';$reportPath=Join-Path $root 'union-report.json'
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath
+            $doc=$null;$report=$null;$lead='';$methods='';$chunks=''
+            if($merged.Code -eq 0){
+                $doc=Read-NightlyStoppedRunSeed $out
+                $report=Read-MergeReport $reportPath
+                $chunks=(@($doc.chunks|ForEach-Object {[string]$_.chunk}) -join ',')
+                $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
+                $plan=@(
+                    [pscustomobject]@{id='g1';classes=@($alpha)},
+                    [pscustomobject]@{id='g2';classes=@($beta)}
+                )
+                $schedule=Invoke-MergeChunkOrder $doc $plan $now
+                $lead=(@($schedule.entries|ForEach-Object {[string]$_.chunk}) -join ',')
+            }
+            $m1=Find-MergeIdentity $report 'M1';$m2=Find-MergeIdentity $report 'M2(canceled)';$m3=Find-MergeIdentity $report 'M3'
+            $kept=($methods -ceq 'M1,M2(canceled)' -and $chunks -ceq 'g1,g2' -and [string]$doc.evidence[0].path -ceq 'newer.json' -and $lead.StartsWith('g1,') -and [string]$m2.method -ceq 'M2(canceled)' -and [string]$m1.status -ceq 'open' -and [string]$m3.status -ceq 'open' -and $m3.placed -eq $false -and $methods.Split(',') -cnotcontains 'M3')
+            $bad=Join-Path $root 'union-bad.json'
+            Write-MergeSeed $bad 'run-bad' 'rc-bad' ('c'*40) $olderObserved $olderCreated @(
+                (New-MergeChunk 'antiphon' 'g1' @($alpha) $true $true $stamp)
+            ) @(
+                (New-MergeFail 'antiphon' 'g1' $beta 'M9' 'Failed')
+            ) @()
+            $badOut=Join-Path $root 'union-bad-out.json';$badReport=Join-Path $root 'union-bad-report.json'
+            $refused=Invoke-MergeNightlySeeds -Seeds @($bad) -OutputPath $badOut -ReportPath $badReport
+            $refusedOk=($refused.Code -eq 2 -and -not [IO.File]::Exists($badOut) -and -not [IO.File]::Exists($badReport))
+            $strictOut=Join-Path $root 'union-strict.json';$strictReport=Join-Path $root 'union-strict-report.json'
+            $strict=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $strictOut -ReportPath $strictReport -Strict
+            $strictDoc=$null
+            if([IO.File]::Exists($strictOut)){$strictDoc=Read-MergeReport $strictReport}
+            $strictOk=($strict.Code -eq 3 -and $null -ne $strictDoc -and [int]$strictDoc.unplacedCount -gt 0 -and (@($strictDoc.identities|Where-Object {[string]$_.method -ceq 'M3'})[0].placed) -eq $false)
+            Check ($merged.Code -eq 0 -and $kept -and $refusedOk -and $strictOk) ('code='+$merged.Code+'; chunks='+$chunks+'; methods='+$methods+'; lead='+$lead+'; refused='+$refused.Code+'; strict='+$strict.Code+'; text='+$merged.Text)
+        }
+        'CumulativeMergeProvenDrop' {
+            $repo=Join-Path $root 'proven-repo'
+            New-MergeGitRepo $repo
+            $rootSha=Add-MergeGitCommit $repo 'a.txt' 'root' 'root' ''
+            $fixSha=Add-MergeGitCommit $repo 'a.txt' 'fixed' 'fix the arm' ''
+            $tipSha=Add-MergeGitCommit $repo 'b.txt' 'later' 'later tip' ''
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00';$newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            $older=Join-Path $root 'proven-older.json';$newer=Join-Path $root 'proven-newer.json'
+            Write-MergeSeed $older 'run-older' 'rc-older' $rootSha $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved),
+                (New-MergeChunk 'antiphon' 'g2' @('Fixture.Beta') $true $true $olderObserved)
+            ) @(
+                (New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed'),
+                (New-MergeFail 'antiphon' 'g2' 'Fixture.Beta' 'Mpending' 'Error')
+            ) @()
+            Write-MergeSeed $newer 'run-newer' 'rc-newer' $tipSha $newerObserved '2026-11-02T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $newerObserved),
+                (New-MergeChunk 'antiphon' 'g2' @('Fixture.Beta') $false $true $newerObserved)
+            ) @() @()
+            $tab=[char]9
+            $decision=Join-Path $root 'proven-decisions.txt'
+            $utf8=New-Object System.Text.UTF8Encoding $false
+            [IO.File]::WriteAllText($decision,("# comment`n`nantiphon|Fixture.Alpha|M1"+$tab+$fixSha+"`nantiphon|Fixture.Beta|Mpending"+$tab+$fixSha+"`n"),$utf8)
+            $out=Join-Path $root 'proven-merged.json';$reportPath=Join-Path $root 'proven-report.json'
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Decision $decision -Repo $repo -OutputPath $out -ReportPath $reportPath
+            $doc=$null;$report=$null;$methods=''
+            if($merged.Code -eq 0){$doc=Read-NightlyStoppedRunSeed $out;$report=Read-MergeReport $reportPath;$methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')}
+            $m1=Find-MergeIdentity $report 'M1';$pending=Find-MergeIdentity $report 'Mpending'
+            $ok=($merged.Code -eq 0 -and $methods -ceq 'Mpending' -and [string]$m1.status -ceq 'proven' -and $m1.placed -eq $false -and [string]$m1.provingRun -ceq 'run-newer' -and [string]$m1.provingSha -ceq $tipSha -and [string]$m1.containingCommit -ceq $fixSha -and [string]$pending.status -ceq 'fixed-pending-proof' -and $pending.placed -eq $true -and [string]$pending.containingCommit -ceq $fixSha -and $null -eq $pending.provingRun)
+            Check $ok ('code='+$merged.Code+'; methods='+$methods+'; m1='+[string]$m1.status+'/'+[string]$m1.containingCommit+'; pending='+[string]$pending.status+'; tip='+$tipSha+'; fix='+$fixSha+'; text='+$merged.Text)
+        }
+        'CumulativeMergeUnfixedGreen' {
+            $repo=Join-Path $root 'unfixed-repo'
+            New-MergeGitRepo $repo
+            $rootSha=Add-MergeGitCommit $repo 'a.txt' 'root' 'root' ''
+            $sourceSha=Add-MergeGitCommit $repo 'b.txt' 'unrelated' 'unrelated tip' ''
+            Invoke-C487FixtureGit $repo @('checkout','-b','fixline',$rootSha)
+            $fixSha=Add-MergeGitCommit $repo 'c.txt' 'fix' 'the real fix' ''
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00';$newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            $older=Join-Path $root 'unfixed-older.json';$newer=Join-Path $root 'unfixed-newer.json'
+            Write-MergeSeed $older 'run-older' 'rc-older' $rootSha $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved)
+            ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+            Write-MergeSeed $newer 'run-newer' 'rc-newer' $sourceSha $newerObserved '2026-11-02T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $newerObserved)
+            ) @() @()
+            $decision=Join-Path $root 'unfixed-decisions.txt'
+            $utf8=New-Object System.Text.UTF8Encoding $false
+            [IO.File]::WriteAllText($decision,('antiphon|Fixture.Alpha|M1'+[char]9+$fixSha+"`n"),$utf8)
+            $out=Join-Path $root 'unfixed-merged.json';$reportPath=Join-Path $root 'unfixed-report.json'
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Decision $decision -Repo $repo -OutputPath $out -ReportPath $reportPath
+            $methods='';$status='';$containing=''
+            if($merged.Code -eq 0){
+                $doc=Read-NightlyStoppedRunSeed $out
+                $report=Read-MergeReport $reportPath
+                $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
+                $row=Find-MergeIdentity $report 'M1'
+                $status=[string]$row.status
+                $containing=[string]$row.containingCommit
+            }
+            Check ($merged.Code -eq 0 -and $methods -ceq 'M1' -and $status -ceq 'open' -and [string]::IsNullOrWhiteSpace($containing)) ('code='+$merged.Code+'; methods='+$methods+'; status='+$status+'; containing='+$containing+'; text='+$merged.Text)
+        }
+        'CumulativeMergeCherryPick' {
+            $repo=Join-Path $root 'cherry-repo'
+            New-MergeGitRepo $repo
+            $rootSha=Add-MergeGitCommit $repo 'a.txt' 'root' 'root' ''
+            $fixSha=Add-MergeGitCommit $repo 'a.txt' 'fixed' 'fix the arm' ''
+            Invoke-C487FixtureGit $repo @('checkout','-b','side',$rootSha)
+            $proseSha=Add-MergeGitCommit $repo 'b.txt' 'note' ('notes mention '+$fixSha+' in the discussion') ''
+            $pickSha=Add-MergeGitCommit $repo 'c.txt' 'port' 'port the fix' ('(cherry picked from commit '+$fixSha+')')
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00';$newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            function Write-CherryPair([string]$Name,[string]$NewerSha){
+                $olderPath=Join-Path $root ($Name+'-older.json');$newerPath=Join-Path $root ($Name+'-newer.json')
+                Write-MergeSeed $olderPath 'run-older' 'rc-older' $rootSha $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                    (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved)
+                ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+                Write-MergeSeed $newerPath 'run-newer' 'rc-newer' $NewerSha $newerObserved '2026-11-02T01:00:00.0000000+00:00' @(
+                    (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $newerObserved)
+                ) @() @()
+                return @($olderPath,$newerPath)
+            }
+            $decision=Join-Path $root 'cherry-decisions.txt'
+            $utf8=New-Object System.Text.UTF8Encoding $false
+            [IO.File]::WriteAllText($decision,('antiphon|Fixture.Alpha|M1'+[char]9+$fixSha+"`n"),$utf8)
+            $pickSeeds=Write-CherryPair 'cherry-pick' $pickSha
+            $pickOut=Join-Path $root 'cherry-pick-merged.json';$pickReport=Join-Path $root 'cherry-pick-report.json'
+            $picked=Invoke-MergeNightlySeeds -Seeds $pickSeeds -Decision $decision -Repo $repo -OutputPath $pickOut -ReportPath $pickReport
+            $pickStatus='';$pickCommit='';$pickMethods=''
+            if($picked.Code -eq 0){
+                $pickDoc=Read-NightlyStoppedRunSeed $pickOut
+                $pickMethods=(@($pickDoc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
+                $pickRow=Find-MergeIdentity (Read-MergeReport $pickReport) 'M1'
+                $pickStatus=[string]$pickRow.status;$pickCommit=[string]$pickRow.containingCommit
+            }
+            $proseSeeds=Write-CherryPair 'cherry-prose' $proseSha
+            $proseOut=Join-Path $root 'cherry-prose-merged.json';$proseReport=Join-Path $root 'cherry-prose-report.json'
+            $prose=Invoke-MergeNightlySeeds -Seeds $proseSeeds -Decision $decision -Repo $repo -OutputPath $proseOut -ReportPath $proseReport
+            $proseStatus='';$proseMethods='';$proseCommit=''
+            if($prose.Code -eq 0){
+                $proseDoc=Read-NightlyStoppedRunSeed $proseOut
+                $proseMethods=(@($proseDoc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
+                $proseRow=Find-MergeIdentity (Read-MergeReport $proseReport) 'M1'
+                $proseStatus=[string]$proseRow.status;$proseCommit=[string]$proseRow.containingCommit
+            }
+            $ok=($picked.Code -eq 0 -and $pickMethods -ceq '' -and $pickStatus -ceq 'proven' -and $pickCommit -ceq $pickSha -and $prose.Code -eq 0 -and $proseMethods -ceq 'M1' -and $proseStatus -ceq 'open' -and [string]::IsNullOrWhiteSpace($proseCommit))
+            Check $ok ('pick='+$picked.Code+'/'+$pickStatus+'/'+$pickCommit+'; prose='+$prose.Code+'/'+$proseStatus+'/'+$proseCommit+'; pickSha='+$pickSha+'; text='+$picked.Text+$prose.Text)
+        }
+        'CumulativeMergeExplicitProven' {
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00';$newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            $olderSha='a'*40;$newerSha='b'*40
+            $older=Join-Path $root 'explicit-older.json';$newer=Join-Path $root 'explicit-newer.json'
+            Write-MergeSeed $older 'run-older' 'rc-older' $olderSha $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved)
+            ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+            Write-MergeSeed $newer 'run-newer' 'rc-newer' $newerSha $newerObserved '2026-11-02T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $newerObserved)
+            ) @() @()
+            $out=Join-Path $root 'explicit-merged.json';$reportPath=Join-Path $root 'explicit-report.json'
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Proven @('antiphon|Fixture.Alpha|M1:run-newer') -OutputPath $out -ReportPath $reportPath
+            $methods='';$status='';$provingRun='';$provingSha=''
+            if($merged.Code -eq 0){
+                $doc=Read-NightlyStoppedRunSeed $out
+                $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
+                $row=Find-MergeIdentity (Read-MergeReport $reportPath) 'M1'
+                $status=[string]$row.status;$provingRun=[string]$row.provingRun;$provingSha=[string]$row.provingSha
+            }
+            $unknownOut=Join-Path $root 'explicit-unknown.json';$unknownReport=Join-Path $root 'explicit-unknown-report.json'
+            $unknown=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Proven @('antiphon|Fixture.Alpha|M1:missing-run') -OutputPath $unknownOut -ReportPath $unknownReport
+            $notLaterOut=Join-Path $root 'explicit-not-later.json';$notLaterReport=Join-Path $root 'explicit-not-later-report.json'
+            $notLater=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Proven @('antiphon|Fixture.Alpha|M1:run-older') -OutputPath $notLaterOut -ReportPath $notLaterReport
+            $redder=Join-Path $root 'explicit-red-newer.json'
+            Write-MergeSeed $redder 'run-red' 'rc-red' ('c'*40) '2026-11-03T00:00:00.0000000+00:00' '2026-11-03T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $false $true $newerObserved)
+            ) @() @()
+            $redOut=Join-Path $root 'explicit-red.json';$redReport=Join-Path $root 'explicit-red-report.json'
+            $notGreen=Invoke-MergeNightlySeeds -Seeds @($older,$redder) -Proven @('antiphon|Fixture.Alpha|M1:run-red') -OutputPath $redOut -ReportPath $redReport
+            $refusedOk=($unknown.Code -eq 2 -and $unknown.Text -like '*proven-run-unknown*' -and -not [IO.File]::Exists($unknownOut) -and $notLater.Code -eq 2 -and -not [IO.File]::Exists($notLaterOut) -and $notGreen.Code -eq 2 -and $notGreen.Text -like '*proven-not-green*' -and -not [IO.File]::Exists($redOut))
+            Check ($merged.Code -eq 0 -and $methods -ceq '' -and $status -ceq 'proven' -and $provingRun -ceq 'run-newer' -and $provingSha -ceq $newerSha -and $refusedOk) ('code='+$merged.Code+'; status='+$status+'; unknown='+$unknown.Code+'; notLater='+$notLater.Code+'; notGreen='+$notGreen.Code+'; text='+$merged.Text+$unknown.Text+$notGreen.Text)
+        }
+        'CumulativeMergeDigestStable' {
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00';$newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            $newerCreated='2026-11-02T01:00:00.0000000+00:00'
+            $older=Join-Path $root 'digest-older.json';$newer=Join-Path $root 'digest-newer.json'
+            Write-MergeSeed $older 'run-older' 'rc-older' ('a'*40) $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved)
+            ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+            Write-MergeSeed $newer 'run-newer' 'rc-newer' ('b'*40) $newerObserved $newerCreated @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $newerObserved)
+            ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M2' 'Timeout')) @()
+            $out1=Join-Path $root 'digest-1.json';$report1=Join-Path $root 'digest-report-1.json'
+            $out2=Join-Path $root 'digest-2.json';$report2=Join-Path $root 'digest-report-2.json'
+            $first=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out1 -ReportPath $report1
+            $second=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out2 -ReportPath $report2
+            $doc=$null;$hash1='';$hash2='';$created='';$same=$false
+            if($first.Code -eq 0 -and $second.Code -eq 0){
+                $doc=Read-NightlyStoppedRunSeed $out1
+                $env1=[IO.File]::ReadAllText($out1)|ConvertFrom-Json
+                $env2=[IO.File]::ReadAllText($out2)|ConvertFrom-Json
+                $hash1=[string]$env1.contentHash;$hash2=[string]$env2.contentHash
+                $created=(ConvertTo-NightlySeedUtc $doc.createdAtUtc).ToString('o')
+                $same=(Test-MergeFileBytes $out1 $out2) -and (Test-MergeFileBytes $report1 $report2)
+            }
+            $expectedCreated=(ConvertTo-NightlySeedUtc $newerCreated).ToString('o')
+            Check ($first.Code -eq 0 -and $second.Code -eq 0 -and $same -and $hash1 -ceq $hash2 -and $hash1 -cmatch '^[a-f0-9]{64}$' -and $created -ceq $expectedCreated -and $null -ne $doc) ('first='+$first.Code+'; second='+$second.Code+'; same='+$same+'; hash='+$hash1+'; created='+$created+'; expected='+$expectedCreated+'; text='+$first.Text+$second.Text)
+        }
+        'CumulativeMergeLaunchDefaults' {
+            $mergePath=Join-Path $PSScriptRoot 'merge-nightly-seeds.ps1'
+            $nightlyPath=Join-Path $PSScriptRoot 'nightly-run.ps1'
+            $raw=[IO.File]::ReadAllBytes($mergePath)
+            $ascii=$true
+            foreach($byte in $raw){if($byte -gt 127){$ascii=$false;break}}
+            $text=[Text.Encoding]::ASCII.GetString($raw)
+            $sentence='A later green proves an identity only when that seed''s source SHA contains the fix commit, or --Proven names that run.'
+            $nightly=[IO.File]::ReadAllText($nightlyPath)
+            $declares=($nightly.Contains('[string]$PriorFailuresPath') -and $nightly.Contains('[string]$PriorFailuresDigest') -and $nightly.Contains('[switch]$AcceptCrossCandidateSeed') -and $nightly.Contains('[string]$SeedSourceCandidateId'))
+            $noCall=(-not $nightly.Contains('merge-nightly-seeds.ps1'))
+            Check ($ascii -and $text.Contains($sentence) -and $declares -and $noCall) ('ascii='+$ascii+'; sentence='+$text.Contains($sentence)+'; declares='+$declares+'; noCall='+$noCall)
         }
         default {throw 'unknown case'}
     }
