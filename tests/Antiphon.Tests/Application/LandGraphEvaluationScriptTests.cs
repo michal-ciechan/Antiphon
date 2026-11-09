@@ -563,7 +563,47 @@ public sealed partial class LandGraphEvaluationTests
         var shimDir = Path.Combine(Path.GetTempPath(), "c1483-dotnet-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(shimDir);
         var shim = Path.Combine(shimDir, "dotnet");
-        var shimBody = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' \"" + sdk + "\"\n  exit 0\nfi\nif [ \"" + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\" != \"0\" ]; then\n  sleep " + sleepSeconds.ToString(CultureInfo.InvariantCulture) + "\nfi\nprintf 'refused\\n'\nexit 1\n";
+        // The pre-check wrapper hosts the C# tool as `dotnet <dll> precheck`. That launch is not
+        // the evaluator. Forward it to the real dotnet and keep every other invocation slow.
+        var sleep = sleepSeconds.ToString(CultureInfo.InvariantCulture);
+        var shimBody = """
+            #!/bin/sh
+            if [ "$1" = "--version" ]; then
+              printf '%s\n' "SDK_VERSION"
+              exit 0
+            fi
+            for arg in "$@"; do
+              if [ "$arg" = "precheck" ]; then
+                selfdir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+                rest=$PATH
+                real=
+                while [ -n "$rest" ]; do
+                  dir=${rest%%:*}
+                  case $rest in
+                    *:*) rest=${rest#*:} ;;
+                    *) rest= ;;
+                  esac
+                  if [ "$dir" = "$selfdir" ]; then
+                    continue
+                  fi
+                  if [ -x "$dir/dotnet" ] && [ ! -d "$dir/dotnet" ]; then
+                    real=$dir/dotnet
+                    break
+                  fi
+                done
+                if [ -z "$real" ]; then
+                  printf 'real dotnet missing\n'
+                  exit 127
+                fi
+                exec "$real" "$@"
+              fi
+            done
+            if [ "SLEEP_SECONDS" != "0" ]; then
+              sleep SLEEP_SECONDS
+            fi
+            printf 'refused\n'
+            exit 1
+            """.Replace("SDK_VERSION", sdk, StringComparison.Ordinal).Replace("SLEEP_SECONDS", sleep, StringComparison.Ordinal);
         shimBody.ShouldNotContain("approved", Case.Sensitive);
         await File.WriteAllTextAsync(shim, shimBody);
         File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
