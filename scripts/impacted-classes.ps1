@@ -6,6 +6,7 @@
 # A kind with "windows": "required" also lands in windowsFilters ("windowsFilter=" lines): the
 # native Windows lane owes that filter, and a Linux row of it is not that lane. An added block with
 # "removed": true also matches a removed line that carries one of its literals.
+# A project row naming more than four land classes is split into <id>-land-<n> rows (CARD-1801 D-1).
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
@@ -741,7 +742,13 @@ function Get-ProjectSlug([string]$Project) {
 
 # Class rows first, one per project in ordinal order, then one method row per class.
 # A whole class wins over a method row of the same class. Id is the CHECKPOINT row name.
-function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix) {
+# CARD-1801 D-1: a land class is a class name containing "Land" (case-sensitive), which is what
+# the checkpoint importer counts. When a project's class row would name more than four, its land
+# classes leave that row and go four at a time, in ordinal order, to rows <id>-land-1, -land-2, ...;
+# the other classes stay in the project row, which is omitted when none remain. Land classes named in
+# $FirstLand (the -MergeSubset fixed classes) fill the first rows and the others start a new row, so a
+# batch class never shifts a fixed land row and each fixed row keeps its measured floor.
+function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) {
     $rows = New-Object System.Collections.Generic.List[object]
     $byProject = @{}
     foreach ($className in $Whole) {
@@ -754,11 +761,37 @@ function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix) {
     $projectOrder = New-StringList
     Fill-Sorted @($byProject.Keys) $projectOrder
     foreach ($project in $projectOrder) {
-        [void]$rows.Add([pscustomobject]@{
-            Id = $IdPrefix + (Get-ProjectSlug $project)
-            Project = $project
-            Filter = (New-ClassFilter $byProject[$project])
-        })
+        $projectId = $IdPrefix + (Get-ProjectSlug $project)
+        $sortedNames = New-StringList
+        Fill-Sorted $byProject[$project] $sortedNames
+        $firstNames = New-StringList
+        $laterNames = New-StringList
+        $otherNames = New-StringList
+        foreach ($className in $sortedNames) {
+            if (-not $className.Contains('Land')) { [void]$otherNames.Add($className) }
+            elseif ($null -ne $FirstLand -and @($FirstLand) -contains $className) { [void]$firstNames.Add($className) }
+            else { [void]$laterNames.Add($className) }
+        }
+        if ($firstNames.Count + $laterNames.Count -le 4) {
+            [void]$rows.Add([pscustomobject]@{ Id = $projectId; Project = $project; Filter = (New-ClassFilter $sortedNames) })
+            continue
+        }
+        if ($otherNames.Count -gt 0) {
+            [void]$rows.Add([pscustomobject]@{ Id = $projectId; Project = $project; Filter = (New-ClassFilter $otherNames) })
+        }
+        $landRow = 0
+        foreach ($group in @($firstNames, $laterNames)) {
+            for ($at = 0; $at -lt $group.Count; $at += 4) {
+                $chunk = New-StringList
+                for ($i = $at; $i -lt [Math]::Min($at + 4, $group.Count); $i++) { [void]$chunk.Add($group[$i]) }
+                $landRow++
+                [void]$rows.Add([pscustomobject]@{
+                    Id = $projectId + '-land-' + $landRow
+                    Project = $project
+                    Filter = (New-ClassFilter $chunk)
+                })
+            }
+        }
     }
     $methodRows = New-Object System.Collections.Generic.List[object]
     $methodOrder = New-StringList
@@ -870,8 +903,8 @@ if ($MergeSubset) {
         if ($kind.Id -eq 'migrations') { $migrationsHit = $true }
         Add-KindSelection $kind $wholeSubset $subsetMethods $null
     }
-    $subsetRows = New-FilterRows $wholeSubset $subsetMethods 'CP-merge-subset-'
-    $windowsRows = New-FilterRows $windowsWhole $windowsMethods 'CP-merge-windows-'
+    $subsetRows = New-FilterRows $wholeSubset $subsetMethods 'CP-merge-subset-' $fixedNames
+    $windowsRows = New-FilterRows $windowsWhole $windowsMethods 'CP-merge-windows-' $fixedNames
     $subsetTop = Get-TopFilter $subsetRows
     $fixedOut = New-StringList
     Fill-Sorted $fixedNames $fixedOut
@@ -908,8 +941,8 @@ $methodsByClass = @{}
 $fileSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 foreach ($kind in $matched) { Add-KindSelection $kind $whole $methodsByClass $fileSet }
 
-$rows = New-FilterRows $whole $methodsByClass ''
-$windowsRows = New-FilterRows $windowsWhole $windowsMethods ''
+$rows = New-FilterRows $whole $methodsByClass '' $null
+$windowsRows = New-FilterRows $windowsWhole $windowsMethods '' $null
 $top = Get-TopFilter $rows
 $c = Get-ClassNames $whole $methodsByClass
 $f = New-StringList
