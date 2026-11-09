@@ -844,7 +844,7 @@ public sealed partial class ImpactedClassesSelectorTests
     public async Task C1819_protected_data_literal_does_not_select_the_table()
     {
         var root = Root();
-        var table = Path.Combine(root, "tests", "impacted-classes.json");
+        var table = await DpapiTableAsync(root);
         var source = Path.Combine(Path.GetTempPath(), "impacted-classes-protected-source-" + Guid.NewGuid().ToString("N"));
         var tableDiff = Path.Combine(Path.GetTempPath(), "impacted-classes-protected-table-" + Guid.NewGuid().ToString("N"));
         try
@@ -853,7 +853,8 @@ public sealed partial class ImpactedClassesSelectorTests
                 source,
                 "tests/Antiphon.Tests/Application/OtherProtectedTests.cs",
                 "public sealed class OtherProtectedTests\n{\n}\n",
-                "public sealed class OtherProtectedTests\n{\n    // ProtectedData\n}\n");
+                "public sealed class OtherProtectedTests\n{\n    // ProtectedData\n}\n",
+                DpapiStubs);
             var selected = await RunAsync(root, "-Repo", source, "-Table", table, "-Range", "HEAD^..HEAD", "-Json");
             selected.Exit.ShouldBe(0, selected.Text);
             using (var json = JsonDocument.Parse(selected.Stdout))
@@ -867,7 +868,8 @@ public sealed partial class ImpactedClassesSelectorTests
                 tableDiff,
                 "tests/impacted-classes.json",
                 "{\n  \"schema\": 1\n}\n",
-                "{\n  \"schema\": 1,\n  \"note\": \"ProtectedData\"\n}\n");
+                "{\n  \"schema\": 1,\n  \"note\": \"ProtectedData\"\n}\n",
+                DpapiStubs);
             var self = await RunAsync(root, "-Repo", tableDiff, "-Table", table, "-Range", "HEAD^..HEAD", "-Json");
             self.Exit.ShouldBe(0, self.Text);
             using var selfJson = JsonDocument.Parse(self.Stdout);
@@ -881,6 +883,7 @@ public sealed partial class ImpactedClassesSelectorTests
         }
         finally
         {
+            File.Delete(table);
             DeleteTree(source);
             DeleteTree(tableDiff);
         }
@@ -1004,8 +1007,34 @@ public sealed partial class ImpactedClassesSelectorTests
     private static List<string> LinuxFilters(JsonElement root) =>
         FilterRows(root, "filters").Select(row => row.Filter).ToList();
 
-    private static void CreateLiteralDiffRepository(string dir, string relative, string before, string after)
+    private static readonly (string Relative, string Text)[] DpapiStubs =
+    [
+        ("tests/Antiphon.Tests/Scripts/CapabilityScriptTests.cs", "public sealed class CapabilityScriptTests\n{\n}\n"),
+        ("tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs", "public sealed class DelegateScriptCapabilityTests\n{\n}\n"),
+    ];
+
+    private static async Task<string> DpapiTableAsync(string root)
     {
+        var table = await File.ReadAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"));
+        using var json = JsonDocument.Parse(table);
+        var kind = json.RootElement.GetProperty("kinds").EnumerateArray()
+            .Single(row => row.GetProperty("id").GetString() == "dpapi-protected-data")
+            .GetRawText();
+        var path = Path.Combine(Path.GetTempPath(), "impacted-classes-dpapi-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(path, "{\"schema\":1,\"kinds\":[" + kind + "]}");
+        return path;
+    }
+
+    private static void CreateLiteralDiffRepository(
+        string dir, string relative, string before, string after, params (string Relative, string Text)[] stubs)
+    {
+        foreach (var stub in stubs)
+        {
+            var stubFile = Path.Combine(dir, stub.Relative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(stubFile)!);
+            File.WriteAllText(stubFile, stub.Text);
+        }
+
         var file = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         File.WriteAllText(file, before);
