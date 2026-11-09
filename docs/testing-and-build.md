@@ -132,6 +132,41 @@ are required until tooling is updated. CARD-1720 refuses an explicit total below
 (`checkpoint-total-below-derived`) unless an override reason is given. This documentation does not
 change those defaults, live qualification, release gate credit or production timeouts.
 
+<a id="review-test-quality-checklist"></a>
+### Review test-quality checklist (CARD-1809)
+
+Operator direction 2026-11-09: the rc run 231f573c test-quality failures become Review checks,
+not new code guards or selector rows. These are CARD-1809 R1-R5, separate from the R-numbered
+rules in [test performance standards](test-performance-standards.md); why-missed notes are
+`docs/investigations/2026-11-09-why-missed-{pty-host-fixture,process-spawn-limit,pre-dispatch-failure-delivery,transcript-prompt-stamp-migration}.md`.
+For each new or changed test in the reviewed range, Review checks and cites:
+
+- **R1 Poll covers every assertion.** A test that polls a file, screen or queue and then asserts:
+  its done-predicate covers every assertion after it, so the wait ends on the LAST record asserted,
+  never the first record of a multi-record turn. Compare sibling tests of the same class.
+  Cite: the predicate and the last record asserted (rc group 4, `Card1277PtyHostFixtureTests`).
+- **R2 Generated text is line-ending neutral.** An exact-text assertion on generated text (EF
+  migration SQL, script output, any `StringBuilder.AppendLine` or `Environment.NewLine` product)
+  does not hard-code `\n` or `\r\n`; it uses `Environment.NewLine` or `ReplaceLineEndings`.
+  Linux-only Review and checkpoints cannot see this. Cite: the neutral assertion, or a Windows-lane
+  owed note the Review asks for (rc group 96, `Card1773TranscriptPromptStampMigrationTests`).
+- **R3 Every caller of a changed terminal state.** A change to a service's terminal-state semantics
+  (for example Canceled becomes final) names and runs every test class that reaches that service
+  through any caller: `git grep` the service and its state enum in `tests/**`, not only the
+  name-prefix family. Cite: the Review selection lists the callers it checked (rc group 71,
+  `PreDispatchFailureDeliveryTests`).
+- **R4 Limiter change runs the limiter census.** A change that adds a test class carrying a
+  `ParallelLimiter` attribute, or touches the limiter types, runs `ProcessSpawnLimitTests` in the
+  Review selection. Cite: its counts (rc group 2). Keep this check until CARD-1807 lands.
+- **R5 A repeated passes-alone red gets a Debug card.** A red that passes alone, seen twice for the
+  same method in review or merge reports, is not a load flake to move past: the reviewer files or
+  links a Debug card. Cite: the card and both reports (C1759, `RemoteWorkspacePreparerTests` cancel,
+  C467_V18 HttpListener bind).
+
+A breach of R1-R4 is a Review defect (Where/Failure/Why/Fix) under the
+[Review rounds](orchestration-loop.md#review-rounds) limits. The `stage-review` bundle reaches this
+checklist through its `#performance-standards` pointer: the bundle is at its size cap.
+
 <!-- CARD-0254 preserved source begins -->
 
 ## CARD-0254 preserved operational detail
