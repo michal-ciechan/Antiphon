@@ -103,8 +103,14 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
 
     private string? DeleteRecorded(string root, string full, bool directory)
     {
-        if (SafeWrite.Preflight(root, [full]) is not null || !SafeWrite.MatchesCreation(full))
-            return "left in place: " + full;
+        // CARD-1520: the persisted refusal must keep which gate stopped the
+        // unlink. Preflight already names tracked, link, and git outcomes.
+        // A content or creation-record mismatch is a different fact.
+        var stage = directory ? "directory" : "file";
+        if (SafeWrite.Preflight(root, [full]) is { } preflight)
+            return PerEntryRefusal(full, stage, "preflight=" + preflight);
+        if (!SafeWrite.MatchesCreation(full))
+            return PerEntryRefusal(full, stage, "content-or-creation-record-mismatch");
         if (context.Registry.Identity(full) is not { } expected)
             return "left in place: " + full;
         try
@@ -117,6 +123,9 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         }
         return null;
     }
+
+    private static string PerEntryRefusal(string full, string stage, string detail) =>
+        "left in place: " + full + "; stage=" + stage + "; " + detail;
 
     // Linux ENOTEMPTY is errno 39. Windows ERROR_DIR_NOT_EMPTY is 145. The virtual
     // fixture says "directory not empty". The code must be the whole token: win32=145
