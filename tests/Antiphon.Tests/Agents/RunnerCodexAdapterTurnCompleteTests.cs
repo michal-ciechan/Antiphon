@@ -65,9 +65,11 @@ public class RunnerCodexAdapterTurnCompleteTests
         var cancellationObserved = false;
         client.BeforeSnapshotAsync = (read, _) =>
         {
-            // Admit the boundary when the screen has stopped showing Working, after the
-            // wait has seen it active. The next transcript poll must beat screen success.
-            if (read == client.IndicatorScreenReads + 2)
+            // Admit the boundary on the first quiet frame, before Observe can seal
+            // screen-done. That frame is the one the tracker judges. A later snapshot
+            // is skipped once the quiet period has already elapsed, and the
+            // post-verdict SnapshotTextAsync would record the row too late.
+            if (read == client.IndicatorScreenReads + 1)
             {
                 client.Append(TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.Cancelled);
                 cancellationObserved = true;
