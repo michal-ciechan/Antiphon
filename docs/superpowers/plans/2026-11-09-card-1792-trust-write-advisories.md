@@ -30,7 +30,9 @@ returns before `SetUnixFileMode`).
 
 The mode copy is the only OS-selected branch (`OperatingSystem.IsWindows` in
 `CopyUnixMode`). The Linux witness is W-mode, executed natively by CP-1.
-The Windows skip in the test is not a second production branch. No startup path changes.
+The Windows skip in the test is not a second production branch. That test lives in
+`ClaudeProjectTrustModeTests.cs` because the witness checker cannot lex C# raw strings,
+and the rest of the class uses them. No startup path changes.
 Runner default at authoring was `globalRunnerId=server2`; this slice pins neither
 `-Runner` nor `-Platform`.
 
