@@ -907,7 +907,7 @@ switch ($PSCmdlet.ParameterSetName) {
             $d = $task.syncDebt
             Write-Output ("Desktop sync debt: {0} source={1} confirmed={2} reason={3} attempts={4}" -f $d.state, $d.sourceSha, $d.confirmedSha, $d.reasonCode, $d.attempts)
         } elseif ($task.progressEvidence -and $task.progressEvidence.remoteSync -and $task.progressEvidence.remoteSync.state -eq 'Pending') {
-            Write-Output 'Pending evidence without a debt row: the progress read blocked this task; repair what the handoff names, then reply. Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802); a bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).'
+            Write-Output 'Pending evidence without a debt row: the progress read blocked this task; repair what the handoff names, then reply. Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802). A bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).'
         }
         if ($task.session) {
             $session = $task.session

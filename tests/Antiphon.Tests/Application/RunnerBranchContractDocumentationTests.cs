@@ -164,7 +164,7 @@ public class RunnerBranchContractDocumentationTests
             + "caught after settlement; CARD-1109's attestation upgrade would close it (CARD-1805).";
         const string gate = "The unfetched gate reads object presence with git cat-file -e: only exit 1 is an unfetched "
             + "tip, and any other failure, such as an unreadable repository, is runner_sync_progress_unverified (CARD-1805).";
-        const string scriptClause = "a bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).";
+        const string scriptClause = "A bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).";
 
         var loop = Read("docs/orchestration-loop.md").Replace("\r\n", "\n");
         var rule6 = Slice(loop, "6. **Do not Reply", "7. **Master lands", "c1805-rule-6");

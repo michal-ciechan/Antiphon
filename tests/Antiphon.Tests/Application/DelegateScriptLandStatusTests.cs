@@ -24,7 +24,7 @@ public sealed class DelegateScriptLandStatusTests
         const string report = "SYNC STATUS REPORT AFTER FACTS";
         const string noDebt = "Pending evidence without a debt row: the progress read blocked this task; repair what the handoff names, "
             + "then reply. Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row "
-            + "(CARD-1802); a bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).";
+            + "(CARD-1802). A bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).";
         var body = JsonSerializer.Serialize(new
         {
             summary = new { status = scenario == "pending-without-debt" ? "Blocked" : "Succeeded",
