@@ -15,7 +15,8 @@
 # -Check is the default. It prints digest=<HEX> count=<N> and exits 0 only
 # when both manifest lines match. -Update rewrites the manifest from HEAD.
 # Exit 1 is a mismatch, a docs-input refusal, or bad usage. Exit 2 is a git failure.
-# -ToolPath defaults to tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll.
+# -ToolPath defaults to tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll,
+# rebuilt automatically when missing or stale (scripts/lib/land-audit-tool.ps1).
 [CmdletBinding()]
 param(
     [switch]$Check,
@@ -48,12 +49,11 @@ if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {
     Exit-Audit 1 'script root is unknown'
 }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-if ([string]::IsNullOrEmpty($ToolPath)) {
-    $ToolPath = [System.IO.Path]::Combine($RepoRoot, 'tools', 'Antiphon.LandGraphAudit', 'bin-land-audit', 'Release', 'net10.0', 'Antiphon.LandGraphAudit.dll')
-}
-if (-not [System.IO.File]::Exists($ToolPath)) {
-    Exit-Audit 1 ('built evaluator missing: ' + $ToolPath)
-}
+# The default DLL is rebuilt when missing or when its sources changed; a failed rebuild refuses.
+. (Join-Path $PSScriptRoot 'lib/land-audit-tool.ps1')
+$tool = Resolve-LandAuditTool $RepoRoot $ToolPath
+if ($tool.ContainsKey('Error')) { Exit-Audit 1 ([string]$tool.Error) }
+$ToolPath = [string]$tool.Path
 
 $arguments = @([System.IO.Path]::GetFullPath($ToolPath), 'precheck', '--repo', $RepoRoot)
 if ($Update.IsPresent) { $arguments += '--update' } else { $arguments += '--check' }

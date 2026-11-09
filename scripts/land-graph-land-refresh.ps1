@@ -13,6 +13,7 @@ param(
     [string]$PinScript)
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/land-audit-tool.ps1')
 $script:NotePath = $NotePath
 
 function Write-Out([string]$Text) {
@@ -217,8 +218,9 @@ function Get-PinText {
         if ($run.Code -ne 0) { Refuse 'LAND-GRAPH-NOTICE action=refuse reason=pin-printer-failed' }
         return [string]$run.Text
     }
-    $dll = Join-Path $script:Repo 'tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll'
-    if (-not [System.IO.File]::Exists($dll)) { Refuse 'LAND-GRAPH-NOTICE action=refuse reason=pin-printer-missing' }
+    $tool = Resolve-LandAuditTool $script:Repo ''
+    if ($tool.ContainsKey('Error')) { Refuse 'LAND-GRAPH-NOTICE action=refuse reason=pin-printer-missing' }
+    $dll = [string]$tool.Path
     $run = Invoke-Child 'dotnet' @('exec', $dll, '--print-pins', '--repo', $script:Repo) 120000
     if ($run.Code -ne 0) { Refuse 'LAND-GRAPH-NOTICE action=refuse reason=pin-printer-failed' }
     return [string]$run.Text

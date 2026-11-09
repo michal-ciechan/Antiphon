@@ -643,6 +643,7 @@ public sealed partial class LandGraphEvaluationTests
         files[PinsFile] = "";
         files["scripts/audit-land-verification-graph.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/audit-land-verification-graph.ps1"));
         files["scripts/lib/land-graph-canary-removal.ps1"] = await File.ReadAllTextAsync(CanaryRemovalLibrary());
+        files["scripts/lib/land-audit-tool.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/lib/land-audit-tool.ps1"));
         var precheck = Path.Combine(RepoRoot(), "scripts/audit-land-verification-precheck.ps1");
         if (File.Exists(precheck)) files["scripts/audit-land-verification-precheck.ps1"] = await File.ReadAllTextAsync(precheck);
         var repo = await AuditRepo.CreateAsync(files);

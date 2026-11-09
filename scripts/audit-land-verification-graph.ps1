@@ -9,9 +9,9 @@
 # with -Update. It lets that script stage pins beside the manifest for one
 # land-graph commit. Without -Update the script refuses. A bare -Update still
 # refuses with "commit source and pins before auditing".
-# Build the DLL through scripts/build-slot.ps1, with -c Release and
-# --property:OutputPath=bin-land-audit/Release/net10.0/, or supply a built -ToolPath.
-# No implicit build and no pre-check-only mode. Any evaluation error refuses (exit 1).
+# The default DLL (bin-land-audit/Release/net10.0) is rebuilt automatically when it is missing or its
+# sources changed (scripts/lib/land-audit-tool.ps1); a failed rebuild refuses. A supplied -ToolPath is used
+# as given. No pre-check-only mode. Any evaluation error refuses (exit 1).
 # The evaluator's own clocks bound each solution pass and the canary copy. This script's
 # wait is the tool's printed ceiling (phase total plus EvaluationBudget.StartupGraceSeconds).
 # That grace constant lives only in the tool. -EvaluationBudgetSeconds overrides that wait
@@ -32,6 +32,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/land-graph-canary-removal.ps1')
+. (Join-Path $PSScriptRoot 'lib/land-audit-tool.ps1')
 
 $script:AuditCanaryRecord = ''
 $script:AuditCanaryRepo = ''
@@ -201,17 +202,21 @@ try {
     $head = Get-GitValue @('rev-parse', 'HEAD')
     $allowPendingPins = $Update.IsPresent -and $LandRefresh.IsPresent
     Assert-HeadSource $head $allowPendingPins
-    $powershell = (Get-Process -Id $PID).Path
-    $precheck = Join-Path $PSScriptRoot 'audit-land-verification-precheck.ps1'
-    $arguments = @('-NoProfile', '-NonInteractive', '-File', $precheck)
-    # The pre-check runs in the same built tool as the evaluation below.
-    if (-not [string]::IsNullOrEmpty($ToolPath)) { $arguments += @('-ToolPath', [System.IO.Path]::GetFullPath($ToolPath)) }
+    # The pre-check runs in the same built tool as the evaluation below, called directly (no child
+    # PowerShell); scripts/audit-land-verification-precheck.ps1 is the same call for standalone use.
+    $tool = Resolve-LandAuditTool $RepoRoot $ToolPath
+    if ($tool.ContainsKey('Error')) {
+        [Console]::Error.WriteLine([string]$tool.Error)
+        throw 'land graph pre-check refused'
+    }
+    $ToolPath = [string]$tool.Path
+    $arguments = @([System.IO.Path]::GetFullPath($ToolPath), 'precheck', '--repo', $RepoRoot)
     if ($Update) {
         [void][System.IO.Directory]::CreateDirectory($RecordDirectory)
         $temporaryManifest = Join-Path $RecordDirectory ('.land-manifest-' + [Guid]::NewGuid().ToString('N'))
-        $arguments += @('-Update', '-ManifestPath', $temporaryManifest)
-    } else { $arguments += '-Check' }
-    $pre = Invoke-AuditChild $powershell $arguments
+        $arguments += @('--update', '--manifest-path', $temporaryManifest)
+    } else { $arguments += '--check' }
+    $pre = Invoke-AuditChild 'dotnet' $arguments
     if ($pre.Text.Length -gt 0) { Write-Output $pre.Text.TrimEnd() }
     if ($pre.Code -ne 0) { throw 'land graph pre-check refused' }
 

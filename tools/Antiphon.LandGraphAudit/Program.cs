@@ -30,6 +30,9 @@ public static class Program
     /// <summary>API probe only. Not an evaluation and not an approval. The audit script treats every non-zero code as refusal.</summary>
     public const int ProbeOnly = 3;
 
+    /// <summary>The first argument is a command word this build does not know: the tool and its caller differ.</summary>
+    public const int UnknownCommand = 64;
+
     private static readonly TimeSpan ToolTimeout = TimeSpan.FromSeconds(EvaluationBudget.ToolCeilingSeconds);
 
     public static int Main(string[] args)
@@ -37,6 +40,14 @@ public static class Program
         // The emulation pre-check (scripts/audit-land-verification-precheck.ps1 runs it). It loads no MSBuild,
         // evaluates nothing and is not an approval: the graph script still requires the evaluation below.
         if (args.Length > 0 && args[0] == "precheck") return Precheck(args);
+        // A command word this build does not know means the calling script is newer than this build (or
+        // older): say so with its own exit code instead of an argument error that reads like a usage fault.
+        if (args.Length > 0 && args[0].Length > 0 && !args[0].StartsWith('-'))
+        {
+            Console.Error.WriteLine($"unknown command '{args[0]}': this Antiphon.LandGraphAudit build does not match the "
+                + "calling script; rebuild it (scripts/lib/land-audit-tool.ps1 rebuilds the default tool automatically)");
+            return UnknownCommand;
+        }
         AppDomain.CurrentDomain.ProcessExit += static (_, _) => CanaryRepository.DeleteActive();
         if (PrintBudget(args, out var budgetExit)) return budgetExit;
         // --print-pins is not an evaluation and not an approval. Exit 0 here only prints rows.
