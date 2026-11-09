@@ -270,6 +270,13 @@ Windows; its sibling `error_paths_never_contain_the_token` stays required on bot
 class-level `[SupportedOSPlatform("windows")]` is a CA1416 analyzer contract only, never a
 runtime gate.
 
+CARD-1814 adds one Linux-only, method-scoped `antiphon` row for the five
+`DelegateScriptCapabilityTests` methods that call `WriteBlob` (`ProtectedData` CurrentUser)
+and skip off Windows. They stay required on Windows.
+`missing_capability_file_does_not_advise_AllowedRoots` never reads a blob and stays required
+on both platforms. `C1814_Dpapi_cases_are_windows_required_and_linux_excluded` pins the row
+and the Linux skips. The audit found no other test class that calls `ProtectedData`.
+
 Rows whose reason starts with `Linux-only by construction:` are Windows-only exclusions for
 tests whose skip is a POSIX mechanism (FIFOs, statx, `/proc`, setsid, unshare, Unix modes, or
 POSIX sh). Linux keeps those cases required. Skips the qualification inventory treats as

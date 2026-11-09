@@ -45,7 +45,8 @@ public static class NativeLinuxPolicyWitness
     // Includes CARD-1614 tracked-linger and the separately commissioned CARD-1545 parity / CARD-1605 load obligations.
     // Exact two-record addition: docs/superpowers/plans/2026-11-05-rc-coverage-admission-repair.md.
     // CARD-1811 one-record addition (Linux CapabilityScriptTests DPAPI row): docs/investigations/2026-11-09-why-missed-capability-script-dpapi-linux.md.
-    public const string LegacyExclusionDigest = "25dae45aca52b4b8de5dee6bf4abb4ebcae13b455dab8018e9d64221d10313ff";
+    // CARD-1814 one-record addition (Linux DelegateScriptCapabilityTests DPAPI methods): same note.
+    public const string LegacyExclusionDigest = "3d964fa87df4b92ddd8fa5230061131a1debde4d82668dacee5938a3c74fc115";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "9cf98d229e32ca52e76d6b8946856776c7c390e3027e2eae191f5042aca3b697",
+  "policyHash": "70cb2f24a7c124f1ee6962ebb6d3dcbd37a84888d3f8940bb21b5d5e097f8898",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -630,6 +630,20 @@
           "platform": "linux",
           "reason": "Windows DPAPI round trip: capability.ps1 writes and the test reads a ProtectedData CurrentUser blob, which only Windows supports. The method remains required on Windows; error_paths_never_contain_the_token stays required on both platforms.",
           "owner": "CARD-1811"
+        },
+        {
+          "suite": "antiphon",
+          "class": "DelegateScriptCapabilityTests",
+          "methods": [
+            "delegate_Capability_sends_header_and_does_not_assign_env_token",
+            "delegate_ANTIPHON_CAPABILITY_name_sends_header",
+            "capability_and_task_token_together_is_refused_before_request",
+            "auto_load_of_the_only_store_file_is_forbidden",
+            "error_paths_never_contain_the_token"
+          ],
+          "platform": "linux",
+          "reason": "Windows DPAPI store: these five methods call WriteBlob, which protects the bearer with ProtectedData CurrentUser and skips off Windows. They stay required on Windows. missing_capability_file_does_not_advise_AllowedRoots never reads a blob and stays required on both platforms.",
+          "owner": "CARD-1814"
         },
         {
           "suite": "antiphon",
