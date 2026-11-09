@@ -1,7 +1,11 @@
 # CARD-1782. Read-only selector from tests/impacted-classes.json.
-# CARD-1783. -MergeSubset always emits the fixed high-radius classes. A -Range
-# that touches server/Migrations/** also emits the migrations downgrade selector. Text mode prints
-# one "filter=<project> <treenodeFilter>" line per project.
+# CARD-1783. -MergeSubset always emits the fixed high-radius classes and methods. Text mode prints
+# one "filter=<project> <treenodeFilter>" line per filters entry.
+# CARD-1801. -MergeSubset with -Range, -Path or -FileList also emits every row those paths select
+# (the migrations row brings the downgrade selector), each filters entry with its CHECKPOINT row id.
+# A kind with "windows": "required" also lands in windowsFilters ("windowsFilter=" lines): the
+# native Windows lane owes that filter, and a Linux row of it is not that lane. An added block with
+# "removed": true also matches a removed line that carries one of its literals.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
@@ -268,9 +272,9 @@ catch {
 $allowedRoot = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 foreach ($name in @('schema', 'card', 'cache', 'maximumStaleness', 'kinds')) { [void]$allowedRoot.Add($name) }
 $allowedKind = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-foreach ($name in @('id', 'globs', 'classes', 'methods', 'added', 'derive')) { [void]$allowedKind.Add($name) }
+foreach ($name in @('id', 'globs', 'classes', 'methods', 'added', 'derive', 'windows')) { [void]$allowedKind.Add($name) }
 $allowedAdded = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-foreach ($name in @('glob', 'literals')) { [void]$allowedAdded.Add($name) }
+foreach ($name in @('glob', 'literals', 'removed')) { [void]$allowedAdded.Add($name) }
 $allowedDerive = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 [void]$allowedDerive.Add('patterns')
 
@@ -333,8 +337,18 @@ foreach ($node in $kindNodes) {
     $methods = New-Object System.Collections.Generic.List[string]
     if ($null -ne $node.PSObject.Properties['methods']) { $methods = As-List $node.methods }
 
+    $windowsLane = $false
+    if ($null -ne $node.PSObject.Properties['windows']) {
+        $laneValue = $node.windows
+        if (-not ($laneValue -is [string]) -or $laneValue -cne 'required') {
+            Refuse-Table $where "windows must be 'required'"
+        }
+        $windowsLane = $true
+    }
+
     $addedGlob = ''
     $addedLiterals = New-Object System.Collections.Generic.List[string]
+    $addedRemoved = $false
     $hasAdded = $false
     if ($null -ne $node.PSObject.Properties['added'] -and $null -ne $node.added) {
         if (-not ($node.added -is [System.Management.Automation.PSCustomObject])) {
@@ -350,6 +364,12 @@ foreach ($node in $kindNodes) {
         }
         if ($null -ne $node.added.PSObject.Properties['literals']) {
             $addedLiterals = As-List $node.added.literals
+        }
+        if ($null -ne $node.added.PSObject.Properties['removed']) {
+            if (-not ($node.added.removed -is [bool])) {
+                Refuse-Table $where 'removed must be true or false'
+            }
+            $addedRemoved = [bool]$node.added.removed
         }
         if (-not [string]::IsNullOrWhiteSpace($addedGlob) -or $addedLiterals.Count -gt 0) { $hasAdded = $true }
     }
@@ -416,6 +436,9 @@ foreach ($node in $kindNodes) {
         Methods = $methods
         AddedRegex = $addedRegex
         AddedLiterals = $addedLiterals
+        AddedRemoved = $addedRemoved
+        HasDerive = $hasDerive
+        Windows = $windowsLane
         Regexes = $regexes
     })
 }
@@ -599,7 +622,7 @@ if (-not [string]::IsNullOrWhiteSpace($Range)) {
     foreach ($line in (Split-Lines $ran.Stdout)) { [void]$changed.Add($line.Replace('\', '/')) }
 }
 elseif ($MergeSubset -and [string]::IsNullOrWhiteSpace($FileList) -and ($null -eq $Path -or @($Path).Count -eq 0)) {
-    # Fixed subset only. A migration diff is what adds the downgrade selector.
+    # Fixed subset only. A batch diff adds every row it selects.
 }
 elseif (-not [string]::IsNullOrWhiteSpace($FileList) -or ($null -ne $Path -and $Path.Count -gt 0)) {
     if (-not [string]::IsNullOrWhiteSpace($FileList)) {
@@ -616,99 +639,8 @@ elseif (-not [string]::IsNullOrWhiteSpace($FileList) -or ($null -ne $Path -and $
     }
 }
 else {
-    Write-Err "usage: impacted-classes.ps1 -Range <git-range> | -FileList <file> | -Path <repo-relative> | -MergeSubset [-Range <git-range>] [-Json] [-Audit]"
+    Write-Err "usage: impacted-classes.ps1 -Range <git-range> | -FileList <file> | -Path <repo-relative> | -MergeSubset [-Range <git-range> | -FileList <file> | -Path <repo-relative>] [-Json] [-Audit]"
     exit 2
-}
-
-if ($MergeSubset) {
-    $fixedNames = @(
-        'AppDbContextModelTests',
-        'CheckpointReceiptSafetyTests',
-        'ContractSnapshotTests',
-        'HostCleanupCheckpointReceiptTests',
-        'TestTimingOperationLabelTests'
-    )
-    $wholeSubset = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    foreach ($fixedName in $fixedNames) {
-        if (-not $census.Contains($fixedName)) {
-            $missingMessage = "merge-subset refused: class '" + $fixedName + "' was not found"
-            Write-Err $missingMessage
-            if ($Json) {
-                Exit-Json ([pscustomobject]@{
-                    ok = $false
-                    mode = 'merge-subset'
-                    migrations = $false
-                    error = $missingMessage
-                }) 1
-            }
-            exit 1
-        }
-        [void]$wholeSubset.Add($fixedName)
-    }
-    $migrationRegex = [regex]::new((Convert-GlobToRegex 'server/Migrations/**'), 'CultureInvariant')
-    $migrationsHit = $false
-    foreach ($changedPath in $changed) {
-        if ($migrationRegex.IsMatch($changedPath)) { $migrationsHit = $true; break }
-    }
-    if ($migrationsHit) {
-        foreach ($kind in $parsed) {
-            if ($kind.Id -ne 'migrations') { continue }
-            foreach ($className in $kind.Classes) {
-                if ($className.EndsWith('Tests')) { [void]$wholeSubset.Add($className) }
-            }
-        }
-        foreach ($className in @($filesByClass.Keys)) {
-            $ownsDerived = $false
-            foreach ($relative in $filesByClass[$className]) {
-                if ($derivedSet.Contains($relative)) { $ownsDerived = $true; break }
-            }
-            if ($ownsDerived -and ([string]$className).EndsWith('Tests')) { [void]$wholeSubset.Add($className) }
-        }
-    }
-    $subsetByProject = @{}
-    foreach ($className in $wholeSubset) {
-        $project = 'tests/Antiphon.Tests'
-        if ($filesByClass.ContainsKey($className) -and $filesByClass[$className].Count -gt 0) {
-            $project = Get-Project $filesByClass[$className][0]
-        }
-        if (-not $subsetByProject.ContainsKey($project)) {
-            $subsetByProject[$project] = New-Object System.Collections.Generic.List[string]
-        }
-        [void]$subsetByProject[$project].Add($className)
-    }
-    $subsetFilters = New-Object System.Collections.Generic.List[object]
-    $subsetProjects = New-StringList
-    Fill-Sorted @($subsetByProject.Keys) $subsetProjects
-    foreach ($project in $subsetProjects) {
-        $filter = New-ClassFilter $subsetByProject[$project]
-        [void]$subsetFilters.Add([pscustomobject]@{ project = $project; treenodeFilter = $filter })
-    }
-    $subsetTop = ''
-    foreach ($row in $subsetFilters) {
-        if ($row.project -eq 'tests/Antiphon.Tests') { $subsetTop = $row.treenodeFilter; break }
-    }
-    if ([string]::IsNullOrEmpty($subsetTop) -and $subsetFilters.Count -gt 0) { $subsetTop = $subsetFilters[0].treenodeFilter }
-    $fixedOut = New-StringList
-    Fill-Sorted $fixedNames $fixedOut
-    $classOut = New-StringList
-    Fill-Sorted $wholeSubset $classOut
-    $subsetPayload = [pscustomobject]@{
-        ok = $true
-        mode = 'merge-subset'
-        migrations = [bool]$migrationsHit
-        fixedClasses = $fixedOut
-        classes = $classOut
-        treenodeFilter = [string]$subsetTop
-        filters = @($subsetFilters.ToArray())
-    }
-    if ($Json) { Exit-Json $subsetPayload 0 }
-    Write-Output 'mode=merge-subset'
-    Write-Output ('migrations=' + $migrationsHit)
-    Write-Output ('fixedClasses=' + ($fixedOut -join ','))
-    Write-Output ('classes=' + ($classOut -join ','))
-    Write-Output ('treenodeFilter=' + $subsetTop)
-    foreach ($row in $subsetFilters) { Write-Output ('filter=' + $row.project + ' ' + $row.treenodeFilter) }
-    exit 0
 }
 
 $addedText = $null
@@ -721,6 +653,16 @@ function Get-AddedText {
     }
     $script:addedText = $ran.Stdout
     return $script:addedText
+}
+
+function Test-LiteralLine([string]$Line, $Kind) {
+    $isAdded = $Line.StartsWith('+') -and -not $Line.StartsWith('+++')
+    $isRemoved = $Kind.AddedRemoved -and $Line.StartsWith('-') -and -not $Line.StartsWith('---')
+    if (-not ($isAdded -or $isRemoved)) { return $false }
+    foreach ($literal in $Kind.AddedLiterals) {
+        if ($Line.Contains($literal)) { return $true }
+    }
+    return $false
 }
 
 $matched = New-Object System.Collections.Generic.List[object]
@@ -738,136 +680,238 @@ foreach ($kind in $parsed) {
         if ($watched) {
             $text = Get-AddedText
             foreach ($line in ($text -split "`n")) {
-                if ($line.StartsWith('+') -and -not $line.StartsWith('+++')) {
-                    foreach ($literal in $kind.AddedLiterals) {
-                        if ($line.Contains($literal)) { $literalHit = $true; break }
-                    }
-                }
-                if ($literalHit) { break }
+                if (Test-LiteralLine $line $kind) { $literalHit = $true; break }
             }
         }
     }
     if ($pathHit -or $literalHit) { [void]$matched.Add($kind) }
 }
 
-$whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-$methodsByClass = @{}
-$fileSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-
-function Add-ClassFile([string]$ClassName) {
-    if (-not $filesByClass.ContainsKey($ClassName)) { return }
-    foreach ($relative in $filesByClass[$ClassName]) { [void]$fileSet.Add($relative) }
+function Add-ClassFile([string]$ClassName, $FileSet) {
+    if ($null -eq $FileSet -or -not $filesByClass.ContainsKey($ClassName)) { return }
+    foreach ($relative in $filesByClass[$ClassName]) { [void]$FileSet.Add($relative) }
 }
 
-foreach ($kind in $matched) {
-    foreach ($className in $kind.Classes) {
-        if ($className.EndsWith('Tests')) { [void]$whole.Add($className) }
-        Add-ClassFile $className
+function Add-MethodEntry([string]$Method, $MethodsByClass, $FileSet) {
+    $slash = $Method.IndexOf('/')
+    if ($slash -le 0 -or $slash -ge ($Method.Length - 1)) { return }
+    $className = $Method.Substring(0, $slash)
+    if (-not $MethodsByClass.ContainsKey($className)) {
+        $MethodsByClass[$className] = New-Object System.Collections.Generic.List[string]
     }
-    $derivedKind = $false
-    foreach ($node in $kindNodes) {
-        if ($null -eq $node) { continue }
-        $id = ''
-        if ($null -ne $node.PSObject.Properties['id']) { $id = [string]$node.id }
-        if ($id -eq $kind.Id -and $null -ne $node.PSObject.Properties['derive'] -and $null -ne $node.derive) {
-            $derivedKind = $true
-        }
+    [void]$MethodsByClass[$className].Add($Method.Substring($slash + 1))
+    Add-ClassFile $className $FileSet
+}
+
+# One kind's whole classes, derived downgrade callers and method entries.
+function Add-KindSelection($Kind, $Whole, $MethodsByClass, $FileSet) {
+    foreach ($className in $Kind.Classes) {
+        if ($className.EndsWith('Tests')) { [void]$Whole.Add($className) }
+        Add-ClassFile $className $FileSet
     }
-    if ($derivedKind) {
-        foreach ($relative in $derivedSet) {
-            [void]$fileSet.Add($relative)
-            if ($filesByClass.Count -gt 0) {
-                # Class names are indexed by name, so scan this file's known declarations via the reverse map.
-            }
+    if ($Kind.HasDerive) {
+        if ($null -ne $FileSet) {
+            foreach ($relative in $derivedSet) { [void]$FileSet.Add($relative) }
         }
         foreach ($className in @($filesByClass.Keys)) {
             $owns = $false
             foreach ($relative in $filesByClass[$className]) {
                 if ($derivedSet.Contains($relative)) { $owns = $true; break }
             }
-            if ($owns -and $className.EndsWith('Tests')) { [void]$whole.Add($className) }
+            if ($owns -and ([string]$className).EndsWith('Tests')) { [void]$Whole.Add([string]$className) }
         }
     }
-    foreach ($method in $kind.Methods) {
-        $slash = $method.IndexOf('/')
-        if ($slash -le 0 -or $slash -ge ($method.Length - 1)) { continue }
-        $className = $method.Substring(0, $slash)
-        $methodName = $method.Substring($slash + 1)
-        if (-not $methodsByClass.ContainsKey($className)) {
-            $methodsByClass[$className] = New-Object System.Collections.Generic.List[string]
+    foreach ($method in $Kind.Methods) { Add-MethodEntry $method $MethodsByClass $FileSet }
+}
+
+function Get-ClassProject([string]$ClassName) {
+    if ($filesByClass.ContainsKey($ClassName) -and $filesByClass[$ClassName].Count -gt 0) {
+        return (Get-Project $filesByClass[$ClassName][0])
+    }
+    return 'tests/Antiphon.Tests'
+}
+
+function Get-ProjectSlug([string]$Project) {
+    if ($Project -eq 'tests/Antiphon.Tests') { return 'tests' }
+    if ($Project -eq 'tests/Antiphon.E2E') { return 'e2e' }
+    if ($Project -eq 'tests/Antiphon.Messaging.Tests') { return 'messaging' }
+    if ($Project -eq 'tests/Antiphon.SessionRunner.Tests') { return 'sessionrunner' }
+    return $Project.Replace('tests/', '').ToLowerInvariant()
+}
+
+# Class rows first, one per project in ordinal order, then one method row per class.
+# A whole class wins over a method row of the same class. Id is the CHECKPOINT row name.
+function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix) {
+    $rows = New-Object System.Collections.Generic.List[object]
+    $byProject = @{}
+    foreach ($className in $Whole) {
+        $project = Get-ClassProject $className
+        if (-not $byProject.ContainsKey($project)) {
+            $byProject[$project] = New-Object System.Collections.Generic.List[string]
         }
-        [void]$methodsByClass[$className].Add($methodName)
-        Add-ClassFile $className
+        [void]$byProject[$project].Add($className)
     }
-}
-
-$classNames = New-Object System.Collections.Generic.List[string]
-foreach ($name in $whole) { [void]$classNames.Add($name) }
-foreach ($className in @($methodsByClass.Keys)) {
-    if (-not $whole.Contains($className)) { [void]$classNames.Add($className) }
-}
-
-$byProjectClasses = @{}
-foreach ($className in $whole) {
-    $project = 'tests/Antiphon.Tests'
-    if ($filesByClass.ContainsKey($className) -and $filesByClass[$className].Count -gt 0) {
-        $project = Get-Project $filesByClass[$className][0]
+    $projectOrder = New-StringList
+    Fill-Sorted @($byProject.Keys) $projectOrder
+    foreach ($project in $projectOrder) {
+        [void]$rows.Add([pscustomobject]@{
+            Id = $IdPrefix + (Get-ProjectSlug $project)
+            Project = $project
+            Filter = (New-ClassFilter $byProject[$project])
+        })
     }
-    if (-not $byProjectClasses.ContainsKey($project)) {
-        $byProjectClasses[$project] = New-Object System.Collections.Generic.List[string]
+    $methodRows = New-Object System.Collections.Generic.List[object]
+    $methodOrder = New-StringList
+    Fill-Sorted @($MethodsByClass.Keys) $methodOrder
+    foreach ($className in $methodOrder) {
+        if ($Whole.Contains($className)) { continue }
+        [void]$methodRows.Add([pscustomobject]@{
+            Id = $IdPrefix + $className
+            Project = (Get-ClassProject $className)
+            Filter = (New-MethodFilter $className $MethodsByClass[$className])
+        })
     }
-    [void]$byProjectClasses[$project].Add($className)
+    foreach ($row in ($methodRows | Sort-Object Project, Filter)) { [void]$rows.Add($row) }
+    return ,$rows
 }
 
-$filters = New-Object System.Collections.Generic.List[object]
-$projectOrder = New-StringList
-Fill-Sorted @($byProjectClasses.Keys) $projectOrder
-foreach ($project in $projectOrder) {
-    $filter = New-ClassFilter $byProjectClasses[$project]
-    [void]$filters.Add([pscustomobject]@{ project = $project; treenodeFilter = $filter; shape = 'class' })
-}
-$methodProjects = New-Object System.Collections.Generic.List[object]
-$methodOrder = New-StringList
-Fill-Sorted @($methodsByClass.Keys) $methodOrder
-foreach ($className in $methodOrder) {
-    if ($whole.Contains($className)) { continue }
-    $project = 'tests/Antiphon.Tests'
-    if ($filesByClass.ContainsKey($className) -and $filesByClass[$className].Count -gt 0) {
-        $project = Get-Project $filesByClass[$className][0]
+function Get-ClassNames($Whole, $MethodsByClass) {
+    $names = New-StringList
+    foreach ($name in $Whole) { [void]$names.Add($name) }
+    foreach ($className in @($MethodsByClass.Keys)) {
+        if (-not $Whole.Contains([string]$className)) { [void]$names.Add([string]$className) }
     }
-    $filter = New-MethodFilter $className $methodsByClass[$className]
-    [void]$methodProjects.Add([pscustomobject]@{ project = $project; treenodeFilter = $filter; shape = 'method' })
-}
-foreach ($row in ($methodProjects | Sort-Object project, treenodeFilter)) {
-    [void]$filters.Add([pscustomobject]@{ project = $row.project; treenodeFilter = $row.treenodeFilter })
+    $sorted = New-StringList
+    Fill-Sorted $names $sorted
+    return ,$sorted
 }
 
-$emitted = New-Object System.Collections.Generic.List[object]
-foreach ($row in $filters) {
-    [void]$emitted.Add([pscustomobject]@{ project = $row.project; treenodeFilter = $row.treenodeFilter })
-}
-
-$top = ''
-foreach ($row in $emitted) {
-    if ($row.project -eq 'tests/Antiphon.Tests' -and $row.treenodeFilter.StartsWith('/*/*/(')) {
-        $top = $row.treenodeFilter
-        break
+function Get-TopFilter($Rows) {
+    foreach ($row in $Rows) {
+        if ($row.Project -eq 'tests/Antiphon.Tests' -and $row.Filter.StartsWith('/*/*/(')) { return $row.Filter }
     }
-}
-if ([string]::IsNullOrEmpty($top)) {
-    foreach ($row in $emitted) {
-        if ($row.project -eq 'tests/Antiphon.Tests') { $top = $row.treenodeFilter; break }
+    foreach ($row in $Rows) {
+        if ($row.Project -eq 'tests/Antiphon.Tests') { return $row.Filter }
     }
+    foreach ($row in $Rows) { return $row.Filter }
+    return ''
 }
-if ([string]::IsNullOrEmpty($top) -and $emitted.Count -gt 0) { $top = $emitted[0].treenodeFilter }
 
-$kindOut = New-Object System.Collections.Generic.List[string]
-foreach ($kind in $matched) { if (-not [string]::IsNullOrWhiteSpace($kind.Id)) { [void]$kindOut.Add($kind.Id) } }
+function Convert-Rows($Rows, [bool]$WithId) {
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($row in $Rows) {
+        if ($WithId) {
+            [void]$out.Add([pscustomobject][ordered]@{ id = $row.Id; project = $row.Project; treenodeFilter = $row.Filter })
+        }
+        else {
+            [void]$out.Add([pscustomobject][ordered]@{ project = $row.Project; treenodeFilter = $row.Filter })
+        }
+    }
+    return ,$out
+}
 
+# The Windows lane: the same selection restricted to kinds whose notes require a native Windows run.
+$windowsWhole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$windowsMethods = @{}
+$kindOut = New-StringList
+foreach ($kind in $matched) {
+    if (-not [string]::IsNullOrWhiteSpace($kind.Id)) { [void]$kindOut.Add($kind.Id) }
+    if ($kind.Windows) { Add-KindSelection $kind $windowsWhole $windowsMethods $null }
+}
 $k = New-StringList
 Fill-Sorted $kindOut $k
-$c = New-StringList
-Fill-Sorted $classNames $c
+
+if ($MergeSubset) {
+    $fixedNames = @(
+        'AgentTaskLandHeldNotificationTests',
+        'AgentTaskLandNotificationParkFollowUpTests',
+        'AgentTaskLandNotificationPersistenceTests',
+        'AgentTaskLandNotificationReconcileLoadTests',
+        'AgentTaskLandNotificationRecoveryTests',
+        'AgentTaskLandNotificationRescanTests',
+        'AgentTaskLandReceiptWatermarkSafetyTests',
+        'AgentTaskLandReceiptWatermarkTests',
+        'AppDbContextModelTests',
+        'CheckpointReceiptSafetyTests',
+        'ContractSnapshotTests',
+        'HostCleanupCheckpointReceiptTests',
+        'ReceiptScanDestinationIntegrationTests',
+        'TestTimingOperationLabelTests'
+    )
+    # The A5 pair: the Linux-only census cases (CARD-1801).
+    $fixedMethods = @(
+        'ReleaseGatePlatformTests/C1686_LinuxOnlyCensus',
+        'ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy'
+    )
+    $wholeSubset = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $subsetMethods = @{}
+    $fixedClassNames = New-StringList
+    foreach ($fixedName in $fixedNames) { [void]$fixedClassNames.Add($fixedName) }
+    foreach ($fixedMethod in $fixedMethods) { [void]$fixedClassNames.Add($fixedMethod.Substring(0, $fixedMethod.IndexOf('/'))) }
+    foreach ($fixedName in $fixedClassNames) {
+        if (-not $census.Contains($fixedName)) {
+            $missingMessage = "merge-subset refused: class '" + $fixedName + "' was not found"
+            Write-Err $missingMessage
+            if ($Json) {
+                Exit-Json ([pscustomobject]@{
+                    ok = $false
+                    mode = 'merge-subset'
+                    migrations = $false
+                    error = $missingMessage
+                }) 1
+            }
+            exit 1
+        }
+    }
+    foreach ($fixedName in $fixedNames) { [void]$wholeSubset.Add($fixedName) }
+    foreach ($fixedMethod in $fixedMethods) { Add-MethodEntry $fixedMethod $subsetMethods $null }
+    $migrationsHit = $false
+    foreach ($kind in $matched) {
+        if ($kind.Id -eq 'migrations') { $migrationsHit = $true }
+        Add-KindSelection $kind $wholeSubset $subsetMethods $null
+    }
+    $subsetRows = New-FilterRows $wholeSubset $subsetMethods 'CP-merge-subset-'
+    $windowsRows = New-FilterRows $windowsWhole $windowsMethods 'CP-merge-windows-'
+    $subsetTop = Get-TopFilter $subsetRows
+    $fixedOut = New-StringList
+    Fill-Sorted $fixedNames $fixedOut
+    $fixedMethodOut = New-StringList
+    Fill-Sorted $fixedMethods $fixedMethodOut
+    $classOut = Get-ClassNames $wholeSubset $subsetMethods
+    $subsetPayload = [pscustomobject]@{
+        ok = $true
+        mode = 'merge-subset'
+        migrations = [bool]$migrationsHit
+        kinds = $k
+        fixedClasses = $fixedOut
+        fixedMethods = $fixedMethodOut
+        classes = $classOut
+        treenodeFilter = [string]$subsetTop
+        filters = @((Convert-Rows $subsetRows $true).ToArray())
+        windowsFilters = @((Convert-Rows $windowsRows $true).ToArray())
+    }
+    if ($Json) { Exit-Json $subsetPayload 0 }
+    Write-Output 'mode=merge-subset'
+    Write-Output ('migrations=' + $migrationsHit)
+    Write-Output ('kinds=' + ($k -join ','))
+    Write-Output ('fixedClasses=' + ($fixedOut -join ','))
+    Write-Output ('fixedMethods=' + ($fixedMethodOut -join ','))
+    Write-Output ('classes=' + ($classOut -join ','))
+    Write-Output ('treenodeFilter=' + $subsetTop)
+    foreach ($row in $subsetRows) { Write-Output ('filter=' + $row.Project + ' ' + $row.Filter) }
+    foreach ($row in $windowsRows) { Write-Output ('windowsFilter=' + $row.Project + ' ' + $row.Filter) }
+    exit 0
+}
+
+$whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$methodsByClass = @{}
+$fileSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+foreach ($kind in $matched) { Add-KindSelection $kind $whole $methodsByClass $fileSet }
+
+$rows = New-FilterRows $whole $methodsByClass ''
+$windowsRows = New-FilterRows $windowsWhole $windowsMethods ''
+$top = Get-TopFilter $rows
+$c = Get-ClassNames $whole $methodsByClass
 $f = New-StringList
 Fill-Sorted $fileSet $f
 $payload = [pscustomobject]@{
@@ -875,10 +919,12 @@ $payload = [pscustomobject]@{
     classes = $c
     files = $f
     treenodeFilter = [string]$top
-    filters = @($emitted.ToArray())
+    filters = @((Convert-Rows $rows $false).ToArray())
+    windowsFilters = @((Convert-Rows $windowsRows $false).ToArray())
 }
 if ($Json) { Exit-Json $payload 0 }
 Write-Output ("kinds=" + ($k -join ','))
 Write-Output ("treenodeFilter=" + $top)
+foreach ($row in $windowsRows) { Write-Output ('windowsFilter=' + $row.Project + ' ' + $row.Filter) }
 foreach ($relative in $f) { Write-Output $relative }
 exit 0
