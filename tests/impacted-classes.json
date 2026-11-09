@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "card": "CARD-1782",
+  "card": "CARD-1782, CARD-1801",
   "cache": "none",
   "maximumStaleness": 0,
   "kinds": [
@@ -13,7 +13,15 @@
       ],
       "classes": [
         "AppDbContextModelTests",
-        "C1514HostLoadMigrationTests"
+        "C1514HostLoadMigrationTests",
+        "AgentTaskLandHeldNotificationTests",
+        "AgentTaskLandNotificationPersistenceTests",
+        "DispatchBaseNotificationTests",
+        "RunnerDefaultMigrationTests",
+        "SessionRuntimeActionRoutingTests",
+        "StandingRestartEscalationTests",
+        "StandingSpecialistRoutingMigrationTests",
+        "WorktreeBaseSelectionTests"
       ],
       "derive": {
         "patterns": [
@@ -84,6 +92,142 @@
         "CheckpointReceiptSafetyTests",
         "CheckpointTerminalReceiptTests",
         "HostCleanupCheckpointReceiptTests"
+      ]
+    },
+    {
+      "id": "land-notification",
+      "globs": [
+        "server/Application/Services/AgentTaskLandNotification*.cs",
+        "server/Application/Services/LandNotificationReconcileQueries.cs"
+      ],
+      "classes": [
+        "AgentTaskLandHeldNotificationTests",
+        "AgentTaskLandNotificationParkFollowUpTests",
+        "AgentTaskLandNotificationPersistenceTests",
+        "AgentTaskLandNotificationReconcileLoadTests",
+        "AgentTaskLandNotificationRecoveryTests",
+        "AgentTaskLandNotificationRescanTests",
+        "AgentTaskLandReceiptWatermarkSafetyTests",
+        "AgentTaskLandReceiptWatermarkTests",
+        "ReceiptScanDestinationIntegrationTests"
+      ]
+    },
+    {
+      "id": "linux-only-policy",
+      "globs": [
+        "tests/test-execution-policy.json"
+      ],
+      "added": {
+        "glob": "tests/**",
+        "literals": [
+          "[NativeLinuxOnly("
+        ],
+        "removed": true
+      },
+      "methods": [
+        "ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy",
+        "ReleaseGatePlatformTests/C1686_LinuxOnlyCensus"
+      ]
+    },
+    {
+      "id": "host-stats",
+      "globs": [
+        "src/Antiphon.SessionRunner/HostStats*.cs"
+      ],
+      "classes": [
+        "RunnerCapabilitiesTests"
+      ]
+    },
+    {
+      "id": "server-git-start-sites",
+      "globs": [
+        "server/Infrastructure/Git/LandingGit.cs",
+        "server/Infrastructure/Git/GitService.cs",
+        "server/Infrastructure/Git/WorktreeManager.cs",
+        "server/Infrastructure/Git/CardFileRepository.cs",
+        "server/Application/Services/GitWorkspaceService.cs",
+        "server/Application/Services/DelegationWorktreeService.cs",
+        "server/Application/Services/DelegationWorkspaceResolver.cs",
+        "server/Application/Services/OrchestratorWorkspaceLayout.cs",
+        "server/Application/Services/AgentTaskReplyService.cs",
+        "server/Infrastructure/ExternalChanges/ChangeDetectionService.cs"
+      ],
+      "classes": [
+        "ServerGitProcessTests"
+      ]
+    },
+    {
+      "id": "server-image-push-credentials",
+      "globs": [
+        "tests/Antiphon.Tests/Infrastructure/ServerImagePushCredentialTests.cs",
+        "server/Infrastructure/Git/ServerGitIdentity.cs"
+      ],
+      "classes": [
+        "ServerImagePushCredentialTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "server-repository-mirror",
+      "globs": [
+        "scripts/server2-*.ps1",
+        "tests/Antiphon.Tests/Scripts/ServerRepositoryMirrorScriptTests.cs"
+      ],
+      "classes": [
+        "ServerRepositoryMirrorScriptTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "runner-read-poll",
+      "globs": [
+        "tests/Antiphon.Tests/Application/Card1761RunnerReadPollTests.cs",
+        "server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs"
+      ],
+      "classes": [
+        "Card1761RunnerReadPollTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "task-load-window",
+      "globs": [
+        "tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs",
+        "tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs"
+      ],
+      "classes": [
+        "C1514TaskLoadWindowTests"
+      ]
+    },
+    {
+      "id": "workspace-slot-role-gate",
+      "globs": [
+        "tests/Antiphon.Tests/Application/C0824SlotTransportWorld.cs"
+      ],
+      "classes": [
+        "C0824WorkspaceSlotRoleGateTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "land-graph-land-refresh",
+      "globs": [
+        "tests/Antiphon.Tests/Application/LandGraphLandRefreshTests.cs",
+        "scripts/land-graph-land-refresh.ps1"
+      ],
+      "classes": [
+        "LandGraphLandRefreshTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "test-selection",
+      "globs": [
+        "tests/Antiphon.Tests/Scripts/TestSelectionTests.cs",
+        "scripts/lib/nightly-core.ps1"
+      ],
+      "classes": [
+        "TestSelectionTests"
       ]
     }
   ]
