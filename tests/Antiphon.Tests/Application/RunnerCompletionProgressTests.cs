@@ -317,6 +317,39 @@ public sealed class RunnerCompletionProgressTests
         (await world.HeadAsync()).ShouldBe(world.Baseline);
     }
 
+    /// <summary>
+    /// CARD-1805 (A-3). The unfetched gate reads absence, never an error: the same read failing as an
+    /// unreadable repository (git exit 128) is the unverified residual, which blocks a Code report,
+    /// not the unfetched tip the sweep fetches. A genuinely missing object stays unfetched.
+    /// </summary>
+    [Test]
+    public async Task C1805_UnfetchedGateTreatsARepositoryErrorAsUnverified()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        world.Git.Clear();
+        var prepared = Pending(world, s, descends: null);
+
+        world.Git.FailCommand = args => args.Any(a => a.StartsWith(s, StringComparison.Ordinal))
+            ? new LandingGitResult(128, "", "fatal: not a git repository (or any of the parent directories): .git")
+            : null;
+        var broken = await Evaluator(world).EvaluateAsync(world.Task, "Done.", prepared, CancellationToken.None);
+        broken.IsIndeterminate.ShouldBeTrue(broken.Reason);
+        broken.Reason.ShouldBe(RemoteSettlementSyncReasons.ProgressUnverified);
+        broken.IsProgress.ShouldBeFalse();
+
+        world.Git.FailCommand = null;
+        world.Git.Clear();
+        var absent = await Evaluator(world).EvaluateAsync(world.Task, "Done.", prepared, CancellationToken.None);
+        absent.IsIndeterminate.ShouldBeTrue(absent.Reason);
+        absent.Reason.ShouldBe(RemoteSettlementSyncReasons.SourceUnfetched);
+        world.Git.Commands.ShouldContain("cat-file -e " + s);
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
     [Test]
     public async Task Missing_remote_sync_dependency_is_unavailable()
     {

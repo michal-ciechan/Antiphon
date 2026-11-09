@@ -497,6 +497,45 @@ public sealed class RunnerTaskSettlementTests
         }
     }
 
+    /// <summary>
+    /// CARD-1805 (A-1). Bind-refusal recovery has no correlated report, so lease contention there is
+    /// not the CARD-1802 case: with sync debt on, a recovery whose evidence names the observed tip still
+    /// blocks on runner_sync_lease_busy with no debt row, keeps the session and the workspace, and its
+    /// handoff asks for the correlated completion report that settles it. The docs name this exception.
+    /// </summary>
+    [Test]
+    public async Task C1805_BindRefusalRecoveryUnderLeaseContentionStaysBlockedWithoutDebt()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        (await world.Git.HasObjectAsync(s)).ShouldBeFalse();
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var recover = world.RecoverThroughWatchdogAsync($"Implemented and pushed {s}.");
+            await FinishBusySettleAsync(world, recover, world.LeaseBusy.First);
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Task.FailureCode.ShouldBeNull();
+        world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.NextHandoff!.ShouldContain("fresh completion report");
+        world.Task.Result!.ShouldContain(RemoteSettlementSyncReasons.LeaseBusy);
+        var sync = world.Evidence()!.RemoteSync!;
+        sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        sync.ObservedSha.ShouldBe(s);
+        sync.ConfirmedSha.ShouldBeNull();
+        await AssertNoDebtAsync(world);
+        var events = await world.EventsAsync();
+        events.ShouldContain(e => e.Type == AgentTaskEventType.Blocked);
+        events.ShouldNotContain(e => e.Type == AgentTaskEventType.Merged || e.Type == AgentTaskEventType.Completed);
+        events.ShouldNotContain(e => e.Detail.Contains("Runner sync pending", StringComparison.Ordinal));
+        world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        Directory.Exists(world.Git.Worktree).ShouldBeTrue();
+    }
+
     [Test]
     public async Task Runner_sync_block_commits_the_completion_obligation()
     {

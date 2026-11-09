@@ -108,7 +108,8 @@ public class RunnerBranchContractDocumentationTests
     [Test]
     public void C1802_rule_six_and_the_sync_debt_design_agree()
     {
-        const string canonical = "Lease contention alone never leaves Pending evidence without a debt row (CARD-1802).";
+        const string canonical =
+            "Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802).";
         const string stale = "Pending evidence without a debt row means the task stayed Blocked and a reply is required.";
 
         var loop = Read("docs/orchestration-loop.md").Replace("\r\n", "\n");
@@ -144,6 +145,50 @@ public class RunnerBranchContractDocumentationTests
         foreach (var reason in named)
             constants.ShouldContain(reason, "c1802-rule-6-constant:" + reason);
         design.ShouldContain("the sweep fetches", Case.Sensitive, "c1802-design-fetches");
+    }
+
+    /// <summary>
+    /// CARD-1805 (A-1..A-3). The CARD-1802 sentences cover a correlated complete report only. Bind-refusal
+    /// recovery has no correlated report and keeps its lease-busy block (rule 6, the design, ops, the
+    /// runtime invariants and the delegate.ps1 status line say so); the unfetched arm's unverified claim
+    /// is a documented residual; and the unfetched gate's presence read separates absence from an error.
+    /// </summary>
+    [Test]
+    public void C1805_bind_refusal_recovery_and_the_unfetched_residual_are_documented()
+    {
+        const string recovery = "Bind-refusal recovery has no correlated report, so its lease-contention result stays "
+            + "Blocked on runner_sync_lease_busy with no debt row, and its handoff asks for the correlated completion "
+            + "report that settles it (CARD-1805).";
+        const string residual = "An unfetched owned tip settles with the report's claimed commit unverified: the sweep "
+            + "fetches S and fast-forwards but never re-checks the claim, so a claimed commit that is not on S is not "
+            + "caught after settlement; CARD-1109's attestation upgrade would close it (CARD-1805).";
+        const string gate = "The unfetched gate reads object presence with git cat-file -e: only exit 1 is an unfetched "
+            + "tip, and any other failure, such as an unreadable repository, is runner_sync_progress_unverified (CARD-1805).";
+        const string scriptClause = "a bind-refusal recovery has no correlated report, so its handoff asks for one (CARD-1805).";
+
+        var loop = Read("docs/orchestration-loop.md").Replace("\r\n", "\n");
+        var rule6 = Slice(loop, "6. **Do not Reply", "7. **Master lands", "c1805-rule-6");
+        var design = Line(loop, "CARD-1082. Delegation:RunnerSyncDebtOnSettlement", "c1805-design");
+        var ops = Line(Read("docs/ops-http.md").Replace("\r\n", "\n"), "| Settlement sync debt (CARD-1082) |", "c1805-ops");
+        var runtime = Line(Read("docs/session-runtime-invariants.md").Replace("\r\n", "\n"),
+            "CARD-1082. Delegation:RunnerSyncDebtOnSettlement", "c1805-runtime");
+        var script = Line(Read("scripts/delegate.ps1").Replace("\r\n", "\n"),
+            "Write-Output 'Pending evidence without a debt row", "c1805-script");
+
+        foreach (var (text, label) in new[] { (rule6, "c1805-rule-6"), (design, "c1805-design"), (ops, "c1805-ops"),
+            (runtime, "c1805-runtime") })
+            Pin(text, recovery, label + "-recovery");
+        Pin(design, residual, "c1805-design-residual");
+        Pin(runtime, residual, "c1805-runtime-residual");
+        Pin(design, gate, "c1805-design-gate");
+        Pin(script, scriptClause, "c1805-script-recovery");
+        rule6.ShouldContain("never Blocks a correlated complete report", Case.Sensitive, "c1805-rule-6-narrowed");
+        rule6.ShouldNotContain("never Blocks a complete report at all", Case.Sensitive, "c1805-rule-6-over-broad");
+        design.ShouldContain("For a correlated report, Pending evidence without a debt row means the progress read, not the lease",
+            Case.Sensitive, "c1805-design-narrowed");
+        ops.ShouldContain("is the progress-blocked case for a correlated report:", Case.Sensitive, "c1805-ops-narrowed");
+        recovery.ShouldContain(RemoteSettlementSyncReasons.LeaseBusy, Case.Sensitive, "c1805-recovery-reason");
+        gate.ShouldContain(RemoteSettlementSyncReasons.ProgressUnverified, Case.Sensitive, "c1805-gate-reason");
     }
 
     private static string Slice(string text, string start, string end, string label)
@@ -336,7 +381,7 @@ public class RunnerBranchContractDocumentationTests
         "A debt row is created only for the lease-contention case of a complete report that settles Succeeded or Failed.",
         "Dirty, diverged and rewound Code stay Blocked with no debt row; an unfetched owned tip under lease contention is Pending with a debt row, and the sweep fetches its objects under the lease before the fast-forward (CARD-1802).",
         "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked.",
-        "A Blocked Pending settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending, and its block reason is never runner_sync_lease_busy (runner_sync_progress_unverified when the progress read gave no reason).",
+        "For a correlated report, a Blocked Pending settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending, and its block reason is never runner_sync_lease_busy (runner_sync_progress_unverified when the progress read gave no reason).",
         "Pending evidence without a debt row means the progress read, not the lease, blocked the task; repair what the handoff names, then reply.",
         "desktop-sync=pending",
         "synced later",
