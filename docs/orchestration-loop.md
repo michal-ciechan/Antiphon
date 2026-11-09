@@ -777,6 +777,8 @@ The overnight "rc batch" procedure, as practised 2026-10-24, repairs completed
    reviewed integration step under [release gates](release-gates.md#the-release-line),
    including the prerequisite-chain and startup-path gates; a master land is not activation.
 
+A post-land summary with new reds gets one Debug per new class under the rc run-group repair loop, before the rc cut, and the Windows qualification is left running.
+
 Condensed task-brief template: CARD-1514 group 37, task `22bd72e0`
 (`GET /api/agent-tasks/22bd72e0` supplies the original goal). Replace run evidence,
 class roster and sibling exclusions for each dispatch; the DO list above remains mandatory:
