@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -490,7 +491,8 @@ public sealed class PwshPrivateCacheTests
         }
     }
 
-    // The presence hook stands in for kill(pid, 0) returning EPERM: stat is gone, the pid exists.
+    // The presence hook must win even when the real pid is already dead. Ignoring the hook
+    // and calling kill deletes this cache.
     [Test]
     [Timeout(60_000)]
     public void A_hidden_proc_stat_keeps_a_live_owner()
@@ -506,6 +508,35 @@ public sealed class PwshPrivateCacheTests
                 Antiphon.Hosting.PwshPrivateCache.ProcStatReader = _ => throw new FileNotFoundException("stat");
                 Antiphon.Hosting.PwshPrivateCache.LinuxProcessPresence = _ => true;
                 var kept = Seed(root, "antiphon-pwsh-cache-eperm-" + Guid.NewGuid().ToString("N"), dead.ToString(CultureInfo.InvariantCulture));
+                Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
+                File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
+            }
+            finally
+            {
+                ClearProcSeams();
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    // kill(pid, 0) EPERM for another user's live pid, with the stat unreadable, keeps the cache.
+    // ESRCH is the only errno that means gone. Success is covered by the live-process witness.
+    [Test]
+    [Timeout(60_000)]
+    public void A_eperm_for_a_live_foreign_pid_keeps_the_cache()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("kill(pid, 0) EPERM is Linux-only.");
+        lock (SeamGate)
+        {
+            var root = Directory.CreateTempSubdirectory("c1813-eperm-").FullName;
+            try
+            {
+                const int foreign = 1;
+                _ = Process.GetProcessById(foreign);
+                RequireEperm(foreign);
+                Antiphon.Hosting.PwshPrivateCache.ProcStatReader = _ => throw new FileNotFoundException("stat");
+                var kept = Seed(root, "antiphon-pwsh-cache-foreign-" + Guid.NewGuid().ToString("N"), foreign.ToString(CultureInfo.InvariantCulture));
                 Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
                 File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
             }
@@ -634,6 +665,20 @@ public sealed class PwshPrivateCacheTests
             text.Contains(hardCodedDirectories, StringComparison.Ordinal).ShouldBeFalse(file);
             text.Contains(hardCodedFull, StringComparison.Ordinal).ShouldBeFalse(file);
         }
+    }
+
+    private const int Eperm = 1;
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int ProbeKill(int pid, int signal);
+
+    private static void RequireEperm(int pid)
+    {
+        if (ProbeKill(pid, 0) == 0)
+            throw new InvalidOperationException($"This host can signal pid {pid}, so kill did not return EPERM.");
+        var errno = Marshal.GetLastPInvokeError();
+        if (errno != Eperm)
+            throw new InvalidOperationException($"kill({pid}, 0) errno {errno} is not EPERM.");
     }
 
     private static void ClearProcSeams()
