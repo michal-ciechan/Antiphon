@@ -94,9 +94,7 @@ public sealed class Card1277PtyHostFixtureTests
                 .ShouldBeTrue("fakeclaude banner missing. screen=" + runner.SnapshotText());
             await DeliverTwoWriteAsync(runner, prompt);
 
-            var jsonl = await PollFileAsync(transcript,
-                t => t.Contains("\"type\":\"user\"", StringComparison.Ordinal) || t.Contains("\"type\": \"user\"", StringComparison.Ordinal),
-                TimeSpan.FromSeconds(8));
+            var jsonl = await PollFileAsync(transcript, ClaudeTurnRecorded, TimeSpan.FromSeconds(8));
             var screen = runner.SnapshotText();
             var parts = NormalizeClaude(jsonl);
             var user = string.Join("\n", parts.Where(p => p.Kind == TranscriptKinds.UserPrompt).Select(p => p.Text));
@@ -117,6 +115,20 @@ public sealed class Card1277PtyHostFixtureTests
             try { Directory.Delete(root, recursive: true); } catch (IOException) { }
         }
     }
+
+    /// <summary>
+    /// Run 231f573c (Windows): the poll woke between fakeclaude's user append and its assistant
+    /// append, so the assistant assert saw an empty reply. This is the captured JSONL.
+    /// </summary>
+    [Test]
+    public void Claude_wait_does_not_end_on_the_user_record_alone()
+    {
+        const string userOnly = "{\"type\":\"user\",\"uuid\":\"674ff261-171f-478d-800c-88b0f6a840d7\",\"timestamp\":\"2026-11-09T05:44:56.7264237Z\",\"message\":{\"role\":\"user\",\"content\":\"[antiphon-channel:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] queued-channel-recovery-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}\n";
+        ClaudeTurnRecorded(userOnly).ShouldBeFalse("the wait ended before the assistant record the test asserts on");
+    }
+
+    internal static bool ClaudeTurnRecorded(string jsonl) =>
+        jsonl.Contains("\"type\":\"user\"", StringComparison.Ordinal) || jsonl.Contains("\"type\": \"user\"", StringComparison.Ordinal);
 
     private static (string Prompt, string Nonce) ChannelWire()
     {
