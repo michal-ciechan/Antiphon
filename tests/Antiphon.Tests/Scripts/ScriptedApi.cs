@@ -12,14 +12,14 @@ internal class ScriptedApi : IDisposable
 {
     internal sealed record Request(string Method, string Path, JsonElement? Body);
     private sealed record Response(string Method, string Prefix, int Status, string Body);
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly Task _pump;
     private readonly ConcurrentQueue<Request> _requests = new();
     private readonly List<Response> _responses = [];
 
     public ScriptedApi()
     {
-        BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+        BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
         _pump = Task.Run(PumpAsync);
     }
 

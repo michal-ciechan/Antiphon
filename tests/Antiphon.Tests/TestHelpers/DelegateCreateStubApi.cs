@@ -6,7 +6,7 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal sealed class DelegateCreateStubApi : IDisposable
 {
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _pump;
     private readonly string _responseJson;
@@ -20,7 +20,7 @@ internal sealed class DelegateCreateStubApi : IDisposable
             {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
              "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode"}
             """;
-        BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+        BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
         _pump = Task.Run(PumpAsync);
     }
 

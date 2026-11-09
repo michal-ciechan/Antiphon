@@ -192,7 +192,7 @@ public sealed class CommitOnSettleScriptTests
 
     private sealed class CommitApiStub : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly int _status;
@@ -202,7 +202,7 @@ public sealed class CommitOnSettleScriptTests
         {
             _status = status;
             _response = response;
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 
@@ -251,13 +251,13 @@ public sealed class CommitOnSettleScriptTests
         public static readonly (string Name, string GitUrl, string BaseBranch) Canned =
             ("antiphon", "https://example.test/antiphon.git", "master");
 
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
 
         public ProjectApiStub()
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

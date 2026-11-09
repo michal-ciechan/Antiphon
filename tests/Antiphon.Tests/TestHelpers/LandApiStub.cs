@@ -12,7 +12,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 internal sealed class LandApiStub : IAsyncDisposable
 {
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly Task _pump;
     private readonly ConcurrentQueue<LandApiCall> _requests = new();
     private int _legacyLandPosts;
@@ -20,7 +20,7 @@ internal sealed class LandApiStub : IAsyncDisposable
     internal LandApiStub(LandApiStubOptions options)
     {
         Options = options;
-        Url = EphemeralHttpListener.BindLoopback(_listener);
+        Url = EphemeralHttpListener.BindLoopback(out _listener);
         _pump = Task.Run(PumpAsync);
     }
 

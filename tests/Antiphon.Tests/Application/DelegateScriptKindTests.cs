@@ -668,7 +668,7 @@ public sealed class DelegateScriptKindTests
     /// </summary>
     private sealed class StubApi : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly string _agentKind;
@@ -685,7 +685,7 @@ public sealed class DelegateScriptKindTests
             _mode = mode;
             _createJson = createJson;
             _createStatusCode = createStatusCode;
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

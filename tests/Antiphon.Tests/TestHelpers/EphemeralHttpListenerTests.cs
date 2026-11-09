@@ -22,7 +22,7 @@ public sealed class EphemeralHttpListenerTests
         HttpListener? listener = null;
         try
         {
-            listener = EphemeralHttpListener.StartLoopback(out var baseUrl, () => attempts++ == 0
+            var baseUrl = EphemeralHttpListener.BindLoopback(out listener, () => attempts++ == 0
                 ? new EphemeralHttpListener.PortReservation(stolen, () => { })
                 : EphemeralHttpListener.ReserveLoopbackPort());
 
@@ -53,13 +53,14 @@ public sealed class EphemeralHttpListenerTests
         var attempts = 0;
         try
         {
-            var error = Should.Throw<InvalidOperationException>(() => EphemeralHttpListener.StartLoopback(out _, () =>
+            var error = Should.Throw<InvalidOperationException>(() => EphemeralHttpListener.BindLoopback(out _, () =>
             {
                 attempts++;
                 return new EphemeralHttpListener.PortReservation(stolen, () => { });
             }));
 
             attempts.ShouldBe(8);
+            error.GetType().ShouldBe(typeof(InvalidOperationException), "a disposed-listener retry is an ObjectDisposedException, not the exhausted bind");
             error.InnerException.ShouldBeOfType<HttpListenerException>();
         }
         finally

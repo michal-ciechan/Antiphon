@@ -19,7 +19,7 @@ public class CardFileBootstrapCheckTests
     public async Task Actual_bootstrap_privacy_probe_only_GETs_stub_and_warns_without_repair(string json, string level, string expected)
     {
         var root = Directory.CreateTempSubdirectory("c408-bootstrap").FullName;
-        using var listener = new HttpListener(); var url = EphemeralHttpListener.BindLoopback(listener);
+        var url = EphemeralHttpListener.BindLoopback(out var bound); using var listener = bound;
         var pump = Task.Run(async () => {
             var request = await listener.GetContextAsync();
             request.Request.HttpMethod.ShouldBe("GET"); request.Request.Url!.AbsolutePath.ShouldBe("/api/projects");

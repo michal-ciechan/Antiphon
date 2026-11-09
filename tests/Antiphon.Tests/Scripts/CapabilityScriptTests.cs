@@ -84,7 +84,7 @@ public sealed class CapabilityScriptTests
 
     private sealed class IssueStub : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly string _payload;
@@ -99,7 +99,7 @@ public sealed class CapabilityScriptTests
                  "token":"{{token}}","storePath":"C:\\\\hint\\\\{{name}}.dpapi",
                  "createdAt":"2026-09-05T00:00:00Z","lastUsedAt":null,"rotatedAt":null,"revokedAt":null}
                 """;
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

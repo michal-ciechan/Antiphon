@@ -4,63 +4,41 @@ using System.Net.Sockets;
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
-/// Bind an <see cref="HttpListener"/> on loopback. HttpListener cannot take a
+/// Start an <see cref="HttpListener"/> on loopback. HttpListener cannot take a
 /// pre-opened socket, so the probe is held until the last moment and bind is
-/// retried if the port is stolen in the remaining gap.
+/// retried if the port is stolen in the remaining gap. A failed Start closes its
+/// listener, so every attempt binds a fresh one (CARD-1808).
 /// </summary>
 internal static class EphemeralHttpListener
 {
-    public static string BindLoopback(HttpListener listener)
+    public static string BindLoopback(out HttpListener listener) => BindLoopback(out listener, ReserveLoopbackPort);
+
+    /// <summary>Seam: <paramref name="reserve"/> yields each attempt's port and the release of its hold.</summary>
+    internal static string BindLoopback(out HttpListener listener, Func<PortReservation> reserve)
     {
         HttpListenerException? last = null;
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            var baseUrl = $"http://localhost:{port}/";
-            listener.Prefixes.Clear();
-            listener.Prefixes.Add(baseUrl);
+            var reservation = reserve();
+            var baseUrl = $"http://localhost:{reservation.Port}/";
+            var candidate = new HttpListener();
+            candidate.Prefixes.Add(baseUrl);
             try
             {
-                probe.Stop();
-                listener.Start();
+                reservation.Release();
+                candidate.Start();
+                listener = candidate;
                 return baseUrl;
             }
             catch (HttpListenerException ex)
             {
                 last = ex;
-                try { probe.Stop(); }
-                catch (Exception) { /* already stopped */ }
+                candidate.Close();
             }
-        }
-
-        throw new InvalidOperationException("Failed to bind an ephemeral HttpListener on loopback.", last);
-    }
-
-    /// <summary>Start a listener on a free loopback port.</summary>
-    public static HttpListener StartLoopback(out string baseUrl) => StartLoopback(out baseUrl, ReserveLoopbackPort);
-
-    /// <summary>Seam: <paramref name="reserve"/> yields each attempt's port and the release of its hold.</summary>
-    internal static HttpListener StartLoopback(out string baseUrl, Func<PortReservation> reserve)
-    {
-        var listener = new HttpListener();
-        HttpListenerException? last = null;
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            var reservation = reserve();
-            baseUrl = $"http://localhost:{reservation.Port}/";
-            listener.Prefixes.Clear();
-            listener.Prefixes.Add(baseUrl);
-            try
+            catch
             {
-                reservation.Release();
-                listener.Start();
-                return listener;
-            }
-            catch (HttpListenerException ex)
-            {
-                last = ex;
+                candidate.Close();
+                throw;
             }
         }
 
