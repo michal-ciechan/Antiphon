@@ -138,11 +138,11 @@ Mutants, one per witness, restored before the slice commit:
 
 ### Checkpoints
 
-totalTimeoutMinutes: 120
+totalTimeoutMinutes: 102
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1695-cwd/ | cwd | `/*/*/StandingRunnerCwdTests/*` | V-1, V-2, V-3, V-4 | 4 executed, 0 failed, 0 skipped | 4 | 10 |
+| CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1695-cwd/ | cwd | `/*/*/StandingRunnerCwdTests/*` | V-1, V-2, V-3, V-4 | 16 executed, 0 failed, 0 skipped | 16 | 1 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1695-policy/ | policy | `/*/*/(StandingRunnerLaunchTests*)\|(PhoneHomeStandingLaunchTests*)/*` | V-5, V-6, V-7, V-8, V-9, R-1 | 21 executed, 0 failed, 0 skipped | 21 | 15 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1695-restart/ | restart | `/*/*/StandingRunnerRestartTests/*` | V-10, V-11, V-12 | 3 executed, 0 failed, 0 skipped | 3 | 15 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1695-docs/ | docs | `/*/*/(StandingRunnerOrchestratorDocTests*)\|(Server2SidecarStandingAgentsTests*)\|(DockerStackDocumentationTests*)/*` | V-13, R-2 | 27 executed, 0 failed, 0 skipped | 27 | 15 |
@@ -157,11 +157,11 @@ Expected execution, separate from build-slot queue wait (CARD-1531). Slot wait i
 
 | Row | Expected execution | Importer kill deadline | What the time is |
 |---|---:|---:|---|
-| CP-1 | 10 min | 30 min (`max(15, 3×10)`) | Cold `Antiphon.SessionRunner.Tests` build plus 4 lexical tests. No IO. |
+| CP-1 | 1 min | 15 min (`max(15, 3×1)`) | Cold `Antiphon.SessionRunner.Tests` build plus 16 lexical tests. No IO. One sample: build about 45s, tests about 2s. Not a p95. |
 | CP-2 | 15 min | 45 min | Cold `Antiphon.Tests` build plus 5 policy tests and 16 integration tests. |
 | CP-3 | 15 min | 45 min | Cold `Antiphon.Tests` build plus 3 supervisor tests on fakes. |
 | CP-4 | 15 min | 45 min | Cold `Antiphon.Tests` build plus 27 text tests. |
-| Run | 55 min sum | 120 min explicit | `2 × 55 + 10`. Matches `DeriveMinimumTotalMinutes`. |
+| Run | 46 min sum | 102 min explicit | `2 × 46 + 10`. Matches `DeriveMinimumTotalMinutes`. |
 
 The importer's 3× kill deadline is not the R5 budget (CARD-1720). R5 wants about 2× a measured p95, and there is no p95 yet. The 15-minute estimates are also the ceiling that keeps `3 × EstimatedMinutes` from crossing the importer's 45-minute advisory. A measured row over 15 minutes is split (same `After`, `Build: CP-n` on the second row) instead of raising one cell past 15. A row whose execution approaches 30 minutes is a Debug obligation under the performance standards. Do not run the full `Antiphon.Tests` suite (about 25.5 minutes, CARD-0110).
 
@@ -177,7 +177,7 @@ None. Latest on this tree: `20261108121426_Card1773TranscriptPromptStampIndex`. 
 
 Each slice is one commit, then the checkpoint row for that `After`. Budget 60–120 minutes of implementation each.
 
-- S1. Runner cwd admission (about 75 minutes). Add `RunnerWorkspaceAdmission` and forward `RunnerWorkspaceCwd`. Extend the dispatcher message. Add `tests/Antiphon.SessionRunner.Tests/StandingRunnerCwdTests.cs` with the four methods V-1 through V-4. See V-1 red before the forwarder admits the agents segment. CP-1.
+- S1. Runner cwd admission (about 75 minutes). Add `RunnerWorkspaceAdmission` and forward `RunnerWorkspaceCwd`. Extend the dispatcher message. Add `tests/Antiphon.SessionRunner.Tests/StandingRunnerCwdTests.cs` with the four methods V-1 through V-4, plus adversarial segment methods (dot, empty, trailing slash, Linux case, name-max, controls, unicode lookalikes, absolute-looking, backslash, unresolved parent). See V-1 red before the forwarder admits the agents segment. CP-1 Min is the whole class.
 - S2. Policy and start wiring (about 110 minutes). `PhoneHomeLaunchPolicy` standing exception and projection. `AgentControlService` host-path skip and `RunnerCwd`. `AgentService` create and PATCH refusals, including `phone_home_cwd_host_refused`. Add `tests/Antiphon.Tests/Application/StandingRunnerLaunchTests.cs` (`[Category("Unit")]`, five methods covering V-5 through V-8). Add `Standing_checkout_starts_without_a_host_directory` to `PhoneHomeStandingLaunchTests`. CP-2. Min 21 is 5 new plus 15 existing plus 1 new.
 - S3. Supervisor reachability (about 100 minutes). Optional liveness parameter, directory-backed implementation, DI registration, desktop-outage split, and the draining/retired no-charge catch. Add `tests/Antiphon.Tests/Application/StandingRunnerRestartTests.cs` (`[Category("Integration")]`, not Slow, three methods, V-10 through V-12) using a fake `IPhoneHomeRunnerLiveness`. Do not add methods to `StandingRestartEscalationTests`. CP-3.
 - S4. Docs and pins (about 90 minutes). Edit `docs/agent-kinds.md` (phone-home paragraphs around lines 30-47): standing checkout, AlwaysOn only for that shape, create body (`runnerId`, `workingDirectory`, `alwaysOn`, `sessionBackend: PtyHost`, `remoteControlEnabled: false`, empty Herdr labels, `createWorkingDirectory: false`), memory under `CLAUDE_CONFIG_DIR=/state/claude`, instructions file `/work/.antiphon/orchestrator-instructions.md` with the URL fallback, and the `pwsh` delegate command. Keep remote control and credential refusals. Edit the CARD-1695 sentence in `docs/docker-stack.md` (around line 994) to say the phone-home runner admits the same `/work/agents/<name>` checkout and this compose does not implement that gate. Keep the literal `CARD-1695` and do not add `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` to that section. Add one paragraph to `docs/orchestration-loop.md` after the human-only list (line 84): the phone-home standing orchestrator is PtyHost in `/work/agents/<name>`, the supervisor restarts a dead process, and killing AlwaysOn agents stays human-only. Add one sentence to `docs/herdr-sessions.md` section 1 (around lines 99-102) or section 6: phone-home standing agents are PtyHost, and Herdr remains the desktop runner. Add `StandingRunnerOrchestratorDocTests` with four `[Test]` methods (V-13). No new doc file. CP-4.
