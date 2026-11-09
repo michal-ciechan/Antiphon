@@ -239,6 +239,11 @@ public sealed class RunnerWorktreeRetentionService
                 await kill.ExecuteScalarAsync(CancellationToken.None);
             }
         }
+        catch (Exception ex) when (IsAdminShutdown(ex))
+        {
+            // CARD-1815 (A-2). pg_terminate_backend(pg_backend_pid()) succeeds by killing this backend, and PostgreSQL
+            // reports that kill as FATAL 57P01. The exception is the break working, not a failed break.
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(
@@ -256,6 +261,18 @@ public sealed class RunnerWorktreeRetentionService
                 "Runner worktree retention tick lock pool clear failed tick={TickId}: {Reason}",
                 TickLockKey, ex.Message);
         }
+    }
+
+    /// <summary>CARD-1815 (A-2). True when <paramref name="exception"/> is PostgreSQL admin shutdown (SQLSTATE 57P01).</summary>
+    private static bool IsAdminShutdown(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.AdminShutdown })
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
