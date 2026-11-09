@@ -150,7 +150,7 @@ public sealed class DelegateScriptCapabilityTests
 
     private sealed class StubApi : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly int _status;
@@ -161,7 +161,7 @@ public sealed class DelegateScriptCapabilityTests
             _status = statusCode;
             _payload = Encoding.UTF8.GetBytes(
                 body ?? """{"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111","status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode"}""");
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

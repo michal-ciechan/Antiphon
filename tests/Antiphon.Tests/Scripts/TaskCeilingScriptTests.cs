@@ -398,14 +398,14 @@ public sealed class TaskCeilingScriptTests
     /// <summary>Records every request; unrouted paths answer 404 and stay recorded, so a stray POST is visible.</summary>
     private sealed class CeilingStubApi : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly ConcurrentQueue<StubRequest> _requests = new();
         private readonly Task _pump;
 
         public CeilingStubApi()
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

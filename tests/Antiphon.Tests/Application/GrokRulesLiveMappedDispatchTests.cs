@@ -172,9 +172,9 @@ public sealed class GrokRulesLiveMappedDispatchTests
     }
     internal sealed class MappedForwarder:IDisposable
     {
-        private readonly HttpListener listener=new();private readonly HttpClient client;private readonly Task pump;
+        private readonly HttpListener listener;private readonly HttpClient client;private readonly Task pump;
         public string BaseUrl { get; }
-        public MappedForwarder(HttpClient http) { client=http;BaseUrl=EphemeralHttpListener.BindLoopback(listener);pump=Task.Run(RunAsync); }
+        public MappedForwarder(HttpClient http) { client=http;BaseUrl=EphemeralHttpListener.BindLoopback(out listener);pump=Task.Run(RunAsync); }
         private async Task RunAsync()
         {
             while(listener.IsListening)

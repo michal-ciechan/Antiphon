@@ -116,7 +116,7 @@ public class DelegateScriptWorktreeBaseTests
         {
             Converters = { new JsonStringEnumConverter() },
         };
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _pump;
         private readonly ServiceProvider _provider;
@@ -126,7 +126,7 @@ public class DelegateScriptWorktreeBaseTests
         {
             _provider = provider;
             _callerDirectory = callerDirectory;
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

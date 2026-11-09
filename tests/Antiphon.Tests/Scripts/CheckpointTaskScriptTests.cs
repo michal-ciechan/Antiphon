@@ -133,7 +133,7 @@ public sealed class CheckpointTaskScriptTests
 
     private sealed class StubApi : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly string _dir;
@@ -143,7 +143,7 @@ public sealed class CheckpointTaskScriptTests
         {
             _dir = workingDirectory.Replace('\\', '/');
             _extra = extraOpenTaskOnSameDir;
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

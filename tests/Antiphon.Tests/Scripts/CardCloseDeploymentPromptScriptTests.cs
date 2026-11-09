@@ -108,7 +108,7 @@ public sealed class CardCloseDeploymentPromptScriptTests
 
     private sealed class StubApi : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly bool _includeSettlement;
@@ -118,7 +118,7 @@ public sealed class CardCloseDeploymentPromptScriptTests
         {
             _includeSettlement = includeSettlement;
             _failPatch = failPatch;
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

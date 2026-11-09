@@ -197,10 +197,10 @@ public sealed class CardFilePrivacyScriptTests
 
     private sealed class Api(string visibility = "Private", bool eligible = false, string? reason = "board_not_opted_in") : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private HttpListener? _listener;
         private Task? _pump;
         private string? _url;
-        public string Url { get { if (_url is null) { _url = EphemeralHttpListener.BindLoopback(_listener); _pump = Pump(); } return _url; } }
+        public string Url { get { if (_url is null) { _url = EphemeralHttpListener.BindLoopback(out var listener); _listener = listener; _pump = Pump(listener); } return _url; } }
         public int Writes { get; private set; }
         public JsonElement Body { get; private set; }
         public bool Reject { get; set; }
@@ -208,12 +208,12 @@ public sealed class CardFilePrivacyScriptTests
         public bool OmitStatus { get; set; }
         public int IntervalSeconds { get; set; } = 60;
         public string? Pending { get; set; }
-        private async Task Pump()
+        private async Task Pump(HttpListener listener)
         {
-            while (_listener.IsListening)
+            while (listener.IsListening)
             {
                 HttpListenerContext c;
-                try { c = await _listener.GetContextAsync(); } catch { return; }
+                try { c = await listener.GetContextAsync(); } catch { return; }
                 object response;
                 if (c.Request.Url!.AbsolutePath.EndsWith("/limits")) response = new { maxTitleLength = 300, maxDescriptionLength = 20000, maxReasonLength = 4000, maxActorLength = 200, maxPrivateNotesLength = 20000 };
                 else
@@ -235,6 +235,6 @@ public sealed class CardFilePrivacyScriptTests
                 c.Response.Close();
             }
         }
-        public void Dispose() { _listener.Close(); _pump?.GetAwaiter().GetResult(); }
+        public void Dispose() { _listener?.Close(); _pump?.GetAwaiter().GetResult(); }
     }
 }

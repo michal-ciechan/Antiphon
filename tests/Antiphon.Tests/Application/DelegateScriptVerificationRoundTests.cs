@@ -200,13 +200,13 @@ public sealed class DelegateScriptVerificationRoundTests
     {
         public const string Token = "c5440000-aaaa-bbbb-cccc-000000000001";
         private const string CardId = "c5440000-aaaa-bbbb-cccc-0000000000cc";
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
 
         public CardStubApi()
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

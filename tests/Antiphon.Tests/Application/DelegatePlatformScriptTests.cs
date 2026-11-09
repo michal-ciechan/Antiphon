@@ -124,13 +124,13 @@ public sealed class CardPlatformScriptTests
     {
         private const string CardId = "c7100000-aaaa-bbbb-cccc-0000000000cc";
         private const string Token = "c7100000-aaaa-bbbb-cccc-000000000001";
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
 
         public CardPlatformStub()
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 

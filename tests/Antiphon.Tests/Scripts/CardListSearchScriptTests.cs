@@ -31,7 +31,7 @@ public sealed class CardListSearchScriptTests
 
     internal sealed class Stub : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _pump;
         public readonly List<Call> Calls = [];
@@ -40,7 +40,7 @@ public sealed class CardListSearchScriptTests
 
         public Stub(string prefix = "")
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener).TrimEnd('/') + prefix;
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener).TrimEnd('/') + prefix;
             _pump = Task.Run(PumpAsync);
         }
 

@@ -103,7 +103,7 @@ public sealed class ProjectScriptWorkspaceTests
     private sealed class ProjectStub : IDisposable
     {
         public const string Id = "11111111-1111-1111-1111-111111111111";
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         public string BaseUrl { get; }
@@ -115,7 +115,7 @@ public sealed class ProjectScriptWorkspaceTests
 
         public ProjectStub()
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(out _listener);
             _pump = Task.Run(PumpAsync);
         }
 
