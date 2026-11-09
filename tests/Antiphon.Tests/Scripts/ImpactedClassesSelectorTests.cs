@@ -842,7 +842,8 @@ public sealed partial class ImpactedClassesSelectorTests
         using var json = JsonDocument.Parse(ran.Stdout);
         AssertSelected(json.RootElement, kind, needle, windows, also);
 
-        var mutant = ran.Stdout.Replace(needle, "MissingC1819" + needle, StringComparison.Ordinal);
+        // The replacement must not contain the needle: ShouldContain would still match a prefixed copy.
+        var mutant = ran.Stdout.Replace(needle, "DroppedC1819Selection", StringComparison.Ordinal);
         mutant.ShouldNotBe(ran.Stdout, needle);
         using var broken = JsonDocument.Parse(mutant);
         Should.Throw<ShouldAssertException>(() => AssertSelected(broken.RootElement, kind, needle, windows, also));
