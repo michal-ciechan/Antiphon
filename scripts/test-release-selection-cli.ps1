@@ -12,7 +12,7 @@ $root = New-C487Root $ResultsDirectory
 
 function Assert-RS([bool]$Ok, [string]$Name, [string]$Detail = '') { Assert-C487 $Ok ('RS ' + $Case + '.' + $Name) $Detail }
 
-function Invoke-RSGit([string]$Root, [string[]]$Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
+function Invoke-RSGit([string]$Root, [string[]]$Arguments) { return (Invoke-C487FixtureGit $Root $Arguments) }
 
 function Write-RSFile([string]$Root, [string]$Relative, [string]$Text) {
     $path = Join-Path $Root $Relative

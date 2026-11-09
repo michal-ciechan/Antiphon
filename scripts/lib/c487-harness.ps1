@@ -30,6 +30,19 @@ function Assert-C487 {
     else { Write-C487Fail $Name $Detail }
 }
 
+# Fixture repository setup (init, commit, clone) through the hardened git runner of test-selection.ps1. The
+# runner asks git for filter/textconv driver settings before every command; fixtures configure no drivers, so
+# that answer is reused for 60 s per directory while a fixture builds its repositories. The setting is restored
+# after each call: the code under test keeps its own.
+function Invoke-C487FixtureGit {
+    param([string]$Root, [string[]]$Arguments)
+    . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+    $saved = [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds
+    [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds = 60000
+    try { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
+    finally { [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds = $saved }
+}
+
 function New-C487Root {
     param([string]$ResultsDirectory)
     if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) {

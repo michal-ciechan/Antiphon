@@ -19,7 +19,7 @@ function Write-Fx($Root, $Relative, $Text) {
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
     [IO.File]::WriteAllText($path, $Text)
 }
-function Git-Fx($Root, $Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
+function Git-Fx($Root, $Arguments) { return (Invoke-C487FixtureGit $Root $Arguments) }
 function Same-Set($Actual, $Expected) { return ((@($Actual | Sort-Object -CaseSensitive) -join "`n") -ceq (@($Expected | Sort-Object -CaseSensitive) -join "`n")) }
 function Assert-Fx($Condition, $Label, $Detail = '') { Assert-C487 ([bool]$Condition) ('C1313 ' + $Label) $Detail }
 function Get-FxTreeDigest($Root) {

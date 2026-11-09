@@ -18,7 +18,7 @@ function Write-C1336File($Root, $Relative, $Text) {
 }
 
 function Git-C1336($Root, $Arguments) {
-    return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim()
+    return (Invoke-C487FixtureGit $Root $Arguments)
 }
 
 function Add-C1336Observer($Path, $Kind) {
