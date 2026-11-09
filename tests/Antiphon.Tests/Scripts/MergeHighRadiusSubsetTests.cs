@@ -215,6 +215,8 @@ public sealed class MergeHighRadiusSubsetTests
     {
         var imported = PlanTableImporter.ImportMarkdown("### Checkpoints\n\n" + table + "\n", "merge-process", isWindows: false);
         imported.ExitCode.ShouldBe(ExitCodes.Green, imported.Error);
+        // CARD-1801 D-1: a land row of more than four land classes warns; the documented rows import clean.
+        imported.Warnings.ShouldBeEmpty(string.Join("; ", imported.Warnings));
         var manifest = imported.Manifest.ShouldNotBeNull();
         manifest.Checkpoints.Count.ShouldBe(MergeRows.Length);
         foreach (var expected in MergeRows)
