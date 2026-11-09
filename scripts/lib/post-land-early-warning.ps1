@@ -175,6 +175,42 @@ function Test-PostLandPidAlive {
     }
 }
 
+function Get-PostLandProcessStartUtc {
+    param([int]$ProcessId)
+    try {
+        $proc = Get-Process -Id $ProcessId -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+    if ($null -eq $proc) { return $null }
+    try {
+        return $proc.StartTime.ToUniversalTime()
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-PostLandPidReused {
+    param([int]$ProcessId, $Doc)
+    if ($null -eq $Doc) { return $false }
+    if ($null -eq $Doc.PSObject.Properties['startedAt']) { return $false }
+    $text = [string]$Doc.startedAt
+    if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+    try {
+        $lockStart = [datetime]::Parse($text).ToUniversalTime()
+    }
+    catch {
+        return $false
+    }
+    $procStart = Get-PostLandProcessStartUtc $ProcessId
+    if ($null -eq $procStart) { return $false }
+    $limit = $lockStart.AddSeconds(2)
+    if ($procStart -gt $limit) { return $true }
+    return $false
+}
+
 function Get-PostLandLockKind {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
@@ -188,7 +224,10 @@ function Get-PostLandLockKind {
     $processId = 0
     try { $processId = [int]$doc.pid } catch { return 'stale' }
     if ($processId -eq $PID) { return 'ours' }
-    if (Test-PostLandPidAlive $processId) { return 'busy' }
+    if (Test-PostLandPidAlive $processId) {
+        if (Test-PostLandPidReused $processId $doc) { return 'stale' }
+        return 'busy'
+    }
     if ($null -eq $doc.PSObject.Properties['startedAt']) { return 'busy' }
     if ([string]::IsNullOrWhiteSpace([string]$doc.startedAt)) { return 'busy' }
     return 'stale'
@@ -231,7 +270,22 @@ function Enter-PostLandLock {
                     try { $delayMs = [int]$delayText } catch { $delayMs = 0 }
                     if ($delayMs -gt 0) { Start-Sleep -Milliseconds $delayMs }
                 }
-                try { Remove-Item -LiteralPath $Path -Force } catch { }
+                $claim = $Path + '.' + [string]$PID + '.' + [string]$attempt + '.reclaim'
+                $moved = $false
+                try {
+                    [IO.File]::Move($Path, $claim)
+                    $moved = $true
+                }
+                catch {
+                    $moved = $false
+                }
+                if (-not $moved) { continue }
+                $claimedKind = Get-PostLandLockKind $claim
+                if ($claimedKind -ne 'stale') {
+                    try { [IO.File]::Move($claim, $Path) } catch { }
+                    return $false
+                }
+                try { Remove-Item -LiteralPath $claim -Force } catch { }
                 continue
             }
             return $false
@@ -789,6 +843,10 @@ function Complete-PostLandOutcome {
             $shard.passed = $parsed.Passed
             $shard.failed = $parsed.Failed
             $shard.skipped = $parsed.Skipped
+            if ($parsed.Executed -eq 0) {
+                [void]$unknown.Add([string]$shard.id)
+                continue
+            }
             if ($null -ne $parsed.Failures) {
                 foreach ($name in $parsed.Failures) {
                     $label = [string]$name
@@ -914,9 +972,10 @@ function Write-PostLandReceipt {
 
 # POST_LAND_WARNING_SLOT_SCRIPT, when set, replaces scripts/build-slot.ps1.
 # The lane still invokes that path as pwsh -File <path> -Label post-land-early-warning -- <command>.
-# POST_LAND_WARNING_RECLAIM_DELAY_MS sleeps after a stale classification and before the reclaim.
+# Command stdout and stderr go to LogPath (or the host when LogPath is empty) and the function returns only the exit code.
+# POST_LAND_WARNING_RECLAIM_DELAY_MS sleeps after a stale classification and before the reclaim rename.
 function Invoke-PostLandSlot {
-    param([string[]]$Command)
+    param([string[]]$Command, [string]$LogPath)
     $shim = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_SHIM')
     if (-not [string]::IsNullOrWhiteSpace($shim)) {
         $parent = Split-Path -Parent $shim
@@ -960,15 +1019,24 @@ function Invoke-PostLandSlot {
     $slot = Join-Path $script:PostLandScriptsRoot 'build-slot.ps1'
     $slotOverride = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_SLOT_SCRIPT')
     if (-not [string]::IsNullOrWhiteSpace($slotOverride)) { $slot = $slotOverride }
+    $code = 1
     try {
-        & pwsh -NoProfile -NonInteractive -File $slot -Label 'post-land-early-warning' -- @Command
-        $code = $LASTEXITCODE
-        if ($null -eq $code) { return 1 }
-        return [int]$code
+        if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+            $logParent = Split-Path -Parent $LogPath
+            if (-not [string]::IsNullOrWhiteSpace($logParent)) {
+                $null = [IO.Directory]::CreateDirectory($logParent)
+            }
+            & pwsh -NoProfile -NonInteractive -File $slot -Label 'post-land-early-warning' -- @Command *>> $LogPath
+        }
+        else {
+            & pwsh -NoProfile -NonInteractive -File $slot -Label 'post-land-early-warning' -- @Command | Out-Host
+        }
+        if ($null -ne $LASTEXITCODE) { $code = [int]$LASTEXITCODE }
     }
     finally {
         if ($hasNative) { $PSNativeCommandUseErrorActionPreference = $saved }
     }
+    return $code
 }
 
 function Invoke-PostLandLane {
@@ -999,7 +1067,8 @@ function Invoke-PostLandLane {
     Push-Location $Repo
     try {
         $build = @('dotnet', 'build', 'tests/Antiphon.Tests', '--property:UseAppHost=false', '--nologo')
-        $buildExit = Invoke-PostLandSlot $build
+        $slotLog = Join-Path $tipDir 'slot.log'
+        $buildExit = Invoke-PostLandSlot -Command $build -LogPath $slotLog
         $Payload.buildExit = $buildExit
         if ($buildExit -eq 0 -and $null -ne $Payload.shards) {
             $launched = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -1019,7 +1088,7 @@ function Invoke-PostLandLane {
                 $started = [datetime]::UtcNow
                 $watch = [Diagnostics.Stopwatch]::StartNew()
                 $shardExit = 1
-                try { $shardExit = Invoke-PostLandSlot $run } catch { [Console]::Error.WriteLine($_.Exception.Message) }
+                try { $shardExit = Invoke-PostLandSlot -Command $run -LogPath $slotLog } catch { [Console]::Error.WriteLine($_.Exception.Message) }
                 $watch.Stop()
                 $shard.exit = $shardExit
                 $fresh = $false
