@@ -90,8 +90,8 @@ Build 08 is the known PtyHost `project.assets.json` race (`net9.0/linux-x64`) wh
 
 ## Other gates
 
-- `scripts/check-evidence-diff.ps1 -BaseRef ed162195eb07f0be8ae79868a9119266467ea6f4 -HeadRef HEAD` before this report: commits=5 entries=0 violations=0, exit 0. Re-run after this report commit.
-- `git fetch origin master` then `git merge-tree --write-tree origin/master HEAD`: exit 0, tree `8fbce983e1d7b17e231c4b475e1d7b7821513ec9`. `origin/master` is `7f0a8bb1f8542d75bb9d8654d43b0c6fabefb2a6` (moved past the task base). No overlap with the fix files. Not merged.
+- `scripts/check-evidence-diff.ps1 -BaseRef ed162195eb07f0be8ae79868a9119266467ea6f4 -HeadRef 6321d80db687b6ec42c384cb4ff4446ec9228706`: commits=5 entries=0 violations=0, exit 0. After this report was added, the same command against that later HEAD reported commits=6 entries=1 violations=0, exit 0.
+- `git fetch origin master` then `git merge-tree --write-tree origin/master 6321d80db687b6ec42c384cb4ff4446ec9228706`: exit 0, tree `8fbce983e1d7b17e231c4b475e1d7b7821513ec9`. `origin/master` is `7f0a8bb1f8542d75bb9d8654d43b0c6fabefb2a6` (moved past the task base). No overlap with the fix files. Not merged. The report commit merges clean as well.
 - OS-branch: csproj, sln, C#, tests, and the why-missed note are portable. This rebase has no plan file for the witness checker.
 - Audit tool build for the refresh: lease `16a6a5d8-3580-4f16-a47b-361e22b9e6bf` waited=0s held=9s, 0 errors. Output `tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/`.
 
