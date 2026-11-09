@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -11,7 +10,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// CARD-0391 S4: <see cref="ClaudeProjectTrust"/> is exact-key, never throws, never creates the
 /// file, and must not be pointed at the operator's real <c>~/.claude.json</c> from tests (D-6).
 /// </summary>
-public class ClaudeProjectTrustTests
+public partial class ClaudeProjectTrustTests
 {
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
@@ -154,31 +153,6 @@ public class ClaudeProjectTrustTests
         expected.ShouldNotContain('\\');
         ClaudeProjectTrust.ProjectKey(directory + System.IO.Path.DirectorySeparatorChar)
             .ShouldBe(expected);
-    }
-
-    [Test]
-    public void Seed_preserves_the_config_file_mode()
-    {
-        using var cfg = new TempConfig("""{"projects":{}}""");
-        if (OperatingSystem.IsWindows())
-            throw new SkipTestException("Unix file mode is not available on this host");
-
-        var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
-        File.SetUnixFileMode(cfg.Path, expected);
-
-        var directory = Directory.CreateTempSubdirectory("antiphon-trust-mode").FullName;
-        try
-        {
-            var result = ClaudeProjectTrust.Seed(directory, cfg.Path);
-            result.Outcome.ShouldBe(ClaudeProjectTrustOutcome.Seeded);
-            File.GetUnixFileMode(cfg.Path).ShouldBe(expected);
-            ClaudeProjectTrust.IsTrusted(directory, cfg.Path).ShouldBeTrue();
-        }
-        finally
-        {
-            ClaudeProjectTrust.Remove(directory, cfg.Path);
-            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
-        }
     }
 
     [Test]
