@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +56,69 @@ public class AntiphonAppFixtureHostPathTests
 
         Directory.Exists(interpreterDirectory).ShouldBeFalse(
             "fixture teardown left the check interpreter directory behind");
+    }
+
+    /// <summary>
+    /// CARD-1797: provisioning the check interpreter seeds Claude trust for its directory. Each boot
+    /// has a new <c>&lt;workspace&gt;/check-interpreter</c>, so a seed into the runner user's real
+    /// <c>.claude.json</c> adds one more entry per E2E boot. The user's config here is a temp
+    /// <c>CLAUDE_CONFIG_DIR</c>, never the real file; the seed must go to the fixture's own config.
+    /// </summary>
+    [Test]
+    public async Task Fixture_boot_leaves_the_user_claude_config_byte_identical_and_seeds_its_own()
+    {
+        using var user = new UserClaudeConfig();
+        await using (var boot = await BootAsync())
+        {
+            File.ReadAllBytes(user.ConfigPath).ShouldBe(user.Original,
+                $"a fixture boot rewrote the user's Claude config {user.ConfigPath}");
+
+            // Redirected, not dropped: the interpreter's first launch still skips the trust dialog.
+            var configuration = boot.Fixture.Services.GetRequiredService<IConfiguration>();
+            var owned = configuration[OwnedClaudeConfigKey];
+            owned.ShouldNotBeNull(OwnedClaudeConfigKey);
+            IsInside(owned, boot.Workspace).ShouldBeTrue($"{OwnedClaudeConfigKey}={owned} is outside {boot.Workspace}");
+            ClaudeProjectTrust.IsTrusted(boot.InterpreterDirectory, owned).ShouldBeTrue(
+                $"the check interpreter directory was not seeded in the fixture's config {owned}");
+        }
+
+        File.ReadAllBytes(user.ConfigPath).ShouldBe(user.Original,
+            "fixture teardown rewrote the user's Claude config");
+    }
+
+    private const string OwnedClaudeConfigKey = "Delegation:SpecialistClaudeConfigPath";
+
+    /// <summary>
+    /// A stand-in for the runner user's Claude config: <c>CLAUDE_CONFIG_DIR</c> points at a temp
+    /// directory holding a real-shaped <c>.claude.json</c> for the duration of the test. The class
+    /// is <c>[NotInParallel]</c>, so no other test observes the variable.
+    /// </summary>
+    private sealed class UserClaudeConfig : IDisposable
+    {
+        private const string Variable = "CLAUDE_CONFIG_DIR";
+        private readonly string? _previous = Environment.GetEnvironmentVariable(Variable);
+        private readonly string _directory =
+            Path.Combine(Path.GetTempPath(), "antiphon-e2e-user-claude-" + Guid.NewGuid().ToString("N"));
+
+        public UserClaudeConfig()
+        {
+            Directory.CreateDirectory(_directory);
+            ConfigPath = ClaudeProjectTrust.DefaultConfigPath(_directory);
+            File.WriteAllText(ConfigPath,
+                "{\n  \"numStartups\": 3,\n  \"projects\": {\n    \"/home/runner/repo\": { \"hasTrustDialogAccepted\": true }\n  }\n}\n");
+            Original = File.ReadAllBytes(ConfigPath);
+            Environment.SetEnvironmentVariable(Variable, _directory);
+            ClaudeProjectTrust.DefaultConfigPath().ShouldBe(ConfigPath);
+        }
+
+        public string ConfigPath { get; }
+        public byte[] Original { get; }
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable(Variable, _previous);
+            Directory.Delete(_directory, recursive: true);
+        }
     }
 
     /// <summary>
