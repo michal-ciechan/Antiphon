@@ -454,8 +454,9 @@ internal sealed class HangfireWorkerLease : IDisposable
     private Timer? _timer;
     private IHostApplicationLifetime? _lifetime;
     private TimeProvider _clock = TimeProvider.System;
-    private long _lastConfirmedTicks;
-    private int _backendPid;
+    private long _lastConfirmedTimestamp;
+    private BackendIdentity? _backend;
+    private BackendIdentity? _pending;
     private int _disposed;
     private Action? _faultAfterFreshLock;
 
@@ -463,24 +464,31 @@ internal sealed class HangfireWorkerLease : IDisposable
     {
         _connection = connection;
         _probe = probe;
-        _lastConfirmedTicks = _clock.GetUtcNow().UtcTicks;
+        _lastConfirmedTimestamp = _clock.GetTimestamp();
         if (connection.State == System.Data.ConnectionState.Open)
-            _backendPid = ReadBackendPid(connection);
+            _backend = ReadBackendIdentity(connection);
     }
+
+    /// <summary>
+    /// CARD-1791. A backend is the pair (pid, <c>backend_start</c>). Postgres reuses pids after a restart.
+    /// <see cref="Started"/> is null when <c>pg_stat_activity</c> hides another role's session.
+    /// </summary>
+    internal readonly record struct BackendIdentity(int Pid, DateTime? Started);
 
     /// <summary>CARD-1774. Tests move the expiry clock. Production keeps <see cref="TimeProvider.System"/>.</summary>
     internal void SetClock(TimeProvider clock)
     {
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        Volatile.Write(ref _lastConfirmedTicks, _clock.GetUtcNow().UtcTicks);
+        Volatile.Write(ref _lastConfirmedTimestamp, _clock.GetTimestamp());
     }
 
-    /// <summary>CARD-1774. True until <see cref="CrashExpirySeconds"/> after the last confirmed hold.</summary>
-    internal bool WithinCrashExpiryWindow()
-    {
-        var confirmed = new DateTime(Volatile.Read(ref _lastConfirmedTicks), DateTimeKind.Utc);
-        return _clock.GetUtcNow().UtcDateTime - confirmed < TimeSpan.FromSeconds(CrashExpirySeconds);
-    }
+    /// <summary>
+    /// CARD-1774. True until <see cref="CrashExpirySeconds"/> after the last confirmed hold.
+    /// CARD-1791. Measured on the monotonic timestamp, so a wall-clock step does not move it.
+    /// </summary>
+    internal bool WithinCrashExpiryWindow() =>
+        _clock.GetElapsedTime(Volatile.Read(ref _lastConfirmedTimestamp))
+        < TimeSpan.FromSeconds(CrashExpirySeconds);
 
     /// <summary>
     /// CARD-1774. Leaves the open session in an aborted transaction so the lock check fails
@@ -511,7 +519,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     internal void RememberBackend(int pid, DateTime backendStart)
     {
         lock (_gate)
-            _backendPid = pid;
+            _backend = new BackendIdentity(pid, backendStart);
     }
 
     /// <summary>
@@ -612,7 +620,9 @@ internal sealed class HangfireWorkerLease : IDisposable
         && ex.Message.Contains("another worker", StringComparison.Ordinal);
 
     private void MarkConfirmed() =>
-        Volatile.Write(ref _lastConfirmedTicks, _clock.GetUtcNow().UtcTicks);
+        Volatile.Write(ref _lastConfirmedTimestamp, _clock.GetTimestamp());
+
+    private bool IsOwn(BackendIdentity holder) => holder == _backend || holder == _pending;
 
     private void ReplaceConnection()
     {
@@ -620,22 +630,28 @@ internal sealed class HangfireWorkerLease : IDisposable
         var owned = false;
         try
         {
+            // Read the new backend before the swap. A failure here must not leave the
+            // fresh session installed against the previous backend (CARD-1774 A-1).
+            var identity = ReadBackendIdentity(fresh);
             var holder = ReadGrantedHolder(fresh);
-            if (holder == _backendPid && _backendPid != 0)
-                ReclaimOwnBackend(fresh, _backendPid);
-            else if (holder is int)
+            var reclaim = holder is { } held && IsOwn(held);
+            if (holder is not null && !reclaim)
                 throw Lost();
+
+            // Recorded before the take: a link that breaks after it leaves a holder that
+            // is still this process's own backend (CARD-1791 A-8).
+            _pending = identity;
+            if (reclaim)
+                ReclaimOwnBackend(fresh, holder.Value);
             else if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
                 throw Lost();
 
             Interlocked.Exchange(ref _faultAfterFreshLock, null)?.Invoke();
             HangfireConfiguration.ApplyCrashExpiry(fresh);
-            // Read the new pid before the swap. A failure here must not leave the
-            // fresh session installed against the previous backend's pid (CARD-1774 A-1).
-            var newPid = ReadBackendPid(fresh);
             var previous = Interlocked.Exchange(ref _connection, fresh);
             owned = true;
-            _backendPid = newPid;
+            _backend = identity;
+            _pending = null;
             MarkConfirmed();
             HangfireConfiguration.ReleaseConnection(previous);
         }
@@ -660,7 +676,7 @@ internal sealed class HangfireWorkerLease : IDisposable
         var connection = _connection;
         if (connection is null
             || connection.State != System.Data.ConnectionState.Open
-            || _backendPid == 0)
+            || _backend is not { } own)
             return false;
 
         NpgsqlConnection? side = null;
@@ -668,13 +684,14 @@ internal sealed class HangfireWorkerLease : IDisposable
         {
             side = OpenFresh();
             var holder = ReadGrantedHolder(side);
-            if (holder == _backendPid)
+            if (holder == own)
             {
                 TryRollback(connection);
                 return true;
             }
 
-            if (holder is int)
+            // A replacement backend that lost its link is reclaimed by ReplaceConnection.
+            if (holder is { } other && other != _pending)
                 throw Lost();
 
             return false;
@@ -700,14 +717,16 @@ internal sealed class HangfireWorkerLease : IDisposable
         }
     }
 
-    private void ReclaimOwnBackend(NpgsqlConnection fresh, int ownPid)
+    private void ReclaimOwnBackend(NpgsqlConnection fresh, BackendIdentity own)
     {
-        TerminateBackend(fresh, ownPid);
+        TerminateBackend(fresh, own);
         var started = Environment.TickCount64;
         while (Environment.TickCount64 - started < 2000)
         {
+            // While own.Pid holds, that process has not exited, so its pid is not yet reused.
+            // Its pg_stat_activity row may already be gone, so compare the pid only.
             var holder = ReadGrantedHolder(fresh);
-            if (holder is int other && other != ownPid)
+            if (holder is { } other && other.Pid != own.Pid)
                 throw Lost();
             if (holder is null && HangfireConfiguration.TryTakeWorkerLock(fresh))
                 return;
@@ -719,43 +738,62 @@ internal sealed class HangfireWorkerLease : IDisposable
                 "Hangfire could not reclaim its own worker lease before the crash-expiry window.");
     }
 
-    private static void TerminateBackend(NpgsqlConnection connection, int pid)
+    /// <summary>CARD-1791. Terminates only the backend with that pid and start.</summary>
+    private static void TerminateBackend(NpgsqlConnection connection, BackendIdentity backend)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT pg_terminate_backend(@pid)";
-        command.Parameters.Add(new NpgsqlParameter("pid", NpgsqlDbType.Integer) { Value = pid });
+        command.CommandText = """
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE pid = @pid
+              AND backend_start IS NOT DISTINCT FROM @started
+            """;
+        command.Parameters.Add(new NpgsqlParameter("pid", NpgsqlDbType.Integer) { Value = backend.Pid });
+        command.Parameters.Add(new NpgsqlParameter("started", NpgsqlDbType.TimestampTz)
+        {
+            Value = backend.Started is { } started ? started : DBNull.Value
+        });
         command.ExecuteScalar();
     }
 
-    private static int? ReadGrantedHolder(NpgsqlConnection connection)
+    private static BackendIdentity? ReadGrantedHolder(NpgsqlConnection connection)
     {
         using var command = connection.CreateCommand();
         // pg_try_advisory_lock(int, int) is local to this database (objsubid 2).
         // pg_locks lists every database in the cluster.
         command.CommandText = """
-            SELECT pid
-            FROM pg_locks
-            WHERE locktype = 'advisory'
-              AND classid = @lockClass
-              AND objid = @lockId
-              AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-              AND objsubid = 2
-              AND granted
+            SELECT l.pid, a.backend_start
+            FROM pg_locks l
+            LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE l.locktype = 'advisory'
+              AND l.classid = @lockClass
+              AND l.objid = @lockId
+              AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+              AND l.objsubid = 2
+              AND l.granted
             """;
         command.Parameters.Add(new NpgsqlParameter("lockClass", NpgsqlDbType.Integer) { Value = ClassId });
         command.Parameters.Add(new NpgsqlParameter("lockId", NpgsqlDbType.Integer) { Value = LockId });
-        var value = command.ExecuteScalar();
-        if (value is null || value is DBNull)
-            return null;
-        return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadIdentity(reader) : null;
     }
 
-    private static int ReadBackendPid(NpgsqlConnection connection)
+    private static BackendIdentity ReadBackendIdentity(NpgsqlConnection connection)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT pg_backend_pid()";
-        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        command.CommandText = """
+            SELECT pg_backend_pid(),
+                   (SELECT backend_start FROM pg_stat_activity WHERE pid = pg_backend_pid())
+            """;
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        return ReadIdentity(reader);
     }
+
+    private static BackendIdentity ReadIdentity(NpgsqlDataReader reader) =>
+        new(
+            reader.GetInt32(0),
+            reader.IsDBNull(1) ? null : reader.GetFieldValue<DateTime>(1));
 
     private static void TryRollback(NpgsqlConnection connection)
     {
