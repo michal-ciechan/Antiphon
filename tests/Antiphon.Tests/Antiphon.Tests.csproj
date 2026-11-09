@@ -95,9 +95,11 @@
     <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.HostLoad.Probe\Antiphon.HostLoad.Probe.csproj" ReferenceOutputAssembly="false" />
-    <!-- CARD-1483: net10.0 (the SDK MSBuild runtime), so it is built for its own framework. -->
+    <!-- CARD-1483: net10.0 is this tool's own framework (the SDK MSBuild runtime). It is
+         single-targeted, so skipping the test project's framework leaves that framework in
+         place. SetTargetFramework would be a second global-property set beside the solution. -->
     <ProjectReference Include="..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" ReferenceOutputAssembly="false" Private="false"
-                      SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net10.0" />
+                      SkipGetTargetFrameworkProperties="true" />
     <ProjectReference Include="..\..\tools\Antiphon.LandGraphAudit.Core\Antiphon.LandGraphAudit.Core.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />

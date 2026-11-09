@@ -1645,11 +1645,12 @@ public sealed class LandNonCodeSkipTests
             "docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md");
     }
 
-    // CARD-1483 (Review cff23aba D-1): the S1 helper metadata is allowed only as the exact tree literal, in
+    // CARD-1483 (Review cff23aba D-1): helper metadata is allowed only as the exact tree literal, in
     // attribute form, on an Include. HelperTargetFramework reaches an MSBuild task Properties string, which
     // splits on ';', so 'net10.0;CustomBeforeMicrosoftCommonTargets=...docs...' would import a docs file.
     // The _StagedHelperFramework property that carries it is pinned to its two tree values the same way.
-    // The real tree approves; each other shape refuses naming the metadata or the property.
+    // SetTargetFramework is not in the tree: on this single-targeted project it is a second MSBuild
+    // instance. The real tree approves; each other shape refuses naming the metadata or the property.
     [Test]
     [Arguments("tree")]
     [Arguments("htf-semicolon")]
@@ -1661,6 +1662,7 @@ public sealed class LandNonCodeSkipTests
     [Arguments("htf-remove")]
     [Arguments("skip-false")]
     [Arguments("skip-semicolon")]
+    [Arguments("stf-literal")]
     [Arguments("stf-net9")]
     [Arguments("stf-semicolon")]
     [Arguments("stf-child")]
@@ -1671,8 +1673,7 @@ public sealed class LandNonCodeSkipTests
     {
         const string helper = """<StagedHelper Include="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" Folder="land-graph-audit" Glob="**\*" """;
         const string htf = """HelperTargetFramework="net10.0" />""";
-        const string skip = """SkipGetTargetFrameworkProperties="true" """;
-        const string stf = """SetTargetFramework="TargetFramework=net10.0" />""";
+        const string skipClose = """SkipGetTargetFrameworkProperties="true" />""";
         const string helperLabel = @"StagedHelper Include=$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj";
         const string evil = @"net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md";
         const string inTarget = "<_StagedHelperFramework>%(StagedHelper.HelperTargetFramework)</_StagedHelperFramework>";
@@ -1680,7 +1681,8 @@ public sealed class LandNonCodeSkipTests
         var files = await BuildRealTestProjectTreeAsync();
         var real = files[RealTestProjectPath];
         real.ShouldContain(helper + htf);
-        real.ShouldContain(skip + stf);
+        real.ShouldContain(skipClose);
+        real.ShouldNotContain("SetTargetFramework");
         real.ShouldContain(inTarget);
         if (shape == "tree")
         {
@@ -1690,7 +1692,9 @@ public sealed class LandNonCodeSkipTests
 
         string HelperValue(string value) => real.Replace(helper + htf, helper + "HelperTargetFramework=\"" + value + "\" />", StringComparison.Ordinal);
         string ReferenceValue(string name, string value, string tail) =>
-            real.Replace(skip + stf, name == "skip" ? "SkipGetTargetFrameworkProperties=\"" + value + "\" " + stf : skip + "SetTargetFramework=\"" + value + "\"" + tail, StringComparison.Ordinal);
+            real.Replace(skipClose, name == "skip"
+                ? "SkipGetTargetFrameworkProperties=\"" + value + "\" SetTargetFramework=\"TargetFramework=net10.0\" />"
+                : "SkipGetTargetFrameworkProperties=\"true\" SetTargetFramework=\"" + value + "\"" + tail, StringComparison.Ordinal);
         var (edited, label, name) = shape switch
         {
             "htf-semicolon" => (HelperValue("net10.0;X=Y"), helperLabel, "HelperTargetFramework"),
@@ -1703,9 +1707,10 @@ public sealed class LandNonCodeSkipTests
                 @"StagedHelper Remove=$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj", "HelperTargetFramework"),
             "skip-false" => (ReferenceValue("skip", "false", ""), referenceLabel, "SkipGetTargetFrameworkProperties"),
             "skip-semicolon" => (ReferenceValue("skip", "true;X=Y", ""), referenceLabel, "SkipGetTargetFrameworkProperties"),
+            "stf-literal" => (ReferenceValue("stf", "TargetFramework=net10.0", " />"), referenceLabel, "SetTargetFramework"),
             "stf-net9" => (ReferenceValue("stf", "TargetFramework=net9.0", " />"), referenceLabel, "SetTargetFramework"),
             "stf-semicolon" => (ReferenceValue("stf", @"TargetFramework=net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md", " />"), referenceLabel, "SetTargetFramework"),
-            "stf-child" => (real.Replace(skip + stf, skip + "><SetTargetFramework>TargetFramework=net10.0</SetTargetFramework></ProjectReference>", StringComparison.Ordinal), referenceLabel, "SetTargetFramework"),
+            "stf-child" => (real.Replace(skipClose, """SkipGetTargetFrameworkProperties="true"><SetTargetFramework>TargetFramework=net10.0</SetTargetFramework></ProjectReference>""", StringComparison.Ordinal), referenceLabel, "SetTargetFramework"),
             "prop-toplevel" => (real.Replace("<IsTestProject>", "<_StagedHelperFramework>" + evil + "</_StagedHelperFramework><IsTestProject>", StringComparison.Ordinal), "", "_StagedHelperFramework"),
             "prop-intarget" => (real.Replace(inTarget, "<_StagedHelperFramework>" + evil + "</_StagedHelperFramework>", StringComparison.Ordinal), "", "_StagedHelperFramework"),
             "prop-output" => (real.Replace(inTarget, inTarget + "</PropertyGroup><CreateProperty Value=\"" + evil + "\"><Output TaskParameter=\"Value\" PropertyName=\"_StagedHelperFramework\" /></CreateProperty><PropertyGroup>", StringComparison.Ordinal), "", "_StagedHelperFramework"),

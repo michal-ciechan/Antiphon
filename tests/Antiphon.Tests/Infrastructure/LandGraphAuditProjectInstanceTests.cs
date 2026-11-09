@@ -21,8 +21,14 @@ public sealed class LandGraphAuditProjectInstanceTests
         frameworks.ShouldBe(["net10.0"]);
         tool.Descendants("TargetFrameworks").ShouldBeEmpty();
 
-        var solution = DockerStackDocuments.Read("Antiphon.sln").Replace('\\', '/');
-        solution.ShouldContain(ToolProject);
+        var solution = DockerStackDocuments.Read("Antiphon.sln");
+        solution.Replace('\\', '/').ShouldContain(ToolProject);
+        var entry = solution.IndexOf("\"Antiphon.LandGraphAudit\", \"tools\\Antiphon.LandGraphAudit\\Antiphon.LandGraphAudit.csproj\"", StringComparison.Ordinal);
+        entry.ShouldBeGreaterThanOrEqualTo(0);
+        var block = solution[entry..];
+        var lineEnd = block.IndexOf('\n');
+        lineEnd.ShouldBeGreaterThan(0);
+        block[(lineEnd + 1)..].TrimStart().ShouldStartWith("EndProject");
 
         var reference = XDocument.Parse(DockerStackDocuments.Read("tests/Antiphon.Tests/Antiphon.Tests.csproj"))
             .Descendants("ProjectReference")
