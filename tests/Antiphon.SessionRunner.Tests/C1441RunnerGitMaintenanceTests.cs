@@ -15,7 +15,7 @@ public sealed class C1441RunnerGitMaintenanceTests
 {
     [Test]
     [Timeout(60_000)]
-    public async Task C1441_non_inspection_git_reads_gc_auto_zero()
+    public async Task C1441_non_inspection_git_reads_gc_auto_zero(CancellationToken ct)
     {
         var root = Path.Combine(Path.GetTempPath(), "c1441-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -26,15 +26,15 @@ public sealed class C1441RunnerGitMaintenanceTests
             Git(root, "config", "maintenance.auto", "true");
             Git(root, "config", "commit.gpgsign", "true");
 
-            var gc = await Read(root, "gc.auto");
+            var gc = await Read(root, "gc.auto", ct);
             gc.Output.ShouldBe("0", "the repository's own gc.auto=6700 must be overridden");
             gc.Arguments.ShouldBe(new[] { "config", "--get", "gc.auto" },
                 "the override is environment config, so the argument vector stays the command");
             Last(gc.Start, "gc.auto").ShouldBe("0");
             Last(gc.Start, "maintenance.auto").ShouldBe("false");
 
-            (await Read(root, "maintenance.auto")).Output.ShouldBe("false");
-            (await Read(root, "commit.gpgsign")).Output.ShouldBe("true",
+            (await Read(root, "maintenance.auto", ct)).Output.ShouldBe("false");
+            (await Read(root, "commit.gpgsign", ct)).Output.ShouldBe("true",
                 "a repository value the override does not name still reads back");
         }
         finally
@@ -44,14 +44,93 @@ public sealed class C1441RunnerGitMaintenanceTests
         }
     }
 
-    private static async Task<ReadResult> Read(string root, string key)
+    [Test]
+    public void C1441_append_preserves_existing_entries()
+    {
+        var start = new ProcessStartInfo("git");
+        start.Environment["GIT_CONFIG_COUNT"] = "2";
+        start.Environment["GIT_CONFIG_KEY_0"] = "commit.gpgSign";
+        start.Environment["GIT_CONFIG_VALUE_0"] = "false";
+        start.Environment["GIT_CONFIG_KEY_1"] = "core.hooksPath";
+        start.Environment["GIT_CONFIG_VALUE_1"] = "/none";
+        start.ArgumentList.Add("status");
+
+        RunnerGitProcess.DisableAutoMaintenance(start);
+
+        start.Environment["GIT_CONFIG_COUNT"].ShouldBe("4");
+        start.Environment["GIT_CONFIG_KEY_0"].ShouldBe("commit.gpgSign");
+        start.Environment["GIT_CONFIG_VALUE_0"].ShouldBe("false");
+        start.Environment["GIT_CONFIG_KEY_1"].ShouldBe("core.hooksPath");
+        start.Environment["GIT_CONFIG_VALUE_1"].ShouldBe("/none");
+        start.Environment["GIT_CONFIG_KEY_2"].ShouldBe("gc.auto");
+        start.Environment["GIT_CONFIG_VALUE_2"].ShouldBe("0");
+        start.Environment["GIT_CONFIG_KEY_3"].ShouldBe("maintenance.auto");
+        start.Environment["GIT_CONFIG_VALUE_3"].ShouldBe("false");
+        start.ArgumentList.ToArray().ShouldBe(new[] { "status" },
+            "the argument vector the test seams read is unchanged");
+
+        var empty = new ProcessStartInfo("git");
+        empty.Environment.Remove("GIT_CONFIG_COUNT");
+        RunnerGitProcess.DisableAutoMaintenance(empty);
+        empty.Environment["GIT_CONFIG_COUNT"].ShouldBe("2");
+        empty.Environment["GIT_CONFIG_KEY_0"].ShouldBe("gc.auto");
+        empty.Environment["GIT_CONFIG_KEY_1"].ShouldBe("maintenance.auto");
+    }
+
+    [Test]
+    [Arguments("x")]
+    [Arguments("-1")]
+    [Arguments(" ")]
+    public void C1441_invalid_count_throws(string count)
+    {
+        var start = new ProcessStartInfo("git");
+        start.Environment["GIT_CONFIG_COUNT"] = count;
+        Should.Throw<InvalidOperationException>(() => RunnerGitProcess.DisableAutoMaintenance(start))
+            .Message.ShouldBe("git_config_count_invalid");
+        start.Environment["GIT_CONFIG_COUNT"].ShouldBe(count, "an invalid count is never overwritten");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1441_inspection_keeps_its_isolated_override_list(CancellationToken ct)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1441-inspect-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Git(root, "init", "-q");
+            Git(root, "config", "gc.auto", "6700");
+            ProcessStartInfo? seen = null;
+            var service = new RunnerWorkspaceService(root, root, root, psi =>
+            {
+                seen = psi;
+                return Process.Start(psi);
+            }, TimeSpan.FromSeconds(15));
+            var result = await service.InspectionGitAsync(root, ct, "config", "--get", "gc.auto");
+            result.ExitCode.ShouldBe(0, result.Stderr);
+            result.Stdout.Trim().ShouldBe("0");
+            seen.ShouldNotBeNull();
+            seen.Environment["GIT_CONFIG_COUNT"].ShouldBe("16",
+                "inspection sets its own list, including the two maintenance keys, and is not appended again");
+            Last(seen, "gc.auto").ShouldBe("0");
+            Last(seen, "maintenance.auto").ShouldBe("false");
+            seen.ArgumentList.ToArray().ShouldBe(new[] { "--no-replace-objects", "config", "--get", "gc.auto" });
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task<ReadResult> Read(string root, string key, CancellationToken ct)
     {
         ProcessStartInfo? seen = null;
         var result = await RunnerWorkspaceService.RunGitAsync(root, psi =>
         {
             seen = psi;
             return Process.Start(psi);
-        }, TimeSpan.FromSeconds(15), CancellationToken.None, "config", "--get", key);
+        }, TimeSpan.FromSeconds(15), ct, "config", "--get", key);
         result.ExitCode.ShouldBe(0, key + " " + result.Stderr);
         seen.ShouldNotBeNull();
         return new ReadResult(result.Stdout.Trim(), seen.ArgumentList.ToArray(), seen);

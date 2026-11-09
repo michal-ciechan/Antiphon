@@ -1047,6 +1047,12 @@ public sealed partial class RunnerWorkspaceService
                 psi.Environment["GIT_CONFIG_VALUE_" + i] = overrides[i].Value;
             }
         }
+        else
+        {
+            // CARD-1441: non-inspection children append the same two keys. Inspection already
+            // sets them inside the isolated list above and must not be appended again.
+            RunnerGitProcess.DisableAutoMaintenance(psi);
+        }
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         // No interactive credential prompt can ever block this process: the deploy key is the only
