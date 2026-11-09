@@ -793,6 +793,8 @@ public sealed partial class AgentTaskDispatcher
             // CARD-0090: a chain-chosen task re-walks instead of sitting Held on a snapshot
             // alias the operator already listed a fallback for. A Required pin is never
             // rerouted by a tick.
+            // CARD-1513: a Rerouted rewalk whose standing agent still launches a held model
+            // Blocks instead of falling through to spawn.
             // CARD-0336: a subscription-quota verdict is a dispatch warning, not a skip. Create
             // is the refuse; Tick used to treat Evaluate's warning as quotaRefuse and leave the
             // task Queued with a model-hold event.
@@ -808,7 +810,14 @@ public sealed partial class AgentTaskDispatcher
                         : RewalkOutcome.None;
                     if (rewalk == RewalkOutcome.Rerouted)
                     {
-                        // Kind/level updated; fall through to spawn.
+                        // Kind/level updated to a survivor that does not launch a held
+                        // standing-agent model; fall through to spawn.
+                    }
+                    else if (rewalk == RewalkOutcome.BlockedStandingAgent)
+                    {
+                        // Already Blocked for a human. Do not spawn the held model.
+                        blockedRoutingExhausted++;
+                        continue;
                     }
                     else if (rewalk == RewalkOutcome.BlockedRunnerKind)
                     {
@@ -1761,9 +1770,10 @@ public sealed partial class AgentTaskDispatcher
             ledger.OtherSeconds, ledger.DominantName);
 
     /// <summary>
-    /// Re-walk a queued chain task whose snapshot alias cannot run. Returns true when kind/level
-    /// were updated to a different survivor (caller falls through to spawn). Required pins never
-    /// reroute.
+    /// Re-walk a queued chain task whose snapshot alias cannot run. Returns
+    /// <see cref="RewalkOutcome.Rerouted"/> when kind/level were updated to a different survivor
+    /// whose standing-agent model is not held (caller falls through to spawn). A held standing-agent
+    /// model Blocks instead (CARD-1513). Required pins never reroute.
     /// </summary>
     private async Task<RewalkOutcome> TryRewalkQueuedChainAsync(
         AgentTask task, string currentAlias, CancellationToken ct)
@@ -1785,6 +1795,18 @@ public sealed partial class AgentTaskDispatcher
             await BlockRunnerKindAsync(task,
                 DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(task.RunnerId!, chosen.Kind, chosen.Alias), ct);
             return RewalkOutcome.BlockedRunnerKind;
+        }
+
+        // CARD-1513: the walk skips held candidates by tier alias, but a standing agent launches
+        // its own model on any candidate. Rerouting and falling through would spawn that held
+        // model. Block for a human with no kind/level change and no Rerouted event. An ephemeral
+        // agent is not this case: StandingAgentModelAsync returns null and the requeue retires it.
+        if (_modelAvailability is not null
+            && await DispatchModelAlias.StandingAgentModelAsync(_db, task, chosen.Kind, ct) is { } agentModel
+            && await _modelAvailability.GetActiveHoldAsync(chosen.Kind, agentModel, ct) is { } hold)
+        {
+            await BlockHeldStandingAgentAsync(task, currentAlias, chosen, agentModel, hold, ct);
+            return RewalkOutcome.BlockedStandingAgent;
         }
 
         if (_db.Database.CurrentTransaction is not null)
@@ -7808,7 +7830,48 @@ public sealed partial class AgentTaskDispatcher
         Rerouted = 1,
         BlockedRunnerKind = 2,
         ClaimLost = 3,
+        /// <summary>CARD-1513: Blocked on a held standing-agent model. Do not spawn.</summary>
+        BlockedStandingAgent = 4,
     }
+
+    /// <summary>
+    /// CARD-1513. Blocks a queued chain task that would otherwise reroute and spawn onto a standing
+    /// agent's held model. Kind, level, attempt and agent stay put, and the reason does not start
+    /// with <see cref="ComplexityRoutingService.RoutingExhaustedPrefix"/>, so the routing-blocked
+    /// resume does not requeue it onto the same model.
+    /// </summary>
+    private async Task BlockHeldStandingAgentAsync(
+        AgentTask task,
+        string currentAlias,
+        RoutingCandidates.Candidate chosen,
+        string agentModel,
+        ModelAvailabilityHold hold,
+        CancellationToken ct)
+    {
+        var reason = HeldStandingAgentDispatchReason(currentAlias, chosen, agentModel, hold);
+        if (task.Status == AgentTaskStatus.Blocked
+            && string.Equals(task.FailureReason, reason, StringComparison.Ordinal))
+            return;
+        task.AgentSessionId = null;
+        StageBlocked(task, reason);
+        await _tasks.EnqueueBlockedParentNoteAsync(task, reason, ct);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Task {ShortId} blocked: held standing agent model at dispatch",
+            DelegationReportFormatter.Short(task.Id));
+    }
+
+    private static string HeldStandingAgentDispatchReason(
+        string currentAlias,
+        RoutingCandidates.Candidate chosen,
+        string agentModel,
+        ModelAvailabilityHold hold) =>
+        AgentTaskService.HeldStandingAgentModelPrefix
+        + $"{currentAlias} is held and the chain chose {chosen.Kind} {chosen.Alias}, but this task's "
+        + $"standing agent launches {agentModel}, which is held "
+        + (hold.DisabledUntil is { } until ? $"until {until:yyyy-MM-ddTHH:mm:ss}Z" : "with no end time")
+        + ". Not rerouted. A human must decide: retry after the hold lapses, or cancel and re-dispatch "
+        + "without the standing agent.";
 
     /// <summary>
     /// CARD-0659 D-5. Blocks a runner-bound task on an incompatible kind with the stable
