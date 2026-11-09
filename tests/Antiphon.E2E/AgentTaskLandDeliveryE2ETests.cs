@@ -290,6 +290,15 @@ public class AgentTaskLandDeliveryE2ETests
             await using var db = f.CreateContext();
             return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged) == 2;
         }, "outcome warning and error obligations");
+        // rc a6410818: the hosted scan, not the monitor, enqueues the Warning, one 5 s pass later
+        // or more while the caller's queue lock is held (CARD-1705). Busy reads its headline only
+        // after that queue row exists.
+        if (state == "busy")
+            await LandDeliveryFixture.UntilAsync(async () => {
+                await using var db = f.CreateContext();
+                return await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged)
+                    .OrderBy(n => n.CreatedAt).Select(n => n.QueueMessageId).FirstAsync() != null;
+            }, "busy caller warning enqueued");
         var attention = await f.AttentionAsync();
         var owed = await f.PollingAttentionAsync(attention, requestId);
         owed.Severity.ShouldBe(AlertSeverity.Error);
