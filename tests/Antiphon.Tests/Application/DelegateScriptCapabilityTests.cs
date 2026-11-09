@@ -2,9 +2,11 @@ using System.Net;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -130,6 +132,53 @@ public sealed class DelegateScriptCapabilityTests
         run.ExitCode.ShouldNotBe(0);
         run.Output.ShouldNotContain(token);
         run.Output.ShouldNotContain("Add it to Delegation:AllowedRoots");
+    }
+
+    /// <summary>
+    /// CARD-1814: five methods build a ProtectedData CurrentUser blob in WriteBlob and skip
+    /// off Windows. The Linux rc profile excludes exactly those methods. The missing-file
+    /// sibling never touches DPAPI and stays required on every platform.
+    /// </summary>
+    [Test]
+    public async Task C1814_Dpapi_cases_are_windows_required_and_linux_excluded()
+    {
+        var policyPath = Path.Combine(DelegateScriptRunner.RepoRoot, "tests", "test-execution-policy.json");
+        using var policy = JsonDocument.Parse(await File.ReadAllTextAsync(policyPath));
+        var rows = policy.RootElement.GetProperty("profiles").GetProperty("rc").GetProperty("exclusions")
+            .EnumerateArray()
+            .Where(row => row.GetProperty("class").GetString() == nameof(DelegateScriptCapabilityTests))
+            .ToArray();
+        rows.Length.ShouldBe(1, "one rc exclusion row for DelegateScriptCapabilityTests");
+        var row = rows[0];
+        row.GetProperty("suite").GetString().ShouldBe("antiphon");
+        row.GetProperty("platform").GetString().ShouldBe("linux");
+        row.GetProperty("methods").EnumerateArray().Select(method => method.GetString()).ToArray()
+            .ShouldBe([
+                nameof(delegate_Capability_sends_header_and_does_not_assign_env_token),
+                nameof(delegate_ANTIPHON_CAPABILITY_name_sends_header),
+                nameof(capability_and_task_token_together_is_refused_before_request),
+                nameof(auto_load_of_the_only_store_file_is_forbidden),
+                nameof(error_paths_never_contain_the_token),
+            ]);
+        row.GetProperty("reason").GetString().ShouldNotStartWith("Linux-only by construction:");
+        row.GetProperty("owner").GetString().ShouldBe("CARD-1814");
+
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var dpapiCases = new Func<Task>[]
+        {
+            delegate_Capability_sends_header_and_does_not_assign_env_token,
+            delegate_ANTIPHON_CAPABILITY_name_sends_header,
+            capability_and_task_token_together_is_refused_before_request,
+            auto_load_of_the_only_store_file_is_forbidden,
+            error_paths_never_contain_the_token,
+        };
+        foreach (var call in dpapiCases)
+        {
+            var skip = await Should.ThrowAsync<SkipTestException>(call());
+            skip.Message.ShouldContain("DPAPI");
+        }
     }
 
     private static string NewToken() =>
