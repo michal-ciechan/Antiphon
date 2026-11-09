@@ -66,6 +66,16 @@ public sealed class CheckpointPerEntryRefusalReasonTests
         AssertPersisted(reason!, "CARD-1520.Changed_content.file");
     }
 
+    [Test]
+    public void Persisted_json_round_trips_a_refusal_reason_that_contains_backslashes()
+    {
+        // A Windows path keeps backslashes. JSON escapes each one, so the raw
+        // reason is absent from the report text on Linux as well as Windows.
+        var reason = Refusal(@"C:\c987\card-1520\bin-owned\payload.txt", "file", "preflight=git-timeout");
+        reason.ShouldContain(@"\", Case.Sensitive, "CARD-1520.Json_backslash.fixture");
+        AssertPersisted(reason, "CARD-1520.Json_backslash");
+    }
+
     private static string Refusal(string path, string stage, string detail) =>
         "left in place: " + path + "; stage=" + stage + "; " + detail;
 
