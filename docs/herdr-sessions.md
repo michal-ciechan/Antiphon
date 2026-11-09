@@ -60,6 +60,17 @@ Activation requires both server and runner restart after the normal review/landi
 | Event pump | `src/Antiphon.SessionRunner/HerdrEventPumpService.cs` |
 | Live probe results | `.antiphon/card-0160-probe-results.md` |
 
+## Pwsh cache (CARD-1813)
+
+Pty-host launches give each session a private `XDG_CACHE_HOME`. `SessionRunnerRuntime` calls
+`WithPwshCache` only on that path: the runner creates `antiphon-pwsh-cache-session-*`, then
+reassigns `owner.pid` to the host pid and its process-start ticks once the host is up, and
+deletes the directory when the session exits.
+
+The herdr lane does not. A herdr pane inherits the herdr server's `XDG_CACHE_HOME`. On Windows
+pwsh does not read that variable, so the residual is inert there (CARD-1793 A-5). This card
+does not change herdr launch, placement, or the pane environment.
+
 ## 1. When to choose it — and when you cannot
 
 Choose herdr when you want to **watch and take over** a session by hand: a pane you can attach to

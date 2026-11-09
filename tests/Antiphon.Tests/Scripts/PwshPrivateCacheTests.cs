@@ -27,7 +27,7 @@ public sealed class PwshPrivateCacheTests
         parts.Length.ShouldBe(2, markerText);
         var recorded = long.Parse(parts[1], CultureInfo.InvariantCulture);
         var observed = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
-        (recorded - recorded % 10).ShouldBe(observed - observed % 10);
+        Math.Abs(recorded - observed).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
         var seen = await ReadProcessAsync(InheritedPwsh(), "inherited");
         seen.ShouldBe(full);
     }
@@ -234,10 +234,9 @@ public sealed class PwshPrivateCacheTests
         try
         {
             var ticks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
-            var normalized = ticks - ticks % 10;
             var pid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
-            var reused = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + (normalized + 10_000_000).ToString(CultureInfo.InvariantCulture));
-            var same = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + normalized.ToString(CultureInfo.InvariantCulture));
+            var reused = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + (ticks + TimeSpan.FromSeconds(1).Ticks).ToString(CultureInfo.InvariantCulture));
+            var same = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + ticks.ToString(CultureInfo.InvariantCulture));
 
             var seen = await ProbeAsync(temp, "start", static environment => environment.Remove("XDG_CACHE_HOME"));
 

@@ -1432,6 +1432,12 @@ evidence root. For a parameterized method, use its method prefix and a trailing 
 inspect the individual argument rows in that phase's fresh TRX. A literal parameter suffix
 can select zero tests even when the build completed successfully.
 
+Sweep-weakening positive controls of `PwshPrivateCache.SweepStale` (CARD-1813 A-1) run inside
+the test host's module initializer, before any test method. Set `TMPDIR`, `TMP` and `TEMP`, or
+`ANTIPHON_PWSH_CACHE_ROOT`, to a private directory on that test-host process. A private
+directory on a probe child does not contain the initializer's sweep. The override must be an
+ordinary directory; a reparse point is ignored and the sweep falls back to the process temp root.
+
 Use the unchanged local `scripts/run-checkpoint.ps1` driver for each phase. In a SourceLanding
 snapshot, copy that driver and `scripts/lib/build-slot.ps1` to the external evidence root
 with the same relative `lib/` layout before mutating source. The driver runs in the snapshot

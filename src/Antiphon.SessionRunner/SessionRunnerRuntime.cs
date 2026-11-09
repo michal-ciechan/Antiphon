@@ -715,6 +715,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 line => _logger.LogInformation("{ClaudeTrustSeed}", line));
             if (useHerdr)
             {
+                // CARD-1813 A-5: a herdr pane inherits the herdr server's XDG_CACHE_HOME.
+                // The per-session cache is pty-host only. See docs/herdr-sessions.md.
                 if (request.InstalledGrokRulesReceipt is { } receipt)
                     new HerdrPaneSidecar
                     {
@@ -3529,7 +3531,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
                     _hostStartTimeUtc = host.StartTime.ToUniversalTime();
                 if (_pwshCache is { } pwshCache)
-                    Antiphon.Hosting.PwshPrivateCache.AssignOwner(pwshCache, _hostPid);
+                    Antiphon.Hosting.PwshPrivateCache.AssignOwner(pwshCache, _hostPid, _hostStartTimeUtc);
                 // CARD-1653 S2: the peer must be the host this launch spawned (proven by spawn), so a
                 // refusal tears that host down below and Launch never reaches the peer.
                 var policy = PeerPolicy(_hostPid, _hostStartTimeUtc, _processLiveness);
@@ -3627,7 +3629,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         /// <summary>
         /// CARD-1793: the runner's own XDG_CACHE_HOME would be shared by every agent's pwsh. Each
         /// pty-host session gets its own cache unless the launch names one; the host owns it once
-        /// its pid is known, and the session's exit deletes it.
+        /// its pid and start time are known, and the session's exit deletes it.
         /// </summary>
         internal RunnerLaunchRequest WithPwshCache(RunnerLaunchRequest request)
         {

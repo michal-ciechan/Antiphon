@@ -51,7 +51,7 @@ public class C1793SessionPwshCacheTests
                 owner[0].ShouldBe(dto.HostPid?.ToString(CultureInfo.InvariantCulture), "the host owns the session cache");
                 owner.Length.ShouldBe(2, seen[1]);
                 var recorded = long.Parse(owner[1], CultureInfo.InvariantCulture);
-                (recorded - recorded % 10).ShouldBe(ticks - ticks % 10);
+                Math.Abs(recorded - ticks).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
             }
             firstSeen[0].ShouldNotBe(secondSeen[0]);
 
