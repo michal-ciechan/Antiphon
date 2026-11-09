@@ -2,7 +2,25 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal static class RepositoryLeaseCrashWorker
 {
-    internal const string CrashScript = """
+    // The workers construct server types by reflection, so a new optional constructor parameter
+    // (CARD-1776 gave LandingGit IOptions<GitSettings>) is not a compile error here.
+    // Activator.CreateInstance does not bind optional parameters; fill each one from its default.
+    private const string ConstructWithDefaults = """
+        function New-ServerObject([Type]$type, [object[]]$leading) {
+            $constructors = @($type.GetConstructors())
+            if ($constructors.Count -ne 1) { throw ('fixture_constructor_count ' + $type.Name) }
+            $parameters = $constructors[0].GetParameters()
+            $values = [object[]]::new($parameters.Length)
+            for ($i = 0; $i -lt $parameters.Length; $i++) {
+                if ($i -lt $leading.Length) { $values[$i] = $leading[$i] }
+                elseif ($parameters[$i].HasDefaultValue) { $values[$i] = $parameters[$i].DefaultValue }
+                else { throw ('fixture_constructor_required ' + $type.Name + '.' + $parameters[$i].Name) }
+            }
+            return $constructors[0].Invoke($values)
+        }
+        """;
+
+    internal const string CrashScript = $$"""
         $ErrorActionPreference = 'Stop'
         $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
         $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease crash worker', $true)
@@ -19,13 +37,14 @@ internal static class RepositoryLeaseCrashWorker
         }.GetNewClosure()
         $loadContext.add_Resolving($resolveDependency)
         $server = $loadContext.LoadFromAssemblyPath($args[0])
-        $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
+        {{ConstructWithDefaults}}
+        $git = New-ServerObject ($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true)) @()
         $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
         $result = $operation.GetAwaiter().GetResult()
         if (-not $result.Succeeded) { throw ('fixture_' + $result.Diagnostic) }
         """;
 
-    internal const string RecoveryScript = """
+    internal const string RecoveryScript = $$"""
         $ErrorActionPreference = 'Stop'
         $record = Get-Content -LiteralPath $args[4] -Raw | ConvertFrom-Json
         if ($record.ProcessId -ne [int]$args[6] -or $record.StartTicks -le 0) { throw 'worker did not record the live child' }
@@ -51,9 +70,10 @@ internal static class RepositoryLeaseCrashWorker
         }.GetNewClosure()
         $loadContext.add_Resolving($resolveDependency)
         $server = $loadContext.LoadFromAssemblyPath($args[0])
-        $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
+        {{ConstructWithDefaults}}
+        $git = New-ServerObject ($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true)) @()
         $leaseType = $server.GetType('Antiphon.Server.Infrastructure.Git.RepositoryMutationLease', $true)
-        $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null, $null))
+        $leases = New-ServerObject $leaseType @($git)
         foreach ($repository in @($args[1], $args[2])) {
             $lease = $leases.TryAcquireAsync($repository, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
             if ($null -ne $lease) { $lease.DisposeAsync().GetAwaiter().GetResult(); exit 10 }
