@@ -26,14 +26,19 @@ public sealed class MergeHighRadiusSubsetTests
     private const string RemoteScriptsRange =
         "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975^..a54a6d4f755fa139b41fd7dc8aef456d3d2c0975";
 
-    // CARD-1801 adds the land notification family to the CARD-1783 classes.
+    // The CARD-1783 classes and ReceiptScanDestinationIntegrationTests. CARD-1801 D-1: the eight
+    // land classes leave this row, four at a time in ordinal order, so no row warns at import.
     private const string TestsFilter =
-        "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
-        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)"
-        + "|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
-        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
-        + "|(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
+
+    private const string LandFilter1 =
+        "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
+        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)/*";
+
+    private const string LandFilter2 =
+        "/*/*/(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
+        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)/*";
 
     // CARD-1801: the A5 pair, the two Linux-only census cases of ReleaseGatePlatformTests.
     private const string CensusPairFilter =
@@ -52,13 +57,18 @@ public sealed class MergeHighRadiusSubsetTests
     private static readonly (string Id, string Project, string Filter, int Min)[] MergeRows =
     [
         ("CP-merge-subset-tests", "tests/Antiphon.Tests", TestsFilter, MeasuredTestsMin),
+        ("CP-merge-subset-tests-land-1", "tests/Antiphon.Tests", LandFilter1, MeasuredLand1Min),
+        ("CP-merge-subset-tests-land-2", "tests/Antiphon.Tests", LandFilter2, MeasuredLand2Min),
         ("CP-merge-subset-ReleaseGatePlatformTests", "tests/Antiphon.Tests", CensusPairFilter, 2),
         ("CP-merge-subset-e2e", "tests/Antiphon.E2E", E2EFilter, 5),
         ("CP-merge-subset-messaging", "tests/Antiphon.Messaging.Tests", MessagingFilter, 1),
     ];
 
-    // The fixed Antiphon.Tests classes executed on server2 Linux (CARD-1801 counting run, 182 in 5m58s).
-    private const int MeasuredTestsMin = 182;
+    // The fixed Antiphon.Tests class rows executed on server2 Linux (CARD-1801 D-1 counting runs,
+    // one leased run each): 44 in 2m02s, 34 in 1m18s and 104 in 4m06s, the 182 of the unsplit row.
+    private const int MeasuredTestsMin = 44;
+    private const int MeasuredLand1Min = 34;
+    private const int MeasuredLand2Min = 104;
 
     private static readonly string[] FixedClasses =
     [
@@ -98,6 +108,9 @@ public sealed class MergeHighRadiusSubsetTests
         RejectWithout(loop, guide, "does not push that ref while the row is red");
         RejectWithout(loop, guide, "CP-merge-subset");
         RejectWithout(loop, guide, TestsFilter);
+        RejectWithout(loop, guide, LandFilter1);
+        RejectWithout(loop, guide, LandFilter2);
+        RejectWithout(loop, guide, "more than four land classes");
         RejectWithout(loop, guide, "fixed high-radius subset");
         // CARD-1801: the table is executed before a land, and a Windows row is owed, never passed on Linux.
         RejectWithout(loop, guide, "runs every impacted-classes row the batch diff selects");
@@ -153,6 +166,12 @@ public sealed class MergeHighRadiusSubsetTests
             .Replace("StandingSessionOwnershipTests", "MissingDowngradeCallerTests", StringComparison.Ordinal);
         using var broken = JsonDocument.Parse(mutant);
         Should.Throw<ShouldAssertException>(() => AssertDowngrade(broken.RootElement));
+
+        // A fifth land class in one row is the import warning of CARD-1801 D-1.
+        var joined = selected.RootElement.GetRawText().Replace(
+            "(LandRequestWriteDiagnosticTests*)", "(LandRequestWriteDiagnosticTests*)|(AgentTaskLandJoinedTests*)", StringComparison.Ordinal);
+        using var crowded = JsonDocument.Parse(joined);
+        Should.Throw<ShouldAssertException>(() => AssertLandRowsSplit(crowded.RootElement));
     }
 
     [Test]
@@ -237,7 +256,7 @@ public sealed class MergeHighRadiusSubsetTests
     {
         var lines = stdout.Replace("\r\n", "\n").Split('\n');
         var filters = root.GetProperty("filters").EnumerateArray().ToList();
-        filters.Count.ShouldBe(4);
+        filters.Count.ShouldBe(7);
         foreach (var row in filters)
             lines.ShouldContain("filter=" + row.GetProperty("project").GetString() + " " + row.GetProperty("treenodeFilter").GetString());
         foreach (var row in root.GetProperty("windowsFilters").EnumerateArray())
@@ -257,6 +276,9 @@ public sealed class MergeHighRadiusSubsetTests
         loop.ShouldContain("CP-merge-subset", Case.Sensitive);
         loop.ShouldContain("merge-high-radius", Case.Sensitive);
         loop.ShouldContain(TestsFilter, Case.Sensitive);
+        loop.ShouldContain(LandFilter1, Case.Sensitive);
+        loop.ShouldContain(LandFilter2, Case.Sensitive);
+        loop.ShouldContain("more than four land classes", Case.Sensitive);
         loop.ShouldContain(E2EFilter, Case.Sensitive);
         foreach (var name in FixedClasses)
             loop.ShouldContain(name, Case.Sensitive, name);
@@ -279,8 +301,14 @@ public sealed class MergeHighRadiusSubsetTests
         Names(root, "classes").ShouldBe(
             FixedClasses.Append("ReleaseGatePlatformTests").Order(StringComparer.Ordinal).ToArray(), ignoreOrder: false);
         Ids(root, "filters").ShouldBe(
-            ["CP-merge-subset-e2e", "CP-merge-subset-tests", "CP-merge-subset-ReleaseGatePlatformTests"], ignoreOrder: false);
+            [
+                "CP-merge-subset-e2e", "CP-merge-subset-tests", "CP-merge-subset-tests-land-1",
+                "CP-merge-subset-tests-land-2", "CP-merge-subset-ReleaseGatePlatformTests",
+            ],
+            ignoreOrder: false);
         Filter(root, "CP-merge-subset-tests").ShouldBe(TestsFilter);
+        Filter(root, "CP-merge-subset-tests-land-1").ShouldBe(LandFilter1);
+        Filter(root, "CP-merge-subset-tests-land-2").ShouldBe(LandFilter2);
         Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
         Filter(root, "CP-merge-subset-e2e").ShouldBe(E2EFilter);
         Project(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe("tests/Antiphon.Tests");
@@ -302,6 +330,22 @@ public sealed class MergeHighRadiusSubsetTests
         tests.ShouldContain("(StandingSessionOwnershipTests*)", Case.Sensitive);
         Filter(root, "CP-merge-subset-e2e").ShouldContain("(ContractSnapshotTests*)", Case.Sensitive);
         Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
+        // A batch land class starts a new row; the fixed land rows keep their filters and floors.
+        Filter(root, "CP-merge-subset-tests-land-1").ShouldBe(LandFilter1);
+        Filter(root, "CP-merge-subset-tests-land-2").ShouldBe(LandFilter2);
+        Filter(root, "CP-merge-subset-tests-land-3").ShouldContain("(LandRequestWriteDiagnosticTests*)", Case.Sensitive);
+        AssertLandRowsSplit(root);
+    }
+
+    // The importer counts a filter class name containing "Land"; more than four in one row warns.
+    private static void AssertLandRowsSplit(JsonElement root)
+    {
+        foreach (var row in root.GetProperty("filters").EnumerateArray())
+        {
+            var filter = row.GetProperty("treenodeFilter").GetString() ?? "";
+            var names = filter.Split('(', ')', '|', '/').Where(name => name.Contains("Land", StringComparison.Ordinal));
+            names.Count().ShouldBeLessThanOrEqualTo(4, filter);
+        }
     }
 
     private static void AssertImpactedMethods(JsonElement root)
