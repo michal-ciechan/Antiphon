@@ -60,7 +60,16 @@ public sealed class ScriptHarnessLinuxOwnershipTests
         (await probe.ConnectAsync()).ShouldStartWith("HELLO " + probe.Nonce);
         var owned = Directory.GetDirectories(Path.GetTempPath(), "antiphon-pwsh-cache-" + probe.SupervisorId + "-*");
         owned.Length.ShouldBe(1);
-        File.ReadAllText(Path.Combine(owned[0], "owner.pid")).Trim().ShouldBe(probe.SupervisorId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var markerText = File.ReadAllText(Path.Combine(owned[0], "owner.pid")).Trim();
+        var parts = markerText.Split('@');
+        parts[0].ShouldBe(probe.SupervisorId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        parts.Length.ShouldBe(2, markerText);
+        using (var supervisor = Process.GetProcessById(probe.SupervisorId))
+        {
+            var observed = supervisor.StartTime.ToUniversalTime().Ticks;
+            var recorded = long.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+            Math.Abs(recorded - observed).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+        }
         (await probe.StartAsync()).ShouldStartWith("ROOT " + probe.Nonce);
         (await probe.ReadAsync()).ShouldStartWith("EXIT " + probe.Nonce);
         await probe.SendAsync("STOP " + probe.Nonce);
