@@ -132,13 +132,13 @@ public sealed class SettlementSyncDebtPolicyTests
     }
 
     /// <summary>
-    /// CARD-1113 item 2. Pending with no progress evidence blocks a Code report with the
-    /// lease reason and leaves every other role unblocked.
+    /// CARD-1113 item 2. Pending with no progress evidence blocks a Code report and leaves
+    /// every other role unblocked. CARD-1802 D-2: the reason says the progress read, not the lease.
     /// </summary>
     [Test]
-    [Arguments(AgentTaskRole.Code, RemoteSettlementSyncReasons.LeaseBusy)]
+    [Arguments(AgentTaskRole.Code, RemoteSettlementSyncReasons.ProgressUnverified)]
     [Arguments(AgentTaskRole.Review, null)]
-    public void C1113_PendingCodeWithoutEvidenceBlocksWithLeaseReason(AgentTaskRole role, string? expected)
+    public void C1113_PendingCodeWithoutEvidenceBlocksWithProgressUnverifiedReason(AgentTaskRole role, string? expected)
     {
         var reason = SettlementSyncDebtPolicy.BlockReason(
             Task(role), LeaseBusy() with { State = RemoteSettlementSyncState.Pending }, evidence: null);
@@ -147,11 +147,12 @@ public sealed class SettlementSyncDebtPolicyTests
 
     /// <summary>
     /// CARD-1119 item 2. An indeterminate Code read under Pending carries the evaluated
-    /// reason, and a missing reason falls back to the lease reason.
+    /// reason, and a missing or lease reason falls back to the unverified-progress reason (CARD-1802 D-2).
     /// </summary>
     [Test]
     [Arguments("baseline_lineage_broken", "baseline_lineage_broken")]
-    [Arguments(null, RemoteSettlementSyncReasons.LeaseBusy)]
+    [Arguments(null, RemoteSettlementSyncReasons.ProgressUnverified)]
+    [Arguments(RemoteSettlementSyncReasons.LeaseBusy, RemoteSettlementSyncReasons.ProgressUnverified)]
     public void C1119_PendingCodeIndeterminateCarriesEvaluatedReason(string? evidenceReason, string expected)
     {
         var evidence = new CompletionProgressEvidence(
@@ -161,6 +162,69 @@ public sealed class SettlementSyncDebtPolicyTests
             LeaseBusy() with { State = RemoteSettlementSyncState.Pending },
             evidence);
         reason.ShouldBe(expected);
+    }
+
+    /// <summary>
+    /// CARD-1802 D-2. An unfetched owned tip under lease contention is owed to the sweep, not
+    /// blocked: the Code report keeps its own verdict and the debt row fetches the objects.
+    /// </summary>
+    [Test]
+    public void C1802_UnfetchedOwnedTipUnderPendingDoesNotBlock()
+    {
+        var evidence = new CompletionProgressEvidence(
+            1, CompletionProgressAssessment.Indeterminate, RemoteSettlementSyncReasons.SourceUnfetched);
+        var pending = LeaseBusy() with { State = RemoteSettlementSyncState.Pending, SourceDescends = null };
+        SettlementSyncDebtPolicy.BlockReason(Task(AgentTaskRole.Code), pending, evidence).ShouldBeNull();
+        // The kill switch path is not Pending, so the same evidence still blocks on the lease.
+        SettlementSyncDebtPolicy.BlockReason(Task(AgentTaskRole.Code), LeaseBusy() with { SourceDescends = null }, evidence)
+            .ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+    }
+
+    /// <summary>
+    /// CARD-1802 D-2. No Pending settlement is blocked by lease contention: an absent, empty or
+    /// lease-reason read says the progress is unverified, every other read keeps its own reason,
+    /// the unfetched read is not blocked, and a Review is never blocked.
+    /// </summary>
+    [Test]
+    [Arguments(AgentTaskRole.Code, false, null, RemoteSettlementSyncReasons.ProgressUnverified)]
+    [Arguments(AgentTaskRole.Code, true, null, RemoteSettlementSyncReasons.ProgressUnverified)]
+    [Arguments(AgentTaskRole.Code, true, RemoteSettlementSyncReasons.LeaseBusy, RemoteSettlementSyncReasons.ProgressUnverified)]
+    [Arguments(AgentTaskRole.Code, true, "baseline_lineage_broken", "baseline_lineage_broken")]
+    [Arguments(AgentTaskRole.Code, true, "primary_log_unavailable", "primary_log_unavailable")]
+    [Arguments(AgentTaskRole.Code, true, "primary_status_unavailable", "primary_status_unavailable")]
+    [Arguments(AgentTaskRole.Code, true, RemoteSettlementSyncReasons.SourceUnfetched, null)]
+    [Arguments(AgentTaskRole.Review, false, null, null)]
+    [Arguments(AgentTaskRole.Review, true, RemoteSettlementSyncReasons.LeaseBusy, null)]
+    public void C1802_PendingBlockReasonIsNeverLeaseBusy(
+        AgentTaskRole role, bool withEvidence, string? evidenceReason, string? expected)
+    {
+        var evidence = withEvidence
+            ? new CompletionProgressEvidence(1, CompletionProgressAssessment.Indeterminate, evidenceReason)
+            : null;
+        var reason = SettlementSyncDebtPolicy.BlockReason(
+            Task(role), LeaseBusy() with { State = RemoteSettlementSyncState.Pending, SourceDescends = null }, evidence);
+        reason.ShouldNotBe(RemoteSettlementSyncReasons.LeaseBusy);
+        reason.ShouldBe(expected);
+    }
+
+    /// <summary>
+    /// CARD-1802 D-5. An unfetched Pending warning adds the fetch clause and still never asks
+    /// for a reply; the fetched warning is unchanged.
+    /// </summary>
+    [Test]
+    public void C1802_UnfetchedPendingWarningSaysTheSweepFetches()
+    {
+        const string clause = "The pushed objects are not yet in the desktop repository; "
+            + "the settlement sync sweep fetches them under the lease before the fast-forward.";
+        var task = Task(AgentTaskRole.Code);
+        var unfetched = SettlementSyncDebtPolicy.PendingWarning(
+            task, LeaseBusy() with { State = RemoteSettlementSyncState.Pending, SourceDescends = null });
+        unfetched.ShouldContain(clause);
+        unfetched.ShouldContain("synced later");
+        unfetched.ShouldContain("No reply is needed");
+        unfetched.ShouldNotContain("then reply");
+        SettlementSyncDebtPolicy.PendingWarning(task, LeaseBusy() with { State = RemoteSettlementSyncState.Pending })
+            .ShouldNotContain(clause);
     }
 
     /// <summary>

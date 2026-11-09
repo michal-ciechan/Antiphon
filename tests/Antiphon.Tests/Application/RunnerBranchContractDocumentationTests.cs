@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Text.RegularExpressions;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -94,6 +97,70 @@ public class RunnerBranchContractDocumentationTests
         Read("server/Application/Services/AttentionService.cs").ShouldContain(
             "SettlementSyncDebtAttention.Build");
         Read("server/Application/Services/AgentTaskService.cs").ShouldContain("new TaskSyncDebtDto");
+    }
+
+    /// <summary>
+    /// CARD-1802 V-6. Rule 6 (never Reply to a complete report Blocked only by runner sync) and the
+    /// CARD-1082 sync-debt design agree: lease contention alone never leaves Pending evidence without
+    /// a debt row, in every place that explains Pending evidence, and rule 6's reason names are
+    /// the server's own constants.
+    /// </summary>
+    [Test]
+    public void C1802_rule_six_and_the_sync_debt_design_agree()
+    {
+        const string canonical = "Lease contention alone never leaves Pending evidence without a debt row (CARD-1802).";
+        const string stale = "Pending evidence without a debt row means the task stayed Blocked and a reply is required.";
+
+        var loop = Read("docs/orchestration-loop.md").Replace("\r\n", "\n");
+        var rule6 = Slice(loop, "6. **Do not Reply", "7. **Master lands", "c1802-rule-6");
+        var design = Line(loop, "CARD-1082. Delegation:RunnerSyncDebtOnSettlement", "c1802-design");
+        var ops = Line(Read("docs/ops-http.md").Replace("\r\n", "\n"), "| Settlement sync debt (CARD-1082) |", "c1802-ops");
+        var runtime = Line(Read("docs/session-runtime-invariants.md").Replace("\r\n", "\n"),
+            "CARD-1082. Delegation:RunnerSyncDebtOnSettlement", "c1802-runtime");
+        var script = Line(Read("scripts/delegate.ps1").Replace("\r\n", "\n"),
+            "Write-Output 'Pending evidence without a debt row", "c1802-script");
+
+        foreach (var (text, label) in new[]
+        {
+            (rule6, "c1802-rule-6"), (design, "c1802-design"), (ops, "c1802-ops"),
+            (runtime, "c1802-runtime"), (script, "c1802-script"),
+        })
+        {
+            Pin(text, canonical, label + "-canonical");
+            text.ShouldNotContain(stale, Case.Sensitive, label + "-stale");
+        }
+        foreach (var relative in new[] { "docs/orchestration-loop.md", "docs/ops-http.md",
+            "docs/session-runtime-invariants.md", "scripts/delegate.ps1" })
+            Read(relative).ShouldNotContain(stale, Case.Sensitive, "c1802-stale-" + relative);
+
+        // Rule 6 names the reason a Pending complete report still blocks on, and every runner_sync_
+        // reason it names is a server constant.
+        rule6.ShouldContain("`" + RemoteSettlementSyncReasons.ProgressUnverified + "`", Case.Sensitive, "c1802-rule-6-unverified");
+        var constants = typeof(RemoteSettlementSyncReasons)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral).Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
+        var named = Regex.Matches(rule6, "runner_sync_[a-z_]+").Select(m => m.Value).Distinct().ToList();
+        named.ShouldContain(RemoteSettlementSyncReasons.ProgressUnverified, "c1802-rule-6-names");
+        foreach (var reason in named)
+            constants.ShouldContain(reason, "c1802-rule-6-constant:" + reason);
+        design.ShouldContain("the sweep fetches", Case.Sensitive, "c1802-design-fetches");
+    }
+
+    private static string Slice(string text, string start, string end, string label)
+    {
+        var from = text.IndexOf(start, StringComparison.Ordinal);
+        from.ShouldBeGreaterThanOrEqualTo(0, label + "-start");
+        var to = text.IndexOf(end, from, StringComparison.Ordinal);
+        to.ShouldBeGreaterThan(from, label + "-end");
+        return text[from..to];
+    }
+
+    private static string Line(string text, string start, string label)
+    {
+        var from = text.IndexOf(start, StringComparison.Ordinal);
+        from.ShouldBeGreaterThanOrEqualTo(0, label + "-start");
+        var to = text.IndexOf('\n', from);
+        return to < 0 ? text[from..] : text[from..to];
     }
 
     /// <summary>

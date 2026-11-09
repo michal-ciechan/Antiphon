@@ -260,6 +260,12 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         services.AddScoped(sp => new TaskCompletionProgressService(sp.GetRequiredService<ITaskProgressGit>(),
                             clock: clock, remoteSync: sp.GetRequiredService<RemoteWorkspaceService>(),
                             workspaceContexts: sp.GetRequiredService<TaskWorkspaceContextResolver>()));
+                        // CARD-1802 V-5. The settlement sync-debt sweep on the fixture clock; resolved on
+                        // demand only, so the dispatcher tick is unchanged.
+                        services.AddScoped(sp => new SettlementSyncRecoveryService(sp.GetRequiredService<AppDbContext>(),
+                            sp.GetRequiredService<RemoteWorkspaceService>(), sp.GetRequiredService<IEventBus>(), clock,
+                            sp.GetRequiredService<ILogger<SettlementSyncRecoveryService>>(),
+                            sp.GetRequiredService<IOptions<DelegationSettings>>()));
                     }
                     services.AddScoped(sp => new AgentTaskDispatcher(
                         sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<AgentRegistry>(),
