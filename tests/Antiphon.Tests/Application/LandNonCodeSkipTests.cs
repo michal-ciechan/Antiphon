@@ -312,6 +312,20 @@ public sealed class LandNonCodeSkipTests
         command.ShouldContain("graph=");
     }
 
+    private static Task<LandGraphEvaluationTests.AuditRepo> ProvenanceRepoAsync() => LandGraphEvaluationTests.ScriptRepoAsync(new()
+    {
+        ["App/App.csproj"] = """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></Project>""",
+    });
+
+    private static readonly Lazy<Task<(byte[] Manifest, byte[] Evaluation)>> ProvenanceRecords = new(async () =>
+    {
+        await using var repo = await ProvenanceRepoAsync();
+        var generated = await LandGraphEvaluationTests.RunScriptAsync(repo.Root, "-Update");
+        generated.ExitCode.ShouldBe(0, generated.Text);
+        return (await File.ReadAllBytesAsync(repo.Full("server/Application/Services/LandVerificationBuildGraph.manifest.txt")),
+            await File.ReadAllBytesAsync(repo.Full("server/Application/Services/LandVerificationBuildGraph.evaluation.txt")));
+    });
+
     [Test]
     [Arguments("10.0.300", null)]
     [Arguments("10.0.402", null)]
@@ -322,12 +336,13 @@ public sealed class LandNonCodeSkipTests
     [Arguments("missing-line", "three lines")]
     public async Task EvaluationRecordPreservesSdkProvenanceWithoutBindingTheCheckingHost(string variant, string? refusal)
     {
-        await using var repo = await LandGraphEvaluationTests.ScriptRepoAsync(new()
-        {
-            ["App/App.csproj"] = """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></Project>""",
-        });
-        var generated = await LandGraphEvaluationTests.RunScriptAsync(repo.Root, "-Update");
-        generated.ExitCode.ShouldBe(0, generated.Text);
+        await using var repo = await ProvenanceRepoAsync();
+        // -Update writes only the manifest and the evaluation record, and every case builds the same fixture, so
+        // the records are generated once (a real -Update with MSBuild evaluation) and written into later cases.
+        // Each case still runs its own -Check, which evaluates again; the approving cases prove the copy valid.
+        var (manifest, evaluation) = await ProvenanceRecords.Value;
+        await File.WriteAllBytesAsync(repo.Full("server/Application/Services/LandVerificationBuildGraph.manifest.txt"), manifest);
+        await File.WriteAllBytesAsync(repo.Full("server/Application/Services/LandVerificationBuildGraph.evaluation.txt"), evaluation);
         var recordPath = repo.Full("server/Application/Services/LandVerificationBuildGraph.evaluation.txt");
         var record = await File.ReadAllLinesAsync(recordPath);
         record[1] = refusal is null ? variant : record[1];

@@ -661,7 +661,8 @@ public sealed partial class LandGraphEvaluationTests
             var ids = new List<string>();
             foreach (var project in projects)
             {
-                var id = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
+                // Derived from the project path, so the same fixture files give the same solution (and digest).
+                var id = "{" + new Guid(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(project))).ToString().ToUpperInvariant() + "}";
                 ids.Add(id);
                 var type = projectTypes.GetValueOrDefault(project, "{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}");
                 sb.Append($"Project(\"{type}\") = \"{Path.GetFileNameWithoutExtension(project)}\", \"{project.Replace('/', '\\')}\", \"{id}\"\r\nEndProject\r\n");
