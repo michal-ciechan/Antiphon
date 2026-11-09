@@ -124,6 +124,17 @@ internal sealed class FakeTaskProgressGit : ITaskProgressGit
         return Task.FromResult(new ProgressRevParse(false, null, "repair_source_identity_unavailable"));
     }
 
+    /// <summary>CARD-1805. Object presence from the same commit graph <see cref="RevParseCommitAsync"/> reads.</summary>
+    public Task<bool?> HasObjectAsync(string repository, string sha, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Trace.Add(["cat-file", "-e", sha]);
+        ThrowIfInjected("cat-file", ["cat-file", "-e", sha]);
+        if (!GitObjectId.IsFull(sha))
+            return Task.FromResult<bool?>(null);
+        return Task.FromResult<bool?>(LocalRefs.ContainsKey(sha) || Parents.ContainsKey(sha));
+    }
+
     public Task<ProgressSymbolicHead> SymbolicHeadAsync(string repository, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

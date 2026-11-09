@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain;
 
 namespace Antiphon.Server.Application.Interfaces;
 
@@ -20,6 +21,24 @@ public interface ITaskProgressGit
         RepositoryLease lease, CancellationToken ct) =>
         ObserveExactRefAsync(repository, fullRef, expectedFingerprint, taskId, ct);
     Task<bool?> IsAncestorAsync(string repository, string ancestorSha, string descendantSha, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-1805 (A-3). Whether one exact full object id is in the repository: true present, false
+    /// absent (<c>git cat-file -e</c> exits 1), null for any other answer. Exit 128 is an unreadable
+    /// repository as well as a bad name, so it is never absence.
+    /// </summary>
+    async Task<bool?> HasObjectAsync(string repository, string sha, CancellationToken ct)
+    {
+        if (!GitObjectId.IsFull(sha))
+            return null;
+        var result = await RunAsync(repository, ["cat-file", "-e", sha], ct);
+        return result.ExitCode switch
+        {
+            0 => true,
+            1 => false,
+            _ => null,
+        };
+    }
 
     /// <summary>
     /// CARD-0613 D-6. The COMMITTER time of one exact full object id, in UTC. Never the author

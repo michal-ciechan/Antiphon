@@ -269,12 +269,12 @@ public sealed class TaskCompletionProgressService
             // server-read tip, it is not b, and it is not a local object, so no ancestry or claim
             // read is possible here. The sync-debt sweep fetches S under the lease before the
             // fast-forward. Indeterminate, never ProgressObserved; SourceDescends stays null.
+            // CARD-1805 (A-3): only a read that says absent counts; a repository error is unverified.
             if (prepared.SourceDescends is null
                 && prepared.RemoteSha is { } unfetched
                 && GitObjectId.IsFull(unfetched)
                 && !string.Equals(unfetched, baseline.LocalSha, StringComparison.Ordinal)
-                && await _git.RevParseCommitAsync(pendingRepo, unfetched, ct) is { Succeeded: false } absent
-                && absent.Reason != "rev_parse_failed")
+                && await _git.HasObjectAsync(pendingRepo, unfetched, ct) == false)
                 return Unknown(RemoteSettlementSyncReasons.SourceUnfetched);
 
             return Unknown(RemoteSettlementSyncReasons.ProgressUnverified);
