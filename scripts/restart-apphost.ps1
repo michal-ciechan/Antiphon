@@ -168,7 +168,11 @@ if (-not $lock.Acquired) {
     Write-Host "REFUSED: another restart is in flight - $($lock.Reason)" -ForegroundColor Yellow
     Write-Host "  A second teardown over the top of the first is exactly what times out the DCP" -ForegroundColor DarkGray
     Write-Host "  dependency check (CARD-0075). Wait for it to finish, then check http://localhost:17202/health." -ForegroundColor DarkGray
-    Write-Host "  Nothing was killed. If the holder is genuinely gone, delete $restartLock." -ForegroundColor DarkGray
+    Write-Host "  Nothing was killed. A dead holder is not a reason to delete $restartLock." -ForegroundColor DarkGray
+    Write-Host "  Inspect both locks, launcher output, owned processes, listeners and health." -ForegroundColor DarkGray
+    Write-Host "  Early recovery needs the same lock identity on two watchdog fires within five minutes," -ForegroundColor DarkGray
+    Write-Host "  holder state Dead, launcher activity Absent, connection-refused health, and no launch lock." -ForegroundColor DarkGray
+    Write-Host "  Otherwise wait for LockMaxAgeMinutes. Unknown, live, slow, or replacement evidence does not qualify." -ForegroundColor DarkGray
     exit 3
 }
 
@@ -442,7 +446,8 @@ try {
         Write-Host "  NOTE: the dev-aspire.ps1 this script spawned may STILL be launching (its own" -ForegroundColor DarkGray
         Write-Host "  budget is longer than ${waitedSec}s). Do not re-run blind - re-running kills a" -ForegroundColor DarkGray
         Write-Host "  DCP that is still coming up (CARD-0075). Check $launchLock first." -ForegroundColor DarkGray
-        Write-Host "  Leaving $restartLock for LockMaxAgeMinutes; delete it to force a retry." -ForegroundColor DarkGray
+        Write-Host "  Leaving $restartLock for LockMaxAgeMinutes. Do not delete it to force a retry." -ForegroundColor DarkGray
+        Write-Host "  Prefer inspection, guarded dead-launch admission, or ordinary expiry." -ForegroundColor DarkGray
         exit 1
     }
 
