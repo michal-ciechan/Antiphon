@@ -470,44 +470,78 @@ function New-PostLandOwedWindows {
     return ,$owed
 }
 
+function Add-PostLandUnitRun {
+    param($Shards, $Manifest, $Checkpoints, $Mode, $Key, $Namespace, $Items)
+    if ($null -eq $Items -or $Items.Count -eq 0) { return }
+    if ($Mode -eq 'cp') {
+        $filter = ([string]$Manifest.checkpointsFilter).Replace('<Letter>', $Key)
+        [void]$Shards.Add((New-PostLandShard -Id ('unit-cp-' + $Key) -Kind 'unit' -Filter $filter -Namespace $Checkpoints -Letter $Key -ClassItems $Items))
+        return
+    }
+    $filter = ([string]$Manifest.nonCheckpointsFilter).Replace('<namespace>', $Namespace)
+    [void]$Shards.Add((New-PostLandShard -Id ('unit-ns-' + $Namespace) -Kind 'unit' -Filter $filter -Namespace $Namespace -Letter $null -ClassItems $Items))
+}
+
 function Build-PostLandShards {
     param($Manifest, $Classes, $SelectorClasses, $WindowNames)
     $shards = New-PostLandObjectList
     $checkpoints = [string]$Manifest.checkpointsNamespace
-    $byNamespace = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
-    $byLetter = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    # A Checkpoints class is not contiguous by letter, and the census walks files.
+    # Those trees keep that walk. Other trees sort namespace shards ordinally.
+    $hasCheckpoints = $false
     if ($null -ne $Classes) {
-    foreach ($class in $Classes) {
-        if ($null -eq $class -or -not $class.Unit) { continue }
-        if ([string]$class.Namespace -eq $checkpoints) {
-            $letter = ([string]$class.Name).Substring(0, 1)
-            if (-not $byLetter.ContainsKey($letter)) { $byLetter[$letter] = New-PostLandObjectList }
-            [void]$byLetter[$letter].Add($class)
+        foreach ($class in $Classes) {
+            if ($null -ne $class -and $class.Unit -and [string]$class.Namespace -eq $checkpoints) {
+                $hasCheckpoints = $true
+                break
+            }
         }
-        else {
+    }
+    if ($hasCheckpoints) {
+        $run = $null
+        $runMode = ''
+        $runKey = ''
+        $runNamespace = ''
+        foreach ($class in $Classes) {
+            if ($null -eq $class -or -not $class.Unit) { continue }
             $ns = [string]$class.Namespace
-            if (-not $byNamespace.ContainsKey($ns)) { $byNamespace[$ns] = New-PostLandObjectList }
-            [void]$byNamespace[$ns].Add($class)
+            $name = [string]$class.Name
+            $mode = 'ns'
+            $key = $ns
+            if ($ns -eq $checkpoints -and $name.Length -gt 0) {
+                $mode = 'cp'
+                $key = $name.Substring(0, 1)
+            }
+            $same = $false
+            if ($null -ne $run -and $runMode -eq $mode -and $runKey -eq $key) { $same = $true }
+            if (-not $same) {
+                Add-PostLandUnitRun $shards $Manifest $checkpoints $runMode $runKey $runNamespace $run
+                $run = New-PostLandObjectList
+                $runMode = $mode
+                $runKey = $key
+                $runNamespace = $ns
+            }
+            [void]$run.Add($class)
         }
+        Add-PostLandUnitRun $shards $Manifest $checkpoints $runMode $runKey $runNamespace $run
     }
-    }
-    $nsKeys = New-PostLandStringList
-    foreach ($key in $byNamespace.Keys) { [void]$nsKeys.Add($key) }
-    $nsSorted = $nsKeys.ToArray()
-    [Array]::Sort($nsSorted, [StringComparer]::Ordinal)
-    foreach ($ns in $nsSorted) {
-        $filter = ([string]$Manifest.nonCheckpointsFilter).Replace('<namespace>', $ns)
-        $items = @($byNamespace[$ns] | Sort-Object Name, Namespace)
-        [void]$shards.Add((New-PostLandShard -Id ('unit-ns-' + $ns) -Kind 'unit' -Filter $filter -Namespace $ns -Letter $null -ClassItems $items))
-    }
-    $letterKeys = New-PostLandStringList
-    foreach ($key in $byLetter.Keys) { [void]$letterKeys.Add($key) }
-    $letterSorted = $letterKeys.ToArray()
-    [Array]::Sort($letterSorted, [StringComparer]::Ordinal)
-    foreach ($letter in $letterSorted) {
-        $filter = ([string]$Manifest.checkpointsFilter).Replace('<Letter>', $letter)
-        $items = @($byLetter[$letter] | Sort-Object Name, Namespace)
-        [void]$shards.Add((New-PostLandShard -Id ('unit-cp-' + $letter) -Kind 'unit' -Filter $filter -Namespace $checkpoints -Letter $letter -ClassItems $items))
+    else {
+        $byNamespace = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+        if ($null -ne $Classes) {
+            foreach ($class in $Classes) {
+                if ($null -eq $class -or -not $class.Unit) { continue }
+                $ns = [string]$class.Namespace
+                if (-not $byNamespace.ContainsKey($ns)) { $byNamespace[$ns] = New-PostLandObjectList }
+                [void]$byNamespace[$ns].Add($class)
+            }
+        }
+        $nsKeys = New-PostLandStringList
+        foreach ($key in $byNamespace.Keys) { [void]$nsKeys.Add($key) }
+        $nsSorted = $nsKeys.ToArray()
+        [Array]::Sort($nsSorted, [StringComparer]::Ordinal)
+        foreach ($ns in $nsSorted) {
+            Add-PostLandUnitRun $shards $Manifest $checkpoints 'ns' $ns $ns $byNamespace[$ns]
+        }
     }
     $selected = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     if ($null -ne $SelectorClasses) {
@@ -648,6 +682,7 @@ function Complete-PostLandOutcome {
     $expect = Test-Path -LiteralPath $tipDir -PathType Container
     $allFailures = New-PostLandStringList
     $unknown = New-PostLandStringList
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $ancestor = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $previous = $null
     if ($expect) {
@@ -672,15 +707,20 @@ function Complete-PostLandOutcome {
             $shard.failed = $parsed.Failed
             $shard.skipped = $parsed.Skipped
             if ($null -ne $parsed.Failures) {
-                foreach ($name in $parsed.Failures) { [void]$allFailures.Add([string]$name) }
+                foreach ($name in $parsed.Failures) {
+                    $label = [string]$name
+                    if ([string]::IsNullOrWhiteSpace($label)) { continue }
+                    if ($seen.Contains($label)) { continue }
+                    [void]$seen.Add($label)
+                    [void]$allFailures.Add($label)
+                }
             }
         }
     }
     $newReds = New-PostLandStringList
-    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     foreach ($name in $allFailures) {
         if ($ancestor.Contains([string]$name)) { continue }
-        if ($seen.Add([string]$name)) { [void]$newReds.Add([string]$name) }
+        [void]$newReds.Add([string]$name)
     }
     $sortedNew = Sort-PostLandNames $newReds
     $sortedAll = Sort-PostLandNames $allFailures
@@ -834,9 +874,11 @@ function Invoke-PostLandLane {
     try {
         $build = @('dotnet', 'build', 'tests/Antiphon.Tests', '--property:UseAppHost=false', '--nologo')
         $null = Invoke-PostLandSlot $build
+        $launched = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
         if ($null -ne $Payload.shards) {
         foreach ($shard in $Payload.shards) {
             if ($null -eq $shard) { continue }
+            if (-not $launched.Add([string]$shard.filter)) { continue }
             $phase = Join-Path $tipDir ('phase/' + [string]$shard.id)
             $null = [IO.Directory]::CreateDirectory($phase)
             $env:ANTIPHON_TEST_PHASE_ROOT = $phase
