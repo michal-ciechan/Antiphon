@@ -52,6 +52,22 @@ public sealed class ScriptHarnessLinuxOwnershipTests
         (await probe.ReadAsync()).ShouldStartWith("EXIT " + probe.Nonce);
     }
 
+    // CARD-1793: SIGKILL of the supervisor's own group skips ProcessExit; its finally releases the cache.
+    [Test]
+    public async Task Supervisor_removes_its_private_cache_before_the_group_kill()
+    {
+        await using var probe = new LinuxSupervisorProbe("Passing");
+        (await probe.ConnectAsync()).ShouldStartWith("HELLO " + probe.Nonce);
+        var owned = Directory.GetDirectories(Path.GetTempPath(), "antiphon-pwsh-cache-" + probe.SupervisorId + "-*");
+        owned.Length.ShouldBe(1);
+        File.ReadAllText(Path.Combine(owned[0], "owner.pid")).Trim().ShouldBe(probe.SupervisorId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        (await probe.StartAsync()).ShouldStartWith("ROOT " + probe.Nonce);
+        (await probe.ReadAsync()).ShouldStartWith("EXIT " + probe.Nonce);
+        await probe.SendAsync("STOP " + probe.Nonce);
+        await probe.WaitExitedAsync(TimeSpan.FromSeconds(10));
+        Directory.Exists(owned[0]).ShouldBeFalse(owned[0]);
+    }
+
     [Test]
     public async Task Setsid_failure_refuses_child_launch()
     {
