@@ -4,6 +4,7 @@ using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Antiphon.Scripts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport.LiveClaude;
@@ -123,79 +124,59 @@ public class LiveLaneEvidenceTests
     [Test]
     public void ArtifactGateRequiresPresence()
     {
-        var script = Path.Combine(FindRepo(), "scripts", "lib", "live-lane-evidence.ps1");
-        if (!File.Exists(script))
-            throw new InvalidOperationException("C1545 V-8/entry required evidence scanner is absent");
         var root = Path.Combine("/tmp", "c1545-scan-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        var proved = new HashSet<string>(StringComparer.Ordinal);
         try
         {
-            var roster = Run(script, "Roster", null, null);
+            var roster = Run("Roster", null, null);
             var expected = Roster.Select(row => row.Case + " " + row.Test + " " + row.Cp).ToArray();
             var actual = roster.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (roster.Code != 0 || !expected.SequenceEqual(actual))
                 throw new InvalidOperationException("C1545 V-8/roster " + roster.Text);
             var clean = Build(Path.Combine(root, "clean"), cleanFiles: true);
-            Expect(script, "Scan", clean.Context, 0, "EVIDENCE-SCAN clean", null);
-            Expect(script, "Publish", clean.Context, 0, "publicationCount=1", null);
+            Expect("Scan", clean.Context, 0, "EVIDENCE-SCAN clean");
+            Expect("Publish", clean.Context, 0, "publicationCount=1");
             if (!File.Exists(clean.Public)) throw new InvalidOperationException("C1545 V-8/publish public summary missing");
-            Prove(script, "PC-48", "Scan", Path.Combine(root, "absent.json"),
-                "Exit-Evidence 2 'context-absent' # GUARD context-present",
-                "$Path = [string]$env:C1545_DECOY_CONTEXT # GUARD context-present",
-                2, "context-absent", 0, "EVIDENCE-SCAN clean",
-                new Dictionary<string, string> { ["C1545_DECOY_CONTEXT"] = clean.Context });
+            Prove(proved, "PC-48", "Scan", Path.Combine(root, "absent.json"), "context-present",
+                2, "context-absent", 2, "reason=unreadable");
             var otherMarker = "C1545-EVIDENCE case=control-success test=OtherTest kind=success run=portable";
-            Prove(script, "PC-49", "Scan", Variant(clean, Path.Combine(root, "wrong-id"), node =>
+            Prove(proved, "PC-49", "Scan", Variant(clean, Path.Combine(root, "wrong-id"), node =>
             {
                 node["cases"]![0]!["test"] = "OtherTest";
                 File.WriteAllText(clean.Trx, Trx("OtherTest", clean.Marker));
                 File.WriteAllText(clean.Receipt, otherMarker + "\n");
                 File.WriteAllText(clean.Summary, otherMarker + "\n");
-            }), "if ($hits.Count -ne 1) { return 'marker-missing' } # GUARD marker-missing",
-                "if ($false) { return 'marker-missing' } # GUARD marker-missing",
-                2, "marker-missing", 0, "EVIDENCE-SCAN clean", null);
+            }), "marker-missing", 2, "marker-missing", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(clean.Trx, Trx("EvidenceIsSanitized", clean.Marker));
             File.WriteAllText(clean.Receipt, clean.Marker + "\n");
             File.WriteAllText(clean.Summary, clean.Marker + "\n");
-            Prove(script, "PC-50", "Scan", Variant(clean, Path.Combine(root, "receipt-gap"), _ =>
+            Prove(proved, "PC-50", "Scan", Variant(clean, Path.Combine(root, "receipt-gap"), _ =>
                 File.WriteAllText(clean.Receipt, "C1545-EVIDENCE-DOCUMENT kind=receipt run=portable count=0\n")),
-                "if (-not $receipt.Text.Contains($marker)) { return 'receipt-marker-missing' } # GUARD receipt-marker",
-                "if ($false) { return 'receipt-marker-missing' } # GUARD receipt-marker",
-                2, "receipt-marker-missing", 0, "EVIDENCE-SCAN clean", null);
+                "receipt-marker", 2, "receipt-marker-missing", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(clean.Receipt, clean.Marker + "\n");
-            Prove(script, "PC-51", "Scan", Variant(clean, Path.Combine(root, "summary-gap"), _ =>
+            Prove(proved, "PC-51", "Scan", Variant(clean, Path.Combine(root, "summary-gap"), _ =>
                 File.WriteAllText(clean.Summary, "C1545-EVIDENCE-DOCUMENT kind=summary run=portable count=0\n")),
-                "if (-not $summary.Text.Contains($marker)) { return 'summary-marker-missing' } # GUARD summary-marker",
-                "if ($false) { return 'summary-marker-missing' } # GUARD summary-marker",
-                2, "summary-marker-missing", 0, "EVIDENCE-SCAN clean", null);
+                "summary-marker", 2, "summary-marker-missing", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(clean.Summary, clean.Marker + "\n");
-            Prove(script, "PC-52", "Scan", Variant(clean, Path.Combine(root, "empty-cases"), node => node["cases"] = new JsonArray()),
-                "if ($cases.Count -eq 0) { return 'zero-case' } # GUARD zero-case",
-                "if ($false) { return 'zero-case' } # GUARD zero-case",
-                2, "zero-case", 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-53", "Scan", Variant(clean, Path.Combine(root, "missing-trx"), node =>
+            Prove(proved, "PC-52", "Scan", Variant(clean, Path.Combine(root, "empty-cases"), node => node["cases"] = new JsonArray()),
+                "zero-case", 2, "zero-case", 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-53", "Scan", Variant(clean, Path.Combine(root, "missing-trx"), node =>
                 node["producers"]![0]!["trx"] = Path.Combine(root, "missing.trx")),
-                "if (-not $trxRead.Ok) { return $trxRead.Reason } # GUARD missing-trx",
-                "if (-not $trxRead.Ok) { return '' } # GUARD missing-trx",
-                2, "missing-trx", 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-54", "Scan", Variant(clean, Path.Combine(root, "empty-receipt"), _ =>
+                "missing-trx", 2, "missing-trx", 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-54", "Scan", Variant(clean, Path.Combine(root, "empty-receipt"), _ =>
                 File.WriteAllBytes(clean.Receipt, [])),
-                "if (-not $receipt.Ok) { return 'empty-artifact' } # GUARD empty-artifact",
-                "if (-not $receipt.Ok) { return '' } # GUARD empty-artifact",
-                2, "empty-artifact", 0, "EVIDENCE-SCAN clean", null);
+                "empty-artifact", 2, "empty-artifact", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(clean.Receipt, clean.Marker + "\n");
             var dirReceipt = Path.Combine(root, "receipt-dir");
             Directory.CreateDirectory(dirReceipt);
-            Prove(script, "PC-55", "Scan", Variant(clean, Path.Combine(root, "unreadable"), node => node["receipt"] = dirReceipt),
-                "if (-not $receipt.Ok -and $receipt.Reason -eq 'unreadable') { return 'unreadable' } # GUARD unreadable",
-                "if (-not $receipt.Ok -and $receipt.Reason -eq 'unreadable') { return '' } # GUARD unreadable",
-                2, "unreadable", 0, "EVIDENCE-SCAN clean", null);
+            Prove(proved, "PC-55", "Scan", Variant(clean, Path.Combine(root, "unreadable"), node => node["receipt"] = dirReceipt),
+                "unreadable", 2, "unreadable", 0, "EVIDENCE-SCAN clean");
             var nested = Path.Combine(clean.Row, "nested");
             Directory.CreateDirectory(nested);
             File.WriteAllText(Path.Combine(nested, "leak.txt"), LiveClaudeEvidenceSentinels.Screen);
-            Prove(script, "PC-56", "Scan", clean.Context,
-                "[IO.SearchOption]::AllDirectories", "[IO.SearchOption]::TopDirectoryOnly",
-                2, "sentinel-present", 0, "EVIDENCE-SCAN clean", null);
+            Prove(proved, "PC-56", "Scan", clean.Context, "row-recursive", 2, "sentinel-present", 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "row-sentinel", "Scan", clean.Context, "row-sentinel", 2, "sentinel-present", 0, "EVIDENCE-SCAN clean");
             File.Delete(Path.Combine(nested, "leak.txt"));
             foreach (var (name, payload) in new (string Name, string Payload)[]
             {
@@ -206,155 +187,112 @@ public class LiveLaneEvidenceTests
             })
             {
                 File.WriteAllText(Path.Combine(nested, "enc.txt"), payload);
-                Prove(script, "PC-57", "Scan", clean.Context,
-                    "# GUARD decode\n    $decoded = $text",
-                    "return $text # GUARD decode\n    $decoded = $text",
-                    2, "sentinel-present", 0, "EVIDENCE-SCAN clean", null);
+                Prove(proved, "PC-57", "Scan", clean.Context, "decode", 2, "sentinel-present", 0, "EVIDENCE-SCAN clean");
                 Console.WriteLine("C1545 PC-57 cycle " + name);
                 File.Delete(Path.Combine(nested, "enc.txt"));
             }
-            Expect(script, "Scan", clean.Context, 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-58", "Scan", clean.Context,
-                "# GUARD console-absence-only",
-                "if ($consoleRead.Text -notmatch 'C1545-EVIDENCE') { return 'marker-missing' }",
-                0, "EVIDENCE-SCAN clean", 2, "marker-missing", null);
-            Prove(script, "PC-59", "Scan", Variant(clean, Path.Combine(root, "zero-results"), _ =>
+            Expect("Scan", clean.Context, 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-58", "Scan", clean.Context, "console-absence-only", 0, "EVIDENCE-SCAN clean", 2, "marker-missing");
+            Prove(proved, "PC-59", "Scan", Variant(clean, Path.Combine(root, "zero-results"), _ =>
                 File.WriteAllText(clean.Trx, Trx("EvidenceIsSanitized", clean.Marker, executed: 0))),
-                "if ($map.Executed -lt 1) { return 'zero-results' } # GUARD zero-results",
-                "if ($false) { return 'zero-results' } # GUARD zero-results",
-                2, "zero-results", 0, "EVIDENCE-SCAN clean", null);
+                "zero-results", 2, "zero-results", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(clean.Trx, Trx("EvidenceIsSanitized", clean.Marker));
-            Prove(script, "PC-60", "Scan", Variant(clean, Path.Combine(root, "zero-summary"), _ =>
+            Prove(proved, "PC-60", "Scan", Variant(clean, Path.Combine(root, "zero-summary"), _ =>
                 File.WriteAllText(clean.Console, "  succeeded: 0\n")),
-                "if (-not (Test-ConsoleSummary $consoleRead.Text)) { return 'zero-summary' } # GUARD zero-summary",
-                "if ($false) { return 'zero-summary' } # GUARD zero-summary",
-                2, "zero-summary", 0, "EVIDENCE-SCAN clean", null);
+                "zero-summary", 2, "zero-summary", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(clean.Console, "  succeeded: 1\n");
-            Prove(script, "PC-61", "Scan", Variant(clean, Path.Combine(root, "stale-source"), node =>
+            Prove(proved, "PC-61", "Scan", Variant(clean, Path.Combine(root, "stale-source"), node =>
                 node["producers"]![0]!["source"] = OtherSha),
-                "if ($source -ne $expectedSource) { return 'stale-source' } # GUARD stale-source",
-                "if ($false) { return 'stale-source' } # GUARD stale-source",
-                2, "stale-source", 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-62", "Scan", Variant(clean, Path.Combine(root, "stale-build"), node =>
+                "stale-source", 2, "stale-source", 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-62", "Scan", Variant(clean, Path.Combine(root, "stale-build"), node =>
                 node["producers"]![0]!["build"] = "stale"),
-                "if ($build -ne 'verified' -or [string](Get-Prop $producer 'buildCommit') -ne $expectedSource) { return 'stale-build' } # GUARD stale-build",
-                "if ($false) { return 'stale-build' } # GUARD stale-build",
-                2, "stale-build", 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-63", "Scan", Variant(clean, Path.Combine(root, "cross-run"), node =>
+                "stale-build", 2, "stale-build", 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-63", "Scan", Variant(clean, Path.Combine(root, "cross-run"), node =>
                 node["producers"]![0]!["runId"] = "other-run"),
-                "if ($runId -ne $expectedRun -or [string]::IsNullOrWhiteSpace($expectedRun)) { return 'cross-run' } # GUARD cross-run",
-                "if ($false) { return 'cross-run' } # GUARD cross-run",
-                2, "cross-run", 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-64", "Scan", Variant(clean, Path.Combine(root, "running"), node =>
+                "cross-run", 2, "cross-run", 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-64", "Scan", Variant(clean, Path.Combine(root, "running"), node =>
                 node["producers"]![0]!["state"] = "running"),
-                "if ($state -ne 'green' -and $state -ne 'red') { return 'producer-running' } # GUARD producer-running",
-                "if ($false) { return 'producer-running' } # GUARD producer-running",
-                2, "producer-running", 0, "EVIDENCE-SCAN clean", null);
+                "producer-running", 2, "producer-running", 0, "EVIDENCE-SCAN clean");
             var rows = BuildCompleted(Path.Combine(root, "rows"));
-            Expect(script, "CompletedRows", rows.Context, 0, "EVIDENCE-SCAN clean", null);
-            Prove(script, "PC-65", "CompletedRows", rows.Context,
-                "requireReport = $false # GUARD report-deferred",
-                "requireReport = $true # GUARD report-deferred",
-                0, "EVIDENCE-SCAN clean", 2, "report-missing", null);
+            Expect("CompletedRows", rows.Context, 0, "EVIDENCE-SCAN clean");
+            Prove(proved, "PC-65", "CompletedRows", rows.Context, "report-deferred", 0, "EVIDENCE-SCAN clean", 2, "report-missing");
             File.Delete(clean.Public);
             File.WriteAllText(Path.Combine(nested, "leak.txt"), LiveClaudeEvidenceSentinels.Screen);
-            Prove(script, "PC-66", "Publish", clean.Context,
-                "if ($reason) { return $reason } # GUARD publish-after-scan",
-                "if ($false) { return $reason } # GUARD publish-after-scan",
-                2, "sentinel-present", 0, "publicationCount=1", null);
-            if (File.Exists(clean.Public) && RanHealthyPublishWasBlocked(script, clean))
+            Prove(proved, "PC-66", "Publish", clean.Context, "publish-after-scan", 2, "sentinel-present", 0, "publicationCount=1");
+            if (File.Exists(clean.Public) && RanHealthyPublishWasBlocked(clean))
                 throw new InvalidOperationException("C1545 V-8/scanner-red publicationCount");
             File.Delete(Path.Combine(nested, "leak.txt"));
             if (File.Exists(clean.Public)) File.Delete(clean.Public);
-            foreach (var (pc, fault, needle) in new (string Pc, string Fault, string Needle)[]
+            foreach (var (fault, needle) in new (string Fault, string Needle)[]
             {
-                ("context-write", "context-write", "write-fault"),
-                ("artifact-read", "artifact-read", "unreadable"),
-                ("receipt-write", "receipt-write", "write-fault"),
-                ("summary-write", "summary-write", "write-fault"),
-                ("publish-write", "publish-write", "write-fault")
+                ("context-write", "write-fault"),
+                ("artifact-read", "unreadable"),
+                ("receipt-write", "write-fault"),
+                ("summary-write", "write-fault"),
+                ("publish-write", "write-fault")
             })
             {
                 var ctx = Variant(clean, Path.Combine(root, "fault-" + fault), node => node["fault"] = fault);
-                Prove(script, "PC-69", "Publish", ctx,
-                    "if ($fault -eq '" + fault + "') { return '" + needle + "' } # GUARD " + fault,
-                    "if ($false) { return '" + needle + "' } # GUARD " + fault,
-                    2, needle, 0, "publicationCount=1", null);
-                Console.WriteLine("C1545 PC-69 cycle " + pc);
+                Prove(proved, "PC-69", "Publish", ctx, fault, 2, needle, 0, "publicationCount=1");
+                Console.WriteLine("C1545 PC-69 cycle " + fault);
                 if (File.Exists(clean.Public)) File.Delete(clean.Public);
             }
-            Prove(script, "PC-70", "Scan", Variant(clean, Path.Combine(root, "child-red"), node =>
+            Prove(proved, "PC-70", "Scan", Variant(clean, Path.Combine(root, "child-red"), node =>
             {
                 node["producers"]![0]!["state"] = "red";
                 node["producers"]![0]!["exit"] = "1";
-            }), "if ($state -eq 'red' -or $exitCode -ne 0) { return 'child-red' } # GUARD child-red",
-                "if ($false) { return 'child-red' } # GUARD child-red",
-                2, "child-red", 0, "EVIDENCE-SCAN clean", null);
-            var mutantExits = new List<int>();
-            foreach (var raw in new[] { "1", "2", "3", "8" })
+            }), "child-red", 2, "child-red", 0, "EVIDENCE-SCAN clean");
+            foreach (var raw in new[] { 1, 2, 3, 8 })
             {
-                var ctx = Variant(clean, Path.Combine(root, "raw-" + raw), node => node["rawExit"] = int.Parse(raw));
-                Expect(script, "Publish", ctx, 2, "nonzero-exit", null);
-                mutantExits.Add(Run(Mutate(script, root, "PC-71",
-                    "if ($rawExit -eq 1 -or $rawExit -eq 2 -or $rawExit -eq 3 -or $rawExit -eq 8) { return 'nonzero-exit' } # GUARD nonzero-exit",
-                    "if ($false) { return 'nonzero-exit' } # GUARD nonzero-exit"), "Publish", ctx, null).Code);
+                var ctx = Variant(clean, Path.Combine(root, "raw-" + raw), node => node["rawExit"] = raw);
+                Prove(proved, "PC-71", "Publish", ctx, "nonzero-exit", 2, "nonzero-exit", 0, "publicationCount=1");
                 if (File.Exists(clean.Public)) File.Delete(clean.Public);
             }
-            if (mutantExits.Any(code => code != 0))
-                throw new InvalidOperationException("C1545 PC-71 mutant " + string.Join(',', mutantExits));
-            foreach (var raw in new[] { "1", "2", "3", "8" })
-                Expect(script, "Publish", Variant(clean, Path.Combine(root, "raw-restored-" + raw), node => node["rawExit"] = int.Parse(raw)),
-                    2, "nonzero-exit", null);
-            Console.WriteLine("C1545 PC-71 assertion-red; restored-green nonzero-exit 1/2/3/8");
-            Prove(script, "PC-68", "Publish", Variant(clean, Path.Combine(root, "wait75"), node => node["phase"] = "wait75"),
-                "if ($phase -eq 'wait75') { return 'wait75' } # GUARD wait75",
-                "if ($false) { return 'wait75' } # GUARD wait75",
-                2, "wait75", 0, "publicationCount=1", null);
+            Prove(proved, "PC-68", "Publish", Variant(clean, Path.Combine(root, "wait75"), node => node["phase"] = "wait75"),
+                "wait75", 2, "wait75", 0, "publicationCount=1");
             if (File.Exists(clean.Public)) File.Delete(clean.Public);
             var report = Path.Combine(root, "report.json");
             File.WriteAllText(report, "{\"commit\":\"" + OtherSha + "\"}");
             var outer = Variant(clean, Path.Combine(root, "outer"), node => node["report"] = report);
-            Prove(script, "PC-67", "OuterPublish", outer,
-                "Exit-Evidence 2 'stale-source' # GUARD final-report-source",
-                "if ($false) { Exit-Evidence 2 'stale-source' } # GUARD final-report-source",
-                2, "stale-source", 0, "publicationCount=1", null);
+            Prove(proved, "PC-67", "OuterPublish", outer, "final-report-source", 2, "stale-source", 0, "publicationCount=1");
             if (File.Exists(clean.Public)) File.Delete(clean.Public);
+            Prove(proved, "final-report", "OuterPublish",
+                Variant(clean, Path.Combine(root, "outer-no-report"), node => node["report"] = Path.Combine(root, "absent-report.json")),
+                "final-report", 2, "report-missing", 2, "reason=unreadable");
             File.WriteAllText(report, "{\"commit\":\"" + Sha + "\"}");
             File.WriteAllText(Path.Combine(nested, "leak.txt"), LiveClaudeEvidenceSentinels.Device);
-            Prove(script, "PC-72", "OuterPublish", outer,
-                "if ($reason) { Exit-Evidence 2 $reason } # GUARD scanner-before-publish",
-                "if ($false) { Exit-Evidence 2 $reason } # GUARD scanner-before-publish",
-                2, "sentinel-present", 0, "publicationCount=1", null);
+            Prove(proved, "PC-72", "OuterPublish", outer, "scanner-before-publish", 2, "sentinel-present", 0, "publicationCount=1");
             File.Delete(Path.Combine(nested, "leak.txt"));
+            if (File.Exists(clean.Public)) File.Delete(clean.Public);
             var duplicate = Variant(clean, Path.Combine(root, "duplicate"), node =>
             {
                 var cases = node["cases"]!.AsArray();
                 cases.Add(JsonNode.Parse(cases[0]!.ToJsonString())!);
             });
-            Prove(script, "duplicate-uid", "Scan", duplicate,
-                "if ($seen.ContainsKey($key)) { return 'duplicate-uid' } # GUARD duplicate-uid",
-                "if ($false) { return 'duplicate-uid' } # GUARD duplicate-uid",
-                2, "duplicate-uid", 0, "EVIDENCE-SCAN clean", null);
+            Prove(proved, "duplicate-uid", "Scan", duplicate, "duplicate-uid", 2, "duplicate-uid", 0, "EVIDENCE-SCAN clean");
             File.WriteAllText(Path.Combine(nested, "leak.txt"), LiveClaudeEvidenceSentinels.Secret);
             var replaced = Variant(clean, Path.Combine(root, "sentinels-replaced"), node =>
                 node["sentinels"] = new JsonArray("NOPE-XYZ"));
-            Expect(script, "Scan", replaced, 2, "sentinel-present", null);
-            Expect(script, "Scan", Variant(clean, Path.Combine(root, "sentinels-empty"), node =>
-                node["sentinels"] = new JsonArray()), 2, "sentinel-present", null);
-            Prove(script, "SM-D3-floor", "Scan", replaced,
-                "$needles = @($script:SentinelFragments)\n    if ($custom.Count -gt 0) { $needles += $custom }",
-                "if ($custom.Count -gt 0) { return @($custom) }\n    $needles = @($script:SentinelFragments)",
-                2, "sentinel-present", 0, "EVIDENCE-SCAN clean", null);
+            Expect("Scan", replaced, 2, "sentinel-present");
+            Expect("Scan", Variant(clean, Path.Combine(root, "sentinels-empty"), node =>
+                node["sentinels"] = new JsonArray()), 2, "sentinel-present");
+            Prove(proved, "SM-D3-floor", "Scan", replaced, "sentinel-floor", 2, "sentinel-present", 0, "EVIDENCE-SCAN clean");
             File.Delete(Path.Combine(nested, "leak.txt"));
             var named = Path.Combine(clean.Row, LiveClaudeEvidenceSentinels.Secret + ".txt");
             File.WriteAllBytes(named, []);
-            Expect(script, "Scan", clean.Context, 2, "sentinel-present", null);
+            Expect("Scan", clean.Context, 2, "sentinel-present");
             File.Delete(named);
             var namedDir = Path.Combine(clean.Row, LiveClaudeEvidenceSentinels.Screen);
             Directory.CreateDirectory(namedDir);
-            Expect(script, "Scan", clean.Context, 2, "sentinel-present", null);
+            Expect("Scan", clean.Context, 2, "sentinel-present");
             Directory.Delete(namedDir);
-            ProveOmittedProducer(script, root);
+            ProveOmittedProducer(root);
+            // Every named guard of the scanner has a mutation proof above; a new guard needs one too.
+            var unproved = LiveLaneEvidence.Guards.Except(proved).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+            if (unproved.Length > 0)
+                throw new InvalidOperationException("C1545 V-8/unproved guards " + string.Join(',', unproved));
+            if (!Throws(() => LiveLaneEvidence.Run("Scan", clean.Context, TextWriter.Null, ["no-such-guard"])))
+                throw new InvalidOperationException("C1545 V-8/unknown guard accepted");
         }
         finally
         {
@@ -362,7 +300,44 @@ public class LiveLaneEvidenceTests
         }
     }
 
-    private static void ProveOmittedProducer(string script, string root)
+    /// <summary>The checkpoint row command reaches the compiled scan: the wrapper runs the built command.</summary>
+    [Test]
+    public void WrapperRunsCompiledScan()
+    {
+        var wrapper = Path.Combine(FindRepo(), "scripts", "test-live-lane-evidence.ps1");
+        var root = Path.Combine("/tmp", "c1545-wrapper-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var roster = RunWrapper(wrapper, "Roster", null);
+            var expected = Roster.Select(row => row.Case + " " + row.Test + " " + row.Cp).ToArray();
+            if (roster.Code != 0 || !expected.SequenceEqual(roster.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
+                throw new InvalidOperationException("C1545 V-8/wrapper roster " + roster.Text);
+            var clean = Build(Path.Combine(root, "clean"), cleanFiles: true);
+            var scan = RunWrapper(wrapper, "Scan", clean.Context);
+            if (scan.Code != 0 || !scan.Text.Contains("EVIDENCE-SCAN clean", StringComparison.Ordinal))
+                throw new InvalidOperationException("C1545 V-8/wrapper clean " + scan.Code + " " + scan.Text);
+            File.WriteAllText(Path.Combine(clean.Row, "nested", "leak.txt"), LiveClaudeEvidenceSentinels.Secret);
+            var red = RunWrapper(wrapper, "Scan", clean.Context);
+            if (red.Code != 2 || !red.Text.Contains("INVALID/evidence-sanitization reason=sentinel-present", StringComparison.Ordinal))
+                throw new InvalidOperationException("C1545 V-8/wrapper red " + red.Code + " " + red.Text);
+            var absent = RunWrapper(wrapper, "Scan", Path.Combine(root, "absent.json"));
+            if (absent.Code != 2 || !absent.Text.Contains("reason=context-absent", StringComparison.Ordinal))
+                throw new InvalidOperationException("C1545 V-8/wrapper absent " + absent.Code + " " + absent.Text);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    private static bool Throws(Action action)
+    {
+        try { action(); return false; }
+        catch (ArgumentException) { return true; }
+    }
+
+    private static void ProveOmittedProducer(string root)
     {
         var results = Path.Combine(root, "omitted-results");
         var run = "run-omitted";
@@ -418,12 +393,12 @@ public class LiveLaneEvidenceTests
             report,
             requireReport = false
         });
-        Expect(script, "Scan", context, 2, "sentinel-present", null);
-        Expect(script, "OuterPublish", context, 2, "sentinel-present", null);
+        Expect("Scan", context, 2, "sentinel-present");
+        Expect("OuterPublish", context, 2, "sentinel-present");
         if (File.Exists(publication)) File.Delete(publication);
     }
 
-    private static bool RanHealthyPublishWasBlocked(string script, Fixture clean)
+    private static bool RanHealthyPublishWasBlocked(Fixture clean)
     {
         if (!File.Exists(clean.Public)) return false;
         var text = File.ReadAllText(clean.Public);
@@ -765,42 +740,35 @@ public class LiveLaneEvidenceTests
         + "<ResultSummary><Counters total=\"1\" executed=\"" + executed + "\" passed=\"1\" failed=\"0\" /></ResultSummary>"
         + "</TestRun>";
 
-    private static void Expect(string script, string caseName, string? context, int code, string needle,
-        IReadOnlyDictionary<string, string>? env)
+    private static void Expect(string caseName, string? context, int code, string needle)
     {
-        var ran = Run(script, caseName, context, env);
+        var ran = Run(caseName, context, null);
         if (ran.Code != code || !ran.Text.Contains(needle, StringComparison.Ordinal))
             throw new InvalidOperationException("C1545 V-8 expected " + code + " " + needle + " actual " + ran.Code + " " + ran.Text);
     }
 
-    private static void Prove(string script, string pc, string caseName, string context, string from, string to,
-        int healthyCode, string healthyNeedle, int mutantCode, string mutantNeedle, IReadOnlyDictionary<string, string>? env)
+    // A guard proof: healthy gives healthyNeedle, the same input with only that guard mutated gives mutantNeedle
+    // (so that guard, and no other, decides the outcome), and healthy again restores healthyNeedle.
+    private static void Prove(HashSet<string> proved, string pc, string caseName, string context, string guard,
+        int healthyCode, string healthyNeedle, int mutantCode, string mutantNeedle)
     {
-        Expect(script, caseName, context, healthyCode, healthyNeedle, env);
-        var copy = Mutate(script, Path.GetDirectoryName(context)!, pc, from, to);
-        var mutated = Run(copy, caseName, context, env);
+        Expect(caseName, context, healthyCode, healthyNeedle);
+        var mutated = Run(caseName, context, guard);
         if (mutated.Code != mutantCode || !mutated.Text.Contains(mutantNeedle, StringComparison.Ordinal))
             throw new InvalidOperationException("C1545 " + pc + " mutant " + mutated.Code + " " + mutated.Text);
-        // Scan and CompletedRows write nothing and the mutant is a copy, so the original script and its inputs
-        // are unchanged: the first healthy run above already is the restored run. A publishing case can have
-        // written the public summary in its mutant run, so it is run healthy again. Each later proof's first
-        // healthy run still runs beside the earlier mutant copies.
-        if (caseName is not ("Scan" or "CompletedRows"))
-            Expect(script, caseName, context, healthyCode, healthyNeedle, env);
+        Expect(caseName, context, healthyCode, healthyNeedle);
+        proved.Add(guard);
         Console.WriteLine("C1545 " + pc + " assertion-red; restored-green " + healthyNeedle);
     }
 
-    private static string Mutate(string script, string directory, string pc, string from, string to)
+    private static (int Code, string Text) Run(string caseName, string? context, string? mutant)
     {
-        var source = File.ReadAllText(script);
-        if (source.Split(from).Length != 2) throw new InvalidOperationException("C1545 " + pc + " anchor missing");
-        var copy = Path.Combine(directory, pc + "-" + Guid.NewGuid().ToString("N") + ".ps1");
-        File.WriteAllText(copy, source.Replace(from, to, StringComparison.Ordinal));
-        return copy;
+        using var output = new StringWriter();
+        var code = LiveLaneEvidence.Run(caseName, context!, output, mutant is null ? null : [mutant]);
+        return (code, output.ToString());
     }
 
-    private static (int Code, string Text) Run(string script, string caseName, string? context,
-        IReadOnlyDictionary<string, string>? env)
+    private static (int Code, string Text) RunWrapper(string wrapper, string caseName, string? context)
     {
         var start = new ProcessStartInfo("pwsh")
         {
@@ -810,7 +778,7 @@ public class LiveLaneEvidenceTests
         };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
+        start.ArgumentList.Add(wrapper);
         start.ArgumentList.Add("-Case");
         start.ArgumentList.Add(caseName);
         if (!string.IsNullOrWhiteSpace(context))
@@ -818,19 +786,16 @@ public class LiveLaneEvidenceTests
             start.ArgumentList.Add("-Context");
             start.ArgumentList.Add(context);
         }
-        if (env is not null)
-        {
-            foreach (var pair in env) start.Environment[pair.Key] = pair.Value;
-        }
         using var process = Process.Start(start) ?? throw new InvalidOperationException("C1545 V-8/pwsh");
+        var stderr = process.StandardError.ReadToEndAsync();
         var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        if (!process.WaitForExit(60_000))
+        // The first run after a source change builds the command (nightly-core.ps1 caches it per source version).
+        if (!process.WaitForExit(240_000))
         {
             process.Kill(entireProcessTree: true);
             throw new InvalidOperationException("C1545 V-8/pwsh timeout");
         }
-        return (process.ExitCode, stdout + "\n" + stderr);
+        return (process.ExitCode, stdout + "\n" + stderr.Result);
     }
 
     private static Assembly Compile(string source)

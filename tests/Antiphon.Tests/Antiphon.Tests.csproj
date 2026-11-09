@@ -248,5 +248,6 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeProfilePaths.cs" Link="TestSupport/LiveClaude/LiveClaudeProfilePaths.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
+    <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneEvidence.cs" Link="Scripts/LiveLaneEvidence.cs" />
   </ItemGroup>
 </Project>

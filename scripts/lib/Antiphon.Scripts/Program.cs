@@ -16,10 +16,15 @@ namespace Antiphon.Scripts
         {
             // One process answers one request: the filter/textconv driver settings are asked of git once.
             CheckpointProcessRunner.DriverSettingsCacheMilliseconds = 60000;
+            // The evidence scan answers every input itself (exit 0 or 2) and never hands back NotHandled.
+            if ((args.Length == 2 || args.Length == 3) && args[0] == "live-lane-evidence"
+                && Array.IndexOf(LiveLaneEvidence.Cases, args[1]) >= 0)
+                return LiveLaneEvidence.RunCommand(args[1], args.Length == 3 ? args[2] : null);
             try
             {
                 if (args.Length == 3 && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2]);
-                Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json>");
+                Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json>"
+                    + " | live-lane-evidence <case> [<context.json>]");
                 return Usage;
             }
             catch (NotHandledException e)

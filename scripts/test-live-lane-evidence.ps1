@@ -1,5 +1,8 @@
-# CARD-1545 evidence wrapper. ASCII. Windows PowerShell 5.1 compatible.
+# CARD-1545 evidence wrapper. ASCII. Windows PowerShell 5.1 parseable.
 # Owns no build slot. The checkpoint tool acquires slots for CP-20, CP-26 and CP-29.
+# The scan itself is the compiled command (antiphon-scripts live-lane-evidence, LiveLaneEvidence.cs),
+# built once per source version by nightly-core.ps1. Without it (Windows PowerShell 5.1, no SDK, a failed
+# build or ANTIPHON_SCRIPTS_CLI=off) there is no scanner, and every case fails closed.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('Scan','Publish','CompletedRows','RunPortableRows','Roster')][string]$Case,
@@ -7,8 +10,12 @@ param(
     [string]$CheckpointToolPath
 )
 $ErrorActionPreference = 'Stop'
-$lib = Join-Path $PSScriptRoot 'lib/live-lane-evidence.ps1'
-if (-not (Test-Path -LiteralPath $lib)) { throw 'missing evidence library' }
+. (Join-Path $PSScriptRoot 'lib/nightly-core.ps1')
+$cli = Get-AntiphonScriptsCli
+if ($null -eq $cli) {
+    Write-Output 'INVALID/evidence-sanitization reason=scanner-unavailable'
+    exit 2
+}
 
 function Invoke-EvidenceCheckpoint {
     param(
@@ -91,7 +98,7 @@ if ($Case -eq 'RunPortableRows') {
     $summary = Join-Path $owned 'summary.txt'
     $public = Join-Path $owned 'public-summary.txt'
     [IO.File]::WriteAllText($export, '')
-    $roster = & pwsh -NoProfile -File $lib -Case Roster
+    $roster = & $cli live-lane-evidence Roster
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $cases = @()
     foreach ($line in @($roster)) {
@@ -150,7 +157,7 @@ if ($Case -eq 'RunPortableRows') {
         [Console]::Out.WriteLine('scan-run=' + $scanRun)
         $scanCode = Wait-EvidenceCheckpoint -RunId $scanRun
         if ($scanCode -ne 0) { exit $scanCode }
-        & pwsh -NoProfile -File $lib -Case OuterPublish -Context $contextPath
+        & $cli live-lane-evidence OuterPublish $contextPath
         exit $LASTEXITCODE
     } finally {
         if ($null -eq $previous) { Remove-Item Env:ANTIPHON_LIVE_EVIDENCE_CONTEXT -ErrorAction SilentlyContinue }
@@ -159,5 +166,6 @@ if ($Case -eq 'RunPortableRows') {
     }
 }
 
-& pwsh -NoProfile -File $lib -Case $Case -Context $Context
+if ([string]::IsNullOrWhiteSpace($Context)) { & $cli live-lane-evidence $Case }
+else { & $cli live-lane-evidence $Case $Context }
 exit $LASTEXITCODE
