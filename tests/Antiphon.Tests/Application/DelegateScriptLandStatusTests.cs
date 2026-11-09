@@ -22,7 +22,8 @@ public sealed class DelegateScriptLandStatusTests
         var synchronized = scenario == "synchronized";
         var hasDebt = scenario == "pending-with-debt";
         const string report = "SYNC STATUS REPORT AFTER FACTS";
-        const string noDebt = "Pending evidence without a debt row means the task stayed Blocked and a reply is required.";
+        const string noDebt = "Pending evidence without a debt row: the progress read blocked this task; repair what the handoff names, "
+            + "then reply. Lease contention alone never leaves Pending evidence without a debt row (CARD-1802).";
         var body = JsonSerializer.Serialize(new
         {
             summary = new { status = scenario == "pending-without-debt" ? "Blocked" : "Succeeded",
