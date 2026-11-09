@@ -357,6 +357,118 @@ public class ProcessSpawnLimitTests
     }
 
     [Test]
+    public void C1816_assignment_statement_working_directory_is_the_shared_checkout_use()
+    {
+        const string statement = """
+            namespace Antiphon.Tests.Checkpoints;
+            public sealed class StatementTests
+            {
+                private static void Run()
+                {
+                    var psi = new ProcessStartInfo("dotnet");
+                    psi.WorkingDirectory = CheckpointFixtures.RepoRoot;
+                }
+            }
+            """;
+        const string alias = """
+            namespace Antiphon.Tests.Checkpoints;
+            public sealed class AliasTests
+            {
+                private static readonly string Root = CheckpointFixtures.RepoRoot;
+                private static void Run()
+                {
+                    var psi = new ProcessStartInfo("dotnet");
+                    psi.WorkingDirectory = Root;
+                }
+            }
+            """;
+        const string startInfo = """
+            namespace Antiphon.Tests.Checkpoints;
+            public sealed class StartInfoTests
+            {
+                private static void Run()
+                {
+                    var process = new Process();
+                    process.StartInfo.WorkingDirectory = CheckpointFixtures.RepoRoot;
+                }
+            }
+            """;
+        const string other = """
+            namespace Antiphon.Tests.Checkpoints;
+            public sealed class OtherAssignmentTests
+            {
+                private static void Run()
+                {
+                    var request = new SchedulerRequest();
+                    request.WorkingDirectory = CheckpointFixtures.RepoRoot;
+                    var psi = new ProcessStartInfo("pwsh");
+                    psi.WorkingDirectory = Path.GetTempPath();
+                }
+            }
+            """;
+        SharedCheckoutSourceCensus.ClassesIn(statement).ShouldBe(["Antiphon.Tests.Checkpoints.StatementTests"]);
+        SharedCheckoutSourceCensus.ClassesIn(alias).ShouldBe(["Antiphon.Tests.Checkpoints.AliasTests"]);
+        SharedCheckoutSourceCensus.ClassesIn(startInfo).ShouldBe(["Antiphon.Tests.Checkpoints.StartInfoTests"]);
+        SharedCheckoutSourceCensus.ClassesIn(other).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void C1816_call_to_a_shared_checkout_helper_is_the_shared_checkout_use()
+    {
+        const string direct = """
+            namespace Antiphon.Tests.Checkpoints;
+            public static class DirectHelper
+            {
+                public static void Run()
+                {
+                    var psi = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+                }
+            }
+            public sealed class DirectCallerTests
+            {
+                private static void Go() { DirectHelper.Run(); }
+            }
+            public sealed class DirectIdleTests
+            {
+                private static void Go() { _ = DirectHelper.ToString(); }
+            }
+            """;
+        const string parameter = """
+            namespace Antiphon.Tests.Checkpoints;
+            public static class ParameterHelper
+            {
+                public static void Run(string directory)
+                {
+                    var psi = new ProcessStartInfo("pwsh") { WorkingDirectory = directory };
+                }
+            }
+            public sealed class ParameterCallerTests
+            {
+                private static void Go() { ParameterHelper.Run(CheckpointFixtures.RepoRoot); }
+            }
+            public sealed class ParameterOtherTests
+            {
+                private static void Go() { ParameterHelper.Run(Path.GetTempPath()); }
+            }
+            """;
+        SharedCheckoutSourceCensus.ClassesIn(direct).ShouldBe(
+        [
+            "Antiphon.Tests.Checkpoints.DirectCallerTests",
+            "Antiphon.Tests.Checkpoints.DirectHelper",
+        ]);
+        SharedCheckoutSourceCensus.ClassesIn(parameter).ShouldBe(["Antiphon.Tests.Checkpoints.ParameterCallerTests"]);
+    }
+
+    [Test]
+    public void C1816_checkpoints_namespace_outside_the_checkpoints_folder_is_in_the_live_census()
+    {
+        var directory = Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Tests", "Checkpoints");
+        var starters = SharedCheckoutSourceCensus.ClassesStartingInSharedCheckout(directory);
+        starters.ShouldContain("Antiphon.Tests.Checkpoints.Sub.C1816OutsideFolderProbe");
+        starters.ShouldNotContain("Antiphon.Tests.Scripts.RunCheckpointRepeatScriptTests");
+    }
+
+    [Test]
     public void C1810_target_typed_and_nested_process_start_is_the_shared_checkout_use()
     {
         const string source = """
