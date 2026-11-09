@@ -43,6 +43,46 @@ function Read-RcProjectBlob {
     return $Cache[$key]
 }
 
+function Read-RcProjectBlobBatch {
+    # The text of many paths at one commit in two git processes per hundred paths: ls-tree -l gives each blob's
+    # size and one show writes their bytes back to back. Each blob is decoded as a single
+    # Invoke-TestSelectionGit read decodes it (strict UTF-8, byte order marks detected). A path left out of the
+    # answer -- a mismatch anywhere, or bytes that do not decode -- is read on its own as before.
+    param([string]$Root, [string]$Sha, [string[]]$Paths)
+    $texts=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    if ($Sha -cnotmatch '^[0-9a-f]{40}$') { return ,$texts }
+    $all=@($Paths)
+    for ($at=0; $at -lt $all.Count; $at+=100) {
+        $chunk=@($all[$at..([Math]::Min($at+100,$all.Count)-1)])
+        try {
+            $listing=(Invoke-TestSelectionGit $Root (@('--literal-pathspecs','ls-tree','-l','-z','--full-tree',$Sha,'--')+$chunk)).Stdout
+            $sizes=[Collections.Generic.Dictionary[string,long]]::new([StringComparer]::Ordinal)
+            foreach ($entry in $listing.Split([char]0)) {
+                if (-not $entry) { continue }
+                if ($entry -cnotmatch "^100(?:644|755) blob [0-9a-f]{40} +([0-9]+)`t(.+)$") { throw 'batch-entry-shape' }
+                $sizes[$Matches[2]]=[long]$Matches[1]
+            }
+            $total=[long]0
+            foreach ($path in $chunk) { if (-not $sizes.ContainsKey($path)) { throw 'batch-entry-missing' }; $total+=$sizes[$path] }
+            if ($sizes.Count -ne $chunk.Count -or $total -gt 16777216) { throw 'batch-entry-count' }
+            $start=[Diagnostics.ProcessStartInfo]::new('git')
+            $start.WorkingDirectory=[IO.Path]::GetFullPath($Root)
+            foreach ($arg in @('show','--no-textconv','--no-color')) { $start.ArgumentList.Add($arg) }
+            foreach ($path in $chunk) { $start.ArgumentList.Add("${Sha}:$path") }
+            $shown=[Antiphon.Checkpoints.CheckpointProcessRunner]::RunBytes($start,30000,$true)
+            if ($shown.TimedOut -or $shown.Exit -ne 0 -or $shown.Stdout.LongLength -ne $total) { throw 'batch-show-failed' }
+            $offset=0
+            foreach ($path in $chunk) {
+                $length=[int]$sizes[$path]
+                $reader=[IO.StreamReader]::new([IO.MemoryStream]::new($shown.Stdout,$offset,$length,$false),[Text.UTF8Encoding]::new($false,$true),$true)
+                try { $texts[$path]=$reader.ReadToEnd() } catch { } finally { $reader.Dispose() }
+                $offset+=$length
+            }
+        } catch { foreach ($path in $chunk) { [void]$texts.Remove($path) } }
+    }
+    return ,$texts
+}
+
 function Read-RcProjectGraph {
     # Listing: this commit's own `ls-tree -r -z` output when the caller already read it.
     param([string]$Root, [string]$Sha, [hashtable]$DocumentCache = @{}, [string]$Listing)
@@ -80,6 +120,29 @@ function Read-RcProjectGraph {
     # Git blob identity binds the immutable XML bytes. Share only parsed documents;
     # imports, relative paths, edges and inventories are still resolved for each graph.
     $documents=$DocumentCache
+    # The inputs every project's walk below starts from -- the project file and the Directory.Build files of
+    # its ancestors -- that are not parsed yet, read together; imports they name are read one at a time.
+    # One path per blob id: identical bytes are read once, as the parsed-document cache reads them.
+    $starts=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($project in $projects.Values) {
+        [void]$starts.Add($project.path)
+        $ancestor=$project.path -replace '/[^/]+$',''
+        while ($true) {
+            foreach ($name in @('Directory.Build.props','Directory.Build.targets')) {
+                $input=if ($ancestor) { "$ancestor/$name" } else { $name }
+                if ($paths.Contains($input)) { [void]$starts.Add($input) }
+            }
+            if (-not $ancestor) { break }
+            $ancestor=if ($ancestor.Contains('/')) { $ancestor -replace '/[^/]+$','' } else { '' }
+        }
+    }
+    $wanted=[Collections.Generic.SortedDictionary[string,string]]::new([StringComparer]::Ordinal)
+    foreach ($path in $starts) {
+        if ($blobs.ContainsKey($path) -and -not $documents.ContainsKey($blobs[$path]) -and -not $wanted.ContainsKey($blobs[$path])) { $wanted[$blobs[$path]]=$path }
+    }
+    $prefetched=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $batch=Read-RcProjectBlobBatch $Root $Sha @($wanted.Values)
+    foreach ($pair in $wanted.GetEnumerator()) { if ($batch.ContainsKey($pair.Value)) { $prefetched[$pair.Key]=$batch[$pair.Value] } }
     foreach ($project in $projects.Values) {
         $queue=[Collections.Generic.Queue[string]]::new(); $queue.Enqueue($project.path)
         $ancestor=$project.path -replace '/[^/]+$',''
@@ -100,7 +163,7 @@ function Read-RcProjectGraph {
                 if (-not $blobs.ContainsKey($input)) { throw "missing-input:$input" }
                 $blob=$blobs[$input]
                 if (-not $documents.ContainsKey($blob)) {
-                    $inputText=Get-TestSelectionBlob $Root $Sha $input
+                    $inputText=if ($prefetched.ContainsKey($blob)) { $prefetched[$blob] } else { Get-TestSelectionBlob $Root $Sha $input }
                     $settings=[Xml.XmlReaderSettings]::new(); $settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit; $settings.XmlResolver=$null
                     try {
                         $reader=[Xml.XmlReader]::Create([IO.StringReader]::new($inputText), $settings)

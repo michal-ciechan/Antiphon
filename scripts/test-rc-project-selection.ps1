@@ -47,12 +47,23 @@ switch ($Case) {
             if ($Path -ceq 'Directory.Build.props') { $script:InvalidSharedReads++ }
             return & $script:OriginalSelectionBlob $Root $Sha $Path
         }
+        # Batched reads count the same way: every path asked of git, one read each.
+        $script:OriginalBlobBatch=${function:Read-RcProjectBlobBatch}
+        function Read-RcProjectBlobBatch {
+            param([string]$Root,[string]$Sha,[string[]]$Paths)
+            foreach ($path in @($Paths)) {
+                if ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) { $script:ProjectBlobReads++ }
+                if ($path -ceq 'Directory.Build.props') { $script:InvalidSharedReads++ }
+            }
+            return ,(& $script:OriginalBlobBatch $Root $Sha $Paths)
+        }
         $s=Get-RcProjectSelection $root $b $a
         $projectReads=$script:ProjectBlobReads
         Put 'Directory.Build.props' 'not XML'; $invalidBase=Commit
         Put 'src/Messaging/Message.cs' 'invalid shared input candidate'; $invalidCandidate=Commit
         $invalid=Get-RcProjectSelection $root $invalidBase $invalidCandidate
         ${function:Get-TestSelectionBlob}=$script:OriginalSelectionBlob
+        ${function:Read-RcProjectBlobBatch}=$script:OriginalBlobBatch
         $projectBlobs=@((Git @('ls-tree','-r',$a)).Split("`n") | Where-Object { $_.EndsWith('.csproj',[StringComparison]::Ordinal) } | ForEach-Object { ($_ -split '\s+',4)[2] } | Sort-Object -Unique)
         Check ($projectReads -eq $projectBlobs.Count -and $script:InvalidSharedReads -eq 1 -and
             $invalid.mode -ceq 'Full' -and @($invalid.fallbackReasons | Where-Object { $_.StartsWith('graph:Directory.Build.props:',[StringComparison]::Ordinal) }).Count -gt 0) 'immutable-blob-read-once'
