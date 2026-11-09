@@ -1,9 +1,15 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Xml.Linq;
+using Antiphon.Tests.TestHelpers;
+using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
+// Starts pwsh with the shared checkout as its working directory. The test classes that call it
+// already carry the strict limiter; the marker is what the source census requires of this class.
+[ParallelLimiter<ProcessSpawnLimit>]
+[SharedCheckoutChild]
 internal static class CheckpointRepeatFixture
 {
     internal sealed record ScriptResult(int ExitCode, string Text, string[] Calls, string? Evidence, string? Trx);
