@@ -38,12 +38,14 @@ public sealed class RunnerWorkspaceSlotPool
     private readonly SemaphoreSlim _lock = new(1, 1);
     // Repository-level git (fetch, worktree add/remove/lock) is serialized; per-slot git is not.
     private readonly SemaphoreSlim _repository = new(1, 1);
+    private readonly RunnerRepositoryActivity? _activity;
     private TaskCompletionSource _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public RunnerWorkspaceSlotPool(
         RunnerWorkspaceService service, PhoneHomeWorkspaceSlotSettings settings, int capacity,
         TimeProvider? clock = null, IWorkspaceSlotFileSystem? fileSystem = null,
-        IWorkspaceSlotProcessProbe? processes = null, IWorkspaceSlotDiskProbe? disk = null)
+        IWorkspaceSlotProcessProbe? processes = null, IWorkspaceSlotDiskProbe? disk = null,
+        RunnerRepositoryActivity? activity = null)
     {
         _service = service;
         Settings = settings;
@@ -52,6 +54,7 @@ public sealed class RunnerWorkspaceSlotPool
         _fileSystem = fileSystem ?? new PhysicalWorkspaceSlotFileSystem();
         _processes = processes ?? new ProcWorkspaceSlotProcessProbe();
         _disk = disk ?? new PhysicalWorkspaceSlotDiskProbe();
+        _activity = activity;
         _ledger = new RunnerWorkspaceSlotLedger(service.AllowedRoot + "/workspace-slots");
     }
 
@@ -1227,9 +1230,19 @@ public sealed class RunnerWorkspaceSlotPool
 
     // ---------------------------------------------------------------- git and ledger plumbing
 
+    /// <summary>CARD-1817. The repository lock is the runner's lease. Maintenance skips while it is held.</summary>
+    internal async Task RunUnderRepositoryLockAsync(Func<Task> action, CancellationToken ct)
+    {
+        await _repository.WaitAsync(ct);
+        using var lease = _activity?.EnterLease();
+        try { await action(); }
+        finally { _repository.Release(); }
+    }
+
     private async Task FetchExactAsync(string branch, string sha, CancellationToken ct)
     {
         await _repository.WaitAsync(ct);
+        using var lease = _activity?.EnterLease();
         try
         {
             var fetch = await _service.GitAsync(_service.PrimaryRepository, ct, "fetch", "origin",
@@ -1261,6 +1274,7 @@ public sealed class RunnerWorkspaceSlotPool
     private async Task<(int ExitCode, string Stdout, string Stderr)> RepositoryGitAsync(CancellationToken ct, params string[] args)
     {
         await _repository.WaitAsync(ct);
+        using var lease = _activity?.EnterLease();
         try
         {
             return await _service.GitAsync(_service.PrimaryRepository, ct, args);

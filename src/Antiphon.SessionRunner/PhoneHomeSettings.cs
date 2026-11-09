@@ -25,6 +25,10 @@ public sealed class PhoneHomeSettings
             ? LaunchGenerationsPath
             : Path.Combine(Path.GetDirectoryName(StoreIdPath) ?? ".", "launch-generations");
 
+    /// <summary>CARD-1817. Last-run stamp beside <see cref="StoreIdPath"/>, not inside a git repository.</summary>
+    public string ResolvedRepositoryMaintenanceStatePath() =>
+        Path.Combine(Path.GetDirectoryName(StoreIdPath) ?? ".", "repository-maintenance.json");
+
     public string AllowedCwd { get; set; } = "/work";
 
     /// <summary>
@@ -95,6 +99,9 @@ public sealed class PhoneHomeSettings
     /// the tree whatever its age.
     /// </summary>
     public int RetentionRecentUseMinutes { get; set; } = 10;
+
+    /// <summary>CARD-1817. Explicit gc of repositories under <see cref="RepositoryPolicy"/>'s root.</summary>
+    public RunnerRepositoryMaintenanceOptions RepositoryMaintenance { get; set; } = new();
 
     /// <summary>
     /// Image-owned executables a projected Raw launch may name, alongside "grok". Anything else,
@@ -185,5 +192,6 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException(
                 "PhoneHome:ReconnectBackoffMs must be positive and not greater than PhoneHome:ReconnectBackoffMaxMs.");
         Limits.Validate("PhoneHome:Limits");
+        RepositoryMaintenance.Validate("PhoneHome:RepositoryMaintenance");
     }
 }

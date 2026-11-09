@@ -177,7 +177,9 @@ public sealed record PhoneHomeTerminalSeatReleaseRequest(Guid SessionId, Termina
 public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
 public sealed record PhoneHomeSetCapacityResponse(int Capacity, bool Persisted, string? Path);
 public sealed record PhoneHomeCapacityHeartbeat(int Capacity, RunnerCodexCliVersionDto? CodexCli = null,
-    PhoneHomeProducerPressure? EventPressure = null);
+    PhoneHomeProducerPressure? EventPressure = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    RunnerRepositoryMaintenanceStatus? RepositoryMaintenance = null);
 
 public sealed record PhoneHomeProducerPressure(bool WaitingForCredit, int PendingEvents, int PendingBytes);
 
@@ -725,7 +727,9 @@ public sealed record PhoneHomeRunnerStatusDto(
     DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
     string? CodexCliVersionError = null,
     bool? CodexCliVersionStale = null,
-    string? EventMode = null)
+    string? EventMode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    RunnerRepositoryMaintenanceStatus? RepositoryMaintenance = null)
 {
     public RunnerLoadShadowDto? Load { get; init; }
 }
