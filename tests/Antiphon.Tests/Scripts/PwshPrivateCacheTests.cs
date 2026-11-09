@@ -20,8 +20,7 @@ public sealed class PwshPrivateCacheTests
         var root = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
         root.ShouldNotBeNullOrWhiteSpace();
         var full = Path.GetFullPath(root);
-        var configured = Environment.GetEnvironmentVariable("ANTIPHON_PWSH_CACHE_ROOT");
-        var parent = string.IsNullOrWhiteSpace(configured) ? Path.GetTempPath() : configured;
+        var parent = Antiphon.Hosting.PwshPrivateCache.ConfiguredCacheParent();
         Under(parent, full).ShouldBeTrue(full);
         Directory.Exists(full).ShouldBeTrue();
         var markerText = File.ReadAllText(Path.Combine(full, "owner.pid")).Trim();
@@ -451,6 +450,209 @@ public sealed class PwshPrivateCacheTests
         {
             Directory.Delete(temp, recursive: true);
         }
+    }
+
+    // CARD-1813 round 2 A-1: comm may contain spaces and ')'. IndexOf(')') stops at the
+    // first closer and rejects this line; LastIndexOf keeps field 22.
+    [Test]
+    [Timeout(30_000)]
+    public void A_parenthesis_in_comm_keeps_the_start_field()
+    {
+        var stat = "42 (a) b) (c) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 888 999";
+        Antiphon.Hosting.PwshPrivateCache.TryParseProcStartTicks(stat, out var ticks).ShouldBeTrue(stat);
+        ticks.ShouldBe(888);
+    }
+
+    // CARD-1813 round 2 A-2: ENOENT on stat while the pid is alive (hidepid, or no /proc)
+    // is unknown, so the sweep keeps the cache. Master's kill(pid, 0) did the same on EPERM.
+    [Test]
+    [Timeout(60_000)]
+    public void A_missing_stat_for_a_live_process_keeps_the_cache()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("A missing /proc stat while the pid is alive is Linux-only.");
+        lock (SeamGate)
+        {
+            var root = Directory.CreateTempSubdirectory("c1813-live-stat-").FullName;
+            try
+            {
+                var pid = Environment.ProcessId;
+                Antiphon.Hosting.PwshPrivateCache.ProcStatReader = _ => throw new FileNotFoundException("stat");
+                var kept = Seed(root, "antiphon-pwsh-cache-hid-" + Guid.NewGuid().ToString("N"), pid.ToString(CultureInfo.InvariantCulture));
+                Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
+                File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
+            }
+            finally
+            {
+                ClearProcSeams();
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    // The presence hook stands in for kill(pid, 0) returning EPERM: stat is gone, the pid exists.
+    [Test]
+    [Timeout(60_000)]
+    public void A_hidden_proc_stat_keeps_a_live_owner()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("hidepid stat absence is Linux-only.");
+        lock (SeamGate)
+        {
+            var root = Directory.CreateTempSubdirectory("c1813-hide-stat-").FullName;
+            try
+            {
+                var dead = DeadPid(root);
+                Antiphon.Hosting.PwshPrivateCache.ProcStatReader = _ => throw new FileNotFoundException("stat");
+                Antiphon.Hosting.PwshPrivateCache.LinuxProcessPresence = _ => true;
+                var kept = Seed(root, "antiphon-pwsh-cache-eperm-" + Guid.NewGuid().ToString("N"), dead.ToString(CultureInfo.InvariantCulture));
+                Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
+                File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
+            }
+            finally
+            {
+                ClearProcSeams();
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    // A missing stat for a pid that kill(pid, 0) reports gone is still dead and is swept.
+    [Test]
+    [Timeout(60_000)]
+    public void A_missing_stat_for_a_dead_process_is_swept()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("A missing /proc stat is Linux-only.");
+        lock (SeamGate)
+        {
+            var root = Directory.CreateTempSubdirectory("c1813-dead-stat-").FullName;
+            try
+            {
+                var dead = DeadPid(root);
+                Antiphon.Hosting.PwshPrivateCache.ProcStatReader = _ => throw new FileNotFoundException("stat");
+                var stale = Seed(root, "antiphon-pwsh-cache-gone-" + Guid.NewGuid().ToString("N"), dead.ToString(CultureInfo.InvariantCulture));
+                Antiphon.Hosting.PwshPrivateCache.SweepStale(root);
+                Directory.Exists(stale).ShouldBeFalse(stale);
+            }
+            finally
+            {
+                ClearProcSeams();
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    // CARD-1813 round 2 A-3: a relative override is unusable. The sweep does not follow it,
+    // and the cache is created under the process temp root.
+    [Test]
+    [Timeout(90_000)]
+    public async Task A_relative_root_override_is_unusable()
+    {
+        var work = Directory.CreateTempSubdirectory("c1813-rel-").FullName;
+        var rel = Path.Combine(work, "rel-cache");
+        var fallback = Path.Combine(work, "fallback");
+        Directory.CreateDirectory(rel);
+        Directory.CreateDirectory(fallback);
+        try
+        {
+            var dead = DeadPid(work);
+            var owner = dead.ToString(CultureInfo.InvariantCulture);
+            var inRelative = Seed(rel, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", owner);
+            var inFallback = Seed(fallback, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", owner);
+            var seen = await ProbeAsync(work, "rel", environment =>
+            {
+                environment.Remove("XDG_CACHE_HOME");
+                environment["TMPDIR"] = fallback;
+                environment["TMP"] = fallback;
+                environment["TEMP"] = fallback;
+                environment["ANTIPHON_PWSH_CACHE_ROOT"] = "rel-cache";
+            });
+
+            File.Exists(Path.Combine(inRelative, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(inRelative);
+            File.Exists(Path.Combine(inFallback, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(inFallback);
+            Under(fallback, seen).ShouldBeTrue(seen);
+            Under(rel, seen).ShouldBeFalse(seen);
+        }
+        finally
+        {
+            Directory.Delete(work, recursive: true);
+        }
+    }
+
+    // A missing absolute override is not created, is not swept, and is not the create root.
+    [Test]
+    [Timeout(90_000)]
+    public async Task A_missing_root_override_is_not_created()
+    {
+        var work = Directory.CreateTempSubdirectory("c1813-miss-").FullName;
+        var missing = Path.Combine(work, "missing-root");
+        var fallback = Path.Combine(work, "fallback");
+        Directory.CreateDirectory(fallback);
+        try
+        {
+            var dead = DeadPid(work);
+            var kept = Seed(fallback, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var seen = await ProbeAsync(work, "missing", environment =>
+            {
+                environment.Remove("XDG_CACHE_HOME");
+                environment["TMPDIR"] = fallback;
+                environment["TMP"] = fallback;
+                environment["TEMP"] = fallback;
+                environment["ANTIPHON_PWSH_CACHE_ROOT"] = missing;
+            });
+
+            Directory.Exists(missing).ShouldBeFalse(missing);
+            File.Exists(Path.Combine(kept, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(kept);
+            Under(fallback, seen).ShouldBeTrue(seen);
+        }
+        finally
+        {
+            Directory.Delete(work, recursive: true);
+        }
+    }
+
+    // CARD-1813 round 2 D-1: the three cache-parent witnesses share ConfiguredCacheParent.
+    // A hard-coded temp parent in any of them fails this scan.
+    [Test]
+    [Timeout(30_000)]
+    public void Cache_parent_lookups_use_the_shared_helper()
+    {
+        var root = RepositoryRoot();
+        var files = new[]
+        {
+            Path.Combine(root, "tests", "Antiphon.Tests", "Scripts", "PwshPrivateCacheTests.cs"),
+            Path.Combine(root, "tests", "Antiphon.Tests", "Scripts", "ScriptHarnessLinuxOwnershipTests.cs"),
+            Path.Combine(root, "tests", "Antiphon.SessionRunner.Tests", "C1793SessionPwshCacheTests.cs"),
+        };
+        var hardCodedDirectories = "GetDirectories(" + "Path.GetTempPath()";
+        var hardCodedFull = "GetFullPath(" + "Path.GetTempPath())";
+        foreach (var file in files)
+        {
+            var text = File.ReadAllText(file);
+            text.ShouldContain("ConfiguredCacheParent()", file);
+            text.Contains(hardCodedDirectories).ShouldBeFalse(file);
+            text.Contains(hardCodedFull).ShouldBeFalse(file);
+        }
+    }
+
+    private static void ClearProcSeams()
+    {
+        Antiphon.Hosting.PwshPrivateCache.ProcStatReader = null;
+        Antiphon.Hosting.PwshPrivateCache.LinuxProcessPresence = null;
+    }
+
+    private static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
+                return dir.FullName;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Antiphon.sln was not found above the test host.");
     }
 
     private static int DeadPid(string workingDirectory)

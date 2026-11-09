@@ -58,7 +58,7 @@ public sealed class ScriptHarnessLinuxOwnershipTests
     {
         await using var probe = new LinuxSupervisorProbe("Passing");
         (await probe.ConnectAsync()).ShouldStartWith("HELLO " + probe.Nonce);
-        var owned = Directory.GetDirectories(Path.GetTempPath(), "antiphon-pwsh-cache-" + probe.SupervisorId + "-*");
+        var owned = Directory.GetDirectories(Antiphon.Hosting.PwshPrivateCache.ConfiguredCacheParent(), "antiphon-pwsh-cache-" + probe.SupervisorId + "-*");
         owned.Length.ShouldBe(1);
         var markerText = File.ReadAllText(Path.Combine(owned[0], "owner.pid")).Trim();
         var parts = markerText.Split('@');
