@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Microsoft.Build.Locator;
 
 namespace Antiphon.LandGraphAudit;
@@ -33,6 +34,9 @@ public static class Program
 
     public static int Main(string[] args)
     {
+        // The emulation pre-check (scripts/audit-land-verification-precheck.ps1 runs it). It loads no MSBuild,
+        // evaluates nothing and is not an approval: the graph script still requires the evaluation below.
+        if (args.Length > 0 && args[0] == "precheck") return Precheck(args);
         AppDomain.CurrentDomain.ProcessExit += static (_, _) => CanaryRepository.DeleteActive();
         if (PrintBudget(args, out var budgetExit)) return budgetExit;
         // --print-pins is not an evaluation and not an approval. Exit 0 here only prints rows.
@@ -121,6 +125,42 @@ public static class Program
         {
             CanaryRepository.DeleteActive();
         }
+    }
+
+    /// <summary>
+    /// <c>precheck --repo &lt;dir&gt; (--check | --update) [--manifest-path &lt;file&gt;]</c>: the exit code and the text of
+    /// <see cref="LandGraphPrecheck.Run"/>, written as UTF-8. 0 approved or matched, 1 mismatch, refusal or bad
+    /// usage, 2 git failure.
+    /// </summary>
+    private static int Precheck(string[] args)
+    {
+        using var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true };
+        using var stderr = new StreamWriter(Console.OpenStandardError(), new UTF8Encoding(false)) { AutoFlush = true };
+        string? repo = null;
+        string? manifest = null;
+        var check = false;
+        var update = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--repo" when i + 1 < args.Length: repo = args[++i]; break;
+                case "--manifest-path" when i + 1 < args.Length: manifest = args[++i]; break;
+                case "--check": check = true; break;
+                case "--update": update = true; break;
+                default:
+                    stderr.WriteLine($"unknown or incomplete argument '{args[i]}'");
+                    return LandGraphPrecheck.Refused;
+            }
+        }
+
+        if (repo is null)
+        {
+            stderr.WriteLine("usage: precheck --repo <dir> (--check | --update) [--manifest-path <file>]");
+            return LandGraphPrecheck.Refused;
+        }
+
+        return LandGraphPrecheck.Run(repo, check, update, manifest, stdout, stderr);
     }
 
     private static bool PrintBudget(string[] args, out int exitCode)

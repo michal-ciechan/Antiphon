@@ -30,8 +30,7 @@ public sealed partial class LandGraphEvaluationTests
             ["Library/Library.csproj"] = SdkProject(""),
         });
         var manifest = repo.Full("precheck-manifest.txt");
-        var run = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1",
-            "-ManifestPath", manifest);
+        var run = await RunPrecheckAsync(repo.Root, "-Update", manifest);
         run.ExitCode.ShouldBe(reviewed ? 0 : 1, run.Text);
         File.Exists(manifest).ShouldBe(reviewed, run.Text);
         if (!reviewed)
@@ -175,8 +174,7 @@ public sealed partial class LandGraphEvaluationTests
             await AuditRepo.GitAsync(repo.Root, "add", project);
             await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
                 "commit", "-qm", "SDK default docs glob");
-            var pre = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1",
-                "-ManifestPath", repo.Full(ManifestFile));
+            var pre = await RunPrecheckAsync(repo.Root, "-Update", repo.Full(ManifestFile));
             pre.ExitCode.ShouldBe(0, pre.Text);
             record[0] = (await File.ReadAllLinesAsync(repo.Full(ManifestFile)))[0];
         }
@@ -274,8 +272,7 @@ public sealed partial class LandGraphEvaluationTests
             await AuditRepo.GitAsync(repo.Root, "add", "App/App.csproj");
             await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1528", "-c", "user.email=c1528@antiphon.test",
                 "commit", "-qm", "unsafe evaluation expression");
-            var pre = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1",
-                "-ManifestPath", repo.Full("precheck-manifest.txt"));
+            var pre = await RunPrecheckAsync(repo.Root, "-Update", repo.Full("precheck-manifest.txt"));
             pre.ExitCode.ShouldBe(0, variant + ": the pre-check must admit this witness: " + pre.Text);
             var run = await RunScriptAsync(repo.Root, "-Update");
             run.ExitCode.ShouldBe(1, variant + ": " + run.Text);
@@ -614,6 +611,24 @@ public sealed partial class LandGraphEvaluationTests
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(ToolDll())!))
             File.Copy(file, Path.Combine(output, Path.GetFileName(file)));
         return repo;
+    }
+
+    // The pre-check runs in-process: LandGraphPrecheck is the code scripts/audit-land-verification-precheck.ps1
+    // runs through the LandGraphAudit tool, and the graph-script tests above still run that wrapper end to end.
+    internal static async Task<ToolRun> RunPrecheckAsync(string root, string mode, string? manifestPath = null)
+    {
+        if (mode is not ("-Update" or "-Check")) throw new ArgumentOutOfRangeException(nameof(mode));
+        return await Task.Run(() =>
+        {
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            var code = Antiphon.LandGraphAudit.LandGraphPrecheck.Run(root, mode == "-Check", mode == "-Update", manifestPath, stdout, stderr);
+            return new ToolRun(code, stdout.ToString() + stderr.ToString())
+            {
+                StandardOutput = stdout.ToString(),
+                StandardError = stderr.ToString(),
+            };
+        }).WaitAsync(TimeSpan.FromSeconds(360));
     }
 
     internal static async Task<ToolRun> RunScriptAsync(string root, string mode,

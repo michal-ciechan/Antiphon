@@ -204,6 +204,8 @@ try {
     $powershell = (Get-Process -Id $PID).Path
     $precheck = Join-Path $PSScriptRoot 'audit-land-verification-precheck.ps1'
     $arguments = @('-NoProfile', '-NonInteractive', '-File', $precheck)
+    # The pre-check runs in the same built tool as the evaluation below.
+    if (-not [string]::IsNullOrEmpty($ToolPath)) { $arguments += @('-ToolPath', [System.IO.Path]::GetFullPath($ToolPath)) }
     if ($Update) {
         [void][System.IO.Directory]::CreateDirectory($RecordDirectory)
         $temporaryManifest = Join-Path $RecordDirectory ('.land-manifest-' + [Guid]::NewGuid().ToString('N'))

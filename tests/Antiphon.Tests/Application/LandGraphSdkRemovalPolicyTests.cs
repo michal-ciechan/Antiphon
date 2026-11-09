@@ -36,7 +36,7 @@ public sealed partial class LandGraphEvaluationTests
                 [variant == "owner" ? "other/Unreviewed.targets" : owner] = $"<Project>{body}</Project>",
             });
             var manifest = repo.Full("precheck-manifest.txt");
-            var run = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1", "-ManifestPath", manifest);
+            var run = await RunPrecheckAsync(repo.Root, "-Update", manifest);
             run.ExitCode.ShouldBe(variant == "exact" ? 0 : 1, $"{item}/{variant}: {run.Text}");
             File.Exists(manifest).ShouldBe(variant == "exact", run.Text);
             if (variant != "exact") run.Text.ShouldContain(item);

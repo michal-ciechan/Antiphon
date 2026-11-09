@@ -119,7 +119,7 @@ public sealed partial class LandGraphEvaluationTests
             File.Exists(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar))).ShouldBeTrue(path);
         }
 
-        var run = await RunScriptAsync(root, "-Check", "audit-land-verification-precheck.ps1");
+        var run = await RunPrecheckAsync(root, "-Check");
         run.Text.ShouldNotContain("sets a property the audit does not allow", Case.Sensitive, run.Text);
         run.Text.ShouldNotContain("_PtyHostNativeProps", Case.Sensitive, run.Text);
         run.Text.ShouldContain("digest=", Case.Sensitive, run.Text);

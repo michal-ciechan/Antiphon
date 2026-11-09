@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using Antiphon.LandGraphAudit;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -2833,12 +2834,8 @@ public sealed class LandNonCodeSkipTests
     {
         var root = new AuditGitFixture();
         Directory.CreateDirectory(Path.Combine(root, "server", "Application", "Services"));
-        Directory.CreateDirectory(Path.Combine(root, "scripts"));
         await File.WriteAllTextAsync(Path.Combine(root, "server", "App.csproj"), project);
-        File.Copy(
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-precheck.ps1"),
-            Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
-        CommitFixture(root, "c1390@example.invalid", "CARD-1390", ["server/App.csproj", "scripts/audit-land-verification-graph.ps1"]);
+        CommitFixture(root, "c1390@example.invalid", "CARD-1390", ["server/App.csproj"]);
         return root;
     }
 
@@ -2846,10 +2843,6 @@ public sealed class LandNonCodeSkipTests
         IReadOnlyList<(string Mode, string Path, string Content)>? entries = null)
     {
         var root = new AuditGitFixture();
-        Directory.CreateDirectory(Path.Combine(root, "scripts"));
-        File.Copy(
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-precheck.ps1"),
-            Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
         foreach (var (relative, content) in files)
         {
             var full = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
@@ -2917,49 +2910,50 @@ public sealed class LandNonCodeSkipTests
         throw new InvalidOperationException("git was not found on PATH.");
     }
 
-    private static string RenderAuditArgument(string arg)
-    {
-        if (arg.Length > 1 && arg[0] == '-' && arg.IndexOfAny([' ', '\t', '\'', '"']) < 0)
-            return arg;
-        return "'" + arg.Replace("'", "''") + "'";
-    }
-
     private static Task<(int Code, string Stdout, string Stderr)> RunAuditAsync(string root, string culture, params string[] args) =>
         RunAuditAsync(root, culture, environment: null, args);
 
+    // The pre-check runs in-process: LandGraphPrecheck is the code scripts/audit-land-verification-precheck.ps1
+    // runs through the LandGraphAudit tool. The culture is the calling thread's for the run (CultureInfo flows
+    // per thread and async context, so a parallel class is unaffected); the environment reaches the git
+    // processes the audit starts, and its PATH chooses which git that is, as it did for the script.
     private static async Task<(int Code, string Stdout, string Stderr)> RunAuditAsync(
         string root, string culture, IReadOnlyDictionary<string, string?>? environment, params string[] args)
     {
-        var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
-        // A switch must stay unquoted. '-Update' is a positional string and the script rejects it.
-        var renderedArgs = string.Join(' ', args.Select(RenderAuditArgument));
-        var command =
-            "$c = [System.Globalization.CultureInfo]::GetCultureInfo('" + culture + "'); " +
-            "[System.Threading.Thread]::CurrentThread.CurrentCulture = $c; " +
-            "[System.Threading.Thread]::CurrentThread.CurrentUICulture = $c; " +
-            "& '" + script.Replace("'", "''") + "' " + renderedArgs;
-        var start = new ProcessStartInfo("pwsh")
+        var check = false;
+        var update = false;
+        string? manifest = null;
+        for (var i = 0; i < args.Length; i++)
         {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(command);
-        if (environment is not null)
-        {
-            foreach (var (name, value) in environment)
-                start.Environment[name] = value;
+            switch (args[i])
+            {
+                case "-Check": check = true; break;
+                case "-Update": update = true; break;
+                case "-ManifestPath" when i + 1 < args.Length: manifest = args[++i]; break;
+                default: throw new ArgumentException("unsupported audit argument: " + args[i], nameof(args));
+            }
         }
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await process.WaitForExitAsync(timeout.Token);
-        return (process.ExitCode, await stdout, await stderr);
+
+        var selected = CultureInfo.GetCultureInfo(culture);
+        return await Task.Run(() =>
+        {
+            var previousCulture = CultureInfo.CurrentCulture;
+            var previousUiCulture = CultureInfo.CurrentUICulture;
+            CultureInfo.CurrentCulture = selected;
+            CultureInfo.CurrentUICulture = selected;
+            try
+            {
+                using var stdout = new StringWriter();
+                using var stderr = new StringWriter();
+                var code = LandGraphPrecheck.Run(root, check, update, manifest, stdout, stderr, environment);
+                return (code, stdout.ToString(), stderr.ToString());
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = previousCulture;
+                CultureInfo.CurrentUICulture = previousUiCulture;
+            }
+        }).WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     private static async Task GitAsync(string root, params string[] args)
