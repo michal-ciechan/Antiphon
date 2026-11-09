@@ -16,6 +16,37 @@ public static class BlockedSeatEscalation
         DateTime now,
         int escalationHours,
         bool undeliveredCallerNote,
-        bool seatWatchEnabled = true) =>
-        throw new NotImplementedException("CARD-1803");
+        bool seatWatchEnabled = true)
+    {
+        if (!seatWatchEnabled || snapshot is null || snapshot.Hosts.Count == 0)
+            return false;
+        if (status != AgentTaskStatus.Blocked || AgentTaskRoles.IsSpecialist(role))
+            return false;
+        if (!undeliveredCallerNote || escalationHours < 1)
+            return false;
+        var seat = OccupyingIdleBlockedSeat(snapshot, taskId);
+        return seat is not null && now - seat.IdleSince >= TimeSpan.FromHours(escalationHours);
+    }
+
+    /// <summary>
+    /// The occupying <see cref="SeatClass.IdleBlocked"/> seat for <paramref name="taskId"/> on a runner host.
+    /// A local host, a non-occupying seat, and any other class do not match.
+    /// </summary>
+    public static SeatObservation? OccupyingIdleBlockedSeat(SeatOccupancySnapshot? snapshot, Guid taskId)
+    {
+        if (snapshot is null)
+            return null;
+        foreach (var host in snapshot.Hosts)
+        {
+            if (!SeatOccupancyProjection.IsRunnerHost(host.Kind, host.HostId))
+                continue;
+            foreach (var seat in host.Seats)
+            {
+                if (seat.TaskId == taskId && seat.Occupies && seat.Class == SeatClass.IdleBlocked)
+                    return seat;
+            }
+        }
+
+        return null;
+    }
 }

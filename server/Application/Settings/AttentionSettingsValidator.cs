@@ -11,6 +11,10 @@ public sealed class AttentionSettingsValidator : IValidateOptions<AttentionSetti
             failures.Add("Attention:SeatIdleWarningMinutes must be positive.");
         if (options.SeatIdleErrorMinutes <= options.SeatIdleWarningMinutes)
             failures.Add("Attention:SeatIdleErrorMinutes must be greater than Attention:SeatIdleWarningMinutes.");
+        if (options.BlockedSeatEscalationHours < 1 || options.BlockedSeatEscalationHours > 720)
+            failures.Add("Attention:BlockedSeatEscalationHours must be from 1 to 720.");
+        else if ((long)options.BlockedSeatEscalationHours * 60 <= options.SeatIdleErrorMinutes)
+            failures.Add("Attention:BlockedSeatEscalationHours must be after Attention:SeatIdleErrorMinutes.");
         if (options.OccupancySampleIntervalSeconds < 10 || options.OccupancySampleIntervalSeconds > 3600)
             failures.Add("Attention:OccupancySampleIntervalSeconds must be from 10 to 3600.");
         if (options.OccupancySampleRetentionDays < 1 || options.OccupancySampleRetentionDays > 365)

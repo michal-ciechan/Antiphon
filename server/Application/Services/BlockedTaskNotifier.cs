@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -35,7 +36,12 @@ public sealed class BlockedTaskNotifier
         var taskIds = blocked.Select(t => t.Id).ToList();
         var events = await _db.AgentTaskEvents.AsNoTracking().Where(e => taskIds.Contains(e.AgentTaskId)).ToListAsync(ct);
         var attention = await _attention.GetAsync(ct);
-        var byId = attention.Items.Where(i => i.TaskId is not null).ToDictionary(i => i.TaskId!.Value);
+        var byId = attention.Items
+            .Where(i => i.TaskId is not null)
+            .GroupBy(i => i.TaskId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.FirstOrDefault(item => item.Kind == AttentionKind.BlockedQuestion) ?? group.First());
         foreach (var task in blocked)
         {
             var latestBlock = events.Where(e => e.AgentTaskId == task.Id && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted))

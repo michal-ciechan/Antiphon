@@ -913,6 +913,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<AwayDigestProjection>();
     builder.Services.AddScoped<AwayDigestNotifier>();
     builder.Services.AddScoped<BlockedTaskNotifier>();
+    builder.Services.AddScoped<BlockedSeatEscalationNotifier>();
     builder.Services.AddScoped<DecisionCardNotifier>();
     builder.Services.AddScoped<IncidentPageNotifier>();
     builder.Services.AddScoped<HerdrPaneDisposalService>();
