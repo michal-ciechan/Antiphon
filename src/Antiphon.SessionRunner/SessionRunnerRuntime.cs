@@ -760,6 +760,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                         AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, request.SessionId));
                 await CreationEffectAsync(request.SessionId, "start");
+                request = session.WithPwshCache(request);
                 await session.StartAsync(request, _launcher, BackendDecision.Requested, pipeName, ct);
             }
 
@@ -780,6 +781,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             // Kill then dispose — DisposeAsync is detach-not-kill (pty-host split). Same shape
             // as AgentSessionService.KillAndDisposeAsync (CARD-0056 D1, CARD-0086).
             session.TearDownFailedLaunch();
+            session.ReleasePwshCache();
             await session.DisposeAsync();
             throw;
         }
@@ -2756,6 +2758,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private Action? _onHerdrPaneSetChanged;
         private int _hostPid;
         private DateTime? _hostStartTimeUtc;
+        private string? _pwshCache;
         // CARD-1653: a held pending row keeps the manifest host's start and manifest path so the
         // vanish sweep can release it once that exact host is dead.
         private DateTime _retainedHostStartTimeUtc;
@@ -3525,6 +3528,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
                 using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
                     _hostStartTimeUtc = host.StartTime.ToUniversalTime();
+                if (_pwshCache is { } pwshCache)
+                    Antiphon.Hosting.PwshPrivateCache.AssignOwner(pwshCache, _hostPid);
                 // CARD-1653 S2: the peer must be the host this launch spawned (proven by spawn), so a
                 // refusal tears that host down below and Launch never reaches the peer.
                 var policy = PeerPolicy(_hostPid, _hostStartTimeUtc, _processLiveness);
@@ -3619,6 +3624,32 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         /// <c>AgentSessionService.KillAndDisposeAsync</c>. Never throws — a kill failure must
         /// not replace the launch exception. Double-kill is harmless.
         /// </summary>
+        /// <summary>
+        /// CARD-1793: the runner's own XDG_CACHE_HOME would be shared by every agent's pwsh. Each
+        /// pty-host session gets its own cache unless the launch names one; the host owns it once
+        /// its pid is known, and the session's exit deletes it.
+        /// </summary>
+        internal RunnerLaunchRequest WithPwshCache(RunnerLaunchRequest request)
+        {
+            var env = request.Env ?? new Dictionary<string, string>();
+            if (env.Keys.Any(key => string.Equals(key, Antiphon.Hosting.PwshPrivateCache.VariableName, StringComparison.OrdinalIgnoreCase)))
+                return request;
+            _pwshCache = Antiphon.Hosting.PwshPrivateCache.CreateOwned("session-" + _sessionId.ToString("N"), Environment.ProcessId);
+            var withCache = new Dictionary<string, string>(env, StringComparer.Ordinal)
+            {
+                [Antiphon.Hosting.PwshPrivateCache.VariableName] = _pwshCache,
+            };
+            return request with { Env = withCache };
+        }
+
+        internal string? PwshCacheDirectory => _pwshCache;
+
+        internal void ReleasePwshCache()
+        {
+            if (Interlocked.Exchange(ref _pwshCache, null) is { } directory)
+                Antiphon.Hosting.PwshPrivateCache.DeleteOwned(directory);
+        }
+
         internal void TearDownFailedLaunch()
         {
             if (_hostPid <= 0)
@@ -4877,6 +4908,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
             _clientReady.TrySetResult(false);
             _exited.TrySetResult();
+            ReleasePwshCache();
             // A dead child writes no more transcript: stop hunting for one (and say so if input was
             // delivered and nothing ever bound).
             _tailer?.NotifyChildExited();
