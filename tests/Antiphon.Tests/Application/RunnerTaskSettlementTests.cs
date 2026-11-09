@@ -582,37 +582,55 @@ public sealed class RunnerTaskSettlementTests
         world.Git.Git.Blocked.ShouldBe(1);
     }
 
+    /// <summary>
+    /// CARD-1802 D-8. The genuine-unknown arm under Pending: the pushed objects are local, so the
+    /// observation needs no lease, the acquire step spends the budget (SourceDescends true), and
+    /// the claim's reachability read cannot complete. That blocks on its own reason, with no debt
+    /// row, and a reply retries it.
+    /// </summary>
     [Test]
     public async Task Sync_uncertainty_blocks_and_reply_retries()
     {
         await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        var c = await world.Git.RunnerPushAsync("first.txt", "first runner commit");
         var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        c.ShouldNotBe(s);
+        await world.Git.RunAsync(world.Git.Desktop, "fetch", "--no-tags", "origin", world.Git.FullRef);
+        (await world.Git.HasObjectAsync(s)).ShouldBeTrue();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        // Only the claim's read fails; the pre-lease ancestry read (b, S) still succeeds.
+        world.Git.Git.FailCommand = args => args.Count == 4 && args[0] == "merge-base" && args[1] == "--is-ancestor"
+            && args[2] == c && args[3] == s
+                ? new LandingGitResult(128, "", "git_exit_128") : null;
 
-        // The lease stays busy for the sync's whole budget (waited on inside it, then given up).
+        // The lease stays busy for the acquire step's whole budget (waited on inside it, then given up).
         await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
         {
             held.ShouldNotBeNull();
-            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
-            (await System.Threading.Tasks.Task.WhenAny(world.LeaseBusy.First, settle)).ShouldBe(world.LeaseBusy.First);
-            world.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
-            await settle;
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed.\n" + world.Claim(c)));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
         }
 
         world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
         world.Task.FailureCode.ShouldBeNull();
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.NextHandoff!.ShouldContain("primary_log_unavailable");
         world.Task.Result!.ShouldContain("Implemented and pushed.");
-        // CARD-1082 D-2. Classify records Pending before the progress read. The objects were not
-        // local, so the Code read stays indeterminate and the verdict stays Blocked (R-2).
+        // CARD-1082 D-2. Classify records Pending before the progress read; the read could not
+        // verify the claim, so the Code verdict stays Blocked on the read's own reason.
         world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
+        world.Evidence()!.RemoteSync!.SourceDescends.ShouldBe(true);
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate);
+        world.Evidence()!.Reason.ShouldBe("primary_log_unavailable");
         await AssertNoDebtAsync(world);
         // CARD-1133. A Pending result that blocks must not tell the caller the sweep will catch up.
         var blockedEvents = await world.EventsAsync();
         blockedEvents.ShouldContain(e => e.Type == AgentTaskEventType.Warning
-            && e.Detail.Contains("Runner sync unavailable: " + RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal)
+            && e.Detail.Contains("Runner sync unavailable: primary_log_unavailable", StringComparison.Ordinal)
             && e.Detail.Contains("then reply", StringComparison.Ordinal));
+        blockedEvents.ShouldNotContain(e => e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy + ". ", StringComparison.Ordinal));
         blockedEvents.ShouldNotContain(e => e.Detail.Contains("Runner sync pending", StringComparison.Ordinal));
         var blockedNote = (await world.NoteAsync())!.Body;
         blockedNote.ShouldContain("Runner sync unavailable");
@@ -621,6 +639,7 @@ public sealed class RunnerTaskSettlementTests
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
 
         // The existing reply path: a new prompt watermark, never a replay of the old done token.
+        world.Git.Git.FailCommand = null;
         var replies = world.Services.GetRequiredService<AgentTaskReplyService>();
         await replies.AnswerAsync(world.TaskId, "The lease is free again; report once more.",
             AnswerOrigin.Cli, null, CancellationToken.None);
@@ -641,7 +660,8 @@ public sealed class RunnerTaskSettlementTests
 
     /// <summary>
     /// CARD-1113 item 2. No progress service means no evidence write. A Code report under the
-    /// held lease stays Blocked/Decide on the lease reason, with no debt row.
+    /// held lease stays Blocked/Decide with no debt row; CARD-1802 D-2 names the unverified
+    /// progress read, never the lease, as the reason.
     /// </summary>
     [Test]
     public async Task C1113_CodeLeaseBusyWithoutProgressServiceStaysBlocked()
@@ -671,7 +691,8 @@ public sealed class RunnerTaskSettlementTests
         world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
         world.Task.NextHandoff.ShouldNotBeNull();
-        world.Task.NextHandoff!.ShouldContain(RemoteSettlementSyncReasons.LeaseBusy);
+        world.Task.NextHandoff!.ShouldContain(RemoteSettlementSyncReasons.ProgressUnverified);
+        world.Task.NextHandoff.ShouldNotContain(RemoteSettlementSyncReasons.LeaseBusy);
         world.Task.CompletionProgressEvidenceJson.ShouldBeNull();
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         await AssertNoDebtAsync(world);
@@ -687,7 +708,8 @@ public sealed class RunnerTaskSettlementTests
         // The real deferred-report sweep re-hands the runner task's marked report while the lease
         // stays busy across several sweeps. Each attempt waits one slice, not the whole budget, so
         // the same sweep settles the other task's report; the runner task stays open (not Blocked)
-        // until the cumulative wait reaches Delegation:RunnerSyncBudgetSeconds, then blocks lease-busy.
+        // until the cumulative wait reaches Delegation:RunnerSyncBudgetSeconds. CARD-1802: then it
+        // settles on its own verdict with a sync-debt row, never Blocked.
         await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
         await world.Git.RunnerPushAsync("work.txt", "runner work");
         await world.SeedReportAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
@@ -730,15 +752,88 @@ public sealed class RunnerTaskSettlementTests
             await SweepAsync(Seconds(5), "sweep 4 [120 s]");
         }
 
-        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Task.FailureCode.ShouldBeNull();
-        world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide);
         world.Task.Result!.ShouldContain("Implemented and pushed.");
-        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
-        (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Blocked).ShouldBe(1);
+        var sync = world.Evidence()!.RemoteSync!;
+        sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        sync.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        sync.SourceDescends.ShouldBeNull();
+        (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Blocked);
         (await world.NoProgressIncidentsAsync()).ShouldBe(0);
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
-        await AssertNoDebtAsync(world);
+        await using var db = world.CreateContext();
+        var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Pending);
+        debt.SourceSha.ShouldBe(sync.ObservedSha);
+    }
+
+    /// <summary>
+    /// CARD-1802 V-3. The desktop lease is busy for the whole observation budget, so the pushed
+    /// objects are never fetched. The complete Code report settles Succeeded on its own verdict
+    /// with a Pending sync-debt row and no reply request; the sweep then fetches, fast-forwards
+    /// and marks the debt Ready without a reply or a new model turn.
+    /// </summary>
+    [Test]
+    public async Task C1802_LeaseBusyObservationSettlesWithDebtAndNoReply()
+    {
+        const string unfetched = "The pushed objects are not yet in the desktop repository; "
+            + "the settlement sync sweep fetches them under the lease before the fast-forward.";
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        (await world.Git.HasObjectAsync(s)).ShouldBeFalse();
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide);
+        world.Task.FailureCode.ShouldBeNull();
+        world.Task.Result!.ShouldContain("Implemented and pushed.");
+        var sync = world.Evidence()!.RemoteSync!;
+        sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        sync.ObservedSha.ShouldBe(s);
+        sync.ConfirmedSha.ShouldBeNull();
+        sync.SourceDescends.ShouldBeNull();
+        world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.Indeterminate);
+        world.Evidence()!.Reason.ShouldBe(RemoteSettlementSyncReasons.SourceUnfetched);
+        var events = await world.EventsAsync();
+        events.ShouldContain(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("Runner sync pending", StringComparison.Ordinal)
+            && e.Detail.Contains("No reply is needed", StringComparison.Ordinal)
+            && e.Detail.Contains(unfetched, StringComparison.Ordinal));
+        events.ShouldNotContain(e => e.Detail.Contains("then reply", StringComparison.Ordinal));
+        events.ShouldNotContain(e => e.Detail.Contains("Runner sync unavailable", StringComparison.Ordinal));
+        events.ShouldNotContain(e => e.Type == AgentTaskEventType.Blocked);
+        (await world.NoteAsync())!.Body.ShouldContain("desktop-sync=pending");
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        await using (var db = world.CreateContext())
+        {
+            var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+            debt.State.ShouldBe(AgentTaskSyncDebtState.Pending);
+            debt.SourceSha.ShouldBe(s);
+            debt.BaselineSha.ShouldBe(world.Git.Baseline);
+            debt.DesktopBeforeSha.ShouldBe(world.Git.Baseline);
+            debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        }
+
+        var evidence = world.Task.CompletionProgressEvidenceJson;
+        world.DebtClock.SetUtcNow(DateTimeOffset.UtcNow.AddMinutes(1));
+        (await world.SweepSettlementSyncAsync()).ShouldBe(1);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        world.Task.CompletionProgressEvidenceJson.ShouldBe(evidence);
+        (await world.Git.HeadAsync()).ShouldBe(s);
+        await using (var db = world.CreateContext())
+        {
+            var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+            debt.State.ShouldBe(AgentTaskSyncDebtState.Ready);
+            debt.ConfirmedSha.ShouldBe(s);
+        }
     }
 
     [Test]

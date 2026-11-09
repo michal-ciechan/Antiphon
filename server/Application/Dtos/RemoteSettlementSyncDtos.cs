@@ -124,4 +124,10 @@ public static class RemoteSettlementSyncReasons
 
     /// <summary>CARD-1446 D-2. The Pending retries reached <c>Delegation:RunnerSyncDebtMaxAttempts</c>; Held before Git.</summary>
     public const string SettlementSyncAttemptsExhausted = "settlement_sync_attempts_exhausted";
+
+    /// <summary>CARD-1802 D-2. Pending Code whose owned tip is not yet a local object; the sync-debt sweep fetches it. Never a block.</summary>
+    public const string SourceUnfetched = "runner_sync_source_unfetched";
+
+    /// <summary>CARD-1802 D-2. Pending Code whose progress read gave no reason (absent evidence or a fallback); blocks.</summary>
+    public const string ProgressUnverified = "runner_sync_progress_unverified";
 }

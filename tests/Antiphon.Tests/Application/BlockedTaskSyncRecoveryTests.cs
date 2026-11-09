@@ -105,6 +105,73 @@ public sealed class BlockedTaskSyncRecoveryTests
         }
     }
 
+    /// <summary>
+    /// CARD-1802 V-5 (D-4). A complete Code report whose observation fetch spends the desktop lease
+    /// budget settles Succeeded with a sync-debt row and releases its seat in that settlement,
+    /// with parking off; the settlement sync-debt sweep then fast-forwards the desktop.
+    /// </summary>
+    [Test]
+    public async Task C1802_LeaseBusyCompleteReportReleasesItsSeatWithParkingOff()
+    {
+        // productionDefaults: automatic conditional release ships disabled, so a Succeeded
+        // settlement takes the ordinary PoolDelegateRelease kill, as it does in production.
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
+            parking: false, syncRecovery: true, syncDebt: true, productionDefaults: true);
+        await f.CreateSourceAsync(remote: true);
+        await f.AddParentAsync(busy: true);
+        await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "published.txt"), "pushed work");
+        await f.GitAsync(f.SourcePath, "add", "published.txt");
+        await f.GitAsync(f.SourcePath, "commit", "-m", "pushed work");
+        await f.GitAsync(f.SourcePath, "push", "origin", "HEAD");
+        var sha = await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
+        var stopper = (RecordingSessionStopper)f.Harness.Provider.GetRequiredService<IDelegateSessionStopper>();
+        stopper.StopsSessionsIn = f.Schema.ConnectionString;
+        var task = await f.TaskAsync();
+        var baseline = task.WorktreeBaseSha;
+        var leases = f.Harness.Provider.GetRequiredService<IRepositoryMutationLease>();
+        await using (var lease = await leases.TryAcquireAsync(task.RepoPath!, default))
+        {
+            lease.ShouldNotBeNull("hold the actual desktop common-directory lease");
+            f.Wire.LeaseBusyObserved = () => f.Clock.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
+            await f.SettleAsync("done");
+        }
+
+        task = await f.TaskAsync();
+        task.Status.ShouldBe(AgentTaskStatus.Succeeded, task.CompletionProgressEvidenceJson);
+        task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide);
+        var sync = TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)!.RemoteSync!;
+        sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        sync.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        sync.SourceDescends.ShouldBeNull();
+        await using (var db = f.Db())
+        {
+            var debt = await db.AgentTaskSyncDebts.AsNoTracking().SingleAsync(d => d.TaskId == f.TaskId);
+            debt.State.ShouldBe(AgentTaskSyncDebtState.Pending);
+            debt.SourceSha.ShouldBe(sha);
+            debt.DesktopBeforeSha.ShouldBe(baseline);
+            // The seat is released in the settlement: the ordinary kill took and the pool row is gone.
+            stopper.Killed.ShouldContain(f.SessionId);
+            (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeFalse("the settled seat keeps no agent row");
+            (await db.AgentSessions.SingleAsync(x => x.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
+            (await db.AgentTaskParks.CountAsync(p => p.TaskId == f.TaskId)).ShouldBe(0);
+        }
+        f.Wire.ConditionalCommands.ShouldBe(0, "the ordinary release owns the seat, not the conditional path");
+        (await f.AttentionAsync()).Items.ShouldNotContain(i => i.TaskId == f.TaskId
+            && (i.Kind == AttentionKind.BlockedQuestion || i.Kind == AttentionKind.SeatIdle));
+
+        f.Clock.Advance(TimeSpan.FromMinutes(1));
+        using (var scope = f.Harness.Provider.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<SettlementSyncRecoveryService>().SweepAsync(default)).ShouldBe(1);
+        await using (var db = f.Db())
+        {
+            var ready = await db.AgentTaskSyncDebts.AsNoTracking().SingleAsync(d => d.TaskId == f.TaskId);
+            ready.State.ShouldBe(AgentTaskSyncDebtState.Ready, ready.ReasonCode);
+            ready.ConfirmedSha.ShouldBe(sha);
+        }
+        (await f.GitAsync(f.DesktopSourcePath, "rev-parse", "HEAD")).ShouldBe(sha);
+        (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Succeeded);
+    }
+
     [Test]
     public async Task C1065_SyncDebtRecoversWithoutMintingApproval()
     {
