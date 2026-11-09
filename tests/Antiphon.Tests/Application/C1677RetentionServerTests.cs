@@ -1684,7 +1684,7 @@ public sealed class C1677RetentionServerTests
         {
             (await service.TryLockAcrossProcessesAsync()).ShouldBeTrue();
             await db.Database.ExecuteSqlRawAsync(
-                $"SELECT pg_advisory_unlock(hashtextextended('{TickLockId}', 0))");
+                "SELECT pg_advisory_unlock(hashtextextended('antiphon.runner-worktree-retention.tick', 0))");
             var result = (await service.RunEnteredAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20))).ShouldHaveSingleItem();
             result.Sent.ShouldBe(0);
             result.Stopped.ShouldBe("tick_lock_lost");

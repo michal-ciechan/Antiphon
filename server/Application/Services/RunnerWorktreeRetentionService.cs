@@ -11,6 +11,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -134,7 +135,10 @@ public sealed class RunnerWorktreeRetentionService
         {
             if (!await TryLockAcrossProcessesAsync())
             {
-                _logger.LogInformation("Runner worktree retention tick skipped: another server process holds the tick lock");
+                // CARD-1812 (R-1). A skip used to be Information with no tick id, so a lock stuck in the pool was easy to miss.
+                _logger.LogWarning(
+                    "Runner worktree retention tick skipped tick={TickId}: another server process holds the tick lock",
+                    TickLockKey);
                 return [];
             }
             try
@@ -185,6 +189,7 @@ public sealed class RunnerWorktreeRetentionService
         if (!_lockHeld)
             return;
         _lockHeld = false;
+        Exception? releaseFailure = null;
         try
         {
             await using var command = _db.Database.GetDbConnection().CreateCommand();
@@ -193,24 +198,126 @@ public sealed class RunnerWorktreeRetentionService
         }
         catch (Exception ex)
         {
-            // Closing the connection below returns it to the pool, which resets it and so releases the lock as well.
-            _logger.LogWarning("Runner worktree retention tick lock release failed: {Reason}", ex.Message);
+            releaseFailure = ex;
+            // CARD-1812 (R-1). The session is still alive and still holds the lock. Returning it to the pool would keep
+            // the lock until Npgsql's lazy DISCARD ALL. Break the physical connection before close.
+            _logger.LogWarning(
+                "Runner worktree retention tick lock release failed tick={TickId}: {Reason}",
+                TickLockKey, ex.Message);
         }
-        finally
+
+        if (releaseFailure is not null)
+            await DiscardLockedConnectionAsync();
+
+        try
         {
             await _db.Database.CloseConnectionAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "Runner worktree retention tick lock connection close failed tick={TickId}: {Reason}",
+                TickLockKey, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1812 (R-1). The unlock failed and this session may still hold the tick lock. Terminate that backend so the
+    /// lock ends now, and clear its pool so the handle is not reused dirty. <see cref="NpgsqlConnection.ClearPool"/> also
+    /// drops idle siblings of this database; a failed unlock is rare, and a stuck tick lock blocks every retention tick.
+    /// </summary>
+    private async Task DiscardLockedConnectionAsync()
+    {
+        if (_db.Database.GetDbConnection() is not NpgsqlConnection npgsql)
+            return;
+        try
+        {
+            if (npgsql.State == System.Data.ConnectionState.Open)
+            {
+                await using var kill = npgsql.CreateCommand();
+                kill.CommandText = "SELECT pg_terminate_backend(pg_backend_pid())";
+                await kill.ExecuteScalarAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "Runner worktree retention tick lock break failed tick={TickId}: {Reason}",
+                TickLockKey, ex.Message);
+        }
+
+        try
+        {
+            NpgsqlConnection.ClearPool(npgsql);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "Runner worktree retention tick lock pool clear failed tick={TickId}: {Reason}",
+                TickLockKey, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1812 (R-3). True when this session still holds <see cref="TickLockKey"/>. A dropped connection throws and is
+    /// treated as lost. The bit split matches <c>pg_locks</c> for a single bigint advisory key (high half <c>classid</c>,
+    /// low half <c>objid</c>, <c>objsubid</c> 1).
+    /// </summary>
+    private async Task<bool> TickLockStillHeldAsync()
+    {
+        if (!_lockHeld)
+            return false;
+        try
+        {
+            await using var command = _db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = $"""
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_locks
+                    WHERE locktype = 'advisory'
+                      AND pid = pg_backend_pid()
+                      AND objsubid = 1
+                      AND classid = (hashtextextended('{TickLockKey}', 0) >> 32)::oid
+                      AND objid = hashtextextended('{TickLockKey}', 0)::oid)
+                """;
+            return await command.ExecuteScalarAsync(CancellationToken.None) is true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "Runner worktree retention tick lock check failed tick={TickId}: {Reason}",
+                TickLockKey, ex.Message);
+            return false;
         }
     }
 
     /// <summary>
     /// CARD-1804 (A-2). The execute route saves its run before it answers 202, so the run id it hands out always names a
     /// row (unfinished until the background tick finishes it). The caller holds the turn and the tick lock.
+    /// CARD-1812 (R-2): the save does not observe <paramref name="ct"/> (the request abort). A cancel after the insert
+    /// committed used to leave that row with no finisher. If the request is already aborted, the run is finished
+    /// <c>tick_cancelled</c> and this throws, so the caller does not start the tick.
     /// </summary>
     internal async Task<Guid> StartExecuteRunAsync(string runnerId, RunnerWorktreeRetentionSettings settings, CancellationToken ct)
     {
         var run = NewRun(Guid.NewGuid(), runnerId, settings, execute: true);
         _db.WorktreeResidueRuns.Add(run);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            _db.ChangeTracker.Clear();
+            await FinishUnfinishedRunAsync(run.Id, runnerId, "tick_cancelled");
+            throw new OperationCanceledException(ct);
+        }
+
+        if (ct.IsCancellationRequested)
+        {
+            await FinishUnfinishedRunAsync(run.Id, runnerId, "tick_cancelled");
+            throw new OperationCanceledException(ct);
+        }
+
         return run.Id;
     }
 
@@ -423,6 +530,24 @@ public sealed class RunnerWorktreeRetentionService
                 continue;
             }
 
+            // CARD-1812 (R-3). Execute removes a tree. Re-check the session lock immediately before that call. A drop
+            // while the previous request was in flight is otherwise noticed only at the next query, after this send.
+            // A retain already on the wire is still covered by the runner's own deletion guards and already_absent.
+            if (execute && !await TickLockStillHeldAsync())
+            {
+                stopped = "tick_lock_lost";
+                Row(run, LaneMirror, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
+                foreach (var (task, _) in queue.Skip(index))
+                {
+                    queued++;
+                    HeldRow(run, cursors, task, "queued_next_tick", runnerId, writeAll, now);
+                }
+                _logger.LogWarning(
+                    "Runner worktree retention {RunnerId} stopped before a destructive send: tick lock lost tick={TickId}",
+                    runnerId, TickLockKey);
+                break;
+            }
+
             var request = new PhoneHomeWorkspaceRetainRequest(fresh.Id, fresh.RemoteWorktreePath!, fresh.WorktreeBranch!,
                 execute ? WorkspaceRetainModes.Execute : WorkspaceRetainModes.DryRun, Guid.NewGuid());
             if (gone)
@@ -494,7 +619,17 @@ public sealed class RunnerWorktreeRetentionService
 
         var families = new Dictionary<string, bool>(temp.Families, StringComparer.Ordinal);
         families.TryAdd(RunnerTempSweepSettings.ClaudeScratch, false);
-        var request = new PhoneHomeTempSweepRequest(temp.Execute && !preview ? TempSweepModes.Execute : TempSweepModes.DryRun,
+        var sweepExecute = temp.Execute && !preview;
+        if (sweepExecute && !await TickLockStillHeldAsync())
+        {
+            Row(run, LaneTemp, WorktreeResidueCandidateOutcome.Deferred, "tick_lock_lost", null, null, null, runnerId);
+            await _db.SaveChangesAsync(ct);
+            _logger.LogWarning(
+                "Runner temp sweep {RunnerId} skipped: tick lock lost tick={TickId}", runnerId, TickLockKey);
+            return;
+        }
+
+        var request = new PhoneHomeTempSweepRequest(sweepExecute ? TempSweepModes.Execute : TempSweepModes.DryRun,
             Guid.NewGuid(), temp.MinAgeHours, temp.MaxEntriesPerTick, temp.MaxBytesPerTick, families);
         PhoneHomeTempSweepResponse? response = null;
         string? failure = null;

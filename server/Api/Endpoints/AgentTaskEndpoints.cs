@@ -18,6 +18,8 @@ public static class AgentTaskEndpoints
     /// CARD-1794 (4). The one-shot runner retention execute: operator credential only (403 operator_token_required for
     /// anyone else, a task token included), then one Execute tick for one allow-listed runner. CARD-1796: the tick runs in
     /// the background, never on the request; the reply names its run (409 tick_in_progress while another tick runs).
+    /// CARD-1812: this request's abort token is how the service notices a client already gone before the 202. The run
+    /// save itself does not observe it. That abort finishes the run <c>tick_cancelled</c> and does not start the tick.
     /// </summary>
     public static Task<RunnerWorktreeRetentionTicks.ExecuteStarted> ExecuteRunnerRetention(string runnerId,
         HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionTicks ticks)
