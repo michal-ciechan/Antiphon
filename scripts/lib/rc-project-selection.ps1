@@ -72,7 +72,10 @@ function Read-RcProjectGraph {
         if ($catalog.schemaVersion -ne 1 -or $catalog.projects -isnot [Collections.IDictionary] -or $catalog.batches -isnot [array]) { throw 'category-inventory-invalid' }
     } catch { $reasons.Add('category-inventory-invalid'); $catalog=@{projects=@{};batches=@()} }
     $projects=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    foreach ($path in (Get-TestSelectionSorted @($paths | Where-Object { $_ -cmatch '\.csproj$' }))) {
+    $projectPaths=[Collections.Generic.List[string]]::new()
+    foreach ($path in $paths) { if ($path -cmatch '\.csproj$') { $projectPaths.Add($path) } }
+    $sortedPaths=$null
+    foreach ($path in (Get-TestSelectionSorted @($projectPaths))) {
         $categories=@($catalog.projects[$path])
         if (-not $categories.Count -or @($categories | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[a-z][a-z0-9-]*$' }).Count) {
             $reasons.Add("unknown-project:$path"); $categories=@('unknown')
@@ -165,7 +168,15 @@ function Read-RcProjectGraph {
                         $pattern=[regex]::new($expression,([Text.RegularExpressions.RegexOptions]::CultureInvariant -bor [Text.RegularExpressions.RegexOptions]::Singleline),[TimeSpan]::FromMilliseconds(100))
                         # A loop, not a pipeline: ~20 globs over a ~10,000-path tree dominated a warm graph.
                         $matched=[Collections.Generic.List[string]]::new()
-                        foreach ($candidate in $paths) { if ($pattern.IsMatch($candidate)) { $matched.Add($candidate) } }
+                        # The expression is anchored and case-sensitive, so only paths that start with the glob's
+                        # literal prefix (the text before its first * or ?) can match: test just that sorted range.
+                        if ($null -eq $sortedPaths) { $sortedPaths=[string[]]@($paths); [Array]::Sort($sortedPaths,[StringComparer]::Ordinal) }
+                        $prefix=$target.Substring(0,$target.IndexOfAny([char[]]@('*','?')))
+                        $at=[Array]::BinarySearch($sortedPaths,$prefix,[StringComparer]::Ordinal)
+                        if ($at -lt 0) { $at=-bnot $at }
+                        for (; $at -lt $sortedPaths.Length -and $sortedPaths[$at].StartsWith($prefix,[StringComparison]::Ordinal); $at++) {
+                            if ($pattern.IsMatch($sortedPaths[$at])) { $matched.Add($sortedPaths[$at]) }
+                        }
                         $inputs+=$matched.ToArray()
                     } else {
                         if ($node.LocalName -ceq 'Compile' -and -not $paths.Contains($target)) { throw "missing-linked-input:$input" }
