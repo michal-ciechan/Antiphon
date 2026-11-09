@@ -845,6 +845,11 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   re-sends it at once. Never-sent trees go first, oldest first, so kept trees never starve removable ones and
   successive dry-run ticks cover the whole population.
 - **Tick bound:** a tick starts no new request after `MaxTickMinutes` (20); the rest wait for the next tick.
+  A tick stopped early (bound, kill switch or `Execute` off) writes a `queued_next_tick` row for every unsent
+  in-bound task as well as its Deferred stop row (CARD-1796).
+- **One tick at a time (CARD-1796):** the scheduled tick, the preview and the one-shot execute share one in-process
+  turn. The scheduled tick waits for it; the preview and execute routes answer 409 `tick_in_progress` while
+  another tick runs (read that tick's run, or retry once it has finished).
 - **Gone mirrors (CARD-1794):** when the runner inventory is complete, an eligible task whose `task-<8hex>` is not
   in it is sent after every present tree, on its own bound `MaxAbsentPerTick` (200), unpaced, and never counts
   against `MaxRemovalsPerTick`; the runner still answers `already_absent` before the path is cleared. An
@@ -862,8 +867,11 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   mirror by hand; nothing commits the file for it.
 - **One-shot reclaim (CARD-1794):** `POST /api/agent-tasks/worktree-residue/runner-retention/server2/execute` with
   the `X-Antiphon-Operator-Token` header (403 `operator_token_required` otherwise) runs one Execute tick now, even
-  while `Execute=false`. `Enabled` and `Runners` still gate it, the tick bound and every runner check still apply,
-  and the temp sweep stays DryRun. It is the sanctioned replacement for hand deletion.
+  while `Execute=false`. `Enabled` and `Runners` still gate it (409 `retention_disabled` / `runner_not_listed`),
+  the tick bound and every runner check still apply, and the temp sweep stays DryRun. It is the sanctioned
+  replacement for hand deletion. CARD-1796: it answers 202 `{ runnerId, runId }` at once and runs the tick in the
+  background (a client or proxy timeout no longer cancels it); follow `GET /api/agent-tasks/worktree-residue/runs/{runId}`
+  until the run has `finishedAt`.
 - **Disk floor (CARD-1794):** the `WorkspaceDiskLow` attention row (Warning at `WorkspaceDiskAlarm:UsedPercent`, 85)
   turns Error when the volume has less than `WorkspaceDiskAlarm:MinFreeGiB` free (50 in `server/appsettings.json`,
   10 in code, 0 off), even below the percentage.

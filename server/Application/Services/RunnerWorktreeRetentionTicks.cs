@@ -40,12 +40,11 @@ public sealed class RunnerWorktreeRetentionTicks
     /// <summary>The last background execute tick; it never faults (a failure is logged).</summary>
     public Task Background { get; private set; } = Task.CompletedTask;
 
-    // RED (CARD-1796 witness commit): no tick turn yet; every tick runs at once, as before.
-    internal Task EnterAsync(CancellationToken ct) => Task.CompletedTask;
+    internal Task EnterAsync(CancellationToken ct) => _turn.WaitAsync(ct);
 
-    internal bool TryEnter() => true;
+    internal bool TryEnter() => _turn.Wait(0);
 
-    internal void Exit() { }
+    internal void Exit() => _turn.Release();
 
     internal static ConflictException TickInProgress() =>
         new("A runner worktree retention tick is already running; read its run, or retry once it has finished.", TickInProgressCode);
@@ -57,9 +56,26 @@ public sealed class RunnerWorktreeRetentionTicks
     /// </summary>
     public ExecuteStarted StartExecute(string runnerId)
     {
-        // RED (CARD-1796 witness commit): the tick still runs on the request, as before.
+        var settings = _settings.CurrentValue;
+        if (!settings.Enabled)
+            throw new ConflictException("Runner worktree retention is switched off (RunnerWorktreeRetention:Enabled).", "retention_disabled");
+        if (string.IsNullOrWhiteSpace(runnerId) || !settings.Runners.Contains(runnerId, StringComparer.Ordinal))
+            throw new ConflictException("RunnerWorktreeRetention:Runners does not name this runner.", "runner_not_listed");
+        if (!TryEnter())
+            throw TickInProgress();
+
         var runId = Guid.NewGuid();
-        RunExecuteAsync(runnerId, runId).GetAwaiter().GetResult();
+        try
+        {
+            // The request's execution context (its HttpContext and logging scopes) stays with the request.
+            using (ExecutionContext.SuppressFlow())
+                Background = Task.Run(() => RunExecuteAsync(runnerId, runId));
+        }
+        catch
+        {
+            Exit();
+            throw;
+        }
         return new ExecuteStarted(runnerId, runId);
     }
 

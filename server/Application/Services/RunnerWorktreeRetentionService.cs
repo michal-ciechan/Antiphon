@@ -161,6 +161,8 @@ public sealed class RunnerWorktreeRetentionService
             ActionBudget = settings.MaxRemovalsPerTick, Scope = "runner-retention:" + runnerId,
         };
         _db.WorktreeResidueRuns.Add(run);
+        // CARD-1796 (A-2): the run is readable while it runs (no FinishedAt yet); the execute route returns its id at once.
+        await _db.SaveChangesAsync(ct);
 
         var client = await EligibleClientAsync(runnerId, ct);
         if (client is null)
@@ -243,6 +245,12 @@ public sealed class RunnerWorktreeRetentionService
             if (stopped is not null)
             {
                 Row(run, LaneMirror, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
+                // CARD-1796 (A-4): the unsent in-bound remainder is queued for a later tick, as the past-bound tasks are.
+                foreach (var (task, _) in queue.Skip(index))
+                {
+                    queued++;
+                    HeldRow(run, cursors, task, "queued_next_tick", runnerId, writeAll, now);
+                }
                 _logger.LogWarning("Runner worktree retention {RunnerId} stopped sending after {Sent} request(s): {Reason}", runnerId, sent, stopped);
                 break;
             }
