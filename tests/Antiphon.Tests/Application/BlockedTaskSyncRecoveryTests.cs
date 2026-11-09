@@ -149,10 +149,17 @@ public sealed class BlockedTaskSyncRecoveryTests
             debt.State.ShouldBe(AgentTaskSyncDebtState.Pending);
             debt.SourceSha.ShouldBe(sha);
             debt.DesktopBeforeSha.ShouldBe(baseline);
-            // The seat is released in the settlement: the ordinary kill took and the pool row is gone.
+            // The seat is released in the settlement: the ordinary kill ran and stopped the session.
+            // A runner session the runtime still lists keeps its pool row Idle for the janitor
+            // (CARD-0691 D-3) instead of Running with no owner.
             stopper.Killed.ShouldContain(f.SessionId);
-            (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeFalse("the settled seat keeps no agent row");
             (await db.AgentSessions.SingleAsync(x => x.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
+            var agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(x => x.Id == f.AgentId);
+            if (agent is not null)
+            {
+                agent.Status.ShouldBe(AgentStatus.Idle, "the released seat is not left Running");
+                agent.PoolIdleSince.ShouldNotBeNull("the janitor owns a released seat whose kill is unverified");
+            }
             (await db.AgentTaskParks.CountAsync(p => p.TaskId == f.TaskId)).ShouldBe(0);
         }
         f.Wire.ConditionalCommands.ShouldBe(0, "the ordinary release owns the seat, not the conditional path");

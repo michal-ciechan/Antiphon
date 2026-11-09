@@ -801,8 +801,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                         RemoteSettlementSyncReasons.EndpointChanged, fullRef, b),
                     "source_remote_endpoint_ambiguous" => Outcome(RemoteSettlementSyncState.Refused,
                         RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b),
+                    // CARD-1802 D-3. The debt row this may become needs the desktop baseline and the
+                    // endpoint the sweep re-checks; SourceDescends stays null (no server-read ancestry).
                     "repository_lease_busy" => WithMirror(Outcome(RemoteSettlementSyncState.Unavailable,
-                        LeaseReason(observeSpent), fullRef, b, observed.Sha) with { SourceDescends = null }),
+                        LeaseReason(observeSpent), fullRef, b, observed.Sha, l0,
+                        fingerprint: observed.EndpointFingerprint ?? fingerprint) with { SourceDescends = null }),
                     _ => Outcome(RemoteSettlementSyncState.Unavailable,
                         RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b),
                 };
