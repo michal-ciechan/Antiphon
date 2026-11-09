@@ -273,7 +273,7 @@ public sealed class RemoteWorkspacePreparerTests
         var mirror = "/work/worktrees/" + RemoteWorkspaceService.MirrorName(taskId);
 
         var tick = rig.TickAsync();
-        var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1, TickBound, tick);
 
         // CARD-0629: this cancel used to block on the claim's FOR UPDATE lock for the whole mirror.
         using (var scope = rig.Provider.CreateScope())
@@ -357,7 +357,7 @@ public sealed class RemoteWorkspacePreparerTests
         cancelRig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
         var canceledTask = await cancelRig.SeedAsync();
         var tick = cancelRig.TickAsync();
-        var cancelRequest = await cancelRig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var cancelRequest = await cancelRig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1, TickBound, tick);
         var cancelSent = cancelRequest.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
         using (var scope = cancelRig.Provider.CreateScope())
         {
@@ -1221,9 +1221,16 @@ public sealed class RemoteWorkspacePreparerTests
                 Host.Directory.MarkRecovered(Live);
         }
 
-        public async Task<PhoneHomeFrame> WaitForRequestsAsync(PhoneHomeOperation operation, int count)
+        /// <summary>
+        /// Waits for the request. The default budget follows an awaited tick. A caller that has not
+        /// awaited its tick passes the tick and its bound: the wait then covers the whole tick, which
+        /// on a cold process under load took up to 6.8 s before the first request (Debug c4b4ad81).
+        /// </summary>
+        public async Task<PhoneHomeFrame> WaitForRequestsAsync(PhoneHomeOperation operation, int count,
+            TimeSpan? within = null, Task? tick = null)
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var started = DateTime.UtcNow;
+            var deadline = started + (within ?? TimeSpan.FromSeconds(10));
             while (DateTime.UtcNow < deadline)
             {
                 if (Peer.RequestCount(operation) >= count)
@@ -1236,7 +1243,9 @@ public sealed class RemoteWorkspacePreparerTests
                 await Task.Delay(20);
             }
 
-            throw new TimeoutException($"Expected {count} {operation} request(s); saw {Peer.RequestCount(operation)}.");
+            var tickState = tick is null ? "" : $" Tick {tick.Status}.";
+            throw new TimeoutException(
+                $"Expected {count} {operation} request(s); saw {Peer.RequestCount(operation)} after {(DateTime.UtcNow - started).TotalSeconds:F1}s.{tickState}");
         }
 
         public async Task SeedOccupantAsync(SessionStatus status)
