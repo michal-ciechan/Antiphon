@@ -12,11 +12,21 @@ internal sealed class TranscriptReadHold
 {
     public const int MaxSessions = 256;
 
+    /// <summary>CARD-1798. The held bodies together: <see cref="MaxSessions"/> times the CARD-1763 256 KiB body.</summary>
+    public const long DefaultMaxBytes = MaxSessions * 256L * 1024;
+
+    // Fixed cost of one held row: the record, its boxed fields and its slot in the array.
+    private const long RowBytes = 256;
+
     private readonly object _gate = new();
-    private readonly Dictionary<Guid, (string Stream, SessionRunnerTranscriptDto Body, long Touched)> _held = new();
+    private readonly Dictionary<Guid, (string Stream, SessionRunnerTranscriptDto Body, long Bytes, long Touched)> _held = new();
+    private readonly long _maxBytes;
+    private long _bytes;
     private long _touch;
 
-    public bool TryGet(Guid sessionId, out string stream, out SessionRunnerTranscriptDto body)
+    public TranscriptReadHold(long maxBytes = DefaultMaxBytes) => _maxBytes = maxBytes;
+
+    public bool TryGet(Guid sessionId, out string stream, out SessionRunnerTranscriptDto body, out long bytes)
     {
         lock (_gate)
         {
@@ -25,31 +35,71 @@ internal sealed class TranscriptReadHold
                 _held[sessionId] = held with { Touched = ++_touch };
                 stream = held.Stream;
                 body = held.Body;
+                bytes = held.Bytes;
                 return true;
             }
         }
 
         stream = "";
         body = null!;
+        bytes = 0;
         return false;
     }
 
-    public void Remember(Guid sessionId, string stream, SessionRunnerTranscriptDto body)
+    /// <summary><paramref name="bytes"/> is <see cref="Weigh"/> of the body's entries.</summary>
+    public void Remember(Guid sessionId, string stream, SessionRunnerTranscriptDto body, long bytes)
     {
         lock (_gate)
         {
-            _held[sessionId] = (stream, body, ++_touch);
+            if (_held.Remove(sessionId, out var prior))
+                _bytes -= prior.Bytes;
+            _held[sessionId] = (stream, body, bytes, ++_touch);
+            _bytes += bytes;
             if (_held.Count <= MaxSessions)
                 return;
-            var oldest = _held.MinBy(entry => entry.Value.Touched).Key;
-            _held.Remove(oldest);
+            var oldest = _held.MinBy(entry => entry.Value.Touched);
+            _held.Remove(oldest.Key);
+            _bytes -= oldest.Value.Bytes;
         }
     }
 
     public void Forget(Guid sessionId)
     {
         lock (_gate)
-            _held.Remove(sessionId);
+        {
+            if (_held.Remove(sessionId, out var prior))
+                _bytes -= prior.Bytes;
+        }
+    }
+
+    /// <summary>
+    /// CARD-1798. An estimate of what <paramref name="entries"/> keep resident: a fixed cost per row
+    /// plus two bytes for each character of its strings.
+    /// </summary>
+    public static long Weigh(IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    {
+        var bytes = 0L;
+        foreach (var entry in entries)
+        {
+            var chars = (long)Length(entry.Kind) + Length(entry.Uuid) + Length(entry.ParentUuid) + Length(entry.Role)
+                + Length(entry.Text) + Length(entry.ToolName) + Length(entry.ToolInput) + Length(entry.ToolUseId)
+                + Length(entry.StopReason) + Length(entry.ApiCallId) + Length(entry.ApiErrorClass) + Length(entry.Model)
+                + Length(entry.ApiErrorTimeZoneId);
+            bytes += RowBytes + 2 * chars;
+        }
+
+        return bytes;
+    }
+
+    private static int Length(string? text) => text?.Length ?? 0;
+
+    internal long Bytes
+    {
+        get
+        {
+            lock (_gate)
+                return _bytes;
+        }
     }
 
     internal int Count
@@ -79,14 +129,14 @@ internal static class TranscriptSinceRead
         CancellationToken ct)
     {
         if (cursorEnabled
-            && hold.TryGet(sessionId, out var stream, out var held)
+            && hold.TryGet(sessionId, out var stream, out var held, out _)
             && TranscriptSince.IsCursor(held.LastSequence, stream))
         {
             var answer = await fetch(held.LastSequence, stream, ct).ConfigureAwait(false);
             var delta = map(answer);
             if (Join(sessionId, stream, held, answer.Stream, delta) is { } joined)
             {
-                hold.Remember(sessionId, stream, joined);
+                hold.Remember(sessionId, stream, joined, TranscriptReadHold.Weigh(joined.Entries));
                 return joined;
             }
         }
@@ -94,7 +144,7 @@ internal static class TranscriptSinceRead
         var full = await fetch(0, null, ct).ConfigureAwait(false);
         var body = map(full);
         if (cursorEnabled && Holdable(sessionId, full.Stream, body))
-            hold.Remember(sessionId, full.Stream!, body);
+            hold.Remember(sessionId, full.Stream!, body, TranscriptReadHold.Weigh(body.Entries));
         else
             hold.Forget(sessionId);
         return body;
