@@ -21,8 +21,13 @@ public sealed class PwshPrivateCacheTests
         var full = Path.GetFullPath(root);
         Under(Path.GetTempPath(), full).ShouldBeTrue();
         Directory.Exists(full).ShouldBeTrue();
-        var marker = Path.Combine(full, "owner.pid");
-        File.ReadAllText(marker).Trim().ShouldBe(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+        var markerText = File.ReadAllText(Path.Combine(full, "owner.pid")).Trim();
+        var parts = markerText.Split('@');
+        parts[0].ShouldBe(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+        parts.Length.ShouldBe(2, markerText);
+        var recorded = long.Parse(parts[1], CultureInfo.InvariantCulture);
+        var observed = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+        (recorded - recorded % 10).ShouldBe(observed - observed % 10);
         var seen = await ReadProcessAsync(InheritedPwsh(), "inherited");
         seen.ShouldBe(full);
     }
@@ -148,6 +153,120 @@ public sealed class PwshPrivateCacheTests
 
             Directory.Exists(stale).ShouldBeFalse(stale);
             Directory.GetDirectories(temp, "antiphon-pwsh-cache-*").ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    // CARD-1813 A-1: the initializer sweeps and creates under ANTIPHON_PWSH_CACHE_ROOT,
+    // not under TMPDIR. A sweep mutant must be able to point the test host at a private root.
+    [Test]
+    [Timeout(90_000)]
+    public async Task Cache_root_override_is_the_only_sweep_and_create_root()
+    {
+        var root = Directory.CreateTempSubdirectory("c1813-root-").FullName;
+        var over = Path.Combine(root, "over");
+        var elsewhere = Path.Combine(root, "else");
+        Directory.CreateDirectory(over);
+        Directory.CreateDirectory(elsewhere);
+        try
+        {
+            var dead = DeadPid(root);
+            var stale = Seed(over, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var decoy = Seed(elsewhere, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            var seen = await ProbeAsync(root, "root", environment =>
+            {
+                environment.Remove("XDG_CACHE_HOME");
+                environment["TMPDIR"] = elsewhere;
+                environment["TMP"] = elsewhere;
+                environment["TEMP"] = elsewhere;
+                environment["ANTIPHON_PWSH_CACHE_ROOT"] = over;
+            });
+
+            Directory.Exists(stale).ShouldBeFalse(stale);
+            File.Exists(Path.Combine(decoy, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(decoy);
+            Under(over, seen).ShouldBeTrue(seen);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // CARD-1813 A-2: an unmarked family directory older than the 10-minute grace is swept.
+    // A fresh unmarked directory and an old garbled marker stay.
+    [Test]
+    [Timeout(90_000)]
+    public async Task Old_unmarked_directories_are_swept_and_fresh_or_garbled_ones_stay()
+    {
+        var temp = Directory.CreateTempSubdirectory("c1813-age-").FullName;
+        try
+        {
+            var dead = DeadPid(temp);
+            var fresh = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", null);
+            var old = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", null);
+            var garbled = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture) + "x");
+            var expired = DateTime.UtcNow.AddMinutes(-11);
+            Directory.SetLastWriteTimeUtc(old, expired);
+            Directory.SetLastWriteTimeUtc(garbled, expired);
+
+            var seen = await ProbeAsync(temp, "age", static environment => environment.Remove("XDG_CACHE_HOME"));
+
+            Directory.Exists(old).ShouldBeFalse(old);
+            File.Exists(Path.Combine(fresh, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(fresh);
+            File.Exists(Path.Combine(garbled, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(garbled);
+            Directory.Exists(seen).ShouldBeFalse(seen);
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    // CARD-1813 A-3: pid reuse. The same live pid with a different start is not the owner.
+    [Test]
+    [Timeout(90_000)]
+    public async Task A_live_pid_with_a_different_start_is_not_the_owner()
+    {
+        var temp = Directory.CreateTempSubdirectory("c1813-start-").FullName;
+        try
+        {
+            var ticks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+            var normalized = ticks - ticks % 10;
+            var pid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+            var reused = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + (normalized + 10_000_000).ToString(CultureInfo.InvariantCulture));
+            var same = Seed(temp, $"antiphon-pwsh-cache-start-{Guid.NewGuid():N}", pid + "@" + normalized.ToString(CultureInfo.InvariantCulture));
+
+            var seen = await ProbeAsync(temp, "start", static environment => environment.Remove("XDG_CACHE_HOME"));
+
+            Directory.Exists(reused).ShouldBeFalse(reused);
+            File.Exists(Path.Combine(same, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(same);
+            Directory.Exists(seen).ShouldBeFalse(seen);
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    // CARD-1813 A-4: a stamp newer than 10 minutes skips the sweep.
+    [Test]
+    [Timeout(90_000)]
+    public async Task A_fresh_sweep_stamp_keeps_a_dead_owner_cache()
+    {
+        var temp = Directory.CreateTempSubdirectory("c1813-stamp-").FullName;
+        try
+        {
+            var dead = DeadPid(temp);
+            var stale = Seed(temp, $"antiphon-pwsh-cache-{dead}-{Guid.NewGuid():N}", dead.ToString(CultureInfo.InvariantCulture));
+            File.WriteAllText(Path.Combine(temp, "antiphon-pwsh-cache-sweep.stamp"), "swept");
+
+            var seen = await ProbeAsync(temp, "stamp", static environment => environment.Remove("XDG_CACHE_HOME"));
+
+            File.Exists(Path.Combine(stale, "powershell", "StartupProfileData-NonInteractive")).ShouldBeTrue(stale);
+            Directory.Exists(seen).ShouldBeFalse(seen);
         }
         finally
         {
