@@ -33,6 +33,8 @@ public sealed class C1677RetentionSettingsTests
         defaults.KeptRecheckMaxHours.ShouldBe(24);
         // CARD-1684 S26, S27 and the low J07-J10 values: the per-tick bound, the pacing and the shipped roots, cron and timeout.
         defaults.MaxRemovalsPerTick.ShouldBe(25);
+        // CARD-1796 (review e4276bff A-3): the gone-mirror bound of CARD-1794.
+        defaults.MaxAbsentPerTick.ShouldBe(200);
         defaults.PauseBetweenSeconds.ShouldBe(5);
         defaults.RequestTimeoutSeconds.ShouldBe(300);
         defaults.Cron.ShouldBe("*/30 * * * *");
@@ -54,6 +56,7 @@ public sealed class C1677RetentionSettingsTests
         section.GetProperty("KeptRecheckMaxHours").GetInt32().ShouldBe(24);
         // CARD-1684 J05-J10.
         section.GetProperty("MaxRemovalsPerTick").GetInt32().ShouldBe(25);
+        section.GetProperty("MaxAbsentPerTick").GetInt32().ShouldBe(200);
         section.GetProperty("PauseBetweenSeconds").GetInt32().ShouldBe(5);
         section.GetProperty("RequestTimeoutSeconds").GetInt32().ShouldBe(300);
         section.GetProperty("Cron").GetString().ShouldBe("*/30 * * * *");
@@ -71,6 +74,7 @@ public sealed class C1677RetentionSettingsTests
         bound.Enabled.ShouldBeTrue();
         bound.Execute.ShouldBeTrue();
         bound.MaxRemovalsPerTick.ShouldBe(25);
+        bound.MaxAbsentPerTick.ShouldBe(200);
         bound.PauseBetweenSeconds.ShouldBe(5);
     }
 
@@ -81,6 +85,10 @@ public sealed class C1677RetentionSettingsTests
     [Arguments("MaxRemovalsPerTick", "1", true)]
     [Arguments("MaxRemovalsPerTick", "100", true)]
     [Arguments("MaxRemovalsPerTick", "101", false)]
+    [Arguments("MaxAbsentPerTick", "-1", false)]
+    [Arguments("MaxAbsentPerTick", "0", true)]
+    [Arguments("MaxAbsentPerTick", "1000", true)]
+    [Arguments("MaxAbsentPerTick", "1001", false)]
     [Arguments("RetiringRoot", "work/r", false)]
     [Arguments("RetiringRoot", "/work/worktrees-retiring", true)]
     [Arguments("MaxTickMinutes", "0", false)]
@@ -95,6 +103,7 @@ public sealed class C1677RetentionSettingsTests
         {
             case "MinTerminalHours": settings.MinTerminalHours = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
             case "MaxRemovalsPerTick": settings.MaxRemovalsPerTick = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
+            case "MaxAbsentPerTick": settings.MaxAbsentPerTick = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
             case "MaxTickMinutes": settings.MaxTickMinutes = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
             case "KeptRecheckMinutes": settings.KeptRecheckMinutes = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
             default: settings.RetiringRoot = value; break;

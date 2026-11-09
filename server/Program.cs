@@ -626,6 +626,7 @@ try
     builder.Services.AddScoped<WorktreeResidueSweepService>();
     builder.Services.AddScoped<AbandonedLandingReconciler>();
     builder.Services.AddScoped<WorktreeResidueJob>();
+    builder.Services.AddSingleton<RunnerWorktreeRetentionTicks>();
     builder.Services.AddScoped<RunnerWorktreeRetentionService>();
     builder.Services.AddScoped<RunnerWorktreeRetentionJob>();
     builder.Services.AddScoped<IRunnerBranchRefs, PhoneHomeRunnerBranchRefs>();

@@ -16,13 +16,14 @@ public static class AgentTaskEndpoints
 {
     /// <summary>
     /// CARD-1794 (4). The one-shot runner retention execute: operator credential only (403 operator_token_required for
-    /// anyone else, a task token included), then one Execute tick for one allow-listed runner.
+    /// anyone else, a task token included), then one Execute tick for one allow-listed runner. CARD-1796: the tick runs in
+    /// the background, never on the request; the reply names its run (409 tick_in_progress while another tick runs).
     /// </summary>
-    public static async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> ExecuteRunnerRetentionAsync(string runnerId,
-        HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionService retention, CancellationToken ct)
+    public static RunnerWorktreeRetentionTicks.ExecuteStarted ExecuteRunnerRetention(string runnerId,
+        HttpContext http, PhoneHomeRunnerSettings operatorSettings, RunnerWorktreeRetentionTicks ticks)
     {
         OperatorCredential.Require(http, operatorSettings, "The one-shot runner retention execute requires the operator credential.");
-        return await retention.RunExecuteOnceAsync(runnerId, ct);
+        return ticks.StartExecute(runnerId);
     }
 
     /// <summary>Header the delegate script sends; matches ANTIPHON_TASK_TOKEN in the agent's env.</summary>
@@ -163,18 +164,21 @@ public static class AgentTaskEndpoints
             var caller = await ResolveCallerAsync(http, service, ct);
             if (caller.Task is not null)
                 throw new ForbiddenException("A child task token cannot preview runner retention.", "caller_scope");
-            return Results.Ok(await retention.RunTickAsync(ct, previewRunner: runnerId));
+            return Results.Ok(await retention.RunPreviewAsync(runnerId, ct));
         });
 
         // CARD-1794 (4). The sanctioned one-shot reclaim: one Execute tick for one allow-listed runner, operator only.
-        // Enabled must be on and Runners must name it; it executes even while the scheduled job is DryRun.
-        tasks.MapPost("/worktree-residue/runner-retention/{runnerId}/execute", async (
+        // Enabled must be on and Runners must name it; it executes even while the scheduled job is DryRun. CARD-1796:
+        // 202 with the run id at once; the tick runs in the background and the run page shows it (FinishedAt when done).
+        tasks.MapPost("/worktree-residue/runner-retention/{runnerId}/execute", (
             string runnerId,
             HttpContext http,
             IOptions<PhoneHomeRunnerSettings> operatorSettings,
-            RunnerWorktreeRetentionService retention,
-            CancellationToken ct) =>
-            Results.Ok(await ExecuteRunnerRetentionAsync(runnerId, http, operatorSettings.Value, retention, ct)));
+            RunnerWorktreeRetentionTicks ticks) =>
+        {
+            var started = ExecuteRunnerRetention(runnerId, http, operatorSettings.Value, ticks);
+            return Results.Accepted($"/api/agent-tasks/worktree-residue/runs/{started.RunId}", started);
+        });
 
         // CARD-0824 S4a T-D-8. One dry-run desktop legacy release tick (it runs even while disabled, so the operator
         // can preview before switching it back on). It files nothing and runs no mutating git; rows land in a run.

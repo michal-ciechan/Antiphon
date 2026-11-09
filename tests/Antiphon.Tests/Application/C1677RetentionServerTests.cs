@@ -50,6 +50,7 @@ public sealed class C1677RetentionServerTests
             var rig = await Rig.StartAsync(capabilities: RetentionRunner(capable), configure: services =>
             {
                 services.AddSingleton<IOptionsMonitor<RunnerWorktreeRetentionSettings>>(new Monitor(settings));
+                services.AddSingleton<RunnerWorktreeRetentionTicks>();
                 services.AddScoped<RunnerWorktreeRetentionService>();
                 configure?.Invoke(services);
             });
@@ -84,7 +85,31 @@ public sealed class C1677RetentionServerTests
         public async Task<IReadOnlyList<RunnerWorktreeRetentionService.TickResult>> PreviewAsync(CancellationToken ct = default)
         {
             using var scope = Rig.Provider.CreateScope();
-            return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunTickAsync(ct, previewRunner: Rig.RunnerId);
+            return await scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>().RunPreviewAsync(Rig.RunnerId, ct);
+        }
+
+        /// <summary>CARD-1796: the process's tick turn and the execute route's background tick.</summary>
+        public RunnerWorktreeRetentionTicks Ticks => Rig.Provider.GetRequiredService<RunnerWorktreeRetentionTicks>();
+
+        /// <summary>
+        /// CARD-1796: the execute route's own call with the operator credential (or <paramref name="header"/>), off the
+        /// test thread, so a route that ran the tick on the request would show as a reply that never comes.
+        /// </summary>
+        public Task<RunnerWorktreeRetentionTicks.ExecuteStarted> ExecuteRouteAsync(string? runnerId = null, string? header = null)
+        {
+            var operatorSettings = new PhoneHomeRunnerSettings { OperatorTokenPath = Rig.Host.OperatorTokenPath };
+            var token = Antiphon.Server.Infrastructure.Security.OperatorTokenFile.ReadOrCreate(operatorSettings.OperatorTokenPath);
+            var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            if (header != "")
+                http.Request.Headers[Antiphon.Server.Infrastructure.Security.OperatorTokenFile.Header] = header ?? token;
+            return Task.Run(() => Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetention(
+                runnerId ?? Rig.RunnerId, http, operatorSettings, Ticks));
+        }
+
+        public async Task<WorktreeResidueRun> RunAsync(Guid? runId)
+        {
+            await using var db = Rig.NewDb();
+            return await db.WorktreeResidueRuns.AsNoTracking().SingleAsync(r => r.Id == runId);
         }
 
         public List<PhoneHomeWorkspaceRetainRequest> Requests() =>
@@ -1129,47 +1154,178 @@ public sealed class C1677RetentionServerTests
     public async Task C1794_execute_route_requires_the_operator_credential(string shape)
     {
         // CARD-1794 (4). POST .../runner-retention/{runnerId}/execute runs the one-shot reclaim only for the operator
-        // credential; any other caller is 403 operator_token_required and nothing reaches the runner.
+        // credential; any other caller is 403 operator_token_required and nothing reaches the runner. CARD-1796: the
+        // accepted call answers with its run, and the tick runs in the background.
         await using var w = await World.StartAsync();
         w.Settings.Execute = false;
         var id = await w.EligibleAsync();
-        var tokenDir = Path.Combine(Path.GetTempPath(), "c1794-op-" + Guid.NewGuid().ToString("N"));
-        var operatorSettings = new Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings
+
+        if (shape != "operator-token")
         {
-            OperatorTokenPath = Path.Combine(tokenDir, "operator.token"),
+            var refused = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ForbiddenException>(
+                w.ExecuteRouteAsync(header: shape == "no-token" ? "" : "wrong-" + Guid.NewGuid().ToString("N")));
+            refused.Message.ShouldContain("operator");
+            w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+            return;
+        }
+
+        var started = await w.ExecuteRouteAsync().WaitAsync(TimeSpan.FromSeconds(15));
+        await w.Ticks.Background.WaitAsync(TimeSpan.FromSeconds(15));
+        started.RunnerId.ShouldBe(w.Rig.RunnerId);
+        w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.Execute);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+        var run = await w.RunAsync(started.RunId);
+        run.Execute.ShouldBeTrue();
+        run.Removed.ShouldBe(1);
+        run.FinishedAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1796_scheduled_tick_waits_for_a_running_execute_tick()
+    {
+        // CARD-1796 (review e4276bff A-1). The one-shot execute and the scheduled tick census the same population; run
+        // together, both inserted the same cursor key and the unique index aborted one after its sends. The scheduled tick
+        // now waits for the running tick's turn: it contacts the runner only once the execute tick has finished.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        var first = await w.EligibleAsync(TimeSpan.FromHours(30));
+        var second = await w.EligibleAsync(TimeSpan.FromHours(20));
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+        var execute = w.ExecuteOnceAsync();
+        var held = await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+
+        var scheduled = w.TickAsync();
+        await Task.Delay(1500);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(1, "the scheduled tick has not started");
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+        scheduled.IsCompleted.ShouldBeFalse();
+
+        w.Rig.Peer.Speak(PhoneHomeOperation.WorkspaceRetain);
+        await w.Rig.Peer.EmitAsync(World.Answer(held, Removed()));
+        var executed = (await execute.WaitAsync(TimeSpan.FromSeconds(15))).ShouldHaveSingleItem();
+        var dry = (await scheduled.WaitAsync(TimeSpan.FromSeconds(15))).ShouldHaveSingleItem();
+
+        executed.Sent.ShouldBe(2);
+        dry.Sent.ShouldBe(0, "the execute tick retired both mirrors before the scheduled tick read the population");
+        w.Requests().Select(r => r.TaskId).ShouldBe([first, second]);
+        (await w.RunAsync(executed.RunId)).FinishedAt.ShouldNotBeNull();
+        (await w.RunAsync(dry.RunId)).FinishedAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1796_a_running_tick_refuses_a_second_execute_and_a_preview()
+    {
+        // CARD-1796 (A-1). While a tick runs, the execute and preview routes refuse 409 tick_in_progress; neither runs a
+        // second census nor waits on the request for the running one.
+        await using var w = await World.StartAsync();
+        await w.EligibleAsync(TimeSpan.FromHours(30));
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+        using var cancel = new CancellationTokenSource();
+        var scheduled = w.TickAsync(cancel.Token);
+        await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+
+        var execute = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            w.ExecuteRouteAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        execute.Code.ShouldBe(RunnerWorktreeRetentionTicks.TickInProgressCode);
+        var preview = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            w.PreviewAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        preview.Code.ShouldBe(RunnerWorktreeRetentionTicks.TickInProgressCode);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetentionInventory).ShouldBe(1);
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(1);
+
+        await cancel.CancelAsync();
+        try { await scheduled.WaitAsync(TimeSpan.FromSeconds(15)); }
+        catch (OperationCanceledException) { }
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1796_execute_route_answers_with_its_run_before_the_tick_ends()
+    {
+        // CARD-1796 (A-2). The paced execute tick ran on the request, so a client or proxy timeout cancelled it mid-tick.
+        // The route now answers at once with the run id; the run is readable while the tick runs and finishes on its own.
+        await using var w = await World.StartAsync();
+        w.Settings.Execute = false;
+        var id = await w.EligibleAsync();
+        w.Rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceRetain);
+
+        var started = await w.ExecuteRouteAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var held = await w.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceRetain, 1);
+        started.RunnerId.ShouldBe(w.Rig.RunnerId);
+        var running = await w.RunAsync(started.RunId);
+        running.FinishedAt.ShouldBeNull("the run is readable while its tick runs");
+        running.Execute.ShouldBeTrue();
+        w.Ticks.Background.IsCompleted.ShouldBeFalse();
+
+        w.Rig.Peer.Speak(PhoneHomeOperation.WorkspaceRetain);
+        await w.Rig.Peer.EmitAsync(World.Answer(held, Removed()));
+        await w.Ticks.Background.WaitAsync(TimeSpan.FromSeconds(15));
+        var finished = await w.RunAsync(started.RunId);
+        finished.FinishedAt.ShouldNotBeNull();
+        finished.Removed.ShouldBe(1);
+        w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.Execute);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("disabled")]
+    [Arguments("unlisted")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1796_execute_route_refuses_while_off_or_for_an_unlisted_runner(string shape)
+    {
+        // CARD-1796 (A-2). A background tick cannot answer [] any more: the kill switch and the allow-list refuse at the
+        // route (409), so no run id is handed out for a tick that will not run. Nothing reaches the runner.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        if (shape == "disabled")
+            w.Settings.Enabled = false;
+
+        var refused = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            w.ExecuteRouteAsync(shape == "unlisted" ? "server2-temp" : null).WaitAsync(TimeSpan.FromSeconds(10)));
+
+        refused.Code.ShouldBe(shape == "disabled" ? "retention_disabled" : "runner_not_listed");
+        await w.Ticks.Background.WaitAsync(TimeSpan.FromSeconds(15));
+        w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+        (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+    }
+
+    [Test]
+    [Arguments("enabled")]
+    [Arguments("execute")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1796_a_stopped_tick_queues_its_unsent_remainder(string setting)
+    {
+        // CARD-1796 (review e4276bff A-4). A stop (kill switch, Execute off, tick budget) left the unsent in-bound
+        // candidates with only the run's Deferred stop row; each is now a queued_next_tick census row, as the past-bound
+        // tasks are, and the tick result counts them.
+        await using var w = await World.StartAsync();
+        var first = await w.EligibleAsync(TimeSpan.FromHours(30));
+        var second = await w.EligibleAsync(TimeSpan.FromHours(25));
+        var third = await w.EligibleAsync(TimeSpan.FromHours(20));
+        w.Retain = (_, frame) =>
+        {
+            if (setting == "enabled")
+                w.Settings.Enabled = false;
+            else
+                w.Settings.Execute = false;
+            return World.Answer(frame, Removed());
         };
-        try
-        {
-            var token = Antiphon.Server.Infrastructure.Security.OperatorTokenFile.ReadOrCreate(operatorSettings.OperatorTokenPath);
-            var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
-            if (shape != "no-token")
-                http.Request.Headers[Antiphon.Server.Infrastructure.Security.OperatorTokenFile.Header] =
-                    shape == "operator-token" ? token : token + "x";
-            using var scope = w.Rig.Provider.CreateScope();
-            var retention = scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>();
 
-            if (shape != "operator-token")
-            {
-                var refused = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ForbiddenException>(() =>
-                    Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetentionAsync(
-                        w.Rig.RunnerId, http, operatorSettings, retention, CancellationToken.None));
-                refused.Message.ShouldContain("operator");
-                w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
-                (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
-                return;
-            }
+        var result = (await w.TickAsync()).ShouldHaveSingleItem();
 
-            var results = await Antiphon.Server.Api.Endpoints.AgentTaskEndpoints.ExecuteRunnerRetentionAsync(
-                w.Rig.RunnerId, http, operatorSettings, retention, CancellationToken.None);
-            results.ShouldHaveSingleItem().Sent.ShouldBe(1);
-            w.Requests().ShouldHaveSingleItem().Mode.ShouldBe(WorkspaceRetainModes.Execute);
-            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBeNull();
-        }
-        finally
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(first);
+        result.Stopped.ShouldBe(setting == "enabled" ? "tick_stopped_disabled" : "tick_stopped_execute_off");
+        result.Queued.ShouldBe(2);
+        foreach (var unsent in new[] { second, third })
         {
-            if (Directory.Exists(tokenDir))
-                Directory.Delete(tokenDir, recursive: true);
+            var row = (await w.RowsAsync(unsent)).ShouldHaveSingleItem();
+            row.ReasonCode.ShouldBe("queued_next_tick");
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
         }
+        (await w.RowsAsync()).ShouldContain(r => r.ReasonCode == result.Stopped && r.Outcome == nameof(WorktreeResidueCandidateOutcome.Deferred));
     }
 
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)
