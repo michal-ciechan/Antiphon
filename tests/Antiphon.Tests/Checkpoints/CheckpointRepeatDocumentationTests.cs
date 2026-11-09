@@ -23,7 +23,7 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         System.Text.Encoding.UTF8.GetString(stage).ShouldContain("SOURCE:");
         System.Text.Encoding.UTF8.GetString(stage).ShouldContain("slot=");
         System.Text.Encoding.UTF8.GetString(stage).ShouldContain("next: review");
-        // CARD-1785 measured 2478 bytes (normalized 2477) after the downgrade-selector line. Still under the 2480 cap.
+        // CARD-1789 measured 2477 bytes after the sort-after-master MIGRATION line. Still under the 2480 cap.
         stage.Length.ShouldBeLessThan(2480, "stage-code stays under the 2480 bundle cap");
         stage.All(value => value < 128).ShouldBeTrue("stage-code-ascii");
         // CARD-0884 compresses existing policy to restore real argv headroom.

@@ -141,7 +141,7 @@ All AI agents and developers MUST follow these 13 rules:
 
 ### EF Core migrations
 
-Operator rule (2026-11-07): "Migrations should be additive; Down must fail safely." Down throws where applying it would lose data. A migration whose Down throws makes every test that rewinds a tip clone fail. Build the predecessor schema forward with `MigrationTestDatabase.CreateAsync(<predecessor>)` instead of downgrading a latest clone. The downgrade selector greps `tests/` for `MigrateAsync(<target>)`, `IMigrator.Migrate`, `MigrationTestDatabase.CreateAsync`, `.Down(`, and `CreateIsolatedSchemaAsync` followed by a backwards `MigrateAsync`. Fix those fixtures or list them as owed, and report red/green counts. Also run the migration and model classes. A reviewer who only reruns the new migration tests has not reviewed the migration.
+Operator rule (2026-11-07, reaffirmed 2026-11-08): "Migrations should be additive; Down must fail safely." Each new migration is also sorted after master's latest migration. The rule, its fixture guidance and the downgrade selector have one owner: [Additive migrations](testing-and-build.md#additive-migrations-operator-rule-2026-11-07).
 
 ## SignalR -> Query Invalidation Mapping
 
