@@ -160,15 +160,11 @@ public class ClaudeProjectTrustTests
     public void Seed_preserves_the_config_file_mode()
     {
         using var cfg = new TempConfig("""{"projects":{}}""");
-        var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
-        try
-        {
-            File.SetUnixFileMode(cfg.Path, expected);
-        }
-        catch (PlatformNotSupportedException)
-        {
+        if (OperatingSystem.IsWindows())
             throw new SkipTestException("Unix file mode is not available on this host");
-        }
+
+        var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
+        File.SetUnixFileMode(cfg.Path, expected);
 
         var directory = Directory.CreateTempSubdirectory("antiphon-trust-mode").FullName;
         try
@@ -230,7 +226,7 @@ public class ClaudeProjectTrustTests
     {
         using var cfg = new TempConfig("""{"projects":{}}""");
         var directory = Directory.CreateTempSubdirectory("antiphon-trust-lock").FullName;
-        var lockPath = cfg.Path + ".antiphon-lock";
+        var lockPath = cfg.Path + ClaudeProjectTrust.ConfigLockSuffix;
         FileStream? held = null;
         Thread? worker = null;
         try

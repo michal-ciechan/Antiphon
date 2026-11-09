@@ -28,8 +28,12 @@ public readonly record struct ClaudeProjectTrustResult(
 public static class ClaudeProjectTrust
 {
     private static readonly ConcurrentDictionary<string, ClaudeProjectTrustResult> Memo = new();
+    private static readonly ConcurrentDictionary<string, object> PathGates = new(StringComparer.Ordinal);
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>Sibling lock shared by every process that seeds or removes the same config file.</summary>
+    internal const string ConfigLockSuffix = ".antiphon-lock";
 
     /// <summary>
     /// <c>CLAUDE_CONFIG_DIR</c> set → <c>{dir}\.claude.json</c> (measured);
@@ -135,6 +139,10 @@ public static class ClaudeProjectTrust
             if (!File.Exists(path))
                 return false;
 
+            using var gate = ConfigLock.Acquire(path);
+            if (gate is null)
+                return false;
+
             var node = JsonNode.Parse(File.ReadAllText(path)) as JsonObject;
             if (node?["projects"] is not JsonObject projects)
                 return false;
@@ -153,6 +161,13 @@ public static class ClaudeProjectTrust
     {
         if (!File.Exists(path))
             return new ClaudeProjectTrustResult(ClaudeProjectTrustOutcome.NoConfigFile, path, key);
+
+        using var gate = ConfigLock.Acquire(path);
+        if (gate is null)
+        {
+            return new ClaudeProjectTrustResult(
+                ClaudeProjectTrustOutcome.Failed, path, key, "config lock failed");
+        }
 
         JsonObject node;
         try
@@ -201,13 +216,15 @@ public static class ClaudeProjectTrust
 
     private static bool WriteAtomic(string path, JsonObject node)
     {
-        var tmp = path + ".antiphon-tmp";
+        // Per call, so one writer's finally cannot unlink another writer's temp.
+        var tmp = path + ".antiphon-tmp-" + Guid.NewGuid().ToString("N");
         var json = node.ToJsonString(WriteOptions);
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
             {
                 File.WriteAllText(tmp, json, Utf8NoBom);
+                CopyUnixMode(path, tmp);
                 File.Move(tmp, path, overwrite: true);
                 return true;
             }
@@ -225,5 +242,73 @@ public static class ClaudeProjectTrust
         return false;
     }
 
+    // Rename keeps the temp inode's mode. Copy the original before the replace so a
+    // 0600 config does not come back as the umask default.
+    private static void CopyUnixMode(string source, string destination)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        try
+        {
+            File.SetUnixFileMode(destination, File.GetUnixFileMode(source));
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // Non-Unix hosts have no mode to preserve.
+        }
+    }
+
     private static string MemoKey(string path, string key) => path + "\0" + key;
+
+    private sealed class ConfigLock : IDisposable
+    {
+        private const int Attempts = 50;
+        private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(25);
+
+        private readonly object _gate;
+        private readonly FileStream _file;
+
+        private ConfigLock(object gate, FileStream file)
+        {
+            _gate = gate;
+            _file = file;
+        }
+
+        public static ConfigLock? Acquire(string configPath)
+        {
+            var gate = PathGates.GetOrAdd(configPath, static _ => new object());
+            Monitor.Enter(gate);
+            try
+            {
+                var lockPath = configPath + ConfigLockSuffix;
+                for (var attempt = 0; attempt < Attempts; attempt++)
+                {
+                    try
+                    {
+                        var file = new FileStream(
+                            lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                        return new ConfigLock(gate, file);
+                    }
+                    catch (IOException) when (attempt < Attempts - 1)
+                    {
+                        Thread.Sleep(RetryDelay);
+                    }
+                }
+
+                Monitor.Exit(gate);
+                return null;
+            }
+            catch
+            {
+                Monitor.Exit(gate);
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            try { _file.Dispose(); }
+            finally { Monitor.Exit(_gate); }
+        }
+    }
 }
