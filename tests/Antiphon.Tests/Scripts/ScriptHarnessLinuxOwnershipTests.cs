@@ -66,9 +66,17 @@ public sealed class ScriptHarnessLinuxOwnershipTests
         parts.Length.ShouldBe(2, markerText);
         using (var supervisor = Process.GetProcessById(probe.SupervisorId))
         {
-            var observed = supervisor.StartTime.ToUniversalTime().Ticks;
-            var recorded = long.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
-            Math.Abs(recorded - observed).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+            if (OperatingSystem.IsLinux())
+            {
+                Antiphon.Hosting.PwshPrivateCache.TryReadKernelStartTicks(probe.SupervisorId, out var kernel).ShouldBeTrue(markerText);
+                parts[1].ShouldBe("k" + kernel.ToString(System.Globalization.CultureInfo.InvariantCulture), markerText);
+            }
+            else
+            {
+                var observed = supervisor.StartTime.ToUniversalTime().Ticks;
+                var recorded = long.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+                Math.Abs(recorded - observed).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+            }
         }
         (await probe.StartAsync()).ShouldStartWith("ROOT " + probe.Nonce);
         (await probe.ReadAsync()).ShouldStartWith("EXIT " + probe.Nonce);

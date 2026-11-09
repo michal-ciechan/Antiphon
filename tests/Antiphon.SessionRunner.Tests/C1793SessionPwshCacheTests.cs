@@ -50,8 +50,16 @@ public class C1793SessionPwshCacheTests
                 var owner = seen[1].Split('@');
                 owner[0].ShouldBe(dto.HostPid?.ToString(CultureInfo.InvariantCulture), "the host owns the session cache");
                 owner.Length.ShouldBe(2, seen[1]);
-                var recorded = long.Parse(owner[1], CultureInfo.InvariantCulture);
-                Math.Abs(recorded - ticks).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+                if (OperatingSystem.IsLinux())
+                {
+                    Antiphon.Hosting.PwshPrivateCache.TryReadKernelStartTicks(dto.HostPid.Value, out var kernel).ShouldBeTrue(seen[1]);
+                    owner[1].ShouldBe("k" + kernel.ToString(CultureInfo.InvariantCulture), seen[1]);
+                }
+                else
+                {
+                    var recorded = long.Parse(owner[1], CultureInfo.InvariantCulture);
+                    Math.Abs(recorded - ticks).ShouldBeLessThanOrEqualTo(Antiphon.Hosting.PwshPrivateCache.StartMatchToleranceTicks);
+                }
             }
             firstSeen[0].ShouldNotBe(secondSeen[0]);
 

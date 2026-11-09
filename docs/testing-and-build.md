@@ -1433,10 +1433,13 @@ inspect the individual argument rows in that phase's fresh TRX. A literal parame
 can select zero tests even when the build completed successfully.
 
 Sweep-weakening positive controls of `PwshPrivateCache.SweepStale` (CARD-1813 A-1) run inside
-the test host's module initializer, before any test method. Set `TMPDIR`, `TMP` and `TEMP`, or
-`ANTIPHON_PWSH_CACHE_ROOT`, to a private directory on that test-host process. A private
-directory on a probe child does not contain the initializer's sweep. The override must be an
-ordinary directory; a reparse point is ignored and the sweep falls back to the process temp root.
+the test host's module initializer, before any test method. Set `TMPDIR`, `TMP` and `TEMP` to
+the same private directory on that test-host process. A private directory on a probe child
+does not contain the initializer's sweep. `ANTIPHON_PWSH_CACHE_ROOT` also confines the
+initializer; the cache tests remove it from probe children and set it only when a test is
+proving the override, so a Mutation host may set it as well as the temp variables. The
+override must be an ordinary directory. A symlink, a file, or an unreadable path skips the
+sweep instead of falling back onto the process temp root.
 
 Use the unchanged local `scripts/run-checkpoint.ps1` driver for each phase. In a SourceLanding
 snapshot, copy that driver and `scripts/lib/build-slot.ps1` to the external evidence root
