@@ -849,7 +849,14 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   in-bound task as well as its Deferred stop row (CARD-1796).
 - **One tick at a time (CARD-1796):** the scheduled tick, the preview and the one-shot execute share one in-process
   turn. The scheduled tick waits for it; the preview and execute routes answer 409 `tick_in_progress` while
-  another tick runs (read that tick's run, or retry once it has finished).
+  another tick runs (read that tick's run, or retry once it has finished). CARD-1804: every tick also holds a
+  database-wide Postgres advisory lock, so a second server process on the same database (AppHost beside the
+  server2 server container) does not census the same population: its preview and execute answer 409
+  `tick_in_progress` and its scheduled tick is skipped (no run) while the other process ticks.
+- **Unfinished runs (CARD-1804):** a tick that fails or is cancelled (host stop, or the preview's client or proxy
+  timeout: the preview stays on its request, use a generous `curl --max-time`) finishes its run with a Deferred
+  `tick_failed` / `tick_cancelled` row; an execute run whose tick finds retention switched off or the runner
+  unlisted finishes with `tick_stopped_disabled` / `runner_not_listed`. Host stop waits for a running execute tick.
 - **Gone mirrors (CARD-1794):** when the runner inventory is complete, an eligible task whose `task-<8hex>` is not
   in it is sent after every present tree, on its own bound `MaxAbsentPerTick` (200), unpaced, and never counts
   against `MaxRemovalsPerTick`; the runner still answers `already_absent` before the path is cleared. An
@@ -871,7 +878,7 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
   the tick bound and every runner check still apply, and the temp sweep stays DryRun. It is the sanctioned
   replacement for hand deletion. CARD-1796: it answers 202 `{ runnerId, runId }` at once and runs the tick in the
   background (a client or proxy timeout no longer cancels it); follow `GET /api/agent-tasks/worktree-residue/runs/{runId}`
-  until the run has `finishedAt`.
+  until the run has `finishedAt`. CARD-1804: the run exists when the 202 is answered.
 - **Disk floor (CARD-1794):** the `WorkspaceDiskLow` attention row (Warning at `WorkspaceDiskAlarm:UsedPercent`, 85)
   turns Error when the volume has less than `WorkspaceDiskAlarm:MinFreeGiB` free (50 in `server/appsettings.json`,
   10 in code, 0 off), even below the percentage.
