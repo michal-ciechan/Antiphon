@@ -52,25 +52,66 @@ function userInfoError(displayName: string): string {
   return `${displayName} base URL cannot include a username or password. Reference a stored key by name instead.`
 }
 
+// `\` ends an authority for these schemes only. Other schemes keep `\` inside the authority.
+const SPECIAL_URL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file'])
+
 /**
  * True when posting the base URL would send a username or password.
- * `mailto:` stays a server scheme refusal. An `@` that is only in the path, and `http://@host`
- * (empty userinfo), are not credentials.
+ * Any scheme is refused, not only http(s). `mailto:` stays a server scheme refusal.
+ * An `@` only in the path, query, or fragment, and `http://@host` (empty userinfo),
+ * are not credentials.
  */
 function baseUrlCarriesUserInfo(baseUrl: string): boolean {
+  if (schemeOf(baseUrl) === 'mailto') return false
+  if (parsedUrlCarriesCredential(baseUrl)) return true
+  return rawAuthorityCarriesCredential(baseUrl)
+}
+
+function schemeOf(value: string): string | null {
+  const match = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(value)
+  return match ? match[1].toLowerCase() : null
+}
+
+function parsedUrlCarriesCredential(baseUrl: string): boolean {
   try {
     const url = new URL(baseUrl)
-    if (url.protocol === 'http:' || url.protocol === 'https:')
-      return url.username.length > 0 || url.password.length > 0
-    if (url.protocol === 'mailto:') return false
-    return !baseUrl.includes('://') && baseUrl.includes('@')
+    return url.protocol !== 'mailto:' && (url.username.length > 0 || url.password.length > 0)
   } catch {
-    if (/^https?:\/\//i.test(baseUrl)) {
-      const authority = /^https?:\/\/([^/?#]*)/i.exec(baseUrl)
-      return authority !== null && authority[1].includes('@')
-    }
-    return /^[^:/@\s]+@[^:/@\s]+$/.test(baseUrl)
+    return false
   }
+}
+
+function rawAuthorityCarriesCredential(value: string): boolean {
+  const scheme = schemeOf(value)
+  if (scheme === 'mailto') return false
+  const schemePrefixLength = scheme === null ? 0 : scheme.length + 1
+  if (value.startsWith('//')) return userinfoIsCredential(segmentBeforeDelimiter(value, 2, false))
+  if (scheme !== null && value.startsWith('//', schemePrefixLength)) {
+    return userinfoIsCredential(
+      segmentBeforeDelimiter(value, schemePrefixLength + 2, SPECIAL_URL_SCHEMES.has(scheme)),
+    )
+  }
+  return userinfoIsCredential(segmentBeforeDelimiter(value, 0, false))
+}
+
+function segmentBeforeDelimiter(value: string, start: number, backslashEndsAuthority: boolean): string {
+  for (let i = start; i < value.length; i++) {
+    const c = value[i]
+    if (c === '/' || c === '?' || c === '#') return value.slice(start, i)
+    if (backslashEndsAuthority && c === '\\') return value.slice(start, i)
+  }
+  return value.slice(start)
+}
+
+function userinfoIsCredential(authority: string): boolean {
+  const at = authority.lastIndexOf('@')
+  if (at <= 0) return false
+  const userinfo = authority.slice(0, at)
+  const colon = userinfo.indexOf(':')
+  if (colon < 0) return true
+  const username = userinfo.slice(0, colon)
+  const password = userinfo.slice(colon + 1)
+  return username.length > 0 || password.length > 0
 }
 
 /** The project's `providerEndpoints` request map, and per-kind errors that block the save. */
