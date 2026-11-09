@@ -502,7 +502,10 @@ public sealed class RunnerTaskSettlementTests
     {
         // The ordinary report path: the lease stays busy for the whole sync budget, so the runner
         // sync blocks. A profile-v1 task still owes the caller its durable decide completion.
-        await using var world = await RunnerSettlementWorld.CreateAsync(profiled: true, controlledSyncClock: true);
+        // CARD-1802: with sync debt on, lease contention settles with a debt row instead, so the
+        // lease-busy block is the kill switch's (Delegation:RunnerSyncDebtOnSettlement off).
+        await using var world = await RunnerSettlementWorld.CreateAsync(profiled: true, controlledSyncClock: true,
+            syncDebt: false);
         await world.Git.RunnerPushAsync("work.txt", "runner work");
 
         await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
