@@ -20010,6 +20010,12 @@
       ]
     },
     {
+      "path": "tests/derived-impact-index.json",
+      "classes": [
+        "DerivedImpactIndexTests"
+      ]
+    },
+    {
       "path": "tests/fixtures/card0490-linux/README.md",
       "classes": [
         "GrokRunnerImageContractTests"
