@@ -98,7 +98,7 @@ public sealed class ReviewTestQualityChecklistWitnessTests
     {
         var section = H2Section(doc, "## Performance standards");
         section.ShouldContain(Anchor + "\n" + Heading, Case.Sensitive, "the checklist sits under ## Performance standards");
-        var checklist = section[section.IndexOf(Heading, StringComparison.Ordinal)..];
+        var checklist = Collapse(section[section.IndexOf(Heading, StringComparison.Ordinal)..]);
         foreach (var phrase in Checks)
             checklist.ShouldContain(phrase, Case.Sensitive, $"CARD-1809 check missing: {phrase}");
     }
@@ -119,7 +119,7 @@ public sealed class ReviewTestQualityChecklistWitnessTests
         var start = doc.IndexOf("<a id=\"review-rounds\"></a>", StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0, "the review-rounds anchor exists");
         var end = doc.IndexOf("\n### ", doc.IndexOf("\n### ", start, StringComparison.Ordinal) + 5, StringComparison.Ordinal);
-        var section = end < 0 ? doc[start..] : doc[start..end];
+        var section = Collapse(end < 0 ? doc[start..] : doc[start..end]);
         section.ShouldContain(OwnerLink, Case.Sensitive);
         section.ShouldContain("CARD-1809 R1-R5", Case.Sensitive);
         section.ShouldContain("round 3 reports a breach only when it is a blocker", Case.Sensitive);
@@ -127,6 +127,7 @@ public sealed class ReviewTestQualityChecklistWitnessTests
 
     private static void AssertSkill(string skill)
     {
+        skill = Collapse(skill);
         skill.ShouldContain("Each Review brief names the [Review test-quality checklist]", Case.Sensitive);
         skill.ShouldContain("../../../docs/" + OwnerLink, Case.Sensitive);
         skill.ShouldContain("CARD-1809", Case.Sensitive);
@@ -140,12 +141,16 @@ public sealed class ReviewTestQualityChecklistWitnessTests
         return end < 0 ? doc[start..] : doc[start..end];
     }
 
+    // Markdown wraps prose anywhere, so phrases are matched with whitespace runs collapsed.
+    private static string Collapse(string text) => Regex.Replace(text, @"\s+", " ");
+
     private static string Slug(string heading) =>
         Regex.Replace(heading.TrimStart('#').Trim().ToLowerInvariant(), "[^a-z0-9 -]", "").Replace(' ', '-');
 
     private static void RejectWithout(string text, string phrase, Action<string> assert)
     {
-        var mutant = text.Replace(phrase, "", StringComparison.Ordinal);
+        // A wrapped phrase is deleted across its line break as well.
+        var mutant = Regex.Replace(text, Regex.Escape(phrase).Replace("\\ ", @"\s+"), "");
         mutant.ShouldNotBe(text, $"phrase not present: {phrase}");
         Should.Throw<ShouldAssertException>(() => assert(mutant));
     }
