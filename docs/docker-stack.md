@@ -928,6 +928,17 @@ against the plan's census (docs/superpowers/plans/2026-11-03-card-1677-runner-wo
 then `TempSweep:Execute=true`. Turn `Families:claude-scratch` on only after its dry-run list has been read.
 Rollback: `TempSweep:Enabled=false` (or `Execute=false` for a dry run).
 
+#### Runner repository gc (CARD-1817)
+
+CARD-1441 stops auto gc on runner git children. The runner itself then runs
+`git gc --prune=2.weeks.ago` on repositories directly under the phone-home
+repository root, weekly or when loose objects reach 6700, and skips that pass
+while a repository lease, worktree add, land, or task git call is in flight.
+It does not enter `antiphon_pgdata`. The last result is `GET /repository-maintenance`
+on the runner and the phone-home runner status. CARD-1432's server Hangfire
+maintenance job never landed; this pass is the owner. The contract is in
+[session runtime invariants](session-runtime-invariants.md).
+
 <a id="linux-docker-production-contract"></a>
 
 ## Production deployment contract (CARD-1221)

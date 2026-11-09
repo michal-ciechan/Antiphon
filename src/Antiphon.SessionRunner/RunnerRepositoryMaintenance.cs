@@ -78,18 +78,50 @@ public sealed class RunnerRepositoryMaintenance
     public static bool IsDue(DateTimeOffset now, int looseObjects, int threshold, DateTimeOffset? lastRunUtc, TimeSpan interval) =>
         looseObjects >= threshold || lastRunUtc is { } last && now - last >= interval;
 
-    public Task<RunnerRepositoryMaintenanceStatus> RunAsync(CancellationToken ct, bool force = false)
+    public async Task<RunnerRepositoryMaintenanceStatus> RunAsync(CancellationToken ct, bool force = false)
     {
-        _ = force;
         var now = _clock.GetUtcNow();
         var repos = Discover(_root);
         var reports = new List<RunnerRepositoryMaintenanceReport>(repos.Count);
+        var persist = false;
         foreach (var repo in repos)
         {
             ct.ThrowIfCancellationRequested();
             var gitDir = Path.Combine(repo, ".git");
-            reports.Add(Row(repo, "not_run", "not_implemented", CountLoose(gitDir), CountLoose(gitDir), CountPacks(gitDir), CountPacks(gitDir)));
+            var loose = CountLoose(gitDir);
+            var packs = CountPacks(gitDir);
+            if (BlockReason() is { } blocked)
+            {
+                reports.Add(Row(repo, "skipped", blocked, loose, loose, packs, packs));
+                continue;
+            }
+
+            var last = ReadLastRun();
+            var due = IsDue(now, loose, _options.LooseObjectThreshold, last, TimeSpan.FromDays(_options.IntervalDays));
+            if (!force && !due)
+            {
+                if (last is null)
+                {
+                    persist = true;
+                    reports.Add(Row(repo, "armed", "week_started", loose, loose, packs, packs));
+                }
+                else
+                    reports.Add(Row(repo, "skipped", "not_due", loose, loose, packs, packs));
+                continue;
+            }
+
+            if (BlockReason() is { } again)
+            {
+                reports.Add(Row(repo, "skipped", again, loose, loose, packs, packs));
+                continue;
+            }
+
+            var report = await GcAsync(repo, gitDir, loose, packs, ct);
+            reports.Add(report);
+            if (report.Outcome == "ran")
+                persist = true;
         }
+
         if (repos.Count == 0)
             _logger.LogInformation("Repository maintenance repos=0 outcome=absent loose=0->0 packs=0->0");
         foreach (var report in reports)
@@ -97,8 +129,11 @@ public sealed class RunnerRepositoryMaintenance
                 "Repository maintenance repo={Repository} outcome={Outcome} reason={Reason} loose={LooseBefore}->{LooseAfter} packs={PacksBefore}->{PacksAfter}",
                 report.Repository, report.Outcome, report.Reason ?? "", report.LooseBefore, report.LooseAfter,
                 report.PacksBefore, report.PacksAfter);
+
+        if (persist)
+            WriteLastRun(now);
         Last = new RunnerRepositoryMaintenanceStatus(now, reports);
-        return Task.FromResult(Last);
+        return Last;
     }
 
     internal static IReadOnlyList<string> Discover(string root)

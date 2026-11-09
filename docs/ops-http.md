@@ -110,6 +110,11 @@ Existing auth/model/placement rules remain independent. Activate reporting runne
 first, then server readers; older runners display unknown without a CLI gate. See the active
 [implementation and verification plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md).
 
+CARD-1817: the runner's `GET /repository-maintenance` (port 17204, no `/api`) is the last
+bounded repository gc pass, null until one finishes. The same payload rides the phone-home
+heartbeat onto `GET /api/session-runners/{runnerId}/status` as `repositoryMaintenance`, and
+that field is omitted when it is null.
+
 CARD-0415 adds `GET`/`PUT /api/agents/{id}/specialist-routing` and
 `POST /api/agents/{id}/specialist-routing/revalidate` for the configured standing Check owner.
 `scripts/specialist-routing.ps1 inspect|set|revalidate -Agent <guid>` uses these shapes and reads a
