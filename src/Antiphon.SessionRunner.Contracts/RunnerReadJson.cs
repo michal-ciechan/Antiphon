@@ -34,6 +34,18 @@ public static class RunnerReadJson
 
     public static JsonTypeInfo<RunnerTranscriptDto> HttpTranscript => Http.RunnerTranscriptDto;
 
+    public static JsonTypeInfo<T> HttpOf<T>() where T : class
+    {
+        if (typeof(T) == typeof(RunnerBufferDto))
+            return (JsonTypeInfo<T>)(object)HttpBuffer;
+        if (typeof(T) == typeof(RunnerSnapshotDto))
+            return (JsonTypeInfo<T>)(object)HttpSnapshot;
+        if (typeof(T) == typeof(RunnerTranscriptDto))
+            return (JsonTypeInfo<T>)(object)HttpTranscript;
+        throw new InvalidOperationException(
+            "Hot runner HTTP read has no source-generated contract for " + typeof(T).FullName + ".");
+    }
+
     internal static readonly AsyncLocal<AdmissionBox?> Witness = new();
 
     internal static WitnessScope Watch() => new();

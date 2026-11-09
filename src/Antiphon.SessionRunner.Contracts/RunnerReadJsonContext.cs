@@ -5,6 +5,7 @@ namespace Antiphon.SessionRunner.Contracts;
 /// <summary>
 /// Metadata for the hot runner read bodies. Options on each
 /// <see cref="RunnerReadJson"/> instance select the encoder; the names stay Web camelCase.
+/// The attribute configures <see cref="JsonSerializerContext.Default"/> only. Nothing reads Default.
 /// </summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
