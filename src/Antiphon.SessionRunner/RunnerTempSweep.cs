@@ -68,7 +68,7 @@ public sealed class RunnerTempSweep
             "^antiphon-(cpu-watchdog-tests|liveness-tests|adoption-tests|bufbounds-tests|backend-seam|first-write-race|0180-dto"
             + "|card0395-adoption|card0395-write-fault|card0395-http|c420-barrier|c502-v25|c502-v26|c502-v26-manifest|c502-v26-herdr"
             + "|c502-v27|c514-gen|c514-seq|c514-gate|c514-dest|c649-prompt|c79-stop|c628-token|c710-platform|c1636-adopt"
-            + "|c1653-adopt|c1653-launch|c1653-sock|c1653-peer)-[0-9a-f]{32}\\z",
+            + "|c1653-adopt|c1653-launch|c1653-sock|c1653-peer|c1778-trust)-[0-9a-f]{32}\\z",
             "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs", "$\"antiphon-{prefix}-{Guid.NewGuid():N}\"",
             "antiphon-adoption-tests-0123456789abcdef0123456789abcdef"),
         new("c514-pty", "^antiphon-c514-pty-[0-9a-f]{32}\\z",
