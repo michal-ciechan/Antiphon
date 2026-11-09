@@ -781,7 +781,12 @@ public class LiveLaneEvidenceTests
         var mutated = Run(copy, caseName, context, env);
         if (mutated.Code != mutantCode || !mutated.Text.Contains(mutantNeedle, StringComparison.Ordinal))
             throw new InvalidOperationException("C1545 " + pc + " mutant " + mutated.Code + " " + mutated.Text);
-        Expect(script, caseName, context, healthyCode, healthyNeedle, env);
+        // Scan and CompletedRows write nothing and the mutant is a copy, so the original script and its inputs
+        // are unchanged: the first healthy run above already is the restored run. A publishing case can have
+        // written the public summary in its mutant run, so it is run healthy again. Each later proof's first
+        // healthy run still runs beside the earlier mutant copies.
+        if (caseName is not ("Scan" or "CompletedRows"))
+            Expect(script, caseName, context, healthyCode, healthyNeedle, env);
         Console.WriteLine("C1545 " + pc + " assertion-red; restored-green " + healthyNeedle);
     }
 
