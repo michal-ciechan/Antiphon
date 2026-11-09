@@ -255,8 +255,10 @@ internal sealed class PrecheckAudit : IDisposable
     // item type, seeded from the tracked definition files. A type absent here allows none. The global-property
     // metadata (AdditionalProperties, Properties, GlobalProperties, SetConfiguration, SetPlatform,
     // SetTargetFramework, UndefineProperties) and every other name refuse: they reopen the R2 property imports.
-    // CARD-1483: the exceptions are the pinned entries below, each allowed only as its one tree literal
-    // (the LandGraphAudit tool is built for net10.0); any other value, the child-element form or a Remove refuses.
+    // CARD-1483: the exceptions are the pinned entries below, each allowed only as its one tree literal.
+    // SetTargetFramework is not one of them: the tool is single-targeted net10.0, and that metadata
+    // is a second global-property set beside the solution build. Any value, the child-element form
+    // or a Remove refuses.
     // Aspire uses IsAspireProjectResource only for application-resource registration/validation;
     // it neither changes the referenced project nor supplies global properties to its evaluation.
     private static readonly Dictionary<string, string[]> ItemMetadata = new(StringComparer.OrdinalIgnoreCase)
@@ -271,8 +273,9 @@ internal sealed class PrecheckAudit : IDisposable
     };
 
     // Item type -> metadata attribute name -> the only value (ordinal) under which that name is allowed.
-    // HelperTargetFramework and SetTargetFramework reach an MSBuild Properties string, which splits on ';'
-    // (Review cff23aba D-1); SkipGetTargetFrameworkProperties is held to its tree value as well.
+    // HelperTargetFramework reaches an MSBuild Properties string, which splits on ';'
+    // (Review cff23aba D-1). SkipGetTargetFrameworkProperties is held to its tree value.
+    // SetTargetFramework is refused: it would build LandGraphAudit a second time.
     // CARD-1613: *.cs.txt is Czech to AssignCulture. The fixture include and the post-split
     // target hold culture off. Only these exact attribute values are admitted; any other value,
     // the child-element form, or a Remove still refuses.
@@ -387,7 +390,6 @@ internal sealed class PrecheckAudit : IDisposable
     private static Hashtable PinnedMetadata()
     {
         var projectReference = Ps.NewHashtable();
-        projectReference["SetTargetFramework"] = "TargetFramework=net10.0";
         projectReference["SkipGetTargetFrameworkProperties"] = "true";
         var stagedHelper = Ps.NewHashtable();
         stagedHelper["HelperTargetFramework"] = "net10.0";
