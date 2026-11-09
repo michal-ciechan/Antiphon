@@ -260,8 +260,9 @@ public sealed class RunnerWorktreeRetentionService
 
     /// <summary>
     /// CARD-1812 (R-3). True when this session still holds <see cref="TickLockKey"/>. A dropped connection throws and is
-    /// treated as lost. The bit split matches <c>pg_locks</c> for a single bigint advisory key (high half <c>classid</c>,
-    /// low half <c>objid</c>, <c>objsubid</c> 1).
+    /// treated as lost. A single bigint advisory key is stored with its high 32 bits in <c>classid</c>, its low 32 bits
+    /// in <c>objid</c>, and <c>objsubid</c> 1. Each half is masked before the <c>oid</c> cast: this key is negative, and
+    /// <c>bigint::oid</c> rejects any value outside 0..4294967295 with "OID out of range", which would look like a lost lock.
     /// </summary>
     private async Task<bool> TickLockStillHeldAsync()
     {
@@ -276,8 +277,8 @@ public sealed class RunnerWorktreeRetentionService
                     WHERE locktype = 'advisory'
                       AND pid = pg_backend_pid()
                       AND objsubid = 1
-                      AND classid = (hashtextextended('{TickLockKey}', 0) >> 32)::oid
-                      AND objid = hashtextextended('{TickLockKey}', 0)::oid)
+                      AND classid = ((hashtextextended('{TickLockKey}', 0) >> 32) & 4294967295)::oid
+                      AND objid = (hashtextextended('{TickLockKey}', 0) & 4294967295)::oid)
                 """;
             return await command.ExecuteScalarAsync(CancellationToken.None) is true;
         }
