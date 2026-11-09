@@ -878,6 +878,16 @@
           "owner": "CARD-0590"
         },
         {
+          "suite": "agents-pty",
+          "class": "ClaudeProjectTrustTests",
+          "methods": [
+            "Seed_preserves_the_config_file_mode"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Unix file modes exist only on Unix. The case remains required on Linux.",
+          "owner": "CARD-1792"
+        },
+        {
           "suite": "session-runner",
           "class": "LinuxRunnerCustodyLifecycleTests",
           "platform": "windows",

@@ -22,17 +22,24 @@ returns before `SetUnixFileMode`).
 
 | Id | Proves | Mutant that must go red |
 |---|---|---|
-| W-mode | `Seed_preserves_the_config_file_mode` keeps `0640` | skip `CopyUnixMode` |
+| W-mode | `Seed_preserves_the_config_file_mode` keeps `0770` | skip `CopyUnixMode` |
 | W-race | `Seed_keeps_every_concurrent_project_key` keeps all eight keys | remove `ConfigLock.Acquire` from `SeedCore` |
 | W-lock | `Seed_waits_for_the_shared_config_lock` blocks while `<config>.antiphon-lock` is held | stop opening that lock file |
 
 ## OS branch
 
-The mode copy is the only OS-selected branch (`OperatingSystem.IsWindows` in
-`CopyUnixMode`). The Linux witness is W-mode, executed natively by CP-1.
-The Windows skip in the test is not a second production branch. That test lives in
-`ClaudeProjectTrustModeTests.cs` because the witness checker cannot lex C# raw strings,
-and the rest of the class uses them. No startup path changes.
+The mode copy is the OS-selected branch (`OperatingSystem.IsWindows` in
+`WriteTemp` and `CopyUnixMode`). `WriteTemp` opens the temp with
+`FileStreamOptions.UnixCreateMode` set to the source mode before the JSON is
+written; `CopyUnixMode` then restores any bits the umask stripped. Windows
+returns before either Unix API. The Linux witness is W-mode, executed natively
+by CP-1, and it uses `0770` so a umask of 022 or 027 cannot hide a dropped
+`CopyUnixMode` after `UnixCreateMode` (an execute bit still means a 0666 create cannot match). The same method keeps its runtime Windows skip, carries
+`[NativeLinuxOnly]`, and has a method-scoped `agents-pty` windows exclusion
+(owner CARD-1792) so a Windows rc skip is a disposition rather than an
+incomplete census. That test lives in `ClaudeProjectTrustModeTests.cs` because
+the witness checker cannot lex C# raw strings, and the rest of the class uses
+them. No startup path changes.
 Runner default at authoring was `globalRunnerId=server2`; this slice pins neither
 `-Runner` nor `-Platform`.
 
@@ -41,6 +48,6 @@ Runner default at authoring was `globalRunnerId=server2`; this slice pins neithe
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | fix | `tests/Antiphon.Agents.Pty.Tests -> bin-c1792-pty/` | trust-write | `/*/*/ClaudeProjectTrustTests/*` | W-mode, W-race, W-lock and the existing seed contract | 10 passed, 0 failed/skipped | 10 | 3 | true |
-| CP-2 | fix | `tests/Antiphon.Tests -> bin-c1792-guards/` | guards | `/*/*/(Server2SidecarStandingAgentsTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | A-1 pin and the Final guard batch | 0 failed/skipped | 50 | 12 | true |
+| CP-2 | fix | `tests/Antiphon.Tests -> bin-c1792-guards/` | guards | `/*/*/(Server2SidecarStandingAgentsTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | A-1 pin, the Final guard batch, and tests/test-execution-policy.json (CARD-1792 agents-pty windows exclusion) | 0 failed/skipped | 50 | 12 | true |
 
 Code executes these filters once through `scripts/build-slot.ps1` on the worktree's native default output (`UseAppHost=false`), which is the task profile. The cold `bin-c1792-*` cells name the rows for the OS-witness checker; they are not a second build.

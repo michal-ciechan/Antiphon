@@ -15,10 +15,10 @@ public partial class ClaudeProjectTrustTests
         if (OperatingSystem.IsWindows())
             throw new SkipTestException("Unix file mode is not available on this host");
 
-        // 0750 carries an execute bit. A umask applied to 0666 cannot produce one,
-        // so a host whose umask is 027 cannot hide a dropped CopyUnixMode.
+        // 0770 has an execute bit, so a umask applied to 0666 cannot produce it, and a
+        // group-write bit, so umask 022 or 027 still strips a bit UnixCreateMode set.
         var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute;
+            | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute;
         File.SetUnixFileMode(cfg.Path, expected);
 
         var directory = Directory.CreateTempSubdirectory("antiphon-trust-mode").FullName;
