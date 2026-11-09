@@ -155,7 +155,10 @@ public sealed partial class ImpactedClassesSelectorTests
     {
         var root = Root();
         var selected = await SelectAsync(root, BatchSpan);
-        Names(selected, "kinds").ShouldBe(["contracts", "migrations", "timing-labels"], ignoreOrder: false);
+        // CARD-1801: the span also edits HostStats*.cs, the C1514 host-load fixture and the policy file.
+        Names(selected, "kinds").ShouldBe(
+            ["contracts", "host-stats", "linux-only-policy", "migrations", "task-load-window", "timing-labels"],
+            ignoreOrder: false);
         var files = Names(selected, "files").ToHashSet(StringComparer.Ordinal);
         var repair = Git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", RepairFilesCommit);
         repair.Count.ShouldBe(37, "the host-load downgrade repair edited 37 files");
@@ -193,8 +196,11 @@ public sealed partial class ImpactedClassesSelectorTests
     public async Task label_remote_budget_and_checkpoint_ranges_select_their_rows()
     {
         var root = Root();
-        await AssertKinds(root, "dcb973d896f1d12776a796b71466977b22737b79", ["timing-labels"], "TestTimingOperationLabelTests");
-        await AssertKinds(root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["timing-labels"], "TestTimingOperationLabelTests");
+        // CARD-1801: dcb973d8 also edits the policy file and c6eee1a0 the C1514 host-load fixture.
+        await AssertKinds(
+            root, "dcb973d896f1d12776a796b71466977b22737b79", ["linux-only-policy", "timing-labels"], "TestTimingOperationLabelTests");
+        await AssertKinds(
+            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
