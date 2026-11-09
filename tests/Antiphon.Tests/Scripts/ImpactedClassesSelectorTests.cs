@@ -162,8 +162,12 @@ public sealed partial class ImpactedClassesSelectorTests
         var selected = await SelectAsync(root, BatchSpan);
         // CARD-1801: the span also edits HostStats*.cs, the C1514 host-load fixture and the policy file.
         // CARD-1807: and it adds ParallelLimiter< lines under tests/Antiphon.Tests.
+        // CARD-1819: those same paths also select the lane guard, the nightly lane, and the audit project row.
         Names(selected, "kinds").ShouldBe(
-            ["contracts", "host-stats", "linux-only-policy", "migrations", "spawn-limit-rosters", "task-load-window", "timing-labels"],
+            [
+                "contracts", "host-stats", "land-graph-audit-project", "linux-only-policy", "migrations",
+                "nightly-live-lane", "spawn-limit-rosters", "task-load-window", "test-lane-category", "timing-labels",
+            ],
             ignoreOrder: false);
         var files = Names(selected, "files").ToHashSet(StringComparer.Ordinal);
         var repair = Git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", RepairFilesCommit);
@@ -204,14 +208,19 @@ public sealed partial class ImpactedClassesSelectorTests
         var root = Root();
         // CARD-1801: dcb973d8 also edits the policy file and c6eee1a0 the C1514 host-load fixture.
         // CARD-1807: c6eee1a0 adds a ParallelLimiter< class and ceda26b3 edits tests/Antiphon.Tests/Checkpoints.
+        // CARD-1819: an Antiphon.Tests source edit selects the lane guard, and the policy file selects the nightly lane.
         await AssertKinds(
-            root, "dcb973d896f1d12776a796b71466977b22737b79", ["linux-only-policy", "timing-labels"], "TestTimingOperationLabelTests");
+            root, "dcb973d896f1d12776a796b71466977b22737b79",
+            ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
+            "TestTimingOperationLabelTests");
         await AssertKinds(
-            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
+            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2",
+            ["spawn-limit-rosters", "task-load-window", "test-lane-category", "timing-labels"],
+            "TestTimingOperationLabelTests");
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
-            ["remote-scripts"],
+            ["remote-scripts", "test-lane-category"],
             "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
             "C0995_Deploy_temp_checks_host_absence_before_checkout",
             "C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle",
@@ -220,12 +229,12 @@ public sealed partial class ImpactedClassesSelectorTests
         await AssertKinds(
             root,
             "43d819da7189349c548b07ebd2677e6be086d95b",
-            ["statement-budgets"],
+            ["statement-budgets", "test-lane-category"],
             "C1149_C1150_Statement_budgets");
         await AssertKinds(
             root,
             "ceda26b31ef344bc07efd590fa9bdb59bae0f23f",
-            ["checkpoint-tool", "spawn-limit-rosters"],
+            ["checkpoint-tool", "spawn-limit-rosters", "test-lane-category"],
             "CheckpointReceiptSafetyTests",
             "CheckpointTerminalReceiptTests",
             "HostCleanupCheckpointReceiptTests");
@@ -349,7 +358,9 @@ public sealed partial class ImpactedClassesSelectorTests
         "AgentTaskLandHeldNotificationTests", "AgentTaskLandNotificationParkFollowUpTests",
         "AgentTaskLandNotificationPersistenceTests", "AgentTaskLandNotificationReconcileLoadTests",
         "AgentTaskLandNotificationRecoveryTests", "AgentTaskLandNotificationRescanTests",
+        "AgentTaskLandReceiptTests",
         "AgentTaskLandReceiptWatermarkSafetyTests", "AgentTaskLandReceiptWatermarkTests",
+        "ExpectationDebtTests", "LandReceiptScanCacheTests", "PreDispatchFailureDeliveryTests",
         "ReceiptScanDestinationIntegrationTests",
     ];
 
@@ -447,6 +458,7 @@ public sealed partial class ImpactedClassesSelectorTests
     {
         var root = Root();
         var expected = "/*/*/" + string.Join("|", LandNotificationClasses.Select(name => "(" + name + "*)")) + "/*";
+        const string e2e = "/*/*/(AgentTaskLandDeliveryE2ETests*)|(LandDeliveryFixtureProbeTests*)/*";
         const string path = "server/Application/Services/AgentTaskLandNotificationService.cs";
 
         var text = await RunAsync(root, "-Path", path);
@@ -459,7 +471,12 @@ public sealed partial class ImpactedClassesSelectorTests
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
         json.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(expected);
-        FilterRows(json.RootElement, "filters").ShouldBe([("tests/Antiphon.Tests", expected)]);
+        // CARD-1819: the same service path also selects the E2E delivery class and its Linux probe.
+        // The printed treenodeFilter stays the Antiphon.Tests row; the E2E row is the second filter.
+        FilterRows(json.RootElement, "filters").ShouldBe([
+            ("tests/Antiphon.E2E", e2e),
+            ("tests/Antiphon.Tests", expected),
+        ]);
     }
 
     [Test]
@@ -550,7 +567,10 @@ public sealed partial class ImpactedClassesSelectorTests
 
         filters.ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
         filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", "/*/*/(RunnerCapabilitiesTests*)/*"));
-        windows.ShouldBe([("tests/Antiphon.Tests", WindowsTestsFilter)]);
+        windows.ShouldBe([
+            ("tests/Antiphon.E2E", "/*/*/(AgentTaskLandDeliveryE2ETests*)/*"),
+            ("tests/Antiphon.Tests", WindowsTestsFilter),
+        ]);
     }
 
     private static void AssertCensusPair(JsonElement root)

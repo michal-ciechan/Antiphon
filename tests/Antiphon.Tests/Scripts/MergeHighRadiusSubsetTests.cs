@@ -32,6 +32,18 @@ public sealed class MergeHighRadiusSubsetTests
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
 
+    // CARD-1819: dcb973d8 edits the policy file and Antiphon.Tests sources, so the quiet range
+    // keeps the fixed land rows and adds the nightly lane plus the lane guard to the tests row.
+    private const string QuietTestsFilter =
+        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        + "|(LiveLaneRunnerTests*)|(NightlyCoreTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+
+    // CARD-1819: a54a6d4f edits Antiphon.Tests sources, so the remote range adds the lane guard.
+    private const string RemoteTestsFilter =
+        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        + "|(ReceiptScanDestinationIntegrationTests*)|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+
     private const string LandFilter1 =
         "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
         + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)/*";
@@ -130,6 +142,12 @@ public sealed class MergeHighRadiusSubsetTests
         using (var broken = JsonDocument.Parse(dropped))
             Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(broken.RootElement));
 
+        var droppedLane = remote.RootElement.GetRawText()
+            .Replace("TestLaneCategoryGuardTests", "MissingLaneGuardTests", StringComparison.Ordinal);
+        droppedLane.ShouldNotBe(remote.RootElement.GetRawText());
+        using (var brokenLane = JsonDocument.Parse(droppedLane))
+            Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(brokenLane.RootElement));
+
         var ran = await RunAsync(root, "-MergeSubset", "-Path", "server/Infrastructure/Git/ServerGitIdentity.cs", "-Json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var lane = JsonDocument.Parse(ran.Stdout);
@@ -147,12 +165,18 @@ public sealed class MergeHighRadiusSubsetTests
         var alone = await SelectMergeAsync(root);
         AssertFixed(alone.RootElement);
         var quiet = await SelectMergeAsync(root, QuietRange);
-        AssertFixed(quiet.RootElement);
+        AssertQuiet(quiet.RootElement);
 
         var mutant = alone.RootElement.GetRawText()
             .Replace("HostCleanupCheckpointReceiptTests", "MissingMergeSubsetTests", StringComparison.Ordinal);
         using var broken = JsonDocument.Parse(mutant);
         Should.Throw<ShouldAssertException>(() => AssertFixed(broken.RootElement));
+
+        var quietMutant = quiet.RootElement.GetRawText()
+            .Replace("LiveLaneRunnerTests", "MissingLiveLaneTests", StringComparison.Ordinal);
+        quietMutant.ShouldNotBe(quiet.RootElement.GetRawText());
+        using var brokenQuiet = JsonDocument.Parse(quietMutant);
+        Should.Throw<ShouldAssertException>(() => AssertQuiet(brokenQuiet.RootElement));
     }
 
     [Test]
@@ -315,6 +339,40 @@ public sealed class MergeHighRadiusSubsetTests
         root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
     }
 
+    // The quiet historical range is not the no-range fixed subset: it also selects the CARD-1819
+    // nightly lane and the lane guard. Land-1 and land-2 stay the documented filters.
+    private static void AssertQuiet(JsonElement root)
+    {
+        root.GetProperty("mode").GetString().ShouldBe("merge-subset");
+        root.GetProperty("migrations").GetBoolean().ShouldBeFalse();
+        Names(root, "kinds").ShouldBe(
+            ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
+            ignoreOrder: false);
+        Names(root, "fixedClasses").ShouldBe(FixedClasses, ignoreOrder: false);
+        Names(root, "fixedMethods").ShouldBe(FixedMethods, ignoreOrder: false);
+        Names(root, "classes").ShouldBe(
+            FixedClasses
+                .Append("LiveLaneRunnerTests")
+                .Append("NightlyCoreTests")
+                .Append("ReleaseGatePlatformTests")
+                .Append("TestLaneCategoryGuardTests")
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
+            ignoreOrder: false);
+        Ids(root, "filters").ShouldBe(
+            [
+                "CP-merge-subset-e2e", "CP-merge-subset-tests", "CP-merge-subset-tests-land-1",
+                "CP-merge-subset-tests-land-2", "CP-merge-subset-ReleaseGatePlatformTests",
+            ],
+            ignoreOrder: false);
+        Filter(root, "CP-merge-subset-tests").ShouldBe(QuietTestsFilter);
+        Filter(root, "CP-merge-subset-tests-land-1").ShouldBe(LandFilter1);
+        Filter(root, "CP-merge-subset-tests-land-2").ShouldBe(LandFilter2);
+        Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
+        Filter(root, "CP-merge-subset-e2e").ShouldBe(E2EFilter);
+        root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
+    }
+
     private static void AssertDowngrade(JsonElement root)
     {
         root.GetProperty("mode").GetString().ShouldBe("merge-subset");
@@ -350,8 +408,8 @@ public sealed class MergeHighRadiusSubsetTests
 
     private static void AssertImpactedMethods(JsonElement root)
     {
-        Names(root, "kinds").ShouldContain("remote-scripts");
-        Filter(root, "CP-merge-subset-tests").ShouldBe(TestsFilter);
+        Names(root, "kinds").ShouldBe(["remote-scripts", "test-lane-category"], ignoreOrder: false);
+        Filter(root, "CP-merge-subset-tests").ShouldBe(RemoteTestsFilter);
         var methods = Filter(root, "CP-merge-subset-RemoteScriptContractTests");
         methods.ShouldStartWith("/*/*/RemoteScriptContractTests/(", Case.Sensitive);
         methods.ShouldContain("(C849_Deploy_ordering_contract_is_pinned*)", Case.Sensitive);

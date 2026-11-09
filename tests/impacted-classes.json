@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "card": "CARD-1782, CARD-1801",
+  "card": "CARD-1782, CARD-1801, CARD-1819",
   "cache": "none",
   "maximumStaleness": 0,
   "kinds": [
@@ -98,7 +98,8 @@
       "id": "land-notification",
       "globs": [
         "server/Application/Services/AgentTaskLandNotification*.cs",
-        "server/Application/Services/LandNotificationReconcileQueries.cs"
+        "server/Application/Services/LandNotificationReconcileQueries.cs",
+        "server/Application/Services/AgentTaskDispatcher.cs"
       ],
       "classes": [
         "AgentTaskLandHeldNotificationTests",
@@ -107,8 +108,12 @@
         "AgentTaskLandNotificationReconcileLoadTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandNotificationRescanTests",
+        "AgentTaskLandReceiptTests",
         "AgentTaskLandReceiptWatermarkSafetyTests",
         "AgentTaskLandReceiptWatermarkTests",
+        "ExpectationDebtTests",
+        "LandReceiptScanCacheTests",
+        "PreDispatchFailureDeliveryTests",
         "ReceiptScanDestinationIntegrationTests"
       ]
     },
@@ -246,6 +251,171 @@
       },
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "id": "pty-host-fixture",
+      "globs": [
+        "tests/Antiphon.Tests/Agents/Card1277PtyHostFixtureTests.cs",
+        "src/Antiphon.FakeClaude/**",
+        "src/Antiphon.FakeGrok/**",
+        "src/Antiphon.Agents.Pty/**",
+        "src/Antiphon.PtyHost/**",
+        "src/Antiphon.SessionRunner/TranscriptNormalizer.cs",
+        "src/Antiphon.SessionRunner/GrokTranscriptNormalizer.cs",
+        "tests/Shared/TestAppHostPath.cs",
+        "tests/Antiphon.Tests/TestHelpers/ProcessSpawnLimit.cs",
+        "src/Antiphon.Hosting/PwshPrivateCache.cs",
+        "Directory.Build.targets"
+      ],
+      "classes": [
+        "Card1277PtyHostFixtureTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "migration-generated-sql-text",
+      "globs": [
+        "server/Migrations/*Card1773TranscriptPromptStampIndex*.cs",
+        "server/Migrations/*AddTranscriptHotPathIndexes.cs",
+        "tests/Antiphon.Tests/Application/Card1773TranscriptPromptStampMigrationTests.cs",
+        "tests/Antiphon.Tests/Application/TranscriptHotPathMigrationTests.cs"
+      ],
+      "classes": [
+        "Card1773TranscriptPromptStampMigrationTests",
+        "TranscriptHotPathMigrationTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "repository-lease-reflected-constructors",
+      "globs": [
+        "server/Infrastructure/Git/LandingGit.cs",
+        "server/Infrastructure/Git/RepositoryMutationLease.cs",
+        "tests/Antiphon.Tests/TestHelpers/RepositoryLeaseCrashWorker.cs"
+      ],
+      "classes": [
+        "RepositoryMutationLeaseTests"
+      ]
+    },
+    {
+      "id": "land-graph-precheck",
+      "globs": [
+        "tools/Antiphon.LandGraphAudit.Core/**",
+        "scripts/audit-land-verification*.ps1"
+      ],
+      "classes": [
+        "LandGraphEvaluationTests"
+      ]
+    },
+    {
+      "id": "land-graph-audit-project",
+      "globs": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+        "Antiphon.sln",
+        "tools/Antiphon.LandGraphAudit/**"
+      ],
+      "classes": [
+        "LandGraphAuditProjectInstanceTests"
+      ]
+    },
+    {
+      "id": "test-lane-category",
+      "globs": [
+        "tests/Antiphon.Tests/**/*.cs"
+      ],
+      "classes": [
+        "TestLaneCategoryGuardTests"
+      ]
+    },
+    {
+      "id": "e2e-source-roster",
+      "globs": [
+        "tests/Antiphon.E2E/**/*.cs"
+      ],
+      "methods": [
+        "C1514LandingSplitBudgetTests/C1584_E2EExpandedBudget"
+      ]
+    },
+    {
+      "id": "dpapi-protected-data",
+      "globs": [
+        "scripts/capability.ps1",
+        "tests/Antiphon.Tests/Scripts/CapabilityScriptTests.cs",
+        "tests/Antiphon.Tests/Application/DelegateScriptCapabilityTests.cs"
+      ],
+      "added": {
+        "glob": "tests/**",
+        "literals": [
+          "ProtectedData"
+        ]
+      },
+      "classes": [
+        "CapabilityScriptTests",
+        "DelegateScriptCapabilityTests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "e2e-land-delivery",
+      "globs": [
+        "server/Infrastructure/Orchestration/AgentTaskLandNotificationHostedService.cs",
+        "server/Application/Services/AgentTaskLandNotification*.cs",
+        "server/Application/Services/LandNotificationReconcileQueries.cs",
+        "server/Application/Services/AgentTaskLandMonitorService.cs"
+      ],
+      "classes": [
+        "AgentTaskLandDeliveryE2ETests"
+      ],
+      "windows": "required"
+    },
+    {
+      "id": "e2e-land-delivery-probe",
+      "globs": [
+        "server/Infrastructure/Orchestration/AgentTaskLandNotificationHostedService.cs",
+        "server/Application/Services/AgentTaskLandNotification*.cs",
+        "server/Application/Services/LandNotificationReconcileQueries.cs",
+        "server/Application/Services/AgentTaskLandMonitorService.cs"
+      ],
+      "classes": [
+        "LandDeliveryFixtureProbeTests"
+      ]
+    },
+    {
+      "id": "temp-family-registry",
+      "globs": [
+        "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs",
+        "src/Antiphon.SessionRunner/RunnerTempSweep.cs",
+        "tests/Antiphon.Tests/TestHelpers/TestClassificationPolicyTests.cs",
+        "scripts/lib/c487-harness.ps1",
+        "tests/Antiphon.Tests/TestHelpers/RemoteControlPtyLane.cs",
+        "tests/Antiphon.Tests/Application/SessionGenerationExitTests.cs",
+        "tests/Antiphon.Tests/TestHelpers/C1514Support.cs",
+        "server/Application/Services/AgentTaskLandService.cs",
+        "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
+        "tests/Antiphon.Tests/Scripts/RcFullTimingContractTests.cs"
+      ],
+      "added": {
+        "glob": "tests/**",
+        "literals": [
+          "TestSessionLogRoot.Create("
+        ]
+      },
+      "classes": [
+        "C1677TempFamilyRegistryTests"
+      ]
+    },
+    {
+      "id": "nightly-live-lane",
+      "globs": [
+        "scripts/lib/nightly-*.ps1",
+        "scripts/lib/Antiphon.Nightly/**",
+        "tests/test-execution-policy.json",
+        "scripts/test-nightly-core.ps1"
+      ],
+      "classes": [
+        "LiveLaneRunnerTests",
+        "NightlyCoreTests"
       ]
     }
   ]
