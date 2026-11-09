@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "cache": "none",
+  "project": "tests/Antiphon.Tests",
+  "nonCheckpointsFilter": "/*/<namespace>/*/*[Category=Unit]",
+  "checkpointsNamespace": "Antiphon.Tests.Checkpoints",
+  "checkpointsFilter": "/*/Antiphon.Tests.Checkpoints/<Letter>*/*[Category=Unit]",
+  "maxIntegrationClassesPerShard": 8,
+  "coalesceMinutes": 60,
+  "shardBudgetMinutes": 30
+}
