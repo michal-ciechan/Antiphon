@@ -11,8 +11,7 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-1784 S1. The post-land script plans a Linux early-warning lane.
-/// <see cref="PostLandEarlyWarningScript"/> names the production script function
-/// <c>ResolvePostLandPlatform</c> for the optional platform seam.
+/// Run mode starts the real script through <see cref="ProcessStartInfo"/>.
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -48,11 +47,24 @@ public sealed class PostLandEarlyWarningTests
         fixture.WriteUnitClass("Antiphon.Tests.Fixture", "FixtureUnitTests");
         fixture.WriteTable("src/Fixture.cs", "FixtureUnitTests");
 
-        var docs = await fixture.PlanAsync(fixture.Paths("docs/owner.md", "README.md"));
+        var docs = await fixture.PlanAsync(fixture.Paths("docs/owner.md"));
         docs.Exit.ShouldBe(0, docs.Text);
         docs.State.ShouldBe("skipped-docs");
         docs.Shards.Count.ShouldBe(0);
         docs.Root.GetProperty("slot").GetBoolean().ShouldBeFalse();
+
+        var outside = await fixture.PlanAsync(fixture.Paths("README.md"));
+        outside.Exit.ShouldBe(0, outside.Text);
+        outside.State.ShouldBe("run", outside.Text);
+        outside.State.ShouldNotBe("skipped-docs");
+
+        fixture.WriteFile(
+            "tests/Antiphon.Tests/DocPin.cs",
+            "namespace Antiphon.Tests.Fixture;\npublic sealed class DocPin\n{\n    public void Holds() { var path = \"docs/pinned-by-unit.md\"; }\n}\n");
+        var pinned = await fixture.PlanAsync(fixture.Paths("docs/pinned-by-unit.md"));
+        pinned.Exit.ShouldBe(0, pinned.Text);
+        pinned.State.ShouldBe("run", pinned.Text);
+        pinned.State.ShouldNotBe("skipped-docs");
 
         var empty = await fixture.PlanAsync(fixture.Paths());
         empty.Exit.ShouldBe(0, empty.Text);
@@ -181,33 +193,52 @@ public sealed class PostLandEarlyWarningTests
         var shim = Path.Combine(blocked.ReceiptRoot, "slot-shim.txt");
         var runnable = blocked.Paths("src/Code.cs");
 
-        var absentStart = blocked.Start(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable);
+        var linuxHost = OperatingSystem.IsLinux();
+        var absentStart = blocked.StartPostLandEarlyWarning(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable);
         absentStart.Environment.Remove("POST_LAND_WARNING_PLATFORM");
         absentStart.Environment["POST_LAND_WARNING_SLOT_SHIM"] = shim;
-        _ = PostLandEarlyWarningScript.ResolvePostLandPlatform(absentStart);
         var absent = await blocked.WaitAsync(absentStart);
-        absent.Exit.ShouldBe(2, absent.Text);
-        absent.Text.ShouldContain("refused=head-mismatch", Case.Sensitive);
-        absent.Text.ShouldNotContain("refused=not-linux", Case.Sensitive);
+        if (linuxHost)
+        {
+            absent.Exit.ShouldBe(2, absent.Text);
+            absent.Text.ShouldContain("refused=head-mismatch", Case.Sensitive);
+            absent.Text.ShouldNotContain("refused=not-linux", Case.Sensitive);
+        }
+        else
+        {
+            absent.Exit.ShouldBe(3, absent.Text);
+            absent.Text.ShouldContain("refused=not-linux", Case.Sensitive);
+            absent.Text.ShouldContain("run this lane on the Linux host", Case.Sensitive);
+        }
+
         File.Exists(shim).ShouldBeFalse();
 
-        var emptyStart = blocked.Start(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable);
+        var emptyStart = blocked.StartPostLandEarlyWarning(plan: false, range: new string('0', 40) + ".." + new string('0', 40), fileList: runnable);
         emptyStart.Environment["POST_LAND_WARNING_PLATFORM"] = "";
         emptyStart.Environment["POST_LAND_WARNING_SLOT_SHIM"] = shim;
-        _ = PostLandEarlyWarningScript.ResolvePostLandPlatform(emptyStart);
         var empty = await blocked.WaitAsync(emptyStart);
-        empty.Exit.ShouldBe(2, empty.Text);
-        empty.Text.ShouldContain("refused=head-mismatch", Case.Sensitive);
-        empty.Text.ShouldNotContain("refused=not-linux", Case.Sensitive);
+        if (linuxHost)
+        {
+            empty.Exit.ShouldBe(2, empty.Text);
+            empty.Text.ShouldContain("refused=head-mismatch", Case.Sensitive);
+            empty.Text.ShouldNotContain("refused=not-linux", Case.Sensitive);
+        }
+        else
+        {
+            empty.Exit.ShouldBe(3, empty.Text);
+            empty.Text.ShouldContain("refused=not-linux", Case.Sensitive);
+            empty.Text.ShouldContain("run this lane on the Linux host", Case.Sensitive);
+        }
+
         File.Exists(shim).ShouldBeFalse();
 
-        var windowsStart = blocked.Start(plan: false, range: new string('c', 40) + ".." + tip, fileList: runnable);
+        var windowsStart = blocked.StartPostLandEarlyWarning(plan: false, range: new string('c', 40) + ".." + tip, fileList: runnable);
         windowsStart.Environment["POST_LAND_WARNING_PLATFORM"] = "windows";
         windowsStart.Environment["POST_LAND_WARNING_SLOT_SHIM"] = shim;
-        _ = PostLandEarlyWarningScript.ResolvePostLandPlatform(windowsStart);
         var windows = await blocked.WaitAsync(windowsStart);
         windows.Exit.ShouldBe(3, windows.Text);
         windows.Text.ShouldContain("refused=not-linux", Case.Sensitive);
+        windows.Text.ShouldContain("run this lane on the Linux host", Case.Sensitive);
         File.Exists(shim).ShouldBeFalse();
         File.Exists(Path.Combine(blocked.ReceiptRoot, tip + ".json")).ShouldBeFalse();
     }
@@ -240,15 +271,19 @@ public sealed class PostLandEarlyWarningTests
                 var key = ns + "\n" + name;
                 seen.ContainsKey(key).ShouldBeFalse(key);
                 if (ns == CheckpointsNamespace)
-                    filter.ShouldBe($"/*/Antiphon.Tests.Checkpoints/{name[0]}*/*[Category=Unit]");
+                    filter.ShouldBe("/*/" + "Antiphon.Tests.Checkpoints/" + name.Substring(0, 1) + "*/*[Category=Unit]");
                 else
-                    filter.ShouldBe($"/*/{ns}/*/*[Category=Unit]");
+                    filter.ShouldBe("/*/" + ns + "/*/*[Category=Unit]");
                 seen.Add(key, filter);
             }
         }
 
         var expected = census.Select(row => row.Namespace + "\n" + row.Name).ToHashSet(StringComparer.Ordinal);
-        seen.Keys.ToHashSet(StringComparer.Ordinal).ShouldBe(expected);
+        var actualKeys = seen.Keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+        var expectedKeys = expected.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+        actualKeys.ShouldBe(expectedKeys);
+        var ids = plan.Shards.Select(shard => shard.GetProperty("id").GetString() ?? "").ToArray();
+        ids.Distinct(StringComparer.Ordinal).Count().ShouldBe(ids.Length);
         plan.Text.ShouldNotContain(ForbiddenLetterOr);
     }
 
@@ -281,6 +316,166 @@ public sealed class PostLandEarlyWarningTests
         owed[0].GetProperty("passed").GetBoolean().ShouldBeFalse();
         (owed[0].GetProperty("filter").GetString() ?? "").ShouldContain("WinOnlyTests", Case.Sensitive);
         plan.Root.GetProperty("summaryLine").GetString().ShouldContain("owed-windows=1", Case.Sensitive);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Build_exit_skips_shards_and_writes_an_incomplete_receipt()
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var shim = Path.Combine(repo.ReceiptRoot, "slot-shim.txt");
+        var parent = repo.CommitParent(tip);
+        var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
+            ["POST_LAND_WARNING_SLOT_BUILD_EXIT"] = "4",
+        });
+        run.Exit.ShouldBe(0, run.Text);
+        var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
+        receipt.RootElement.GetProperty("state").GetString().ShouldBe("incomplete");
+        receipt.RootElement.GetProperty("buildExit").GetInt32().ShouldBe(4);
+        (receipt.RootElement.GetProperty("summaryLine").GetString() ?? "").ShouldContain("new-reds=unknown build=4", Case.Sensitive);
+        var shimText = await File.ReadAllTextAsync(shim);
+        CountOf(shimText, "dotnet build").ShouldBe(1);
+        shimText.ShouldNotContain("--no-build", Case.Sensitive);
+
+        repo.WriteFile("src/Code.cs", "class Code2 { }\n");
+        var next = repo.Commit("next", "2026-11-05T00:00:00Z");
+        var follow = await repo.PlanAsync(repo.Paths("src/Code.cs"), tip + ".." + next, force: true);
+        follow.Exit.ShouldBe(0, follow.Text);
+        follow.Root.GetProperty("previousTipSha").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Shard_error_timeout_and_aborted_are_failures()
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var trxPath = Path.Combine(repo.ReceiptRoot, "fresh-outcomes.trx");
+        await File.WriteAllTextAsync(trxPath, Trx(
+            ("Synthetic.Ancient", "Boom", "Error"),
+            ("Synthetic.Ancient", "Hung", "Timeout"),
+            ("Synthetic.Ancient", "Stopped", "Aborted"),
+            ("Synthetic.Ancient", "Ok", "Passed")));
+        var shim = Path.Combine(repo.ReceiptRoot, "slot-shim.txt");
+        var parent = repo.CommitParent(tip);
+        var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
+            ["POST_LAND_WARNING_SLOT_SHARD_EXIT"] = "2",
+            ["POST_LAND_WARNING_SLOT_TRX"] = trxPath,
+        });
+        run.Exit.ShouldBe(0, run.Text);
+        var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
+        receipt.RootElement.GetProperty("state").GetString().ShouldBe("completed");
+        var names = receipt.RootElement.GetProperty("newReds").EnumerateArray().Select(item => item.GetString() ?? "").ToArray();
+        names.ShouldBe(new[] { "Ancient.Boom", "Ancient.Hung", "Ancient.Stopped" });
+        var shards = receipt.RootElement.GetProperty("shards").EnumerateArray().ToArray();
+        shards.ShouldAllBe(shard => shard.GetProperty("exit").GetInt32() == 2);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Stale_trx_and_nonzero_shard_exit_are_not_a_green()
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var shard = "unit-ns-Antiphon.Tests.Fixture";
+        repo.WriteTrx(tip, shard, Trx(("Synthetic.Stale", "Old", "Failed")));
+        var shim = Path.Combine(repo.ReceiptRoot, "slot-shim.txt");
+        var parent = repo.CommitParent(tip);
+        var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
+            ["POST_LAND_WARNING_SLOT_SHARD_EXIT"] = "2",
+        });
+        run.Exit.ShouldBe(0, run.Text);
+        var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
+        receipt.RootElement.GetProperty("state").GetString().ShouldBe("incomplete");
+        var line = receipt.RootElement.GetProperty("summaryLine").GetString() ?? "";
+        line.ShouldContain("new-reds=unknown", Case.Sensitive);
+        line.ShouldContain("no-trx=" + shard, Case.Sensitive);
+        line.ShouldNotContain("Stale.Old", Case.Sensitive);
+        var names = receipt.RootElement.GetProperty("newReds").EnumerateArray().Select(item => item.GetString() ?? "").ToArray();
+        names.ShouldBe(Array.Empty<string>());
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Slow_shard_is_recorded_on_the_receipt()
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var trxPath = Path.Combine(repo.ReceiptRoot, "slow-green.trx");
+        await File.WriteAllTextAsync(trxPath, Trx(("Synthetic.Ancient", "Ok", "Passed")));
+        var shim = Path.Combine(repo.ReceiptRoot, "slot-shim.txt");
+        var parent = repo.CommitParent(tip);
+        var run = await repo.RunDetachedAsync(parent + ".." + tip, repo.Paths("src/Code.cs"), new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
+            ["POST_LAND_WARNING_SLOT_TRX"] = trxPath,
+            ["POST_LAND_WARNING_SLOT_DELAY_MS"] = "50",
+            ["POST_LAND_WARNING_SHARD_BUDGET_MINUTES"] = "0",
+        });
+        run.Exit.ShouldBe(0, run.Text);
+        var receipt = await repo.WaitReceiptAsync(tip, TimeSpan.FromSeconds(20));
+        var slow = receipt.RootElement.GetProperty("slowShards").EnumerateArray().Select(item => item.GetString() ?? "").ToArray();
+        slow.ShouldContain("unit-ns-Antiphon.Tests.Fixture");
+        var shard = receipt.RootElement.GetProperty("shards").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetString() == "unit-ns-Antiphon.Tests.Fixture");
+        shard.GetProperty("slow").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task Second_run_refuses_while_the_lane_holds_the_lock()
+    {
+        using var repo = GitRepo.Create();
+        var tip = repo.CommitCodeTip();
+        var shim = Path.Combine(repo.ReceiptRoot, "slot-shim.txt");
+        var parent = repo.CommitParent(tip);
+        var range = parent + ".." + tip;
+        var list = repo.Paths("src/Code.cs");
+        var env = new Dictionary<string, string>
+        {
+            ["POST_LAND_WARNING_PLATFORM"] = "linux",
+            ["POST_LAND_WARNING_SLOT_SHIM"] = shim,
+            ["POST_LAND_WARNING_PLAN_DELAY_MS"] = "2000",
+        };
+        var first = repo.StartPostLandEarlyWarning(plan: false, range: range, fileList: list);
+        var second = repo.StartPostLandEarlyWarning(plan: false, range: range, fileList: list);
+        foreach (var pair in env)
+        {
+            first.Environment[pair.Key] = pair.Value;
+            second.Environment[pair.Key] = pair.Value;
+        }
+
+        using var left = Process.Start(first) ?? throw new InvalidOperationException("first pwsh did not start");
+        using var right = Process.Start(second) ?? throw new InvalidOperationException("second pwsh did not start");
+        var leftOut = left.StandardOutput.ReadToEndAsync();
+        var leftErr = left.StandardError.ReadToEndAsync();
+        var rightOut = right.StandardOutput.ReadToEndAsync();
+        var rightErr = right.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        await left.WaitForExitAsync(timeout.Token);
+        await right.WaitForExitAsync(timeout.Token);
+        var text = await leftOut + await leftErr + await rightOut + await rightErr;
+        left.ExitCode.ShouldBe(0, text);
+        right.ExitCode.ShouldBe(0, text);
+        await repo.WaitUnlockedAsync(TimeSpan.FromSeconds(20));
+        var states = Directory.EnumerateFiles(repo.ReceiptRoot, "lane-*.json")
+            .Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement.GetProperty("state").GetString() ?? "")
+            .OrderBy(state => state, StringComparer.Ordinal)
+            .ToArray();
+        states.ShouldBe(new[] { "skipped-busy", "started" });
+        var shimText = await File.ReadAllTextAsync(shim);
+        CountOf(shimText, "dotnet build").ShouldBe(1);
     }
 
     [Test]
@@ -390,16 +585,20 @@ public sealed class PostLandEarlyWarningTests
         return found;
     }
 
-    private sealed class PostLandEarlyWarningScript
+    private static int CountOf(string text, string token)
     {
-        public static string ResolvePostLandPlatform(ProcessStartInfo start)
+        var count = 0;
+        var start = 0;
+        while (start < text.Length)
         {
-            if (!start.Environment.TryGetValue("POST_LAND_WARNING_PLATFORM", out var value) || value is null)
-                return "absent";
-            if (value.Length == 0)
-                return "empty";
-            return value;
+            var index = text.IndexOf(token, start, StringComparison.Ordinal);
+            if (index < 0)
+                break;
+            count++;
+            start = index + token.Length;
         }
+
+        return count;
     }
 
     private class Fixture : IDisposable
@@ -482,13 +681,13 @@ public sealed class PostLandEarlyWarningTests
         internal Task<PlanResult> PlanAsync(string fileList) =>
             PlanAsync(fileList, new string('1', 40) + ".." + new string('2', 40));
 
-        internal Task<PlanResult> PlanAsync(string fileList, string range) =>
-            WaitAsync(Start(plan: true, range: range, fileList: fileList));
+        internal Task<PlanResult> PlanAsync(string fileList, string range, bool force = false) =>
+            WaitAsync(StartPostLandEarlyWarning(plan: true, range: range, fileList: fileList, force: force));
 
         internal Task<PlanResult> PlanRangeAsync(string range) =>
-            WaitAsync(Start(plan: true, range: range, fileList: null));
+            WaitAsync(StartPostLandEarlyWarning(plan: true, range: range, fileList: null));
 
-        internal ProcessStartInfo Start(bool plan, string range, string? fileList)
+        internal ProcessStartInfo StartPostLandEarlyWarning(bool plan, string range, string? fileList, bool force = false)
         {
             var start = new ProcessStartInfo("pwsh")
             {
@@ -503,6 +702,8 @@ public sealed class PostLandEarlyWarningTests
             start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "post-land-early-warning.ps1"));
             if (plan)
                 start.ArgumentList.Add("-Plan");
+            if (force)
+                start.ArgumentList.Add("-Force");
             start.ArgumentList.Add("-Range");
             start.ArgumentList.Add(range);
             start.ArgumentList.Add("-Repo");
@@ -578,6 +779,57 @@ public sealed class PostLandEarlyWarningTests
             created.WriteFile("README.md", "fixture\n");
             created.Commit("init", "2026-10-01T00:00:00Z");
             return created;
+        }
+
+        internal string CommitCodeTip()
+        {
+            WriteUnitClass("Antiphon.Tests.Fixture", "FixtureUnitTests");
+            WriteTable("src/Code.cs", "FixtureUnitTests");
+            WriteFile("src/Code.cs", "class Code { }\n");
+            return Commit("tip", "2026-11-04T00:00:00Z");
+        }
+
+        internal string CommitParent(string tip)
+        {
+            var shown = Git(Repo, "rev-parse", tip + "^");
+            return shown.Trim();
+        }
+
+        internal async Task<PlanResult> RunDetachedAsync(string range, string fileList, Dictionary<string, string> env)
+        {
+            var start = StartPostLandEarlyWarning(plan: false, range: range, fileList: fileList);
+            foreach (var pair in env)
+                start.Environment[pair.Key] = pair.Value;
+            return await WaitAsync(start);
+        }
+
+        internal async Task<JsonDocument> WaitReceiptAsync(string tip, TimeSpan budget)
+        {
+            var path = Path.Combine(ReceiptRoot, tip + ".json");
+            var lockPath = Path.Combine(ReceiptRoot, "lock.json");
+            var deadline = DateTime.UtcNow + budget;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (File.Exists(path) && !File.Exists(lockPath))
+                    return JsonDocument.Parse(await File.ReadAllTextAsync(path));
+                await Task.Delay(100);
+            }
+
+            throw new TimeoutException("receipt missing at " + path);
+        }
+
+        internal async Task WaitUnlockedAsync(TimeSpan budget)
+        {
+            var lockPath = Path.Combine(ReceiptRoot, "lock.json");
+            var deadline = DateTime.UtcNow + budget;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!File.Exists(lockPath))
+                    return;
+                await Task.Delay(100);
+            }
+
+            throw new TimeoutException("lock still held at " + lockPath);
         }
 
         internal string Commit(string message, string date)
