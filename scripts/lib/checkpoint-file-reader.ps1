@@ -1,7 +1,13 @@
 #requires -Version 7.0
 # Bounded regular-file reads. Embed the native boundary to avoid a repository-derived source loader.
+#
+# The embedded source is compiled once per source version into a cache under the user's temp directory,
+# keyed by the SHA-256 of the source text in this file plus the PowerShell/.NET versions, and each later
+# process only loads the cached assembly's bytes (the compile costs most of a second in each). Nothing is read
+# from the repository to do it: the key is the here-string itself. A cache that cannot be written or
+# loaded falls back to compiling in memory.
 if (-not ('Antiphon.Checkpoints.Coverage.ConfinedFileReader' -as [type])) {
-    Add-Type -TypeDefinition @'
+    $confinedReaderSource = @'
 #nullable enable
 using System;
 using System.IO;
@@ -525,6 +531,37 @@ public static class ConfinedFileReader
 }
 
 '@
+    $confinedReaderLoaded = $false
+    try {
+        $confinedReaderKey = [Text.Encoding]::UTF8.GetBytes($confinedReaderSource + "`n" + $PSVersionTable.PSVersion.ToString() + "`n" + [Environment]::Version.ToString())
+        $confinedReaderHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($confinedReaderKey)).Substring(0, 24).ToLowerInvariant()
+        $confinedReaderDir = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-checkpoint-reader'
+        $confinedReaderDll = Join-Path $confinedReaderDir ('ConfinedFileReader-' + $confinedReaderHash + '.dll')
+        if (-not [IO.File]::Exists($confinedReaderDll)) {
+            [void][IO.Directory]::CreateDirectory($confinedReaderDir)
+            $confinedReaderWork = Join-Path $confinedReaderDir ('build-' + [guid]::NewGuid().ToString('N') + '.dll')
+            try {
+                Add-Type -TypeDefinition $confinedReaderSource -OutputAssembly $confinedReaderWork
+                # Concurrent first runs each compile; the first rename wins and the rest use it.
+                try { [IO.File]::Move($confinedReaderWork, $confinedReaderDll) } catch [IO.IOException] { }
+            } finally {
+                if ([IO.File]::Exists($confinedReaderWork)) { try { [IO.File]::Delete($confinedReaderWork) } catch { } }
+            }
+            # Assemblies of earlier source versions: best effort, a week old (one still loaded elsewhere stays).
+            foreach ($confinedReaderOld in @([IO.Directory]::GetFiles($confinedReaderDir, 'ConfinedFileReader-*.dll'))) {
+                if ($confinedReaderOld -eq $confinedReaderDll -or [IO.File]::GetLastWriteTimeUtc($confinedReaderOld) -gt [DateTime]::UtcNow.AddDays(-7)) { continue }
+                try { [IO.File]::Delete($confinedReaderOld) } catch { }
+            }
+        }
+        # Loaded from its bytes, not its path: the witnesses tell this embedded reader from the compiled
+        # Antiphon.Checkpoints facade by an empty Assembly.Location, and a byte-loaded assembly keeps it empty.
+        [void][Reflection.Assembly]::Load([IO.File]::ReadAllBytes($confinedReaderDll))
+        $confinedReaderLoaded = [bool]('Antiphon.Checkpoints.Coverage.ConfinedFileReader' -as [type])
+    } catch {
+        $confinedReaderLoaded = [bool]('Antiphon.Checkpoints.Coverage.ConfinedFileReader' -as [type])
+    }
+    if (-not $confinedReaderLoaded) { Add-Type -TypeDefinition $confinedReaderSource }
+    Remove-Variable -Name confinedReader* -ErrorAction SilentlyContinue
 }
 function Read-CheckpointBytes {
     param([string]$Path)

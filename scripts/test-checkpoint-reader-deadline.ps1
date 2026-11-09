@@ -12,7 +12,7 @@ if ($Mode -eq 'windows-open') {
     # its kernel call is substituted; the production flags and FileStream's
     # handle-mode detection remain real. This does not qualify native Windows IO.
     $scriptSource = [IO.File]::ReadAllText((Join-Path $Repository 'scripts/lib/checkpoint-file-reader.ps1'))
-    $match = [regex]::Match($scriptSource, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")
+    $match = [regex]::Match($scriptSource, "(?s)(?:Add-Type -TypeDefinition|\`$confinedReaderSource =) @'\r?\n(.*?)\r?\n'@")
     if (-not $match.Success) { throw 'embedded reader source not found' }
     $source = $match.Groups[1].Value.Replace('var handle = CreateFile(', 'var handle = PortableWindowsOpen.CreateFile(')
     if ($source -ceq $match.Groups[1].Value) { throw 'Windows factory call not found' }
