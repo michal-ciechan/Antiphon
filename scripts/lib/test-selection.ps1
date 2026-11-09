@@ -155,9 +155,12 @@ function Invoke-TestSelectionGit {
     # An object's type, and a path's bytes at a full commit id, cannot change (the runner disables replace
     # objects): one selection reads the same contract blobs dozens of times. Only answered reads (exit 0) of
     # those two shapes are kept, per process; a missing object or any refusal is asked of git every time.
+    # Whether one full commit id is an ancestor of another cannot change either: both answers (0, 1) are kept.
     $memoKey=$null
-    if($Arguments.Count -eq 3 -and $Arguments[0] -ceq 'cat-file' -and
-        (($Arguments[1] -ceq '-t' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}$') -or ($Arguments[1] -ceq 'blob' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}:[^:]'))){
+    $ancestry=($Arguments.Count -eq 4 -and $Arguments[0] -ceq 'merge-base' -and $Arguments[1] -ceq '--is-ancestor' -and
+        $Arguments[2] -cmatch '^[0-9a-f]{40}$' -and $Arguments[3] -cmatch '^[0-9a-f]{40}$')
+    if($ancestry -or ($Arguments.Count -eq 3 -and $Arguments[0] -ceq 'cat-file' -and
+        (($Arguments[1] -ceq '-t' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}$') -or ($Arguments[1] -ceq 'blob' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}:[^:]')))){
         if($null -eq $script:TestSelectionGitMemo){$script:TestSelectionGitMemo=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)}
         $memoKey=$start.WorkingDirectory+[char]0+($Arguments -join [char]0)
         $memo=$null
@@ -166,7 +169,7 @@ function Invoke-TestSelectionGit {
     $result=[Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,30000,$true)
     if($result.TimedOut -or $AllowedExit -notcontains $result.Exit){throw "git-read-failed:$($Arguments[0]):$($result.Exit)"}
     if($result.Stdout.Length -gt 16777216){throw 'git-output-too-large'}
-    if($null -ne $memoKey -and $result.Exit -eq 0 -and $result.Stdout.Length -le 4194304 -and $script:TestSelectionGitMemo.Count -lt 1024){$script:TestSelectionGitMemo[$memoKey]=$result}
+    if($null -ne $memoKey -and ($result.Exit -eq 0 -or ($ancestry -and $result.Exit -eq 1)) -and $result.Stdout.Length -le 4194304 -and $script:TestSelectionGitMemo.Count -lt 1024){$script:TestSelectionGitMemo[$memoKey]=$result}
     return $result
 }
 
@@ -349,10 +352,13 @@ function Get-TestSelectionCore {
         $sets+=$copy
     }
     $roots=(Invoke-TestSelectionGit $RepositoryRoot @('rev-list','--max-parents=0',$CandidateSha,'--')).Stdout.Trim().Split("`n")
+    # One rev-parse names both blobs, one line each in argument order.
+    $blobIds=@((Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${CandidateSha}:$policyPath","${CandidateSha}:$catalogPath")).Stdout.Trim().Split("`n")|ForEach-Object {$_.Trim()})
+    if($blobIds.Count -ne 2 -or $blobIds[0] -cnotmatch '^[0-9a-f]{40}$' -or $blobIds[1] -cnotmatch '^[0-9a-f]{40}$'){throw 'git-read-failed:rev-parse:shape'}
     $result=[ordered]@{
         format='antiphon-test-selection-v1';repositoryIdentity=(Get-TestSelectionDigest @(Get-TestSelectionSorted $roots));baselineSha=$BaselineSha;candidateSha=$CandidateSha
-        policyBlob=(Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${CandidateSha}:$policyPath")).Stdout.Trim();policyHash=$policy.policyHash
-        catalogBlob=(Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${CandidateSha}:$catalogPath")).Stdout.Trim();catalogHash=$catalog.catalogHash
+        policyBlob=$blobIds[0];policyHash=$policy.policyHash
+        catalogBlob=$blobIds[1];catalogHash=$catalog.catalogHash
         selectorVersion=1;selectorHash=(Get-TestSelectionDigest $selectorBytes);profile=$Profile;mode=$(if($fallback.Count){'full'}else{'narrow'})
         fallbackReasons=@(Get-TestSelectionSorted @($fallback));changedPaths=@($records);selectedSets=@($sets)
         unselectedSets=@(Get-TestSelectionSorted @($setMap.Keys|Where-Object {-not $selected.Contains($_)}))
