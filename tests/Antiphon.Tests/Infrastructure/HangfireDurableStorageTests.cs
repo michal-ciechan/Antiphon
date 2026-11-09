@@ -213,6 +213,51 @@ public sealed class HangfireStorageSelectionTests
         await host.StopAsync();
     }
 
+    /// <summary>CARD-1791 A-5. A wall-clock step does not move the crash-expiry window.</summary>
+    [Test]
+    [Timeout(20_000)]
+    public async Task Crash_expiry_window_follows_the_monotonic_clock_not_the_wall_clock()
+    {
+        const string unreachable =
+            "Host=127.0.0.1;Port=1;Database=antiphon;Username=antiphon;Password=unused;Timeout=1;Pooling=false";
+        var clock = new SteppedClock(new DateTimeOffset(2026, 11, 9, 0, 0, 0, TimeSpan.Zero));
+        using var connection = new NpgsqlConnection(unreachable);
+        using var lease = new HangfireWorkerLease(connection, unreachable);
+        lease.SetClock(clock);
+
+        clock.StepWall(TimeSpan.FromHours(1));
+        lease.WithinCrashExpiryWindow().ShouldBeTrue();
+
+        clock.StepWall(TimeSpan.FromHours(-2));
+        clock.AdvanceMonotonic(TimeSpan.FromSeconds(HangfireWorkerLease.CrashExpirySeconds - 1));
+        lease.WithinCrashExpiryWindow().ShouldBeTrue();
+
+        clock.AdvanceMonotonic(TimeSpan.FromSeconds(1));
+        lease.WithinCrashExpiryWindow().ShouldBeFalse();
+        await Task.CompletedTask;
+    }
+
+    /// <summary>CARD-1791. Wall time and the monotonic timestamp move independently.</summary>
+    private sealed class SteppedClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _wall = start;
+        private long _timestamp;
+
+        public override DateTimeOffset GetUtcNow() => _wall;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void StepWall(TimeSpan step) => _wall += step;
+
+        public void AdvanceMonotonic(TimeSpan elapsed)
+        {
+            _timestamp += elapsed.Ticks;
+            _wall += elapsed;
+        }
+    }
+
     [Test]
     [Timeout(20_000)]
     public async Task PostgreSql_bootstrap_resolves_storage_and_refuses_an_unreachable_database()
@@ -515,6 +560,7 @@ public sealed class HangfirePostgreSqlStorageTests
         await CreateDatabaseAsync(siblingName);
         NpgsqlConnection? sibling = null;
         NpgsqlConnection? decoy = null;
+        NpgsqlConnection? waiter = null;
         try
         {
             var siblingConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
@@ -571,13 +617,26 @@ public sealed class HangfirePostgreSqlStorageTests
             var quiet = await Task.WhenAny(stopping.Task, Task.Delay(TimeSpan.FromSeconds(1)));
             quiet.ShouldNotBe(stopping.Task);
 
+            // CARD-1791 A-7. A blocking waiter queues before the terminate, so the lock passes
+            // straight to it: the supervised lease's 50 ms tick cannot re-take it first.
+            waiter = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(database.ConnectionString)
+            {
+                Pooling = false
+            }.ConnectionString);
+            await waiter.OpenAsync();
+            var waiterPid = waiter.ProcessID;
+            var waiterTake = new NpgsqlCommand("SELECT pg_advisory_lock(@lockClass, @lockId)", waiter);
+            waiterTake.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
+            waiterTake.Parameters.AddWithValue("lockId", HangfireWorkerLease.LockId);
+            var waiting = waiterTake.ExecuteScalarAsync();
+            await WaitUntilWorkerLockWaiterAsync(database.ConnectionString, waiterPid);
+
             await TerminateBackendAsync(database.ConnectionString, reacquired[0]);
-            await WaitUntilWorkerLockDropsAsync(database.ConnectionString, reacquired[0]);
-            using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+            await waiting;
+            await waiterTake.DisposeAsync();
             var stopped = await Task.WhenAny(stopping.Task, Task.Delay(TimeSpan.FromSeconds(5)));
             stopped.ShouldBe(stopping.Task);
-            (await FindWorkerLockPidsAsync(database.ConnectionString)).Count.ShouldBe(1);
-            second.ShouldNotBeNull();
+            (await FindWorkerLockPidsAsync(database.ConnectionString)).ShouldBe([waiterPid]);
             await host.StopAsync();
         }
         finally
@@ -586,8 +645,98 @@ public sealed class HangfirePostgreSqlStorageTests
                 await sibling.DisposeAsync();
             if (decoy is not null)
                 await decoy.DisposeAsync();
+            if (waiter is not null)
+                await waiter.DisposeAsync();
             await DropDatabaseAsync(siblingName);
         }
+    }
+
+    /// <summary>
+    /// CARD-1791 A-2. After a Postgres restart pids start small again. A holder whose pid matches
+    /// the remembered backend but whose backend_start does not is another worker, and its
+    /// backend is left alone.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_treats_a_reused_pid_with_another_start_as_another_worker()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var first = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var pid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        await TerminateBackendAsync(database.ConnectionString, pid);
+        await WaitUntilWorkerLockDropsAsync(database.ConnectionString, pid);
+        using var second = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var secondPid = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        var secondStart = await ReadBackendStartAsync(database.ConnectionString, secondPid);
+        first.RememberBackend(secondPid, secondStart - TimeSpan.FromMinutes(5));
+
+        var lost = Should.Throw<InvalidOperationException>(first.EnsureHeld);
+
+        lost.Message.ShouldContain("another worker");
+        (await FindWorkerLockPidsAsync(database.ConnectionString)).ShouldBe([secondPid]);
+        (await ReadBackendStartAsync(database.ConnectionString, secondPid)).ShouldBe(secondStart);
+        second.ShouldNotBeNull();
+    }
+
+    /// <summary>
+    /// CARD-1791 A-3. The lease connection is gone but its backend still holds the lock:
+    /// the lease terminates that backend and takes the lock on a new session.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_reclaims_its_own_backend_when_its_connection_is_gone()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString);
+        var before = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        await using var detached = lease.DetachConnection();
+        detached.State.ShouldBe(System.Data.ConnectionState.Open);
+        detached.ProcessID.ShouldBe(before);
+
+        lease.EnsureHeld();
+
+        var after = await FindWorkerLockPidsAsync(database.ConnectionString);
+        after.Count.ShouldBe(1);
+        after[0].ShouldNotBe(before);
+        await WaitUntilBackendEndsAsync(database.ConnectionString, before);
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString));
+        refused.Message.ShouldContain("second worker");
+    }
+
+    /// <summary>
+    /// CARD-1791 A-8. The link breaks right after a replacement session takes the lock. That
+    /// backend keeps the lock server-side. It is this process's own backend, so the next
+    /// check reclaims it instead of stopping for another worker.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task Worker_lease_reclaims_a_new_backend_it_lost_right_after_taking_the_lock()
+    {
+        await using var database = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var link = SeverableLink.Start(database.ConnectionString);
+        using var lease = HangfireConfiguration.AcquireSingleWorkerLease(link.ConnectionString);
+        var original = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        await TerminateBackendAsync(database.ConnectionString, original);
+        await WaitUntilWorkerLockDropsAsync(database.ConnectionString, original);
+        lease.FaultAfterNextFreshLock(link.SeverAll);
+
+        var broken = Should.Throw<InvalidOperationException>(lease.EnsureHeld);
+
+        broken.Message.ShouldContain("not reachable");
+        var orphan = (await FindWorkerLockPidsAsync(database.ConnectionString)).Single();
+        orphan.ShouldNotBe(original);
+        link.SeveredCount.ShouldBe(1);
+
+        lease.EnsureHeld();
+
+        var after = await FindWorkerLockPidsAsync(database.ConnectionString);
+        after.Count.ShouldBe(1);
+        after[0].ShouldNotBe(orphan);
+        await WaitUntilBackendEndsAsync(database.ConnectionString, orphan);
+        var refused = Should.Throw<InvalidOperationException>(() =>
+            HangfireConfiguration.AcquireSingleWorkerLease(database.ConnectionString));
+        refused.Message.ShouldContain("second worker");
     }
 
     [Test]
@@ -828,6 +977,70 @@ public sealed class HangfirePostgreSqlStorageTests
         }
     }
 
+    private static async Task WaitUntilWorkerLockWaiterAsync(string connectionString, int pid)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            await using (var connection = new NpgsqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = new NpgsqlCommand("""
+                    SELECT COUNT(*)
+                    FROM pg_locks
+                    WHERE locktype = 'advisory'
+                      AND classid = @lockClass
+                      AND objid = @lockId
+                      AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                      AND objsubid = 2
+                      AND NOT granted
+                      AND pid = @pid
+                    """, connection);
+                command.Parameters.AddWithValue("lockClass", HangfireWorkerLease.ClassId);
+                command.Parameters.AddWithValue("lockId", HangfireWorkerLease.LockId);
+                command.Parameters.AddWithValue("pid", pid);
+                if (Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) == 1)
+                    return;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException("Backend " + pid + " never queued for the Hangfire worker lock.");
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+    }
+
+    private static async Task<DateTime> ReadBackendStartAsync(string connectionString, int pid)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT backend_start FROM pg_stat_activity WHERE pid = @pid", connection);
+        command.Parameters.AddWithValue("pid", pid);
+        var value = await command.ExecuteScalarAsync();
+        return value.ShouldBeOfType<DateTime>();
+    }
+
+    private static async Task WaitUntilBackendEndsAsync(string connectionString, int pid)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            await using (var connection = new NpgsqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = new NpgsqlCommand(
+                    "SELECT COUNT(*) FROM pg_stat_activity WHERE pid = @pid", connection);
+                command.Parameters.AddWithValue("pid", pid);
+                if (Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) == 0)
+                    return;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException("Backend " + pid + " is still running.");
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+    }
+
     private static async Task<int> CountGrantedHoldersAsync(string connectionString, string databaseName)
     {
         await using var connection = new NpgsqlConnection(connectionString);
@@ -934,6 +1147,128 @@ public sealed class HangfirePostgreSqlStorageTests
         return value.ShouldBeOfType<string>();
     }
 
+    /// <summary>
+    /// CARD-1791. A TCP relay to Postgres. <see cref="SeverAll"/> drops the client side of every
+    /// live relay and keeps the server side open, as a broken network path does: the backend
+    /// stays alive and keeps its locks.
+    /// </summary>
+    private sealed class SeverableLink : IAsyncDisposable
+    {
+        private readonly System.Net.Sockets.TcpListener _listener;
+        private readonly System.Net.EndPoint _upstream;
+        private readonly CancellationTokenSource _stop = new();
+        private readonly List<Relay> _relays = [];
+        private readonly Task _accepting;
+        private int _severed;
+
+        private SeverableLink(string connectionString)
+        {
+            var builder = new NpgsqlConnectionStringBuilder(connectionString);
+            var address = System.Net.Dns.GetHostAddresses(builder.Host!)
+                .First(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+            _upstream = new System.Net.IPEndPoint(address, builder.Port);
+            _listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            _listener.Start();
+            builder.Host = "127.0.0.1";
+            builder.Port = ((System.Net.IPEndPoint)_listener.LocalEndpoint).Port;
+            ConnectionString = builder.ConnectionString;
+            _accepting = AcceptAsync();
+        }
+
+        public string ConnectionString { get; }
+
+        public int SeveredCount => Volatile.Read(ref _severed);
+
+        public static SeverableLink Start(string connectionString) => new(connectionString);
+
+        public void SeverAll()
+        {
+            lock (_relays)
+            {
+                foreach (var relay in _relays.Where(r => !r.Severed))
+                {
+                    relay.Severed = true;
+                    relay.Client.Close();
+                    Interlocked.Increment(ref _severed);
+                }
+            }
+        }
+
+        private async Task AcceptAsync()
+        {
+            while (!_stop.IsCancellationRequested)
+            {
+                System.Net.Sockets.Socket client;
+                try
+                {
+                    client = await _listener.AcceptSocketAsync(_stop.Token);
+                }
+                catch (Exception) when (_stop.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                var server = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                await server.ConnectAsync(_upstream);
+                var relay = new Relay(client, server);
+                lock (_relays)
+                    _relays.Add(relay);
+                _ = PumpAsync(relay, client, server, clientToServer: true);
+                _ = PumpAsync(relay, server, client, clientToServer: false);
+            }
+        }
+
+        private static async Task PumpAsync(Relay relay, System.Net.Sockets.Socket from, System.Net.Sockets.Socket to, bool clientToServer)
+        {
+            var buffer = new byte[16 * 1024];
+            try
+            {
+                while (true)
+                {
+                    var read = await from.ReceiveAsync(buffer, System.Net.Sockets.SocketFlags.None);
+                    if (read == 0 || relay.Severed)
+                        break;
+                    await to.SendAsync(buffer.AsMemory(0, read), System.Net.Sockets.SocketFlags.None);
+                }
+            }
+            catch (Exception ex) when (ex is System.Net.Sockets.SocketException or ObjectDisposedException)
+            {
+            }
+
+            // A severed relay keeps its server side open. Otherwise an ended side ends the other.
+            if (relay.Severed)
+                return;
+            if (clientToServer)
+                relay.Server.Close();
+            else
+                relay.Client.Close();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _stop.Cancel();
+            _listener.Stop();
+            await _accepting;
+            lock (_relays)
+            {
+                foreach (var relay in _relays)
+                {
+                    relay.Client.Close();
+                    relay.Server.Close();
+                }
+            }
+
+            _stop.Dispose();
+        }
+
+        private sealed class Relay(System.Net.Sockets.Socket client, System.Net.Sockets.Socket server)
+        {
+            public System.Net.Sockets.Socket Client { get; } = client;
+            public System.Net.Sockets.Socket Server { get; } = server;
+            public volatile bool Severed;
+        }
+    }
+
     private sealed class DrainProbe : IHostedService
     {
         private readonly Action _onStop;
@@ -973,7 +1308,15 @@ public sealed class HangfireLeaseDocumentationTests
         var contract = DockerStackDocuments.Read("docs/docker-stack.md");
         contract.ShouldContain("That 15 seconds is the detection bound");
         contract.ShouldContain(
-            "plus the Hangfire drain (`BackgroundJobServerOptions.ShutdownTimeout`, 15 seconds by default) plus host shutdown (`HostOptions.ShutdownTimeout`, 30 seconds by default)");
+            "A successor can overlap for at most 45 seconds: those 15 seconds plus host shutdown (`HostOptions.ShutdownTimeout`, 30 seconds by default).");
+        contract.ShouldContain(
+            "The Hangfire drain (`BackgroundJobServerOptions.ShutdownTimeout`, 15 seconds by default) runs inside that host shutdown budget, so it adds nothing.");
+        contract.ShouldNotContain("plus the Hangfire drain");
+        contract.ShouldContain(
+            "The lease knows its backend by the pair (pid, `backend_start`) from `pg_stat_activity`, so a pid that Postgres reuses after a restart is another worker.");
+        contract.ShouldContain(
+            "A new session records its backend before it takes the lock, so a link that breaks right after the take leaves a holder the next tick reclaims as its own.");
+        contract.ShouldContain("That 60-second window runs on the monotonic clock, so a wall-clock step does not shorten it.");
         contract.ShouldContain("A holder that is this process's own previous backend is not another worker.");
         contract.ShouldContain("When another worker holds the lock, the host stops on that tick.");
         contract.ShouldContain(

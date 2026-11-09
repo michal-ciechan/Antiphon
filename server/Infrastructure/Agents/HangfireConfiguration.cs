@@ -457,6 +457,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     private long _lastConfirmedTicks;
     private int _backendPid;
     private int _disposed;
+    private Action? _faultAfterFreshLock;
 
     internal HangfireWorkerLease(NpgsqlConnection connection, string probe)
     {
@@ -505,6 +506,28 @@ internal sealed class HangfireWorkerLease : IDisposable
         {
         }
     }
+
+    /// <summary>CARD-1791. Tests stand in a remembered backend, such as a pid reused after a Postgres restart.</summary>
+    internal void RememberBackend(int pid, DateTime backendStart)
+    {
+        lock (_gate)
+            _backendPid = pid;
+    }
+
+    /// <summary>
+    /// CARD-1791. Leaves an unopened connection in place of the lease session and hands the
+    /// open session to the caller, so its backend still holds the lock.
+    /// </summary>
+    internal NpgsqlConnection DetachConnection()
+    {
+        lock (_gate)
+            return Interlocked.Exchange(ref _connection, new NpgsqlConnection(_probe))
+                ?? throw new InvalidOperationException("Hangfire worker lease has no connection.");
+    }
+
+    /// <summary>CARD-1791. Runs once, right after the next replacement session takes the lock.</summary>
+    internal void FaultAfterNextFreshLock(Action fault) =>
+        _faultAfterFreshLock = fault ?? throw new ArgumentNullException(nameof(fault));
 
     /// <summary>CARD-1774. The command timeout Dispose uses when it unlocks.</summary>
     internal int ReadUnlockCommandTimeoutSeconds()
@@ -605,6 +628,7 @@ internal sealed class HangfireWorkerLease : IDisposable
             else if (!HangfireConfiguration.TryTakeWorkerLock(fresh))
                 throw Lost();
 
+            Interlocked.Exchange(ref _faultAfterFreshLock, null)?.Invoke();
             HangfireConfiguration.ApplyCrashExpiry(fresh);
             // Read the new pid before the swap. A failure here must not leave the
             // fresh session installed against the previous backend's pid (CARD-1774 A-1).
