@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -35,7 +34,7 @@ public static class RunnerReadJson
 
     public static JsonTypeInfo<RunnerTranscriptDto> HttpTranscript => Http.RunnerTranscriptDto;
 
-    internal static readonly AsyncLocal<StrongBox<int>?> Witness = new();
+    internal static readonly AsyncLocal<AdmissionBox?> Witness = new();
 
     internal static WitnessScope Watch() => new();
 
@@ -44,7 +43,7 @@ public static class RunnerReadJson
         if (type.OriginatingResolver is not RunnerReadJsonContext)
             throw new InvalidOperationException("Hot runner read JSON requires the source-generated contract.");
         if (Witness.Value is { } box)
-            box.Value++;
+            box.Note(type);
         return type;
     }
 
@@ -54,17 +53,32 @@ public static class RunnerReadJson
         return payload is { } element ? element.Deserialize(contract) : null;
     }
 
+    internal sealed class AdmissionBox
+    {
+        public int Count { get; private set; }
+
+        public List<JsonTypeInfo> Admitted { get; } = new(4);
+
+        public void Note(JsonTypeInfo type)
+        {
+            Count++;
+            Admitted.Add(type);
+        }
+    }
+
     internal readonly struct WitnessScope : IDisposable
     {
-        private readonly StrongBox<int> _box;
+        private readonly AdmissionBox _box;
 
         public WitnessScope()
         {
-            _box = new StrongBox<int>();
+            _box = new AdmissionBox();
             Witness.Value = _box;
         }
 
-        public int Count => _box.Value;
+        public int Count => _box.Count;
+
+        public IReadOnlyList<JsonTypeInfo> Admitted => _box.Admitted;
 
         public void Dispose()
         {
