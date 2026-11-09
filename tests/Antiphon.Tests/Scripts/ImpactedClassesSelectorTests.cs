@@ -250,6 +250,18 @@ public sealed partial class ImpactedClassesSelectorTests
         "{\"schema\":1,\"kinds\":[{\"id\":\"contracts\",\"globs\":[\"client/src/api/**\"],\"class\":[\"ContractSnapshotTests\"]}]}",
         "unknown property 'class'",
         "unknown kind property")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"lane\",\"globs\":[\"server/Migrations/**\"],\"classes\":[\"AppDbContextModelTests\"],\"windows\":\"yes\"}]}",
+        "lane: windows must be 'required'",
+        "windows lane other than required")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"lane\",\"globs\":[\"server/Migrations/**\"],\"classes\":[\"AppDbContextModelTests\"],\"windows\":true}]}",
+        "lane: windows must be 'required'",
+        "windows lane as a boolean")]
+    [Arguments(
+        "{\"schema\":1,\"kinds\":[{\"id\":\"marker\",\"added\":{\"glob\":\"tests/**\",\"literals\":[\"[NativeLinuxOnly(\"],\"removed\":\"yes\"},\"classes\":[\"AppDbContextModelTests\"]}]}",
+        "marker: removed must be true or false",
+        "removed flag that is not a boolean")]
     public async Task malformed_table_is_refused(string table, string needle, string shape)
     {
         var root = Root();
@@ -297,6 +309,254 @@ public sealed partial class ImpactedClassesSelectorTests
         {
             File.Delete(list);
         }
+    }
+
+    // CARD-1801. One row per 2026-11-08 why-missed note: a path the note names, the table kind that owns it,
+    // the class or Class/Method that path selects, and whether the note asks for the native Windows lane.
+    private static readonly (string Path, string Kind, string Selects, bool Windows)[] WhyMissedRows =
+    [
+        ("server/Application/Services/AgentTaskLandNotificationService.cs", "land-notification", "AgentTaskLandReceiptWatermarkTests", false),
+        ("server/Application/Services/LandNotificationReconcileQueries.cs", "land-notification", "ReceiptScanDestinationIntegrationTests", false),
+        ("tests/test-execution-policy.json", "linux-only-policy", "ReleaseGatePlatformTests/C1686_LinuxOnlyCensus", false),
+        ("src/Antiphon.SessionRunner/HostStatsStore.cs", "host-stats", "RunnerCapabilitiesTests", false),
+        ("server/Infrastructure/Git/WorktreeManager.cs", "server-git-start-sites", "ServerGitProcessTests", false),
+        ("server/Infrastructure/ExternalChanges/ChangeDetectionService.cs", "server-git-start-sites", "ServerGitProcessTests", false),
+        ("server/Infrastructure/Git/ServerGitIdentity.cs", "server-image-push-credentials", "ServerImagePushCredentialTests", true),
+        ("scripts/server2-repository-mirrors.ps1", "server-repository-mirror", "ServerRepositoryMirrorScriptTests", true),
+        ("server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs", "runner-read-poll", "Card1761RunnerReadPollTests", true),
+        ("tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs", "task-load-window", "C1514TaskLoadWindowTests", false),
+        ("tests/Antiphon.Tests/Application/C0824SlotTransportWorld.cs", "workspace-slot-role-gate", "C0824WorkspaceSlotRoleGateTests", true),
+        ("tests/Antiphon.Tests/Application/LandGraphLandRefreshTests.cs", "land-graph-land-refresh", "LandGraphLandRefreshTests", true),
+        ("scripts/lib/nightly-core.ps1", "test-selection", "TestSelectionTests", false),
+    ];
+
+    private static readonly string[] LandNotificationClasses =
+    [
+        "AgentTaskLandHeldNotificationTests", "AgentTaskLandNotificationParkFollowUpTests",
+        "AgentTaskLandNotificationPersistenceTests", "AgentTaskLandNotificationReconcileLoadTests",
+        "AgentTaskLandNotificationRecoveryTests", "AgentTaskLandNotificationRescanTests",
+        "AgentTaskLandReceiptWatermarkSafetyTests", "AgentTaskLandReceiptWatermarkTests",
+        "ReceiptScanDestinationIntegrationTests",
+    ];
+
+    // The C1432 roster: every server file that starts a git process.
+    private static readonly string[] ServerGitStartSites =
+    [
+        "server/Infrastructure/Git/LandingGit.cs", "server/Infrastructure/Git/GitService.cs",
+        "server/Infrastructure/Git/WorktreeManager.cs", "server/Infrastructure/Git/CardFileRepository.cs",
+        "server/Application/Services/GitWorkspaceService.cs", "server/Application/Services/DelegationWorktreeService.cs",
+        "server/Application/Services/DelegationWorkspaceResolver.cs", "server/Application/Services/OrchestratorWorkspaceLayout.cs",
+        "server/Application/Services/AgentTaskReplyService.cs", "server/Infrastructure/ExternalChanges/ChangeDetectionService.cs",
+    ];
+
+    // Downgrade callers the notes name. The derive scan finds them today; the explicit list keeps
+    // them selected after a fixture repair stops matching a derive pattern.
+    private static readonly string[] DowngradeCallerClasses =
+    [
+        "AgentTaskLandHeldNotificationTests", "AgentTaskLandNotificationPersistenceTests", "DispatchBaseNotificationTests",
+        "RunnerDefaultMigrationTests", "SessionRuntimeActionRoutingTests", "StandingRestartEscalationTests",
+        "StandingSpecialistRoutingMigrationTests", "WorktreeBaseSelectionTests",
+    ];
+
+    private const string WindowsTestsFilter =
+        "/*/*/(C0824WorkspaceSlotRoleGateTests*)|(Card1761RunnerReadPollTests*)|(LandGraphLandRefreshTests*)"
+        + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)/*";
+
+    private const string LinuxOnlyCensusFilter =
+        "/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)|(LinuxOnlyWindowsExclusionPolicy*)";
+
+    // CARD-1677 S2 witnesses: adds two [NativeLinuxOnly( markers and does not touch the policy file.
+    private const string MarkerCommit = "c9cc1a1c0c59252f6bce2ecec96996e84cdcac67";
+
+    [Test]
+    public async Task C1801_why_missed_rows_are_table_rows_with_their_windows_lane()
+    {
+        var root = Root();
+        var table = await File.ReadAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"));
+        using (var json = JsonDocument.Parse(table))
+            AssertWhyMissedTable(json.RootElement);
+
+        // Each mutant loses one note's row: a renamed kind, a dropped Windows lane, a dropped class or start site.
+        foreach (var (from, to) in new[]
+                 {
+                     ("\"id\": \"runner-read-poll\"", "\"id\": \"runner-read-poll-renamed\""),
+                     ("\"windows\": \"required\"", "\"windowsLane\": \"required\""),
+                     ("\"AgentTaskLandReceiptWatermarkSafetyTests\"", "\"AgentTaskLandReceiptWatermarkTests\""),
+                     ("\"RunnerDefaultMigrationTests\"", "\"AppDbContextModelTests\""),
+                     ("\"server/Infrastructure/ExternalChanges/ChangeDetectionService.cs\"", "\"server/Infrastructure/Git/GitService.cs\""),
+                     ("\"removed\": true", "\"removed\": false"),
+                 })
+        {
+            var at = table.IndexOf(from, StringComparison.Ordinal);
+            at.ShouldBeGreaterThanOrEqualTo(0, from);
+            var mutant = table[..at] + to + table[(at + from.Length)..];
+            using var broken = JsonDocument.Parse(mutant);
+            Should.Throw<ShouldAssertException>(() => AssertWhyMissedTable(broken.RootElement), from);
+        }
+    }
+
+    [Test]
+    public async Task C1801_why_missed_paths_select_their_classes_and_windows_filters()
+    {
+        var root = Root();
+        var list = Path.Combine(Path.GetTempPath(), "impacted-classes-why-missed-" + Guid.NewGuid().ToString("N") + ".txt");
+        await File.WriteAllTextAsync(list, string.Join("\n", WhyMissedRows.Select(row => row.Path)) + "\n");
+        try
+        {
+            var ran = await RunAsync(root, "-FileList", list, "-Json");
+            ran.Exit.ShouldBe(0, ran.Text);
+            using var json = JsonDocument.Parse(ran.Stdout);
+            AssertWhyMissedSelection(json.RootElement);
+
+            var text = await RunAsync(root, "-FileList", list);
+            text.Exit.ShouldBe(0, text.Text);
+            text.Stdout.Replace("\r\n", "\n").Split('\n')
+                .ShouldContain("windowsFilter=tests/Antiphon.Tests " + WindowsTestsFilter);
+
+            var raw = json.RootElement.GetRawText();
+            var mutant = raw.Replace("(LandGraphLandRefreshTests*)|", "", StringComparison.Ordinal);
+            mutant.ShouldNotBe(raw);
+            using var broken = JsonDocument.Parse(mutant);
+            Should.Throw<ShouldAssertException>(() => AssertWhyMissedSelection(broken.RootElement));
+        }
+        finally
+        {
+            File.Delete(list);
+        }
+    }
+
+    [Test]
+    public async Task C1801_native_linux_only_marker_edits_select_the_census_pair()
+    {
+        var root = Root();
+        using (var added = await SelectAsync(root, MarkerCommit + "^.." + MarkerCommit))
+            AssertCensusPair(added.RootElement);
+
+        // A removed marker selects the pair too. No commit on master removes one, so a scratch repository does,
+        // read through the real table's row.
+        var table = await File.ReadAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"));
+        string kind;
+        using (var json = JsonDocument.Parse(table))
+        {
+            kind = json.RootElement.GetProperty("kinds").EnumerateArray()
+                .Single(row => row.GetProperty("id").GetString() == "linux-only-policy").GetRawText();
+        }
+
+        var scratch = Path.Combine(Path.GetTempPath(), "impacted-classes-marker-" + Guid.NewGuid().ToString("N"));
+        var tablePath = scratch + ".json";
+        try
+        {
+            CreateMarkerRemovalRepository(scratch);
+            await File.WriteAllTextAsync(tablePath, "{\"schema\":1,\"kinds\":[" + kind + "]}");
+            var removed = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Range", "HEAD^..HEAD", "-Json");
+            removed.Exit.ShouldBe(0, removed.Text);
+            using (var selected = JsonDocument.Parse(removed.Stdout))
+                AssertCensusPair(selected.RootElement);
+
+            var addedOnly = kind.Replace("\"removed\": true", "\"removed\": false", StringComparison.Ordinal);
+            addedOnly.ShouldNotBe(kind);
+            await File.WriteAllTextAsync(tablePath, "{\"schema\":1,\"kinds\":[" + addedOnly + "]}");
+            var missed = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Range", "HEAD^..HEAD", "-Json");
+            missed.Exit.ShouldBe(0, missed.Text);
+            using var notSelected = JsonDocument.Parse(missed.Stdout);
+            Should.Throw<ShouldAssertException>(() => AssertCensusPair(notSelected.RootElement));
+        }
+        finally
+        {
+            File.Delete(tablePath);
+            DeleteTree(scratch);
+        }
+    }
+
+    private static void AssertWhyMissedTable(JsonElement root)
+    {
+        var kinds = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var row in root.GetProperty("kinds").EnumerateArray())
+            kinds[row.GetProperty("id").GetString() ?? ""] = row;
+        foreach (var row in WhyMissedRows)
+        {
+            kinds.ContainsKey(row.Kind).ShouldBeTrue(row.Kind);
+            var kind = kinds[row.Kind];
+            Strings(kind, "classes").Concat(Strings(kind, "methods")).ShouldContain(row.Selects, row.Kind);
+            var lane = kind.TryGetProperty("windows", out var windows) ? windows.GetString() : null;
+            lane.ShouldBe(row.Windows ? "required" : null, row.Kind + " windows lane");
+        }
+
+        Strings(kinds["land-notification"], "classes").ShouldBe(LandNotificationClasses, ignoreOrder: true);
+        Strings(kinds["server-git-start-sites"], "globs").ShouldBe(ServerGitStartSites, ignoreOrder: true);
+        var migrations = Strings(kinds["migrations"], "classes");
+        foreach (var name in DowngradeCallerClasses)
+            migrations.ShouldContain(name, "migrations " + name);
+        var census = kinds["linux-only-policy"];
+        Strings(census, "methods").ShouldBe(
+            ["ReleaseGatePlatformTests/C1686_LinuxOnlyCensus", "ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy"],
+            ignoreOrder: true);
+        var marker = census.GetProperty("added");
+        Strings(marker, "literals").ShouldBe(["[NativeLinuxOnly("]);
+        marker.GetProperty("removed").GetBoolean().ShouldBeTrue("a removed marker changes the census too");
+    }
+
+    private static void AssertWhyMissedSelection(JsonElement root)
+    {
+        var kinds = root.GetProperty("kinds").EnumerateArray().Select(row => row.GetString() ?? "").ToList();
+        var filters = FilterRows(root, "filters");
+        var windows = FilterRows(root, "windowsFilters");
+        foreach (var row in WhyMissedRows)
+        {
+            kinds.ShouldContain(row.Kind, row.Path);
+            var slash = row.Selects.IndexOf('/');
+            var needle = "(" + (slash < 0 ? row.Selects : row.Selects[(slash + 1)..]) + "*)";
+            filters.Any(filter => filter.Filter.Contains(needle, StringComparison.Ordinal)).ShouldBeTrue(row.Path + " " + needle);
+            windows.Any(filter => filter.Filter.Contains(needle, StringComparison.Ordinal))
+                .ShouldBe(row.Windows, row.Path + " windows lane " + needle);
+        }
+
+        filters.ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
+        filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", "/*/*/(RunnerCapabilitiesTests*)/*"));
+        windows.ShouldBe([("tests/Antiphon.Tests", WindowsTestsFilter)]);
+    }
+
+    private static void AssertCensusPair(JsonElement root)
+    {
+        root.GetProperty("kinds").EnumerateArray().Select(row => row.GetString() ?? "").ShouldContain("linux-only-policy");
+        FilterRows(root, "filters").ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
+    }
+
+    private static List<(string Project, string Filter)> FilterRows(JsonElement root, string property) =>
+        root.GetProperty(property).EnumerateArray()
+            .Select(row => (row.GetProperty("project").GetString() ?? "", row.GetProperty("treenodeFilter").GetString() ?? ""))
+            .ToList();
+
+    private static List<string> Strings(JsonElement row, string property) =>
+        row.TryGetProperty(property, out var value)
+            ? value.EnumerateArray().Select(item => item.GetString() ?? "").ToList()
+            : [];
+
+    private static void CreateMarkerRemovalRepository(string dir)
+    {
+        var scripts = Path.Combine(dir, "tests", "Antiphon.Tests", "Scripts");
+        Directory.CreateDirectory(scripts);
+        File.WriteAllText(Path.Combine(scripts, "ReleaseGatePlatformTests.cs"), "public sealed class ReleaseGatePlatformTests\n{\n}\n");
+        var marked = Path.Combine(scripts, "MarkerTests.cs");
+        File.WriteAllText(
+            marked,
+            "public sealed class MarkerTests\n{\n    [NativeLinuxOnly(\"fixture\")]\n    public void Linux() { }\n}\n");
+        Git(dir, "init", "-q");
+        Git(dir, "add", "-A");
+        Git(dir, "-c", "user.name=impacted", "-c", "user.email=impacted@example.invalid", "-c", "commit.gpgsign=false",
+            "commit", "-q", "-m", "marked");
+        File.WriteAllText(marked, "public sealed class MarkerTests\n{\n    public void Linux() { }\n}\n");
+        Git(dir, "-c", "user.name=impacted", "-c", "user.email=impacted@example.invalid", "-c", "commit.gpgsign=false",
+            "commit", "-q", "-am", "unmarked");
+    }
+
+    private static void DeleteTree(string dir)
+    {
+        if (!Directory.Exists(dir))
+            return;
+        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(dir, recursive: true);
     }
 
     private static async Task AssertKinds(string root, string sha, string[] kinds, params string[] needles)

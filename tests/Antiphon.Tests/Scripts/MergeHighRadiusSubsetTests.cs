@@ -22,8 +22,22 @@ public sealed class MergeHighRadiusSubsetTests
     private const string QuietRange =
         "dcb973d896f1d12776a796b71466977b22737b79^..dcb973d896f1d12776a796b71466977b22737b79";
 
+    // CARD-1801: a batch diff that touches the remote deploy scripts selects the remote-scripts method row.
+    private const string RemoteScriptsRange =
+        "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975^..a54a6d4f755fa139b41fd7dc8aef456d3d2c0975";
+
+    // CARD-1801 adds the land notification family to the CARD-1783 classes.
     private const string TestsFilter =
-        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)|(TestTimingOperationLabelTests*)/*";
+        "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
+        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)"
+        + "|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
+        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
+        + "|(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
+
+    // CARD-1801: the A5 pair, the two Linux-only census cases of ReleaseGatePlatformTests.
+    private const string CensusPairFilter =
+        "/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)|(LinuxOnlyWindowsExclusionPolicy*)";
 
     private const string E2EFilter = "/*/*/(ContractSnapshotTests*)/*";
 
@@ -37,18 +51,37 @@ public sealed class MergeHighRadiusSubsetTests
     // One TUnit row per selector filters entry: project, exact filter, measured minimum.
     private static readonly (string Id, string Project, string Filter, int Min)[] MergeRows =
     [
-        ("CP-merge-subset-tests", "tests/Antiphon.Tests", TestsFilter, 21),
+        ("CP-merge-subset-tests", "tests/Antiphon.Tests", TestsFilter, MeasuredTestsMin),
+        ("CP-merge-subset-ReleaseGatePlatformTests", "tests/Antiphon.Tests", CensusPairFilter, 2),
         ("CP-merge-subset-e2e", "tests/Antiphon.E2E", E2EFilter, 5),
         ("CP-merge-subset-messaging", "tests/Antiphon.Messaging.Tests", MessagingFilter, 1),
     ];
 
+    // The fixed Antiphon.Tests classes executed on server2 Linux (CARD-1801 counting run).
+    private const int MeasuredTestsMin = 21;
+
     private static readonly string[] FixedClasses =
     [
+        "AgentTaskLandHeldNotificationTests",
+        "AgentTaskLandNotificationParkFollowUpTests",
+        "AgentTaskLandNotificationPersistenceTests",
+        "AgentTaskLandNotificationReconcileLoadTests",
+        "AgentTaskLandNotificationRecoveryTests",
+        "AgentTaskLandNotificationRescanTests",
+        "AgentTaskLandReceiptWatermarkSafetyTests",
+        "AgentTaskLandReceiptWatermarkTests",
         "AppDbContextModelTests",
         "CheckpointReceiptSafetyTests",
         "ContractSnapshotTests",
         "HostCleanupCheckpointReceiptTests",
+        "ReceiptScanDestinationIntegrationTests",
         "TestTimingOperationLabelTests",
+    ];
+
+    private static readonly string[] FixedMethods =
+    [
+        "ReleaseGatePlatformTests/C1686_LinuxOnlyCensus",
+        "ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy",
     ];
 
     [Test]
@@ -66,6 +99,32 @@ public sealed class MergeHighRadiusSubsetTests
         RejectWithout(loop, guide, "CP-merge-subset");
         RejectWithout(loop, guide, TestsFilter);
         RejectWithout(loop, guide, "fixed high-radius subset");
+        // CARD-1801: the table is executed before a land, and a Windows row is owed, never passed on Linux.
+        RejectWithout(loop, guide, "runs every impacted-classes row the batch diff selects");
+        RejectWithout(loop, guide, "windowsFilters");
+        RejectWithout(loop, guide, "owed on the native Windows lane");
+        RejectWithout(loop, guide, CensusPairFilter);
+    }
+
+    [Test]
+    public async Task merge_subset_runs_every_impacted_row_the_batch_diff_selects()
+    {
+        var root = Root();
+        using var remote = await SelectMergeAsync(root, RemoteScriptsRange);
+        AssertImpactedMethods(remote.RootElement);
+        var dropped = remote.RootElement.GetRawText()
+            .Replace("CP-merge-subset-RemoteScriptContractTests", "CP-merge-subset-dropped", StringComparison.Ordinal);
+        using (var broken = JsonDocument.Parse(dropped))
+            Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(broken.RootElement));
+
+        var ran = await RunAsync(root, "-MergeSubset", "-Path", "server/Infrastructure/Git/ServerGitIdentity.cs", "-Json");
+        ran.Exit.ShouldBe(0, ran.Text);
+        using var lane = JsonDocument.Parse(ran.Stdout);
+        AssertWindowsLane(lane.RootElement);
+        var linuxOnly = lane.RootElement.GetRawText()
+            .Replace("CP-merge-windows-tests", "CP-merge-linux-tests", StringComparison.Ordinal);
+        using (var broken = JsonDocument.Parse(linuxOnly))
+            Should.Throw<ShouldAssertException>(() => AssertWindowsLane(broken.RootElement));
     }
 
     [Test]
@@ -176,9 +235,11 @@ public sealed class MergeHighRadiusSubsetTests
     {
         var lines = stdout.Replace("\r\n", "\n").Split('\n');
         var filters = root.GetProperty("filters").EnumerateArray().ToList();
-        filters.Count.ShouldBe(3);
+        filters.Count.ShouldBe(4);
         foreach (var row in filters)
             lines.ShouldContain("filter=" + row.GetProperty("project").GetString() + " " + row.GetProperty("treenodeFilter").GetString());
+        foreach (var row in root.GetProperty("windowsFilters").EnumerateArray())
+            lines.ShouldContain("windowsFilter=" + row.GetProperty("project").GetString() + " " + row.GetProperty("treenodeFilter").GetString());
     }
 
     private static void AssertDocs(string loop, string guide)
@@ -197,6 +258,10 @@ public sealed class MergeHighRadiusSubsetTests
         loop.ShouldContain(E2EFilter, Case.Sensitive);
         foreach (var name in FixedClasses)
             loop.ShouldContain(name, Case.Sensitive, name);
+        loop.ShouldContain("runs every impacted-classes row the batch diff selects", Case.Sensitive);
+        loop.ShouldContain("windowsFilters", Case.Sensitive);
+        loop.ShouldContain("owed on the native Windows lane", Case.Sensitive);
+        loop.ShouldContain(CensusPairFilter, Case.Sensitive);
 
         guide.ShouldContain("A Merge batch appends the union", Case.Sensitive);
         guide.ShouldContain("fixed high-radius subset", Case.Sensitive);
@@ -208,9 +273,16 @@ public sealed class MergeHighRadiusSubsetTests
         root.GetProperty("mode").GetString().ShouldBe("merge-subset");
         root.GetProperty("migrations").GetBoolean().ShouldBeFalse();
         Names(root, "fixedClasses").ShouldBe(FixedClasses, ignoreOrder: false);
-        Names(root, "classes").ShouldBe(FixedClasses, ignoreOrder: false);
-        Filter(root, "tests/Antiphon.Tests").ShouldBe(TestsFilter);
-        Filter(root, "tests/Antiphon.E2E").ShouldBe(E2EFilter);
+        Names(root, "fixedMethods").ShouldBe(FixedMethods, ignoreOrder: false);
+        Names(root, "classes").ShouldBe(
+            FixedClasses.Append("ReleaseGatePlatformTests").Order(StringComparer.Ordinal).ToArray(), ignoreOrder: false);
+        Ids(root, "filters").ShouldBe(
+            ["CP-merge-subset-e2e", "CP-merge-subset-tests", "CP-merge-subset-ReleaseGatePlatformTests"], ignoreOrder: false);
+        Filter(root, "CP-merge-subset-tests").ShouldBe(TestsFilter);
+        Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
+        Filter(root, "CP-merge-subset-e2e").ShouldBe(E2EFilter);
+        Project(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe("tests/Antiphon.Tests");
+        root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
     }
 
     private static void AssertDowngrade(JsonElement root)
@@ -223,10 +295,30 @@ public sealed class MergeHighRadiusSubsetTests
         classes.ShouldContain("C1514HostLoadMigrationTests");
         classes.ShouldContain("StandingSessionOwnershipTests");
         classes.Count.ShouldBeGreaterThan(FixedClasses.Length);
-        var tests = Filter(root, "tests/Antiphon.Tests");
+        var tests = Filter(root, "CP-merge-subset-tests");
         tests.ShouldContain("(HostCleanupCheckpointReceiptTests*)", Case.Sensitive);
         tests.ShouldContain("(StandingSessionOwnershipTests*)", Case.Sensitive);
-        Filter(root, "tests/Antiphon.E2E").ShouldContain("(ContractSnapshotTests*)", Case.Sensitive);
+        Filter(root, "CP-merge-subset-e2e").ShouldContain("(ContractSnapshotTests*)", Case.Sensitive);
+        Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
+    }
+
+    private static void AssertImpactedMethods(JsonElement root)
+    {
+        Names(root, "kinds").ShouldContain("remote-scripts");
+        Filter(root, "CP-merge-subset-tests").ShouldBe(TestsFilter);
+        var methods = Filter(root, "CP-merge-subset-RemoteScriptContractTests");
+        methods.ShouldStartWith("/*/*/RemoteScriptContractTests/(", Case.Sensitive);
+        methods.ShouldContain("(C849_Deploy_ordering_contract_is_pinned*)", Case.Sensitive);
+        Project(root, "CP-merge-subset-RemoteScriptContractTests").ShouldBe("tests/Antiphon.Tests");
+    }
+
+    private static void AssertWindowsLane(JsonElement root)
+    {
+        Names(root, "kinds").ShouldContain("server-image-push-credentials");
+        Filter(root, "CP-merge-subset-tests").ShouldContain("(ServerImagePushCredentialTests*)", Case.Sensitive);
+        root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(1);
+        Filter(root, "CP-merge-windows-tests", "windowsFilters").ShouldBe("/*/*/(ServerImagePushCredentialTests*)/*");
+        Project(root, "CP-merge-windows-tests", "windowsFilters").ShouldBe("tests/Antiphon.Tests");
     }
 
     private static void RejectWithout(string loop, string guide, string sentence)
@@ -237,16 +329,27 @@ public sealed class MergeHighRadiusSubsetTests
         Should.Throw<ShouldAssertException>(() => AssertDocs(mutantLoop, mutantGuide));
     }
 
-    private static string Filter(JsonElement root, string project)
+    private static string Filter(JsonElement root, string id, string property = "filters") =>
+        Row(root, id, property).GetProperty("treenodeFilter").GetString() ?? "";
+
+    private static string Project(JsonElement root, string id, string property = "filters") =>
+        Row(root, id, property).GetProperty("project").GetString() ?? "";
+
+    private static JsonElement Row(JsonElement root, string id, string property)
     {
-        foreach (var row in root.GetProperty("filters").EnumerateArray())
+        foreach (var row in root.GetProperty(property).EnumerateArray())
         {
-            if (row.GetProperty("project").GetString() == project)
-                return row.GetProperty("treenodeFilter").GetString() ?? "";
+            if (row.TryGetProperty("id", out var rowId) && rowId.GetString() == id)
+                return row;
         }
 
-        throw new ShouldAssertException("missing filter for " + project);
+        throw new ShouldAssertException("missing " + property + " row " + id);
     }
+
+    private static List<string> Ids(JsonElement root, string property) =>
+        root.GetProperty(property).EnumerateArray()
+            .Select(row => row.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "")
+            .ToList();
 
     private static List<string> Names(JsonElement root, string property) =>
         root.GetProperty(property).EnumerateArray().Select(row => row.GetString() ?? "").ToList();
