@@ -196,7 +196,8 @@ public sealed class RunnerCompletionProgressTests
     /// <summary>
     /// CARD-1082 V-9. A Pending tip whose objects are already local attributes the claim against
     /// that tip. The desktop checkout stays at the baseline; an unconfirmed lease-busy result,
-    /// and a Pending result that never read ancestry, stay indeterminate.
+    /// and a Pending result that never read ancestry, stay indeterminate. CARD-1802 D-2: the
+    /// local-object Pending residual says the progress is unverified, not the lease.
     /// </summary>
     [Test]
     public async Task C1082_PendingWithLocalObjectsAttributesClaimAgainstObservedTip()
@@ -240,7 +241,7 @@ public sealed class RunnerCompletionProgressTests
         var closed = await Evaluator(world).EvaluateAsync(
             world.Task, "Done.\n" + Claim(world, s), unproven, CancellationToken.None);
         closed.IsIndeterminate.ShouldBeTrue(closed.Reason);
-        closed.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        closed.Reason.ShouldBe(RemoteSettlementSyncReasons.ProgressUnverified);
         (await world.HeadAsync()).ShouldBe(world.Baseline);
     }
 
@@ -272,14 +273,16 @@ public sealed class RunnerCompletionProgressTests
         var unproven = await Evaluator(world).EvaluateAsync(
             world.Task, "Done.", prepared with { SourceDescends = null }, CancellationToken.None);
         unproven.IsIndeterminate.ShouldBeTrue(unproven.Reason);
-        unproven.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        unproven.Reason.ShouldBe(RemoteSettlementSyncReasons.ProgressUnverified);
         (await world.HeadAsync()).ShouldBe(world.Baseline);
         world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
     }
 
     /// <summary>
-    /// CARD-1082 V-11 / G-7. Pending whose objects were never fetched stays indeterminate with
-    /// the lease reason. The locality read is what makes skipping <c>RevParseCommitAsync</c> red.
+    /// CARD-1082 V-11 / G-7. Pending whose objects were never fetched stays indeterminate. The
+    /// locality read is what makes skipping <c>RevParseCommitAsync</c> red. CARD-1802 D-1: without
+    /// a server-read ancestry that is the unfetched owned tip the sweep fetches; with an ancestry
+    /// read but no local object it is the unverified residual.
     /// </summary>
     [Test]
     public async Task C1082_PendingWithoutLocalObjectsIsIndeterminate()
@@ -294,7 +297,7 @@ public sealed class RunnerCompletionProgressTests
             world.Task, "Done.\n" + Claim(world, s), prepared, CancellationToken.None);
 
         evaluated.IsIndeterminate.ShouldBeTrue(evaluated.Reason);
-        evaluated.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        evaluated.Reason.ShouldBe(RemoteSettlementSyncReasons.ProgressUnverified);
         evaluated.IsProgress.ShouldBeFalse();
         evaluated.Evidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
         evaluated.Evidence.RemoteSync.ObservedSha.ShouldBe(s);
@@ -308,7 +311,9 @@ public sealed class RunnerCompletionProgressTests
         var unproven = await Evaluator(world).EvaluateAsync(
             world.Task, "Done.\n" + Claim(world, s), prepared with { SourceDescends = null }, CancellationToken.None);
         unproven.IsIndeterminate.ShouldBeTrue(unproven.Reason);
-        unproven.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        unproven.Reason.ShouldBe(RemoteSettlementSyncReasons.SourceUnfetched);
+        unproven.IsProgress.ShouldBeFalse();
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
         (await world.HeadAsync()).ShouldBe(world.Baseline);
     }
 
