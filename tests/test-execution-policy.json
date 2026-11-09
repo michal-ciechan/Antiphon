@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "9cf98d229e32ca52e76d6b8946856776c7c390e3027e2eae191f5042aca3b697",
+  "policyHash": "b594eb68d7e5dc36e3a8084a88669f430fb205528da69f076ec91e58cf912a32",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -862,6 +862,16 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Unix PTY argv contract requires a Unix PTY and node. The case remains required on Linux.",
           "owner": "CARD-0590"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "ClaudeProjectTrustTests",
+          "methods": [
+            "Seed_preserves_the_config_file_mode"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: Unix file modes exist only on Unix. The case remains required on Linux.",
+          "owner": "CARD-1792"
         },
         {
           "suite": "session-runner",

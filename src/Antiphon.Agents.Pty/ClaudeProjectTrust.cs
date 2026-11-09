@@ -223,7 +223,7 @@ public static class ClaudeProjectTrust
         {
             try
             {
-                File.WriteAllText(tmp, json, Utf8NoBom);
+                WriteTemp(path, tmp, json);
                 CopyUnixMode(path, tmp);
                 File.Move(tmp, path, overwrite: true);
                 return true;
@@ -242,8 +242,34 @@ public static class ClaudeProjectTrust
         return false;
     }
 
-    // Rename keeps the temp inode's mode. Copy the original before the replace so a
-    // 0600 config does not come back as the umask default.
+    // Rename keeps the temp inode's mode. Open the temp at the source mode before any
+    // JSON is written, then copy the mode again so a umask cannot leave a 0600 config
+    // as the create default.
+    private static void WriteTemp(string source, string tmp, string json)
+    {
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            try
+            {
+                options.UnixCreateMode = File.GetUnixFileMode(source);
+            }
+            catch (PlatformNotSupportedException)
+            {
+                // Non-Unix hosts have no mode to apply at creation.
+            }
+        }
+
+        var bytes = Utf8NoBom.GetBytes(json);
+        using var stream = new FileStream(tmp, options);
+        stream.Write(bytes);
+    }
+
     private static void CopyUnixMode(string source, string destination)
     {
         if (OperatingSystem.IsWindows())
