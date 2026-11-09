@@ -139,9 +139,7 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(60_000)]
     public async Task CheckRefusesSdkOutsideCommittedPolicy(string recordedSdk)
     {
-        await using var repo = await ScriptRepoAsync(new() { ["App/App.csproj"] = SdkProject("") });
-        var update = await RunScriptAsync(repo.Root, "-Update");
-        update.ExitCode.ShouldBe(0, update.Text);
+        await using var repo = await UpdatedScriptRepoAsync(new() { ["App/App.csproj"] = SdkProject("") });
         var record = await File.ReadAllLinesAsync(repo.Full(EvaluationFile));
         record[1] = recordedSdk;
         await File.WriteAllLinesAsync(repo.Full(EvaluationFile), record);
@@ -158,13 +156,11 @@ public sealed partial class LandGraphEvaluationTests
     public async Task CheckDifferentSdkRequiresEvaluation(string variant)
     {
         var project = variant == "sdk-doc-glob" ? "App.csproj" : "App/App.csproj";
-        await using var repo = await ScriptRepoAsync(new()
+        await using var repo = await UpdatedScriptRepoAsync(new()
         {
             [project] = variant == "sdk-doc-glob" ? "<Project />" : SdkProject(""),
             ["docs/guide.md"] = "# SDK default item witness",
         });
-        var update = await RunScriptAsync(repo.Root, "-Update");
-        update.ExitCode.ShouldBe(0, update.Text);
         var record = await File.ReadAllLinesAsync(repo.Full(EvaluationFile));
         if (variant == "sdk-doc-glob")
         {
@@ -670,6 +666,29 @@ public sealed partial class LandGraphEvaluationTests
                 StandardError = stderr.ToString(),
             };
         }).WaitAsync(TimeSpan.FromSeconds(360));
+    }
+
+    // -Update on identical fixture files writes identical records (the fixture solution's project GUIDs come from
+    // the project paths). A test that only needs an updated fixture as its starting point gets a fresh fixture with
+    // the records of the first real -Update for those files; it still runs its own -Check. Tests about -Update
+    // itself call RunScriptAsync directly.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Task<(byte[] Manifest, byte[] Evaluation)>>>
+        UpdatedRecords = new(StringComparer.Ordinal);
+
+    internal static async Task<AuditRepo> UpdatedScriptRepoAsync(Dictionary<string, string> files)
+    {
+        var key = string.Join("\0", files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => f.Key + "\0" + f.Value));
+        var records = await UpdatedRecords.GetOrAdd(key, _ => new Lazy<Task<(byte[], byte[])>>(async () =>
+        {
+            await using var first = await ScriptRepoAsync(new Dictionary<string, string>(files));
+            var update = await RunScriptAsync(first.Root, "-Update");
+            update.ExitCode.ShouldBe(0, update.Text);
+            return (await File.ReadAllBytesAsync(first.Full(ManifestFile)), await File.ReadAllBytesAsync(first.Full(EvaluationFile)));
+        })).Value;
+        var repo = await ScriptRepoAsync(new Dictionary<string, string>(files));
+        await File.WriteAllBytesAsync(repo.Full(ManifestFile), records.Manifest);
+        await File.WriteAllBytesAsync(repo.Full(EvaluationFile), records.Evaluation);
+        return repo;
     }
 
     internal static async Task<ToolRun> RunScriptAsync(string root, string mode,

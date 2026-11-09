@@ -95,7 +95,7 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(300_000)]
     public async Task C1780_RealRepositoryFlagsReferencesOutsideTheSolution()
     {
-        var run = await AuditRepo.RunToolAtAsync(RepoRoot());
+        var run = await AuditRepo.RealRepositoryRunAsync();
         run.ExitCode.ShouldBe(0, run.Text);
         var flags = run.Lines.Where(line => line.StartsWith("outside-solution:", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)

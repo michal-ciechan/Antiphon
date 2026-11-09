@@ -533,6 +533,12 @@ public sealed partial class LandGraphEvaluationTests
         public async Task<ToolRun> RunToolAsync(params string[] extra)
             => await RunToolAtAsync(Root, extra);
 
+        /// <summary>The real repository's evaluation, run once per process: several tests assert different lines
+        /// of the same output, and the repository does not change during a run.</summary>
+        internal static Task<ToolRun> RealRepositoryRunAsync() => RealRepositoryRun.Value;
+
+        private static readonly Lazy<Task<ToolRun>> RealRepositoryRun = new(() => RunToolAtAsync(RepoRoot()));
+
         internal static async Task<ToolRun> RunToolAtAsync(string root, params string[] extra)
             => await RunToolWithEnvironmentAtAsync(root, null, extra);
 

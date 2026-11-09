@@ -96,7 +96,7 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(300_000)]
     public async Task C1483_S4_RealRepositoryApproves()
     {
-        var run = await AuditRepo.RunToolAtAsync(RepoRoot());
+        var run = await AuditRepo.RealRepositoryRunAsync();
         run.ExitCode.ShouldBe(0, run.Text);
         run.Lines.ShouldContain("approved", run.Text);
         run.Text.ShouldContain("not-built: docs/investigations/evidence/card-0462/Reproduce.csproj");
