@@ -622,7 +622,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             },
             async (response, token) =>
             {
-                var buffer = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.PhoneBuffer), token)
+                var buffer = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.HttpOf<RunnerBufferDto>()), token)
                     ?? throw new InvalidOperationException("Session runner returned an empty buffer response.");
                 return new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence);
             }, ct);
@@ -632,7 +632,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             EnsureRunnerSuccessAsync,
             async (response, token) =>
             {
-                var snapshot = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.PhoneSnapshot), token)
+                var snapshot = await response.Content.ReadFromJsonAsync(RunnerReadJson.Use(RunnerReadJson.HttpOf<RunnerSnapshotDto>()), token)
                     ?? throw new InvalidOperationException("Session runner returned an empty snapshot response.");
                 return new SessionRunnerSnapshotDto(
                     snapshot.SessionId,
@@ -701,7 +701,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         TranscriptSinceRead.ReadAsync(sessionId, _transcriptHold, cursorEnabled: true,
             (since, stream, token) => ReadGeneratedAsync(
                 $"sessions/{sessionId:D}/transcript" + (stream is null ? "" : TranscriptSince.Query(since, stream)),
-                ResilienceOperations.RunnerTranscript, RunnerReadJson.PhoneTranscript, token),
+                ResilienceOperations.RunnerTranscript, RunnerReadJson.HttpOf<RunnerTranscriptDto>(), token),
             MapTranscriptDto, ct);
 
     private static SessionRunnerTranscriptDto MapTranscriptDto(RunnerTranscriptDto transcript) =>
