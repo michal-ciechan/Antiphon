@@ -381,6 +381,14 @@ function Test-C1590_GoneRootPassed {
     $roots = New-C1590GoneFirstRoot
     Assert-Fx ((-not (Test-Path -LiteralPath $roots.Gone)) -and (Test-Path -LiteralPath (Join-Path $roots.Kept 'seed/.git')) -and $script:FixtureRoots.Count -eq 2) 'gone-root-fixture'
 }
+# CARD-1590: a passed run whose fixture ran a real Full workload (release clone, origin and
+# seed repositories) must leave no nested repository behind in the results directory.
+function Test-C1590_WorkloadPassed {
+    $fx = New-Fx; $request = New-Request $fx 'Full'; [void](Bind-Request $request)
+    $execution = Invoke-Workload $fx $request
+    Assert-Fx ($execution.ExitCode -eq 0 -and $execution.testsPassed -and @($execution.Selected).Count -gt 0 -and
+        (Test-Path -LiteralPath (Join-Path $fx.Clone '.git')) -and (Test-Path -LiteralPath (Join-Path $fx.Seed '.git'))) 'workload-fixture'
+}
 function Test-C1590_GoneRootFailed {
     [void](New-C1590GoneFirstRoot)
     throw 'c1590-original-failure'

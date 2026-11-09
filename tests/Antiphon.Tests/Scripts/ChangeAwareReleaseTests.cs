@@ -32,13 +32,14 @@ public sealed class ChangeAwareReleaseTests
         AssertNoFixtureRepository(root, output);
     });
 
-    // Budget: 2x the 358 s direct run on loaded server2 (2026-11-03, n=1; provisional).
-    [Test, Timeout(780_000)]
-    public Task C1590_PassedRunRemovesFixtureRoots() => RunOwnedRoot("C1313_BaselineAuthority", FilterHostArguments, TimeSpan.FromSeconds(720), (result, root) =>
+    // A dedicated passing case: one fixture plus one real Full workload in its release clone.
+    [Test]
+    public Task C1590_PassedRunRemovesFixtureRoots() => RunOwnedRoot("C1590_WorkloadPassed", [], ScriptHarnessOptions.Default.ExecutionBudget, (result, root) =>
     {
         var output = result.Stdout + result.Stderr;
         result.ExitCode.ShouldBe(0, output);
         output.ShouldContain("C487 HARNESS EXIT CODE: 0", Case.Sensitive, output);
+        output.ShouldContain("PASS C1313 workload-fixture", Case.Sensitive, output);
         AssertNoFixtureRepository(root, output);
     });
 
@@ -124,7 +125,7 @@ public sealed class ChangeAwareReleaseTests
             {
                 AdditionalArguments = FilterHostArguments,
                 // CARD-1722: BaselineAuthority took 358 s on loaded server2 (2026-11-03,
-                // n=1, provisional; same workload as C1590_PassedRunRemovesFixtureRoots).
+                // n=1, provisional; formerly also the C1590 passed-run workload).
                 // Investigate 5c10955b's five rc samples: median 263.002 s, sample p95
                 // 294.207 s. Round 2x the loaded sample to 720 s. ParameterHops took
                 // 183.8 s in Windows g120 (n=1, provisional); 600 s is the commissioned
