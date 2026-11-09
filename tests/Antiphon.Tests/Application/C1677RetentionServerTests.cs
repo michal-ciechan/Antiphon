@@ -1589,6 +1589,11 @@ public sealed class C1677RetentionServerTests
         logs.Items.Any(e => e.Level == LogLevel.Warning && e.Category.Contains(nameof(RunnerWorktreeRetentionService), StringComparison.Ordinal)
                 && e.Message.Contains(TickLockId, StringComparison.Ordinal))
             .ShouldBeTrue("the release warning must name the tick id; saw: " + logs.Render());
+        // CARD-1815 (A-2). pg_terminate_backend(pg_backend_pid()) succeeds by killing this backend, and PostgreSQL
+        // reports that kill as FATAL 57P01. That exception is the break working, so it must not be logged as a failure.
+        logs.Items.Any(e => e.Level == LogLevel.Warning && e.Category.Contains(nameof(RunnerWorktreeRetentionService), StringComparison.Ordinal)
+                && e.Message.Contains("tick lock break failed", StringComparison.Ordinal))
+            .ShouldBeFalse("a 57P01 break succeeded; saw: " + logs.Render());
 
         var probeCs = new NpgsqlConnectionStringBuilder(w.Rig.Schema.ConnectionString) { Pooling = false }.ConnectionString;
         await using var probe = new NpgsqlConnection(probeCs);
@@ -1698,6 +1703,70 @@ public sealed class C1677RetentionServerTests
         {
             await service.UnlockAcrossProcessesAsync();
             w.Ticks.Exit();
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1815_a_foreign_unpooled_tick_lock_is_not_this_session()
+    {
+        // CARD-1815 (A-1). The re-check must be this backend (pid = pg_backend_pid()). A second unpooled session that
+        // holds the same tick key after this session released it is not this session's lock. Without that filter the
+        // tick would see the other holder and send a destructive retain. The run stops tick_lock_lost and the path stays.
+        await using var w = await World.StartAsync();
+        var id = await w.EligibleAsync();
+        await using var scope = w.Rig.Provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<RunnerWorktreeRetentionService>();
+        var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
+        var holderCs = new NpgsqlConnectionStringBuilder(w.Rig.Schema.ConnectionString) { Pooling = false }.ConnectionString;
+        NpgsqlConnection? holder = null;
+        w.Ticks.TryEnter().ShouldBeTrue();
+        try
+        {
+            (await service.TryLockAcrossProcessesAsync()).ShouldBeTrue();
+            await using (var ownPid = db.Database.GetDbConnection().CreateCommand())
+            {
+                ownPid.CommandText = "SELECT pg_backend_pid()";
+                var own = await ownPid.ExecuteScalarAsync();
+                await db.Database.ExecuteSqlRawAsync(
+                    "SELECT pg_advisory_unlock(hashtextextended('antiphon.runner-worktree-retention.tick', 0))");
+                holder = new NpgsqlConnection(holderCs);
+                await holder.OpenAsync();
+                await using var hold = holder.CreateCommand();
+                hold.CommandText = $"SELECT pg_try_advisory_lock(hashtextextended('{TickLockId}', 0))";
+                (await hold.ExecuteScalarAsync() is true).ShouldBeTrue("the other unpooled session must hold the tick key");
+                hold.CommandText = "SELECT pg_backend_pid()";
+                var other = await hold.ExecuteScalarAsync();
+                Convert.ToInt64(other).ShouldNotBe(Convert.ToInt64(own), "the holder must be a different backend from this tick session");
+            }
+
+            var result = (await service.RunEnteredAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20))).ShouldHaveSingleItem();
+            result.Sent.ShouldBe(0);
+            result.Stopped.ShouldBe("tick_lock_lost");
+            (await w.RunAsync(result.RunId)).FinishedAt.ShouldNotBeNull();
+            var row = (await w.RunRowsAsync(result.RunId)).Single(r => r.ReasonCode == "tick_lock_lost");
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+            w.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceRetain).ShouldBe(0);
+            (await w.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(World.PathOf(id));
+        }
+        finally
+        {
+            try
+            {
+                if (holder is not null)
+                {
+                    await using var release = holder.CreateCommand();
+                    release.CommandText = $"SELECT pg_advisory_unlock(hashtextextended('{TickLockId}', 0))";
+                    await release.ExecuteScalarAsync();
+                }
+            }
+            finally
+            {
+                if (holder is not null)
+                    await holder.DisposeAsync();
+                await service.UnlockAcrossProcessesAsync();
+                w.Ticks.Exit();
+            }
         }
     }
 
