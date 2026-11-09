@@ -107,6 +107,17 @@ function New-C1507Stop($World) {
         return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
     }.GetNewClosure()
 }
+function Get-C1507CommandLine([int]$ProcessId) {
+    $path = '/proc/' + [string]$ProcessId + '/cmdline'
+    if (-not [IO.File]::Exists($path)) { return $null }
+    $bytes = [IO.File]::ReadAllBytes($path)
+    if ($bytes.Length -eq 0) { return $null }
+    $text = (New-Object System.Text.UTF8Encoding $false).GetString($bytes)
+    $text = $text.TrimEnd([char]0)
+    $text = $text.Replace([string]([char]0), ' ')
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    return $text
+}
 
 function C1507_StopOrder {
     $world = New-C1507World
@@ -294,6 +305,160 @@ function C1507_WindowsTreeStopRefusesOffWindows {
         'Invoke-QualificationWindowsTreeStop refuses off Windows and records taskkill /T /F' ($result.reason + ' ' + $result.command)
 }
 
+function C1507_TreeDescendant {
+    $world = New-C1507World
+    $world.map['4100'] = 'alive'
+    $world.map['4200'] = 'alive'
+    $world.map['4300'] = 'absent'
+    $world.children = @{ '4100' = @('4200') }
+    $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    $stop = {
+        param([int]$ProcessId)
+        $world.calls.Add($ProcessId)
+        $pending = New-Object System.Collections.Generic.List[string]
+        $pending.Add([string]$ProcessId)
+        $seen = @{}
+        $index = 0
+        while ($index -lt $pending.Count) {
+            $current = $pending[$index]
+            $index++
+            if ($seen.ContainsKey($current)) { continue }
+            $seen[$current] = $true
+            $world.map[$current] = 'absent'
+            $kids = $null
+            if ($world.children.ContainsKey($current)) { $kids = $world.children[$current] }
+            if ($kids) {
+                foreach ($kid in @($kids)) { $pending.Add([string]$kid) }
+            }
+        }
+        return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
+    }.GetNewClosure()
+    $result = Invoke-C1507 $fixture (New-C1507Observe $world) $stop
+    $calls = $world.calls.ToArray()
+    Assert-C1507 ($result.exitCode -eq 0 -and $calls.Count -eq 1 -and $calls[0] -eq 4100 -and $result.kills.Count -eq 1 -and $result.kills[0].phase -ceq 'supervisor' -and $result.kills[0].command -ceq 'taskkill.exe /PID 4100 /T /F' -and $result.lockAction -ceq 'moved') `
+        'a driver already absent after the supervisor tree kill is one kill and the lock moves' ($result.exitCode.ToString() + ' calls=' + ($calls -join ',') + ' lock=' + $result.lockAction + ' ' + $result.detail)
+
+    $callsR = New-Object System.Collections.Generic.List[object]
+    $phase = @{ killed = $false }
+    $observeR = {
+        param($Record)
+        $id = [int]$Record.pid
+        if ($id -eq 4100) {
+            if ($phase.killed) { return [pscustomobject]@{ status = 'absent'; reason = 'absent' } }
+            return [pscustomobject]@{ status = 'alive'; reason = 'alive' }
+        }
+        if ($id -eq 4200) {
+            if ($phase.killed) { return [pscustomobject]@{ status = 'reused'; reason = 'start-mismatch' } }
+            return [pscustomobject]@{ status = 'alive'; reason = 'alive' }
+        }
+        return [pscustomobject]@{ status = 'absent'; reason = 'absent' }
+    }.GetNewClosure()
+    $stopR = {
+        param([int]$ProcessId)
+        $callsR.Add($ProcessId)
+        if ($ProcessId -eq 4100) { $phase.killed = $true }
+        return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
+    }.GetNewClosure()
+    $reusedFixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    $reusedBefore = Get-C1507Hash (Join-Path $reusedFixture.Coord 'native-run.lock')
+    $reusedAfter = Invoke-C1507 $reusedFixture $observeR $stopR
+    Assert-C1507 ($reusedAfter.exitCode -eq 3 -and $reusedAfter.outcome -ceq 'incomplete' -and $reusedAfter.lockAction -ceq 'not-attempted' -and $callsR.Count -eq 1 -and $callsR[0] -eq 4100 -and (Get-C1507Hash (Join-Path $reusedFixture.Coord 'native-run.lock')) -ceq $reusedBefore) `
+        'a reused driver after a kill stays an incomplete stop and keeps the lock' ($reusedAfter.detail + ' calls=' + ($callsR -join ','))
+
+    $callsU = New-Object System.Collections.Generic.List[object]
+    $phaseU = @{ killed = $false }
+    $observeU = {
+        param($Record)
+        $id = [int]$Record.pid
+        if ($id -eq 4100) {
+            if ($phaseU.killed) { return [pscustomobject]@{ status = 'absent'; reason = 'absent' } }
+            return [pscustomobject]@{ status = 'alive'; reason = 'alive' }
+        }
+        if ($id -eq 4200) {
+            if ($phaseU.killed) { return [pscustomobject]@{ status = 'unknown'; reason = 'process-probe-error' } }
+            return [pscustomobject]@{ status = 'alive'; reason = 'alive' }
+        }
+        return [pscustomobject]@{ status = 'absent'; reason = 'absent' }
+    }.GetNewClosure()
+    $stopU = {
+        param([int]$ProcessId)
+        $callsU.Add($ProcessId)
+        if ($ProcessId -eq 4100) { $phaseU.killed = $true }
+        return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
+    }.GetNewClosure()
+    $unknownFixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    $unknownBefore = Get-C1507Hash (Join-Path $unknownFixture.Coord 'native-run.lock')
+    $unknownAfter = Invoke-C1507 $unknownFixture $observeU $stopU
+    Assert-C1507 ($unknownAfter.exitCode -eq 3 -and $unknownAfter.outcome -ceq 'incomplete' -and $unknownAfter.lockAction -ceq 'not-attempted' -and $callsU.Count -eq 1 -and (Get-C1507Hash (Join-Path $unknownFixture.Coord 'native-run.lock')) -ceq $unknownBefore) `
+        'an unknown driver after a kill stays an incomplete stop and keeps the lock' $unknownAfter.detail
+}
+
+function C1507_QuotedReason {
+    $gone = New-C1507Exited
+    $fixture = New-C1507Fixture $gone $gone $null
+    $reason = 'probe "outcome=forged" lock=forged'
+    $unexpected = { param([int]$ProcessId) throw ('unexpected stop ' + $ProcessId) }
+    $result = Invoke-C1507 $fixture $null $unexpected $reason
+    $logPath = Join-Path $fixture.Task 'supervisor.log'
+    $log = ''
+    if ([IO.File]::Exists($logPath)) { $log = [IO.File]::ReadAllText($logPath) }
+    $escaped = $log -match 'reason="probe \\"outcome=forged\\" lock=forged" outcome=stopped lock=absent'
+    Assert-C1507 ($result.exitCode -eq 0 -and $result.outcome -ceq 'stopped' -and $escaped -and $log -notmatch 'outcome=forged' -and $log -notmatch 'lock=forged') `
+        'a quoted stop reason is escaped and cannot forge outcome or lock fields' $log
+}
+
+function C1507_LogWriteFailure {
+    $gone = New-C1507Exited
+    $fixture = New-C1507Fixture $gone $gone $null
+    $logPath = Join-Path $fixture.Task 'supervisor.log'
+    [void][IO.Directory]::CreateDirectory($logPath)
+    $unexpected = { param([int]$ProcessId) throw ('unexpected stop ' + $ProcessId) }
+    $threw = $false
+    $result = $null
+    try { $result = Invoke-C1507 $fixture $null $unexpected }
+    catch { $threw = $true }
+    $json = ''
+    if ($null -ne $result) { $json = ($result | ConvertTo-Json -Compress -Depth 6) }
+    Assert-C1507 ((-not $threw) -and $null -ne $result -and $result.exitCode -eq 0 -and $result.outcome -ceq 'stopped' -and $json -match '"outcome":"stopped"' -and $json -match '"exitCode":0') `
+        'a supervisor.log write failure still returns a JSON stop result' ($threw.ToString() + ' ' + $json)
+}
+
+function C1507_CommandLineIdentity {
+    $self = [Diagnostics.Process]::GetCurrentProcess()
+    $started = $self.StartTime.ToUniversalTime().ToString('o')
+    $actual = Get-C1507CommandLine $self.Id
+    Assert-C1507 (-not [string]::IsNullOrWhiteSpace($actual)) 'the live process command line is readable for the identity witness' 'empty'
+    $calls = New-Object System.Collections.Generic.List[object]
+    $state = @{ dead = $false }
+    $observe = {
+        param($Record)
+        if ($state.dead) { return [pscustomobject]@{ status = 'absent'; reason = 'absent' } }
+        return [pscustomobject]@{ status = 'alive'; reason = 'injected' }
+    }.GetNewClosure()
+    $stop = {
+        param([int]$ProcessId)
+        $calls.Add($ProcessId)
+        $state.dead = $true
+        return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
+    }.GetNewClosure()
+    $wrong = New-C1507Fixture ([ordered]@{ pid = $self.Id; processStartedAt = $started; commandLine = 'not-the-recorded-command' }) $null $null
+    $wrongResult = Invoke-C1507 $wrong $observe $stop
+    Assert-C1507 ($wrongResult.exitCode -eq 2 -and $calls.Count -eq 0 -and $wrongResult.detail -ceq 'supervisor-reused') `
+        'a recorded command line that does not match the live process authorizes no kill' ($wrongResult.detail + ' calls=' + $calls.Count)
+    $calls.Clear()
+    $state.dead = $false
+    $matched = New-C1507Fixture ([ordered]@{ pid = $self.Id; processStartedAt = $started; commandLine = $actual }) $null $null
+    $matchedResult = Invoke-C1507 $matched $observe $stop
+    Assert-C1507 ($matchedResult.exitCode -eq 0 -and $calls.Count -eq 1 -and $calls[0] -eq $self.Id) `
+        'a recorded command line that matches the live process still stops that pid' ($matchedResult.detail + ' calls=' + $calls.Count)
+    $calls.Clear()
+    $state.dead = $false
+    $plain = New-C1507Fixture ([ordered]@{ pid = $self.Id; processStartedAt = $started }) $null $null
+    $plainResult = Invoke-C1507 $plain $observe $stop
+    Assert-C1507 ($plainResult.exitCode -eq 0 -and $calls.Count -eq 1 -and $calls[0] -eq $self.Id) `
+        'a record without a command line keeps the pid and start-time check' ($plainResult.detail + ' calls=' + $calls.Count)
+}
+
 function C1507_EntryRefusesOffWindows {
     $platform = Get-QualificationStopPlatform
     if ($platform -cne 'Unix') {
@@ -307,8 +472,8 @@ function C1507_EntryRefusesOffWindows {
     Assert-C1507 ($code -eq 5 -and $text -match 'windows-only' -and -not [IO.File]::Exists((Join-Path $fixture.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')) -ceq $lockBefore) `
         'stop-supervisor.ps1 refuses on this host before any kill or lock change' ($code.ToString() + ' ' + $text)
     $noConfirm = @(& $script:pwsh -NoProfile -NonInteractive -File $script:stopScript -TaskRoot $fixture.Task -CoordinationRoot $fixture.Coord -RunId $fixture.RunId -Reason 'operator replacement' 2>&1) -join "`n"
-    Assert-C1507 ($LASTEXITCODE -eq 2 -and $noConfirm -match 'Confirm') `
-        'stop-supervisor.ps1 without -Confirm does not stop anything' ($LASTEXITCODE.ToString() + ' ' + $noConfirm)
+    Assert-C1507 ($LASTEXITCODE -eq 2 -and $noConfirm -match 'Confirm' -and $noConfirm -match 'dry-run' -and $noConfirm -match 'pid=4100' -and $noConfirm -match 'pid=4200' -and $noConfirm -match '2026-11-09T00:00:00.0000000Z' -and $noConfirm -match 'ownerPid=4300' -and $noConfirm -match 'move-if-owner-dead' -and -not [IO.File]::Exists((Join-Path $fixture.Task 'supervisor.log')) -and (Get-C1507Hash (Join-Path $fixture.Coord 'native-run.lock')) -ceq $lockBefore) `
+        'stop-supervisor.ps1 without -Confirm prints the planned kills and changes nothing' ($LASTEXITCODE.ToString() + ' ' + $noConfirm)
     $bytes = [IO.File]::ReadAllBytes($script:stopScript) + [IO.File]::ReadAllBytes($lib)
     $ascii = $true
     foreach ($b in $bytes) { if ($b -gt 127) { $ascii = $false; break } }
@@ -320,6 +485,10 @@ try {
         'C1507_StopOrder',
         'C1507_LockClear',
         'C1507_RunLog',
+        'C1507_TreeDescendant',
+        'C1507_QuotedReason',
+        'C1507_LogWriteFailure',
+        'C1507_CommandLineIdentity',
         'C1507_WindowsTreeStopRefusesOffWindows',
         'C1507_EntryRefusesOffWindows'
     )
