@@ -3,7 +3,8 @@
 function ConvertTo-TestSelectionCanonicalJson {
     param($Value)
     if ($null -eq $Value) { return 'null' }
-    if ($Value -is [string]) { return ConvertTo-Json -InputObject $Value -Compress }
+    # Printable ASCII without a quote or backslash is its own JSON body; anything else is ConvertTo-Json's.
+    if ($Value -is [string]) { if ($Value -cmatch '\A[\x20\x21\x23-\x5b\x5d-\x7e]*\z') { return '"' + $Value + '"' }; return ConvertTo-Json -InputObject $Value -Compress }
     if ($Value -is [bool]) { return $Value.ToString().ToLowerInvariant() }
     if ($Value -is [System.Collections.IDictionary]) {
         $keys = [string[]]@($Value.Keys); [Array]::Sort($keys, [StringComparer]::Ordinal)
@@ -131,7 +132,8 @@ function Read-TestSelectionCatalog {
 
 function Invoke-TestSelectionGit {
     param([string]$RepositoryRoot, [string[]]$Arguments, [int[]]$AllowedExit = @(0))
-    . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+    # Loaded once: a dot-source here keeps only the compiled runner type past this call.
+    if(-not ('Antiphon.Checkpoints.CheckpointProcessRunner' -as [type])){. (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')}
     $start=[Diagnostics.ProcessStartInfo]::new('git')
     $start.WorkingDirectory=[IO.Path]::GetFullPath($RepositoryRoot)
     $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
@@ -167,6 +169,18 @@ function Get-TestSelectionSorted {
 }
 
 function Get-TestSelection {
+    # Every git call of a selection reads objects of the two commits; none can change the filter/textconv
+    # driver settings the runner asks git for before each command. That answer is reused for this selection
+    # (60 s per directory) and the caller's setting is restored after it.
+    param([string]$RepositoryRoot,[string]$BaselineSha,[string]$CandidateSha,[string]$Profile='rc')
+    if(-not ('Antiphon.Checkpoints.CheckpointProcessRunner' -as [type])){. (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')}
+    $savedDriverCache=[Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds
+    [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds=60000
+    try{return Get-TestSelectionCore $RepositoryRoot $BaselineSha $CandidateSha $Profile}
+    finally{[Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds=$savedDriverCache}
+}
+
+function Get-TestSelectionCore {
     param([string]$RepositoryRoot,[string]$BaselineSha,[string]$CandidateSha,[string]$Profile='rc')
     foreach($sha in @($BaselineSha,$CandidateSha)){
         if($sha -cnotmatch '^[0-9a-fA-F]{40}$'){throw 'full-commit-sha-required'}
