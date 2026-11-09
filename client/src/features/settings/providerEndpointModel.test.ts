@@ -32,6 +32,18 @@ describe('endpointFromDraft userinfo', () => {
     ['unparsed http authority', `http://operator:${SENTINEL}@`],
     ['scheme-less user:pass@host', `operator:${SENTINEL}@proxy.test`],
     ['scheme-less username@host', `${SENTINEL}@proxy.test`],
+    ['ftp scheme userinfo', `ftp://operator:${SENTINEL}@proxy.test/v1`],
+    ['websocket scheme userinfo', `ws://operator:${SENTINEL}@proxy.test`],
+    ['file scheme userinfo', `file://operator:${SENTINEL}@host/`],
+    ['git+https scheme userinfo', `git+https://operator:${SENTINEL}@proxy.test`],
+    ['scheme-relative userinfo', `//operator:${SENTINEL}@proxy.test/v1`],
+    ['scheme-less user at host with a path', `${SENTINEL}@proxy.test/v1`],
+    ['scheme-less user at host with a port', `${SENTINEL}@proxy.test:8080`],
+    ['scheme typo htps userinfo', `htps://u:${SENTINEL}@h`],
+    ['a tab inside a non-http authority, because the username is still a credential', `ftp://opera\ttor:${SENTINEL}@proxy.test/v1`],
+    ['a newline inside a non-http authority, because the password is still a credential', `ws://operator:${SENTINEL}@pro\nxy.test`],
+    ['an uppercase FTP scheme, because the scheme case does not remove userinfo', `FTP://operator:${SENTINEL}@proxy.test/v1`],
+    ['userinfo on an IPv6 host, because brackets do not remove the username or password', `wss://operator:${SENTINEL}@[::1]:8443/v1`],
   ])('refuses %s and does not return the URL', (_name, baseUrl) => {
     const result = endpointFromDraft({ baseUrl, apiKeyName: 'claude-proxy-key' }, 'Grok', false)
     expect(result.endpoint).toBeNull()
@@ -61,6 +73,12 @@ describe('endpointFromDraft userinfo', () => {
     ['loopback', 'http://127.0.0.1:8080'],
     ['at sign only in the path', 'http://u:1234/S3@h/'],
     ['empty userinfo', 'http://@host'],
+    ['percent-encoded %40 in the host because it is not a username or password', 'https://user%40proxy.test/v1'],
+    ['a special-scheme backslash that places @ in the path', 'http://good.example\\@evil'],
+    ['a trailing-dot host because the dot is not userinfo', 'https://proxy.test./v1'],
+    ['a port-only http URL because a port is not a password', 'http://:8080/'],
+    ['an @ only in the query because it is not in the authority', 'https://proxy.test?x=a@b'],
+    ['an @ only in the fragment because it is not in the authority', 'https://proxy.test#a@b'],
   ])('still accepts %s', (_name, baseUrl) => {
     expect(endpointFromDraft({ baseUrl, apiKeyName: 'claude-proxy-key' }, 'Grok', false)).toEqual({
       endpoint: { baseUrl, apiKeyName: 'claude-proxy-key' },
