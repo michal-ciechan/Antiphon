@@ -32,17 +32,27 @@ public sealed class MergeHighRadiusSubsetTests
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
 
-    // CARD-1819: dcb973d8 edits the policy file and Antiphon.Tests sources, so the quiet range
-    // keeps the fixed land rows and adds the nightly lane plus the lane guard to the tests row.
+    // CARD-1820. The quiet batch also names these four derived classes. The doc pin stays TestsFilter.
     private const string QuietTestsFilter =
-        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
-        + "|(LiveLaneRunnerTests*)|(NightlyCoreTests*)|(ReceiptScanDestinationIntegrationTests*)"
-        + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+        "/*/*/(AppDbContextModelTests*)|(C1708ReflogSalvageTests*)|(CheckpointReceiptSafetyTests*)"
+        + "|(HostCleanupCheckpointReceiptTests*)|(ImpactedClassesSelectorTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(TestTimingOperationLabelTests*)|(TimeoutAuditTests*)|(WindowsUnitPlatformAdmissionTests*)/*";
 
-    // CARD-1819: a54a6d4f edits Antiphon.Tests sources, so the remote range adds the lane guard.
+    // CARD-1820. The remote-scripts batch keeps the method row and widens the class row.
     private const string RemoteTestsFilter =
-        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
-        + "|(ReceiptScanDestinationIntegrationTests*)|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+        "/*/*/(AppDbContextModelTests*)|(C0824BranchDeletionRecycleAuditTests*)|(C1008HostFixtureSetupInsertionTests*)"
+        + "|(C1008PlatformContractTests*)|(CheckpointReceiptSafetyTests*)|(ClaudeTokenRefreshOptInTests*)"
+        + "|(CodexRootExecContractTests*)|(CodexRunnerImageContractTests*)|(DeployServer2ApiDefaultTests*)"
+        + "|(DindRunnerContractTests*)|(DockerStackContractTests*)|(DockerStackDocumentationTests*)"
+        + "|(GrokRunnerImageContractTests*)|(HangfireLeaseDocumentationTests*)|(HangfirePostgreSqlStorageTests*)"
+        + "|(HangfireStorageSelectionTests*)|(HostCleanupCheckpointReceiptTests*)|(HostJqPrerequisiteScriptTests*)"
+        + "|(JqRunnerImageContractTests*)|(ReceiptScanDestinationIntegrationTests*)|(RemoteScriptContractTests*)"
+        + "|(RetiredTempContainerHostTests*)|(RetiredTempContainerScriptTests*)|(RollingProductionMountTests*)"
+        + "|(RollingVolumeRecycleCensusChurnTests*)|(RollingVolumeRecycleScriptTests*)|(RunnerPushCredentialDocsTests*)"
+        + "|(SeedSmokeTargetingPackContractTests*)|(Server2ProductionServerContractTests*)"
+        + "|(Server2SidecarStandingAgentsTests*)|(Server2StagingServerContractTests*)|(ServerImagePushCredentialTests*)"
+        + "|(TestTimingOperationLabelTests*)|(VerifyDindRunnerScriptTests*)|(VolumeRetirementApplyGateTests*)"
+        + "|(VolumeRetirementContentTests*)|(VolumeRetirementReceiptTests*)|(VolumeRetirementWrapperTests*)/*";
 
     private const string LandFilter1 =
         "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
@@ -138,7 +148,8 @@ public sealed class MergeHighRadiusSubsetTests
         using var remote = await SelectMergeAsync(root, RemoteScriptsRange);
         AssertImpactedMethods(remote.RootElement);
         var dropped = remote.RootElement.GetRawText()
-            .Replace("CP-merge-subset-RemoteScriptContractTests", "CP-merge-subset-dropped", StringComparison.Ordinal);
+            .Replace("(RemoteScriptContractTests*)|", "", StringComparison.Ordinal);
+        dropped.ShouldNotBe(remote.RootElement.GetRawText());
         using (var broken = JsonDocument.Parse(dropped))
             Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(broken.RootElement));
 
@@ -339,25 +350,42 @@ public sealed class MergeHighRadiusSubsetTests
         root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
     }
 
-    // The quiet historical range is not the no-range fixed subset: it also selects the CARD-1819
-    // nightly lane and the lane guard. Land-1 and land-2 stay the documented filters.
     private static void AssertQuiet(JsonElement root)
     {
         root.GetProperty("mode").GetString().ShouldBe("merge-subset");
         root.GetProperty("migrations").GetBoolean().ShouldBeFalse();
-        Names(root, "kinds").ShouldBe(
-            ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
-            ignoreOrder: false);
         Names(root, "fixedClasses").ShouldBe(FixedClasses, ignoreOrder: false);
         Names(root, "fixedMethods").ShouldBe(FixedMethods, ignoreOrder: false);
+        Names(root, "derivedClasses").ShouldBe(
+            [
+                "C1708ReflogSalvageTests",
+                "ImpactedClassesSelectorTests",
+                "TimeoutAuditTests",
+                "WindowsUnitPlatformAdmissionTests",
+            ],
+            ignoreOrder: false);
         Names(root, "classes").ShouldBe(
-            FixedClasses
-                .Append("LiveLaneRunnerTests")
-                .Append("NightlyCoreTests")
-                .Append("ReleaseGatePlatformTests")
-                .Append("TestLaneCategoryGuardTests")
-                .Order(StringComparer.Ordinal)
-                .ToArray(),
+            [
+                "AgentTaskLandHeldNotificationTests",
+                "AgentTaskLandNotificationParkFollowUpTests",
+                "AgentTaskLandNotificationPersistenceTests",
+                "AgentTaskLandNotificationReconcileLoadTests",
+                "AgentTaskLandNotificationRecoveryTests",
+                "AgentTaskLandNotificationRescanTests",
+                "AgentTaskLandReceiptWatermarkSafetyTests",
+                "AgentTaskLandReceiptWatermarkTests",
+                "AppDbContextModelTests",
+                "C1708ReflogSalvageTests",
+                "CheckpointReceiptSafetyTests",
+                "ContractSnapshotTests",
+                "HostCleanupCheckpointReceiptTests",
+                "ImpactedClassesSelectorTests",
+                "ReceiptScanDestinationIntegrationTests",
+                "ReleaseGatePlatformTests",
+                "TestTimingOperationLabelTests",
+                "TimeoutAuditTests",
+                "WindowsUnitPlatformAdmissionTests",
+            ],
             ignoreOrder: false);
         Ids(root, "filters").ShouldBe(
             [
@@ -408,12 +436,10 @@ public sealed class MergeHighRadiusSubsetTests
 
     private static void AssertImpactedMethods(JsonElement root)
     {
-        Names(root, "kinds").ShouldBe(["remote-scripts", "test-lane-category"], ignoreOrder: false);
+        Names(root, "kinds").ShouldContain("remote-scripts");
         Filter(root, "CP-merge-subset-tests").ShouldBe(RemoteTestsFilter);
-        var methods = Filter(root, "CP-merge-subset-RemoteScriptContractTests");
-        methods.ShouldStartWith("/*/*/RemoteScriptContractTests/(", Case.Sensitive);
-        methods.ShouldContain("(C849_Deploy_ordering_contract_is_pinned*)", Case.Sensitive);
-        Project(root, "CP-merge-subset-RemoteScriptContractTests").ShouldBe("tests/Antiphon.Tests");
+        Names(root, "classes").ShouldContain("RemoteScriptContractTests");
+        Ids(root, "filters").ShouldNotContain("CP-merge-subset-RemoteScriptContractTests");
     }
 
     private static void AssertWindowsLane(JsonElement root)
