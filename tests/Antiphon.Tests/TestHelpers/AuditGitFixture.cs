@@ -42,6 +42,12 @@ internal sealed class AuditGitFixture
             || !Path.GetFileName(full).StartsWith("antiphon-audit-", StringComparison.Ordinal))
             throw new IOException("Audit cleanup escaped its owned temp root.");
 
+        // CARD-1568: a contained root that is already gone is a no-op. The checks above
+        // still run, so a missing outside or misnamed path throws instead of skipping
+        // deletion. A present link still reaches RefuseLink.
+        if (!Directory.Exists(full) && !File.Exists(full))
+            return;
+
         // Check the complete tree before changing any attributes. A replaced root, directory
         // junction or file link must never let attribute normalization reach an outside target.
         for (var ancestor = new DirectoryInfo(full); ancestor is not null; ancestor = ancestor.Parent)
