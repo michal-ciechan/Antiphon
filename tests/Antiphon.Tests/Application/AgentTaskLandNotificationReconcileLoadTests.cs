@@ -21,6 +21,9 @@ namespace Antiphon.Tests.Application;
 /// expression. Parameter names are not the witness: an EF upgrade that renames <c>@__id</c>
 /// must not turn this green or red by itself. The async reader runs after the compiled-query
 /// method has returned, so the stack does not name it.
+/// Debug c4b4ad81. The hosted test waits for one whole notification pass, not for two of its
+/// rows: the rows are scanned in random id order, so a stop after the due and provider rows
+/// could cancel the pass before it reached the linked row.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("card-1759-land-note-load")]
@@ -31,12 +34,14 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
     private static BridgeQueueHarness _harness = null!;
     private static DbContextOptions<AppDbContext> _options = null!;
     private static LoadObserver _observer = null!;
+    private static ScanCounter _scans = null!;
 
     [Before(Class)]
     public static async Task Start()
     {
         _schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         _observer = new LoadObserver();
+        _scans = new ScanCounter();
         _harness = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false,
@@ -46,6 +51,7 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
             {
                 services.AddSingleton<CompletionNoteFlushQueue>();
                 services.AddScoped<AgentTaskLandNotificationService>();
+                services.AddSingleton<LandDeliveryBoundary>(_scans);
             },
         });
         _options = TestDbFixture.CreateDbContextOptions(_schema.ConnectionString, _observer);
@@ -152,21 +158,13 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
             _harness.Provider.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<AgentTaskLandNotificationHostedService>.Instance);
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var passes = _scans.Count;
         await worker.StartAsync(stop.Token);
         try
         {
-            var deadline = DateTime.UtcNow.AddSeconds(30);
-            while (DateTime.UtcNow < deadline)
-            {
-                await using var db = new AppDbContext(_options);
-                var dueQueued = await db.AgentTaskLandNotifications.AsNoTracking()
-                    .AnyAsync(n => n.Id == dueId && n.QueueMessageId != null);
-                var providerSettled = await db.AgentTaskLandNotifications.AsNoTracking()
-                    .AnyAsync(n => n.Id == providerId && n.State == LandNotificationState.NotRequired);
-                if (dueQueued && providerSettled)
-                    break;
-                await Task.Delay(100, stop.Token);
-            }
+            // The first pass starts after every row above is saved, so it is the pass under test.
+            (await _scans.WaitForScanAsync(passes + 1, TimeSpan.FromSeconds(30)))
+                .ShouldBeTrue("the hosted worker did not finish one notification pass");
         }
         finally
         {
@@ -204,6 +202,30 @@ public sealed class AgentTaskLandNotificationReconcileLoadTests
             note.ParentSessionId = parent;
         await db.SaveChangesAsync();
         return note.Id;
+    }
+
+    /// <summary>Counts completed hosted notification passes.</summary>
+    private sealed class ScanCounter : LandDeliveryBoundary
+    {
+        private int _count;
+        public int Count => Volatile.Read(ref _count);
+
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary == "notification-scan") Interlocked.Increment(ref _count);
+            return Task.CompletedTask;
+        }
+
+        public async Task<bool> WaitForScanAsync(int count, TimeSpan within)
+        {
+            var deadline = DateTime.UtcNow + within;
+            while (Count < count)
+            {
+                if (DateTime.UtcNow >= deadline) return false;
+                await Task.Delay(50);
+            }
+            return true;
+        }
     }
 
     private sealed class LoadObserver : DbCommandInterceptor
