@@ -298,7 +298,279 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             else if (mine != (git.Output.Length != 0)) mismatches.Add($"ls-files --unmerged: git {git.Output.Length != 0} libgit2 {mine}");
         }
 
+        // ls-files -z and ls-files --stage -z: git's bytes, read from the index file; an unmerged index and every
+        // shape that falls back for all reads stay with git. ls-tree of HEAD (both forms) is the same in every shape.
+        foreach (var args in IndexForms)
+        {
+            var mine = InProcessGitStatus.TryAnswer(checkout, args, ChildEnvironment());
+            var fallback = scenario.Fallback == Falls.All || name == "unmerged-conflict";
+            await SameBytesAsync(mismatches, checkout, args, mine, fallback);
+        }
+        var head = (await Repo.RunGitAsync(checkout, "rev-parse", "HEAD")).Output.Trim();
+        foreach (var args in TreeForms(head))
+            await SameBytesAsync(mismatches, checkout, args, InProcessGitReads.TryAnswer(checkout, args), fallback: false);
+
         mismatches.ShouldBeEmpty($"{name}:\n  " + string.Join("\n  ", mismatches));
+    }
+
+    /// <summary>The index listings GuardedWorktreeRemoval, GuardedVerificationRemoval and LandingGit run.</summary>
+    private static readonly string[][] IndexForms = [["ls-files", "-z"], ["ls-files", "--stage", "-z"]];
+
+    /// <summary>The tree listings LandingGit (recovery checkout) and GuardedWorktreeRemoval run.</summary>
+    private static string[][] TreeForms(string oid) => [["ls-tree", "-r", "-z", oid], ["ls-tree", "-r", "-z", "--full-tree", oid]];
+
+    /// <summary>Exactly git's exit code and output, or null where <paramref name="fallback"/> says git must answer.</summary>
+    private static async Task SameBytesAsync(List<string> mismatches, string cwd, string[] args, LandingGitResult? mine, bool fallback)
+    {
+        var what = string.Join(' ', args);
+        if (fallback)
+        {
+            if (mine is not null) mismatches.Add($"{what}: answered, must fall back");
+            return;
+        }
+        if (mine is null) { mismatches.Add(what + ": fell back"); return; }
+        var git = await Repo.RunGitAsync(cwd, args);
+        if (git.ExitCode != 0 || git.Error.Length != 0) mismatches.Add($"{what}: git exit {git.ExitCode}: {git.Error.Trim()}");
+        if (mine.ExitCode != git.ExitCode || mine.Output != git.Output)
+            mismatches.Add($"{what}: git [{git.ExitCode}] {Visible(git.Output)} in process [{mine.ExitCode}] {Visible(mine.Output)}");
+    }
+
+    private static string Visible(string output) => output.Replace("\0", "\\0").Replace("\t", "\\t");
+
+    /// <summary>
+    /// A repository shape for the index and tree listings. <c>Index</c>/<c>Tree</c>: whether ls-files and ls-tree
+    /// must match git byte for byte (true) or fall back (false). <c>Moved</c>: the linked worktree is renamed on disk
+    /// afterwards (as the guarded removal moves a tree aside) and both read it at the new path.
+    /// </summary>
+    private sealed record ListingShape(string Name, Func<Repo, Task> Arrange, bool Index = true, bool Tree = true, bool Linked = false,
+        bool Moved = false);
+
+    private static readonly ListingShape[] ListingShapes =
+    [
+        new("seed", _ => Task.CompletedTask),
+        new("empty-index-and-empty-tree", async r =>
+        {
+            await r.GitAsync("rm", "-q", "--cached", "a.txt", "b.txt");
+            await r.GitAsync("commit", "-q", "-m", "empty");
+        }),
+        new("rich-tree", ArrangeRichAsync),
+        new("rich-tree-linked-worktree", ArrangeRichAsync, Linked: true),
+        new("rich-tree-moved-linked-worktree", ArrangeRichAsync, Linked: true, Moved: true),
+        // Any core.worktree in the config git reads: git's (the main checkout exists, so git's listing still works).
+        new("moved-linked-worktree-with-core-worktree", r => r.GitAsync("config", "core.worktree",
+            Path.GetFullPath(Path.Combine(r.Root, "..", "main")).Replace('\\', '/')), Index: false, Linked: true, Moved: true),
+        // A .git file that names a main git directory (a submodule-style git file): git and libgit2 both take the
+        // directory holding the file as the work tree and read that git directory's index.
+        new("moved-linked-worktree-whose-git-file-names-the-main-repository", r =>
+        {
+            var dotGit = Path.Combine(r.Root, ".git");
+            File.SetAttributes(dotGit, FileAttributes.Normal); // git hides it on Windows
+            return File.WriteAllTextAsync(dotGit, "gitdir: " + Path.GetFullPath(Path.Combine(r.Root, "..", "main", ".git")).Replace('\\', '/') + "\n");
+        }, Linked: true, Moved: true),
+        new("assume-unchanged", r => r.GitAsync("update-index", "--assume-unchanged", "a.txt")),
+        new("long-name-past-the-12-bit-length", async r =>
+        {
+            // A name of 4095+ bytes stores 0xFFF as its length and is found by its NUL.
+            var name = "long/" + new string('n', 4200) + ".txt";
+            await r.GitAsync("update-index", "--add", "--cacheinfo", "100644," + await BlobAsync(r, "long\n") + "," + name);
+            await r.GitAsync("commit", "-q", "-m", "long");
+        }),
+        new("non-utf8-name", async r =>
+        {
+            var tree = await MkTreeAsync(r, "100644", [.. "bad"u8, 0xFF]);
+            await r.GitAsync("read-tree", tree);
+            await r.GitAsync("commit", "-q", "-m", "odd");
+        }, Index: false, Tree: false),
+        new("control-character-in-tree", async r =>
+        {
+            // git refuses such a path in the index on Windows; the tree alone is enough for ls-tree.
+            var tree = await MkTreeAsync(r, "100644", [.. "ct"u8, 0x01, .. "rl"u8]);
+            await r.GitAsync("reset", "-q", "--soft", await CommitTreeAsync(r, tree));
+        }, Tree: false),
+        new("non-canonical-tree-mode", async r =>
+        {
+            // mktree keeps 100664 as written; git prints it canonicalised, libgit2 by its own rules: git's.
+            var tree = await MkTreeAsync(r, "100664", [.. "group-writable"u8]);
+            await r.GitAsync("reset", "-q", "--soft", await CommitTreeAsync(r, tree));
+        }, Tree: false),
+        new("gitlink", async r =>
+        {
+            var head = (await Repo.RunGitAsync(r.Root, "rev-parse", "HEAD")).Output.Trim();
+            await r.GitAsync("update-index", "--add", "--cacheinfo", "160000," + head + ",sub");
+            await r.GitAsync("commit", "-q", "-m", "gitlink");
+        }, Index: false),
+        new("unmerged", async r =>
+        {
+            await r.GitAsync("checkout", "-q", "-b", "side");
+            await r.WriteAsync("a.txt", "side\n");
+            await r.CommitAllAsync();
+            await r.GitAsync("checkout", "-q", "master");
+            await r.WriteAsync("a.txt", "main\n");
+            await r.CommitAllAsync();
+            await Repo.RunGitAsync(r.Root, "merge", "-q", "side"); // conflicts, exit 1
+        }, Index: false),
+        new("skip-worktree", r => r.GitAsync("update-index", "--skip-worktree", "a.txt"), Index: false),
+        new("intent-to-add", async r => { await r.WriteAsync("ita.txt", "i\n"); await r.GitAsync("add", "-N", "ita.txt"); }, Index: false),
+        new("index-version-4", r => r.GitAsync("update-index", "--index-version", "4"), Index: false),
+        new("split-index", r => r.GitAsync("update-index", "--split-index"), Index: false),
+        new("sparse-checkout", r => r.GitAsync("config", "core.sparseCheckout", "true"), Index: false),
+    ];
+
+    /// <summary>Nested directories, names that sort differently by byte and by case, spaces, unicode, an
+    /// executable file and a symlink (staged by id, so no link is needed on disk), committed.</summary>
+    private static async Task ArrangeRichAsync(Repo r)
+    {
+        foreach (var path in new[] { "d1/d2/d3/deep.txt", "d1/z.txt", "a-b.txt", "a/b.txt", "a0.txt", "B.txt", "dír with space/naïve 'q'.txt", "run.sh" })
+            await r.WriteAsync(path, path + "\n");
+        await r.GitAsync("add", "-A");
+        await r.GitAsync("update-index", "--chmod=+x", "run.sh");
+        await r.GitAsync("update-index", "--add", "--cacheinfo", "120000," + await BlobAsync(r, "a.txt") + ",link");
+        await r.GitAsync("commit", "-q", "-m", "rich");
+    }
+
+    public static IEnumerable<string> ListingShapeNames() => ListingShapes.Select(s => s.Name);
+
+    [Test]
+    [MethodDataSource(nameof(ListingShapeNames))]
+    public async Task Index_and_tree_listings_match_git_bytes(string name)
+    {
+        var shape = ListingShapes.Single(s => s.Name == name);
+        await using var repo = await Repo.CreateAsync(shape.Linked);
+        await shape.Arrange(repo);
+        var root = repo.Root;
+        if (shape.Moved)
+        {
+            root = repo.Root + ".moved";
+            Directory.Move(repo.Root, root);
+        }
+        var mismatches = new List<string>();
+        foreach (var args in IndexForms)
+            await SameBytesAsync(mismatches, root, args, InProcessGitStatus.TryAnswer(root, args, ChildEnvironment()), !shape.Index);
+        var commit = (await Repo.RunGitAsync(root, "rev-parse", "HEAD")).Output.Trim();
+        var tree = (await Repo.RunGitAsync(root, "rev-parse", "HEAD^{tree}")).Output.Trim();
+        foreach (var oid in new[] { commit, tree })
+            foreach (var args in TreeForms(oid))
+                await SameBytesAsync(mismatches, root, args, InProcessGitReads.TryAnswer(root, args), !shape.Tree);
+        mismatches.ShouldBeEmpty($"{name}:\n  " + string.Join("\n  ", mismatches));
+    }
+
+    [Test]
+    public async Task Index_and_tree_listings_leave_other_shapes_and_arguments_to_git()
+    {
+        await using var repo = await Repo.CreateAsync(linked: false);
+        var head = (await Repo.RunGitAsync(repo.Root, "rev-parse", "HEAD")).Output.Trim();
+        var blob = (await Repo.RunGitAsync(repo.Root, "rev-parse", "HEAD:a.txt")).Output.Trim();
+        await repo.GitAsync("tag", "-a", "-m", "t", "annotated");
+        var tag = (await Repo.RunGitAsync(repo.Root, "rev-parse", "annotated")).Output.Trim();
+        // Not a full id, an id of no object, of a blob or of a tag; arguments the product never runs.
+        foreach (var args in new[]
+                 {
+                     new[] { "ls-tree", "-r", "-z", head[..12] }, ["ls-tree", "-r", "-z", "HEAD"], ["ls-tree", "-r", "-z", head.ToUpperInvariant()],
+                     ["ls-tree", "-r", "-z", new string('1', 40)], ["ls-tree", "-r", "-z", blob], ["ls-tree", "-r", "-z", tag],
+                     ["ls-tree", "-r", "-z", "--full-tree", head[..12]], ["ls-tree", "-z", head], ["ls-tree", "-r", head],
+                     ["ls-tree", "-r", "-z", "--full-tree", head, "--", "a.txt"], ["ls-tree", "-r", "-z", "--name-only", head],
+                 })
+            InProcessGitReads.TryAnswer(repo.Root, args).ShouldBeNull(string.Join(' ', args));
+        foreach (var args in new[]
+                 {
+                     new[] { "ls-files" }, ["ls-files", "-z", "--", "a.txt"], ["ls-files", "-s", "-z"], ["ls-files", "--stage"],
+                     ["-c", "core.quotePath=false", "ls-files", "-z"], ["ls-files", "--cached", "-z"],
+                 })
+            InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldBeNull(string.Join(' ', args));
+
+        // Below the checkout root git lists relative to the directory: git's. So is a git directory.
+        Directory.CreateDirectory(repo.Full("sub"));
+        foreach (var args in IndexForms)
+        {
+            InProcessGitStatus.TryAnswer(repo.Full("sub"), args, ChildEnvironment()).ShouldBeNull("subdirectory " + string.Join(' ', args));
+            InProcessGitStatus.TryAnswer(repo.GitDir, args, ChildEnvironment()).ShouldBeNull("git dir " + string.Join(' ', args));
+        }
+        foreach (var args in TreeForms(head))
+            InProcessGitReads.TryAnswer(repo.Full("sub"), args).ShouldBeNull("subdirectory " + string.Join(' ', args));
+
+        // No index file yet (a fresh repository): git prints nothing, this leaves it to git.
+        var fresh = Path.Combine(repo.Root, "..", "fresh");
+        Directory.CreateDirectory(fresh);
+        await Repo.RunGitAsync(fresh, "init", "-q", "-b", "master");
+        foreach (var args in IndexForms) InProcessGitStatus.TryAnswer(fresh, args, ChildEnvironment()).ShouldBeNull("no index");
+
+        // A control character in an index path (git refuses to write one on Windows, so the name is patched in with a
+        // fresh checksum): git prints it raw, this leaves it to git.
+        var index = Path.Combine(repo.GitDir, "index");
+        var bytes = await File.ReadAllBytesAsync(index);
+        var at = bytes.AsSpan().IndexOf("a.txt\0"u8);
+        at.ShouldBeGreaterThan(0);
+        bytes[at + 1] = 0x01;
+        System.Security.Cryptography.SHA1.HashData(bytes.AsSpan(0, bytes.Length - 20)).CopyTo(bytes, bytes.Length - 20);
+        await File.WriteAllBytesAsync(index, bytes);
+        (await Repo.RunGitAsync(repo.Root, "ls-files", "-z")).Output.ShouldStartWith("a\u0001txt\0");
+        foreach (var args in IndexForms) InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldBeNull("control character");
+        InProcessGitStatus.ListIndex(bytes, stage: false).ShouldBeNull("the index reader itself refuses it");
+
+        // A damaged index (checksum) is git's error to report.
+        bytes[at + 1] = (byte)'.';
+        bytes[^1] ^= 0xFF;
+        await File.WriteAllBytesAsync(index, bytes);
+        foreach (var args in IndexForms) InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldBeNull("bad checksum");
+    }
+
+    [Test]
+    public async Task The_runner_answers_the_landing_listings_without_a_git_process()
+    {
+        await using var repo = await Repo.CreateAsync(linked: true);
+        await ArrangeRichAsync(repo);
+        var runner = new SpawnCountingGit();
+        var head = (await Repo.RunGitAsync(repo.Root, "rev-parse", "HEAD")).Output.Trim();
+        foreach (var args in IndexForms.Concat(TreeForms(head)))
+        {
+            var answer = await runner.RunAsync(repo.Root, args, CancellationToken.None);
+            var git = await Repo.RunGitAsync(repo.Root, args);
+            (answer.ExitCode, answer.Output, answer.WroteStandardError).ShouldBe((git.ExitCode, git.Output, false), string.Join(' ', args));
+        }
+        runner.Spawns.ShouldBe(0);
+        // An unmerged-free index that turns version 3 (skip-worktree) runs git again.
+        await repo.GitAsync("update-index", "--skip-worktree", "a.txt");
+        (await runner.RunAsync(repo.Root, ["ls-files", "-z"], CancellationToken.None)).Output
+            .ShouldBe((await Repo.RunGitAsync(repo.Root, "ls-files", "-z")).Output);
+        runner.Spawns.ShouldBe(1);
+    }
+
+    private static async Task<string> BlobAsync(Repo r, string content)
+    {
+        var path = Path.Combine(r.Root, "..", "blob-" + Guid.NewGuid().ToString("N")[..8]);
+        await File.WriteAllTextAsync(path, content, new UTF8Encoding(false));
+        var hashed = await Repo.RunGitAsync(r.Root, "hash-object", "-w", Path.GetFullPath(path));
+        hashed.ExitCode.ShouldBe(0, hashed.Error);
+        return hashed.Output.Trim();
+    }
+
+    /// <summary>A tree of one blob entry ("x\n") with this mode and raw name bytes, through git mktree.</summary>
+    private static async Task<string> MkTreeAsync(Repo r, string mode, byte[] name)
+    {
+        var blob = await BlobAsync(r, "x\n");
+        byte[] input = [.. Encoding.ASCII.GetBytes(mode + " blob " + blob + "\t"), .. name, (byte)'\n'];
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = r.Root, UseShellExecute = false,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var (key, value) in Isolation) start.Environment[key] = value;
+        start.ArgumentList.Add("mktree");
+        using var p = Process.Start(start)!;
+        await p.StandardInput.BaseStream.WriteAsync(input);
+        p.StandardInput.Close();
+        var output = await p.StandardOutput.ReadToEndAsync();
+        var error = await p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        p.ExitCode.ShouldBe(0, "mktree: " + error);
+        return output.Trim();
+    }
+
+    private static async Task<string> CommitTreeAsync(Repo r, string tree)
+    {
+        var committed = await Repo.RunGitAsync(r.Root, "commit-tree", tree, "-p", "HEAD", "-m", "tree");
+        committed.ExitCode.ShouldBe(0, committed.Error);
+        return committed.Output.Trim();
     }
 
     private static void Check(List<string> mismatches, bool fallback, string what, IReadOnlySet<string>? mine,
@@ -463,6 +735,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     private sealed class SpawnCountingGit : LandingGit
     {
         public int StatusSpawns;
+        public int Spawns;
 
         protected override void ConfigureProcess(System.Diagnostics.ProcessStartInfo start)
         {
@@ -471,6 +744,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
 
         protected override System.Diagnostics.Process? StartProcess(System.Diagnostics.ProcessStartInfo start)
         {
+            Interlocked.Increment(ref Spawns);
             if (start.ArgumentList.Contains("status")) Interlocked.Increment(ref StatusSpawns);
             return base.StartProcess(start);
         }

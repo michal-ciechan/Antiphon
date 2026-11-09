@@ -13,9 +13,10 @@ namespace Antiphon.GitInProcess;
 /// <para>
 /// <see cref="TryAnswer"/> serves the server's <c>LandingGit</c>'s runner and keeps its contract of git's exact
 /// bytes or nothing: a status or ls-files --others/--unmerged is answered only when it is empty (a dirty
-/// tree still runs git, so every caller that reads the listing gets git's own), and ls-files -v is
-/// rebuilt exactly. A status-like answer also needs the config to agree with the git child's
-/// (<see cref="GitStatusConfigAgreement"/>). <c>LibGit2VsGitWorkingTreeVerdictTests</c> pins each
+/// tree still runs git, so every caller that reads the listing gets git's own), ls-files -v is
+/// rebuilt exactly, and ls-files -z and ls-files --stage -z are read byte for byte from the index file
+/// (<see cref="IndexListing"/>; they read no config, so need no agreement). A status-like answer also needs the
+/// config to agree with the git child's (<see cref="GitStatusConfigAgreement"/>). <c>LibGit2VsGitWorkingTreeVerdictTests</c> pins each
 /// verdict against the real CLI, across the repository shapes and argument forms the product uses.
 /// </para>
 /// <list type="bullet">
@@ -58,6 +59,8 @@ internal static class InProcessGitStatus
             foreach (var (tag, path) in tags) output.Append(tag).Append(' ').Append(path).Append('\0');
             return Ok(output.ToString());
         }
+        if (a is ["ls-files", "-z"] or ["ls-files", "--stage", "-z"])
+            return overrides.Count == 0 && IndexListing(checkout, stage: a.Length == 3) is { } listing ? Ok(listing) : null;
         if (a is ["ls-files", "--unmerged", "-z"])
             return overrides.Count == 0 && HasUnmerged(checkout) == false ? Ok("") : null;
         Func<Configuration, bool> agrees = config => GitStatusConfigAgreement.Agrees(config, childEnvironment, overrides);
@@ -221,14 +224,103 @@ internal static class InProcessGitStatus
     public static bool? HasUnmerged(string checkout)
         => Read<object>(checkout, null, repo => repo.Index.Any(e => e.StageLevel != StageLevel.Staged)) is bool any ? any : null;
 
-    private static T? Read<T>(string checkout, Func<Configuration, bool>? agrees, Func<Repository, T?> answer) where T : class
+    /// <summary>
+    /// <c>git ls-files -z</c> (<paramref name="stage"/> false: "path\0" per entry) or <c>git ls-files --stage -z</c>
+    /// ("mode oid stage\tpath\0"), run at the checkout root: git's bytes, decoded as the runner decodes them (UTF-8).
+    /// Read from the index file itself, not from LibGit2Sharp's entries, whose paths carry native separators on
+    /// Windows and whose modes are normalised. Null (git answers) for anything git might print differently or not
+    /// at all: see <see cref="ListIndex"/>. A linked worktree renamed on disk is read too (<see cref="MovedLinkedWorktree"/>),
+    /// and any core.worktree setting is git's.
+    /// </summary>
+    public static string? IndexListing(string checkout, bool stage)
+        => Read(checkout, null, repo =>
+        {
+            byte[] data;
+            using (var stream = new FileStream(Path.Combine(repo.Info.Path, "index"), FileMode.Open, FileAccess.Read,
+                       FileShare.ReadWrite | FileShare.Delete))
+            {
+                if (stream.Length > int.MaxValue / 2) return null;
+                data = new byte[stream.Length];
+                stream.ReadExactly(data);
+            }
+            return ListIndex(data, stage);
+        }, indexOnly: true);
+
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// An index file's entries in file order (git prints them in that order), from a version-2 SHA-1 index whose
+    /// trailing checksum holds. Null for: another signature or version (v3 carries skip-worktree and
+    /// intent-to-add, v4 compresses paths), a bad or skipped (all-zero) checksum, any entry above stage 0 (an
+    /// unmerged path), a mode other than a regular, executable or symlink blob (a gitlink, or a mode git never
+    /// writes), a path that is not valid UTF-8 or holds a control character, and any required (lower-case)
+    /// extension such as a split index's "link" or a sparse index's "sdir". Optional extensions (TREE, REUC,
+    /// UNTR, FSMN, EOIE, IEOT) change nothing ls-files prints.
+    /// </summary>
+    internal static string? ListIndex(byte[] data, bool stage)
+    {
+        const int Header = 12, Hash = 20, Fixed = 62;
+        if (data.Length < Header + Hash || !data.AsSpan(0, 4).SequenceEqual("DIRC"u8)
+            || BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(4)) != 2)
+            return null;
+        var body = data.Length - Hash;
+        if (!System.Security.Cryptography.SHA1.HashData(data.AsSpan(0, body)).AsSpan().SequenceEqual(data.AsSpan(body))) return null;
+        var count = BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(8));
+        var output = new StringBuilder();
+        var at = Header;
+        for (var i = 0u; i < count; i++)
+        {
+            if (at + Fixed + 1 > body) return null;
+            var mode = BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(at + 24));
+            var flags = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(at + 60));
+            // 0x4000 extended (never valid in v2), 0x3000 the stage.
+            if ((flags & 0x7000) != 0) return null;
+            if (mode is not (0x81A4 or 0x81ED or 0xA000)) return null; // 100644, 100755, 120000
+            var nameStart = at + Fixed;
+            int nameLength = flags & 0xFFF;
+            if (nameLength == 0xFFF)
+            {
+                var nul = data.AsSpan(nameStart, body - nameStart).IndexOf((byte)0);
+                if (nul < 0) return null;
+                nameLength = nul;
+            }
+            if (nameLength == 0 || nameStart + nameLength >= body || data[nameStart + nameLength] != 0) return null;
+            var name = data.AsSpan(nameStart, nameLength);
+            foreach (var b in name)
+                if (b < 0x20 || b == 0x7f) return null;
+            string path;
+            try { path = StrictUtf8.GetString(name); }
+            catch (DecoderFallbackException) { return null; }
+            if (stage)
+            {
+                output.Append(Convert.ToString((int)mode, 8)).Append(' ')
+                    .Append(Convert.ToHexString(data, at + 40, Hash).ToLowerInvariant()).Append(" 0\t");
+            }
+            output.Append(path).Append('\0');
+            // Entries are padded with 1-8 NULs to a multiple of eight bytes.
+            at += (Fixed + nameLength + 8) & ~7;
+        }
+        while (at < body)
+        {
+            if (at + 8 > body) return null;
+            var signature = data[at];
+            var size = BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(at + 4));
+            if (signature is < (byte)'A' or > (byte)'Z' || size > (uint)(body - at - 8)) return null;
+            at += 8 + (int)size;
+        }
+        return output.ToString();
+    }
+
+    private static T? Read<T>(string checkout, Func<Configuration, bool>? agrees, Func<Repository, T?> answer,
+        bool indexOnly = false) where T : class
     {
         if (!InProcessGitReads.Enabled) return null;
         try
         {
             using var repo = new Repository(checkout);
             if (repo.Info.IsBare || repo.Info.WorkingDirectory is null || InProcessGitReads.Unusual(repo)) return null;
-            if (!GitText.PathsEqual(repo.Info.WorkingDirectory.TrimEnd('\\', '/'), checkout.TrimEnd('\\', '/'))) return null;
+            if (!GitText.PathsEqual(repo.Info.WorkingDirectory.TrimEnd('\\', '/'), checkout.TrimEnd('\\', '/'))
+                && !(indexOnly && MovedLinkedWorktree(repo, checkout))) return null;
             if (!PlainIndex(repo.Info.Path)) return null;
             // Config only through ConfigOf: touching repo.Config of a linked worktree would install LibGit2Sharp's
             // config, which lacks the repository's own file, into the libgit2 status below.
@@ -236,6 +328,7 @@ internal static class InProcessGitStatus
             try
             {
                 if (view.Config.Get<bool>("core.sparseCheckout")?.Value == true) return null;
+                if (indexOnly && view.Config.Get<string>("core.worktree") is not null) return null;
                 if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;
                 if (agrees is not null && !agrees(view.Config)) return null;
                 return answer(repo);
@@ -249,6 +342,25 @@ internal static class InProcessGitStatus
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// A linked worktree renamed on disk (the guarded removal moves a tree aside before deleting it): git run there
+    /// follows the checkout's own .git file to the git directory, so it reads the index libgit2 opened, while libgit2
+    /// still reports the work tree recorded in that git directory's gitdir file. Only a read of the index alone may
+    /// rely on this. The .git file must be a plain "gitdir: &lt;path&gt;" file (git strips only the trailing line
+    /// end) naming exactly the linked worktree's git directory.
+    /// </summary>
+    private static bool MovedLinkedWorktree(Repository repo, string checkout)
+    {
+        var dotGit = Path.Combine(checkout, ".git");
+        if (!File.Exists(dotGit) || (File.GetAttributes(dotGit) & FileAttributes.ReparsePoint) != 0) return false;
+        if (!File.Exists(Path.Combine(repo.Info.Path, "commondir"))) return false;
+        var text = File.ReadAllText(dotGit, StrictUtf8);
+        if (!text.StartsWith("gitdir: ", StringComparison.Ordinal)) return false;
+        var target = text["gitdir: ".Length..].TrimEnd('\n', '\r');
+        if (target.Length == 0 || target.Any(char.IsControl) || target != target.Trim()) return false;
+        return GitText.PathsEqual(Path.GetFullPath(target, Path.GetFullPath(checkout)), repo.Info.Path);
     }
 
     /// <summary>An index file of version 2 and no split-index shared file beside it.</summary>

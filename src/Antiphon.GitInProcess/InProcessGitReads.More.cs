@@ -14,7 +14,7 @@ namespace Antiphon.GitInProcess;
 /// <item><c>for-each-ref --format=…</c> with literal prefix patterns, sorted by name as git sorts them.</item>
 /// <item><c>diff-tree --no-commit-id --raw -r -z --no-abbrev --no-ext-diff --no-textconv --find-renames A B --</c>
 /// when no rename can be found (no path is both added and deleted), from a walk of the two trees.</item>
-/// <item><c>ls-tree -r -z &lt;commit&gt;</c>, from a walk of the tree.</item>
+/// <item><c>ls-tree -r -z [--full-tree] &lt;commit or tree oid&gt;</c>, from a walk of the tree.</item>
 /// </list>
 /// </summary>
 internal static partial class InProcessGitReads
@@ -164,19 +164,35 @@ internal static partial class InProcessGitReads
 
     private static string ModeText(TreeEntry? entry) => entry is null ? "000000" : Convert.ToString((int)entry.Mode, 8).PadLeft(6, '0');
 
+    /// <summary>
+    /// <c>ls-tree -r -z [--full-tree] &lt;full oid&gt;</c>. Without --full-tree git lists only the part of the tree under
+    /// the directory it runs in; this opens only a checkout root or a git directory (never a subdirectory), where
+    /// both forms list the whole tree.
+    /// </summary>
     private static LandingGitResult? LsTree(Repository repo, IReadOnlyList<string> a)
     {
-        if (a is not ["ls-tree", "-r", "-z", var rev] || !GitText.IsOid(rev) || TreeOf(repo, rev) is not { } tree) return null;
+        var rev = a switch
+        {
+            ["ls-tree", "-r", "-z", var plain] => plain,
+            ["ls-tree", "-r", "-z", "--full-tree", var full] => full,
+            _ => null,
+        };
+        if (rev is null || !GitText.IsOid(rev) || rev.Length != 40 || TreeOf(repo, rev) is not { } tree) return null;
         var output = new StringBuilder();
         return Walk(tree, "", output) ? Ok(output.ToString()) : null;
     }
 
-    /// <summary>ls-tree -r: blobs, links and submodules in tree order (a tree's stored order is git's).</summary>
+    /// <summary>
+    /// ls-tree -r: blobs, links and submodules in tree order (a tree's stored order is git's). False for a name
+    /// that is not valid UTF-8 or holds a control character, and for a tree whose stored bytes are not exactly
+    /// what its entries, as libgit2 reports them, serialise to (<see cref="Canonical"/>).
+    /// </summary>
     private static bool Walk(Tree tree, string prefix, StringBuilder output)
     {
+        if (!Canonical(tree)) return false;
         foreach (var entry in tree)
         {
-            if (entry.Name.Contains('�')) return false;
+            if (entry.Name.Any(c => c == '�' || c < 0x20 || c == 0x7f)) return false;
             if (entry.TargetType == TreeEntryTargetType.Tree)
             {
                 if (!Walk((Tree)entry.Target, prefix + entry.Name + "/", output)) return false;
@@ -187,6 +203,41 @@ internal static partial class InProcessGitReads
                 .Append('\t').Append(prefix).Append(entry.Name).Append('\0');
         }
         return true;
+    }
+
+    /// <summary>
+    /// Whether the tree object's id is the SHA-1 of its entries written back in git's canonical form ("mode name\0"
+    /// then the raw id; modes 40000, 100644, 100755, 120000, 160000) in the order libgit2 lists them. libgit2
+    /// normalises a stored mode (100664, a zero-padded 040000) by rules that differ from git's in corners (a
+    /// group-only exec bit), and decodes names leniently; a tree that round-trips was stored canonically, so
+    /// git prints exactly what libgit2 reports. Anything else is git's to print.
+    /// </summary>
+    private static bool Canonical(Tree tree)
+    {
+        if (tree.Sha.Length != 40) return false;
+        using var content = new MemoryStream();
+        foreach (var entry in tree)
+        {
+            var mode = entry.Mode switch
+            {
+                Mode.Directory => "40000",
+                Mode.NonExecutableFile => "100644",
+                Mode.ExecutableFile => "100755",
+                Mode.SymbolicLink => "120000",
+                Mode.GitLink => "160000",
+                _ => null,
+            };
+            if (mode is null) return false;
+            content.Write(Encoding.ASCII.GetBytes(mode + " "));
+            content.Write(Encoding.UTF8.GetBytes(entry.Name));
+            content.WriteByte(0);
+            content.Write(Convert.FromHexString(entry.Target.Sha));
+        }
+        var header = Encoding.ASCII.GetBytes($"tree {content.Length}\0");
+        using var sha1 = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA1);
+        sha1.AppendData(header);
+        sha1.AppendData(content.GetBuffer(), 0, (int)content.Length);
+        return Convert.ToHexString(sha1.GetHashAndReset()).Equals(tree.Sha, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Tree? TreeOf(Repository repo, string sha) => repo.Lookup(sha) switch
