@@ -29,7 +29,7 @@ Verdict: BLOCKER D-1. The 60 s native grace never fires. Safety holds: no path m
 ## Evidence (reviewed SHA 89fd55cef, server2 Linux, every run leased)
 
 - Whole `scripts/test-nightly-tests.ps1` aborts on Linux at `C487_G044` ("Nightly native custody requires Windows."). That abort is inherited, so I ran every default-loop case separately at the tip and at base 52e13fdca (detached worktree). Tip: 103 pass / 5 fail. Base: 78 pass / 5 fail. The identical reds at both are G039 (1), G040 (2), G051 (1), G144 (1) and the G044 abort, all known Linux reds. Tip minus base = `Group4CompletedHang` 25/25 (exit 0). No regression.
-- Guard batch `(TestClassificationPolicy*)|(TestClassificationGuard*)|(SlowTestRegistryMerge*)|(SlowTestTripwire*)|(NativeLinuxPolicyWitnessTests*)|(TestLaneCategoryGuardTests*)` in Antiphon.Tests: 53/53, 0 failed, 0 skipped. Not rerun: the Shared guard copies in the other five test projects that make up the 78 union. The diff touches no C# test or project, so this round is Interim.
+- Guard batch `(TestClassificationPolicy*)|(TestClassificationGuard*)|(SlowTestRegistryMerge*)|(SlowTestTripwire*)|(NativeLinuxPolicyWitnessTests*)|(TestLaneCategoryGuardTests*)` in Antiphon.Tests: 53/53, 0 failed, 0 skipped. That is the complete six-family union in this assembly (41 policy, 5 registry, 3 native, 2 tripwire, 1+1 guards). The brief's "78/78" does not match this assembly. The diff touches no C# test or project. Ordinary scope: Full.
 - `check-evidence-diff.ps1 -BaseRef 52e13fdca -HeadRef 89fd55cef`: commits=3, violations=0, exit 0.
 - `git merge-tree --write-tree`: clean against origin/master 09d80f11a and against 0ce91e6a5.
 - The owner `.cs` compiles as a net10 library with 0 warnings and loads with `Add-Type` on Linux pwsh.
