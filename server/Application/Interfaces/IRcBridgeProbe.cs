@@ -23,7 +23,9 @@ public sealed record RcProbeResult(
     /// <summary>Established TCP connections from the pid to Anthropic (160.79.0.0/16:443).</summary>
     int BridgeConnections,
     /// <summary>False when the state file was unreadable/absent (probe result untrustworthy).</summary>
-    bool StateFileFound);
+    bool StateFileFound,
+    /// <summary>False means <see cref="BridgeConnections"/> is not a count.</summary>
+    bool ConnectionCountMeasured = true);
 
 public interface IRcBridgeProbe
 {
