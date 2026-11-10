@@ -5049,6 +5049,23 @@ public sealed class RemoteScriptContractTests
                         C849AssertLfFixture (Join-Path $caseDir $name)
                     }
                 }
+                function global:C849ExpectCachePreviewInvalid([string]$Label, [hashtable]$Arguments) {
+                    $global:seen = @()
+                    $failed = $false
+                    $detail = ''
+                    try { & $Front @Arguments | Out-Null }
+                    catch {
+                        $failed = $true
+                        $detail = [string]$_.Exception.Message
+                    }
+                    if (-not $failed -or $detail -notlike '*CachePreviewInvalid*') {
+                        throw "FAIL $Label expected CachePreviewInvalid, got failed=$failed detail=$detail"
+                    }
+                    if (@($global:seen).Count -ne 0) {
+                        throw "FAIL $Label reached the invoker: $($global:seen -join ',')"
+                    }
+                    Write-Output "PASS $Label"
+                }
                 try {
                     foreach ($entry in $entries) {
                         $global:requested = $entry.Name
@@ -5071,6 +5088,35 @@ public sealed class RemoteScriptContractTests
                         }
                         Write-Output "PASS $($entry.Name) full remote case"
                     }
+                    $global:requested = 'Prune'
+                    $global:seen = @()
+                    $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
+                    New-Item -ItemType Directory -Path $previewDir -Force | Out-Null
+                    $preview = Join-Path $previewDir 'preview.txt'
+                    $crlfRun = "c849$('b' * 16)0"
+                    [IO.File]::WriteAllText($preview, "run=$crlfRun`r`nsource-sha=$sha`r`n", [Text.Encoding]::ASCII)
+                    if (-not ([IO.File]::ReadAllBytes($preview) -contains [byte]13)) {
+                        throw 'FAIL Prune CRLF preview fixture has no CR'
+                    }
+                    try { & $Front -Case Prune -Sha $sha -Preview $preview | Out-Null }
+                    catch {
+                        if ($_.Exception.Message -ne 'C849_STUB_STOP') {
+                            throw "FAIL Prune CRLF preview: $($_.Exception.Message)"
+                        }
+                    }
+                    if ($global:seen.Count -ne 1 -or $global:seen[0] -cne 'runner-cache-prune') {
+                        throw "FAIL Prune CRLF preview: expected runner-cache-prune, got $($global:seen -join ',')"
+                    }
+                    Write-Output 'PASS Prune CRLF preview'
+                    $wrongSha = 'b' * 40
+                    if ($wrongSha -ceq $sha) { throw 'FAIL Prune CRLF wrong source-sha fixture collided with HEAD' }
+                    [IO.File]::WriteAllText($preview, "run=$crlfRun`r`nsource-sha=$wrongSha`r`n", [Text.Encoding]::ASCII)
+                    C849ExpectCachePreviewInvalid 'Prune CRLF wrong source-sha' @{ Case = 'Prune'; Sha = $sha; Preview = $preview }
+                    [IO.File]::WriteAllText($preview, "run=not-a-run`r`nsource-sha=$sha`r`n", [Text.Encoding]::ASCII)
+                    C849ExpectCachePreviewInvalid 'Prune CRLF wrong run id' @{ Case = 'Prune'; Sha = $sha; Preview = $preview }
+                    $wrongPath = Join-Path $previewDir 'other.txt'
+                    [IO.File]::WriteAllText($wrongPath, "run=$crlfRun`r`nsource-sha=$sha`r`n", [Text.Encoding]::ASCII)
+                    C849ExpectCachePreviewInvalid 'Prune CRLF wrong path' @{ Case = 'Prune'; Sha = $sha; Preview = $wrongPath }
                     $global:requested = 'Both'
                     $global:seen = @()
                     & $Front -Case Both -Sha $sha | Out-Null
@@ -5089,6 +5135,7 @@ public sealed class RemoteScriptContractTests
                     Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
                     Remove-Item Function:\C849WriteLfFixture -ErrorAction SilentlyContinue
                     Remove-Item Function:\C849AssertLfFixture -ErrorAction SilentlyContinue
+                    Remove-Item Function:\C849ExpectCachePreviewInvalid -ErrorAction SilentlyContinue
                 }
                 """.ReplaceLineEndings("\n") + "\n");
 
@@ -5117,6 +5164,10 @@ public sealed class RemoteScriptContractTests
             process.ExitCode.ShouldBe(0, output);
             foreach (var entry in entries)
                 output.ShouldContain("PASS " + entry.Name + " full remote case");
+            output.ShouldContain("PASS Prune CRLF preview");
+            output.ShouldContain("PASS Prune CRLF wrong source-sha");
+            output.ShouldContain("PASS Prune CRLF wrong run id");
+            output.ShouldContain("PASS Prune CRLF wrong path");
             output.ShouldContain("PASS Both ordered remote cases");
         }
         finally
