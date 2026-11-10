@@ -544,7 +544,8 @@ public sealed class DerivedImpactIndexTests
         var sweep = await SelectAsync(root, "-Path", LeakSweepPath, "-Json");
         sweep.Exit.ShouldBe(0, sweep.Text);
         using var sweepJson = JsonDocument.Parse(sweep.Stdout);
-        Strings(sweepJson.RootElement, "classes").ShouldContain("C1677TempFamilyRegistryTests");
+        Strings(sweepJson.RootElement, "classes").ShouldNotContain("C1677TempFamilyRegistryTests");
+        WholeClasses(sweepJson.RootElement, "windowsFilters").ShouldContain("C1677TempFamilyRegistryTests");
         OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(7);
     }
 
