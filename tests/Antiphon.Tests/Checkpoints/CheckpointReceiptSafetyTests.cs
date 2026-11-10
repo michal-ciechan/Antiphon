@@ -130,6 +130,33 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task reused_receipt_fixture_matches_a_fresh_fixture_refusal()
+    {
+        var (freshRoot, freshRun) = Fixture();
+        var freshNames = EntryNames(freshRun);
+        freshNames.ShouldContain("report.md");
+        var fresh = await StatusWithNullRunId(freshRoot, freshRun);
+        fresh.Exit.ShouldBe(2);
+        fresh.Output.ShouldContain("refused:");
+        fresh.StateUnchanged.ShouldBeTrue();
+
+        var (reusedRoot, reusedRun) = Fixture();
+        var snapshot = Snapshot(reusedRun);
+        snapshot.ContainsKey("report.md").ShouldBeTrue();
+        File.WriteAllText(Path.Combine(reusedRun, "debris.txt"), "x");
+        var debris = Path.Combine(reusedRun, "debris-dir");
+        Directory.CreateDirectory(debris);
+        File.WriteAllText(Path.Combine(debris, "nested.txt"), "y");
+        File.WriteAllText(Path.Combine(reusedRun, "report.json"), "{}");
+        Restore(reusedRun, snapshot);
+        EntryNames(reusedRun).ShouldBe(freshNames);
+        var reused = await StatusWithNullRunId(reusedRoot, reusedRun);
+        reused.Exit.ShouldBe(fresh.Exit);
+        reused.Output.ShouldBe(fresh.Output);
+        reused.StateUnchanged.ShouldBeTrue();
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments(" \t\r\n")]
     [Arguments(null)]
@@ -221,6 +248,52 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
                 Line = "CHECKPOINT CP-fixture commit=" + observation.Commit + " source=" + observation.Commit
                     + " dirty=0 sourceState=clean buildSource=verified executed=1 passed=1 failed=0 skipped=0" }] });
         return (root, run);
+    }
+
+    private static Dictionary<string, byte[]> Snapshot(string run)
+    {
+        var snapshot = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var file in Directory.GetFiles(run))
+            snapshot.Add(Path.GetFileName(file)!, File.ReadAllBytes(file));
+        return snapshot;
+    }
+
+    // report.md is omitted until the snapshot restore is complete. The witness fails on that gap.
+    private static void Restore(string run, IReadOnlyDictionary<string, byte[]> snapshot)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(run).ToArray())
+        {
+            var name = Path.GetFileName(entry)!;
+            var drop = name == "report.md" || !snapshot.ContainsKey(name) || Directory.Exists(entry);
+            if (!drop)
+                continue;
+            if (Directory.Exists(entry))
+                Directory.Delete(entry, recursive: true);
+            else
+                File.Delete(entry);
+        }
+
+        foreach (var pair in snapshot)
+        {
+            if (pair.Key == "report.md")
+                continue;
+            File.WriteAllBytes(Path.Combine(run, pair.Key), pair.Value);
+        }
+    }
+
+    private static string[] EntryNames(string run) =>
+        Directory.EnumerateFileSystemEntries(run).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray()!;
+
+    private async Task<(int Exit, string Output, bool StateUnchanged)> StatusWithNullRunId(string root, string run)
+    {
+        var path = Path.Combine(run, "report.json");
+        var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        json["runId"] = null;
+        File.WriteAllText(path, json.ToJsonString());
+        var before = File.ReadAllBytes(Path.Combine(run, "state.json"));
+        var output = new StringWriter();
+        var code = await Antiphon.Checkpoints.Program.RunAsync(Args(root, run, "status"), new CheckpointApp.Runtime { Output = output });
+        return (code, output.ToString(), File.ReadAllBytes(Path.Combine(run, "state.json")).SequenceEqual(before));
     }
 
     private static string[] Args(string root, string run, string verb) =>
