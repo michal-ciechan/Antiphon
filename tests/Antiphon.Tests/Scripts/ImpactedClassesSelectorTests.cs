@@ -365,24 +365,26 @@ public sealed partial class ImpactedClassesSelectorTests
         "ReceiptScanDestinationIntegrationTests",
     ];
 
-    // CARD-1820. The hand nine stay. windowsOnly classes leave this Linux row.
+    // CARD-1820. Undeclared classes stay on this Linux row. The hand windows:only e2e class does not.
     private const string LandNotificationDerivedFilter =
-        "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandMonitoringTests*)"
+        "/*/*/(AgentTaskCommitEndpointTests*)|(AgentTaskDispatchBaseGuardTests*)"
+        + "|(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandMonitoringTests*)"
         + "|(AgentTaskLandNotificationParkFollowUpTests*)|(AgentTaskLandNotificationPersistenceTests*)"
         + "|(AgentTaskLandNotificationReconcileLoadTests*)|(AgentTaskLandNotificationRecoveryTests*)"
-        + "|(AgentTaskLandNotificationRescanTests*)|(AgentTaskLandQueueAgingTests*)|(AgentTaskLandQueuedReceiptTests*)"
-        + "|(AgentTaskLandReceiptTests*)|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
-        + "|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)|(CapacityRecoveryTaskTests*)"
-        + "|(CheckNoteDeliveryHandoffTests*)|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)"
-        + "|(DispatchHoldVisibilityTests*)|(ExpectationDebtTests*)|(LandEvidenceWarningDeliveryTests*)"
-        + "|(LandReceiptScanCacheTests*)|(LegacyCheckNotePublicationTests*)|(PendingSettlementDeliveryTests*)"
-        + "|(PreDispatchFailureDeliveryTests*)|(ReceiptScanDestinationIntegrationTests*)"
-        + "|(RepositoryMutationLeaseOwnerTests*)|(RolePolicyToolBundleDispatchTests*)|(WorktreeLandingCleanupRetryTests*)/*";
-
-    private const string LandNotificationWindowsFilter =
-        "/*/*/(AgentTaskCommitEndpointTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandPublicationTests*)"
-        + "|(AgentTaskReplyIntegrationTests*)|(AgentTaskWorktreeLockOutcomeTests*)|(BlockedTaskParkDeliveryTests*)"
-        + "|(DispatchBaseNotificationTests*)|(PostLandMutationDeliveryTests*)|(VerificationRoundDeliveryTests*)/*";
+        + "|(AgentTaskLandNotificationRescanTests*)|(AgentTaskLandPublicationTests*)"
+        + "|(AgentTaskLandQueueAgingTests*)|(AgentTaskLandQueuedReceiptTests*)|(AgentTaskLandReceiptTests*)"
+        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
+        + "|(AgentTaskReplyIntegrationTests*)|(AgentTaskWorktreeLockOutcomeTests*)"
+        + "|(BlockedTaskParkDeliveryTests*)|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)"
+        + "|(CapacityRecoveryTaskTests*)|(CheckNoteDeliveryHandoffTests*)"
+        + "|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)"
+        + "|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)|(ExpectationDebtTests*)"
+        + "|(LandEvidenceWarningDeliveryTests*)|(LandReceiptScanCacheTests*)"
+        + "|(LegacyCheckNotePublicationTests*)|(PendingSettlementDeliveryTests*)"
+        + "|(PostLandMutationDeliveryTests*)|(PreDispatchFailureDeliveryTests*)"
+        + "|(ReceiptScanDestinationIntegrationTests*)|(RepositoryMutationLeaseOwnerTests*)"
+        + "|(RolePolicyToolBundleDispatchTests*)|(VerificationRoundDeliveryTests*)"
+        + "|(WorktreeLandingCleanupRetryTests*)/*";
 
     // The C1432 roster: every server file that starts a git process, plus the CARD-1546 project.
     private static readonly string[] ServerGitStartSites =
@@ -404,49 +406,54 @@ public sealed partial class ImpactedClassesSelectorTests
         "StandingSpecialistRoutingMigrationTests", "WorktreeBaseSelectionTests",
     ];
 
-    // CARD-1820. windowsOnly classes join this lane, including classes a hand row also names.
+    // CARD-1820. Hand windows rows plus the temporary override list. Declared-both classes stay off this lane.
     private const string WindowsTestsFilter =
-        "/*/*/(AdvisoryChangePolicyTests*)|(AgentSessionServiceIntegrationTests*)|(AgentTaskCommitEndpointTests*)"
-        + "|(AgentTaskDeliveryWatchdogTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandPublicationTests*)"
-        + "|(AgentTaskReplyIntegrationTests*)|(AgentTaskWorktreeLockOutcomeTests*)|(BlockedTaskParkDeliveryTests*)"
-        + "|(C0824TransportGitTests*)|(C0824WorkspaceSlotRoleGateTests*)|(C0824WorkspaceSlotServerTests*)"
-        + "|(C1514HostLoadApiTests*)|(C1514HostLoadHistoryTests*)|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)"
-        + "|(C1677RetentionServerTests*)|(Card1761RunnerReadPollTests*)|(DelegationWorktreeTests*)"
-        + "|(DispatchBaseNotificationTests*)|(ImpactedClassesSelectorTests*)|(InProcessGitCommandsTests*)"
-        + "|(LandGraphLandRefreshTests*)|(LandWorkspaceTests*)|(LiveLaneRunnerTests*)|(NightlyCoreTests*)"
-        + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)|(PostLandMutationWorktreeTests*)"
-        + "|(ProcessSpawnLimitTests*)|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
-        + "|(TestSelectionTests*)|(VerificationRoundDeliveryTests*)|(WindowsUnitPlatformAdmissionTests*)"
-        + "|(WorktreeBaseSelectionTests*)|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)"
-        + "|(WorktreeManagerTests*)|(WorktreeResidueSweepTests*)/*";
+        "/*/*/(AgentSessionServiceIntegrationTests*)|(C0824WorkspaceSlotRoleGateTests*)"
+        + "|(Card1761RunnerReadPollTests*)|(LandGraphLandRefreshTests*)|(ServerImagePushCredentialTests*)"
+        + "|(ServerRepositoryMirrorScriptTests*)/*";
 
-    // CARD-1820. Linux keeps the hand and derived classes that are not windowsOnly.
+    // CARD-1820. Linux keeps hand and derived classes that are not windowsOnly.
     private const string WhyMissedTestsFilter =
-        "/*/*/(AgentTaskLandApprovalRequestTests*)|(AgentTaskLandBoundaryTests*)|(AgentTaskLandHeldNotificationTests*)"
-        + "|(AgentTaskLandMonitoringTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
-        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)"
-        + "|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
+        "/*/*/(AdvisoryChangePolicyTests*)|(AgentTaskCommitEndpointTests*)"
+        + "|(AgentTaskDeliveryWatchdogTests*)|(AgentTaskDispatchBaseGuardTests*)"
+        + "|(AgentTaskLandApprovalRequestTests*)|(AgentTaskLandBoundaryTests*)"
+        + "|(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandMonitoringTests*)"
+        + "|(AgentTaskLandNotificationParkFollowUpTests*)|(AgentTaskLandNotificationPersistenceTests*)"
+        + "|(AgentTaskLandNotificationReconcileLoadTests*)|(AgentTaskLandNotificationRecoveryTests*)"
+        + "|(AgentTaskLandNotificationRescanTests*)|(AgentTaskLandPublicationTests*)"
         + "|(AgentTaskLandQueueAgingTests*)|(AgentTaskLandQueuedReceiptTests*)|(AgentTaskLandReceiptTests*)"
         + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
-        + "|(AgentTaskLandRequestTests*)|(AgentTaskLandSweepTests*)|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)"
-        + "|(CapacityRecoveryTaskTests*)|(Card1761RunnerReadPollTests*)|(CheckNoteDeliveryHandoffTests*)"
-        + "|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)"
-        + "|(DelegationTestServicesTests*)|(DispatchHoldVisibilityTests*)|(ExpectationDebtTests*)"
-        + "|(ExternalTrackerSyncIdentifierTests*)|(LandEvidenceWarningDeliveryTests*)|(LandReceiptScanCacheTests*)"
-        + "|(LegacyCheckNotePublicationTests*)|(MergeHighRadiusSubsetTests*)|(PendingSettlementDeliveryTests*)"
-        + "|(PreDispatchFailureDeliveryTests*)|(ReceiptScanDestinationIntegrationTests*)|(RepositoryMutationLeaseOwnerTests*)"
-        + "|(RolePolicyToolBundleDispatchTests*)|(RunnerStartupStaleObservationTests*)|(RunnerTerminalSessionGenerationTests*)"
-        + "|(RunnerTerminalSessionInputEncodingTests*)|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
-        + "|(ServerImagePushCredentialTests*)|(SessionTerminationSourcePersistenceTests*)|(TestLaneCategoryGuardTests*)"
-        + "|(TimeoutAuditTests*)|(WorktreeLandingCleanupRetryTests*)|(WorktreeManagerStartRefLocalOnlyTests*)"
-        + "|(WorktreeRemovalAuthorityTests*)/*";
+        + "|(AgentTaskLandRequestTests*)|(AgentTaskLandSweepTests*)|(AgentTaskReplyIntegrationTests*)"
+        + "|(AgentTaskWorktreeLockOutcomeTests*)|(BlockedTaskParkDeliveryTests*)"
+        + "|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)|(C0824TransportGitTests*)"
+        + "|(C0824WorkspaceSlotRoleGateTests*)|(C0824WorkspaceSlotServerTests*)|(C1514HostLoadApiTests*)"
+        + "|(C1514HostLoadHistoryTests*)|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)"
+        + "|(C1677RetentionServerTests*)|(CapacityRecoveryTaskTests*)|(Card1761RunnerReadPollTests*)"
+        + "|(CheckNoteDeliveryHandoffTests*)|(CompletionNoteDurableSweepTests*)"
+        + "|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)|(DelegationTestServicesTests*)"
+        + "|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)"
+        + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)|(GitIndexLockTests*)"
+        + "|(ImpactedClassesSelectorTests*)|(InProcessGitCommandsTests*)"
+        + "|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
+        + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LiveLaneRunnerTests*)"
+        + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreTests*)|(PendingSettlementDeliveryTests*)"
+        + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
+        + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
+        + "|(ReceiptScanDestinationIntegrationTests*)|(RepositoryMutationLeaseOwnerTests*)"
+        + "|(RolePolicyToolBundleDispatchTests*)|(RunnerStartupStaleObservationTests*)"
+        + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"
+        + "|(SelectorLineEndingAttributeTests*)|(ServerGitAssemblyTests*)|(ServerGitProcessTests*)"
+        + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
+        + "|(SessionTerminationSourcePersistenceTests*)|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
+        + "|(TimeoutAuditTests*)|(VerificationRoundDeliveryTests*)|(WindowsUnitPlatformAdmissionTests*)"
+        + "|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
+        + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)"
+        + "|(WorktreeManagerStartRefLocalOnlyTests*)|(WorktreeManagerTests*)"
+        + "|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
 
     private const string WhyMissedSessionRunnerFilter =
-        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)|(HostStatsStoreTests*)"
-        + "|(RunnerCapabilitiesTests*)/*";
-
-    private const string WhyMissedSessionRunnerWindowsFilter =
-        "/*/*/(PhoneHomeCommandDispatcherTests*)/*";
+        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)"
+        + "|(HostStatsStoreTests*)|(PhoneHomeCommandDispatcherTests*)|(RunnerCapabilitiesTests*)/*";
 
     private const string LinuxOnlyCensusFilter =
         "/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)|(LinuxOnlyWindowsExclusionPolicy*)";
@@ -544,7 +551,6 @@ public sealed partial class ImpactedClassesSelectorTests
         ]);
         FilterRows(json.RootElement, "windowsFilters").ShouldBe([
             ("tests/Antiphon.E2E", windowsE2e),
-            ("tests/Antiphon.Tests", LandNotificationWindowsFilter),
         ]);
     }
 
@@ -645,7 +651,6 @@ public sealed partial class ImpactedClassesSelectorTests
         filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", WhyMissedSessionRunnerFilter));
         windows.ShouldBe([
             ("tests/Antiphon.E2E", "/*/*/(AgentTaskLandDeliveryE2ETests*)/*"),
-            ("tests/Antiphon.SessionRunner.Tests", WhyMissedSessionRunnerWindowsFilter),
             ("tests/Antiphon.Tests", WindowsTestsFilter),
         ]);
     }
@@ -832,13 +837,14 @@ public sealed partial class ImpactedClassesSelectorTests
             "server/Infrastructure/Git/LandingGit.cs",
             "repository-lease-reflected-constructors",
             "RepositoryMutationLeaseTests",
-            windows: true,
+            windows: false,
             also: "RepositoryLeaseWindowsBoundaryTests",
-            windowsOnly: true,
+            windowsOnly: false,
             alsoWindowsOnly: true,
             mergeWindows: false,
             mergeWindowsOnly: false,
-            mergeAlsoWindowsOnly: true);
+            mergeAlsoWindowsOnly: true,
+            onLinux: true);
     }
 
     // CARD-1819 round 2. A kind that is not windows:only or windows:required runs on Linux.
@@ -890,10 +896,11 @@ public sealed partial class ImpactedClassesSelectorTests
             "tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs",
             "land-graph-precheck",
             "LandGraphEvaluationTests",
-            windows: true,
-            windowsOnly: true,
+            windows: false,
+            windowsOnly: false,
             mergeWindows: false,
-            mergeWindowsOnly: false);
+            mergeWindowsOnly: false,
+            onLinux: true);
     }
 
     [Test]
@@ -1027,10 +1034,11 @@ public sealed partial class ImpactedClassesSelectorTests
             "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs",
             "temp-family-registry",
             "C1677TempFamilyRegistryTests",
-            windows: true,
-            windowsOnly: true,
+            windows: false,
+            windowsOnly: false,
             mergeWindows: false,
-            mergeWindowsOnly: false);
+            mergeWindowsOnly: false,
+            onLinux: true);
     }
 
     [Test]
@@ -1040,27 +1048,29 @@ public sealed partial class ImpactedClassesSelectorTests
             "tests/test-execution-policy.json",
             "nightly-live-lane",
             "LiveLaneRunnerTests",
-            windows: true,
+            windows: false,
             also: "NightlyCoreTests",
-            windowsOnly: true,
-            alsoWindowsOnly: true,
+            windowsOnly: false,
+            alsoWindowsOnly: false,
             mergeWindows: false,
             mergeWindowsOnly: false,
-            mergeAlsoWindowsOnly: false);
+            mergeAlsoWindowsOnly: false,
+            onLinux: true);
     }
 
     private static async Task AssertFakeDiff(
         string path, string kind, string needle, bool windows, string? also = null,
         bool windowsOnly = false, bool alsoWindowsOnly = false,
-        bool? mergeWindows = null, bool? mergeWindowsOnly = null, bool? mergeAlsoWindowsOnly = null)
+        bool? mergeWindows = null, bool? mergeWindowsOnly = null, bool? mergeAlsoWindowsOnly = null,
+        bool onLinux = false)
     {
         var root = Root();
         var ran = await RunAsync(root, "-Path", path, "-Json");
         ran.Exit.ShouldBe(0, path + " " + ran.Text);
         using (var json = JsonDocument.Parse(ran.Stdout))
-            AssertSelected(json.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly);
+            AssertSelected(json.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly, onLinux);
 
-        if (windowsOnly)
+        if (windowsOnly || onLinux)
         {
             // -MergeSubset returns before the derived windowsOnly strip. A hand windows:only
             // kind stays on that lane; a derived-only class stays on the hand Linux lane.
@@ -1070,7 +1080,7 @@ public sealed partial class ImpactedClassesSelectorTests
             var merged = await RunAsync(root, "-MergeSubset", "-Path", path, "-Json");
             merged.Exit.ShouldBe(0, path + " merge " + merged.Text);
             using var mergeJson = JsonDocument.Parse(merged.Stdout);
-            AssertSelected(mergeJson.RootElement, kind, needle, laneWindows, also, laneOnly, laneAlsoOnly);
+            AssertSelected(mergeJson.RootElement, kind, needle, laneWindows, also, laneOnly, laneAlsoOnly, onLinux);
             if (mergeWindowsOnly == false)
             {
                 LinuxFilters(mergeJson.RootElement).Any(filter => filter.Contains(needle, StringComparison.Ordinal))
@@ -1094,12 +1104,12 @@ public sealed partial class ImpactedClassesSelectorTests
         mutant.ShouldNotBe(ran.Stdout, needle);
         using var broken = JsonDocument.Parse(mutant);
         Should.Throw<ShouldAssertException>(() =>
-            AssertSelected(broken.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly));
+            AssertSelected(broken.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly, onLinux));
     }
 
     private static void AssertSelected(
         JsonElement root, string kind, string needle, bool windows, string? also,
-        bool windowsOnly = false, bool alsoWindowsOnly = false)
+        bool windowsOnly = false, bool alsoWindowsOnly = false, bool onLinux = false)
     {
         root.GetProperty("kinds").EnumerateArray().Select(row => row.GetString() ?? "")
             .ShouldContain(kind);
@@ -1110,6 +1120,16 @@ public sealed partial class ImpactedClassesSelectorTests
         var windowsHit = root.GetProperty("windowsFilters").EnumerateArray()
             .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(needle, StringComparison.Ordinal));
         windowsHit.ShouldBe(windows, kind + " windows lane " + needle);
+        if (onLinux)
+        {
+            LinuxFilters(root).Any(filter => filter.Contains(needle, StringComparison.Ordinal))
+                .ShouldBeTrue(kind + " linux filter " + needle);
+            if (also is not null && !alsoWindowsOnly)
+            {
+                LinuxFilters(root).Any(filter => filter.Contains(also, StringComparison.Ordinal))
+                    .ShouldBeTrue(kind + " linux filter " + also);
+            }
+        }
         // The primary class can stay on Linux while its partner is windows-only.
         if (also is not null && alsoWindowsOnly && !windowsOnly)
         {
