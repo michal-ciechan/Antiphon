@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "568aae96ca07d5fb5cb5c54e62a5a4a02b1159ae6fd287de18ca9e8f2c0f2a52",
+  "policyHash": "7a7d65408ed9956188efb31dd7da7ad62082e864456404266c93c96aec5d650c",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1070,6 +1070,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: real Linux stop boundaries require /bin/sh, libc signals and /proc storage refusal. The case remains required on Linux.",
           "owner": "CARD-1619"
+        },
+        {
+          "suite": "pty-host",
+          "class": "PosixProcessSpawnerStdioAliasTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: CloseStdioAliases reads /proc/self/fd and closes only pipe:[ and socket:[ identities. The case remains required on Linux.",
+          "owner": "CARD-0608"
         },
         {
           "suite": "session-runner",
