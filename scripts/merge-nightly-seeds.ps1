@@ -6,7 +6,13 @@ A later green proves an identity only when that seed's source SHA contains the f
 Merge one or more stopped-run seeds into a single operator-seed-from-stopped-run
 envelope and a deterministic report. Chunk rows and evidence come from the newest
 seed. failedTests lists identities that are not yet proven. Launch defaults stay
-on the existing prior-failure switches.
+on the existing prior-failure switches. When -Repo is set, a decision SHA already
+contained in the last-failing run source (ancestor or cherry-pick trailer) is
+ignored for proven and for fixed-pending-proof. With no remaining SHA the identity
+stays open. --Proven remains the manual override. Proof requires the later green
+source to contain a fix the failing run did not already contain. Without -Repo,
+git proof stays off.
+A test skipped inside a completed chunk looks green; that is an accepted seed-schema limit.
 #>
 # Named arguments are parsed from $args. This host's pwsh -File rejects a repeated
 # [string[]] parameter, and the operator command repeats -Seed and -Proven.
@@ -314,12 +320,26 @@ try {
         $decisionList = @()
         $stored = $null
         if ($decisions.TryGetValue($key, [ref]$stored)) { $decisionList = @($stored) }
+        $usableDecisions = New-Object System.Collections.Generic.List[string]
+        $fixPresentAtFailure = $false
+        foreach ($fix in @($decisionList)) {
+            $fixText = [string]$fix
+            if ([string]::IsNullOrWhiteSpace($fixText)) { continue }
+            if (-not [string]::IsNullOrWhiteSpace($Repo)) {
+                $already = Get-MergeContainment ([string]$last.sourceSha) $fixText
+                if ($already.Contained) {
+                    $fixPresentAtFailure = $true
+                    continue
+                }
+            }
+            $usableDecisions.Add($fixText)
+        }
 
         $proving = $null
         $containing = $null
         foreach ($doc in $later) {
             $green = Test-MergeGreen $doc $record.Suite $record.ClassName $record.Method
-            $hit = Find-MergeDecisionHit $doc $decisionList
+            $hit = Find-MergeDecisionHit $doc $usableDecisions
             $named = $false
             foreach ($row in $provenRows) {
                 if ($row.Key -ceq $key -and $row.RunId -ceq [string]$doc.sourceRunId) { $named = $true; break }
@@ -341,7 +361,7 @@ try {
         } else {
             $pending = $null
             foreach ($doc in $later) {
-                $hit = Find-MergeDecisionHit $doc $decisionList
+                $hit = Find-MergeDecisionHit $doc $usableDecisions
                 if ($null -ne $hit) { $pending = $hit; break }
             }
             if ($null -ne $pending) {
@@ -397,6 +417,7 @@ try {
             provingSha = $provingSha
             decisionShas = $decisionValue.ToArray()
             containingCommit = $containing
+            fixPresentAtFailure = [bool]$fixPresentAtFailure
         })
     }
 
@@ -454,6 +475,8 @@ try {
     $script:MergeWroteReport = $true
     $written = Read-NightlyStoppedRunSeed $OutputPath
     if ([string]$written.sourceRunId -cne [string]$newest.sourceRunId) { throw 'merged-seed-unreadable' }
+    Write-Host 'A test skipped inside a completed chunk looks green; that is an accepted seed-schema limit.'
+    Write-Host ('digest=' + (Get-NightlyHistoryDigest $OutputPath))
     if ($Strict -and $strictBreach) { exit 3 }
     exit 0
 } catch {
