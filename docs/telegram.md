@@ -143,9 +143,13 @@ from before the injection, and the default path uses the newest channel chat at
 resolution, so a later retry publishes there (CARD-1454).
 The debt is abandoned after `ChannelBridge:ReplyDebtGiveUpAttempts` (default 20; 0 disables)
 failed attempts, or `ChannelBridge:ReplyDebtGiveUpMinutes` (default 10; 0 disables; at most
-`PendingReplyTtlMinutes`) after the row was created once it has failed at least once. Its open
+`PendingReplyTtlMinutes`) after the row was created once it has failed at least once. That
+clock stays the creation time: a row that only waited is tried once before the bound can
+abandon it, and the bound does not start again when the row becomes head (CARD-1455). Its open
 correlations then settle with a Critical `ChannelReplyLost` (`PublishFailed`) incident and alert,
 a best-effort notice goes to the originating chat, and later replies to that chat flow.
+A row whose correlations are already settled is still removed, with a Warning that names the
+sequence.
 `PendingReplyTtlMinutes` (default 30) remains the backstop. A late-confirmed publication that
 waits for an earlier owed reply to the same chat, or that fails, is the same debt (CARD-1433).
 
