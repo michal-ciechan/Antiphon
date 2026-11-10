@@ -87,7 +87,8 @@ Capacity auto-resume (CARD-0412) paces recovery **per execution kind**: supervis
 for `OpenCode` or `Raw` is **refused with a 422 naming the reason**, never silently substituted.
 An orchestrator is `ClaudeCode` only: its contract (the PreToolUse deny hook, `delegate.ps1`, the
 check interpreter) has only ever run on Claude, and an explicit orchestrator kind of `Grok`/`Codex`
-is rejected rather than reinterpreted. ChatGPT is not Codex remote control. A named Codex session
+is rejected rather than reinterpreted. On a Linux placement the deny hook runs the same script
+under `pwsh` (CARD-1225); a Windows placement keeps `powershell`. ChatGPT is not Codex remote control. A named Codex session
 token can still delegate (kind-blind `MayDelegate`); `delegate.ps1 -Orchestrator -Kind Codex` stays
 422. External ChatGPT dispatch uses a Delegation Capability (`docs/ops-http.md`).
 

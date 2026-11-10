@@ -497,10 +497,12 @@ public sealed class DelegationWorktreeService
     }
 
     /// <summary>
-    /// The PreToolUse deny hook, verbatim. Blocks the edit tools with exit code 2 — Claude Code
-    /// feeds the stderr message back to the model — so "you are an orchestrator, delegate this"
-    /// becomes an invariant instead of advice. powershell.exe (5.1) on purpose: always present on
-    /// Windows and invocable identically from cmd or sh, whichever shell runs the hook.
+    /// The PreToolUse deny hook for a Windows placement, verbatim. Blocks the edit tools with
+    /// exit code 2 — Claude Code feeds the stderr message back to the model — so "you are an
+    /// orchestrator, delegate this" becomes an invariant instead of advice. powershell.exe (5.1)
+    /// on purpose: always present on Windows and invocable identically from cmd or sh, whichever
+    /// shell runs the hook. A Linux placement uses <see cref="LinuxDenyHookSettingsJson"/>;
+    /// this command text stays the Windows one (CARD-1225).
     /// </summary>
     internal const string DenyHookSettingsJson = """
         {
@@ -519,6 +521,33 @@ public sealed class DelegationWorktreeService
           }
         }
         """;
+
+    /// <summary>
+    /// CARD-1225. The same deny script as <see cref="DenyHookSettingsJson"/>, run by <c>pwsh</c>.
+    /// The Linux runner image installs <c>pwsh</c> and has no <c>powershell</c> executable.
+    /// </summary>
+    internal static readonly string LinuxDenyHookSettingsJson = DenyHookSettingsJson.Replace(
+        "\"command\": \"powershell -NoProfile -Command ",
+        "\"command\": \"pwsh -NoProfile -Command ",
+        StringComparison.Ordinal);
+
+    /// <summary>
+    /// Linux placement is the runner OS observed at create. When that was not observed, a Linux
+    /// requirement is still Linux: the session cannot be admitted on Windows. Any other
+    /// unobserved requirement keeps the Windows command, including historical rows.
+    /// </summary>
+    internal static bool UsesLinuxDenyHook(AgentTask task)
+    {
+        var observed = RunnerPlatformWire.Normalize(task.ObservedPlatform);
+        if (observed == RunnerPlatformWire.Linux)
+            return true;
+        if (observed == RunnerPlatformWire.Windows)
+            return false;
+        return task.RequiredPlatform == RequiredPlatform.Linux;
+    }
+
+    internal static string DenyHookSettingsFor(AgentTask task) =>
+        UsesLinuxDenyHook(task) ? LinuxDenyHookSettingsJson : DenyHookSettingsJson;
 
     private const string DenyHookRelativePath = ".claude/settings.local.json";
 
@@ -614,7 +643,7 @@ public sealed class DelegationWorktreeService
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
-            await File.WriteAllTextAsync(settingsPath, DenyHookSettingsJson, ct);
+            await File.WriteAllTextAsync(settingsPath, DenyHookSettingsFor(task), ct);
             await EnsureGitExcludeAsync(worktree, DenyHookRelativePath, ct);
             return true;
         }

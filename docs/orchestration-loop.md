@@ -446,6 +446,28 @@ the code - it is a habit to fix in the next brief.
 
 ---
 
+## Orchestrator deny hook on Linux (CARD-1225)
+
+`DelegationWorktreeService.ArmDenyHookAsync` writes the PreToolUse deny hook into the
+orchestrator's own worktree (`.claude/settings.local.json`). The hook matches
+`Edit|Write|MultiEdit|NotebookEdit`, writes the "delegate this" line to stderr, and exits 2.
+Claude feeds that stderr back to the model. An existing settings file is still left alone,
+and the file stays on the git exclude list. When the hook is armed does not change.
+
+Windows placement keeps Windows PowerShell 5.1: `powershell -NoProfile -Command` with that
+same script. That command text is unchanged. `powershell.exe` is the Windows interpreter
+because it is always present and can be started from cmd or sh.
+
+Linux placement is the runner OS recorded on the task (`ObservedPlatform` `linux`). When no
+OS was observed, `RequiredPlatform.Linux` is still a Linux placement, because that task
+cannot be admitted on Windows. Any other unobserved requirement, including `Any`, keeps the
+Windows command. A Linux placement writes the same script with `pwsh -NoProfile -Command`.
+The Linux runner image installs `pwsh` and does not install `powershell`, so the old command
+was not a deny hook there. `pwsh` is the interpreter; the exit code and the stderr sentence
+stay the same.
+
+---
+
 ## 1. The cycle (CARD-0146)
 
 A pipeline stage IS an `AgentTaskRole` — `Investigate`, `Plan`, `TestDesign`, `Code`, `Mutation`, `Review`
