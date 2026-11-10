@@ -529,7 +529,10 @@ public class AgentTaskAutoTitleTests
 
         public async Task<AgentTask> WaitForDiagnoseRunAsync(Guid specialistId)
         {
-            for (var attempt = 0; attempt < 200; attempt++)
+            // Wall clock. DiagnoseWaitSeconds is fake-clock time and starts after this row exists.
+            // rc dce78ee0 group 86 spent 7.825s in 200 x 25ms and still had no Queued row.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (DateTime.UtcNow < deadline)
             {
                 await using var db = CreateContext();
                 var row = await db.AgentTasks.AsNoTracking()
