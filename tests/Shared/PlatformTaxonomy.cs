@@ -5,8 +5,8 @@ namespace Antiphon.TestSupport;
 /// <summary>
 /// CARD-1832. Method declaration that the Linux lane runs and the Windows lane excludes.
 /// The reason is stored for the diff and the census. The filter value is <c>LinuxOnly</c>.
+/// TUnit0028 forbids a second AttributeUsage, so this inherits PropertyAttribute's usage.
 /// </summary>
-[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class LinuxOnlyAttribute : PropertyAttribute
 {
     public string Reason { get; }
@@ -21,7 +21,6 @@ public sealed class LinuxOnlyAttribute : PropertyAttribute
 /// <summary>
 /// CARD-1832. Method declaration that the Windows lane runs and the Linux lane excludes.
 /// </summary>
-[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class WindowsOnlyAttribute : PropertyAttribute
 {
     public string Reason { get; }
@@ -36,7 +35,6 @@ public sealed class WindowsOnlyAttribute : PropertyAttribute
 /// <summary>
 /// CARD-1832. The method runs on both lanes, and a Linux-concerning diff must schedule it.
 /// </summary>
-[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class HasLinuxSpecificsAttribute : PropertyAttribute
 {
     public string Reason { get; }
@@ -51,7 +49,6 @@ public sealed class HasLinuxSpecificsAttribute : PropertyAttribute
 /// <summary>
 /// CARD-1832. The method runs on both lanes, and a Windows-concerning diff must schedule it.
 /// </summary>
-[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class HasWindowsSpecificsAttribute : PropertyAttribute
 {
     public string Reason { get; }
