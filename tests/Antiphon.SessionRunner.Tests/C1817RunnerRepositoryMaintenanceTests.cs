@@ -31,7 +31,7 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
             var foreign = Repo(outside, "foreign", 1);
             var marker = Path.Combine(buried, "MARKER");
             File.WriteAllText(marker, "keep");
-            Directory.CreateSymbolicLink(link, foreign);
+            MaintenanceFixture.LinkDirectory(link, foreign);
             var buriedLoose = RunnerRepositoryMaintenance.CountLoose(Path.Combine(buried, ".git"));
             var foreignLoose = RunnerRepositoryMaintenance.CountLoose(Path.Combine(foreign, ".git"));
             buriedLoose.ShouldBeGreaterThan(0);
@@ -82,12 +82,7 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
             Repo(root, "antiphon", 0);
             var maintenance = Build(root, threshold: 1, budget: 1, start: _ =>
             {
-                child = Process.Start(new ProcessStartInfo("/bin/sleep", "30")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                });
+                child = MaintenanceFixture.StartSleep(30);
                 pid = child!.Id;
                 return child;
             });
@@ -95,13 +90,13 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
             var report = status.Repositories.ShouldHaveSingleItem();
             report.Outcome.ShouldBe("failed");
             report.Reason.ShouldBe("budget");
-            Directory.Exists("/proc/" + pid).ShouldBeFalse();
+            MaintenanceFixture.ProcessGone(pid).ShouldBeTrue();
         }
         finally
         {
             try
             {
-                if (child is not null && pid > 0 && Directory.Exists("/proc/" + pid))
+                if (child is not null && pid > 0 && !MaintenanceFixture.ProcessGone(pid))
                     child.Kill(entireProcessTree: true);
             }
             catch { /* already reaped */ }
@@ -123,12 +118,7 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
             var maintenance = Build(root, threshold: 1, start: psi =>
             {
                 seen = psi;
-                return Process.Start(new ProcessStartInfo("/bin/true")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                });
+                return MaintenanceFixture.StartTrue();
             });
             var status = await maintenance.RunAsync(CancellationToken.None, force: true);
             seen.ShouldNotBeNull();
@@ -470,12 +460,7 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
         _ =>
         {
             // Return at once. Blocking here never gives GitAsync a Task to await, so the test cannot release it.
-            var child = Process.Start(new ProcessStartInfo("/bin/sleep", "30")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            }) ?? throw new InvalidOperationException("sleep did not start");
+            var child = MaintenanceFixture.StartSleep(30);
             started(child);
             entered.TrySetResult();
             return child;
@@ -500,6 +485,10 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
         Git(path, "init", "-q");
         Git(path, "config", "gc.auto", "0");
         Git(path, "config", "maintenance.auto", "false");
+        Git(path, "config", "user.name", "c1817");
+        Git(path, "config", "user.email", "c1817@example.com");
+        Git(path, "config", "commit.gpgsign", "false");
+        Git(path, "config", "core.hooksPath", OperatingSystem.IsWindows() ? "NUL" : "/dev/null");
         for (var i = 0; i < commits; i++)
         {
             File.WriteAllText(Path.Combine(path, "f" + i + ".txt"), "body " + i);
