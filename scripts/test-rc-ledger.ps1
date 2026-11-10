@@ -69,6 +69,84 @@ function Decide($Platform, $Boundary, $NewDigest, $Ledger, $Identity, $Chunk, $H
 $same = New-Hex 'a'
 $other = New-Hex 'b'
 
+function New-SampleJson {
+    param($Identity, $Chunk)
+    if ($null -eq $Identity) { $Identity = New-Id 'passed' $same 'core' 'Runs' }
+    if ($null -eq $Chunk) { $Chunk = New-Chunk $same 'core' 'passed' 'Runs' }
+    $sampleContract = [ordered]@{ policyHash = 'p'; catalogHash = 'c'; selectorHash = 's'; runtimeHash = 'r' }
+    $sample = New-RcLedger -Document ([ordered]@{
+        platform = 'windows'; repository = 'antiphon'; candidateId = 'cand-1'; candidateSha = ('1' * 40)
+        baselineSha = $null; baselineRef = $null; runId = 'run-1'; attempt = 1; contract = $sampleContract
+        forcedFull = @(); identities = @($Identity); chunks = @($Chunk)
+    })
+    return (ConvertTo-RcLedgerJson -Document $sample)
+}
+function Update-Once {
+    param([string]$Text, [string]$Old, [string]$New)
+    $at = $Text.IndexOf($Old)
+    if ($at -lt 0) { throw ('fixture missing ' + $Old) }
+    return $Text.Remove($at, $Old.Length).Insert($at, $New)
+}
+function Write-LedgerFile {
+    param([string]$Name, [string]$Text, [bool]$Bom = $false, [bool]$Crlf = $false)
+    if ($Crlf) { $Text = $Text.Replace(',"', ",`r`n`"") }
+    $path = Join-Path $ResultsDirectory ($Name + '.json')
+    $encoding = New-Object System.Text.UTF8Encoding $Bom
+    [System.IO.File]::WriteAllText($path, $Text, $encoding)
+    return $path
+}
+function Assert-Rejected {
+    param([string]$Label, [string]$Text, [bool]$Bom = $false, [bool]$Crlf = $false)
+    $path = Write-LedgerFile $Label $Text $Bom $Crlf
+    $threw = $false
+    $message = ''
+    try {
+        $doc = Read-RcLedger -Path $path
+        $message = 'accepted'
+        if ($null -ne $doc) { $message = 'accepted format=' + [string](Get-RcProp $doc 'format') }
+    } catch {
+        $threw = $true
+        $message = [string]$_.Exception.Message
+    }
+    Note ($threw -and $message.StartsWith('ledger-invalid')) ($Label + ' => ' + $message)
+}
+function Assert-CarriesFile {
+    param([string]$Label, [string]$Path)
+    $doc = Read-RcLedger -Path $Path
+    $id = $doc.identities
+    if ($id -is [System.Array]) { $id = $id[0] }
+    $chunk = $doc.chunks
+    if ($chunk -is [System.Array]) { $chunk = $chunk[0] }
+    $decision = Get-RcIdentityCarryDecision -Platform 'windows' -Boundary 'core' -NewDigest ([string](Get-RcProp $id 'inputDigest')) -SourceLedger $doc -SourceIdentity $id -SourceChunk $chunk -History $null -FixProven:$false -ExpectedSkipRoster @() -ForcedFull @()
+    Note ($decision.decision -ceq 'carry' -and $decision.reason -ceq 'carry' -and [string](Get-RcProp $id 'outcome') -ceq 'passed') ($Label + ' ' + $decision.decision + '/' + $decision.reason + '/' + (Get-RcProp $id 'outcome'))
+}
+function New-WideJson {
+    param([int]$Count)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('{"format":"antiphon-rc-ledger-v1","platform":"windows","repository":"antiphon","candidateId":"cand-1","candidateSha":"')
+    [void]$sb.Append(('1' * 40))
+    [void]$sb.Append('","baselineSha":null,"baselineRef":null,"runId":"run-1","attempt":1,"contract":{"policyHash":"p","catalogHash":"c","selectorHash":"s","runtimeHash":"r"},"forcedFull":[],"identities":[')
+    $keys = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $Count; $i++) {
+        if ($i -gt 0) { [void]$sb.Append(','); [void]$keys.Append(',') }
+        $method = 'M' + $i.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        [void]$keys.Append('"SampleTests/')
+        [void]$keys.Append($method)
+        [void]$keys.Append('"')
+        [void]$sb.Append('{"suite":"antiphon","className":"SampleTests","method":"')
+        [void]$sb.Append($method)
+        [void]$sb.Append('","boundary":"core","inputDigest":"')
+        [void]$sb.Append($same)
+        [void]$sb.Append('","outcome":"passed","durationSeconds":1,"carriedFrom":null}')
+    }
+    [void]$sb.Append('],"chunks":[{"chunkId":"b-core-aaaaaaaaaaaaaaaa","boundary":"core","suite":"antiphon","identityKeys":[')
+    [void]$sb.Append($keys.ToString())
+    [void]$sb.Append('],"inputDigest":"')
+    [void]$sb.Append($same)
+    [void]$sb.Append('","outcome":"passed","durationSeconds":1}]}')
+    return $sb.ToString()
+}
+
 switch ($Case) {
     'MissingDigestIsDirty' {
         $id = New-Id 'passed' $same 'core' 'Runs'
@@ -206,6 +284,121 @@ switch ($Case) {
         $exists = $false
         try { Write-RcLedger -Path $pathA -Document $docA } catch { if ($_.Exception.Message -ceq 'ledger-exists') { $exists = $true } else { throw } }
         Note $exists 'second write refused'
+        Assert-Contract
+    }
+    'DuplicateOutcomeNeverCarries' {
+        $json = New-SampleJson
+        $dup = Update-Once $json '"outcome":"passed"' '"outcome":"failed","outcome":"passed"'
+        Assert-Rejected 'duplicate-outcome' $dup
+        Assert-Contract
+    }
+    'NestedDuplicateIsInvalid' {
+        $json = New-SampleJson
+        $contractDup = Update-Once $json '"policyHash":"p"' '"policyHash":"p","policyHash":"q"'
+        Assert-Rejected 'duplicate-contract' $contractDup
+        $chunkDup = Update-Once $json '"chunkId":"b-core-aaaaaaaaaaaaaaaa"' '"chunkId":"b-core-aaaaaaaaaaaaaaaa","chunkId":"b-core-bbbbbbbbbbbbbbbb"'
+        Assert-Rejected 'duplicate-chunk' $chunkDup
+        $carried = New-Id 'passed' $same 'core' 'Runs'
+        $carried.carriedFrom = [ordered]@{
+            candidateId = 'cand-0'; runId = 'run-0'; candidateSha = ('2' * 40)
+            chunkId = 'b-core-aaaaaaaaaaaaaaaa'; inputDigest = $same
+        }
+        $carriedJson = New-SampleJson $carried
+        $carriedDup = Update-Once $carriedJson '"candidateId":"cand-0"' '"candidateId":"cand-0","candidateId":"cand-9"'
+        Assert-Rejected 'duplicate-carried' $carriedDup
+        Assert-Contract
+    }
+    'CaseDuplicateIsInvalid' {
+        $json = New-SampleJson
+        $dup = Update-Once $json '"outcome":"passed"' '"outcome":"failed","Outcome":"passed"'
+        Assert-Rejected 'case-outcome' $dup
+        $contractDup = Update-Once $json '"policyHash":"p"' '"policyHash":"p","PolicyHash":"q"'
+        Assert-Rejected 'case-contract' $contractDup
+        Assert-Contract
+    }
+    'UnknownPropertyIsInvalid' {
+        $json = New-SampleJson
+        Assert-Rejected 'unknown-top' (Update-Once $json '{"format":' '{"doNotCarry":true,"format":')
+        Assert-Rejected 'unknown-contract' (Update-Once $json '"policyHash":"p"' '"policyHash":"p","extra":true')
+        Assert-Rejected 'unknown-identity' (Update-Once $json '{"suite":"antiphon"' '{"extra":1,"suite":"antiphon"')
+        Assert-Rejected 'unknown-chunk' (Update-Once $json '{"chunkId":' '{"extra":true,"chunkId":')
+        $carried = New-Id 'passed' $same 'core' 'Runs'
+        $carried.carriedFrom = [ordered]@{
+            candidateId = 'cand-0'; runId = 'run-0'; candidateSha = ('2' * 40)
+            chunkId = 'b-core-aaaaaaaaaaaaaaaa'; inputDigest = $same
+        }
+        $carriedJson = New-SampleJson $carried
+        Assert-Rejected 'unknown-carried' (Update-Once $carriedJson '"carriedFrom":{"candidateId":' '"carriedFrom":{"extra":true,"candidateId":')
+        Assert-Contract
+    }
+    'WrongTypeIsInvalid' {
+        $json = New-SampleJson
+        Assert-Rejected 'number-repository' ($json.Replace('"repository":"antiphon"', '"repository":1'))
+        Assert-Rejected 'string-attempt' ($json.Replace('"attempt":1', '"attempt":"1"'))
+        $contractJson = '"contract":{"policyHash":"p","catalogHash":"c","selectorHash":"s","runtimeHash":"r"}'
+        Assert-Rejected 'bool-contract' ($json.Replace($contractJson, '"contract":true'))
+        Assert-Rejected 'array-contract' ($json.Replace($contractJson, '"contract":[]'))
+        $identityStart = $json.IndexOf('"identities":[')
+        $identityEnd = $json.IndexOf('],"chunks":')
+        if ($identityStart -lt 0 -or $identityEnd -lt $identityStart) { throw 'fixture identities missing' }
+        $boolIdentity = $json.Remove($identityStart, ($identityEnd - $identityStart) + 1).Insert($identityStart, '"identities":[true]')
+        Assert-Rejected 'bool-identity' $boolIdentity
+        Assert-Contract
+    }
+    'MissingFieldIsInvalid' {
+        $json = New-SampleJson
+        Assert-Rejected 'missing-format' ($json.Replace('"format":"antiphon-rc-ledger-v1",', ''))
+        Assert-Rejected 'missing-forced' ($json.Replace('"forcedFull":[],', ''))
+        Assert-Rejected 'missing-duration' (Update-Once $json '"durationSeconds":1.25,' '')
+        Assert-Rejected 'missing-outcome' (Update-Once $json '"outcome":"passed",' '')
+        Assert-Rejected 'truncated' ($json.Substring(0, 40))
+        Assert-Rejected 'newer-format' ($json.Replace('antiphon-rc-ledger-v1', 'antiphon-rc-ledger-v2'))
+        Assert-Contract
+    }
+    'BomAndCrlfStillRead' {
+        $json = New-SampleJson
+        $bomPath = Write-LedgerFile 'bom' $json $true $false
+        $bomBytes = [System.IO.File]::ReadAllBytes($bomPath)
+        Note ($bomBytes.Length -ge 3 -and $bomBytes[0] -eq 0xEF -and $bomBytes[1] -eq 0xBB -and $bomBytes[2] -eq 0xBF) 'bom marker'
+        Assert-CarriesFile 'bom-carry' $bomPath
+        $crlfPath = Write-LedgerFile 'crlf' $json $false $true
+        $crlfBytes = [System.IO.File]::ReadAllBytes($crlfPath)
+        $crlfText = [System.Text.Encoding]::UTF8.GetString($crlfBytes)
+        Note ($crlfText.Contains("`r`n")) 'crlf marker'
+        Assert-CarriesFile 'crlf-carry' $crlfPath
+        $bothPath = Write-LedgerFile 'both' $json $true $true
+        Assert-CarriesFile 'bom-crlf-carry' $bothPath
+        $dup = Update-Once $json '"outcome":"passed"' '"outcome":"failed","outcome":"passed"'
+        Assert-Rejected 'crlf-duplicate' $dup $false $true
+        Assert-Rejected 'bom-duplicate' $dup $true $false
+        Assert-Contract
+    }
+    'LargeLedgerStaysLinear' {
+        $count = 2500
+        $wide = New-WideJson $count
+        $validPath = Write-LedgerFile 'wide-valid' $wide
+        $validWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        Assert-CarriesFile 'wide-carry' $validPath
+        $validWatch.Stop()
+        Note ($validWatch.ElapsedMilliseconds -lt 8000) ('wide-valid-ms ' + $validWatch.ElapsedMilliseconds)
+        $marker = '"outcome":"passed","durationSeconds":1,"carriedFrom":null'
+        $at = $wide.LastIndexOf($marker)
+        if ($at -lt 0) { throw 'wide marker missing' }
+        $bad = $wide.Remove($at, $marker.Length).Insert($at, '"outcome":"failed","outcome":"passed","durationSeconds":1,"carriedFrom":null')
+        $badPath = Write-LedgerFile 'wide-dup' $bad
+        $badWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        Assert-Rejected 'wide-duplicate' $bad
+        $badWatch.Stop()
+        Note ($badWatch.ElapsedMilliseconds -lt 8000) ('wide-dup-ms ' + $badWatch.ElapsedMilliseconds)
+        Note ($wide.Length -gt 400000) ('wide-bytes ' + $wide.Length)
+        Assert-Contract
+    }
+    'WellFormedRowStillCarries' {
+        $path = Write-LedgerFile 'valid' (New-SampleJson)
+        Assert-CarriesFile 'valid-carry' $path
+        $read = Read-RcLedger -Path $path
+        $check = Test-RcLedgerDocument -Document $read
+        Note ($check.valid) ('valid document ' + ($check.errors -join ','))
         Assert-Contract
     }
     default { throw ('unknown case ' + $Case) }
