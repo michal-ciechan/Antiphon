@@ -232,11 +232,23 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
                     await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
                 }
             }
-            if (options.Cut == "enqueue-errors" && boundary == "before-enqueue" && Interlocked.Increment(ref _enqueueCalls) <= 2)
+            if (options.Cut == "enqueue-errors" && boundary == "before-enqueue")
             {
-                await File.WriteAllTextAsync(Path.Combine(options.Root, $"enqueue-failure-{Guid.NewGuid():N}.json"),
-                    JsonSerializer.Serialize(new { taskId, identity }), ct);
-                throw new IOException("Owned notification insert failure");
+                // enqueue-errors-task.txt keeps the two throws on that task. Absent, the first two
+                // before-enqueue reaches in the process still throw (C467_V31).
+                var namedPath = Path.Combine(options.Root, "enqueue-errors-task.txt");
+                var counts = !File.Exists(namedPath);
+                if (!counts)
+                {
+                    var text = (await File.ReadAllTextAsync(namedPath, ct)).Trim();
+                    counts = Guid.TryParse(text, out var named) && named == taskId;
+                }
+                if (counts && Interlocked.Increment(ref _enqueueCalls) <= 2)
+                {
+                    await File.WriteAllTextAsync(Path.Combine(options.Root, $"enqueue-failure-{Guid.NewGuid():N}.json"),
+                        JsonSerializer.Serialize(new { taskId, identity }), ct);
+                    throw new IOException("Owned notification insert failure");
+                }
             }
             var blocked = boundary == "before-execution" && !File.Exists(Path.Combine(options.Root, "execute.release"))
                 || options.Cut == "terminal" && boundary is "terminal-committed" or "before-enqueue"
