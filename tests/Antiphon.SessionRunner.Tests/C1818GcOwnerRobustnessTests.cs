@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -8,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
 /// CARD-1818. A fault in one repository or one pass does not end the owner, a budget kill
-/// does not leave the packed-refs lock it created, and a symlinked .git is not a repository.
+/// leaves packed-refs.lock in place, and a symlinked .git is not a repository.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -86,29 +87,34 @@ public sealed class C1818GcOwnerRobustnessTests
     }
 
     [Test]
-    [Timeout(30_000)]
-    public async Task C1818_budget_kill_removes_a_stale_packed_refs_lock()
+    [Timeout(60_000)]
+    public async Task C1818_budget_kill_reports_a_lock_the_gc_child_wrote()
     {
-        var root = Temp("lock");
+        var root = Temp("child-lock");
         var children = new List<Process>();
+        var log = new CaptureLogger();
         try
         {
             var oldRepo = Repo(root, "oldrepo");
-            var freshRepo = Repo(root, "freshrepo");
+            var childRepo = Repo(root, "childrepo");
             var oldLock = Path.Combine(oldRepo, ".git", "packed-refs.lock");
-            var freshLock = Path.Combine(freshRepo, ".git", "packed-refs.lock");
+            var childLock = Path.Combine(childRepo, ".git", "packed-refs.lock");
             File.WriteAllText(oldLock, "");
             File.SetLastWriteTimeUtc(oldLock, DateTime.UtcNow.AddHours(-2));
-            var maintenance = Build(root, budget: 1, start: psi =>
+            string? childIdentity = null;
+            var maintenance = Build(root, budget: 1, log, start: psi =>
             {
-                if (psi.WorkingDirectory.Contains("freshrepo", StringComparison.Ordinal))
-                    File.WriteAllText(freshLock, "");
-                var child = Process.Start(new ProcessStartInfo("/bin/sleep", "30")
+                Process child;
+                if (psi.WorkingDirectory.Contains($"{Path.DirectorySeparatorChar}childrepo", StringComparison.Ordinal))
                 {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                }) ?? throw new InvalidOperationException("sleep did not start");
+                    child = StartShell(psi.WorkingDirectory, "printf '' > .git/packed-refs.lock; exec sleep 30");
+                    WaitUntil(() => File.Exists(childLock), "gc child did not write packed-refs.lock");
+                    childIdentity = Identity(childLock);
+                }
+                else
+                {
+                    child = StartShell(psi.WorkingDirectory, "exec sleep 30");
+                }
                 children.Add(child);
                 return child;
             });
@@ -116,18 +122,78 @@ public sealed class C1818GcOwnerRobustnessTests
             var status = await maintenance.RunAsync(CancellationToken.None, force: true);
 
             File.Exists(oldLock).ShouldBeTrue();
-            File.Exists(freshLock).ShouldBeFalse();
+            File.Exists(childLock).ShouldBeTrue();
+            Identity(childLock).ShouldBe(childIdentity);
             status.Repositories.ShouldContain(report =>
                 report.Repository.EndsWith($"{Path.DirectorySeparatorChar}oldrepo", StringComparison.Ordinal)
                 && report.Outcome == "failed" && report.Reason == "budget");
             status.Repositories.ShouldContain(report =>
-                report.Repository.EndsWith($"{Path.DirectorySeparatorChar}freshrepo", StringComparison.Ordinal)
-                && report.Outcome == "failed" && report.Reason == "budget");
+                report.Repository.EndsWith($"{Path.DirectorySeparatorChar}childrepo", StringComparison.Ordinal)
+                && report.Outcome == "failed" && report.Reason == "packed_refs_lock_left");
+            log.Lines.ShouldContain(line =>
+                line.Contains("left packed-refs.lock", StringComparison.Ordinal)
+                && line.Contains(childRepo, StringComparison.Ordinal)
+                && line.Contains("ageSeconds=", StringComparison.Ordinal));
+            log.Lines.ShouldNotContain(line =>
+                line.Contains("left packed-refs.lock", StringComparison.Ordinal)
+                && line.Contains(oldRepo, StringComparison.Ordinal));
         }
         finally
         {
             foreach (var child in children)
                 Stop(child);
+            Delete(root);
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1818_budget_kill_leaves_a_lock_held_by_an_outside_process()
+    {
+        var root = Temp("held-lock");
+        var children = new List<Process>();
+        Process? holder = null;
+        var log = new CaptureLogger();
+        try
+        {
+            var heldRepo = Repo(root, "heldrepo");
+            var heldLock = Path.Combine(heldRepo, ".git", "packed-refs.lock");
+            string? heldIdentity = null;
+            var maintenance = Build(root, budget: 1, log, start: psi =>
+            {
+                if (psi.WorkingDirectory.Contains($"{Path.DirectorySeparatorChar}heldrepo", StringComparison.Ordinal))
+                {
+                    var outside = StartHolder(heldLock);
+                    holder = outside;
+                    WaitUntil(() => HolderHasLock(outside, heldLock), "outside process did not hold packed-refs.lock");
+                    heldIdentity = Identity(heldLock);
+                }
+                var child = StartShell(psi.WorkingDirectory, "exec sleep 30");
+                children.Add(child);
+                return child;
+            });
+
+            var status = await maintenance.RunAsync(CancellationToken.None, force: true);
+
+            holder.ShouldNotBeNull();
+            holder!.HasExited.ShouldBeFalse();
+            HolderHasLock(holder, heldLock).ShouldBeTrue();
+            File.Exists(heldLock).ShouldBeTrue();
+            Identity(heldLock).ShouldBe(heldIdentity);
+            Directory.Exists("/proc/" + children[0].Id).ShouldBeFalse();
+            status.Repositories.ShouldContain(report =>
+                report.Repository.EndsWith($"{Path.DirectorySeparatorChar}heldrepo", StringComparison.Ordinal)
+                && report.Outcome == "failed" && report.Reason == "packed_refs_lock_left");
+            log.Lines.ShouldContain(line =>
+                line.Contains("left packed-refs.lock", StringComparison.Ordinal)
+                && line.Contains(heldRepo, StringComparison.Ordinal)
+                && line.Contains("ageSeconds=", StringComparison.Ordinal));
+        }
+        finally
+        {
+            foreach (var child in children)
+                Stop(child);
+            Stop(holder);
             Delete(root);
         }
     }
@@ -206,6 +272,8 @@ public sealed class C1818GcOwnerRobustnessTests
         invariants.ShouldContain("Git an agent runs itself inside a worktree is not counted");
         invariants.ShouldContain("does not stop the pass or the owner");
         invariants.ShouldContain("packed-refs.lock");
+        invariants.ShouldContain("row reason is `packed_refs_lock_left`");
+        invariants.ShouldContain("names the repository and the lock age");
         invariants.ShouldContain("symlinked .git");
         stack.ShouldContain("Git an agent runs itself is not counted");
     }
@@ -220,10 +288,87 @@ public sealed class C1818GcOwnerRobustnessTests
     }
 
     private static RunnerRepositoryMaintenance Build(string root, int budget = 120,
-        Func<ProcessStartInfo, Process?>? start = null) =>
-        new(root, new RunnerRepositoryActivity(), TimeProvider.System, NullLogger.Instance,
+        ILogger? logger = null, Func<ProcessStartInfo, Process?>? start = null) =>
+        new(root, new RunnerRepositoryActivity(), TimeProvider.System, logger ?? NullLogger.Instance,
             new RunnerRepositoryMaintenanceOptions { LooseObjectThreshold = 6700, BudgetSeconds = budget },
             Path.Combine(root, "repository-maintenance.json"), start);
+
+    private static Process StartShell(string workingDirectory, string command)
+    {
+        var psi = new ProcessStartInfo("/bin/sh")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(command);
+        return Process.Start(psi) ?? throw new InvalidOperationException("shell did not start");
+    }
+
+    private static Process StartHolder(string lockPath)
+    {
+        var psi = new ProcessStartInfo("/bin/sh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("exec 3>\"$1\"; exec sleep 120");
+        psi.ArgumentList.Add("holder");
+        psi.ArgumentList.Add(lockPath);
+        return Process.Start(psi) ?? throw new InvalidOperationException("holder did not start");
+    }
+
+    private static void WaitUntil(Func<bool> ready, string failure)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!ready() && DateTime.UtcNow < deadline)
+            Thread.Sleep(20);
+        ready().ShouldBeTrue(failure);
+    }
+
+    private static bool HolderHasLock(Process holder, string lockPath)
+    {
+        if (holder.HasExited)
+            return false;
+        var fdDir = "/proc/" + holder.Id + "/fd";
+        if (!Directory.Exists(fdDir))
+            return false;
+        var full = Path.GetFullPath(lockPath);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(fdDir))
+        {
+            string? target;
+            try { target = Directory.ResolveLinkTarget(entry, returnFinalTarget: false)?.FullName; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { continue; }
+            if (target is not null && string.Equals(Path.GetFullPath(target), full, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static string Identity(string path)
+    {
+        var psi = new ProcessStartInfo("stat")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("%d:%i:%s");
+        psi.ArgumentList.Add(path);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("stat did not start");
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException("stat " + path + " -> " + stderr);
+        return stdout.Trim();
+    }
 
     private static string Repo(string parent, string name)
     {
@@ -289,5 +434,14 @@ public sealed class C1818GcOwnerRobustnessTests
                 File.SetAttributes(file, FileAttributes.Normal);
             Directory.Delete(path, recursive: true);
         }
+    }
+
+    private sealed class CaptureLogger : ILogger
+    {
+        public List<string> Lines { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Lines.Add(formatter(state, exception));
     }
 }
